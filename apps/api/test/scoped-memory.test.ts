@@ -1,4 +1,3 @@
-import { WorkspaceService } from '../src/services/workspace-service';
 import { readFileSync } from 'node:fs';
 import { asAutomationId, asHarnessRunId, asSubstreamId, asUserId, asWorkstreamId } from "@rally/contracts";
 import { asWorkspaceId } from "@rally/contracts";
@@ -9,23 +8,18 @@ import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import type { Env } from "../src/env";
 import {
   createMemoryTools,
-  freezeRunMemoryContext,
-  memorySearch,
-  processMemoryIndexOutbox,
   resolveMemoryAccess,
+  writableScope,
   type MemoryScope,
 } from "../src/services/memory-service";
 import { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { createMemoryTableTools } from "../src/services/memory-table-service";
 import { validateToolArguments } from "@rally/agent-harness";
-import { MEMORY_RECALL_QUERY_LIMIT } from "@rally/contracts";
-import { z } from "zod";
-import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-object-rpcs";
 import {
   seedWorkstreamObjectRoot,
   seedWorkstreamRun,
-  testHarnessRunPort,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   applyWorkstreamObjectRootFields,
@@ -95,72 +89,6 @@ function sqliteD1(database: DatabaseSync): D1Database {
   });
 }
 
-function embeddingFor(text: string): number[] {
-  const normalized = text.toLowerCase();
-  const embedding = Array.from({ length: 1_024 }, () => 0);
-  if (normalized.includes("crimson") || normalized.includes("red")) embedding[0] = 1;
-  else if (normalized.includes("azure") || normalized.includes("blue")) embedding[1] = 1;
-  else embedding[2] = 1;
-  return embedding;
-}
-
-class FakeOpenRouterEmbeddings {
-  fail = false;
-  resolvedModel: string | null = null;
-  readonly requests: Array<{ body: Record<string, unknown>; headers: Headers }> = [];
-
-  readonly fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-    if (this.fail) throw new Error("embedding unavailable");
-    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-    const headers = new Headers(init?.headers);
-    this.requests.push({ body, headers });
-    const rawInput = body.input;
-    const values = Array.isArray(rawInput) ? rawInput.map(String) : [String(rawInput)];
-    return Response.json({
-      data: values.map((value, index) => ({
-        embedding: embeddingFor(value),
-        index,
-        object: "embedding",
-      })),
-      model: this.resolvedModel ?? String(body.model),
-      object: "list",
-      usage: { prompt_tokens: values.length, total_tokens: values.length },
-    });
-  });
-}
-
-class FakeVectorIndex {
-  readonly vectors = new Map<string, { values: number[]; namespace?: string }>();
-  readonly deleted: string[] = [];
-
-  async query(values: number[], options?: { namespace?: string; topK?: number }) {
-    const magnitude = (vector: number[]) => Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0));
-    const matches = [...this.vectors.entries()]
-      .filter(([, vector]) => vector.namespace === options?.namespace)
-      .map(([id, vector]) => ({
-        id,
-        score: vector.values.reduce((sum, value, index) => sum + value * (values[index] ?? 0), 0)
-          / Math.max(1e-9, magnitude(vector.values) * magnitude(values)),
-      }))
-      .sort((left, right) => right.score - left.score)
-      .slice(0, options?.topK ?? 10);
-    return { matches, count: matches.length };
-  }
-
-  async upsert(vectors: Array<{ id: string; values: number[]; namespace?: string }>) {
-    for (const vector of vectors) this.vectors.set(vector.id, vector);
-    return { count: vectors.length, ids: vectors.map((vector) => vector.id) };
-  }
-
-  async deleteByIds(ids: string[]) {
-    for (const id of ids) {
-      this.vectors.delete(id);
-      this.deleted.push(id);
-    }
-    return { count: ids.length, ids };
-  }
-}
-
 const openDatabases: DatabaseSync[] = [];
 /** Per-workstream object databases; run rows and run receipts live here. */
 const objectStores = new Map<string, DatabaseSync>();
@@ -184,19 +112,6 @@ function routedEnv(env: Env, runInput: WorkstreamWorkflowInput): Env {
 /** The typed WorkspaceDO methods the memory services call. */
 const MEMORY_OBJECT_METHODS = [
   "ensureMemoryScope",
-  "searchMemoryItemsFts",
-  "canonicalMemoryItems",
-  "recordMemoryItemAccess",
-  "memoryItemForWrite",
-  "memoryMutationReceipt",
-  "addMemoryItem",
-  "updateMemoryItem",
-  "invalidateMemoryItem",
-  "dueMemoryIndexOutbox",
-  "claimMemoryIndexOutboxRow",
-  "completeMemoryIndexOutboxRow",
-  "retryMemoryIndexOutboxRow",
-  "memoryIndexProjectionSource",
   "memoryTableWithColumns",
   "searchMemoryTables",
   "queryMemoryTableRows",
@@ -214,8 +129,6 @@ function fixture(): {
   /** The real WorkspaceDO's own database — where memory rows now live. */
   objectDatabase: DatabaseSync;
   env: Env;
-  embeddings: FakeOpenRouterEmbeddings;
-  vector: FakeVectorIndex;
   /**
    * An env whose named WorkspaceDO method runs `mutate` first, once — the
    * seam for racing a competing writer between the service's read and the
@@ -306,9 +219,6 @@ function fixture(): {
       heartbeatAt: Date.parse("2026-01-01") });
     objectStores.set(automationId, store);
   }
-  const embeddings = new FakeOpenRouterEmbeddings();
-  vi.stubGlobal("fetch", embeddings.fetch);
-  const vector = new FakeVectorIndex();
   // Memory rows live in WorkspaceDO now, so the suite stands up the real
   // object over its own schema and exposes its typed methods as stub RPCs.
   // Only the transport is doubled; re-implementing a method here would move
@@ -323,8 +233,7 @@ function fixture(): {
   const envWith = (rpcs: Record<string, unknown>): Env => createTestEnv({
     DB: sqliteD1(database),
     ACCESS_REVOCATION_QUEUE: { send: async () => undefined, sendBatch: async () => undefined },
-    MEMORY_INDEX: createCloudflareTestBinding<VectorizeIndex>(vector),
-    // Freezing a run's recall now goes through the harness-run authority, so
+    // Scope resolution reads the run through the harness-run authority, so
     // this fixture needs the object namespace as well as the SQL callback
     // below. Both reach the same per-work-stream store.
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
@@ -338,8 +247,6 @@ function fixture(): {
   return {
     database,
     objectDatabase: workspaceObject.objectDatabase,
-    embeddings,
-    vector,
     env: envWith(memoryRpcs),
     withMethodRace: (method, mutate) => {
       let intercepted = false;
@@ -416,13 +323,6 @@ function toolContext(runInput: WorkstreamWorkflowInput, receipt: string) {
   };
 }
 
-function memoryTool(env: Env, runInput: WorkstreamWorkflowInput, name: string) {
-  const tool = createMemoryTools(routedEnv(env, runInput), runInput)
-    .find((candidate) => candidate.definition.name === name);
-  if (!tool) throw new Error(`missing tool ${name}`);
-  return tool;
-}
-
 function tableTool(env: Env, runInput: WorkstreamWorkflowInput, name: string) {
   const tool = createMemoryTableTools(routedEnv(env, runInput), runInput)
     .find((candidate) => candidate.definition.name === name);
@@ -430,86 +330,19 @@ function tableTool(env: Env, runInput: WorkstreamWorkflowInput, name: string) {
   return tool;
 }
 
-describe("scoped agent memory", () => {
+describe("memory scopes and durable tables", () => {
   it("derives the complete scope union and never exposes search scope selectors", async () => {
     const { env } = fixture();
     const ownerScopes = await resolveMemoryAccess(routedEnv(env, input("owner")), input("owner"));
     expect(ownerScopes.map((scope) => scope.kind)).toEqual(["workspace", "user", "workstream"]);
     expect(ownerScopes.find((scope) => scope.kind === "workspace")?.ownerId).toBe(WORKSPACE_ID);
 
-    const search = memoryTool(env, input("owner"), "search");
-    expect(search.definition.inputSchema).toMatchObject({
-      additionalProperties: false,
-      properties: { query: expect.any(Object), memoryItemId: expect.any(Object) },
-    });
-    expect(Object.keys((search.definition.inputSchema as { properties: object }).properties))
-      .toEqual(["query", "memoryItemId"]);
-    // The choice between the two is exclusive, and the executor is where that
-    // holds: a `oneOf` of bare `required` branches does not survive schema
-    // sanitization, so the wire schema never carried it either. Asserted on the
-    // parse rather than the declaration for that reason — see
-    // `tool-schema-sanitization.test.ts`.
-    // The message is asserted, not just the rejection: with the constraint gone
-    // from the wire schema this is the model's only feedback, and a union's
-    // default text ("Unrecognized key: …" from each branch) reads as though
-    // neither parameter were allowed.
-    await expect(search.execute(
-      { query: "anything", memoryItemId: OWNER_ID },
-      toolContext(input("owner"), "search-with-both"),
-    )).rejects.toThrow(/exactly one of query or memoryItemId/);
-    await expect(search.execute(
-      {},
-      toolContext(input("owner"), "search-with-neither"),
-    )).rejects.toThrow(/exactly one of query or memoryItemId/);
-    await expect(search.execute(
-      { query: "anything", scopes: ["workspace"] },
-      toolContext(input("owner"), "search-with-selector"),
-    )).rejects.toThrow();
-  });
-
-  it("isolates user and workstream memory while sharing workspace memory", async () => {
-    const { env } = fixture();
-    const ownerInput = input("owner");
-    const add = memoryTool(env, ownerInput, "add");
-    await add.execute(
-      { scopeKind: "user", text: "Owner prefers crimson reports", rationale: "Durable preference" },
-      toolContext(ownerInput, "add-owner-user"),
-    );
-    await add.execute(
-      { scopeKind: "workstream", text: "This task uses the zephyr codename", rationale: "Task continuity" },
-      toolContext(ownerInput, "add-owner-workstream"),
-    );
-    await add.execute(
-      { scopeKind: "workspace", text: "The workspace release day is Thursday", rationale: "Shared convention" },
-      toolContext(ownerInput, "add-workspace"),
-    );
-    await add.execute(
-      {
-        scopeKind: "user",
-        text: "Obsolete preference was chartreuse",
-        expiresAt: "2020-01-01T00:00:00.000Z",
-        rationale: "Time-limited preference",
-      },
-      toolContext(ownerInput, "add-expired"),
-    );
-
-    const memberInput = input("member");
-    expect((await memorySearch(routedEnv(env, memberInput), memberInput, "crimson")).results).toEqual([]);
-    expect((await memorySearch(routedEnv(env, memberInput), memberInput, "zephyr")).results).toEqual([]);
-    expect((await memorySearch(routedEnv(env, memberInput), memberInput, "release Thursday")).results)
-      .toEqual([expect.objectContaining({ scopeKind: "workspace" })]);
-    expect((await memorySearch(routedEnv(env, ownerInput), ownerInput, "obsolete chartreuse")).results).toEqual([]);
-
-    await expect(memoryTool(env, memberInput, "add").execute(
-      { scopeKind: "workspace", text: "Members cannot write this", rationale: "Unauthorized" },
-      toolContext(memberInput, "member-workspace-write"),
-    // The refusal names what this run may write instead, because `scopeKind`
-    // offers every kind and a bare code left the model nothing to retry with.
-    )).rejects.toMatchObject({
-      code: "memory_scope_not_writable",
-      message: expect.stringContaining("may write: workstream, user"),
-      details: { reason: expect.stringContaining("Retry with one of: workstream, user — narrowest first") },
-    });
+    // The run's tools never carry a scope selector: the three memory tools
+    // take a query, a fact, or a fact id, and nothing that names where to look.
+    for (const tool of createMemoryTools(routedEnv(env, input("owner")), input("owner"))) {
+      expect(Object.keys((tool.definition.inputSchema as { properties: object }).properties)).not.toContain("scopes");
+      expect(Object.keys((tool.definition.inputSchema as { properties: object }).properties)).not.toContain("scopeKind");
+    }
   });
 
   it("gives an automation run the workspace scope and its automation's own, and nothing personal", async () => {
@@ -529,38 +362,13 @@ describe("scoped agent memory", () => {
     const workstreamRun = input("owner");
     expect((await resolveMemoryAccess(routedEnv(env, workstreamRun), workstreamRun)).map((scope) => scope.kind))
       .toEqual(["workspace", "user", "workstream"]);
-    // The tool surface still offers every kind, so asking for the one this run
-    // cannot reach is the executor's refusal, naming what it can write.
-    await expect(memoryTool(env, runInput, "add").execute(
-      { scopeKind: "user", text: "Owner prefers crimson reports", rationale: "Should not resolve" },
-      toolContext(runInput, "add-user-under-automation"),
-    )).rejects.toMatchObject({
+    // The table tools still offer every kind, so asking for the one this run
+    // cannot reach is the resolver's refusal, naming what it can write.
+    await expect(writableScope(routedEnv(env, runInput), runInput, "user")).rejects.toMatchObject({
       code: "memory_scope_not_available",
       message: expect.stringContaining("Its scopes are: sidekick, workspace"),
     });
   });
-
-  it("keeps two automations' memory apart while both share the workspace's", async () => {
-    const { env } = fixture();
-    const first = input("owner", 1);
-    const second = input("workspace", 2);
-    await memoryTool(env, first, "add").execute(
-      { scopeKind: "sidekick", text: "Use the crimson summary template", rationale: "Future runs need this" },
-      toolContext(first, "add-automation-one"),
-    );
-    await memoryTool(env, first, "add").execute(
-      { scopeKind: "workspace", text: "The workspace release day is Thursday", rationale: "Shared convention" },
-      toolContext(first, "add-workspace-from-automation"),
-    );
-    // The second automation's scope is its own, keyed by the automation and
-    // not by the workspace both belong to.
-    expect((await resolveMemoryAccess(routedEnv(env, second), second)).map((scope) => [scope.kind, scope.ownerId]))
-      .toEqual([["workspace", WORKSPACE_ID], ["sidekick", AUTOMATION_TWO]]);
-    expect((await memorySearch(routedEnv(env, first), first, "crimson summary")).results)
-      .toEqual([expect.objectContaining({ scopeKind: "sidekick" })]);
-    expect((await memorySearch(routedEnv(env, second), second, "crimson summary")).results).toEqual([]);
-    expect((await memorySearch(routedEnv(env, second), second, "release Thursday")).results)
-      .toEqual([expect.objectContaining({ scopeKind: "workspace" })]);
   });
 
   it("asks the WorkspaceDO for each scope once, and decides writability on every call", async () => {
@@ -580,268 +388,6 @@ describe("scoped agent memory", () => {
     } finally {
       ensure.mockRestore();
     }
-  });
-
-  it("replays receipts and uses revision CAS for updates and invalidation", async () => {
-    const { objectDatabase, env } = fixture();
-    const runInput = input("owner");
-    const add = memoryTool(env, runInput, "add");
-    const args = { scopeKind: "user", text: "Favorite color is crimson", rationale: "Preference" };
-    const first = await add.execute(args, toolContext(runInput, "receipt-add"));
-    const replay = await add.execute(args, toolContext(runInput, "receipt-add"));
-    expect(replay).toEqual(first);
-    expect(objectDatabase.prepare("SELECT COUNT(*) AS count FROM memory_items").get()).toEqual({ count: 1 });
-    expect(objectDatabase.prepare("SELECT COUNT(*) AS count FROM memory_mutations").get()).toEqual({ count: 1 });
-
-    const memoryItemId = (first.output as { memoryItemId: string }).memoryItemId;
-    const update = memoryTool(env, runInput, "update");
-    const updated = await update.execute(
-      { memoryItemId, expectedRevision: 1, text: "Favorite color is azure", rationale: "Preference changed" },
-      toolContext(runInput, "receipt-update"),
-    );
-    expect(updated.output).toMatchObject({ revision: 2, invalidated: false });
-    await expect(update.execute(
-      { memoryItemId, expectedRevision: 1, text: "Favorite color is green", rationale: "Stale writer" },
-      toolContext(runInput, "receipt-stale-update"),
-    )).rejects.toMatchObject({
-      code: "memory_revision_conflict",
-      message: "The durable memory changed after it was read. Read it again by memoryItemId, inspect the current text and revision, and rebuild the mutation.",
-      details: { reason: expect.stringContaining("memory_search") },
-    });
-
-    expect(await memoryTool(env, runInput, "search").execute(
-      { memoryItemId },
-      toolContext(runInput, "read-memory-by-id"),
-    )).toMatchObject({
-      output: {
-        memoryItemId,
-        retrievalMode: "exact",
-        results: [{ memoryItemId, revision: 2, text: "Favorite color is azure" }],
-      },
-    });
-
-    await expect(memoryTool(env, runInput, "invalidate").execute(
-      { memoryItemId, expectedRevision: 1, reason: "Stale invalidation" },
-      toolContext(runInput, "receipt-stale-invalidate"),
-    )).rejects.toMatchObject({
-      code: "memory_revision_conflict",
-      details: { reason: expect.stringContaining("memoryItemId") },
-    });
-
-    const invalidated = await memoryTool(env, runInput, "invalidate").execute(
-      { memoryItemId, expectedRevision: 2, reason: "Preference is no longer valid" },
-      toolContext(runInput, "receipt-invalidate"),
-    );
-    expect(invalidated.output).toMatchObject({ revision: 3, invalidated: true });
-    expect((await memorySearch(routedEnv(env, runInput), runInput, "azure")).results).toEqual([]);
-    expect(objectDatabase.prepare(
-      "SELECT invalidated_at, invalidation_reason, text FROM memory_items WHERE memory_item_id = ?",
-    ).get(memoryItemId)).toMatchObject({
-      invalidation_reason: "Preference is no longer valid",
-      text: "Favorite color is azure",
-    });
-  });
-
-  it('stops recalling a removed member\'s memory on their next search, storing no decision', async () => {
-    const { objectDatabase, env } = fixture();
-    const runInput = input('member');
-    await memoryTool(env, runInput, 'add').execute(
-      { scopeKind: 'user', text: 'Projected crimson memory', rationale: 'Recall fixture' },
-      toolContext(runInput, 'projected-add'));
-    expect((await memorySearch(env, runInput, 'crimson')).results).toHaveLength(1);
-    // Each search checks the run canonically; no key per run is kept.
-    expect(objectDatabase.prepare('SELECT COUNT(*) AS n FROM search_authorization_keys').get()).toEqual({ n: 0 });
-    await new WorkspaceService(env, { sessionId: 'test', userId: OWNER_ID, workspaceId: WORKSPACE_ID,
-      region: 'global', role: 'owner' }).removeMember(MEMBER_ID);
-    expect((await memorySearch(env, runInput, 'crimson')).results).toEqual([]);
-  });
-
-  it.each(["qwen/qwen3-embedding-8b", "Qwen/Qwen3-Embedding-8B"])("uses one fixed embedding space for %s, rejects stale vectors, and degrades to FTS", async (model) => {
-    const { objectDatabase, env, embeddings, vector } = fixture();
-    embeddings.resolvedModel = model;
-    const getObjectDetails = vi.fn<Flagship["getObjectDetails"]>();
-    env.FLAGS = createCloudflareTestBinding<Flagship>({ getObjectDetails });
-    const runInput = input("owner");
-    const added = await memoryTool(env, runInput, "add").execute(
-      { scopeKind: "user", text: "The report palette is crimson", rationale: "Durable style" },
-      toolContext(runInput, "vector-add"),
-    );
-    expect(await processMemoryIndexOutbox(env, 50, WORKSPACE_ID)).toBe(1);
-    expect(embeddings.requests[0]?.body).toMatchObject({
-      model: "qwen/qwen3-embedding-8b",
-      dimensions: 1_024,
-      input_type: "search_document",
-      user: WORKSPACE_ID,
-    });
-    expect(getObjectDetails).not.toHaveBeenCalled();
-    expect(embeddings.requests[0]?.headers.get("x-session-id")).toBeNull();
-    expect(objectDatabase.prepare(
-      "SELECT status FROM memory_index_outbox WHERE memory_item_id = ?",
-    ).get((added.output as { memoryItemId: string }).memoryItemId)).toEqual({ status: "completed" });
-    expect(await processMemoryIndexOutbox(env, 50, WORKSPACE_ID)).toBe(0);
-
-    const semantic = await memorySearch(routedEnv(env, runInput), runInput, "red");
-    expect(embeddings.requests.at(-1)?.body).toMatchObject({
-      dimensions: 1_024,
-      input_type: "search_query",
-      user: WORKSPACE_ID,
-    });
-    expect(embeddings.requests.at(-1)?.headers.get("x-session-id"))
-      .toBe(`${WORKSTREAM_ONE}-0`);
-    expect(semantic.retrievalMode).toBe("hybrid");
-    expect(semantic.results).toEqual([expect.objectContaining({ text: "The report palette is crimson" })]);
-
-    const memoryItemId = (added.output as { memoryItemId: string }).memoryItemId;
-    await memoryTool(env, runInput, "update").execute(
-      { memoryItemId, expectedRevision: 1, text: "The report palette is azure", rationale: "Palette changed" },
-      toolContext(runInput, "vector-update"),
-    );
-    expect(vector.vectors.has(`${memoryItemId}:1`)).toBe(true);
-    expect((await memorySearch(routedEnv(env, runInput), runInput, "red")).results).toEqual([]);
-
-    embeddings.fail = true;
-    const degraded = await memorySearch(routedEnv(env, runInput), runInput, "azure palette");
-    expect(degraded.retrievalMode).toBe("fts_only");
-    expect(degraded.results).toEqual([expect.objectContaining({ revision: 2, text: "The report palette is azure" })]);
-    expect(await processMemoryIndexOutbox(env, 50, WORKSPACE_ID)).toBe(0);
-    expect(objectDatabase.prepare(
-      `SELECT status, attempt_count, last_error FROM memory_index_outbox
-        WHERE memory_item_id = ? AND revision = 2`,
-    ).get(memoryItemId)).toMatchObject({
-      status: "pending",
-      attempt_count: 1,
-      last_error: "embedding_failure",
-    });
-
-    embeddings.fail = false;
-    objectDatabase.prepare(
-      "UPDATE memory_index_outbox SET available_at = '2020-01-01' WHERE memory_item_id = ? AND revision = 2",
-    ).run(memoryItemId);
-    expect(await processMemoryIndexOutbox(env, 50, WORKSPACE_ID)).toBe(1);
-    expect(vector.vectors.has(`${memoryItemId}:2`)).toBe(true);
-    expect(vector.vectors.has(`${memoryItemId}:1`)).toBe(false);
-  });
-
-  it("uses the owning workstream as the document-embedding session", async () => {
-    const { env, embeddings } = fixture();
-    const runInput = input("owner");
-    await memoryTool(env, runInput, "add").execute(
-      { scopeKind: "workstream", text: "This task prefers terse reports", rationale: "Task style" },
-      toolContext(runInput, "vector-add-workstream"),
-    );
-
-    expect(await processMemoryIndexOutbox(env, 50, WORKSPACE_ID)).toBe(1);
-    expect(embeddings.requests).toHaveLength(1);
-    expect(embeddings.requests[0]?.headers.get("x-session-id")).toBe(`${WORKSTREAM_ONE}-0`);
-  });
-
-  it("keeps query embeddings on the active substream session", async () => {
-    const { env, embeddings } = fixture();
-    const substreamId = asSubstreamId("00000000-0000-4000-8000-000000000077");
-    const runInput = {
-      ...input("owner"),
-      substreamId,
-    };
-
-    await memorySearch(routedEnv(env, runInput), runInput, "crimson");
-
-    expect(embeddings.requests).toHaveLength(1);
-    expect(embeddings.requests[0]?.headers.get("x-session-id"))
-      .toBe(`${WORKSTREAM_ONE}-${substreamId}`);
-  });
-
-  it("fails closed to FTS when OpenRouter reports a different embedding model", async () => {
-    const { env, embeddings } = fixture();
-    const runInput = input("owner");
-    await memoryTool(env, runInput, "add").execute(
-      { scopeKind: "user", text: "The report palette is crimson", rationale: "Durable style" },
-      toolContext(runInput, "vector-model-drift"),
-    );
-    embeddings.resolvedModel = "provider/changed-embedding-model";
-
-    const result = await memorySearch(routedEnv(env, runInput), runInput, "crimson palette");
-
-    expect(result.retrievalMode).toBe("fts_only");
-    expect(result.results).toEqual([
-      expect.objectContaining({ text: "The report palette is crimson" }),
-    ]);
-  });
-
-  it("bounds the assembled recall query to what the recall receivers accept", async () => {
-    const { env } = fixture();
-    const runInput = input("owner");
-
-    // The query is assembled from run content — the objective, the trigger
-    // context, and the whole text of the triggering message — so an automation
-    // triggered by a long email built one past the automation memory tool's
-    // 2000-character bound. That parse threw inside run setup, before the frozen
-    // scope and before any inference, so the run failed identically on every
-    // attempt and stayed failed. Clamping here is what the receiving schema
-    // requires, and it has to happen before the persisted text and the hash so a
-    // replay freezes the same query.
-    const frozen = await freezeRunMemoryContext(
-      routedEnv(env, runInput),
-      runInput,
-      { attemptId: "attempt-owner", owner: "lease-owner" },
-      `${"trigger email body ".repeat(400)}`,
-    );
-
-    // Read back off the frozen row rather than the argument, so this asserts
-    // what the run will actually replay and what the recall surfaces were sent.
-    // Asserted against the shared bound rather than a literal, because the
-    // bound is the whole point: the automation receiver rejects anything past
-    // it, and rejecting is what escaped run setup.
-    //
-    // This exercises a work-stream run; an automation run's recall goes
-    // through the same freeze with its automation scope in the union, so the
-    // bound proved here is the one both shapes are held to.
-    expect(frozen.query.length).toBe(MEMORY_RECALL_QUERY_LIMIT);
-    expect(() => z.string().max(MEMORY_RECALL_QUERY_LIMIT).parse(frozen.query)).not.toThrow();
-  });
-
-  it("freezes recalled results and the context hash for deterministic retries", async () => {
-    const { objectDatabase, env } = fixture();
-    const runInput = input("owner");
-    await memoryTool(env, runInput, "add").execute(
-      { scopeKind: "user", text: "Use the crimson dashboard", rationale: "Presentation preference" },
-      toolContext(runInput, "snapshot-add"),
-    );
-    const first = await freezeRunMemoryContext(
-      routedEnv(env, runInput),
-      runInput,
-      { attemptId: "attempt-owner", owner: "lease-owner" },
-      "crimson dashboard",
-    );
-    expect(first.results).toHaveLength(1);
-
-    objectDatabase.prepare("UPDATE memory_items SET text = 'Changed after admission' WHERE memory_item_id = ?")
-      .run(first.results[0]!.memoryItemId);
-    const replay = await freezeRunMemoryContext(
-      routedEnv(env, runInput),
-      runInput,
-      { attemptId: "attempt-owner", owner: "lease-owner" },
-      "a different retry query",
-    );
-    expect(replay).toEqual(first);
-    // The frozen context is immutable through its only write surface. That used
-    // to be enforced by the compat view carrying an insert trigger and nothing
-    // else, so a routed UPDATE was refused outright; the authority now enforces
-    // it by answering `reused` and never writing, which is the same guarantee
-    // stated as an outcome rather than as a missing trigger.
-    const reFrozen = await testHarnessRunPort(objectStores.get(runInput.parentId)!)
-      .persistMemoryContext({
-        runId: RUN_ONE,
-        attemptId: "attempt-owner",
-        owner: "lease-owner",
-        now: Date.now(),
-        memoryScopeIdsJson: "[]",
-        queryText: "mutated",
-        retrievalMode: "fts_only",
-        resultsJson: "[]",
-        memoryContextHash: "mutated-hash",
-      });
-    expect(reFrozen).toMatchObject({ outcome: "reused" });
-    expect(reFrozen.outcome === "reused" && reFrozen.row.query_text).not.toBe("mutated");
   });
 
   it("shares workspace tables across runs and queries only matching projected rows", async () => {
@@ -1039,18 +585,10 @@ describe("scoped agent memory", () => {
   it("keeps model-facing revision guidance tied to an exact producing read", () => {
     const { env } = fixture();
     const runInput = input("owner");
-    const memoryTools = createMemoryTools(env, runInput);
     const tableTools = createMemoryTableTools(env, runInput);
-    const memorySearchDefinition = memoryTools.find((tool) => tool.definition.name === "search")?.definition;
     const tableQueryDefinition = tableTools.find((tool) => tool.definition.name === "query")?.definition;
 
-    expect(memorySearchDefinition?.description).toContain("memoryItemId");
     expect(tableQueryDefinition?.description).toContain("memoryTableRowIds");
-    for (const name of ["update", "invalidate"]) {
-      const definition = memoryTools.find((tool) => tool.definition.name === name)?.definition;
-      expect(definition?.description).toContain("memory_search with memoryItemId");
-      expect(JSON.stringify(definition?.inputSchema)).toContain("memory_search for this memoryItemId");
-    }
     for (const name of ["update_rows", "invalidate_rows"]) {
       const definition = tableTools.find((tool) => tool.definition.name === name)?.definition;
       expect(definition?.description).toContain("table_query with memoryTableRowIds");
@@ -1058,47 +596,9 @@ describe("scoped agent memory", () => {
     }
   });
 
-  it("normalizes post-read CAS races for memory and table mutations", async () => {
+  it("normalizes post-read CAS races for table mutations", async () => {
     const { objectDatabase, env, withMethodRace } = fixture();
     const runInput = input("owner");
-    const add = memoryTool(env, runInput, "add");
-    const updateItem = await add.execute({
-      scopeKind: "user",
-      text: "Update race source",
-      rationale: "Create race fixture",
-    }, toolContext(runInput, "race-memory-update-source"));
-    const invalidateItem = await add.execute({
-      scopeKind: "user",
-      text: "Invalidate race source",
-      rationale: "Create race fixture",
-    }, toolContext(runInput, "race-memory-invalidate-source"));
-
-    const updateItemId = (updateItem.output as { memoryItemId: string }).memoryItemId;
-    await expect(memoryTool(withMethodRace("updateMemoryItem", () => {
-      objectDatabase.prepare("UPDATE memory_items SET revision = revision + 1 WHERE memory_item_id = ?")
-        .run(updateItemId);
-    }), runInput, "update").execute({
-      memoryItemId: updateItemId,
-      expectedRevision: 1,
-      text: "Race should lose",
-      rationale: "Exercise post-read CAS loss",
-    }, toolContext(runInput, "race-memory-update"))).rejects.toMatchObject({
-      code: "memory_revision_conflict",
-      details: { reason: expect.stringContaining("memoryItemId") },
-    });
-
-    const invalidateItemId = (invalidateItem.output as { memoryItemId: string }).memoryItemId;
-    await expect(memoryTool(withMethodRace("invalidateMemoryItem", () => {
-      objectDatabase.prepare("UPDATE memory_items SET revision = revision + 1 WHERE memory_item_id = ?")
-        .run(invalidateItemId);
-    }), runInput, "invalidate").execute({
-      memoryItemId: invalidateItemId,
-      expectedRevision: 1,
-      reason: "Race should lose",
-    }, toolContext(runInput, "race-memory-invalidate"))).rejects.toMatchObject({
-      code: "memory_revision_conflict",
-      details: { reason: expect.stringContaining("memoryItemId") },
-    });
 
     const created = await tableTool(env, runInput, "create").execute({
       scopeKind: "user",
@@ -1211,4 +711,3 @@ describe("scoped agent memory", () => {
     expect(search.validateInput?.(tooLong)).not.toBeNull();
     await expect(search.execute(tooLong, toolContext(input("owner"), "table-search-too-long"))).rejects.toThrow();
   });
-});

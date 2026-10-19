@@ -552,8 +552,8 @@ a document from a build ahead of it and naming the keys it dropped;
 design's rule table; `test-workers/conversation-parent-contract.test.ts` proves
 the index returns only what a reader's groups admit, including after revocation;
 `test/search-route.test.ts` proves the HTTP boundary fails closed;
-`test/scoped-memory.test.ts` proves memory search checks each run canonically,
-and asks the WorkspaceDO for each scope once per isolate while deciding
+`test/scoped-memory.test.ts` proves the typed tables check each run canonically,
+and ask the WorkspaceDO for each scope once per isolate while deciding
 writability per call; `test-workers/workspace-memory-search-key-purge-migration.test.ts`
 proves WorkspaceDO migration 84 removes memory search's keys and nothing else.
 The executor's group is proved in `automation-directory.test.ts` and
@@ -670,8 +670,9 @@ alarm, and that delay is a number for the team to set. It was left out of the
 2026-09-11 change as too large for an incident fix.
 
 Production deployment and backfill remain to be completed and verified; the
-512/128-token policy requires no environment configuration. Memory,
-notes/table text, agent tools, and external provider ranking still need migration.
+512/128-token policy requires no environment configuration. Agent memory's
+facts (when semantic recall is wanted, per its PRD), notes/table text, agent
+tools, and external provider ranking still need migration.
 Conversation discovery queries the workspace namespace and authorizes each hit;
 archived parents and automation runs still require navigation/coverage verification.
 BM25/semantic canonical filtering can shorten a page; their refill and client

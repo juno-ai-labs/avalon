@@ -267,6 +267,7 @@ export const AGENT_MODEL_ROLES = [
   "workstream_description",
   "session_import",
   "suggestion_draft",
+  "memory_sweep",
 ] as const;
 export type AgentModelRole = (typeof AGENT_MODEL_ROLES)[number];
 
@@ -280,6 +281,7 @@ export const AGENT_MODEL_FLAG_KEYS: Readonly<Record<AgentModelRole, string>> = {
   workstream_description: "agent-model-workstream-description",
   session_import: "agent-model-session-import",
   suggestion_draft: "agent-model-suggestion-draft",
+  memory_sweep: "agent-model-memory-sweep",
 };
 
 /** One task's primary OpenRouter model and its ordered fallback route. */
@@ -1017,16 +1019,10 @@ export const AutomationMemoryTableColumnSchema = z.strictObject({
 });
 
 /**
- * The longest memory-recall query any recall surface accepts.
+ * The longest query `memory_recall` and `table_search` accept.
  *
- * It lives here because it is a contract between parties that cannot see each
- * other: `freezeRunMemoryContext` clamps to it, the workspace and automation
- * `search` tools declare it to the model, and `AutomationAgent` enforces it on
- * the far side of an RPC. Those four hard-coded the same 2000 independently,
- * and the drift was not hypothetical — the clamp did not exist at all, so a
- * recall query assembled from a long trigger message failed the receiver's
- * parse inside run setup and killed the run on every attempt. A single constant
- * is what makes moving the bound a one-line change rather than a search.
+ * It lives here because the tools declare it to the model and the services
+ * enforce it, and the two must agree.
  */
 export const MEMORY_RECALL_QUERY_LIMIT = 2_000;
 

@@ -63,8 +63,7 @@ type CloudflareBinding =
   | Queue
   | R2Bucket
   | ScheduledController
-  | SqlStorage
-  | VectorizeIndex;
+  | SqlStorage;
 
 export function createTestEnv<T extends EnvDouble>(value: ExactKeys<EnvDouble, T>): Env {
   // Legacy focused fixtures share a connection; isolation tests override these bindings.

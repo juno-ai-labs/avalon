@@ -4955,6 +4955,11 @@ describe("a member's message travels the whole pipeline", () => {
         // was no later model available.
         primaryModel: STREAM_FAILURE_PRIMARY_MODEL,
         fallbackModels: [STREAM_FAILURE_FALLBACK_MODEL],
+        // The run must still be streaming when the socket subscribes. A
+        // scripted stream answers in microseconds and run start is faster than
+        // a socket upgrade, so without the gate the frames are gone before
+        // anyone listens for them.
+        gateFirstCall: true,
       });
       const opened = await initializeWorkstream(stub, "show me a streamed answer");
       expect(opened.status).toBe(200);
@@ -4964,6 +4969,7 @@ describe("a member's message travels the whole pipeline", () => {
       ));
       const live = collectSocketFrames(socket);
       stopCollecting = live.stop;
+      await openProviderGate(stub);
 
       const run = await settledRun(stub, opened.body.harnessRunId as string);
       expect(run.status).toBe("failed");
@@ -5047,6 +5053,8 @@ describe("a member's message travels the whole pipeline", () => {
       ], {
         primaryModel: INTERLEAVED_TOOLS_MODEL,
         fallbackModels: [],
+        // As above: the live frames exist only while a listener is attached.
+        gateFirstCall: true,
       });
       const opened = await initializeWorkstream(stub, "perform two deterministic tool steps");
       expect(opened.status).toBe(200);
@@ -5056,6 +5064,7 @@ describe("a member's message travels the whole pipeline", () => {
       ));
       const live = collectSocketFrames(liveSocket);
       stopCollecting = live.stop;
+      await openProviderGate(stub);
 
       const run = await settledRun(stub, opened.body.harnessRunId as string);
       expect(run.status).toBe("completed");

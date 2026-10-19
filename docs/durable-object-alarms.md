@@ -230,7 +230,7 @@ post-drain refresh reconcile all four kinds:
 
 Runtime writes map `schedules` to `schedule`, `resource_watches` to `watch`,
 and `resources` to both `maintenance` and `watch` (deletion cascades).
-Resource versions and cleanup, note, memory, and Slack outboxes map to
+Resource versions and cleanup, note, and Slack outboxes map to
 `maintenance`. Digest RPCs select `schedule`; directory effects repair
 `terminal` on first application and replay. The source map next to schedule
 derivation is the registry for compatibility-port writes.
@@ -638,7 +638,7 @@ resources without slugs. The maintenance queries retain their link/reservation
 exclusions and deadlines, but no longer visit every completed resource when no
 work remains. Runtime SQL writes now derive and reconcile only their source
 kinds, including watch removal when a resource deletion cascades; typed note,
-Slack, memory, and digest writes do the same. The public
+Slack, and digest writes do the same. The public
 repair operation and post-drain recovery still reconcile all kinds.
 
 The billing investigation found each empty resource maintenance query reading
@@ -1108,4 +1108,4 @@ and which was unreachable in the `durable_object_open` phase, and
 take its siblings down — is now a property of the drain itself. Maintenance is
 also no longer all-or-nothing per alarm: each pass is its own entry with its own
 due time, so a Slack reap that has been failing for an hour no longer re-runs
-the memory-index outbox every time it retries.
+every other maintenance pass every time it retries.

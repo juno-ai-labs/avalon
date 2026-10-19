@@ -165,7 +165,7 @@ not invent one. Peek does not lease, acknowledge, retry, or remove a message.
 Ace deliberately discards Cloudflare's returned purge reference, so this first
 Queues surface has no delete capability.
 
-`GET /api/models` reads the seven `agent-model-*` JSON flags. Ace hard-codes
+`GET /api/models` reads the eight `agent-model-*` JSON flags. Ace hard-codes
 the role catalog because Flagship knows only opaque keys: each entry explains
 the code path the model serves and carries the same checked-in route the API
 Worker uses when Flagship is unavailable. The suggested model list combines

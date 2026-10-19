@@ -1082,7 +1082,6 @@ describe("freezing a run's scope", () => {
     routingPolicyVersion: "routing-v1",
     promptVersion: "prompt-v1",
     toolSurfaceHash: "tools-v1",
-    memoryContextHash: null,
     limitsJson: '{"maxIterations":8}',
   };
 
@@ -1475,54 +1474,6 @@ describe("ending a run that was never claimed", () => {
 
     expect(storage.terminalizeQueuedRun({ ...queued, lifecycleEventId: "event-2" }))
       .toEqual({ outcome: "already_terminal" });
-  });
-});
-
-describe("a run's frozen memory recall", () => {
-  const recall = {
-    memoryScopeIdsJson: '["scope-1"]',
-    queryText: "the first attempt's query",
-    retrievalMode: "hybrid",
-    resultsJson: '[{"memoryItemId":"m1"}]',
-    memoryContextHash: "recall-hash-1",
-  };
-
-  function claimed() {
-    const opened = open();
-    seedRun(opened.sql, RUN);
-    opened.storage.claimAttempt({
-      ...fence, runId: RUN, leaseSeconds: 60, lifecycleEventId: "event-claim",
-    });
-    return opened;
-  }
-
-  it("hands a later attempt the recall the run already froze", () => {
-    const { storage, sql } = claimed();
-    storage.persistMemoryContext({ ...fence, runId: RUN, ...recall });
-    // A second attempt takes over the same run.
-    sql.exec(
-      `UPDATE runs SET legacy_attempt_id = ?, lease_owner = ? WHERE run_id = ?`,
-      "attempt-2", "owner-2", RUN,
-    );
-    const second = { ...fence, runId: RUN, attemptId: "attempt-2", owner: "owner-2" };
-
-    // The row is PRIMARY KEY (run_id), so there is no per-attempt row to find.
-    // Filtering this read by attempt id made a retry miss the fast path, pay a
-    // vector search, and then discard it for this very row.
-    expect(storage.memoryContext(second)).toMatchObject({
-      attempt_id: "attempt-1",
-      memory_context_hash: "recall-hash-1",
-    });
-    expect(storage.persistMemoryContext({ ...second, ...recall, memoryContextHash: "recall-hash-2" }))
-      .toMatchObject({ outcome: "reused", row: { memory_context_hash: "recall-hash-1" } });
-  });
-
-  it("tells a caller that no longer holds the run nothing at all", () => {
-    const { storage } = claimed();
-    storage.persistMemoryContext({ ...fence, runId: RUN, ...recall });
-
-    expect(storage.memoryContext({ ...fence, runId: RUN, owner: "someone-else" }))
-      .toBeUndefined();
   });
 });
 

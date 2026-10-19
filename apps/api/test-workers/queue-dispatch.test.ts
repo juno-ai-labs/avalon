@@ -39,7 +39,7 @@ function batchOf(queue: string, body: unknown): MessageBatch<unknown> {
  */
 const contractComplete = {
   ...env,
-  AI: {}, PAYLOADS: {}, TELEMETRY_PAYLOADS: {}, IMAGES: {}, MEMORY_INDEX: {},
+  AI: {}, PAYLOADS: {}, TELEMETRY_PAYLOADS: {}, IMAGES: {},
   RUN_ANALYTICS: {}, TERMINAL_ANALYTICS: {}, CRASH_SYMBOLICATOR: {},
   CONNECTOR_POLL_WORKFLOW: {}, CONNECTOR_EVENT_WORKFLOW: {}, WORK_OPPORTUNITY_WORKFLOW: {},
   DEMO_PREPARATION_WORKFLOW: {},

@@ -142,6 +142,7 @@ import {
 import { canonicalExternalResultText } from "../services/external-result-delivery";
 import { SlackAgentService } from "../services/slack-agent-service";
 import { refreshWorkstreamDescription } from "../services/workstream-description-service";
+import { attemptMemorySweep } from "../services/memory-sweep-service";
 import { refreshWorkstreamName, summarizeExistingDescription } from "../services/workstream-naming-service";
 import { loadOpenRouterContextWindows } from "../services/openrouter-context-windows";
 import {
@@ -239,6 +240,7 @@ import {
   AnswerElicitationExternallyInputSchema,
   OpenElicitationInputSchema,
   type SchedulingOperationRequest,
+  armsDerivedAlarm,
   mutatesWakeups,
   SchedulingOperationRequestSchema,
 } from "./workstream-scheduling-protocol";
@@ -960,8 +962,8 @@ export function planSocketReplay(
  * multi-line JSON — so slicing the first six lines of one captured six lines of
  * the message and no frames at all. Every `workstream_harness_threw` for a
  * validation failure was therefore logged without the one thing the log exists
- * to carry, which is why a run dying inside `freezeRunMemoryContext` looked for
- * days like it might have come from any of four call sites. `reason` already
+ * to carry, which is why a run dying inside the retired admission-recall step
+ * looked for days like it might have come from any of four call sites. `reason` already
  * carries the message; this carries where it happened.
  *
  * The split is by prefix rather than by parsing, so an error whose message
@@ -2807,6 +2809,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * An operation that can change which wake-ups are pending runs through
    * `commitRuntimeMutation`, re-derives the timer index, and arms the next
    * alarm before answering — so a caller never has to remember to do any of it.
+   * A memory sweep write (`armsDerivedAlarm`) arms the next alarm as well,
+   * because `retry_at` is a due time the alarm is derived from.
    *
    * All three used to be consequences of the routing. A wake-up write arrived
    * as SQL, and the object matched `workstream_wakeups` in the statement text
@@ -2867,8 +2871,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (parsedElicitationInput && isPersistedElicitationOutcome(value)) {
       await this.flushSemanticRealtimeOutboxBestEffort();
     }
-    if (mutates) {
-      this.syncAgentTimerAlarms();
+    // A sweep write moves only the column the alarm is derived from, so it
+    // re-arms without the wake-up index reconcile.
+    if (mutates || armsDerivedAlarm(parsed.data.operation)) {
+      if (mutates) this.syncAgentTimerAlarms();
       // Arming is best-effort, as it is for every typed mutation endpoint and
       // `runTerminalOperation`, and for the reason those two give: the
       // operation is already durable, so raising here would tell a caller its
@@ -5663,6 +5669,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // call behind gates that are each cheaper than it; never throws.
       await this.observeTurnDispositionStep(executionEnv, input, outcome);
     }
+    // The memory sweep admits a Sidekick's own conversation and runs as well
+    // as a Thread's, which is why it sits outside the guard above. Two
+    // single-row reads on most calls; a claim sends the window to the Queue
+    // rather than calling the model here. Never throws.
+    if (input.parentKind === "workstream" || input.parentKind === "automation") {
+      await attemptMemorySweep(executionEnv, {
+        workspaceId: input.workspaceId,
+        parentKind: input.parentKind,
+        parentId: input.parentId,
+        substreamId: input.substreamId ?? "0",
+      });
+    }
     return canvaCleanupDiagnostic ?? settlementDiagnosticCode;
   }
 
@@ -7439,7 +7457,44 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       || this.nextLoopWorkAt(now) !== null
       || this.nextExternalSettlementAt() !== null
       || this.terminalObservationDue(now)
+      || this.memorySweepDue(now)
       || this.scheduledAlarms.due(now, 1).length > 0;
+  }
+
+  /**
+   * When the memory sweep asked to be tried again: a conversation that was
+   * resting with person messages behind its cursor, or whose claim failed.
+   * `null` for an object below migration 76, which has no row to read.
+   */
+  private nextMemorySweepAt(): number | null {
+    const present = this.state.storage.sql.exec(
+      "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'memory_sweep_state'",
+    ).toArray().length > 0;
+    if (!present) return null;
+    const row = this.state.storage.sql.exec<{ retry_at: number | null }>(
+      `SELECT retry_at FROM memory_sweep_state WHERE id = 1`,
+    ).toArray()[0];
+    return row?.retry_at ?? null;
+  }
+
+  private memorySweepDue(now: number): boolean {
+    const dueAt = this.nextMemorySweepAt();
+    return dueAt !== null && dueAt <= now;
+  }
+
+  /**
+   * The alarm's half of the sweep trigger: the same attempt settlement makes,
+   * against this conversation. Every path of the attempt moves `retry_at`, so
+   * an alarm that fires here never comes back due at the same instant.
+   */
+  private async attemptDueMemorySweep(): Promise<void> {
+    const identity = this.objectStore.identity();
+    if (!identity) return;
+    const substreamId = this.externalSubstreamId();
+    await attemptMemorySweep(
+      this.localRuntimeEnvironment(identity.workspaceId, identity.parentId, substreamId),
+      { workspaceId: identity.workspaceId, parentKind: identity.parentKind, parentId: identity.parentId, substreamId },
+    );
   }
 
   /**
@@ -7594,6 +7649,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const terminalObservation = this.terminalObservationDue(now)
       ? this.observeDueTerminalSandbox()
       : null;
+    // Likewise started here and joined below: the attempt is two reads and at
+    // most one Queue send, and must not wait behind the run lane.
+    const memorySweep = this.memorySweepDue(now) ? this.attemptDueMemorySweep() : null;
     try {
       await this.runDueAlarmLanes(now, {
         nextRegionalEffectAt, nextSemanticRealtimeAt, nextSearchProjectionAt,
@@ -7601,6 +7659,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       });
     } finally {
       if (terminalObservation) await terminalObservation;
+      if (memorySweep) await memorySweep;
     }
   }
 
@@ -8220,6 +8279,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         nextAuthorizationProjectionAt(this.state.storage.sql),
         this.nextExternalSettlementAt(),
         this.nextTerminalObservationAt(),
+        this.nextMemorySweepAt(),
         now + KEEP_ALIVE_INTERVAL_MS,
       ],
     });
@@ -8315,6 +8375,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.nextLoopWorkAt(now),
       this.nextExternalSettlementAt(),
       this.nextTerminalObservationAt(),
+      this.nextMemorySweepAt(),
     ];
     if (this.keepAliveLease.active) candidates.push(now + KEEP_ALIVE_INTERVAL_MS);
     return candidates.filter((candidate): candidate is number => candidate !== null);

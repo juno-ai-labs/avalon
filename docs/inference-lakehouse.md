@@ -69,10 +69,9 @@ application-level fallback. OpenRouter forwards those custom keys as
 `metadata_*` event properties.
 
 OpenRouter's current embeddings request schema is narrower than chat: it
-accepts `user` but not the custom Broadcast `trace` object. Durable-memory
-embeddings therefore send `user = workspace_id` and the work-stream session as
-`X-Session-ID`. Work-stream-scoped document indexing recovers that session from
-the memory scope; inference with no work-stream identity omits the session
+accepts `user` but not the custom Broadcast `trace` object. Search embeddings
+therefore send `user = workspace_id` and the work-stream session as
+`X-Session-ID`; inference with no work-stream identity omits the session
 rather than substituting an unrelated request ID.
 Rally emits a content-free regional `embedding_inference` diagnostic containing
 the same feature, trace/session identity, intended/requested/resolved model,

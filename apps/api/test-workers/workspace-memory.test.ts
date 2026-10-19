@@ -1,14 +1,14 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 /**
- * Scoped durable memory, against the object that owns it.
+ * Durable memory tables, against the object that owns them.
  *
  * The mutations here are the ones the facade ran as D1 batches: the receipt
- * read, the compare-and-set, and the audit and outbox inserts were separate
- * round trips racing each other, and the CAS was judged by a `changes`
- * counter that real workerd inflates with index maintenance. These tests run
- * on real workerd so a refusal proves the returned witness, not a Node
- * double's flattering `changes()`.
+ * read, the compare-and-set, and the audit inserts were separate round trips
+ * racing each other, and the CAS was judged by a `changes` counter that real
+ * workerd inflates with index maintenance. These tests run on real workerd so
+ * a refusal proves the returned witness, not a Node double's flattering
+ * `changes()`. The prose half of this store is `memory-facts.test.ts`.
  */
 
 import { env } from "cloudflare:workers";
@@ -19,14 +19,9 @@ import { asWorkspaceId } from "@rally/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
 import {
-  WorkspaceMemoryAddResultSchema,
-  WorkspaceMemoryCandidateListSchema,
-  WorkspaceMemoryOutboxClaimResultSchema,
-  WorkspaceMemoryOutboxDueListSchema,
   WorkspaceMemoryTableCreateResultSchema,
   WorkspaceMemoryTableInsertRowsResultSchema,
   WorkspaceMemoryTableQueryResultSchema,
-  WorkspaceMemoryWriteResultSchema,
 } from "../src/durable-objects/workspace-memory-protocol";
 
 /** Its own workspace: a shared id makes this file queue behind its siblings. */
@@ -48,23 +43,6 @@ function nextId(): string {
   return `00000000-0000-7000-8000-ce${String(sequence).padStart(10, "0")}`;
 }
 
-function mutation(
-  receiptId: string,
-  overrides: { inputHash?: string | undefined; resultJson?: string | undefined } = {},
-) {
-  return {
-    memoryMutationId: nextId(),
-    receiptId,
-    actorPrincipalJson: JSON.stringify({ type: "workspace", workspaceId: WORKSPACE_ID }),
-    harnessRunId: RUN_ID,
-    workstreamId: WORKSTREAM_ID,
-    rationale: "test",
-    inputHash: overrides.inputHash ?? "hash-1",
-    mutationJson: "{}",
-    resultJson: overrides.resultJson ?? JSON.stringify({ recorded: true }),
-  };
-}
-
 async function ensureScope() {
   await workspace().ensureMemoryScope({
     workspaceId: WORKSPACE_ID,
@@ -72,41 +50,6 @@ async function ensureScope() {
     kind: "workspace",
     ownerId: WORKSPACE_ID,
     at: AT,
-  });
-}
-
-async function addItem(input: {
-  memoryItemId?: string;
-  receiptId?: string;
-  text?: string;
-  inputHash?: string;
-  resultJson?: string;
-} = {}) {
-  return WorkspaceMemoryAddResultSchema.parse(await workspace().addMemoryItem({
-    workspaceId: WORKSPACE_ID,
-    memoryItemId: input.memoryItemId ?? nextId(),
-    memoryScopeId: SCOPE_ID,
-    text: input.text ?? "The report palette is crimson",
-    expiresAt: null,
-    provenanceJson: JSON.stringify({ source: "test" }),
-    mutation: mutation(input.receiptId ?? "receipt-add", {
-      inputHash: input.inputHash,
-      resultJson: input.resultJson,
-    }),
-    at: AT,
-  }));
-}
-
-async function memoryCounts() {
-  return runInDurableObject(workspace(), (_instance, state) => {
-    const count = (table: string): number => Number(state.storage.sql.exec<{ n: number }>(
-      `SELECT COUNT(*) AS n FROM ${table}`,
-    ).toArray()[0]?.n ?? 0);
-    return {
-      items: count("memory_items"),
-      mutations: count("memory_mutations"),
-      outbox: count("memory_index_outbox"),
-    };
   });
 }
 
@@ -119,9 +62,6 @@ beforeEach(async () => {
       "memory_table_columns",
       "memory_table_mutations",
       "memory_tables",
-      "memory_index_outbox",
-      "memory_mutations",
-      "memory_items",
       "memory_scopes",
     ]) {
       state.storage.sql.exec(`DELETE FROM ${table}`);
@@ -129,152 +69,6 @@ beforeEach(async () => {
   });
   await ensureScope();
 }, 30_000);
-
-describe("workspace memory items", () => {
-  it("adds the item, its audit record, and its outbox intent as one decision", async () => {
-    const added = await addItem();
-    expect(added).toEqual({ outcome: "added" });
-    expect(await memoryCounts()).toEqual({ items: 1, mutations: 1, outbox: 1 });
-    // The FTS shadow table is maintained by the object's own triggers, which
-    // only real SQLite runs — a match here proves the virtual table took the
-    // insert, not that a fixture said so.
-    const found = WorkspaceMemoryCandidateListSchema.parse(
-      await workspace().searchMemoryItemsFts({
-        workspaceId: WORKSPACE_ID,
-        match: '"crimson"',
-        scopeIds: [SCOPE_ID],
-        now: AT,
-        limit: 20,
-      }),
-    );
-    expect(found.candidates).toHaveLength(1);
-  });
-
-  it("answers a replayed receipt with the recorded result and writes nothing", async () => {
-    await addItem({ resultJson: JSON.stringify({ first: true }) });
-    const replay = await addItem({ resultJson: JSON.stringify({ second: true }) });
-    expect(replay).toEqual({ outcome: "replayed", resultJson: JSON.stringify({ first: true }) });
-    expect(await memoryCounts()).toEqual({ items: 1, mutations: 1, outbox: 1 });
-  });
-
-  it("names a receipt whose payload hash disagrees instead of writing under it", async () => {
-    await addItem({ inputHash: "hash-1" });
-    const mismatch = await addItem({ inputHash: "hash-2" });
-    expect(mismatch).toEqual({ outcome: "receipt_mismatch" });
-    expect(await memoryCounts()).toEqual({ items: 1, mutations: 1, outbox: 1 });
-  });
-
-  it("refuses a stale revision by witness and leaves no partial write behind", async () => {
-    const memoryItemId = nextId();
-    await addItem({ memoryItemId });
-    const stale = WorkspaceMemoryWriteResultSchema.parse(await workspace().updateMemoryItem({
-      workspaceId: WORKSPACE_ID,
-      memoryItemId,
-      memoryScopeId: SCOPE_ID,
-      expectedRevision: 2,
-      text: "The report palette is azure",
-      expiresAt: null,
-      mutation: mutation("receipt-update", { inputHash: "hash-update" }),
-      at: AT,
-    }));
-    expect(stale).toEqual({ outcome: "revision_conflict" });
-    // Nothing from the refused transaction may remain: not the text, not an
-    // audit row, not an outbox intent.
-    expect(await memoryCounts()).toEqual({ items: 1, mutations: 1, outbox: 1 });
-    const current = WorkspaceMemoryWriteResultSchema.parse(await workspace().updateMemoryItem({
-      workspaceId: WORKSPACE_ID,
-      memoryItemId,
-      memoryScopeId: SCOPE_ID,
-      expectedRevision: 1,
-      text: "The report palette is azure",
-      expiresAt: null,
-      mutation: mutation("receipt-update-2", { inputHash: "hash-update-2" }),
-      at: AT,
-    }));
-    expect(current).toEqual({ outcome: "written" });
-    expect(await memoryCounts()).toEqual({ items: 1, mutations: 2, outbox: 2 });
-  });
-
-  it("hands an outbox row to exactly one lease and settles it under that lease", async () => {
-    await addItem();
-    const due = WorkspaceMemoryOutboxDueListSchema.parse(await workspace().dueMemoryIndexOutbox({
-      workspaceId: WORKSPACE_ID,
-      now: "2026-08-29T01:00:00.000Z",
-      limit: 50,
-    }));
-    expect(due.rows).toHaveLength(1);
-    const outboxId = due.rows[0]!.outboxId;
-    const winner = WorkspaceMemoryOutboxClaimResultSchema.parse(
-      await workspace().claimMemoryIndexOutboxRow({
-        workspaceId: WORKSPACE_ID,
-        outboxId,
-        leaseToken: "lease-a",
-        leaseExpiresAt: "2026-08-29T02:00:00.000Z",
-        now: "2026-08-29T01:00:00.000Z",
-      }),
-    );
-    expect(winner).toEqual({ claimed: true });
-    // The loser is told by the lease witness, on the runtime whose physical
-    // write counters made `changes === 1` lie for exactly this shape of claim.
-    const loser = WorkspaceMemoryOutboxClaimResultSchema.parse(
-      await workspace().claimMemoryIndexOutboxRow({
-        workspaceId: WORKSPACE_ID,
-        outboxId,
-        leaseToken: "lease-b",
-        leaseExpiresAt: "2026-08-29T02:00:00.000Z",
-        now: "2026-08-29T01:00:00.000Z",
-      }),
-    );
-    expect(loser).toEqual({ claimed: false });
-    await workspace().completeMemoryIndexOutboxRow({
-      workspaceId: WORKSPACE_ID,
-      outboxId,
-      leaseToken: "lease-a",
-      at: "2026-08-29T01:01:00.000Z",
-    });
-    const remaining = WorkspaceMemoryOutboxDueListSchema.parse(
-      await workspace().dueMemoryIndexOutbox({
-        workspaceId: WORKSPACE_ID,
-        now: "2026-08-29T03:00:00.000Z",
-        limit: 50,
-      }),
-    );
-    expect(remaining.rows).toEqual([]);
-  });
-
-  it("refuses another workspace's id before touching memory", async () => {
-    const outcome = await runInDurableObject(workspace(), async (instance) =>
-      instance.addMemoryItem({
-        workspaceId: "00000000-0000-7000-8000-000000000cee",
-        memoryItemId: nextId(),
-        memoryScopeId: SCOPE_ID,
-        text: "Wrong room",
-        expiresAt: null,
-        provenanceJson: "{}",
-        mutation: mutation("receipt-wrong-workspace"),
-        at: AT,
-      }).then(() => null, (error: unknown) => error));
-    expect(String(outcome)).toContain("workspace_object_identity_mismatch");
-  });
-});
-
-describe("the memory index alarm", () => {
-  it("arms the workspace alarm for an embedding intent a write just left", async () => {
-    // `memory_index_outbox` is an alarm source, so while these writes were
-    // generic statements `executeRuntimeSql` re-derived the schedule for them.
-    // A typed method gets nothing for free: without an explicit refresh a
-    // memory written into a quiet workspace sits unprojected until an
-    // unrelated mutation happens to reconcile.
-    await runInDurableObject(workspace(), async (_instance, state) => {
-      await state.storage.deleteAlarm();
-      expect(await state.storage.getAlarm()).toBeNull();
-    });
-    await addItem({ receiptId: "receipt-alarm" });
-    await runInDurableObject(workspace(), async (_instance, state) => {
-      expect(await state.storage.getAlarm()).not.toBeNull();
-    });
-  });
-});
 
 describe("workspace memory tables", () => {
   const TABLE_ID = "mtt_test-table";
