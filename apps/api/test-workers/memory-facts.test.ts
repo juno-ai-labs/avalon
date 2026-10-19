@@ -526,9 +526,13 @@ describe("the fact store on workerd", () => {
     });
   });
 
-  it("marks every holder when an administrator removes an Organization fact from their review, and not when a member is refused", async () => {
+  it("marks the holders that read a fact an administrator removes from their review, and none when a member is refused", async () => {
     await fresh();
     const now = Date.parse("2026-10-19T09:00:00.000Z");
+    // The side room's copy is read before the fact exists: a holder that never held it.
+    await workspace().memoryDigest({
+      workspaceId: WORKSPACE_ID, reader: { kind: "person", userId: OWNER }, conversation: privateThread, now, limit: 10,
+    });
     await workspace().applyMemorySweep({
       workspaceId: WORKSPACE_ID, conversation: openThread, fromSeq: 0, toSeq: 3,
       operations: [add("organization", "Release day is Thursday")],

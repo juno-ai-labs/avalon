@@ -1326,7 +1326,11 @@ export function forgetReviewedMemoryFact(
       `UPDATE memory_facts SET retracted_at = ?, retracted_by = ?, updated_at = ? WHERE fact_id = ?`,
       request.now, `person:${person.userId}`, request.now, request.factId,
     );
-    markMemoryDigestHolders(sql);
+    // As `memory_forget` does: the holders whose copy was read with this fact
+    // are refreshed by the copy-sync lane, and the revision moves so a read
+    // from before this removal cannot replace a copy read after it.
+    markMemoryDigestHoldersFor(sql, [fact.factId]);
+    nextMemoryRevision(sql);
     return {
       outcome: "retracted",
       fact: { ...fact, retractedAt: request.now, updatedAt: request.now },
