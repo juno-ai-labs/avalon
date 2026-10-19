@@ -1,10 +1,10 @@
 /**
- * WorkspaceDO migration 119 (a Channel's own messages are projected into the
- * search index), upgraded the way a deployed Organization is: populated at 118
+ * WorkspaceDO migration 120 (a Channel's own messages are projected into the
+ * search index), upgraded the way a deployed Organization is: populated at 119
  * and committed in its own event, then woken with every migration. Every
  * existing message is queued once with its words intact, its document can be
  * prepared, and its reference goes out as a document-phase job, the envelope
- * an older consumer retries rather than drops. An Organization held below 119
+ * an older consumer retries rather than drops. An Organization held below 120
  * arms no lane for a table it does not have.
  */
 import { env } from "cloudflare:workers";
@@ -40,13 +40,13 @@ function indexingEnv(sent: unknown[]) {
   });
 }
 
-describe("migration 119", () => {
+describe("migration 120", () => {
   it("queues a populated Organization's existing Channel messages once, and publishes each as a document job", async () => {
-    const stub = env.MIGRATION_PROBE_DO!.getByName("channel-message-search-v118");
+    const stub = env.MIGRATION_PROBE_DO!.getByName("channel-message-search-v119");
     await stub.ping();
     await runInDurableObject(stub, (_instance, state) => {
-      const before = WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 118);
-      expect(before.at(-1)?.version).toBe(118);
+      const before = WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 119);
+      expect(before.at(-1)?.version).toBe(119);
       applyDurableObjectSqliteMigrations({
         storage: state.storage, migrations: before, component: "workspace_do", workerVersionId: "before-search", now: 1,
       });
