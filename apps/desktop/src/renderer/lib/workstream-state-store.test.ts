@@ -567,6 +567,24 @@ describe('patchCachedWorkstreamViewerState', () => {
     expect(held()).toBe(false);
   });
 
+  it('keeps participation through a newer row that does not say, and takes a newer one that does', () => {
+    const queryClient = new QueryClient();
+    setCachedWorkstreams(queryClient, [summary({ isParticipant: false })]);
+    const at = (viewerWaterline: number, isParticipant?: boolean) => applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(2, viewerWaterline),
+      visible: true,
+      ...workstreamSummaryState(summary(isParticipant === undefined ? {} : { isParticipant })),
+    });
+    const held = () => queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.isParticipant;
+
+    at(1, false);
+    at(2);
+    expect(held()).toBe(false);
+    at(3, true);
+    expect(held()).toBe(true);
+  });
+
   it('writes the addressed child entry without changing Main in the list', () => {
     const queryClient = new QueryClient();
     setCachedWorkstreams(queryClient, [summary({ readThroughSequenceNumber: 1 })]);
