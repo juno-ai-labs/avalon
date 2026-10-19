@@ -5270,8 +5270,9 @@ async function loadHarnessTools(
     || (input.parentKind === "automation" && !!input.agentExchange);
   const pageReceipts = createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0");
   const paginationSources = new WeakMap<HarnessTool, HarnessTool>();
-  const priorPaginationTools = (tools: readonly HarnessTool[]) => [...new Set(tools.map((tool) => paginationSources.get(tool) ?? tool))]
-    .map(prePaginationTool);
+  const priorPaginationTools = (tools: readonly HarnessTool[]) => prePaginationTools(
+    [...new Set(tools.map((tool) => paginationSources.get(tool) ?? tool))],
+  );
   // `prefix` namespaces the minted page IDs; `wirePrefix` is what the page
   // tools' descriptions call their own family by. They are the same string for
   // a connector, and differ for a plugin that advertises no wire prefix.
@@ -6082,6 +6083,15 @@ function installDynamicPluginTools(
 ): HarnessTool[] {
   hostTools.splice(0, hostTools.length, ...discoveredTools);
   return hostTools;
+}
+
+/** Operations introduced after the cutover cannot enter its frozen surface.
+ * Keep additions here alongside the historical schema reconstruction below.
+ */
+function prePaginationTools(tools: readonly HarnessTool[]): HarnessTool[] {
+  return tools.filter(({ definition }) => !(definition.capability === "calendar.read"
+    && definition.name === "calendar.query_availability"))
+    .map(prePaginationTool);
 }
 
 /** Historical schema prose is part of the surface digest, not just validation.
@@ -8858,6 +8868,7 @@ export const __integrationTesting = {
   executeAuthorizedConnectorTool,
   assertFrozenConnectionAuthorized,
   prePaginationTool,
+  prePaginationTools,
   connectorToolSurfaceHash,
   createToolEffectIntents,
   logPluginAuthorizationFailure,
