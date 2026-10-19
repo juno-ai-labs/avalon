@@ -256,6 +256,25 @@ describe('a Channel listed before its create answers', () => {
       .toEqual([expect.objectContaining({ title: 'Named by Rally', pending: true })]);
   });
 
+  it('keeps the opening it was started with while the server describes it, and drops it once confirmed', () => {
+    const client = new QueryClient();
+    setCachedWorkstreams(client, [summary()]);
+    const opening = {
+      text: '[@Alex](person://alex) look',
+      mentions: [{ type: 'person' as const, personId: 'alex', startOffset: 0, endOffset: 21 }],
+      attachments: [{ id: 'res-1', fileName: 'invite.png', mimeType: 'image/png', sizeBytes: 10, contentAvailable: true, createdAt: '2026-09-24T10:00:00.000Z' }],
+    };
+    addPendingWorkstream(client, {
+      id: pendingId, spaceIds: ['space-1'], scope: 'personal', harnessStatus: 'running', createdAt: '2026-09-24T10:00:00.000Z', opening,
+    });
+
+    mergeCachedWorkstreamPage(client, [{ ...summary(), id: pendingId, title: 'Named by Rally' }]);
+    expect(rows(client).find((row) => row.id === pendingId)?.pendingOpening).toEqual(opening);
+
+    confirmPendingWorkstream(client, pendingId);
+    expect(rows(client).find((row) => row.id === pendingId)?.pendingOpening).toBeUndefined();
+  });
+
   it('takes the create answer when the server has not described it yet', () => {
     const client = listedPending();
 

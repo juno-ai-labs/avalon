@@ -162,13 +162,18 @@ const workstreamSidebarFailureCopy: Record<WorkstreamSidebarFailure, FailureCopy
 export function WorkstreamScreen(): React.JSX.Element {
   const { id = '' } = useParams();
   const row = useCachedWorkstreamSummary(id);
+  const { api } = useCollaborationSession();
   if (row?.pending) {
+    const opening = row.pendingOrigin === 'import'
+      ? undefined
+      : row.pendingOpening ?? (row.objective ? { text: row.objective, mentions: [], attachments: [] } : undefined);
     return (
       <ConversationOpeningSkeleton
         caption
         label={row.pendingOrigin === 'import' ? 'Importing conversation…' : 'Starting…'}
+        loadAttachmentContent={api ? (resourceId, signal) => api.getResourcePreviewContent(resourceId, signal) : undefined}
         openingAuthorId={row.createdByUserId}
-        openingMessage={row.pendingOrigin === 'import' ? undefined : row.objective}
+        openingMessage={opening}
         parentKind="workstream"
       />
     );
