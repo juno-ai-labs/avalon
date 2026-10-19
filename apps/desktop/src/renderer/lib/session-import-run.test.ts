@@ -386,7 +386,7 @@ describe('running an import', () => {
     sockets.length = 0;
     const { run, discards, abandons } = started(undefined, { reservation: Promise.reject(new Error('Network connection lost')) });
     await expect(run.done).resolves.toEqual({ kind: 'error', message: 'Network connection lost' });
-    expect(abandons).toEqual([{ clientMessageId: 'c1' }]);
+    await vi.waitFor(() => expect(abandons).toEqual([{ clientMessageId: 'c1' }]));
     expect(discards).toEqual([]);
     expect(sockets).toHaveLength(0);
   });

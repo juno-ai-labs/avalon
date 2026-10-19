@@ -1804,10 +1804,7 @@ export class RallyApi {
     });
   }
 
-  /**
-   * Take back a new import whose start failed, by its create key alone: the
-   * start may have reserved a Channel whose ids never came back.
-   */
+  /** Take back a failed start's import by its create key alone. */
   async abandonSessionImport(input: { clientMessageId: string }): Promise<void> {
     await this.requestVoid('/workstreams/import/abandon', { method: 'POST', body: input });
   }

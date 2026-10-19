@@ -187,10 +187,7 @@ workstreamRoutes.post("/import/runs", zValidator("json", SessionImportStartReque
   const result = await new SessionImportRunService(c.env, getAuth(c), requestDeferral(c)).start(c.req.valid("json"));
   return c.json(SessionImportRunSchema.parse(result), 201);
 });
-/**
- * Take back a new import by its create key, for a start whose answer never
- * came back: stop its agents and archive a Channel that never opened.
- */
+/** Take back a failed start's import by its create key; see `abandon`. */
 workstreamRoutes.post("/import/abandon", zValidator("json", SessionImportAbandonRequestSchema), async (c) => {
   await new SessionImportRunService(c.env, getAuth(c), requestDeferral(c)).abandon(c.req.valid("json").clientMessageId);
   return c.body(null, 204);

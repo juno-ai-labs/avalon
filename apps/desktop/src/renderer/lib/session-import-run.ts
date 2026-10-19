@@ -393,13 +393,12 @@ export function startSessionImportRun(input: {
       input.onStarted?.({ workstreamId: run.workstreamId, substreamId: run.substreamId });
       await connect();
     } catch (error) {
-      // A new import's start that failed may still have reserved its Channel,
-      // and the ids `discard` needs never came back. The create key is enough
-      // to take the reservation back; the API answers no-op if none was made.
-      if (!run && input.mode.kind === 'create') {
-        await input.api.abandonSessionImport({ clientMessageId: input.mode.clientMessageId }).catch(() => undefined);
-      }
       finish({ kind: 'error', message: messageOf(error) });
+      // A failed start may still have reserved its Channel; take it back by key.
+      // Not awaited: the request has no timeout, and the error must not wait on it.
+      if (!run && input.mode.kind === 'create') {
+        void input.api.abandonSessionImport({ clientMessageId: input.mode.clientMessageId }).catch(() => undefined);
+      }
     }
   })();
 

@@ -126,9 +126,7 @@ export class SessionImportRunService {
       const othersRun = admitted === "exists" || (admitted === null && await createHarnessRunObjectPort(
         this.env, this.auth.workspaceId, workstreamId, undefined, childId,
       ).run({ runId }).then((found) => found != null, () => false));
-      // The launch's own error is what the caller gets; a retire that fails
-      // too leaves the Channel listed until the desktop abandons the key, so
-      // it is logged rather than lost.
+      // Logged, not swallowed: a failed retire leaves the Channel listed.
       if (!othersRun) {
         await this.retire(workstreamId, input.clientMessageId).catch((retireError: unknown) => {
           logWarn(this.env, "session_import_retire_failed", {
@@ -432,19 +430,9 @@ export class SessionImportRunService {
   }
 
   /**
-   * End a new import by its create key alone: stop the caller's import agents
-   * on its Channel and, while the Channel has never opened, archive it.
-   *
-   * For a start whose answer never reached the desktop (a launch that failed
-   * with a retire that failed too, or an invocation cut off mid-launch), so
-   * the window holds no ids for `discard`, only the key it sent. No run may
-   * exist to end, so the run-end reclaim cannot cover it either.
-   *
-   * Reaches only the caller's own key, and only while its receipt is
-   * `reserved` or `failed`: a key `complete` has claimed is refused before any
-   * agent is stopped. A `failed` receipt is retired again, because a retire
-   * that failed after the receipt was written left its Channel listed. A key
-   * that reserved nothing answers `abandoned: false`.
+   * `discard` for a failed start, by the caller's create key alone; a key
+   * `complete` has claimed is refused before any agent is stopped. See
+   * `docs/session-import.md`, step 5.
    */
   async abandon(clientMessageId: string): Promise<{ abandoned: boolean }> {
     const receipt = await this.env.DB.prepare(
