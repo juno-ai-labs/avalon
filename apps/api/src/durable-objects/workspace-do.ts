@@ -521,12 +521,14 @@ import {
 } from "./workspace-memory-storage";
 import {
   WorkspaceMemoryApplySweepRequestSchema,
+  WorkspaceMemoryDigestRequestSchema,
   WorkspaceMemoryForgetRequestSchema,
   WorkspaceMemoryRecallRequestSchema,
   WorkspaceMemoryRememberRequestSchema,
   WorkspaceMemorySweepCandidatesRequestSchema,
   type MemoryReader,
   type WorkspaceMemoryApplySweepResult,
+  type WorkspaceMemoryDigestResult,
   type WorkspaceMemoryForgetResult,
   type WorkspaceMemoryRecallResult,
   type WorkspaceMemoryRememberResult,
@@ -536,10 +538,23 @@ import {
   MEMORY_FACTS_MIGRATION,
   applyMemorySweep,
   forgetMemoryFact,
+  memoryDigestFacts,
   memorySweepCandidates,
   recallMemoryFacts,
   rememberMemoryFact,
 } from "./workspace-memory-facts-storage";
+import {
+  MEMORY_DIGEST_SYNC_MIGRATION,
+  MemoryDigestSyncMessageSchema,
+  MemoryDigestSyncWorkSchema,
+  completeMemoryDigestSync,
+  memoryDigestSyncWork,
+  nextMemoryDigestSyncAt,
+  publishMemoryDigestSync,
+  releaseMemoryDigestSync,
+  type MemoryDigestSyncMessage,
+  type MemoryDigestSyncWork,
+} from "./memory-digest-sync";
 import {
   WorkspaceNotificationIntentClaimResultSchema,
   WorkspaceNotificationIntentMaintenanceRequestSchema,
@@ -1197,6 +1212,10 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "workspace_socket_unheard", // The first-frame watch's ledger.
   "channel_color_sync", "channel_color_sync_state", // Its triggers, the alarm lane and the channel-colour RPCs.
   "thread_backfill", // The alarm lane and the thread-backfill RPCs.
+  // Recorded by `memoryDigest`, marked by triggers and retractions, and read by
+  // the alarm lane and the memory-digest-sync RPCs.
+  "memory_digest_holders", "memory_digest_holder_facts", "memory_digest_sync", "memory_digest_sync_state",
+  "memory_revision",
   // Converted to typed methods, so a generic statement naming one is a
   // mistake rather than a legacy caller. Refusing it here is what makes the
   // routing entries in `WORKSPACE_LOCAL_TABLES` more than a courtesy: the
@@ -4535,6 +4554,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "agent memory facts and sweep receipts, every live prose memory imported as a fact, and the item store dropped",
   // See MEMORY_FACTS_MIGRATION and docs/agent-memory.md.
   statements: MEMORY_FACTS_MIGRATION,
+}, {
+  version: 117,
+  description: "conversations holding a memory digest copy and the facts each copy holds, marked for a refresh when a visibility input changes or a held fact is retracted, and the revision digest reads are ordered by",
+  // The lane is channel colour sync's; see memory-digest-sync.ts.
+  statements: MEMORY_DIGEST_SYNC_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -7479,6 +7503,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       space_bootstrap: () => this.spaceStorage().nextBootstrapDueAt(),
       channel_color_sync: () => nextChannelColorSyncAt(sql),
       thread_backfill: () => nextThreadBackfillAt(sql),
+      memory_digest_sync: () => nextMemoryDigestSyncAt(sql),
       activity_reap: () => {
         const oldest = sql.exec<{ created_at: number | null }>(
           "SELECT MIN(created_at) AS created_at FROM workspace_activity_events",
@@ -7707,6 +7732,24 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           logWarn(this.env, "thread_backfill_publication_failed", {
             workspace_id: workspaceId,
             reason: diagnosticErrorCode(error, "thread_backfill_publication_failed"),
+          });
+        }
+      });
+      // Conversations whose memory digest copies may show a withdrawn fact; see memory-digest-sync.ts.
+      if (due("memory_digest_sync")) await this.instrumentWorkspaceAlarmPhase("memory_digest_sync", undefined, async () => {
+        try {
+          await publishMemoryDigestSync({
+            sql: this.state.storage.sql,
+            queue: this.env.ACTIVITY_QUEUE,
+            workspaceId,
+            region: this.env.AVALON_REGION,
+            now,
+            retryAt: (attempt) => now + scheduledAlarmRetryDelay(attempt),
+          });
+        } catch (error) {
+          logWarn(this.env, "memory_digest_sync_publication_failed", {
+            workspace_id: workspaceId,
+            reason: diagnosticErrorCode(error, "memory_digest_sync_publication_failed"),
           });
         }
       });
@@ -11269,6 +11312,43 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(ThreadBackfillMessageSchema, input, "release_thread_backfill");
     this.assertWorkspace(request.workspaceId);
     const released = releaseThreadBackfill(this.state.storage.sql, request.job, request.workstreamId, request.attempt);
+    await this.armNextAlarm();
+    return released;
+  }
+
+  /**
+   * The conversation one marked row asks to refresh the digest copies of, or
+   * `null` (settling the row when the holder is gone) when there is nothing to
+   * do. Server-to-server, like the channel-colour RPCs above.
+   */
+  async memoryDigestSyncWork(input: MemoryDigestSyncMessage): Promise<MemoryDigestSyncWork> {
+    await this.initialized;
+    const request = parseRpcInput(MemoryDigestSyncMessageSchema, input, "memory_digest_sync_work");
+    this.assertWorkspace(request.workspaceId);
+    const work = MemoryDigestSyncWorkSchema.parse(this.state.storage.transactionSync(() => memoryDigestSyncWork(
+      this.state.storage.sql, { conversation: request.conversation, revision: request.revision },
+    )));
+    // A settled row may be the last of its batch, which lets the next one go.
+    if (work === null) await this.armNextAlarm();
+    return work;
+  }
+
+  /** Settle a conversation whose digest copies were refreshed. */
+  async completeMemoryDigestSync(input: MemoryDigestSyncMessage): Promise<boolean> {
+    await this.initialized;
+    const request = parseRpcInput(MemoryDigestSyncMessageSchema, input, "complete_memory_digest_sync");
+    this.assertWorkspace(request.workspaceId);
+    const completed = completeMemoryDigestSync(this.state.storage.sql, request.conversation, request.revision);
+    await this.armNextAlarm();
+    return completed;
+  }
+
+  /** A conversation the consumer could not refresh: it retries at its own gate and holds back nothing. */
+  async releaseMemoryDigestSync(input: MemoryDigestSyncMessage): Promise<boolean> {
+    await this.initialized;
+    const request = parseRpcInput(MemoryDigestSyncMessageSchema, input, "release_memory_digest_sync");
+    this.assertWorkspace(request.workspaceId);
+    const released = releaseMemoryDigestSync(this.state.storage.sql, request.conversation, request.revision);
     await this.armNextAlarm();
     return released;
   }
@@ -15221,7 +15301,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceMemoryForgetRequestSchema, input, "forget_memory_fact");
     this.assertWorkspace(request.workspaceId);
-    return forgetMemoryFact(this.state.storage, request, await this.memoryReaderRelationship(request));
+    const result = forgetMemoryFact(this.state.storage, request, await this.memoryReaderRelationship(request));
+    // A retraction marked the digest holders that held the fact; the lane
+    // sends them without waiting on an unrelated wake.
+    if (result.outcome === "retracted") await this.armNextAlarm();
+    return result;
+  }
+
+  /**
+   * The facts one principal's digest copy in this conversation is refreshed
+   * from, newest first, recording the conversation as a holder so the
+   * copy-sync lane can reach it; see `memory-digest-sync.ts`.
+   */
+  async memoryDigest(input: unknown): Promise<WorkspaceMemoryDigestResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceMemoryDigestRequestSchema, input, "memory_digest");
+    this.assertWorkspace(request.workspaceId);
+    return memoryDigestFacts(this.state.storage, request, await this.memoryReaderRelationship(request));
   }
 
   /** The facts a sweep of this conversation may read and revise, and where the conversation sits. */
@@ -15237,7 +15333,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceMemoryApplySweepRequestSchema, input, "apply_memory_sweep");
     this.assertWorkspace(request.workspaceId);
-    return applyMemorySweep(this.state.storage, request);
+    const result = applyMemorySweep(this.state.storage, request);
+    // A retraction marked the digest holders that held its fact; the lane
+    // sends them without waiting on an unrelated wake.
+    if (result.outcome === "applied" && result.markedHolders) await this.armNextAlarm();
+    return result;
   }
 
   /** A person reader's Organization relationship, or nothing for a Sidekick reader. */

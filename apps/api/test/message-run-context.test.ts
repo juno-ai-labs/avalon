@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import { __integrationTesting } from "../src/services/integrations";
 
-const { personalSystemPromptFor } = __integrationTesting;
+const { personalSystemPromptFor, principalSystemSectionFor } = __integrationTesting;
 
 const WORKSPACE = asWorkspaceId("00000000-0000-7000-8000-000000000101");
 const OWNER = asUserId("00000000-0000-7000-8000-000000000102");
@@ -65,5 +65,15 @@ describe("personal system prompt", () => {
 
   it("leaves it out of a Sidekick run acting as the member", () => {
     expect(personalSystemPromptFor({ ...workflowInput("human_message"), parentKind: "automation" }, read)).toBe("");
+  });
+});
+
+describe("principal system section", () => {
+  it("is empty, changing no byte of the prefix, when the conversation holds no digest copy and no personal prompt", () => {
+    expect(principalSystemSectionFor(workflowInput("human_message"), {
+      memoryDigest: () => null,
+      personalSystemPrompt: () => "",
+    })).toBe("");
+    expect(principalSystemSectionFor(workflowInput("human_message"), undefined)).toBe("");
   });
 });

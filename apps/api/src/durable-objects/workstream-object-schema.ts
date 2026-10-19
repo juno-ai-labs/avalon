@@ -25,7 +25,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 76;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 77;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3528,6 +3528,24 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       // table since the agent-memory redesign. `run_scopes.memory_context_hash`
       // stays, always NULL, because `run_scopes` is a referenced parent.
       `DROP TABLE run_memory_contexts`,
+    ],
+  },
+  {
+    version: 77,
+    description: "the memory digest copies a run renders its remembered facts from",
+    statements: [
+      // One row per principal that has acted here (`user:<id>`,
+      // `sidekick:<automationId>`, or `conversation`): the WorkspaceDO's
+      // digest answer for that reader, as structured facts the run renders at
+      // start, so inference reads nothing beyond this object.
+      // `source_revision` is the WorkspaceDO's `memory_revision` at the read
+      // and orders overlapping refreshes. `docs/agent-memory.md#the-digest`.
+      `CREATE TABLE memory_digest_copies (
+        principal TEXT PRIMARY KEY,
+        facts_json TEXT NOT NULL,
+        source_revision INTEGER NOT NULL CHECK (source_revision >= 0),
+        refreshed_at INTEGER NOT NULL
+      ) STRICT`,
     ],
   },
 ];

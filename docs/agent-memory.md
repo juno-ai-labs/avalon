@@ -22,14 +22,18 @@ conversation.
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/durable-objects/workspace-memory-facts-storage.ts` | The store: migration 116, the visibility rules (`openableBy`, `subjectAdmits`, `sourcesOpenToAudience`), recall, remember, forget, sweep candidates and `applyMemorySweep`. Every rule about who sees a fact is here. |
-| `apps/api/src/durable-objects/workspace-memory-facts-protocol.ts` | The typed RPC shapes, the subject and reader vocabularies, `memorySourceOf` (a fact's source) and `memoryReceiptKeyOf` (a sweep's cursor fence), the sweep operation schema and refusal codes. |
-| `apps/api/src/durable-objects/workspace-do.ts` | The five RPC methods (`recallMemoryFacts`, `rememberMemoryFact`, `forgetMemoryFact`, `memorySweepCandidates`, `applyMemorySweep`) and the person reader's relationship read. |
-| `apps/api/src/durable-objects/workstream-scheduling-storage.ts` | `memory_sweep_state`: the cursor, the rest, the claim, the settle, the release and the alarm's retry time (conversation-object migration 76). `workstream-scheduling-protocol.ts` names the four writes in `DERIVED_ALARM_MUTATIONS`, so the endpoint re-arms the alarm after each. |
+| `apps/api/src/durable-objects/workspace-memory-facts-protocol.ts` | The typed RPC shapes, the subject and reader vocabularies, `memorySourceOf` (what a fact was learned from), `memoryConversationKeyOf` (one conversation: a sweep's cursor fence and a digest holder), `digestPrincipalKey`, the sweep operation schema and refusal codes. |
+| `apps/api/src/durable-objects/workspace-do.ts` | The RPC methods (`recallMemoryFacts`, `rememberMemoryFact`, `forgetMemoryFact`, `memorySweepCandidates`, `applyMemorySweep`, `memoryDigest`, and the three copy-sync RPCs), the `memory_digest_sync` alarm lane, and the person reader's relationship read. |
+| `apps/api/src/durable-objects/memory-digest-sync.ts` | The copy-sync lane: migration 117 (`memory_digest_holders`, `memory_digest_holder_facts`, `memory_digest_sync`, its revision counter, `memory_revision` and the marking triggers), `markMemoryDigestHolders`, `markMemoryDigestHoldersFor`, and the publish, work, complete and release halves, the colour-sync shape. |
+| `apps/api/src/durable-objects/workstream-scheduling-storage.ts` | `memory_sweep_state`: the cursor, the rest, the claim, the settle, the release and the alarm's retry time (conversation-object migration 76). `memory_digest_copies`: one principal's copy, its store, the principal list and the per-fact removal (migration 77). `workstream-scheduling-protocol.ts` names the four sweep writes in `DERIVED_ALARM_MUTATIONS`, so the endpoint re-arms the alarm after each. |
+| `apps/api/src/services/memory-digest-service.ts` | The digest's conversation half: `digestReaderFor`, the copy refreshes (`refreshMemoryDigestCopy`, `refreshMemoryDigestCopies`), `renderMemoryDigestSection`, and the digest's open limits. |
+| `packages/agent-harness/src/prompts/memory-digest.ts` | `renderMemoryDigest`: the one implementation of the digest's text. Golden-hashed in `prompts.test.ts`. |
 | `apps/api/src/services/memory-sweep-service.ts` | The lane: `attemptMemorySweep` (gates, claim, one Queue send) and `runMemorySweep` (window, candidates, model, apply, settle). The open limits. |
 | `apps/api/src/services/memory-service.ts` | The `rally:memory` tools (`recall`, `remember`, `forget`), who a run reads as (`readerOf`), the trust class of a remembered fact, and the scope resolution `rally_tables` still uses. |
 | `packages/agent-harness/src/prompts/memory-sweep.ts` | The sweep prompt and its strict JSON schema. Golden-hashed in `prompts.test.ts`. |
-| `apps/api/src/durable-objects/substream-agent.ts` | The two triggers: the settlement step after the description loop, and the alarm lane (`nextMemorySweepAt`). |
-| `apps/api/src/queues/activity-consumer.ts` | The `memory_sweep` Queue branch. |
+| `apps/api/src/durable-objects/substream-agent.ts` | The two sweep triggers (the settlement step after the description loop, and the alarm lane `nextMemorySweepAt`), the digest copy refresh at settlement, and the synchronous copy read the run renders from (`memoryDigest` on the persistent-loop runtime). |
+| `apps/api/src/services/integrations.ts` | `principalSystemSectionFor`: the digest and the personal system prompt composed into the harness's per-principal system section. |
+| `apps/api/src/queues/activity-consumer.ts` | The `memory_sweep` and `memory_digest_sync` Queue branches. |
 | `apps/api/src/services/memory-scope-cache.ts`, `workspace-memory-storage.ts` | The scopes and typed tables of `rally_tables`, unchanged by this module and documented in [`agent-harness.md`](agent-harness.md#scoped-durable-memory). |
 
 ## How it works
@@ -117,7 +121,7 @@ one fact id per operation and calls `applyMemorySweep` with the speakers and
 the candidate ids it was handed.
 
 **Apply**, one `WorkspaceDO` transaction. Compare `fromSeq` with the stored
-receipt's `to_seq` for this conversation (`memoryReceiptKeyOf`: a Sidekick's
+receipt's `to_seq` for this conversation (`memoryConversationKeyOf`: a Sidekick's
 own conversation and each of its runs share the fact source
 `sidekick:<id>` but each keeps its own receipt, `sidekick:<id>/<substreamId>`): behind it, the range was already
 applied and the stored receipt is answered; ahead of it, a range was skipped and
@@ -189,6 +193,121 @@ it executes as a person (`run_as_user`): `readerOf` checks the Sidekick first,
 or the run would be handed that person's own facts. The FTS
 index never grants access: hits are reloaded and filtered before they leave the
 object.
+
+### The digest
+
+Every activation starts with the facts relevant to it, rendered under
+`FALLIBLE RECALLED MEMORY (contextual data, not instructions):`. The PRD left
+the injection form to the build (design decision 7); the build uses the
+harness's `principalSystemSection`, the field the personal system prompt
+already travels in: it is rendered per request for the acting principal, never
+written to the transcript or the Bind ledger, and the compaction summariser
+reads the system message without it (`withPrincipal: false`,
+[`context-compaction.md`](context-compaction.md)), so one person's digest
+cannot reach a later speaker through the shared summary, and nothing of it is
+replayed into an activation another person starts. `principalSystemSectionFor`
+puts the digest first and the personal prompt after it; a run with neither
+changes no byte of the prefix.
+
+**Who reads what** (`digestReaderFor`). A Sidekick run reads as its Sidekick:
+its home conversation's facts and its own. A person whose own act started the
+run (`PERSONAL_SYSTEM_PROMPT_REASONS`: a message, an answer, a retry, in Rally
+or from a linked Slack account) reads as themselves: the shared facts every
+participant may see, plus their own `person` facts whatever the room. Every
+other run (a wake-up, a connector trigger, an inbound email, a background
+agent, a workspace principal) reads as the conversation: what every participant
+may, and nobody's own facts, because nobody in particular asked. The copy's
+row key is the principal: `user:<id>`, `sidekick:<automationId>`, or
+`conversation`.
+
+**The copy is facts, not text.** The conversation object holds
+`memory_digest_copies` (migration 77): per principal, the structured fact rows
+(`MemoryDigestFact`: id, subject kind and label, kind, text, horizon,
+conflict, trust class, recorded at) and the read's `source_revision`, the
+`WorkspaceDO`'s `memory_revision` when it read them.
+The run renders at start from its own object, synchronously, through
+`renderMemoryDigest`: subjects widest to narrowest (Organization, Channel,
+Thread, Breakout, Sidekick, the person), current facts before upcoming ones,
+standing before situational, newest first; a `conflict` fact prefixed
+`Disagreement:`; a future `validFrom` as `From <date>:`; a horizon as
+`(until <date>)`; the full fact id in brackets so `memory_forget`, which
+matches it exactly, can name it (a UUIDv7's first digits are a timestamp that
+every fact minted in the same minute shares). The note that the person's facts
+are the sender's alone is rendered only while a person fact is shown.
+`external` facts are left out (design decision 11): `memoryDigest` drops them
+in SQL before its limit, so they never take a copy's place, and the renderer
+drops them again; expired facts are left out at render, so expiry and upcoming
+are exact at every run with no read beyond the object. Over the
+character budget the oldest fact of the widest group goes first, so this
+conversation's own facts and the person's own are kept longest, and one closing
+line says how many were left out. Nothing current renders as the empty string.
+
+**Refresh.** A run never reads `WorkspaceDO` for its digest; the copy is a
+projection, refreshed by five writers. (1) `settleAgentRun` refreshes the run's
+principal's copy after the sweep attempt: one `memoryDigest` RPC (recall with
+no query, as that reader, which also records the conversation as a **holder**
+of the facts it read) and one local write, never throwing. (2) The sweep
+consumer refreshes every copy of the swept conversation after an apply that
+wrote. (3) `memory_forget` removes the fact from this conversation's own copies
+in the same call, so the person who forgot it never sees it again where they
+forgot it. (4) `provisionSidekickRun` reads the Sidekick's copy into each new
+run conversation before its first activation, since a run is a conversation
+nobody has settled in yet. (5) The **copy-sync lane** reaches every other
+conversation. A holder is keyed by `memoryConversationKeyOf` (a Thread's id, a
+Breakout's `<thread>/<breakout>`, `sidekick:<id>/<substream>`, `space:<id>`),
+not by the fact source, because every conversation of one Sidekick shares the
+source `sidekick:<id>` but holds its own copies; `memory_digest_holder_facts`
+records which facts each principal's copy there was read with. `WorkspaceDO`
+marks holders in `memory_digest_sync` with a revision:
+
+- a retraction (`memory_forget`, or a sweep's `retract`) marks only the holders
+  whose copy holds that fact (`markMemoryDigestHoldersFor`). A sweep's `update`
+  marks nothing: a supersede withdraws nobody's access, and the copy showing
+  the old wording catches up at its next refresh, as for an add;
+- a trigger marks every holder when a `channels`, `breakouts` or `spaces`
+  row's `scope` or `archived_at` changes, when a `workspace_member_status` row's
+  access class, role, status or `active` changes, or when an
+  `automation_directory` row's `scope` changes;
+- a trigger marks one conversation's holders when a participant joins or
+  leaves it: an `INSERT` with `is_participant = 1` or a change of
+  `is_participant` in `channel_viewers` or `breakout_viewers` marks the holders
+  under that Thread, in `space_viewers` the Channel's;
+- a participant leaving also marks every holder whose copy holds a fact
+  sourced from what they left (the Thread and its Breakouts, the Breakout, or
+  the Channel's feed), found by joining `memory_digest_holder_facts` to the
+  fact's sources: the person can no longer open it, so its facts leave their
+  own copies in every other conversation and every copy whose audience
+  includes them. Joining marks only that conversation's holders, because a
+  wider audience hides nothing.
+
+The alarm lane `memory_digest_sync` publishes one batch of up to 100
+`memory_digest_sync` messages with one batch in flight per Organization; the
+consumer asks `memoryDigestSyncWork` for the conversation, refreshes each of its
+copies as its own principal, and completes the row, or releases it when any
+copy failed so the alarm sends it again at its gate. A row marked again while in
+flight is carried by the newer message; a holder whose conversation is archived
+or gone from the directory is dropped when its row comes up, and recorded again
+at its next `memoryDigest` read if it is restored. Adding a fact marks nothing:
+copies widen on their own refreshes.
+
+**Ordering.** Refreshes overlap, so a copy keeps the newest read by
+`memory_revision`, a counter `WorkspaceDO` advances in every transaction that
+writes a fact (a remember that wrote, a retraction, a sweep that applied
+anything) and with every mark, so a refresh a change asks for reads above every
+read taken before it. A read lands when its revision is at least the copy's: a
+read that ties read the same facts under the same marks, and a change no
+trigger marks still reaches the copy at its next refresh. A forget also raises
+every copy in its conversation to the retraction's revision, so a refresh that
+read before the forget and lands after it is refused.
+
+The cost is lag, as for the personal system prompt: a principal's first run in
+a Thread or Breakout has no digest, a new fact reaches a run from the next
+refresh, and a run that starts in the moments before the lane reaches its
+conversation can see a retracted fact once more; `memory_recall` never can,
+because it reads the store. There are no `DELETE` triggers on the viewer
+tables: projection rebuilds delete and reinsert their rows in bulk, so a
+rebuild's reinserts mark that one conversation's holders, which is bounded, and
+a participant a rebuild removed reaches copies at their next refresh.
 
 ### The tools
 
@@ -283,6 +402,32 @@ nine items in one Organization and none to one elsewhere when this shipped.
   migrations and are not edited. Guard: migration hashes.
 - **Forgetting is authorized apart from seeing.** Guard:
   `test/memory-facts-tools.test.ts` ("lets a member forget their own facts…").
+- **A run reads its digest from its own object and nothing else.** No
+  `WorkspaceDO` call sits on the run path; the copy is refreshed after the run,
+  by the sweep, by a forget, and by the copy-sync lane. Breaking it puts a
+  cross-object read in front of every first token. Guard: `memoryDigestCopy`
+  is synchronous and refreshes nothing; `test/memory-digest-service.test.ts`.
+- **The digest travels in `principalSystemSection` and nowhere else.** It is
+  rendered per request for the acting principal and excluded from the
+  compaction summary; appended to `systemPrompt` or to a transcript message it
+  would reach the shared checkpoint. Guard: `principalSystemSectionFor` is the
+  only writer; [`context-compaction.md`](context-compaction.md).
+- **A copy never regresses.** `storeMemoryDigestCopy` writes only a read whose
+  `memory_revision` is at least the copy's `source_revision`, and a forget
+  raises every copy in its conversation to the retraction's revision, so two
+  overlapping refreshes converge on the newer and a read from before a forget
+  cannot restore the fact. The revision advances with every fact write and
+  every mark; a clock would tie across two reads that straddle a change. Guard:
+  `test/memory-digest-service.test.ts` ("an older revision never replaces it",
+  "refuses a refresh that read before a forget").
+- **Every input the visibility rule reads marks the copies it can change.** A
+  retraction marks the holders of its fact; a change of scope, archive, access
+  class, role or Sidekick scope marks every holder; a participant joining or
+  leaving marks that conversation's, and leaving also marks every copy holding
+  a fact sourced there. A new input to `openableByPerson` or
+  `conversationAudience` needs its trigger here, or it reaches copies only at
+  their next refresh. Guard: `test-workers/memory-facts.test.ts` (the
+  copy-sync cases).
 
 ## Boundary
 
@@ -325,6 +470,12 @@ vector-index facts (Turbopuffer, when wanted:
   quiet sweep, so a long run of such pages is read at a lengthening rest.
 - **A model operation outside the placement:** refused by code and logged;
   the rest of the batch applies.
+- **A digest copy refresh fails:** `memory_digest_refresh_failed` with the
+  reason; the old copy stands and the next refresh tries again. In the
+  copy-sync consumer a failed copy releases the row (`memory_digest_sync_failed`
+  when the work itself threw), so the alarm sends it again at its gate.
+- **An unreadable copy:** `memory_digest_copy_unreadable` names the field
+  (`zodDiagnosticCode`) and the run renders no digest rather than failing.
 
 Limits, every one a placeholder the team has not set
 ([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)),
@@ -339,6 +490,8 @@ declared as `LIMIT UNSET` constants in `memory-sweep-service.ts`:
 | `MEMORY_SWEEP_WINDOW_OVERLAP_MESSAGES` | 20 | Messages before the cursor shown as context |
 | `MEMORY_SWEEP_MAXIMUM_CANDIDATES` | 60 | Remembered facts shown to the model |
 | `MEMORY_SWEEP_CLAIM_TIMEOUT_MS` | 15 minutes | How long a claim holds the lane |
+| `MEMORY_DIGEST_COPY_FACT_LIMIT` (`memory-digest-service.ts`) | 120 | Facts one copy holds; twice what the render budget shows, so the renderer's cut decides |
+| `MEMORY_DIGEST_BUDGET_CHARACTERS` (`memory-digest-service.ts`) | 6,000 | Characters the rendered digest may take (about 1,500 tokens, under 1% of a 200k window) |
 
 Arithmetic the placeholders came from: a Sol-class call on a 300-message
 window costs one call per conversation per rest period, and Juno Labs' busiest
@@ -352,11 +505,14 @@ defensive numbers.
 
 | Suite | Covers |
 | --- | --- |
-| `apps/api/test-workers/memory-facts.test.ts` | Migration 116 on a populated object at 115 (subjects, sources, FTS, the drop, the retired alarm row); `applyMemorySweep`'s fence, receipt replay and `cursor_ahead`, one fence per Sidekick conversation; an update's source order and `mixed`; placement refusals; candidate and recall audience fencing. Run with `pnpm --filter @rally/api test:workers`. |
+| `apps/api/test-workers/memory-facts.test.ts` | Migration 116 on a populated object at 115 (subjects, sources, FTS, the drop, the retired alarm row); `applyMemorySweep`'s fence, receipt replay and `cursor_ahead`, one fence per Sidekick conversation; an update's source order and `mixed`; placement refusals; candidate and recall audience fencing; `memoryDigest`, the revision it answers and the holder and holder facts it records, one holder per conversation of a Sidekick; the copy-sync lane: a retraction marks only the holders of its fact and an update none, a participant joining marks that Thread's holders only, a participant leaving marks the copies elsewhere holding a fact learned there, a member becoming a guest and an archive mark every holder, one batch publishes, work, complete and release settle the row. Run with `pnpm --filter @rally/api test:workers`. |
 | `apps/api/test/memory-facts-tools.test.ts` | The three tools over a real `WorkspaceDO` (node:sqlite) and real conversation objects: person facts follow their person and nobody else, a Sidekick run reads as the Sidekick, conversation facts stay with their subject, forget authority, dedupe, receipt replay, horizon errors. The fixture uses `migratedSqliteDatabase()` because the object reads a person's relationship from current `workspace_members`. |
 | `apps/api/test/memory-sweep-service.test.ts` | The attempt's gates and claim, the Queue message, rest and `retry_at` (resting, keyless, the follow-up a settle keeps); the window's character budget, and a full page or an over-budget run of agent text passed without a model call; the run's window, names, candidates, prompt, per-operation parsing, trust class from evidence, apply, settle, the empty receipt, release on model failure, replay and rewind, quiet rests. The model is a stubbed `fetch`; `WorkspaceDO` is a stub recording its calls. |
 | `apps/api/test-workers/memory-sweep-state.test.ts` | `memory_sweep_state` through the real scheduling port, as the consumer reaches it: a settle's arguments cross the binding, and a release re-arms the object's alarm at the rest. |
-| `packages/agent-harness/src/prompts.test.ts` | The sweep prompt's golden hash, injection isolation, bounding, and load-bearing lines. |
+| `packages/agent-harness/src/prompts.test.ts` | The sweep prompt's golden hash, injection isolation, bounding, and load-bearing lines; the digest's golden hash, group order, horizons, full fact ids, the `external` exclusion, the budget cut and its trailer, and the personal note only beside a person fact. |
+| `apps/api/test/memory-digest-service.test.ts` | The digest over a real `WorkspaceDO` and real conversation objects: who reads as whom (`digestReaderFor`), a copy holds what its reader may see and nobody else's facts, an older revision never replaces a newer copy, a forget drops the fact from every copy and refuses a read from before it, `external` facts never take a copy's place, and the section composes digest then personal prompt. |
+| `apps/api/test-workers/sidekick-run-continuation.test.ts` | A Sidekick run's first activation starts with the Sidekick's facts, copied in at provisioning. |
+| `apps/api/test/message-run-context.test.ts` | Which runs carry the personal prompt; the section is empty with no copy and no prompt. |
 | `apps/api/test/scoped-memory.test.ts`, `test-workers/workspace-memory.test.ts` | The scopes and typed tables this module leaves in place. |
 
 Traps: the Node fixtures seed `channels` and `channel_viewers` by hand (the
@@ -368,10 +524,16 @@ object below it has no row and `nextMemorySweepAt` reads `null`.
 ## Data model
 
 `WorkspaceDO`: `memory_facts` (indexed on subject and activity, FTS5 shadow
-`memory_facts_fts`), `memory_sweep_receipts` (one row per conversation, its
-`conversation` column holding `memoryReceiptKeyOf`),
-`memory_fact_receipts` (tool replays). Conversation object:
-`memory_sweep_state` (singleton). Instants are Unix milliseconds. The retired
+`memory_facts_fts`), `memory_sweep_receipts` (one row per conversation, keyed by
+`memoryConversationKeyOf`),
+`memory_fact_receipts` (tool replays), `memory_digest_holders` (every
+conversation holding a digest copy, keyed by `memoryConversationKeyOf`),
+`memory_digest_holder_facts` (the facts each principal's copy there was read
+with), `memory_digest_sync` and `memory_digest_sync_state` (the copy-sync lane's
+marks and revision counter), `memory_revision` (singleton: the ordering token of
+digest reads). Conversation object: `memory_sweep_state` (singleton),
+`memory_digest_copies` (one row per principal, with the `source_revision` it
+was read at). Instants are Unix milliseconds. The retired
 `memory_items`, `memory_items_fts`, `memory_mutations`, `memory_index_outbox`
 and `run_memory_contexts` are gone; `run_scopes.memory_context_hash` stays,
 always NULL, because `run_scopes` is a referenced parent.
@@ -390,6 +552,57 @@ when nothing it cites is in the window, and never defaults to `person`. The mode
 authority. `retracted_by` records who forgot a fact.
 
 ## Changelog
+
+### 2026-10-19 — Every activation starts with a digest rendered from its conversation's own copy
+
+**What changed:** PRD rollout step 2. A run's system message carries the memory
+digest: the facts relevant to the conversation and the acting person, rendered
+by `renderMemoryDigest` from `memory_digest_copies` in the conversation object
+(migration 77), composed with the personal system prompt into the harness's
+`principalSystemSection`. The copy is refreshed at settlement, after a sweep
+that wrote, by a forget in the same call, when a Sidekick run is provisioned,
+and by the copy-sync lane (`WorkspaceDO` migration 117: holders and the facts
+each copy holds, marks, triggers on every visibility input, `memory_revision`,
+the `memory_digest_sync` alarm lane and Queue branch). `PERSONAL_SYSTEM_PROMPT_REASONS` moved to
+`personal-system-prompt.ts` so the digest and the personal prompt share one
+definition of "a run this person started".
+
+**Why:** The PRD's reason for memory is that the model should not have to
+decide to search: step 1 shipped recall-only, and a fact nobody recalls is a
+fact nobody uses. Low latency is a goal, so the run reads nothing outside its
+own object; the personal system prompt had already worked out the copy shape
+and its lag, and the digest takes the same shape rather than a second one. The
+injection form was the build's to choose (design decision 7): the per-principal
+system section is rendered per request and excluded from compaction already,
+which is exactly the "never replayed into another person's activation" rule,
+and it costs no new mechanism.
+
+**Considered and rejected:** Decorating the triggering user message with the
+digest. With a persistent loop that message is committed to the ledger and
+replayed to every later activation, so the decoration would have to be
+ephemeral at render time, which is what the system section already is. Reading
+`WorkspaceDO` at run start, overlapped with other startup work: no lag, but a
+cross-object call in front of every first token, the trade the personal prompt
+had already refused. Marking every holder on a retraction: correct, but a
+forget in one Thread would refresh every copy in the Organization, so each copy
+records the facts it was read with and a retraction marks only those holders.
+Ordering copies by the `WorkspaceDO` clock: two reads in one millisecond
+straddling a forget tie, so the order is a persisted revision instead. Keying a
+holder by the fact source: every run of a Sidekick shares one. `DELETE`
+triggers on the viewer tables: projection rebuilds delete and reinsert those
+rows in bulk, and a mark per rebuild would refresh every conversation on every
+projection.
+
+**Consequences:** A principal's first run in a Thread or Breakout has no
+digest; a new fact reaches a run from the next refresh; a retraction reaches other
+conversations within one alarm tick and may be seen once more by a run that
+starts before it lands. Both digest limits are placeholders the team owes.
+Anything that changes what a reader may see has to reach copies either through
+a mark (add a trigger, or a `markMemoryDigestHolders` or
+`markMemoryDigestHoldersFor` call) or accept the next-run lag; a cache of rendered text would break expiry, which the renderer
+applies at run time.
+
+Shipped in the step-2 pull request on top of #1300.
 
 ### 2026-10-19 — Facts, sweeps and three tools replace the scoped-memory items store
 

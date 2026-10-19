@@ -9,21 +9,39 @@
  * cursor fence and the receipt it writes are one transaction, and that the
  * candidates a sweep is handed are fenced by what every participant of the
  * swept conversation may open. `docs/agent-memory.md` owns the rules.
+ *
+ * And the digest's half in this object (`memory-digest-sync.ts`): that a
+ * digest read records its conversation as a holder of the facts it read in
+ * the same transaction, that a retraction marks the holders of its fact and
+ * the triggers on every visibility input mark the holders it can change, and
+ * that the lane publishes one batch at a time and settles only the revision it
+ * was sent.
  */
 
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { asWorkspaceId } from "@rally/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
+import {
+  completeMemoryDigestSync,
+  markMemoryDigestHolders,
+  memoryDigestSyncWork,
+  publishMemoryDigestSync,
+  releaseMemoryDigestSync,
+  type MemoryDigestSyncMessage,
+} from "../src/durable-objects/memory-digest-sync";
 import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 import {
   WorkspaceMemoryApplySweepResultSchema,
+  WorkspaceMemoryDigestResultSchema,
+  WorkspaceMemoryForgetResultSchema,
   WorkspaceMemoryRecallResultSchema,
   WorkspaceMemorySweepCandidatesResultSchema,
+  type MemorySweepOperation,
 } from "../src/durable-objects/workspace-memory-facts-protocol";
 
 const FACTS_MIGRATION = 116;
@@ -157,8 +175,8 @@ describe("the fact store on workerd", () => {
     await runInDurableObject(workspace(), (_instance, state) => {
       const sql = state.storage.sql;
       for (const table of [
-        "memory_facts", "memory_sweep_receipts", "memory_fact_receipts", "channel_viewers", "channels", "workspace_member_status",
-        "automation_directory",
+        "memory_facts", "memory_sweep_receipts", "memory_fact_receipts", "memory_digest_holders", "memory_digest_holder_facts",
+        "channel_viewers", "channels", "workspace_member_status", "automation_directory",
       ]) {
         sql.exec(`DELETE FROM ${table}`);
       }
@@ -170,6 +188,11 @@ describe("the fact store on workerd", () => {
       sql.exec(`INSERT INTO automation_directory
           (automation_id, workspace_id, author_user_id, source_version, payload_hash, lifecycle, scope, owning_workstream_id, title, description, next_run_at, projected_at)
         VALUES (?, ?, ?, 1, 'hash', 'active', 'workspace', NULL, 'Digest', '', NULL, 1)`, SIDEKICK, WORKSPACE_ID, OWNER);
+      // Seeding fires the participant triggers, which advance both counters; each
+      // has one row, the migration's seed, so it is reset rather than deleted.
+      sql.exec("DELETE FROM memory_digest_sync");
+      sql.exec(`UPDATE memory_digest_sync_state SET revision = 0`);
+      sql.exec(`UPDATE memory_revision SET revision = 0`);
     });
   }
 
@@ -196,6 +219,9 @@ describe("the fact store on workerd", () => {
       outcome: "applied",
       receipt: { conversation: THREAD_OPEN, fromSeq: 0, toSeq: 12, appliedAt: now, operationCount: 2 },
       refused: [],
+      // One applied sweep, one advance of the ordering token, whatever it wrote.
+      revision: 1,
+      markedHolders: false,
     });
     // A redelivery of the same range writes nothing and hands back the receipt.
     const replay = WorkspaceMemoryApplySweepResultSchema.parse(await workspace().applyMemorySweep({
@@ -376,5 +402,322 @@ describe("the fact store on workerd", () => {
       workspaceId: WORKSPACE_ID, reader: { kind: "person", userId: MEMBER }, conversation: openThread,
       query: "release day", now, limit: 10,
     })).facts.map((fact) => fact.factId)).toEqual(["fact-release"]);
+  });
+
+  /** A recording queue, so a publish is read back rather than sent. */
+  function recordingQueue() {
+    const sent: Array<{ body: MemoryDigestSyncMessage }> = [];
+    return { sent, queue: { sendBatch: async (messages: Array<{ body: MemoryDigestSyncMessage }>) => { sent.push(...messages); } } };
+  }
+
+  function syncRow(sql: SqlStorage) {
+    return sql.exec<{ conversation: string; revision: number; attempts: number; not_before: number; in_flight: number }>(
+      "SELECT conversation, revision, attempts, not_before, in_flight FROM memory_digest_sync",
+    ).toArray();
+  }
+
+  it("answers a member's digest with the facts they may read here, newest first and named, and records the thread as a holder", async () => {
+    await fresh();
+    const now = Date.parse("2026-10-19T09:00:00.000Z");
+    const common = { workspaceId: WORKSPACE_ID, model: "test/model", inputTokens: null, outputTokens: null, candidateFactIds: [] };
+    // An Organization fact learned in the owner's private room, while it was open.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE channels SET scope = 'workspace' WHERE workstream_id = ?`, THREAD_PRIVATE);
+    });
+    await workspace().applyMemorySweep({
+      ...common, conversation: privateThread, fromSeq: 0, toSeq: 3, operations: [add("organization", "Release day is Thursday")],
+      factIds: ["fact-release"], speakerIds: [], now,
+    });
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE channels SET scope = 'personal' WHERE workstream_id = ?`, THREAD_PRIVATE);
+    });
+    await workspace().applyMemorySweep({
+      ...common, conversation: openThread, fromSeq: 0, toSeq: 3, operations: [add("organization", "Standups are at ten")],
+      factIds: ["fact-standups"], speakerIds: [], now: now + 1,
+    });
+    await workspace().applyMemorySweep({
+      ...common, conversation: openThread, fromSeq: 3, toSeq: 6, operations: [add("thread", "The launch codename is zephyr")],
+      factIds: ["fact-codename"], speakerIds: [], now: now + 2,
+    });
+    await workspace().applyMemorySweep({
+      ...common, conversation: openThread, fromSeq: 6, toSeq: 9,
+      operations: [{ ...add("thread", "Member prefers short updates"), subjectKind: "person" as const, subjectId: MEMBER }],
+      factIds: ["fact-updates"], speakerIds: [MEMBER], now: now + 3,
+    });
+
+    const digest = WorkspaceMemoryDigestResultSchema.parse(await workspace().memoryDigest({
+      workspaceId: WORKSPACE_ID, reader: { kind: "person", userId: MEMBER }, conversation: openThread, now: now + 4, limit: 10,
+    }));
+    const shape = { kind: "standing", validFrom: null, validUntil: null, conflict: false, derivedFrom: "person" };
+    // The room's fact stays out: the member cannot open where it was learned.
+    expect(digest.facts).toEqual([
+      { ...shape, factId: "fact-updates", subjectKind: "person", subjectLabel: null, text: "Member prefers short updates", createdAt: now + 3 },
+      { ...shape, factId: "fact-codename", subjectKind: "thread", subjectLabel: "Launch", text: "The launch codename is zephyr", createdAt: now + 2 },
+      { ...shape, factId: "fact-standups", subjectKind: "organization", subjectLabel: null, text: "Standups are at ten", createdAt: now + 1 },
+    ]);
+    // Four applied sweeps and two scope changes (each a mark) came before the read.
+    expect(digest.revision).toBe(6);
+    await runInDurableObject(workspace(), (_instance, state) => {
+      expect(state.storage.sql.exec(
+        "SELECT conversation, parent_kind, parent_id, substream_id FROM memory_digest_holders",
+      ).toArray()).toEqual([{ conversation: THREAD_OPEN, parent_kind: "workstream", parent_id: THREAD_OPEN, substream_id: "0" }]);
+      expect(state.storage.sql.exec(
+        "SELECT conversation, principal, fact_id FROM memory_digest_holder_facts ORDER BY fact_id",
+      ).toArray()).toEqual([
+        { conversation: THREAD_OPEN, principal: `user:${MEMBER}`, fact_id: "fact-codename" },
+        { conversation: THREAD_OPEN, principal: `user:${MEMBER}`, fact_id: "fact-standups" },
+        { conversation: THREAD_OPEN, principal: `user:${MEMBER}`, fact_id: "fact-updates" },
+      ]);
+    });
+  });
+
+  it("marks the holder of a retracted fact, publishes one batch at a time, and settles only the revision it sent", async () => {
+    await fresh();
+    const now = Date.parse("2026-10-19T09:00:00.000Z");
+    await workspace().applyMemorySweep({
+      workspaceId: WORKSPACE_ID, conversation: openThread, fromSeq: 0, toSeq: 3,
+      operations: [add("thread", "The launch codename is zephyr")],
+      model: "test/model", inputTokens: null, outputTokens: null, factIds: ["fact-codename"], speakerIds: [], candidateFactIds: [], now,
+    });
+    await workspace().memoryDigest({
+      workspaceId: WORKSPACE_ID, reader: { kind: "person", userId: MEMBER }, conversation: openThread, now, limit: 10,
+    });
+    expect(WorkspaceMemoryForgetResultSchema.parse(await workspace().forgetMemoryFact({
+      workspaceId: WORKSPACE_ID, reader: { kind: "person", userId: OWNER }, conversation: openThread,
+      receiptId: "receipt-forget", harnessRunId: "run-forget", factId: "fact-codename", now: now + 1,
+    })).outcome).toBe("retracted");
+
+    // The retraction arms the alarm itself, so the lane claims the holder
+    // without waiting on an unrelated wake. Its gate is a minute out.
+    const claimed = await vi.waitFor(async () => {
+      const rows = await runInDurableObject(workspace(), (_instance, state) => syncRow(state.storage.sql));
+      expect(rows).toMatchObject([{ conversation: THREAD_OPEN, revision: 1, attempts: 1, in_flight: 1 }]);
+      return rows[0]!;
+    }, { timeout: 10_000 });
+
+    await runInDurableObject(workspace(), async (_instance, state) => {
+      const sql = state.storage.sql;
+      const { sent, queue } = recordingQueue();
+      const publish = (at: number) => publishMemoryDigestSync({
+        sql, queue, workspaceId: WORKSPACE_ID, region: "global", now: at, retryAt: (attempt) => at + attempt * 60_000,
+      });
+      // The alarm's batch is in flight, so nothing more goes before its gate.
+      expect(await publish(claimed.not_before - 1)).toBe(0);
+      expect(sent).toEqual([]);
+      // Released, the row waits on its own gate and holds nothing back.
+      expect(releaseMemoryDigestSync(sql, THREAD_OPEN, 1)).toBe(true);
+      expect(syncRow(sql)).toMatchObject([{ in_flight: 0 }]);
+      expect(await publish(claimed.not_before - 1)).toBe(0);
+      expect(await publish(claimed.not_before)).toBe(1);
+      expect(sent).toEqual([{ body: { type: "memory_digest_sync", region: "global", workspaceId: WORKSPACE_ID, conversation: THREAD_OPEN, revision: 1 } }]);
+      expect(syncRow(sql)).toMatchObject([{ attempts: 2, in_flight: 1 }]);
+      // A second publish before that batch's gate sends nothing.
+      expect(await publish(claimed.not_before + 1)).toBe(0);
+      expect(sent).toHaveLength(1);
+
+      expect(memoryDigestSyncWork(sql, { conversation: THREAD_OPEN, revision: 1 })).toEqual(openThread);
+      expect(completeMemoryDigestSync(sql, THREAD_OPEN, 1)).toBe(true);
+      expect(syncRow(sql)).toEqual([]);
+
+      // A thread made private marks the holder again, numbered above the last.
+      sql.exec(`UPDATE channels SET scope = 'personal' WHERE workstream_id = ?`, THREAD_OPEN);
+      expect(syncRow(sql)).toMatchObject([{ conversation: THREAD_OPEN, revision: 2, attempts: 0, not_before: 0, in_flight: 0 }]);
+    });
+  });
+
+  it("refuses a stale revision, leaving the newer mark, and settles a row whose holder is gone", async () => {
+    await fresh();
+    const now = Date.parse("2026-10-19T09:00:00.000Z");
+    await workspace().memoryDigest({
+      workspaceId: WORKSPACE_ID, reader: { kind: "person", userId: MEMBER }, conversation: openThread, now, limit: 10,
+    });
+    await runInDurableObject(workspace(), async (_instance, state) => {
+      const sql = state.storage.sql;
+      markMemoryDigestHolders(sql);
+      const { queue } = recordingQueue();
+      expect(await publishMemoryDigestSync({
+        sql, queue, workspaceId: WORKSPACE_ID, region: "global", now, retryAt: () => now + 60_000,
+      })).toBe(1);
+      expect(releaseMemoryDigestSync(sql, THREAD_OPEN, 1)).toBe(true);
+      expect(syncRow(sql)).toMatchObject([{ revision: 1, in_flight: 0, not_before: now + 60_000 }]);
+
+      // The member leaving the thread marks it again while revision 1 is out.
+      sql.exec(`UPDATE channel_viewers SET is_participant = 0 WHERE workstream_id = ? AND user_id = ?`, THREAD_OPEN, MEMBER);
+      expect(syncRow(sql)).toMatchObject([{ revision: 2, attempts: 0, not_before: 0, in_flight: 0 }]);
+      expect(memoryDigestSyncWork(sql, { conversation: THREAD_OPEN, revision: 1 })).toBeNull();
+      expect(completeMemoryDigestSync(sql, THREAD_OPEN, 1)).toBe(false);
+      expect(releaseMemoryDigestSync(sql, THREAD_OPEN, 1)).toBe(false);
+      expect(syncRow(sql)).toMatchObject([{ revision: 2 }]);
+
+      sql.exec("DELETE FROM memory_digest_holders");
+      expect(memoryDigestSyncWork(sql, { conversation: THREAD_OPEN, revision: 2 })).toBeNull();
+      expect(syncRow(sql)).toEqual([]);
+    });
+  });
+
+  it("marks only the holders that read a fact a sweep retracts, and none for a confirm or an update", async () => {
+    await fresh();
+    const now = Date.parse("2026-10-19T09:00:00.000Z");
+    const common = { workspaceId: WORKSPACE_ID, conversation: openThread, model: "test/model", inputTokens: null, outputTokens: null, speakerIds: [] };
+    await workspace().applyMemorySweep({
+      ...common, fromSeq: 0, toSeq: 3,
+      operations: [add("thread", "The launch codename is zephyr"), add("thread", "The launch is on Tuesday")],
+      factIds: ["fact-codename", "fact-launch-day"], candidateFactIds: [], now,
+    });
+    // The open thread's copy holds both facts; the side room's holds neither.
+    await workspace().memoryDigest({
+      workspaceId: WORKSPACE_ID, reader: { kind: "person", userId: MEMBER }, conversation: openThread, now, limit: 10,
+    });
+    await workspace().memoryDigest({
+      workspaceId: WORKSPACE_ID, reader: { kind: "person", userId: OWNER }, conversation: privateThread, now, limit: 10,
+    });
+    const apply = async (fromSeq: number, operation: MemorySweepOperation, factId: string) =>
+      WorkspaceMemoryApplySweepResultSchema.parse(await workspace().applyMemorySweep({
+        ...common, fromSeq, toSeq: fromSeq + 3, operations: [operation], factIds: ["fact-minted"],
+        candidateFactIds: [factId], now: now + fromSeq,
+      }));
+    expect(await apply(3, { op: "confirm", factId: "fact-codename", evidence: [4] }, "fact-codename"))
+      .toMatchObject({ outcome: "applied", refused: [], markedHolders: false });
+    // A supersede withdraws nobody's access: the copy is stale until its next refresh.
+    expect(await apply(6, { op: "update", factId: "fact-launch-day", text: "The launch is on Wednesday", validUntil: null, derivedFrom: "person", evidence: [7] }, "fact-launch-day"))
+      .toMatchObject({ outcome: "applied", refused: [], markedHolders: false });
+    await runInDurableObject(workspace(), (_instance, state) => expect(syncRow(state.storage.sql)).toEqual([]));
+    expect(await apply(9, { op: "retract", factId: "fact-codename", reason: "The codename was dropped", evidence: [10] }, "fact-codename"))
+      .toMatchObject({ outcome: "applied", refused: [], markedHolders: true });
+    await runInDurableObject(workspace(), (_instance, state) => {
+      expect(syncRow(state.storage.sql)).toMatchObject([{ conversation: THREAD_OPEN, revision: 1 }]);
+    });
+  });
+
+  it("records every conversation of one Sidekick as its own holder, and hands each back to the lane", async () => {
+    await fresh();
+    const now = Date.parse("2026-10-19T09:00:00.000Z");
+    // `fresh()` seeds the Sidekick in the directory.
+    const authoring = { parentKind: "automation" as const, parentId: SIDEKICK, substreamId: "0" };
+    const run = { parentKind: "automation" as const, parentId: SIDEKICK, substreamId: "run-1" };
+    for (const conversation of [authoring, run]) {
+      await workspace().memoryDigest({
+        workspaceId: WORKSPACE_ID, reader: { kind: "sidekick", automationId: SIDEKICK }, conversation, now, limit: 10,
+      });
+    }
+    await runInDurableObject(workspace(), (_instance, state) => {
+      const sql = state.storage.sql;
+      expect(sql.exec("SELECT conversation, substream_id FROM memory_digest_holders ORDER BY conversation").toArray()).toEqual([
+        { conversation: `sidekick:${SIDEKICK}/0`, substream_id: "0" },
+        { conversation: `sidekick:${SIDEKICK}/run-1`, substream_id: "run-1" },
+      ]);
+      markMemoryDigestHolders(sql);
+      expect(memoryDigestSyncWork(sql, { conversation: `sidekick:${SIDEKICK}/0`, revision: 1 })).toEqual(authoring);
+      expect(memoryDigestSyncWork(sql, { conversation: `sidekick:${SIDEKICK}/run-1`, revision: 1 })).toEqual(run);
+    });
+  });
+
+  /** The open thread held by the member and the side room by the owner, with nothing marked yet. */
+  async function twoHolders(now: number) {
+    await workspace().memoryDigest({
+      workspaceId: WORKSPACE_ID, reader: { kind: "person", userId: MEMBER }, conversation: openThread, now, limit: 10,
+    });
+    await workspace().memoryDigest({
+      workspaceId: WORKSPACE_ID, reader: { kind: "person", userId: OWNER }, conversation: privateThread, now, limit: 10,
+    });
+  }
+
+  function markedConversations(sql: SqlStorage): string[] {
+    return sql.exec<{ conversation: string }>("SELECT conversation FROM memory_digest_sync ORDER BY conversation")
+      .toArray().map((row) => row.conversation);
+  }
+
+  it("marks the holders of the thread a participant joins, and not another thread's", async () => {
+    await fresh();
+    await twoHolders(Date.parse("2026-10-19T09:00:00.000Z"));
+    await runInDurableObject(workspace(), (_instance, state) => {
+      const sql = state.storage.sql;
+      sql.exec(`INSERT INTO channel_viewers (
+          workstream_id, user_id, authority_generation, waterline, source_event_id, payload_hash,
+          is_participant, unread_count, you_are_mentioned, listable, seen_attention_ordinal,
+          manual_unread_from_ordinal, manual_unread_generation, latest_mention_attention_ordinal, projected_at
+        ) VALUES (?, ?, 1, 1, 'event-join', 'hash', 1, 0, 0, 1, 0, NULL, 0, 0, 200)`, THREAD_PRIVATE, MEMBER);
+      expect(markedConversations(sql)).toEqual([THREAD_PRIVATE]);
+    });
+  });
+
+  it("marks every copy holding a fact learned in a thread its person leaves, and no copy that never read one", async () => {
+    await fresh();
+    const now = Date.parse("2026-10-19T09:00:00.000Z");
+    const THREAD_OTHER = "00000000-0000-7000-8000-000000000ada";
+    await runInDurableObject(workspace(), (_instance, state) => {
+      const sql = state.storage.sql;
+      // The member joins the side room, and a third open thread has the owner alone.
+      sql.exec(`INSERT INTO channel_viewers (
+          workstream_id, user_id, authority_generation, waterline, source_event_id, payload_hash,
+          is_participant, unread_count, you_are_mentioned, listable, seen_attention_ordinal,
+          manual_unread_from_ordinal, manual_unread_generation, latest_mention_attention_ordinal, projected_at
+        ) VALUES (?, ?, 1, 1, 'event-join', 'hash', 1, 0, 0, 1, 0, NULL, 0, 0, 200)`, THREAD_PRIVATE, MEMBER);
+      seedThread(sql, THREAD_OTHER, "workspace", "Planning", [OWNER]);
+    });
+    // A fact about the member, learned in the side room.
+    expect(WorkspaceMemoryApplySweepResultSchema.parse(await workspace().applyMemorySweep({
+      workspaceId: WORKSPACE_ID, conversation: privateThread, fromSeq: 0, toSeq: 3,
+      operations: [{ ...add("thread", "Member is interviewing elsewhere"), subjectKind: "person" as const, subjectId: MEMBER }],
+      model: "test/model", inputTokens: null, outputTokens: null, factIds: ["fact-interviewing"],
+      speakerIds: [MEMBER], candidateFactIds: [], now,
+    }))).toMatchObject({ outcome: "applied", refused: [] });
+    // The member's copy in the open thread holds it; the owner's copy in the
+    // third thread never read it.
+    const read = async (userId: string, workstreamId: string) => WorkspaceMemoryDigestResultSchema.parse(await workspace().memoryDigest({
+      workspaceId: WORKSPACE_ID, reader: { kind: "person", userId },
+      conversation: { parentKind: "workstream", parentId: workstreamId, substreamId: "0" }, now, limit: 10,
+    })).facts.map((fact) => fact.factId);
+    expect(await read(MEMBER, THREAD_OPEN)).toEqual(["fact-interviewing"]);
+    expect(await read(OWNER, THREAD_OTHER)).toEqual([]);
+    await runInDurableObject(workspace(), (_instance, state) => {
+      const sql = state.storage.sql;
+      sql.exec("DELETE FROM memory_digest_sync");
+      sql.exec("UPDATE channel_viewers SET is_participant = 0 WHERE workstream_id = ? AND user_id = ?", THREAD_PRIVATE, MEMBER);
+      expect(markedConversations(sql)).toEqual([THREAD_OPEN]);
+    });
+  });
+
+  it("marks every holder when a member becomes a guest, and none for a revision that changed nothing they read", async () => {
+    await fresh();
+    await twoHolders(Date.parse("2026-10-19T09:00:00.000Z"));
+    await runInDurableObject(workspace(), (_instance, state) => {
+      const sql = state.storage.sql;
+      const relationship = (accessClass: "member" | "guest", revision: number) => JSON.stringify({
+        workspaceId: WORKSPACE_ID, userId: MEMBER, accessClass, role: "member", status: "active", incarnation: "i1", revision,
+      });
+      sql.exec("UPDATE workspace_member_status SET relationship_json = ? WHERE user_id = ?", relationship("member", 2), MEMBER);
+      expect(markedConversations(sql)).toEqual([]);
+      sql.exec("UPDATE workspace_member_status SET relationship_json = ? WHERE user_id = ?", relationship("guest", 3), MEMBER);
+      expect(markedConversations(sql)).toEqual([THREAD_OPEN, THREAD_PRIVATE].sort());
+    });
+  });
+
+  it("marks every holder when a source is archived", async () => {
+    await fresh();
+    const now = Date.parse("2026-10-19T09:00:00.000Z");
+    await twoHolders(now);
+    await runInDurableObject(workspace(), (_instance, state) => {
+      const sql = state.storage.sql;
+      sql.exec("UPDATE channels SET archived_at = ? WHERE workstream_id = ?", now, THREAD_PRIVATE);
+      expect(markedConversations(sql)).toEqual([THREAD_OPEN, THREAD_PRIVATE].sort());
+    });
+  });
+
+  it("drops the holder of an archived thread when its row comes up, so it stops being marked", async () => {
+    await fresh();
+    const now = Date.parse("2026-10-19T09:00:00.000Z");
+    await workspace().memoryDigest({
+      workspaceId: WORKSPACE_ID, reader: { kind: "person", userId: MEMBER }, conversation: openThread, now, limit: 10,
+    });
+    await runInDurableObject(workspace(), (_instance, state) => {
+      const sql = state.storage.sql;
+      // The archive marks the holder itself.
+      sql.exec(`UPDATE channels SET archived_at = ? WHERE workstream_id = ?`, now, THREAD_OPEN);
+      expect(syncRow(sql)).toMatchObject([{ conversation: THREAD_OPEN, revision: 1 }]);
+      expect(memoryDigestSyncWork(sql, { conversation: THREAD_OPEN, revision: 1 })).toBeNull();
+      expect(syncRow(sql)).toEqual([]);
+      expect(sql.exec("SELECT conversation FROM memory_digest_holders").toArray()).toEqual([]);
+    });
   });
 });

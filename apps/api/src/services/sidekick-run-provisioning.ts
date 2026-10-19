@@ -17,6 +17,7 @@ import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { automationModelOverride, scheduledWorkstreamModel } from "./agent-model-flags";
 import { activateWorkstreamLoop } from "./integrations";
+import { refreshMemoryDigestCopy } from "./memory-digest-service";
 import { attachWorkstreamRuntimeResource } from "./workstream-object-client";
 import { bootstrapConversationChildRuntime, provisionWorkstreamObject } from "./workstream-runtime-database";
 
@@ -62,6 +63,14 @@ export async function provisionSidekickRun(env: Env, message: SidekickRunProvisi
     modelOverride: run.modelOverride,
     now,
   });
+  // Every run is a new conversation with no digest copy of its own, and the
+  // copy is otherwise written only after a run settles: read it now so the
+  // first activation starts with the Sidekick's facts. Never throws.
+  await refreshMemoryDigestCopy(
+    env,
+    { workspaceId: run.workspaceId, parentKind: "automation", parentId: run.automationId, substreamId: run.runId },
+    { kind: "sidekick", automationId: run.automationId },
+  );
   let triggerMessageId: string | null = null;
   if (definition.opening) {
     // Only an email is also a resource the run can open; an event is prose.

@@ -29,6 +29,7 @@ import { diagnosticErrorCode, logInfo, logStructuredEvent, logWarn } from "../ob
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
+import { refreshMemoryDigestCopies } from "./memory-digest-service";
 import { runStructuredInference } from "./structured-inference";
 
 /**
@@ -616,6 +617,10 @@ export async function runMemorySweep(env: Env, message: MemorySweepMessage): Pro
       : applied.receipt.operationCount > 0;
     await settle(applied.receipt.toSeq, wrote);
     if (applied.outcome === "already_applied") return { status: "already_applied", toSeq: applied.receipt.toSeq };
+    // Every copy this conversation holds now reads a stale store; refresh
+    // them here rather than wait for the next run of each principal. Never
+    // throws, so a failed refresh cannot release a sweep that committed.
+    if (wrote) await refreshMemoryDigestCopies(env, { workspaceId: message.workspaceId, ...conversation });
     logStructuredEvent(env, "info", "memory_sweep_applied", {
       workspace_id: message.workspaceId,
       workstream_id: message.parentId,

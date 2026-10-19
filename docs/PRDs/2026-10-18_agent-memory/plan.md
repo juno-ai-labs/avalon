@@ -192,3 +192,82 @@ New `docs/agent-memory.md` (module document with changelog), registered in
 `architecture.md`, `inference-lakehouse.md`, `dev-environment.md`,
 `testing.md`, `authorization.md`, `demo-workspaces.md`, `ace.md`. `state.md`
 stays at in progress until step 3.
+
+## 7. Step 2: digest copies and injection
+
+Branch `claude/agent-memory-step-2`, one pull request on top of step 1.
+
+**Injection form.** The PRD left the form to the build (design decision 7).
+The build uses the harness's `principalSystemSection`: it is rendered per
+request for the acting principal, never written to the transcript or the
+ledger, and the compaction summariser already reads the system message without
+it (`withPrincipal: false`), so one person's digest cannot reach a later
+speaker through the shared summary. The personal system prompt already travels
+this way; the section now carries the digest first and the personal prompt
+after it. Recorded in the PRD decision log.
+
+**The copy** (conversation-object migration 77): `memory_digest_copies`
+(`principal` PK, `facts_json`, `read_at`, `refreshed_at`). One row per
+principal that has acted here: `user:<id>`, `sidekick:<automationId>`, or
+`conversation` (a workspace principal, which reads what every participant
+may). `facts_json` holds structured rows (`factId`, `subjectKind`,
+`subjectLabel`, `kind`, `text`, `validFrom`, `validUntil`, `conflict`,
+`derivedFrom`, `createdAt`), not text; the run renders at start, so expiry and
+upcoming are exact at every run with no read beyond the object.
+
+**Who reads what.** `digestReaderFor(input)`: a Sidekick run reads as its
+Sidekick (home facts plus its own); a person whose own act started the run (the
+personal-prompt reason list) reads as themselves (shared facts plus their own);
+every other run (a wake-up, a connector trigger, a workspace principal) reads
+as the conversation. The copy row is the WorkspaceDO's `recallMemoryFacts`
+answer for that reader with no query, through a `memoryDigest` RPC that also
+records the conversation as a holder.
+
+**Render** (`packages/agent-harness/src/prompts/memory-digest.ts`): groups by
+subject widest to narrowest (Organization, Channel, Thread, Breakout, Sidekick,
+person), standing before situational, newest first; `Disagreement:` prefix for a
+conflict; upcoming as `From <date>:`; expired and `external` facts left out;
+cut oldest-first from the widest group to a character budget (`LIMIT UNSET`)
+with one closing line naming how many were left out. Empty when nothing
+remains, so a conversation with no facts runs byte-identical to today.
+
+**Refresh.** (1) `settleAgentRun` refreshes the run's principal's copy after
+the sweep attempt, one `WorkspaceDO` call, never throws. (2) The sweep consumer
+refreshes every copy of the swept conversation after an apply that wrote. (3)
+`memory_forget` from inside a conversation removes the fact from that
+conversation's own copies in the same call. (4) The **copy-sync lane**
+(WorkspaceDO migration 117, the colour-sync shape): `memory_digest_holders`
+records every conversation that holds a copy; `memory_digest_sync` marks
+holders with a revision; triggers on `scope` changes of `channels`,
+`breakouts` and `spaces`, on a participant flag dropping in the three viewer
+tables, and a mark from every retraction; the alarm publishes one batch of
+`memory_digest_sync` messages, one in flight per Organization; the consumer
+refreshes each marked conversation's copies and completes or releases the row.
+
+**Tests.** Renderer goldens and cases; a Node suite over a real `WorkspaceDO`
+and real conversation objects proving a member's copy excludes another
+person's facts and a Breakout's facts stay out of the Thread's copy, a forget
+removes the fact from the copy, and the section composes digest and personal
+prompt; a workerd suite proving a retraction and a scope change mark holders,
+the lane publishes once, and complete and release settle the row.
+
+## 8. Step 3: review surface
+
+Branch `claude/agent-memory-step-3`, one pull request on top of step 2.
+
+`GET /workspace/me/memory` answers `MemoryReview`: the caller's own facts
+(expired included, retracted excluded), each with its source conversation and
+title, horizon and `expired`; below them the Organization's facts and those of
+the Channels the caller may open, read-only for a member and removable by an
+administrator (`removable` per fact). `DELETE /workspace/me/memory/:factId`
+retracts through `forgetMemoryFact` with no conversation: own facts by their
+person, Channel and Organization facts by an administrator; a retraction marks
+every holder for the copy-sync lane. New `WorkspaceDO` RPC `reviewMemoryFacts`;
+contracts in `packages/contracts/src/memory.ts`.
+
+The desktop renders **What Rally remembers** in the Personal Channel
+(`scope === "individual"`), above the feed: own facts with a link to the
+source conversation, the horizon or *Expired*, and a Remove action; shared
+facts grouped by Organization and Channel below, with Remove for
+administrators. Verified in a real window under Xvfb. `state.md` moves to
+completed.
