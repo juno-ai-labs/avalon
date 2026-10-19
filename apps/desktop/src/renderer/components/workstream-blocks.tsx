@@ -1759,6 +1759,10 @@ export interface MessageMergeAction {
  *   message in a Channel is not called a "response".
  * - `verbatim` says the host drew the text as typed (kept line breaks, no
  *   model repairs), so the exports draw it the same way.
+ * - `rendered` is the text the host drew, when it differs from the stored
+ *   `text`: a Channel resolves typed @names into mention links before drawing.
+ *   The exports draw it, so a chip on screen is a chip in the file; Copy and
+ *   Speak keep the stored words.
  *
  * The row is always laid out, even empty: under a person's bubble it is the
  * slot that keeps the next turn off it (see `.human-message .message-actions`).
@@ -1768,6 +1772,7 @@ export function MessageActions({
   mentions = NO_MENTIONS,
   onMerge,
   onStartSubstream,
+  rendered,
   subject = 'response',
   telemetry,
   text,
@@ -1778,6 +1783,7 @@ export function MessageActions({
   mentions?: MessageMention[];
   onMerge?: MessageMergeAction;
   onStartSubstream?: () => void;
+  rendered?: { text: string; mentions: MessageMention[] };
   subject?: 'response' | 'message';
   /** A Channel's own message is in no Thread, so it reports no `workstreamId`. */
   telemetry?: { messageId: string; workstreamId?: string };
@@ -1815,12 +1821,12 @@ export function MessageActions({
         // sources a pill's popover holds are printed under it instead.
         content: <MarkdownBody
           citations={citations}
-          mentions={mentions}
+          mentions={rendered?.mentions ?? mentions}
           preserveLineBreaks={verbatim}
           rallyMentions={verbatim}
           still
           verbatim={verbatim}
-        >{text}</MarkdownBody>,
+        >{rendered?.text ?? text}</MarkdownBody>,
         // The file name slugs the first line the way the card *shows* it — a
         // saved image named `…-backlog-rightarrow-done` outlives the render
         // that repaired the text it pictures. Copy stays the stored bytes.
