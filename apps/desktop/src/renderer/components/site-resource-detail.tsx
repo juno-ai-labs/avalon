@@ -6,7 +6,7 @@ import React from 'react';
 import { flushSync } from 'react-dom';
 import type { DesktopSiteArtifactWindowRequest } from '../../common/desktop';
 
-import type { IconGroupAction } from '@rally/ui/components/icon-group';
+import type { DetailHeaderAction } from './detail-header-actions';
 import { useCopy } from '../lib/use-copy';
 import { useDetailHeaderActions } from './detail-header-actions';
 import { CopyButton, CopyStatus, copyStateLabel } from './copy-button';
@@ -43,6 +43,7 @@ export interface SiteArtifactTable {
 }
 
 export interface SiteResourceDetailProps {
+  editable?: boolean;
   resourceId: string;
   version: number;
   title: string;
@@ -135,6 +136,7 @@ async function stillWithin(take: () => Promise<string | null>): Promise<string |
 const HIDDEN = { x: 0, y: 0, width: 0, height: 0 };
 
 export function SiteResourceDetail({
+  editable = false,
   resourceId,
   version,
   title,
@@ -180,15 +182,6 @@ export function SiteResourceDetail({
   // before the old effect's cleanup runs, and must not show the old page.
   const [frame, setFrame] = React.useState<{ resourceId: string; url: string } | null>(null);
   const frameUrl = frame?.resourceId === resourceId ? frame.url : null;
-  /**
-   * The site's stored rows, in place of the page.
-   *
-   * A state rather than a panel among panels: the page *is* this detail, and
-   * everything else it can show is a departure from it. The composited view is
-   * torn down while this is on, because the pane it was measured against is
-   * not on screen to be covered.
-   */
-  const [showingData, setShowingData] = React.useState(false);
   // The page as it looked when a menu or dialog opened over it.
   const [snapshot, setSnapshot] = React.useState<{
     src: string;
@@ -218,13 +211,6 @@ export function SiteResourceDetail({
     setLoadedAccess(null);
     setAccessError(null);
     setPreviewShown(null);
-    // The data view goes with it. This element is not keyed on the resource, so
-    // the same instance is reconciled across a switch, and the control that
-    // turns this back off only exists for an artifact that keeps data: carried
-    // into one that does not, it would show that artifact's empty data view
-    // with no way back to the page.
-    setShowingData(false);
-
     let request = initialAccessRef.current;
     if (request?.resourceId !== resourceId || request.version !== version
       || request.openArtifact !== openArtifact) {
@@ -301,7 +287,7 @@ export function SiteResourceDetail({
   // Present when the artifact and its pane are both ready, and tear down when
   // the detail closes or the artifact changes — one live preview at a time.
   React.useEffect(() => {
-    if (!access || showingData) return undefined;
+    if (!access) return undefined;
     const bounds = measure();
     if (!bounds) return undefined;
     let cancelled = false;
@@ -340,7 +326,7 @@ export function SiteResourceDetail({
       setPreviewShown(null);
       void surface.close();
     };
-  }, [access, measure, mintAccess, occluded, paneCorner, resourceId, showingData, surface]);
+  }, [access, measure, mintAccess, occluded, paneCorner, resourceId, surface]);
 
   // Native content must remain clipped to its owning scroll viewport and
   // disappear behind nested DOM dialogs; Electron cannot infer either.
@@ -353,7 +339,7 @@ export function SiteResourceDetail({
     // holds the view hidden until the site's document is ready and then
     // reveals it at the last bounds it was sent. A dialog opened or a pane
     // moved during that load must already be reflected by then.
-    if (!access || previewShown === false || showingData || surface.framed) return undefined;
+    if (!access || previewShown === false || surface.framed) return undefined;
     let disposed = false;
     let hidden = false;
     let capturing = false;
@@ -422,7 +408,7 @@ export function SiteResourceDetail({
       overlays.disconnect();
       setSnapshot(null);
     };
-  }, [access, measure, occluded, previewShown, showingData, surface]);
+  }, [access, measure, occluded, previewShown, surface]);
 
   const acceptPin = React.useCallback(async (pin: ArtifactPickerPin): Promise<void> => {
     if (!annotationDraft || !pickingRef.current) return;
@@ -473,17 +459,14 @@ export function SiteResourceDetail({
    * their labels open is the host's call, since only it knows where its header
    * sits against the composited page below.
    */
-  const headerActions = React.useMemo((): IconGroupAction[] => [
-    ...(annotationDraft ? [{ key: 'comment-mode', className: 'annotation-mode-button', label: 'Comment mode', disabledReason: surface.framed ? 'Website comments require the Rally Mac app.' : undefined, icon: <IconPointerCollaboration aria-hidden="true" size={16} stroke={1.9} />, pressed: picking, disabled: Boolean(surface.framed) || previewShown !== true || showingData, onSelect: () => { if (!surface.framed) setPicking((value) => !value); } }] : []),
+  const headerActions = React.useMemo((): DetailHeaderAction[] => [
+    ...(annotationDraft ? [{ key: 'comment-mode', className: 'annotation-mode-button', label: 'Comment mode', disabledReason: surface.framed ? 'Website comments require the Rally Mac app.' : undefined, icon: <IconPointerCollaboration aria-hidden="true" size={16} stroke={1.9} />, pressed: picking, disabled: Boolean(surface.framed) || previewShown !== true, onSelect: () => { if (!surface.framed) setPicking((value) => !value); } }] : []),
     ...(access?.stateful ? [{
       key: 'stored-data',
-      // The name stays the same in both states: `pressed` is what says which
-      // one it is in, and a name that changes with it makes a screen reader
-      // announce the state twice.
       label: 'Stored data',
       icon: <IconDatabase aria-hidden="true" size={16} stroke={1.9} />,
-      pressed: showingData,
-      onSelect: () => setShowingData((showing) => !showing),
+      menu: <section aria-label="Stored data" data-title-menu-autofocus="" tabIndex={-1}><SiteDataPanel describeData={describeData} loadTable={loadTable} resourceId={resourceId} surface={surface} /></section>,
+      onSelect: () => undefined,
     }] : []),
     {
       key: 'new-window',
@@ -495,8 +478,12 @@ export function SiteResourceDetail({
         void mintAccess().then(
           async (navigation) => await surface.popOut({
             kind: 'site',
+            editable,
             resourceId,
             version,
+            canonicalUrl: navigation.canonicalUrl,
+            mode: navigation.mode,
+            stateful: navigation.stateful,
             artifactId: navigation.artifactId,
             url: navigation.openUrl,
             title,
@@ -525,19 +512,16 @@ export function SiteResourceDetail({
         async (navigation) => await surface.openExternal(navigation.openUrl),
       ),
     },
-  ], [access, copy, copyState, mintAccess, resourceId, showingData, surface, title, version, annotationDraft, picking, previewShown]);
+  ], [access, copy, copyState, mintAccess, resourceId, surface, title, version, annotationDraft, picking, previewShown, describeData, loadTable, editable]);
   const orderedHeaderActions = React.useMemo(() => [...headerActions.filter((action) => action.key !== 'comment-mode'), ...headerActions.filter((action) => action.key === 'comment-mode')], [headerActions]);
   useDetailHeaderActions(orderedHeaderActions);
 
   const editingAnnotation = annotationDraft?.pins.find((p) => p.id === editingPin)?.annotation;
   return (
     <div className="site-detail">
-      <CopyStatus state={copyState} />
+      <CopyStatus state={copyState} visible />
       {pickError && <p role="alert">{pickError}</p>}
 
-      {showingData && access
-        ? <SiteDataPanel describeData={describeData} loadTable={loadTable} resourceId={resourceId} surface={surface} />
-        : (
           <div className="site-detail-pane" data-testid="site-preview-pane" ref={paneRef}>
             {accessError && <EmptyState description={accessError} title="This site could not be opened" />}
             {!accessError && previewShown === null && <p className="site-detail-status">Opening…</p>}
@@ -567,7 +551,6 @@ export function SiteResourceDetail({
               />
             )}
           </div>
-        )}
       {editingPin && annotationDraft?.pins.some((p) => p.id === editingPin) && <div className="annotation-site-comment" role="dialog" aria-label="Comment on site selection" data-state="open" style={{left:commentAnchor.x,top:commentAnchor.y}}>
         <q>{editingAnnotation ? annotationQuote(editingAnnotation,title).slice(0,120) : ''}</q>
         <textarea autoFocus aria-label="Comment on site selection" placeholder="Ask Rally to change this…" value={annotationDraft.pins.find((p) => p.id === editingPin)?.annotation.comment ?? ''} onChange={(e) => annotationDraft.comment(editingPin,e.target.value)} onKeyDown={(e) => { if(isComposingKeyEvent(e.nativeEvent))return; if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); setEditingPin(null); } }} />

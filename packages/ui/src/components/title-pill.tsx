@@ -527,7 +527,7 @@ export function TitleMenuButton({ children, onSelect }: { children: ReactNode; o
 export function TitleMenuItem({ children, danger = false, disabled, icon, onSelect }: {
   children: ReactNode; danger?: boolean; disabled?: boolean; icon: ReactNode; onSelect: () => void;
 }): React.JSX.Element {
-  return <DropdownMenu.Item className={clsx('menu-item title-menu-item', danger && 'menu-item-danger')} disabled={disabled} onSelect={onSelect}>
+  return <DropdownMenu.Item className={clsx('menu-item title-menu-item title-menu-action', danger && 'menu-item-danger')} disabled={disabled} onSelect={onSelect}>
     {icon}{children}
   </DropdownMenu.Item>;
 }
@@ -548,8 +548,8 @@ export function TitlePillAction({ children, label, onClick, tooltipSide }: {
 }
 
 /** A row of square actions under the menu's header, the most used things done to it. */
-export function ActionTiles({ children }: { children: ReactNode }): React.JSX.Element {
-  return <div className="title-menu-tiles" role="group" aria-label="Actions">{children}</div>;
+export function ActionTiles({ children, className }: { children: ReactNode; className?: string }): React.JSX.Element {
+  return <div className={clsx('title-menu-tiles', className)} role="group" aria-label="Actions">{children}</div>;
 }
 
 export function ActionTile({ icon, label, onSelect, disabled }: {

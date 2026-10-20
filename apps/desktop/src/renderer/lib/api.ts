@@ -334,7 +334,7 @@ export function mapViewer(viewer: z.infer<typeof WireViewerSchema>): Participant
   return { ...mapUser(viewer.user), viewing: true };
 }
 
-function mapResourceVersion(revision: WireResourceRevision): ResourceVersion {
+export function mapResourceVersion(revision: WireResourceRevision): ResourceVersion {
   return {
     version: revision.version,
     capturedAt: revision.createdAt,

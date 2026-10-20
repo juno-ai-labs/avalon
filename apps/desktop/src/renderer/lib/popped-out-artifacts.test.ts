@@ -82,6 +82,7 @@ describe('refreshing detached artifact windows', () => {
       openSiteArtifact: vi.fn(async () => ({
         artifactId: 'artifact-site',
         openUrl: 'https://artifact-site-g.rallyusercontent.test/__rally/open#fresh',
+        canonicalUrl: 'https://artifact-site-g.rallyusercontent.test', mode: 'active' as const, stateful: true,
       })),
       resources: [site],
     });
@@ -91,6 +92,7 @@ describe('refreshing detached artifact windows', () => {
       version: 3,
       artifactId: 'artifact-site',
       url: 'https://artifact-site-g.rallyusercontent.test/__rally/open#fresh',
+      canonicalUrl: 'https://artifact-site-g.rallyusercontent.test', mode: 'active' as const, stateful: true,
       title: site.title,
     });
   });

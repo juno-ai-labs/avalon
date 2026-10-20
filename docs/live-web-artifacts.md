@@ -37,7 +37,7 @@ exists.
 | `packages/agent-harness/src/prompts/document-generation.ts` | The standing policy's `# Sites` section: the trigger and the manners, and nothing else. |
 | `packages/agent-harness/src/building-live-sites-skill.ts` | The loadable skill that carries the build craft, scoped to the Terminal plugin. |
 | `apps/api/src/services/artifact-open-service.ts` | The identity-bearing door into an artifact origin: the open-time visibility check and the fragment-carrying URL it mints. Public reads bypass it and remain anonymous. |
-| `apps/desktop/src/renderer/components/site-resource-detail.tsx` | The site detail: the pane it measures and hands over, the actions it puts in its host's header, and the Data view. |
+| `apps/desktop/src/renderer/components/site-resource-detail.tsx` | The site detail: the pane it measures and hands over, the actions and lazy menu levels it contributes to its host, and the Stored data pop-out. |
 | `apps/desktop/src/renderer/components/detail-header-actions.tsx` | How a detail hands its actions to the header of the rail or panel showing it, as data the host draws as its own. Not artifact-specific: it is what keeps this detail's controls out of the page it is showing. |
 | `apps/desktop/src/main/artifact-viewers.ts` | What the desktop will load into an artifact surface, the preview rectangle's clamp and corner, the shared isolation contract, the activation gate on leaving the origin, and the overlay rule. |
 
@@ -599,6 +599,25 @@ The selector and trust boundaries are owned by
 [artifact annotations](artifact-annotations.md).
 
 ## Changelog
+
+### 2026-10-19 — Stored data lives in the artifact title-menu pop-out
+
+**What changed:** Stateful sites contribute a Stored data menu level through
+`DetailHeaderAction.menu`. The table picker, rows and CSV export mount only
+when that level opens. The site preview stays mounted; the existing overlay
+snapshot and native-view hiding behavior keeps the pop-out above it.
+
+**Why:** Stored data belongs with the artifact's other menu sections. Replacing
+the live page required tearing down and reopening a preview just to inspect its
+rows, losing the original in-page state. A shared detail-menu primitive lets a
+detail supply its own section without moving its data-fetching logic into the
+panel host or duplicating it for detached windows.
+
+**Consequences:** Closing the menu or going Back unmounts the table view and
+restores the same preview without minting new access. Table selection and CSV
+copy keep using the existing data APIs; authorization and row retrieval are
+unchanged. Wide tables scroll inside the pop-out.
+
 
 
 ### 2026-10-18 — An overlay covers the page instead of blanking it

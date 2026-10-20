@@ -5,12 +5,14 @@ import type { WindowBounds } from './main-window-state';
 export interface ArtifactWindowState {
   id: string;
   workspaceId: string;
+  region?: string;
   userId: string;
   kind: 'site' | 'generated';
   resourceId: string;
   version: number;
   title: string;
   mimeType?: string;
+  editable?: boolean;
   annotationScope?: string;
   bounds: WindowBounds;
   displayId: number;
