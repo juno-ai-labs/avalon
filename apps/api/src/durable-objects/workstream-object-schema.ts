@@ -26,7 +26,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 78;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 80;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3554,6 +3554,47 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     description: "compact visible conversation projection and historical turn backfill",
     statements: CONVERSATION_VIEW_SOURCE_MIGRATION,
   },
+  {
+    version: 79,
+    description: "offer marking a completed conversation resolved",
+    statements: [
+      `ALTER TABLE conversation_suggestions RENAME TO conversation_suggestions_before_resolution`,
+      `CREATE TABLE conversation_suggestions (
+        suggestion_id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('merge_up', 'start_breakout', 'mark_resolved')),
+        judged_turn_id TEXT NOT NULL,
+        judged_turn_sequence INTEGER NOT NULL CHECK (judged_turn_sequence >= 0),
+        run_id TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('open', 'accepted', 'dismissed', 'expired', 'withdrawn')),
+        draft_status TEXT NOT NULL CHECK (draft_status IN ('pending', 'ready', 'failed')),
+        draft_text TEXT,
+        draft_subject TEXT,
+        target_kind TEXT CHECK (target_kind IS NULL OR target_kind IN ('thread', 'channel')),
+        target_id TEXT,
+        target_title TEXT,
+        decision_choice TEXT NOT NULL,
+        decision_confidence REAL NOT NULL CHECK (decision_confidence >= 0 AND decision_confidence <= 1),
+        decision_model TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        resolved_at INTEGER,
+        resolved_by_user_id TEXT,
+        resolution TEXT CHECK (resolution IS NULL OR resolution IN ('accepted', 'dismissed', 'ignored'))
+      ) STRICT`,
+      `INSERT INTO conversation_suggestions SELECT * FROM conversation_suggestions_before_resolution`,
+      `DROP TABLE conversation_suggestions_before_resolution`,
+      `CREATE UNIQUE INDEX conversation_suggestions_one_per_turn ON conversation_suggestions (judged_turn_id)`,
+      `CREATE INDEX conversation_suggestions_pacing ON conversation_suggestions (kind, status, resolved_at)`,
+    ],
+  },
+
+  {
+    version: 80,
+    description: "retain resolution acceptance intent across parent RPCs",
+    statements: [
+      `ALTER TABLE conversation_suggestions ADD COLUMN accepting_by_user_id TEXT`,
+    ],
+  },
+
 ];
 
 /**

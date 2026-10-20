@@ -37,8 +37,8 @@ import { UserTimezoneSchema, type UserTimezone } from "@rally/contracts";
 
 type SessionImportRun = z.infer<typeof SessionImportRunSchema>;
 import {
-  ConversationSuggestionDismissResultSchema,
-  type ConversationSuggestionDismissResult,
+  ConversationSuggestionActionResultSchema,
+  type ConversationSuggestionActionResult,
   AutomationDetailSchema as WireAutomationDetailSchema,
   AutomationExecutionPrincipalClaimSchema,
   AutomationRunSchema as WireAutomationRunSchema,
@@ -2326,11 +2326,19 @@ export class RallyApi {
     });
   }
 
+  /** Mark the conversation resolved through its completion suggestion. */
+  async resolveSuggestion(parentId: string, substreamId: string, suggestionId: string): Promise<ConversationSuggestionActionResult> {
+    return this.request(
+      `/conversations/${encodeURIComponent(parentId)}/substreams/${encodeURIComponent(substreamId)}/suggestions/${encodeURIComponent(suggestionId)}/resolve`,
+      { method: 'POST', schema: ConversationSuggestionActionResultSchema },
+    );
+  }
+
   /** Dismiss a conversation suggestion for everyone (docs/conversation-suggestions.md). */
-  async dismissSuggestion(parentId: string, substreamId: string, suggestionId: string): Promise<ConversationSuggestionDismissResult> {
+  async dismissSuggestion(parentId: string, substreamId: string, suggestionId: string): Promise<ConversationSuggestionActionResult> {
     return this.request(
       `/conversations/${encodeURIComponent(parentId)}/substreams/${encodeURIComponent(substreamId)}/suggestions/${encodeURIComponent(suggestionId)}/dismiss`,
-      { method: 'POST', schema: ConversationSuggestionDismissResultSchema },
+      { method: 'POST', schema: ConversationSuggestionActionResultSchema },
     );
   }
 

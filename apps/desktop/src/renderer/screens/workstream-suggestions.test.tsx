@@ -19,6 +19,7 @@ const api = vi.hoisted(() => ({
   getWorkspaceMembers: vi.fn(),
   getConversation: vi.fn(),
   dismissSuggestion: vi.fn(),
+  resolveSuggestion: vi.fn(),
   mergeConversation: vi.fn(),
   mergeChannels: vi.fn(),
 }));
@@ -56,6 +57,7 @@ vi.mock('../lib/use-transcript-follow', () => ({
 }));
 
 import { WorkstreamScreen } from './workstream';
+import { setCachedWorkstreams } from '../lib/workstreams-cache';
 import { useUiStore } from '../lib/ui-store';
 import { workstreamDraftKey } from '../lib/draft-keys';
 import { readDraftText, clearAllDrafts } from '../lib/draft-cache';
@@ -184,6 +186,45 @@ describe('the suggestion chip', () => {
   });
   afterEach(() => { vi.restoreAllMocks(); });
 
+
+  it('hides a completion chip when another action already resolved the Thread', async () => {
+    renderThread(twoTurns, [suggestion({ kind: 'mark_resolved', target: null, draft: { status: 'ready', text: null, subject: null } })], (client) => {
+      setCachedWorkstreams(client, [{ ...boot(threadId, 'Pricing', twoTurns), resolved: true }]);
+    });
+    await screen.findByText(judged);
+    expect(screen.queryByRole('group', { name: 'Suggestion: mark resolved' })).toBeNull();
+  });
+
+  it('keeps dismissal available but disables resolution in an archived conversation', async () => {
+    renderThread(twoTurns, [suggestion({ kind: 'mark_resolved', target: null, draft: { status: 'ready', text: null, subject: null } })], (client) => {
+      client.setQueryData<WorkstreamDetail>(['workstream', threadId], (held) => held ? { ...held, archivedAt: '2026-10-20T10:00:00.000Z' } : held);
+    });
+    const chip = await screen.findByRole('group', { name: 'Suggestion: mark resolved' });
+    expect(within(chip).getByRole('button', { name: 'Mark resolved' })).toBeDisabled();
+    fireEvent.click(within(chip).getByRole('button', { name: 'Dismiss suggestion' }));
+    expect(api.dismissSuggestion).toHaveBeenCalled();
+    expect(api.resolveSuggestion).not.toHaveBeenCalled();
+  });
+
+  it.each(['thread', 'breakout'])('marks a %s resolved from its suggestion without drafting or merging', async (kind) => {
+    const row = suggestion({ kind: 'mark_resolved', target: null, draft: { status: 'ready', text: null, subject: null } });
+    api.resolveSuggestion.mockResolvedValue({ suggestionId: row.suggestionId, status: 'accepted', replayed: false });
+    if (kind === 'thread') renderThread(twoTurns, [row]);
+    else renderBreakout(twoTurns, [row]);
+    const chip = await screen.findByRole('group', { name: 'Suggestion: mark resolved' });
+    fireEvent.click(within(chip).getByRole('button', { name: 'Mark resolved' }));
+    await waitFor(() => expect(api.resolveSuggestion).toHaveBeenCalledWith(threadId, kind === 'thread' ? '0' : breakoutId, row.suggestionId));
+    expect(screen.queryByRole('group', { name: 'Suggestion: mark resolved' })).toBeNull();
+    expect(api.mergeConversation).not.toHaveBeenCalled();
+  });
+
+  it('restores a resolve suggestion when the action fails', async () => {
+    api.resolveSuggestion.mockRejectedValue(new Error('offline'));
+    renderBreakout(twoTurns, [suggestion({ kind: 'mark_resolved', target: null, draft: { status: 'ready', text: null, subject: null } })]);
+    fireEvent.click(within(await screen.findByRole('group', { name: 'Suggestion: mark resolved' })).getByRole('button', { name: 'Mark resolved' }));
+    await waitFor(() => expect(api.resolveSuggestion).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole('group', { name: 'Suggestion: mark resolved' })).toBeInTheDocument();
+  });
 
   it.each([
     { name: 'replaced', channels: [{ id: '00000000-0000-7000-8000-000000000922', name: 'Board' }] },

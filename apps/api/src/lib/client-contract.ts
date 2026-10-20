@@ -7,6 +7,7 @@ import {
   INDIVIDUAL_SPACE_CLIENT_CONTRACT,
   MINIMUM_SERVED_CLIENT_CONTRACT,
   SESSION_IMPORT_CLIENT_CONTRACT,
+  RESOLUTION_SUGGESTIONS_CLIENT_CONTRACT,
   RALLY_HEADERS,
   readRallyHeader,
 } from "@rally/contracts/http-headers";
@@ -127,4 +128,9 @@ export function clientReadsPrivateChannelMerges(header: ClientRequestHeaders): b
 function clientReads(header: ClientRequestHeaders, contract: number): boolean {
   if (readRallyHeader(header, RALLY_HEADERS.CLIENT_CONTRACT) === undefined && header("origin") === undefined) return true;
   return declaredClientContract(header) >= contract;
+}
+
+/** Only these builds can decode the resolution kind inside a conversation snapshot. */
+export function clientReadsResolutionSuggestions(header: ClientRequestHeaders): boolean {
+  return clientReads(header, RESOLUTION_SUGGESTIONS_CLIENT_CONTRACT);
 }

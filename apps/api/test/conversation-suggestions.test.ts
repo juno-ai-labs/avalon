@@ -121,13 +121,13 @@ describe("observeTurnDisposition", () => {
     expect(request.state.judged_message.merged_from).toEqual({ kind: "breakout", title: "Demo schedule" });
   });
 
-  it("skips an incoming merge with no eligible Channel without calling the provider", async () => {
+  it("still classifies an incoming merge with no eligible Channel for resolution", async () => {
     const { storage } = conversation([twoTurns[0]!, mergedResult]);
     const fetcher = answering("worth_carrying_up", 0.91);
     expect(await observeTurnDisposition(observation(storage, {
       substreamId: "0", runId: "merge:turn-2", readParent: async () => null, fetch: fetcher,
-    }))).toEqual({ outcome: "skipped", gate: "nothing_offerable" });
-    expect(fetcher).not.toHaveBeenCalled();
+    }))).toMatchObject({ outcome: "judged", code: "not_offerable", suggestion: null });
+    expect(fetcher).toHaveBeenCalledTimes(1);
     expect(storage.open()).toEqual([]);
   });
 
@@ -162,6 +162,59 @@ describe("observeTurnDisposition", () => {
     expect(request.state.judged_message).not.toHaveProperty("merged_from");
     expect(request.state.recent_messages).toHaveLength(1);
     expect(request.state.conversation.messages_before).toBe(1);
+  });
+
+  it("creates a ready resolution suggestion without a draft and accepts it in place", async () => {
+    const { storage } = conversation(twoTurns);
+    const input = observation(storage, { fetch: answering("mark_resolved", 0.94, "update") });
+    const result = await observeTurnDisposition(input);
+    expect(result).toMatchObject({ outcome: "judged", code: "mark_resolved", confidence: 0.94,
+      suggestion: { kind: "mark_resolved", status: "open", draft_status: "ready", draft_text: null, target_id: null } });
+    expect(storage.judgementForRun(runId)).toMatchObject({ code: "mark_resolved", failure_kind: null });
+    expect(storage.open()).toHaveLength(1);
+    expect(storage.resolveCompleted(userId, 1_700_000_000_001)).toMatchObject([{ status: "accepted", resolution: "accepted", resolved_by_user_id: userId }]);
+    expect(storage.open()).toEqual([]);
+    expect(await observeTurnDisposition(input)).toEqual({ outcome: "skipped", gate: "already_judged" });
+    expect(input.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["0", "00000000-0000-7000-8000-000000000024"])("offers resolution without a merge parent in %s", async (substreamId) => {
+    const { storage } = conversation(twoTurns);
+    const result = await observeTurnDisposition(observation(storage, {
+      substreamId, readParent: async () => null, fetch: answering("mark_resolved", 0.9),
+    }));
+    expect(result).toMatchObject({ outcome: "judged", suggestion: { kind: "mark_resolved", draft_status: "ready" } });
+  });
+
+  it("does not write a suggestion when resolution occurs during classification", async () => {
+    const { storage } = conversation(twoTurns);
+    let resolved = false;
+    const answer = answering("mark_resolved", 0.9);
+    const result = await observeTurnDisposition(observation(storage, {
+      readResolved: async () => resolved,
+      fetch: async (...args) => { resolved = true; return answer(...args); },
+    }));
+    expect(result).toMatchObject({ outcome: "judged", code: "already_resolved", suggestion: null });
+    expect(storage.open()).toEqual([]);
+  });
+
+  it.each(["worth_carrying_up", "side_question_worth_a_breakout"])("keeps %s offerable after the shared resolution bit is set", async (choice) => {
+    const { storage } = conversation(twoTurns);
+    const readResolved = vi.fn(async () => true);
+    const result = await observeTurnDisposition(observation(storage, {
+      substreamId: "0", readResolved, fetch: answering(choice, 0.95),
+    }));
+    expect(result).toMatchObject({ outcome: "judged", suggestion: { kind: choice === "worth_carrying_up" ? "merge_up" : "start_breakout" } });
+    expect(readResolved).not.toHaveBeenCalled();
+  });
+
+  it("checks shared resolution once and records an already resolved completion without a chip", async () => {
+    const { storage } = conversation(twoTurns);
+    const readResolved = vi.fn(async () => true);
+    const result = await observeTurnDisposition(observation(storage, { readResolved, fetch: answering("mark_resolved", 0.94) }));
+    expect(result).toMatchObject({ outcome: "judged", code: "already_resolved", suggestion: null });
+    expect(readResolved).toHaveBeenCalledTimes(1);
+    expect(storage.judgementForRun(runId)?.code).toBe("already_resolved");
   });
 
   it("records a continue_here answer and writes no row", async () => {
@@ -202,7 +255,6 @@ describe("observeTurnDisposition", () => {
     expect(await observeTurnDisposition(observation(storage, { fetch: fetcher, backgroundAgent: true }))).toEqual({ outcome: "skipped", gate: "background_agent" });
     expect(await observeTurnDisposition(observation(storage, { fetch: fetcher, identity: { title: "t", description: "", scope: "workspace", archived_at: 5, system_kind: null } }))).toEqual({ outcome: "skipped", gate: "archived" });
     expect(await observeTurnDisposition(observation(storage, { fetch: fetcher, identity: { title: "t", description: "", scope: "workspace", archived_at: null, system_kind: "digest" } }))).toEqual({ outcome: "skipped", gate: "system_conversation" });
-    expect(await observeTurnDisposition(observation(storage, { fetch: fetcher, readParent: async () => null }))).toEqual({ outcome: "skipped", gate: "nothing_offerable" });
     expect(fetcher).not.toHaveBeenCalled();
   });
 
@@ -212,8 +264,8 @@ describe("observeTurnDisposition", () => {
       { actor: "system", messageType: "system", text: "Merged into Pricing", structured: JSON.stringify({ type: "conversation_merged_into", mergedByUserId: userId }) },
     ]);
     const fetcher = answering("worth_carrying_up", 0.91);
-    expect(await observeTurnDisposition(observation(storage, { fetch: fetcher }))).toEqual({ outcome: "skipped", gate: "already_carried_up" });
-    expect(fetcher).not.toHaveBeenCalled();
+    expect(await observeTurnDisposition(observation(storage, { fetch: fetcher }))).toMatchObject({ outcome: "judged", code: "already_carried_up", suggestion: null });
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it("records a positive that lands behind three newer messages as late and shows nothing", async () => {
