@@ -58,9 +58,9 @@ import {
   connectorConnectionCardInput,
   connectorConnectionCardProvider,
   connectorConnectionCardSelectionKey,
-  isUnrecognizedConnectorConnectionCard,
   connectorResourceAuthorizationRequest,
 } from './connector-mentions';
+import { isUnrecognizedConnectorConnectionCard } from '../lib/connector-connection-card';
 import { markdownLineKinds } from '@rally/contracts/markdown-code';
 import { normalizeModelMarkdown, normalizeModelText } from '@rally/contracts/model-markdown';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
@@ -2890,7 +2890,7 @@ export function MessageBlock({
             {...(onConnectorConnected ? { onConnected: onConnectorConnected } : {})}
             request={connectionCard}
           />
-        ) : connectorConnectionCards && (connectionCard || isUnrecognizedConnectorConnectionCard(message)) ? (
+        ) : connectorConnectionCards && isUnrecognizedConnectorConnectionCard(message) ? (
           <ConnectorConnectionUpdateCard />
         ) : <ToolBlock message={message} />}
       </div>
