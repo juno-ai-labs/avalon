@@ -199,7 +199,7 @@ for one person, newest first:
   replies above its read floor; no window scans over read history. Pushes
   restrict these seeks to the changed conversation before pagination.
   The author and nonparticipants receive no reply activity; AI and tool traffic
-  never becomes `new_message`. Builds before client contract 10 omit these rows;
+  never becomes `new_message`. Builds before client contract 11 omit these rows;
 - every thread and breakout somebody else started, read from its own
   directory row (`channels` / `breakouts`: `created_by_user_id`,
   `source_created_at`) rather than from an event; and
