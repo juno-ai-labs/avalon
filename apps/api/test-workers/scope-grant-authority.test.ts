@@ -115,6 +115,19 @@ it("admits and shares an independent child without granting Main or parent mutat
   expect(await room().readScopeAccess({ userId: recipientId, target: child })).toEqual({ allowed: false, reason: "relationship_required" });
 });
 
+it("lets guests resolve only their granted conversation", async () => {
+  await seedActorGrant(child);
+  await room().mutateScopeGrant(mutation());
+  expect(await room().resolveConversation({ workspaceId, parentId, substreamId: childId, userId: recipientId }))
+    .toEqual({ outcome: "resolved" });
+  expect(await room().resolveConversation({ workspaceId, parentId, substreamId: asSubstreamId("0"), userId: recipientId }))
+    .toEqual({ outcome: "forbidden" });
+  await seedActorGrant(main);
+  await room().mutateScopeGrant(mutation(main));
+  expect(await room().resolveConversation({ workspaceId, parentId, substreamId: asSubstreamId("0"), userId: recipientId }))
+    .toEqual({ outcome: "resolved" });
+});
+
 it("refuses a legacy Main migration over an existing parent grant ledger", async () => {
   await seedActorGrant(parent);
   expect(await room().beginMainParticipantMigration({ workspaceId,parentId })).toEqual({ status:"conflict" });
