@@ -685,7 +685,11 @@ describe("provider-wide webhook ingestion", () => {
     expect(queue.messages).toHaveLength(1);
   });
 
-  it("lets GitHub deletion override a recoverable status without creating an activity", async () => {
+  it.each([
+    ["deleted", "disabled"],
+    ["suspend", "needs_reconnect"],
+    ["unsuspend", "healthy"],
+  ])("applies GitHub %s authorization state without creating an activity", async (action, status) => {
     const database = new FakeDatabase();
     database.connections.push(await connection({
       id: CONNECTION_ONE,
@@ -696,11 +700,11 @@ describe("provider-wide webhook ingestion", () => {
       ownerUserId: USER_ONE,
       credentials: { installationId: "42", accessToken: "personal-token" },
     }));
-    database.connections[0]!.status = "needs_reconnect";
+    database.connections[0]!.status = action === "unsuspend" ? "needs_reconnect" : "error";
     const bucket = new FakeBucket();
     const queue = new FakeQueue();
     const service = serviceFor(database, bucket, queue);
-    const rawBody = JSON.stringify({ action: "deleted", installation: { id: 42 } });
+    const rawBody = JSON.stringify({ action, installation: { id: 42 } });
     const headers = new Headers({
       "x-github-delivery": "github-installation-deleted-1",
       "x-github-event": "installation",
@@ -712,7 +716,12 @@ describe("provider-wide webhook ingestion", () => {
       duplicate: false,
       activityCount: 0,
     });
-    expect(database.connections[0]).toMatchObject({ status: "disabled" });
+    expect(database.connections[0]).toMatchObject({ status });
+    if (action === "suspend") {
+      expect(JSON.parse(database.connections[0]!.error_json!)).toMatchObject({
+        code: "github_installation_suspended",
+      });
+    }
     expect(database.activities).toHaveLength(0);
     expect(queue.messages).toHaveLength(0);
   });

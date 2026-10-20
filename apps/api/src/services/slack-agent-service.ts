@@ -3117,7 +3117,7 @@ export class SlackAgentService {
     await this.env.DB.prepare(
       `UPDATE connector_connections
        SET status = 'needs_reconnect', error_json = ?, updated_at = ?
-       WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace' AND status = 'healthy'`,
+       WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace' AND status IN ('healthy', 'error')`,
     ).bind(JSON.stringify({
       code: "slack_bot_scope_missing",
       message: `Slack workspace authorization needs reconnect (${reason})`,

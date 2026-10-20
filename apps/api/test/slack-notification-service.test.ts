@@ -325,10 +325,11 @@ describe("workspace Slack mention delivery", () => {
     }));
   });
 
-  it("skips Slack when the installation has not yet received the lookup scope", async () => {
+  it.each(["healthy", "error"])("marks a %s installation for reconnect when Slack refuses the lookup scope", async (status) => {
     const database = migratedDatabase();
     const env = environment(database);
     await seed(database, env, false);
+    database.prepare("UPDATE connector_connections SET status = ? WHERE id = ?").run(status, connectionId);
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const request: typeof fetch = vi.fn(async () => response({ ok: false, error: "missing_scope" }));
 
