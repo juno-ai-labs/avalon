@@ -34,6 +34,8 @@ import {
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it } from "vitest";
 
+import pushDevicesMigration from "../../../packages/db/migrations/0107_user_push_devices.sql?raw";
+import { splitSqlStatements } from "../src/lib/sql-statements";
 import type { HonoAppEnv } from "../src/env";
 import { noteChangedConnection, workspaceRealtimeInvalidation } from "../src/middleware/workspace-realtime";
 import { hostedParentStub } from "./helpers/hosted-parent";
@@ -267,6 +269,7 @@ beforeEach(async () => {
     ...[owner, member, outsider].map((userId) => env.DB.prepare(
       `INSERT INTO workspace_members (workspace_id, user_id, status, role) VALUES (?, ?, 'active', 'member')`,
     ).bind(workspaceId, userId)),
+    env.DB.prepare(`CREATE TABLE users (id TEXT PRIMARY KEY)`),
     env.DB.prepare(`CREATE TABLE sessions (workspace_incarnation TEXT DEFAULT 'existing-member', id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL, workspace_id TEXT NOT NULL, region TEXT NOT NULL, revoked_at TEXT,
       expires_at TEXT NOT NULL, impersonator_user_id TEXT)`),
@@ -275,6 +278,7 @@ beforeEach(async () => {
        VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`,
     ).bind(`session-${userId}`, userId, workspaceId)),
   ]);
+  await env.DB.batch(splitSqlStatements(pushDevicesMigration).map((sql) => env.DB.prepare(sql)));
   await organization().initializeWorkspace(workspaceId, "wnam");
   await runInDurableObject(organization(), (_instance, state) => {
     for (const parentId of [openChannel, privateChannel]) {
