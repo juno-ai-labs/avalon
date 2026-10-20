@@ -39,6 +39,18 @@ a thread or a breakout opens, or who owns the right panel.
 
 ## How it works
 
+### Electron navigation history
+
+The leftmost visible pane header carries Back and Forward before its breadcrumb,
+as one neutral two-mark liquid glass bridge with Tabler chevrons. The desktop
+shell's `NavigationHistoryProvider` supplies the shared header's leading slot;
+the browser host leaves it empty. Buttons traverse HashRouter's existing entries,
+including query parameters and location state. PUSH drops the forward branch,
+REPLACE keeps it, and POP moves the cursor. Unavailable directions are disabled.
+The cursor belongs to the shell, so changing the pane that draws the controls
+does not reset it. A new shell starts at the current entry with no forward visits
+recorded; history is not persisted separately.
+
 ### The sidebar
 
 One `ResizableSidebar` on the left, at the width in `useUiStore.sidebarWidth`
@@ -520,6 +532,22 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-19 — Electron history controls before the breadcrumb
+
+**What changed:** The leftmost header offers Back and Forward in a two-icon
+liquid glass bridge. The shell owns the history cursor and passes the controls
+through the shared header's leading slot.
+
+**Why:** The product asked for direct history navigation beside the breadcrumb.
+Reusing HashRouter preserves route queries and expansion state; a separate
+resource stack would lose those details and duplicate the router's behavior.
+The browser keeps its existing navigation controls.
+
+**Consequences:** Split panes show the controls only in their leftmost header,
+and an expanded resource panel carries them when it covers its conversation.
+`navigation-history.test.tsx` exercises traversal, replacement and branching
+against HashRouter and the browser history API.
 
 ### 2026-10-19 — Open Channels at the server read waterline
 

@@ -1,3 +1,4 @@
+import { NavigationHistoryProvider } from './navigation-history';
 import { AccessRequestDialog } from './access-request-dialog';
 import { useAccessRequests, useDecideAccessRequest } from '../lib/access-requests';
 import type { WorkspaceAttention } from '@rally/contracts';
@@ -547,7 +548,9 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           {switchingWorkspace ? `Opening ${switchingWorkspace.name}…` : ''}
         </span>
         <main className="main-pane" inert={navigationSheetOpen}>
-          <PhoneHeaderContext value={windowSurface ? null : phoneHeader}>{children}</PhoneHeaderContext>
+          <NavigationHistoryProvider enabled={host === 'desktop'}>
+            <PhoneHeaderContext value={windowSurface ? null : phoneHeader}>{children}</PhoneHeaderContext>
+          </NavigationHistoryProvider>
         </main>
       </div>
       {api && <SearchModal key={`${workspace.id}:${workspace.currentUser.id}`} workspaceId={`${workspace.id}:${workspace.currentUser.id}`}
