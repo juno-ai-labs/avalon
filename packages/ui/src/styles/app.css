@@ -9133,7 +9133,7 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .merge-message-who { align-items: center; display: inline-flex; gap: 4px; }
 .merge-message-who .avatar { height: 16px; width: 16px; }
 .merge-message-for { margin: 0 2px; }
-.merge-message-quote { align-items: center; border-inline-start: 2px solid var(--av-sys-color-border-strong); color: color-mix(in srgb, var(--av-sys-color-text-muted) 60%, transparent); display: flex; font-size: 12px; gap: 6px; line-height: 1.5; max-width: 520px; min-width: 0; padding-inline-start: 10px; }
+.merge-message-quote { align-items: center; border-inline-start: 2px solid var(--av-sys-color-border-strong); color: var(--av-sys-color-text-muted); display: flex; font-size: 12px; gap: 6px; line-height: 1.5; max-width: 520px; min-width: 0; padding-inline-start: 10px; }
 .merge-message-quote > svg { flex: none; }
 .merge-message-quote > span, .merge-message-quote > button { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .merge-message-quote > button { background: transparent; color: inherit; font: inherit; min-width: 0; padding: 0; text-align: start; }
