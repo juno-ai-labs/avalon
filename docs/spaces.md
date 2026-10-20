@@ -515,6 +515,10 @@ A message is an author (`rally`, or a `member` by user id), a markdown body
 and a time, in `space_messages` (WorkspaceDO migration 104). Nothing in the
 mechanism knows what a message is for.
 
+- **Posting joins the author.** A member who posts a Channel message becomes a
+  participant of that Channel. Starting a thread from the Channel composer also
+  joins its author to the Channel; it remains a separate participant of its own
+  thread. Rally messages do not subscribe anyone.
 - **Posting.** `postMessage(spaceId, draft, postedAt)` writes one, and
   `postMessages` maps it over a list. A draft may carry a `key`; the message id
   is then derived from the Channel and the key, so the same key posts once and
@@ -1996,6 +2000,23 @@ while Spaces are not open, and closing the cutover queues it again when a
 member is still unseated.
 
 ## Changelog
+
+### 2026-10-20 — Posting is the participation action
+
+**What changed:** A member posting a Channel message, or starting a thread from
+its composer, is seated in that Channel through the existing membership primitive.
+Thread and breakout message admission already seats its author independently.
+
+**Why:** Participation is the notification subscription. A person contributing
+should receive later replies without a separate join action or author-history rule.
+
+**Considered and rejected:** Deriving subscriptions from every past message would
+duplicate membership and make leaving ambiguous. The ordinary participant row is
+the durable subscription, and leaving removes it normally.
+
+**Consequences:** Channel membership does not grant participation in other threads.
+Rally messages do not join any user; message retries do not rejoin somebody who left.
+
 
 ### 2026-10-16: The Channel waterline counts news of any kind
 

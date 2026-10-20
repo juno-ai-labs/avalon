@@ -16,7 +16,7 @@ type ActivityEventEffect = Extract<ConversationEffect, { kind: "activity_event" 
  * still checks at read time that the viewer may list the breakout
  * (`workspace-activity-feed.ts`, `docs/digests.md`).
  */
-export function breakoutMentionActivity(
+export function breakoutMessageActivity(
   effect: ConversationEffect,
   substreamId: string,
 ): ActivityEventEffect | null {

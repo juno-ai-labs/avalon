@@ -45,7 +45,7 @@ import { searchAudienceGroup, searchAudienceGroupIds } from "../src/services/sea
 import { WorkspaceRegionalEffectApplyRequestSchema } from "../src/durable-objects/workspace-directory-protocol";
 import { applyWorkstreamRegionalEnvelope } from "../src/durable-objects/workspace-regional-effect-storage";
 import { hostedParentStub } from "./helpers/hosted-parent";
-import { placeMembership, removeMembership } from "./helpers/space-membership";
+import { withSpaceStorage, placeMembership, removeMembership } from "./helpers/space-membership";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000e100");
 const OWNER = asUserId("00000000-0000-7000-8000-00000000e101");
@@ -1592,5 +1592,35 @@ describe("Channel merges", () => {
     expect(await messages(channelId, OWNER)).toHaveLength(1);
     expect(await remove(OWNER)).toEqual({ ok: true });
     expect(await messages(channelId, OWNER)).toEqual([]);
+  });
+});
+
+
+describe("posting subscribes the author", () => {
+  it("makes a Channel message author a participant, while Rally messages seat nobody", async () => {
+    const channelId = await reserveChannel("Outbound");
+    const participants = () => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ user_id: string }>(
+      `SELECT user_id FROM space_viewers WHERE space_id = ? AND is_participant = 1 ORDER BY user_id`, channelId,
+    ).toArray().map((row) => row.user_id));
+    expect(await participants()).toEqual([OWNER]);
+    await withSpaceStorage(workspace(), (storage) => storage.postMessage(channelId, { author: { kind: "rally" }, body: "News" }, Date.now()));
+    expect(await participants()).toEqual([OWNER]);
+    await withSpaceStorage(workspace(), (storage) => storage.postMessage(channelId,
+      { author: { kind: "member", userId: MEMBER }, body: "Following up", key: "join-by-message" }, Date.now()));
+    expect(await participants()).toEqual([OWNER, MEMBER]);
+  });
+
+  it("makes the author starting a thread in a Channel a participant of that Channel", async () => {
+    const channelId = await reserveChannel("Outbound");
+    const reserved = await workspace().reserveChannelInSpaces({
+      workspaceId: WORKSPACE_ID, userId: MEMBER, workstreamId: OPEN_THREAD, spaceIds: [channelId],
+      requestedScope: "workspace", requestedParticipantUserIds: [], authorityGeneration: 1,
+      directory: { title: "My first post", description: "", emailAddress: null, titleStatus: "settled", createdAt: new Date().toISOString() },
+    });
+    expect(reserved.status).toBe("reserved");
+    const participants = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ user_id: string }>(
+      `SELECT user_id FROM space_viewers WHERE space_id = ? AND is_participant = 1 ORDER BY user_id`, channelId,
+    ).toArray().map((row) => row.user_id));
+    expect(participants).toEqual([OWNER, MEMBER]);
   });
 });

@@ -72,6 +72,9 @@ migration. `MemberPreferencesSchema` in `@rally/contracts` is the shape, and
 
 ## Boundary
 
+Human replies have their own `newMessages` delivery setting, defaulting to push
+independently of explicit mentions and Rally completions.
+
 The desktop and browser renderers honour the preference. iOS does not yet. A new
 display preference is a column in `member_preferences`, a field in
 `MemberPreferencesSchema` with a default, and a setting definition. A new kind
@@ -85,21 +88,6 @@ Before the socket answers or REST returns, the defaults render. A server that
 predates the field sends no `viewerPreferences`, which also reads as defaults.
 
 ## Changelog
-
-### 2026-10-20 — Human replies have their own notification channels
-
-**What changed:** `newMessages` defaults to push and appears as **New messages**
-in Notifications, independently of mentions and Rally completions.
-
-**Why:** Participants need replies without another @mention, and need to control
-those alerts without losing explicit mentions.
-
-**Considered and rejected:** Reusing the mentions switch would couple ordinary
-conversation traffic to explicit calls for attention.
-
-**Consequences:** The field defaults when talking to older servers; partial
-saves unwrap that default so unrelated saves cannot overwrite it.
-
 
 ### 2026-10-15 — Channels per kind replace the push switches
 
