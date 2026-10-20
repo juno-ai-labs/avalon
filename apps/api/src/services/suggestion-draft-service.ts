@@ -22,7 +22,7 @@ export interface SuggestionDraftInput {
   workspaceId: string;
   workstreamId: string;
   substreamId: string;
-  kind: ConversationSuggestionKind;
+  kind: Exclude<ConversationSuggestionKind, "mark_resolved">;
   title: string;
   purpose: string;
   parentTitle: string | null;
@@ -86,7 +86,7 @@ const BreakoutPromptSchema = z.object({ prompt: words, subject: z.string().trim(
  * of that message, so an embed past the bound is appended here rather than
  * asked of the model.
  */
-export function parseDraft(kind: ConversationSuggestionKind, value: unknown, judgedText: string): SuggestionDraft {
+export function parseDraft(kind: Exclude<ConversationSuggestionKind, "mark_resolved">, value: unknown, judgedText: string): SuggestionDraft {
   if (kind === "merge_up") {
     const note = MergeNoteSchema.parse(value);
     return { text: withEveryEmbed(note.text, judgedText), subject: null };
