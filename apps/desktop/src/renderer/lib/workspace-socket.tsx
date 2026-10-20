@@ -1,3 +1,4 @@
+import { WorkspaceConversationViewEventSchema, type WorkspaceConversationViewEvent } from "@rally/contracts/conversation-view";
 import { MERGE_CHANNELS_QUERY_KEY } from './use-merge-channels';
 import {
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
@@ -225,6 +226,8 @@ interface PendingDirectoryRequest {
 }
 
 interface WorkspaceSocketContextValue {
+  requestConversationView(parentId: string, substreamId: string,
+    receive: (event: WorkspaceConversationViewEvent) => void): () => void;
   state: WorkspaceSocketState;
   topicWaterlines: Readonly<Partial<Record<WorkspaceSyncTopic, number>>>;
   presenceUserIdsByWorkstream: Readonly<Record<string, readonly string[]>>;
@@ -402,6 +405,17 @@ export function WorkspaceSocketProvider({
   const relayedState = relaySnapshot?.source && sameWorkspaceSyncIdentity(relaySnapshot.source, { region, workspaceId })
     ? relaySnapshot.source.state
     : 'connecting';
+  const conversationViewRequests = useRef(new Map<string, {
+    parentId: string; substreamId: string; receive: (event: WorkspaceConversationViewEvent) => void; sentOn?: WebSocket;
+  }>());
+  const sendConversationViewRequestsRef = useRef<() => void>(() => undefined);
+  const requestConversationView = useCallback((parentId: string, substreamId: string,
+    receive: (event: WorkspaceConversationViewEvent) => void): (() => void) => {
+    const requestId = uuidV7();
+    conversationViewRequests.current.set(requestId, { parentId, substreamId, receive });
+    sendConversationViewRequestsRef.current();
+    return () => { conversationViewRequests.current.delete(requestId); };
+  }, []);
   const foregroundWorkstreamIdRef = useRef<WorkstreamId | null>(null);
   const reportPresenceRef = useRef<() => void>(() => undefined);
   const scheduleRailPrefetchRef = useRef<() => void>(() => undefined);
@@ -478,6 +492,7 @@ export function WorkspaceSocketProvider({
     let railPrefetchRunning = false;
     let railPrefetchScheduled = false;
     let subscribed = false;
+    let conversationViewsAvailable = false;
     /**
      * Whether the lists in the query cache are the socket's. Until the first
      * subscribe answer they may be the local cache's own seed, and the mirror
@@ -488,6 +503,15 @@ export function WorkspaceSocketProvider({
     let applicationFocusObservation = 0;
     let windowForegrounded = document.visibilityState === 'visible' && document.hasFocus();
 
+    sendConversationViewRequestsRef.current = () => {
+      if (!subscribed || !conversationViewsAvailable || socket?.readyState !== WebSocket.OPEN) return;
+      for (const [requestId, request] of conversationViewRequests.current) {
+        if (request.sentOn === socket) continue;
+        request.sentOn = socket;
+        socket.send(JSON.stringify({ type: "conversation_view", requestId,
+          parentId: request.parentId, substreamId: request.substreamId }));
+      }
+    };
     const sendPresence = (target: WebSocket | null = socket): void => {
       if (!subscribed || target?.readyState !== WebSocket.OPEN) return;
       target.send(JSON.stringify({
@@ -914,6 +938,7 @@ export function WorkspaceSocketProvider({
     const releaseSocket = (): void => {
       clearSocketTimers();
       subscribed = false;
+      conversationViewsAvailable = false;
       socket = null;
       setPresenceUserIdsByWorkstream({});
       rejectPendingRailRequests(new ApiError('The organization connection closed.', 0, 'workspace_socket_closed'));
@@ -1042,8 +1067,19 @@ export function WorkspaceSocketProvider({
           } catch {
             return;
           }
+          const conversationView = safeParseSocketEvent(WorkspaceConversationViewEventSchema, decoded);
+          if (conversationView.success) {
+            const event = conversationView.data;
+            const request = conversationViewRequests.current.get(event.requestId);
+            if (request && request.parentId === event.parentId && request.substreamId === event.substreamId) {
+              conversationViewRequests.current.delete(event.requestId);
+              request.receive(event);
+            }
+            return;
+          }
           const sync = safeParseSocketEvent(WorkspaceSocketSyncEventSchema, decoded);
           if (sync.success) {
+            if (sync.data.conversationViews) conversationViewsAvailable = true;
             if (!firstSyncObserved) {
               firstSyncObserved = true;
               reportHandshake(diagnosticAttemptId, 'sync_received');
@@ -1051,6 +1087,7 @@ export function WorkspaceSocketProvider({
             if (!subscribed) {
               subscribed = true;
               sendPresence();
+              sendConversationViewRequestsRef.current();
             }
             if (sync.data.accessRequests) {
               queryClient.setQueryData(accessRequestsQueryKey(workspaceId), sync.data.accessRequests);
@@ -1582,6 +1619,7 @@ export function WorkspaceSocketProvider({
       walkSpaceChannelsRef.current = () => Promise.resolve(null);
       walkSpaceNowRef.current = () => undefined;
       scheduleRailPrefetchRef.current = () => undefined;
+      sendConversationViewRequestsRef.current = () => undefined;
       refreshChannelRailsRef.current = () => Promise.reject(new ApiError('The organization closed.', 409, 'workspace_socket_closed'));
       window.removeEventListener('online', online);
       window.removeEventListener('offline', offline);
@@ -1712,6 +1750,7 @@ export function WorkspaceSocketProvider({
       prioritizeSpace,
       loadedSpaceIds,
       refreshChannelRails,
+      requestConversationView,
     }),
     [
       listWorkstreams,
@@ -1719,6 +1758,7 @@ export function WorkspaceSocketProvider({
       prioritizeSpace,
       walkSpaceChannels,
       refreshChannelRails,
+      requestConversationView,
       presenceUserIdsByWorkstream,
       setForegroundWorkstreamId,
       sidebarConnect,

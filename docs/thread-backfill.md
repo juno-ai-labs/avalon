@@ -47,6 +47,13 @@ consumer says so.
 A thread that is archived, or that WorkspaceDO has no projection of, is
 settled by `threadBackfillWork` without running anything.
 
+The `conversation_view` job is the exception to the open-thread universe:
+WorkspaceDO migration 123 lists every parent in `parent_children` and
+`sidekick_children`, and its work lookup returns all ready children, including
+archived conversations. Each child is woken to queue its compact display
+projection durably. [Conversation view cache](conversation-view-cache.md) owns
+the payload, delivery, and rollout details; this lane owns scheduling the pass.
+
 ### Adding a job
 
 Add the name to `THREAD_BACKFILL_JOBS`, a handler to

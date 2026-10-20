@@ -205,6 +205,48 @@ function initialSidebarFrame() {
 }
 
 describe('WorkspaceSocketProvider', () => {
+  it.each([false, true])('requests previews only when advertised (%s) and ignores cancelled replies', async (supported) => {
+    const queryClient = new QueryClient();
+    const receive = vi.fn();
+    let cancel = () => undefined;
+    const parentId = '00000000-0000-7000-8000-000000000020';
+    function Preview(): null {
+      const { requestConversationView } = useWorkspaceSocket();
+      useEffect(() => {
+        const stop = requestConversationView(parentId, '0', receive);
+        cancel = () => { stop(); return undefined; };
+        return stop;
+      }, [requestConversationView]);
+      return null;
+    }
+    const rendered = render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider region="global" workspaceId="00000000-0000-7000-8000-000000000001"
+          api={{ getWorkspaceSocketTicket: vi.fn().mockResolvedValue({
+            ticket: 'ticket-1', expiresAt: '2026-08-26T21:00:00.000Z',
+            socketUrl: 'ws://localhost:8787/workspace/socket',
+          }) }}>
+          <Preview />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({ ...initialSidebarFrame(), ...(supported ? { conversationViews: true } : {}) }));
+    const sent = socket.send.mock.calls.map(([frame]) => JSON.parse(String(frame)) as Record<string, unknown>);
+    expect(sent.filter((frame) => frame.type === 'conversation_view')).toEqual(supported ? [{
+      type: 'conversation_view', requestId: expect.any(String), parentId, substreamId: '0',
+    }] : []);
+    const request = sent.find((frame) => frame.type === 'conversation_view');
+    act(() => cancel());
+    if (request) act(() => socket.message({ ...request, type: 'workspace_conversation_view', view: null }));
+    expect(receive).not.toHaveBeenCalled();
+    rendered.unmount();
+    queryClient.clear();
+  });
+
   it('reports app and channel foreground separately and receives viewer-scoped presence', async () => {
     applicationFocus.foregrounded = true;
     const documentFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(true);

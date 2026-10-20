@@ -24,7 +24,7 @@ import { z } from "zod";
  */
 
 /** Every job a row may name. A job is added with the code that runs it, never before. */
-export const THREAD_BACKFILL_JOBS = ["description_summary", "suggestion_backfill"] as const;
+export const THREAD_BACKFILL_JOBS = ["description_summary", "suggestion_backfill", "conversation_view"] as const;
 export const ThreadBackfillJobSchema = z.enum(THREAD_BACKFILL_JOBS);
 export type ThreadBackfillJob = z.infer<typeof ThreadBackfillJobSchema>;
 
@@ -180,6 +180,16 @@ export function threadBackfillWork(
   ).toArray().length > 0;
   // Settled already, by an earlier delivery of the same row.
   if (!listed) return null;
+  if (input.job === "conversation_view") {
+    const substreamIds = sql.exec<{ substream_id: string }>(
+      `SELECT substream_id FROM parent_children WHERE parent_id = ? AND status = 'ready'
+       UNION SELECT substream_id FROM sidekick_children WHERE sidekick_id = ? ORDER BY substream_id`,
+      input.workstreamId, input.workstreamId,
+    ).toArray().map((row) => row.substream_id);
+    if (substreamIds.length) return { substreamIds };
+    completeThreadBackfill(sql, input.job, input.workstreamId);
+    return null;
+  }
   const thread = sql.exec<{ archived_at: number | null }>(
     "SELECT archived_at FROM channels WHERE workstream_id = ?", input.workstreamId,
   ).toArray()[0];
