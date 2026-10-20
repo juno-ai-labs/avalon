@@ -695,11 +695,11 @@ describe("the regional data plane behind the GitHub consumer", () => {
     // `unsuspend` was received first but its first attempt failed; `suspend`,
     // received after it, applies; the retried `unsuspend` then arrives.
     await consumeGitHubDeliveryMessage(lifecycleMessage("suspend-newer", "suspend", at(2_000)), plane.env, service);
-    expect(connectionStatus(plane)).toBe("error");
+    expect(connectionStatus(plane)).toBe("needs_reconnect");
     const older = lifecycleMessage("unsuspend-older", "unsuspend", at(1_000));
     await consumeGitHubDeliveryMessage(older, plane.env, service);
     expect(older.ack).toHaveBeenCalledTimes(1);
-    expect(connectionStatus(plane)).toBe("error");
+    expect(connectionStatus(plane)).toBe("needs_reconnect");
 
     // A lifecycle event received after the newest one applied still applies.
     await consumeGitHubDeliveryMessage(lifecycleMessage("unsuspend-latest", "unsuspend", at(3_000)), plane.env, service);
@@ -729,7 +729,7 @@ describe("the regional data plane behind the GitHub consumer", () => {
     expect(message.retry).not.toHaveBeenCalled();
     expect(message.ack).toHaveBeenCalledTimes(1);
     expect(receipt(enterprise, "bridged-suspend")?.processed_at).not.toBeNull();
-    expect(connectionStatus(enterprise)).toBe("error");
+    expect(connectionStatus(enterprise)).toBe("needs_reconnect");
   });
 });
 
