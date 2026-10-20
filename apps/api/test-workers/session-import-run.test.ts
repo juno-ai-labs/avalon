@@ -653,6 +653,10 @@ describe("a conversation import run", () => {
       await state.storage.setAlarm(Date.now());
     });
     await runDurableObjectAlarm(workspace());
+    // The runtime can pick up the due alarm before the helper does. The helper
+    // then returns without waiting for that in-flight reclaim, so wait for its
+    // durable completion before asserting the archive and receipt below.
+    await expect.poll(() => watchedReservations(workstreamId), { timeout: 30_000 }).toEqual([]);
   }
 
   const watchedReservations = (workstreamId: string) => runInDurableObject(workspace(), (_instance, state) => state.storage.sql
