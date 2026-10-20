@@ -53,6 +53,9 @@ export interface ConversationRowActions {
   onCopyLink?: ((target: ConversationRowTarget) => void) | undefined;
   onRename?: (target: ConversationRowTarget) => void;
   onArchive?: (target: ConversationRowTarget) => void;
+  /** Mark this conversation done while keeping it visible. */
+  onResolve?: ((target: ConversationRowTarget) => void) | undefined;
+  resolveDisabled?: boolean | undefined;
   /**
    * Merge this conversation's result up: a Breakout into its Thread, a Thread
    * into one of its Channels. The label names the target ("Merge to thread",
@@ -71,6 +74,17 @@ function MergeRow({ actions }: { actions?: ConversationRowActions | undefined })
     <IconCornerUpLeft aria-hidden="true" size={17} stroke={1.7} />
     <span className="title-menu-item-copy">{actions.merge.label}</span>
     {actions.merge.target && <span className="title-menu-level-meta">{actions.merge.target}</span>}
+  </DropdownMenu.Item>;
+}
+
+/** Resolution is independent of publishing a result or archiving the conversation. */
+function ResolveRow({ actions, target, noun }: {
+  actions?: ConversationRowActions | undefined; target: ConversationRowTarget; noun: 'Thread' | 'Breakout';
+}): React.JSX.Element | null {
+  if (!actions?.onResolve) return null;
+  return <DropdownMenu.Item className="menu-item title-menu-level-row" disabled={actions.resolveDisabled} onSelect={() => actions.onResolve?.(target)}>
+    <IconCheck aria-hidden="true" size={17} stroke={1.7} />
+    <span className="title-menu-item-copy">Resolve {noun}</span>
   </DropdownMenu.Item>;
 }
 
@@ -589,6 +603,7 @@ export function ChannelMenu({
       <ActionTile icon={<IconDots aria-hidden="true" size={20} stroke={1.6} />} label="More" onSelect={openLevel(nav, MORE_VIEW)} />
     </ActionTiles>
     <MergeRow actions={actions} />
+    <ResolveRow actions={actions} noun="Thread" target={target} />
     <LevelRow icon={<IconUsers aria-hidden="true" size={17} stroke={1.7} />} label="People" meta={peopleMeta(workstream.participants.length, workstream.scope, participantsPending)} view={PEOPLE_VIEW} />
     <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={countMeta(sidekicks)} view={SIDEKICKS_VIEW} />
     <LevelRow icon={<IconCornerDownRight aria-hidden="true" size={17} stroke={1.7} />} label="Breakouts" meta={breakouts?.length} view={BREAKOUTS_VIEW} />
@@ -755,6 +770,7 @@ export function BreakoutMenu({
       {(appearance || actions?.onSetPublic || actions?.onArchive) && <ActionTile icon={<IconDots aria-hidden="true" size={20} stroke={1.6} />} label="More" onSelect={openLevel(nav, MORE_VIEW)} />}
     </ActionTiles>
     <MergeRow actions={actions} />
+    <ResolveRow actions={actions} noun="Breakout" target={breakout} />
     <LevelRow icon={<IconUsers aria-hidden="true" size={17} stroke={1.7} />} label="People" meta={peopleMeta(participants.length, scope, participantsPending)} view={PEOPLE_VIEW} />
     <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={countMeta(sidekicks)} view={SIDEKICKS_VIEW} />
     <MemoryLevelRow memory={memory} />

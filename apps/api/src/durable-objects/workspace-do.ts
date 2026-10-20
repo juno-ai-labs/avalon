@@ -6910,6 +6910,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).removePrivateChildParticipant(input));
   }
 
+  async resolveConversation(input: Parameters<HostedParent["resolveConversation"]>[0]) {
+    return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).resolveConversation(input));
+  }
+
   async setPrivateChildArchived(input: Parameters<HostedParent["setPrivateChildArchived"]>[0]) {
     return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).setPrivateChildArchived(input));
   }

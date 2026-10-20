@@ -249,6 +249,50 @@ describe("a Channel's breakouts and background agents on the workspace socket", 
     ownerSocket.socket.close(1000, "done");
   });
 
+  it("manually resolves Threads and Breakouts, persists across eviction, and refuses an unrelated viewer", async () => {
+    const memberSocket = await connect(member);
+    await expect(organization().resolveConversation({ workspaceId, parentId: channelA, substreamId: breakoutA, userId: owner }))
+      .resolves.toEqual({ outcome: "forbidden" });
+    const pushed = memberSocket.stream.next(stateOf(channelA), "manually resolved breakout");
+    await expect(organization().resolveConversation({ workspaceId, parentId: channelA, substreamId: breakoutA, userId: member }))
+      .resolves.toEqual({ outcome: "resolved" });
+    expect((await pushed).workstream).toMatchObject({ privateChildren: [{ substreamId: breakoutA, resolved: true }] });
+    await expect(organization().resolveConversation({ workspaceId, parentId: channelA, substreamId: breakoutA, userId: member }))
+      .resolves.toEqual({ outcome: "unchanged" });
+    await expect(organization().resolveConversation({ workspaceId, parentId: channelA, substreamId: asSubstreamId("0"), userId: owner }))
+      .resolves.toEqual({ outcome: "resolved" });
+    memberSocket.socket.close(1000, "done");
+    await evictDurableObject(organization());
+    const reopened = await connect(member);
+    expect(rowIn(reopened.answer, channelA)).toMatchObject({ resolved: true, privateChildren: [{ substreamId: breakoutA, resolved: true }] });
+    await runInDurableObject(organization(), (_instance, state) => {
+      expect(state.storage.sql.exec("SELECT substream_id, resolved, archived_at FROM parent_children WHERE parent_id = ? ORDER BY substream_id", channelA).toArray())
+        .toEqual([{ substream_id: "0", resolved: 1, archived_at: null }, { substream_id: breakoutA, resolved: 1, archived_at: null }]);
+    });
+    reopened.socket.close(1000, "done");
+  });
+
+  it("resolves Main when a legacy parent's main registry entry is implicit", async () => {
+    await runInDurableObject(organization(), (_instance, state) => {
+      state.storage.sql.exec("DELETE FROM parent_children WHERE parent_id = ? AND substream_id = '0'", channelA);
+    });
+    await expect(organization().resolveConversation({ workspaceId, parentId: channelA, substreamId: asSubstreamId("0"), userId: owner }))
+      .resolves.toEqual({ outcome: "resolved" });
+    await runInDurableObject(organization(), (_instance, state) => {
+      expect(state.storage.sql.exec("SELECT resolved FROM parent_children WHERE parent_id = ? AND substream_id = '0'", channelA).toArray())
+        .toEqual([{ resolved: 1 }]);
+    });
+  });
+
+  it("refuses manual resolution of an archived conversation", async () => {
+    // Start from an already-archived registry entry; this suite does not provision a child runtime.
+    await runInDurableObject(organization(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE parent_children SET archived_at = 1 WHERE parent_id = ? AND substream_id = ?", channelA, breakoutA);
+    });
+    await expect(organization().resolveConversation({ workspaceId, parentId: channelA, substreamId: breakoutA, userId: member }))
+      .resolves.toEqual({ outcome: "archived" });
+  });
+
   it("publishes Breakout resolution to readers outside its private roster so shared navigation refreshes", async () => {
     const memberSocket = await connect(member);
     const ownerSocket = await connect(owner);
