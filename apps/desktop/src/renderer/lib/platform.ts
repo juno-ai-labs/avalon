@@ -236,13 +236,29 @@ const browserBridge: RallyDesktopBridge = {
     // Page Lifecycle events stand in for main's suspend and resume, so the
     // workspace socket closes cleanly and dials again rather than waiting on a
     // heartbeat. Browsers without them never fire either.
-    const suspended = (): void => listener('suspended');
-    const resumed = (): void => listener('resumed');
+    let paused = false;
+    const suspended = (): void => {
+      if (paused) return;
+      paused = true;
+      listener('suspended');
+    };
+    const resumed = (): void => {
+      paused = false;
+      listener('resumed');
+    };
+    // Safari restores pages from its back/forward cache without Chromium's
+    // freeze/resume events. Chrome may deliver both pairs; resume only once.
+    const pageHidden = (event: PageTransitionEvent): void => { if (event.persisted) suspended(); };
+    const pageShown = (event: PageTransitionEvent): void => { if (event.persisted && paused) resumed(); };
     document.addEventListener('freeze', suspended);
     document.addEventListener('resume', resumed);
+    window.addEventListener('pagehide', pageHidden);
+    window.addEventListener('pageshow', pageShown);
     return () => {
       document.removeEventListener('freeze', suspended);
       document.removeEventListener('resume', resumed);
+      window.removeEventListener('pagehide', pageHidden);
+      window.removeEventListener('pageshow', pageShown);
     };
   },
   async getUpdateStatus() {

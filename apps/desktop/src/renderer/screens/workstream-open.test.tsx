@@ -488,7 +488,7 @@ describe('socket-first channel open', () => {
     vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(600);
     const loadTranscriptRange = vi.fn().mockRejectedValue(new Error('offline test'));
     const socket = { state: 'connecting', workspaceSocketState: 'connected', suggestions: [], activeCompaction: null, activeInferenceDelays: [],
-      sendReady: false, requestSnapshot: vi.fn(), loadTranscriptRange };
+      sendReady: false, requestSnapshot: vi.fn(), retryOpening: vi.fn(), loadTranscriptRange };
     retainedSocket.mockReturnValue(socket);
     const boot = historyBoot();
     const cache = renderScreen(cache => {
@@ -496,6 +496,8 @@ describe('socket-first channel open', () => {
       cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
     });
     expect(await screen.findByText('Waiting to reconnect…')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Reconnect now' }));
+    expect(socket.retryOpening).toHaveBeenCalledOnce();
     expect(loadTranscriptRange).not.toHaveBeenCalled();
     socket.state = 'connected';
     act(() => cache.setQueryData(['workstream', workstreamId], { ...boot, title: 'Reconnected' }));

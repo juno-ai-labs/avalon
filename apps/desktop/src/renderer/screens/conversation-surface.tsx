@@ -1,3 +1,4 @@
+import { TranscriptHistoryStatus } from '../components/transcript-history-status';
 import { loadAnnotationPreview } from '../lib/annotation-preview';
 import { AnnotationDraftProvider, useAnnotationDraft } from '../components/artifact-annotations';
 import { ScopeSharingPanel, useScopeInvitations } from "../components/scope-sharing-panel";
@@ -3740,16 +3741,15 @@ function ConversationSurfaceContent({
               Its space is held for as long as there is history to load, so the
               status coming and going never moves the messages under it. */}
           <div role="status" className={historyStatusShown ? 'transcript-history-control' : undefined}>
-            {(loadingOlder || (nearHistoryEdge && !feedLive && !feedFromLocalCache)) && <>
-              <LoaderCircle aria-hidden="true" className="spin" size={14} />
-              <span>{feedLive ? 'Loading earlier messages…' : 'Waiting to reconnect…'}</span>
-            </>}
+            {(loadingOlder || (nearHistoryEdge && !feedLive && !feedFromLocalCache)) && (
+              <TranscriptHistoryStatus live={feedLive} onReconnect={socketConnection.retryOpening} />
+            )}
           </div>
           {historyRetryShown && (
             <div className="transcript-history-control">
-              <Button disabled={!feedLive} onClick={() => void loadOlderMessages()}>
+              <Button onClick={() => feedLive ? void loadOlderMessages() : socketConnection.retryOpening()}>
                 <RefreshCcw aria-hidden="true" size={14} />
-                {feedLive ? 'Retry loading earlier messages' : 'Waiting to reconnect…'}
+                {feedLive ? 'Retry loading earlier messages' : 'Reconnect now'}
               </Button>
             </div>
           )}
