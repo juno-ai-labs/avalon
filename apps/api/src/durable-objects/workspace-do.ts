@@ -867,7 +867,7 @@ import {
 } from "./thread-backfill";
 import { unreadState } from "./unread-state";
 import { artifactActivityId, WorkspaceActivityFeed, WORKSPACE_ACTIVITY_READS_MIGRATION } from "./workspace-activity-feed";
-import { ACTIVITY_PUSH_KINDS, WorkspaceActivityPushes, WORKSPACE_ACTIVITY_PUSH_MIGRATION, type ActivityPushSubject } from "./workspace-activity-push";
+import { activityEnqueueKey, ActivityAlertRecordSchema, type ActivityAlertRecord, REPLY_BATCH_SECONDS, WORKSPACE_REPLY_ALERT_MIGRATION, ACTIVITY_PUSH_KINDS, WorkspaceActivityPushes, WORKSPACE_ACTIVITY_PUSH_MIGRATION, type ActivityPushSubject } from "./workspace-activity-push";
 import {
   PersonalSystemPromptReadRequestSchema,
   PersonalSystemPromptWriteRequestSchema,
@@ -4741,6 +4741,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 124,
   description: "cache visible conversation turns and backfill every existing conversation",
   statements: WORKSPACE_CONVERSATION_VIEW_MIGRATION,
+}, {
+  version: 125,
+  description: "index participating-conversation replies and distinguish queued batches from actual per-channel alerts",
+  statements: WORKSPACE_REPLY_ALERT_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -5890,6 +5894,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * carries the row's JSON: a follow-up rolled back with an outer transaction
    * leaves an id a later row may reuse, and only the row it names is run.
    */
+  private readonly activityEnqueues = new Set<string>();
   private readonly pendingParentFollowUps: { id: number; json: string }[] = [];
   /** Space intents a request, a Queue delivery or the alarm is running now, by operation id. */
 
@@ -10315,7 +10320,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       this.state.storage,
       new WorkspaceActivityFeed(this.state.storage, this.spaceStorage()),
     );
-    return WorkspaceActivityPushReadResultSchema.parse(pushes.item(viewer, request.itemId));
+    const item = pushes.item(viewer, request.itemId);
+    return WorkspaceActivityPushReadResultSchema.parse(item && pushes.allowsAlert(request.userId, item, request.itemId, request.channel ?? "push") ? item : null);
+  }
+
+  /** Provider acceptance, rather than an Activity decision, starts the notification cooldown. */
+  async recordActivityAlert(input: ActivityAlertRecord): Promise<void> {
+    await this.initialized;
+    const request = parseRpcInput(ActivityAlertRecordSchema, input, "record_activity_alert");
+    this.assertWorkspace(request.workspaceId);
+    new WorkspaceActivityPushes(this.state.storage, new WorkspaceActivityFeed(this.state.storage, this.spaceStorage()))
+      .recordAlert(request, Date.now());
   }
 
   /** Mark the Activity tab read through a time, for this person's other windows too. */
@@ -11276,6 +11291,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }, now);
     if (result.ok && !result.replayed) {
       this.publishChannelRowToReaders(request.workstreamId);
+      // Posting the merge can seat its author in the destination Channel.
+      this.publishSpaceSnapshot();
       this.publishSpaceConversationsChanged({ spaceIds: [result.spaceId] });
       // The merge queued its search projection; publish it now rather than at the next wake.
       await this.armNextAlarm();
@@ -13373,6 +13390,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const recipients = await activeMembersForActivity(
       this.env, workspaceId, audience.everyone ? null : audience.userIds,
     );
+    const failures: unknown[] = [];
     for (const recipient of recipients) {
       // One person's failure leaves the others' deliveries standing.
       try {
@@ -13388,6 +13406,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           { userId: recipient.userId, accessClass: recipient.accessClass },
           subjects,
           this.threadsOnScreen(recipient.userId),
+          this.activityEnqueues,
         );
         for (const item of items) {
           // Recorded whether or not it was queued: a row not queued (no
@@ -13395,14 +13414,28 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           // queued by a later batch either. The consumer checks the choice
           // again when it sends, so one changed since never sends an old
           // row late.
-          for (const channel of channels(item.kind as PushNotificationData["kind"])) {
-            const address = { region: this.env.AVALON_REGION, workspaceId, recipientUserId: recipient.userId, activityItemId: item.id };
-            if (channel === "push") await enqueuePushDelivery(this.env, address, item.kind === "new_message" ? 15 : 0);
-            else await enqueueActivityDelivery(this.env, { ...address, channel }, item.kind === "new_message" ? 15 : 0);
+          const selected = channels(item.kind as PushNotificationData["kind"]);
+          // Reserve synchronously before yielding. The existing durable
+          // follow-up stays pending until handoff finishes, so a restart loses
+          // this in-memory claim but retains the work and no false decision.
+          const key = activityEnqueueKey(recipient.userId, item);
+          this.activityEnqueues.add(key);
+          let enqueued = false;
+          try {
+            for (const channel of selected) {
+              const address = { region: this.env.AVALON_REGION, workspaceId, recipientUserId: recipient.userId, activityItemId: item.id };
+              const delay = item.kind === "new_message" || item.kind === "run_finished" ? REPLY_BATCH_SECONDS : 0;
+              const accepted = channel === "push" ? await enqueuePushDelivery(this.env, address, delay)
+                : await enqueueActivityDelivery(this.env, { ...address, channel }, delay);
+              enqueued ||= accepted;
+            }
+            pushes.record(recipient.userId, item.id, Date.now(), enqueued);
+          } finally {
+            this.activityEnqueues.delete(key);
           }
-          pushes.record(recipient.userId, item.id, Date.now());
         }
       } catch (error) {
+        failures.push(error);
         logWarn(this.env, "activity_push_failed", {
           workspace_id: workspaceId,
           recipient_user_id: recipient.userId,
@@ -13410,6 +13443,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         });
       }
     }
+    // The durable directory follow-up retains retryable enqueue failures.
+    if (failures.length > 0) throw failures[0];
   }
 
   /** The threads this person has in front of them in a foreground window. */

@@ -274,6 +274,7 @@ export interface ActivityGroup extends ActivityItem {
  */
 export function groupActivityItems(items: readonly ActivityItem[]): ActivityGroup[] {
   const buckets = new Map<string, ActivityItem[]>();
+  const seen = new Set<string>();
   for (const item of items) {
     const key = item.artifact ? `artifact:${item.artifact.resourceId}`
       : item.mergedInto ? `channel:${item.mergedInto.channelId}`
@@ -281,7 +282,8 @@ export function groupActivityItems(items: readonly ActivityItem[]): ActivityGrou
     const bucket = buckets.get(key) ?? [];
     // Refetched infinite pages can overlap. A mention and reply may also
     // refer to the same event: keep both kinds, but count the reply once.
-    if (!bucket.some((held) => held.id === item.id && held.kind === item.kind)) bucket.push(item);
+    const eventKey = `${key}\0${item.kind}\0${item.id}`;
+    if (!seen.has(eventKey)) { bucket.push(item); seen.add(eventKey); }
     buckets.set(key, bucket);
   }
   return [...buckets].map(([groupKey, bucket]): ActivityGroup => {
@@ -294,7 +296,7 @@ export function groupActivityItems(items: readonly ActivityItem[]): ActivityGrou
       groupKey,
       occurredAt: latest.occurredAt,
       unread: bucket.some((item) => item.unread),
-      unreadMessages: human?.unreadMessageCount ?? bucket.filter((item) => item.kind === "new_message" && item.unread).length,
+      unreadMessages: human?.unread ? human.unreadMessageCount ?? bucket.filter((item) => item.kind === "new_message" && item.unread).length : 0,
       unreadMention: bucket.some((item) => item.kind === "mentioned" && item.unread),
       rallyFinished: bucket.some((item) => item.kind === "run_finished" && item.unread),
     };

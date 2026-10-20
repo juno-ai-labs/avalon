@@ -63,7 +63,7 @@ import {
   type ParentEffect,
   type ParentEffectEnvelope,
 } from "@rally/contracts/conversation-effects";
-import { breakoutMentionActivity } from "./breakout-activity";
+import { breakoutMessageActivity } from "./breakout-activity";
 import {
   BeginPrivateChildPreparationRequestSchema,
   ClaimPrivateChildConfirmationRequestSchema,
@@ -867,7 +867,7 @@ export class HostedParent {
       return effect.kind === "directory_common" || effect.kind === "directory_user";
     }
     if (substreamId === "0") return true;
-    return isPersonNotificationEffect(effect) || breakoutMentionActivity(effect, substreamId) !== null;
+    return isPersonNotificationEffect(effect) || breakoutMessageActivity(effect, substreamId) !== null;
   }
 
   /**
@@ -3321,7 +3321,7 @@ export const HostedParentEffectSchema = ParentEffectSchema;
  */
 function breakoutActivity(effect: ConversationEffect, substreamId: string): ConversationEffect {
   if (effect.kind !== "activity_event") return effect;
-  const emptied = breakoutMentionActivity(effect, substreamId);
+  const emptied = breakoutMessageActivity(effect, substreamId);
   if (emptied === null) throw new Error("breakout_activity_not_forwardable");
   return emptied;
 }

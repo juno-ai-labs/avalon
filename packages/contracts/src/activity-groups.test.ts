@@ -32,6 +32,11 @@ describe('groupActivityItems', () => {
     expect(group?.unreadMessages).toBe(3);
   });
 
+  it('clears a stale reply count when Mark all read optimistically clears unread', () => {
+    const [group] = groupActivityItems([item('message:a', 'new_message', 1, { unread: false, unreadMessageCount: 3 })]);
+    expect(group?.unreadMessages).toBe(0);
+  });
+
   it('preserves unread state when a newer event has already been read', () => {
     const [group] = groupActivityItems([item('old', 'mentioned', 1000), item('new', 'run_finished', 2000, { unread: false })]);
     expect(group).toMatchObject({ unread: true, unreadMention: true, kind: 'mentioned' });

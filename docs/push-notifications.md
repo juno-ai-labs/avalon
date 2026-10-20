@@ -43,9 +43,10 @@ added. Successful enqueue with a live device is not proof of an Apple alert.
 
 Success receipts key on workspace, intent and device. A partial retry skips only
 those devices already reached for that intent. Sending precedes recording, so an
-uncertain send can alert twice. Collapse identifiers are hashes of workspace and conversation (thread plus
-breakout), so later notifications replace the same conversation. Delivery receipts
-remain keyed by intent, independently of presentation grouping. No exactly-once claim is made.
+uncertain send can alert twice. Reply collapse identifiers are hashes of workspace and conversation (thread plus
+breakout). Other kinds retain per-intent collapse ids, so an ordinary reply never
+replaces an explicit mention or addition. APNs groups them through thread-id.
+Delivery receipts remain keyed by intent. No exactly-once claim is made.
 
 Receipts currently live until their device is deleted. After the existing intent
 retention expires they are inert: no later intent reuses the key. This accepts
@@ -126,19 +127,28 @@ notification setting is **New messages** (`newMessages`), defaulting to push.
 The existing directory follow-up durably triggers delivery after a message event
 commits. AI messages, the author, and nonparticipants are excluded.
 
-Reply delivery waits **15 seconds** on the existing Queue. Reading the reply in
+Reply and completion delivery wait **15 seconds** on the existing Queue. Reading the reply in
 that interval cancels delivery; otherwise the consumer reads the conversation's
 latest human reply and uses the original queued event for its delivery receipt.
 Ordinary reply and completion alerts share a **two-minute** per-conversation
-cooldown, stored through `workspace_activity_pushes`; suppressed events still
-update Activity. Explicit mentions retain their own immediate delivery path and
-a mention's message does not also schedule a reply alert. These intervals are
-product policy, not execution timeouts.
+cooldown, stored per delivery channel in `workspace_activity_alerts` only after
+a provider accepts the alert. Disabled kinds, unavailable transports and replies
+read before delivery start no cooldown. `workspace_activity_pushes` separately
+records decisions and whether a reply was actually enqueued for its 15-second
+batch. The owning object reserves the recipient/conversation synchronously
+before awaiting the Queue. The existing durable directory follow-up remains
+pending until handoff completes; a failure or restart leaves that work retryable
+without treating an unfinished handoff as a final decision.
+Suppressed events still update Activity. Explicit mentions retain their own
+immediate delivery path and a mention's message does not also schedule a reply alert. These intervals are product policy, named `REPLY_BATCH_SECONDS` and
+`CONVERSATION_ALERT_COOLDOWN_MS`.
+The cooldown intentionally suppresses the trailing alert rather than deferring
+it; its unread Activity remains available.
 
 Having a thread selected does not suppress a human reply: only the existing
 visible-message read waterline clears it. That waterline advances after the
-250 ms read debounce while the app is focused and visible, through messages in
-the viewport. A thread scrolled away from new replies therefore remains unread.
+client's read debounce while the app is focused and visible, through messages
+in the viewport. A thread scrolled away from new replies therefore remains unread.
 
 
 Everything the Activity tab lists can be a push, an email or a Slack message.
@@ -398,11 +408,13 @@ signed-Mac APNs/universal-link acceptance is claimed.
 
 **What changed:** Unmentioned human replies notify current participants through
 `newMessages`. A 15-second Queue delay coalesces a burst onto its latest reply;
-reply and completion alerts share a two-minute cooldown. System notification
-collapse ids group a conversation, while receipts retain the original delivery.
+reply and completion alerts share a two-minute cooldown after actual provider
+acceptance, per channel. Reply collapse ids group a conversation, while mentions
+and additions retain per-intent alerts and receipts retain the original delivery.
 
 **Why:** Human replies were missed unless they mentioned the reader, while
-successive completions and mentions occupied separate notification slots.
+routine conversation activity crowded the sidebar. Repeated ordinary reply
+alerts should coalesce without erasing explicit calls for attention.
 
 **Considered and rejected:** Treating a foreground thread as proof every message
 was read would suppress replies while the reader was scrolled elsewhere. A new

@@ -87,9 +87,9 @@ async function intentContent(env: Env, workspace: WorkspaceStub, message: PushDe
  * has read or lost since it was queued sends nothing. Worded as the sidebar
  * words it.
  */
-async function activityContent(env: Env, workspace: WorkspaceStub, message: PushDeliveryMessage & { activityItemId: string }): Promise<PushContent> {
+async function activityContent(env: Env, workspace: WorkspaceStub, message: Extract<PushDeliveryMessage, { activityItemId: string }>): Promise<PushContent> {
   const item = WorkspaceActivityPushReadResultSchema.parse(await workspace.readActivityItemForPush({
-    workspaceId: asWorkspaceId(message.workspaceId), userId: asUserId(message.recipientUserId), itemId: message.activityItemId,
+    workspaceId: asWorkspaceId(message.workspaceId), userId: asUserId(message.recipientUserId), itemId: message.activityItemId, channel: message.channel ?? "push",
   }));
   if (!item) return { outcome: "skipped", reason: "activity_item_not_pending" };
   const actor = item.actorUserId === null ? item.actorLabel
@@ -100,7 +100,7 @@ async function activityContent(env: Env, workspace: WorkspaceStub, message: Push
   const breakout = item.breakout ? item.breakout.title.trim() || UNNAMED_BREAKOUT : null;
   const words = item.kind === "thread_started" ? { title: `${actor} started ${thread}`, body: "" }
     : item.kind === "breakout_started" ? { title: `${actor} started a breakout on ${thread}`, body: breakout ?? "" }
-    : item.kind === "new_message" ? { title: `${actor} replied in ${breakout ?? thread}`, body: rewriteMessageAsPlainText(item.preview ?? "") }
+    : item.kind === "new_message" ? { title: `${actor} replied in ${breakout ?? thread}`, body: item.preview ?? "" }
     : item.kind === "merged" ? mergedWords(actor, thread, breakout, item.mergedInto?.name)
     : item.kind === "artifact_updated" ? { title: `${actor || "Someone"} updated ${item.artifact?.title.trim() || "an artifact"}`, body: `in ${thread}` }
     : { title: `${actor} finished ${breakout ?? thread}`, body: breakout ? `in ${thread}` : "" };
@@ -173,6 +173,10 @@ async function deliverActivityElsewhere(
     return true;
   }
   const outcome = await sendElsewhere(message.channel);
+  if (outcome === "sent" && (content.kind === "new_message" || content.kind === "run_finished")) {
+    await workspace.recordActivityAlert({ workspaceId: asWorkspaceId(message.workspaceId), userId: asUserId(message.recipientUserId),
+      threadId: content.workstreamId, substreamId: content.substreamId, itemId: message.activityItemId, channel: message.channel });
+  }
   logInfo(env, "activity_delivery_terminal", { activity_item_id: message.activityItemId, channel: message.channel, outcome });
   return true;
 
@@ -257,7 +261,7 @@ export async function deliverPush(
   }));
   const url = await contentUrl(env, message.workspaceId, content);
   const data = { v: 1 as const, kind: content.kind, region: env.AVALON_REGION, workspaceId: message.workspaceId, url };
-  const collapseId = await pushCollapseId(message.workspaceId, `conversation:${content.workstreamId}:${content.substreamId ?? "0"}`);
+  const collapseId = await pushCollapseId(message.workspaceId, content.kind === "new_message" ? `conversation:${content.workstreamId}:${content.substreamId ?? "0"}` : content.deliveryKey);
   const { title, body } = content;
   const payload: PushPayloads = {
     apns: renderPushPayload({ title, body, threadKey: content.workstreamId, badge: attention.readerAttentionCount, data }),
@@ -277,6 +281,10 @@ export async function deliverPush(
     const result = await send(env, device, payload, collapseId);
     const at = new Date().toISOString();
     if (result.outcome === "sent") {
+      if ("activityItemId" in message && (content.kind === "new_message" || content.kind === "run_finished")) {
+        await workspace.recordActivityAlert({ workspaceId: id, userId: asUserId(message.recipientUserId),
+          threadId: content.workstreamId, substreamId: content.substreamId, itemId: message.activityItemId, channel: "push" });
+      }
       await db.batch([
         db.prepare(`INSERT OR IGNORE INTO push_delivery_receipts VALUES (?, ?, ?, ?)`).bind(row.workspaceId, row.intentId, device.id, at),
         db.prepare(`UPDATE user_push_devices SET last_delivery_at = ?, last_failure_code = NULL WHERE id = ?`).bind(at, device.id),
