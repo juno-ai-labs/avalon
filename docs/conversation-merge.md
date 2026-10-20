@@ -130,6 +130,16 @@ its readers, including grant-only readers whose shared navigation must refresh.
 Retries converge, and a failed merge resolves nothing. No additional cross-object
 call or execution-state transition is needed.
 
+People can also resolve a Thread or Breakout from its title-pill menu without
+merging. `PATCH /conversations/:parentId/substreams/:substreamId` with
+`{ resolved: true }` changes the parent-owned registry, the same boundary used
+for archive control. An older parent with implicit Main registers that entry
+through the existing child-registry primitive before writing resolution.
+The parent checks access and readiness, refuses archived conversations, and
+publishes the committed resolution to its readers. Resolution admits members
+and guests within their canonical conversation scope. It is idempotent and never changes execution or archive state. The
+[desktop shell](desktop-shell.md#title-pills) owns menu and navigation behavior.
+
 WorkspaceDO migration 123 backfills Thread resolution from Channel merge rows
 and Breakout resolution from merge activity events, including archived sources.
 Its synchronous after-migration hook also matches the deterministic keyed merge
@@ -435,6 +445,25 @@ choice, made in review: a source that always says where its work went is worth
 more than keeping a private Channel's name hidden.
 
 ## Changelog
+
+### 2026-10-20 — Resolve a conversation without merging
+
+**What changed:** Thread and Breakout title menus offer Resolve below Merge, backed by
+one parent-owned, access-checked resolution write, live directory publication,
+and navigation back to the parent after success. Older parents register their
+implicit Main entry through the existing registry helper.
+
+**Why:** Finishing work does not always produce a result to publish, and the
+person needs to return to the containing conversation after marking it done.
+
+**Considered and rejected:** Using merge would force an unwanted message;
+archiving would hide work the person still wants visible.
+
+**Consequences:** Manual resolution shares the persistent registry flag and
+must remain independent of execution and archiving. Parent navigation follows
+a successful write and must not interrupt a later visit.
+
+Shipped in [#1354](https://github.com/juno-ai-labs/avalon/pull/1354).
 
 ### 2026-10-20 — Resolve a merged conversation independently of its archive
 

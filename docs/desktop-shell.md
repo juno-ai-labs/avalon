@@ -310,6 +310,15 @@ pill's chevron points down. A Breakout pill's menu's **Icon and color**
 (`AppearanceSubmenu`) sets the same appearance as its icon. An open pill fills solid and
 drops its lift to the bare ring.
 
+Thread and Breakout menus place **Resolve Thread** or **Resolve Breakout** directly
+below Merge. The action marks the conversation resolved without publishing a result
+or removing it, then returns to its parent after the write succeeds: a Breakout
+returns to its Thread, and a Thread to the Channel it was opened from (or its
+first visible Channel). A Breakout-only reader stays in the resolved Breakout
+when Main is inaccessible. Failed writes and results arriving after navigation
+or unmount never redirect. Members and guests can resolve within their admitted
+conversation scope; archived conversations offer no Resolve action.
+
 Each menu has a root and levels. The root is a row of action tiles (Add people,
 Rename, Copy link, More), under a header on a Breakout, and one row each for People,
 Sidekicks, on a thread Breakouts and Channels, and Memory, with a count beside each. A row, or the

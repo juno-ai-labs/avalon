@@ -779,15 +779,7 @@ export class HostedParent {
         && envelope.effect.eventType === "workstream_message_created") {
         const source = ConversationMergeV1Schema.shape.mergedFrom.safeParse(envelope.effect.metadata.mergedFrom);
         if (source.success) {
-          const resolved = this.sql.exec(
-            `UPDATE parent_children SET resolved = 1
-              WHERE parent_id = ? AND substream_id = ? AND resolved = 0 RETURNING substream_id`,
-            this.parentId, source.data.breakoutId,
-          ).toArray();
-          if (resolved.length > 0) {
-            this.advancePrivateChildrenVersionsFor(source.data.breakoutId, now);
-            this.resolutionMoved = true;
-          }
+          this.markResolved(source.data.breakoutId, now);
         }
       }
       const forwards = this.forwardsChildEffect(substreamId, envelope.effect);
@@ -2591,6 +2583,43 @@ export class HostedParent {
     }
     await this.broadcastMetadata();
     return this.requirePrivateChildPreparation(request.operationId);
+  }
+
+  /** Called inside the caller's transaction for both merge and manual resolution. */
+  private markResolved(substreamId: string, now: number): boolean {
+    const moved = this.sql.exec(
+      "UPDATE parent_children SET resolved = 1 WHERE parent_id = ? AND substream_id = ? AND resolved = 0 RETURNING substream_id",
+      this.parentId, substreamId,
+    ).toArray().length > 0;
+    if (moved) {
+      this.advancePrivateChildrenVersionsFor(substreamId, now);
+      this.resolutionMoved = true;
+    }
+    return moved;
+  }
+
+  /** One idempotent parent-owned write for manual Thread and Breakout resolution. */
+  async resolveConversation(input: ConversationParentAuthorizeViewerRequest) {
+    const request = ConversationParentAuthorizeViewerRequestSchema.parse(input);
+    this.assertParent(request.workspaceId, request.parentId);
+    const substreamId = asSubstreamId(request.substreamId ?? "0");
+    const relationship = await this.host.readRelationship(request.workspaceId, request.userId);
+    const result = this.tx(() => {
+      if (!this.canReadConversation(request, substreamId, relationship)) return { outcome: "forbidden" as const };
+      const now = Date.now();
+      // Main may still be implicit on an older parent, as childRegistry permits.
+      if (substreamId === "0") this.registerChild("0", "main", null, now);
+      const child = this.sql.exec<{ status: string; archived_at: number | null }>(
+        "SELECT status, archived_at FROM parent_children WHERE parent_id = ? AND substream_id = ?",
+        this.parentId, substreamId,
+      ).toArray()[0];
+      if (!child || child.status !== "ready") return { outcome: "not_ready" as const };
+      if (this.metadataRow()?.archived_at != null || child.archived_at !== null) return { outcome: "archived" as const };
+      const moved = this.markResolved(substreamId, now);
+      return { outcome: moved ? "resolved" as const : "unchanged" as const };
+    });
+    if (result.outcome === "resolved") await this.broadcastMetadata();
+    return result;
   }
 
   /** Archive the child registry entry without deleting membership or transcript. */
