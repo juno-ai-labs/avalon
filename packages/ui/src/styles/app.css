@@ -8785,6 +8785,7 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .activity-row-body { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
 .activity-row-text { color: var(--av-sys-color-text-subtle); font-size: 14px; line-height: 1.35; text-wrap: pretty; }
 .activity-row-text strong { color: var(--av-sys-color-text-default); font-weight: 600; }
+.activity-message-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .activity-row-detail { color: var(--av-sys-color-text-muted); font-size: 12px; }
 .activity-chip { align-self: flex-start; cursor: inherit; height: 26px; }
 .activity-unread-dot { align-self: center; background: var(--av-sys-color-workstream-news); border-radius: 999px; flex: none; height: 8px; width: 8px; }

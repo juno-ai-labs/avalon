@@ -1286,6 +1286,8 @@ export class WorkspaceSpaceStorage {
       draft.operationId ?? null,
     ).toArray().length === 1;
     if (!written) return { messageId, replayed: true };
+    // Posting is the subscription action; Rally's own messages seat nobody.
+    if (authorUserId !== null) this.seat(spaceId, authorUserId, postedAt);
     if (draft.operationId !== undefined) {
       this.storage.sql.exec(
         "INSERT INTO space_message_operations (message_id, operation_id, created_at) VALUES (?, ?, ?)",
@@ -3608,6 +3610,9 @@ export class WorkspaceSpaceStorage {
           now,
         );
         this.stampPlacements(request.spaceId, [request.workstreamId], request.userId, now);
+        // The Channel composer posts by starting a thread. Only the first
+        // placement subscribes its author; a replay must not undo a leave.
+        this.seat(request.spaceId, request.userId, now);
         this.advanceWaterline(now);
       }
       const space = this.space(request.spaceId, member(request.userId));

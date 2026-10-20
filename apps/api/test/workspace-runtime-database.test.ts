@@ -234,6 +234,8 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "workspace_resource_version_changes", // Filled by a resource_versions trigger, drained by the object after each write.
   "workspace_activity_seen", // How far each person read Activity; only the Activity RPCs.
   "workspace_activity_reads", // How far each person read each subject for Activity; only the Activity RPCs.
+  "workspace_activity_alerts", // Actual provider acceptance; Activity delivery RPCs only.
+  "workspace_activity_alert_claims", // Provider handoff fencing; Activity delivery RPCs only.
   "workspace_activity_pushes", // Which Activity rows went to whom as a push; only the directory follow-up.
   "workspace_activity_push_origin", // When this object began pushing Activity rows; only the directory follow-up.
   "member_personal_system_prompts", // Read and written only by the personal system prompt RPCs.

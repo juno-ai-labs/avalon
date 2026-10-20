@@ -1,7 +1,7 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import type { ActivityFilter, ActivityItem, ActivityPage, ArtifactPin, ConversationAccessRequestItem, PinKind, SpaceSummary, WorkstreamAppearance } from '@rally/contracts';
-import { SPACE_COLOR_KEYS } from '@rally/contracts';
+import type { ActivityFilter, ActivityGroup, ActivityItem, ActivityPage, ArtifactPin, ConversationAccessRequestItem, PinKind, SpaceSummary, WorkstreamAppearance } from '@rally/contracts';
+import { groupActivityItems, SPACE_COLOR_KEYS } from '@rally/contracts';
 import { IdentityTile, ShapeOutline, type TileBadge } from '@rally/ui/components/identity-tile';
 import { resourceGlyph } from '@rally/ui/components/resource-icon';
 import { resolveWorkstreamAppearance, WORKSTREAM_ICON_COMPONENTS } from '@rally/ui/components/workstream-glyph';
@@ -431,9 +431,8 @@ function useActivityFeed(only: ActivityFilter | null) {
  */
 function useUnreadActivityCount(): number {
   const feed = useActivityFeed(null);
-  return useMemo(() => (feed.data?.pages ?? []).reduce(
-    (total, page) => total + page.items.filter((item) => item.unread).length, 0,
-  ), [feed.data]);
+  return useMemo(() => groupActivityItems((feed.data?.pages ?? []).flatMap((page) => page.items))
+    .filter((item) => item.unread).length, [feed.data]);
 }
 
 /**
@@ -1544,6 +1543,7 @@ function NewChannelDialog({ onClose }: { onClose: () => void }): React.JSX.Eleme
 const ACTIVITY_VERBS: Record<ActivityItem['kind'], string> = {
   added: 'added you to',
   mentioned: 'mentioned you in',
+  new_message: 'replied in',
   thread_started: 'started',
   breakout_started: 'started a breakout on',
   run_finished: 'finished',
@@ -1646,7 +1646,8 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
   };
   const feed = useActivityFeed(only);
   const fetched = useMemo(() => (feed.data?.pages ?? []).flatMap((page) => page.items), [feed.data]);
-  const items = chip === 'unread' ? fetched.filter((item) => item.unread) : fetched;
+  const flattened = groupActivityItems(fetched);
+  const items = chip === 'unread' ? flattened.filter((item) => item.unread) : flattened;
   // An artifact's row opens its thread onto the artifact, expanded; every
   // other row asks for its pane expanded.
   const linkState = (item: ActivityItem) => (item.kind === 'artifact_updated' && item.artifact
@@ -1663,7 +1664,7 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
   // New activity pushes the rows under it down, and a request arriving or
   // answered slides in or out, rather than the list jumping.
   useListMotion(scroll);
-  const groups: Array<{ label: string; items: ActivityItem[] }> = [];
+  const groups: Array<{ label: string; items: ActivityGroup[] }> = [];
   for (const item of items) {
     const label = dayLabel(item.occurredAt);
     const last = groups.at(-1);
@@ -1718,8 +1719,8 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
         const thread = resolveWorkstreamAppearance(item.threadId, live.data?.find((candidate) => candidate.id === item.threadId)?.appearance);
         return <Link
           className={clsx('activity-row', item.unread ? 'is-unread' : 'is-read')}
-          data-motion-key={`activity:${item.id}`}
-          key={item.id}
+          data-motion-key={`activity:${item.groupKey}`}
+          key={item.groupKey}
           state={linkState(item)}
           to={href(item)}
         >
@@ -1739,6 +1740,12 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
                 <strong>{item.breakout ? item.threadTitle : item.mergedInto?.name ?? 'a channel'}</strong>
               </> : <strong>{item.breakout && item.kind !== 'breakout_started' ? item.breakout.title : item.threadTitle}</strong>}
             </span>
+            {item.kind === 'new_message' && item.preview && <span className="activity-row-detail activity-message-preview">{item.preview}</span>}
+            {(item.unreadMessages > 0 || item.unreadMention) && <span className="activity-row-detail">
+              {item.unreadMessages > 0 ? `${item.unreadMessages} new message${item.unreadMessages === 1 ? '' : 's'}` : ''}
+              {item.unreadMention ? `${item.unreadMessages > 0 ? ' · ' : ''}@mention` : ''}
+            </span>}
+            {item.rallyFinished && item.kind !== 'run_finished' && <span className="activity-row-detail">Rally also finished</span>}
             {item.kind === 'breakout_started' && item.breakout && <span className="breakout-chip activity-chip">
               <IconCornerDownRight aria-hidden="true" className="breakout-chip-icon" size={13} stroke={1.9} />
               <span className="breakout-chip-title">{item.breakout.title}</span>

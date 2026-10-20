@@ -1,5 +1,6 @@
 import { RegionSchema } from "@rally/contracts/regions";
 import {
+  NotificationChannelSchema,
   ContainerOrderSchema,
   PinnedOrderSchema,
   ConversationParentReserveChildRequestSchema,
@@ -459,6 +460,7 @@ export type WorkspaceActivityResult = z.infer<typeof WorkspaceActivityResultSche
 /** One Activity row a push names, read back when the push is sent. */
 export const WorkspaceActivityPushReadRequestSchema = SpaceActorSchema.extend({
   itemId: ActivityItemSchema.shape.id,
+  channel: NotificationChannelSchema.optional(),
 }).strict();
 export type WorkspaceActivityPushReadRequest = z.infer<typeof WorkspaceActivityPushReadRequestSchema>;
 

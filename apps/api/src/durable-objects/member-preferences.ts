@@ -69,6 +69,7 @@ const KINDS = NotificationKindSchema.options;
 /** The kind of channel list a pushed notification of this kind reads. */
 export const NOTIFICATION_KIND_FOR_PUSH: Record<PushNotificationData["kind"], NotificationKind> = {
   mention: "mentions",
+  new_message: "newMessages",
   participant_added: "added",
   thread_started: "newThreads",
   breakout_started: "newBreakouts",

@@ -1,4 +1,5 @@
 import type { SqlStorageValue } from "@cloudflare/workers-types";
+import { rewriteMessageAsPlainText } from "@rally/contracts/citations";
 import type { ActivityEvent, ActivityFilter, ActivityItem, ActivityItemKind, ActivitySubject } from "@rally/contracts";
 
 import {
@@ -97,6 +98,9 @@ interface ActivityKey extends Record<string, SqlStorageValue> {
   substream_id: string | null;
   /** The message's attention ordinal, on a message event that recorded one. */
   attention_ordinal: number | null;
+  preview?: string;
+  unread_message_count?: number;
+  read_floor?: number;
   /** On a breakout's `merged` row: the breakout, frozen at merge time. */
   merged_breakout_id?: string | null;
   merged_breakout_title?: string | null;
@@ -210,6 +214,7 @@ export class WorkspaceActivityFeed {
     viewer: Viewer,
     cursor: string | null,
     only: ActivityFilter | null = null,
+    replySubjects?: readonly { threadId: string; substreamId: string | null }[],
   ): { items: ActivityItem[]; nextCursor: string | null } | "invalid_cursor" {
     const after = cursor === null ? null : decodeCursor(cursor);
     if (cursor !== null && after === null) return "invalid_cursor";
@@ -254,6 +259,7 @@ export class WorkspaceActivityFeed {
                                      AND breakout.archived_at IS NULL
                                      AND ${breakoutListed}))`
                    : `COALESCE(json_extract(event.metadata_json, '$.substreamId'), '0') = '0'`}`),
+      ...(mentionsOnly ? [] : this.replyKeys(viewer, after, limit, replySubjects)),
       // A start is read from the thread's and the breakout's own directory
       // rows, as a finish is: the conversation's opening-message event does
       // not reliably reach this object (a breakout's is never forwarded), and
@@ -373,6 +379,81 @@ export class WorkspaceActivityFeed {
   }
 
   /**
+   * Seek from participating conversations into the partial message index. Push
+   * batches restrict the conversations before touching any message history.
+   * Read waterlines are joined once per conversation, including the initial
+   * participant cursor that predates the client's first Activity read.
+   */
+  private replyKeys(
+    person: Viewer, after: ActivityCursor | null, limit: number,
+    subjects?: readonly { threadId: string; substreamId: string | null }[],
+  ): ActivityKey[] {
+    if (subjects?.length === 0) return [];
+    const breakouts = this.spaces.breakoutsReady();
+    const threadListed = channelListedSql("directory", "viewer", person.accessClass, { breakouts, userId: "?1" });
+    const breakoutListed = breakoutListedSql("breakout", "breakout_viewer", person.accessClass);
+    const restrict = subjects === undefined ? "" : `AND EXISTS (SELECT 1 FROM json_each(?5) requested
+      WHERE json_extract(requested.value, '$.threadId') = conversation.thread_id
+        AND COALESCE(json_extract(requested.value, '$.substreamId'), '0') = conversation.substream_id)`;
+    // Strip the directory column's TEXT affinity at the expression-index join;
+    // otherwise SQLite scans the whole thread and sorts instead of seeking a breakout.
+    const query = `WITH conversations AS (
+      SELECT directory.workstream_id AS thread_id, '0' AS substream_id,
+             viewer.seen_attention_ordinal AS seen_ordinal,
+             'thread:' || directory.workstream_id AS subject_key
+        FROM channel_viewers viewer JOIN channels directory
+          ON directory.workstream_id = viewer.workstream_id
+         AND directory.authority_generation = viewer.authority_generation
+       WHERE viewer.user_id = ?1 AND viewer.is_participant = 1
+         AND directory.archived_at IS NULL AND ${threadListed}
+      ${breakouts ? `UNION ALL
+      SELECT breakout.workstream_id AS thread_id, breakout.substream_id,
+             breakout_viewer.seen_attention_ordinal AS seen_ordinal,
+             'breakout:' || breakout.workstream_id || ':' || breakout.substream_id AS subject_key
+        FROM breakout_viewers breakout_viewer JOIN breakouts breakout
+          ON breakout.workstream_id = breakout_viewer.workstream_id
+         AND breakout.substream_id = breakout_viewer.substream_id
+         AND breakout.authority_generation = breakout_viewer.authority_generation
+        JOIN channels directory ON directory.workstream_id = breakout.workstream_id
+        ${CHANNEL_VIEWER}
+       WHERE breakout_viewer.user_id = ?1 AND breakout_viewer.is_participant = 1
+         AND directory.archived_at IS NULL AND breakout.archived_at IS NULL
+         AND ${threadListed} AND ${breakoutListed}` : ""}
+    ), latest_replies AS (
+      SELECT 'message:' || event.event_id AS id, 'new_message' AS kind,
+             event.occurred_at, event.actor_user_id, event.actor_label,
+             conversation.thread_id, conversation.substream_id,
+             json_extract(event.metadata_json, '$.attentionOrdinal') AS attention_ordinal,
+             event.body AS preview,
+             MAX(conversation.seen_ordinal, COALESCE(waterline.read_through, 0)) AS read_floor,
+             (SELECT COUNT(*) FROM workspace_activity_events unread INDEXED BY workspace_activity_replies_conversation_idx
+               WHERE unread.subject_id = conversation.thread_id
+                 AND COALESCE(json_extract(unread.metadata_json, '$.substreamId'), '0') = +conversation.substream_id
+                 AND unread.event_type = 'workstream_message_created' AND unread.subject_type = 'workstream'
+                 AND unread.actor_type = 'user' AND json_extract(unread.metadata_json, '$.mergedFrom.breakoutId') IS NULL
+                 AND unread.actor_user_id <> ?1
+                 AND COALESCE(json_extract(unread.metadata_json, '$.attentionOrdinal'), 0) > MAX(conversation.seen_ordinal, COALESCE(waterline.read_through, 0))
+                 AND unread.occurred_at > COALESCE(seen.seen_through, 0)) AS unread_message_count
+        FROM conversations conversation
+        LEFT JOIN workspace_activity_reads waterline ON waterline.user_id = ?1 AND waterline.subject_key = conversation.subject_key
+        LEFT JOIN workspace_activity_seen seen ON seen.user_id = ?1
+        CROSS JOIN workspace_activity_events event
+       WHERE event.event_id = (
+         SELECT latest.event_id FROM workspace_activity_events latest INDEXED BY workspace_activity_replies_conversation_idx
+          WHERE latest.subject_id = conversation.thread_id
+            AND COALESCE(json_extract(latest.metadata_json, '$.substreamId'), '0') = +conversation.substream_id
+            AND latest.event_type = 'workstream_message_created' AND latest.subject_type = 'workstream'
+            AND latest.actor_type = 'user' AND json_extract(latest.metadata_json, '$.mergedFrom.breakoutId') IS NULL
+            AND latest.actor_user_id <> ?1
+          ORDER BY COALESCE(json_extract(latest.metadata_json, '$.attentionOrdinal'), 0) DESC,
+                   latest.occurred_at DESC, latest.event_id DESC LIMIT 1
+       ) ${restrict}
+    ) SELECT * FROM latest_replies WHERE ${AFTER} ORDER BY occurred_at DESC, id DESC LIMIT ?4`;
+    return this.storage.sql.exec<ActivityKey>(query, person.userId, after?.occurredAt ?? null, after?.id ?? "", limit,
+      ...(subjects === undefined ? [] : [JSON.stringify(subjects)])).toArray();
+  }
+
+  /**
    * The page's keys as rows, with today's titles. The arms already applied
    * the listing rules; the title reads keep to them as well, so a key that
    * somehow passed an arm still never yields a row.
@@ -444,6 +525,7 @@ export class WorkspaceActivityFeed {
       )))])
       : new Map<string, ActivityWaterline>();
     const done = (key: ActivityKey): boolean => {
+      if (key.kind === "new_message" && Number(key.attention_ordinal ?? 0) <= Number(key.read_floor ?? 0)) return true;
       const row = facts.get(key.id);
       return row !== undefined && cleared(ACTIVITY_CLEAR_RULES[key.kind], row, waterlines);
     };
@@ -464,6 +546,7 @@ export class WorkspaceActivityFeed {
         occurredAt: new Date(key.occurred_at).toISOString(),
         actorUserId: key.actor_user_id,
         actorLabel: key.actor_label,
+        ...(key.kind === "new_message" ? { preview: rewriteMessageAsPlainText(key.preview ?? ""), unreadMessageCount: Number(key.unread_message_count ?? 0) } : {}),
         threadId: key.thread_id as ActivityItem["threadId"],
         threadTitle: threadTitle ?? "",
         breakout: breakout ? { substreamId: key.substream_id as string, title: breakout.title }

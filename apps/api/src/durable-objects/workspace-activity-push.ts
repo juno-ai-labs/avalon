@@ -1,5 +1,6 @@
+import { z } from "zod";
 import type { SqlStorageValue } from "@cloudflare/workers-types";
-import type { ActivityItem, ActivityItemKind } from "@rally/contracts";
+import { IdSchema, NotificationChannelSchema, type ActivityItem, type ActivityItemKind, type NotificationChannel } from "@rally/contracts";
 
 import type { WorkspaceActivityFeed } from "./workspace-activity-feed";
 import type { Viewer } from "./listing-rules";
@@ -11,7 +12,43 @@ import type { Viewer } from "./listing-rules";
  */
 
 /** The kinds this path pushes, in the push payload's words; `added` and `mentioned` have their own. */
-export const ACTIVITY_PUSH_KINDS = ["thread_started", "breakout_started", "run_finished", "merged", "artifact_updated"] as const satisfies readonly ActivityItemKind[];
+export const ACTIVITY_PUSH_KINDS = ["new_message", "thread_started", "breakout_started", "run_finished", "merged", "artifact_updated"] as const satisfies readonly ActivityItemKind[];
+
+// Product policy: collect short reply bursts, then space ordinary interruptions.
+export const REPLY_BATCH_SECONDS = 15;
+export const CONVERSATION_ALERT_COOLDOWN_MS = 120_000;
+
+/** Decision receipts are separate from actual delivery and from a queued reply batch. */
+export const WORKSPACE_REPLY_ALERT_MIGRATION: readonly string[] = [
+  `ALTER TABLE workspace_activity_pushes ADD COLUMN delivery_enqueued INTEGER NOT NULL DEFAULT 0 CHECK (delivery_enqueued IN (0, 1))`,
+  `CREATE INDEX workspace_activity_pushes_recent_idx ON workspace_activity_pushes (user_id, pushed_at)`,
+  `CREATE TABLE workspace_activity_alert_claims (
+    user_id TEXT NOT NULL, conversation_key TEXT NOT NULL, channel TEXT NOT NULL,
+    claim_id TEXT NOT NULL, expires_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, conversation_key, channel)
+  ) STRICT`,
+  `CREATE TABLE workspace_activity_alerts (
+    user_id TEXT NOT NULL,
+    conversation_key TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    alerted_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, conversation_key, channel)
+  ) STRICT`,
+  `CREATE INDEX workspace_activity_replies_conversation_idx ON workspace_activity_events
+    (subject_id, COALESCE(json_extract(metadata_json, '$.substreamId'), '0'),
+     COALESCE(json_extract(metadata_json, '$.attentionOrdinal'), 0) DESC, occurred_at DESC, event_id DESC)
+    WHERE event_type = 'workstream_message_created' AND subject_type = 'workstream'
+      AND actor_type = 'user' AND json_extract(metadata_json, '$.mergedFrom.breakoutId') IS NULL`,
+];
+
+export const ActivityAlertRecordSchema = z.strictObject({
+  workspaceId: IdSchema, userId: IdSchema, threadId: IdSchema,
+  substreamId: IdSchema.nullable(), itemId: z.string(), channel: NotificationChannelSchema,
+});
+export const ActivityAlertClaimSchema = ActivityAlertRecordSchema.extend({ claimId: IdSchema });
+export type ActivityAlertClaim = z.infer<typeof ActivityAlertClaimSchema>;
+export type ActivityAlertRecord = z.infer<typeof ActivityAlertRecordSchema>;
 
 const PUSHED_KINDS: ReadonlySet<ActivityItemKind> = new Set(ACTIVITY_PUSH_KINDS);
 
@@ -31,7 +68,7 @@ export interface ActivityPushSubject {
   threadId: string;
   /** Null for the thread itself; always null on `merge` and `artifact`. */
   substreamId: string | null;
-  kind: "start" | "finish" | "joined" | "merge" | "artifact";
+  kind: "start" | "finish" | "joined" | "merge" | "artifact" | "message";
   /** The person, on `joined` and `artifact` only. */
   userId?: string | undefined;
   /** The Activity row, on `merge` and `artifact` only. */
@@ -45,6 +82,7 @@ export interface ActivityPushSubject {
 
 /** The kinds of row a subject can push. A join pushes the start alone. */
 function subjectKinds(subject: ActivityPushSubject): ReadonlySet<ActivityItemKind> {
+  if (subject.kind === "message") return new Set(["new_message"]);
   if (subject.kind === "merge") return new Set(["merged"]);
   if (subject.kind === "artifact") return new Set(["artifact_updated"]);
   return subject.kind === "finish" ? new Set(["run_finished"]) : STARTS;
@@ -56,6 +94,11 @@ function conversationKey(threadId: string, substreamId: string | null | undefine
 
 function itemConversation(item: ActivityItem): string {
   return conversationKey(item.threadId, item.breakout?.substreamId);
+}
+
+/** Synchronous reservation in the owning WorkspaceDO; its follow-up holds the durable work. */
+export function activityEnqueueKey(userId: string, item: ActivityItem): string {
+  return `${userId}:${item.kind === "new_message" ? itemConversation(item) : item.id}`;
 }
 
 /**
@@ -131,7 +174,7 @@ export class WorkspaceActivityPushes {
           ).toArray()[0];
         if (row?.scope === "workspace") return { everyone: true, userIds: [] };
       }
-      const reach = subject.kind === "finish" ? "viewer.is_participant = 1"
+      const reach = subject.kind === "finish" || subject.kind === "message" ? "viewer.is_participant = 1"
         : "(viewer.is_participant = 1 OR viewer.listable = 1)";
       const viewers = subject.substreamId === null
         ? this.storage.sql.exec<{ user_id: string }>(
@@ -160,12 +203,13 @@ export class WorkspaceActivityPushes {
    * is left out when the same page tells them they were added to that
    * conversation, since the add pushes itself, and so is anything about a
    * thread they have on screen. Nothing is recorded here; {@link record} does
-   * that once a row has been handed to delivery.
+   * that once delivery channels have been decided.
    */
   pending(
     viewer: Viewer,
     subjects: readonly ActivityPushSubject[],
     onScreen: ReadonlySet<string>,
+    inFlight?: ReadonlySet<string>,
   ): ActivityItem[] {
     const wanted = new Map<string, Set<ActivityItemKind>>();
     // A merge is matched by its own row, not by its conversation: a breakout's
@@ -184,7 +228,7 @@ export class WorkspaceActivityPushes {
       wanted.set(key, kinds);
     }
     if (wanted.size === 0 && merges.size === 0 && artifacts.size === 0) return [];
-    const page = this.feed.page(viewer, null);
+    const page = this.feed.page(viewer, null, null, subjects.filter((subject) => subject.kind === "message"));
     if (page === "invalid_cursor") return [];
     const origin = this.storage.sql.exec<{ started_at: number }>(
       `SELECT started_at FROM workspace_activity_push_origin WHERE id = 1`,
@@ -192,11 +236,16 @@ export class WorkspaceActivityPushes {
     const added = addedConversations(page.items);
     const candidates = page.items.filter((item) => (
       item.unread
+      && !inFlight?.has(activityEnqueueKey(viewer.userId, item))
       && (item.kind === "merged" ? merges.has(item.id)
         : item.kind === "artifact_updated" ? artifacts.has(item.id)
           : wanted.get(itemConversation(item))?.has(item.kind) === true)
       && Date.parse(item.occurredAt) >= origin
-      && !onScreen.has(item.threadId)
+      // A reply remains eligible while this thread is open but scrolled away.
+      // The consumer rechecks the visible-message waterline after batching.
+      && (item.kind === "new_message" || !onScreen.has(item.threadId))
+      && !(item.kind === "new_message" && replyCoveredByIntent(page.items, item))
+      && !(item.kind === "new_message" && this.replyBatchQueued(viewer.userId, item))
       && !(STARTS.has(item.kind) && added.has(itemConversation(item)))
     ));
     if (candidates.length === 0) return [];
@@ -209,12 +258,70 @@ export class WorkspaceActivityPushes {
     return candidates.filter((item) => !pushed.has(item.id));
   }
 
-  /** Note that this row has been handed to delivery for this person, so no later batch sends it again. */
-  record(userId: string, itemId: string, now: number): void {
+  /** Coalesce only a reply actually handed to a Queue, for its batching interval. */
+  private replyBatchQueued(userId: string, item: ActivityItem): boolean {
+    return this.storage.sql.exec<{ found: number }>(
+      `SELECT 1 AS found FROM workspace_activity_pushes pushed
+         JOIN workspace_activity_events event ON event.event_id = substr(pushed.item_id, 9)
+        WHERE pushed.user_id = ? AND pushed.delivery_enqueued = 1 AND pushed.pushed_at > ?
+          AND substr(pushed.item_id, 1, 8) = 'message:'
+          AND event.subject_id = ? AND COALESCE(json_extract(event.metadata_json, '$.substreamId'), '0') = ? LIMIT 1`,
+      userId, Date.now() - REPLY_BATCH_SECONDS * 1000, item.threadId, item.breakout?.substreamId ?? "0",
+    ).toArray().length > 0;
+  }
+
+  /** A sent alert starts the cooldown for its channel; retries of that delivery remain allowed. */
+  allowsAlert(userId: string, item: ActivityItem, itemId: string, channel: NotificationChannel): boolean {
+    if (item.kind !== "new_message" && item.kind !== "run_finished") return true;
+    const last = this.storage.sql.exec<{ item_id: string; alerted_at: number }>(
+      `SELECT item_id, alerted_at FROM workspace_activity_alerts
+        WHERE user_id = ? AND conversation_key = ? AND channel = ?`,
+      userId, itemConversation(item), channel,
+    ).toArray()[0];
+    return !last || last.item_id === itemId || last.alerted_at <= Date.now() - CONVERSATION_ALERT_COOLDOWN_MS;
+  }
+
+  /** Atomic provider handoff lease; expiration recovers a consumer lost mid-send. */
+  claimAlert(input: ActivityAlertClaim, now: number): "claimed" | "busy" | "cooldown" {
+    const key = conversationKey(input.threadId, input.substreamId);
+    const last = this.storage.sql.exec<{ item_id: string; alerted_at: number }>(
+      `SELECT item_id, alerted_at FROM workspace_activity_alerts WHERE user_id = ? AND conversation_key = ? AND channel = ?`,
+      input.userId, key, input.channel,
+    ).toArray()[0];
+    if (last && last.item_id !== input.itemId && last.alerted_at > now - CONVERSATION_ALERT_COOLDOWN_MS) return "cooldown";
+    const claimed = this.storage.sql.exec(
+      `INSERT INTO workspace_activity_alert_claims (user_id, conversation_key, channel, claim_id, expires_at)
+       VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, conversation_key, channel) DO UPDATE
+       SET claim_id = excluded.claim_id, expires_at = excluded.expires_at
+       WHERE expires_at <= ? RETURNING claim_id`,
+      input.userId, key, input.channel, input.claimId, now + CONVERSATION_ALERT_COOLDOWN_MS, now,
+    ).toArray();
+    return claimed.length === 1 ? "claimed" : "busy";
+  }
+
+  releaseAlert(input: ActivityAlertClaim): void {
     this.storage.sql.exec(
-      `INSERT INTO workspace_activity_pushes (user_id, item_id, pushed_at) VALUES (?, ?, ?)
+      `DELETE FROM workspace_activity_alert_claims WHERE user_id = ? AND conversation_key = ? AND channel = ? AND claim_id = ?`,
+      input.userId, conversationKey(input.threadId, input.substreamId), input.channel, input.claimId,
+    );
+  }
+
+  recordAlert(input: ActivityAlertRecord, now: number): void {
+    this.storage.sql.exec(
+      `INSERT INTO workspace_activity_alerts (user_id, conversation_key, channel, item_id, alerted_at)
+       VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, conversation_key, channel) DO UPDATE
+       SET item_id = excluded.item_id, alerted_at = excluded.alerted_at
+       WHERE excluded.item_id <> item_id AND excluded.alerted_at >= alerted_at`,
+      input.userId, conversationKey(input.threadId, input.substreamId), input.channel, input.itemId, now,
+    );
+  }
+
+  /** Record the delivery decision, including disabled or unavailable channels, so it is not reconsidered later. */
+  record(userId: string, itemId: string, now: number, enqueued = false): void {
+    this.storage.sql.exec(
+      `INSERT INTO workspace_activity_pushes (user_id, item_id, pushed_at, delivery_enqueued) VALUES (?, ?, ?, ?)
        ON CONFLICT(user_id, item_id) DO NOTHING`,
-      userId, itemId, now,
+      userId, itemId, now, enqueued ? 1 : 0,
     );
   }
 
@@ -227,7 +334,23 @@ export class WorkspaceActivityPushes {
    * person has an add for the same conversation, which pushes itself.
    */
   item(viewer: Viewer, itemId: string): ActivityItem | null {
-    const page = this.feed.page(viewer, null);
+    if (itemId.startsWith("message:")) {
+      const source = this.storage.sql.exec<{ subject_id: string; substream_id: string }>(
+        `SELECT subject_id, COALESCE(json_extract(metadata_json, '$.substreamId'), '0') AS substream_id
+           FROM workspace_activity_events WHERE event_id = ?`, itemId.slice("message:".length),
+      ).toArray()[0];
+      if (!source) return null;
+      const page = this.feed.page(viewer, null, null, [{ threadId: source.subject_id, substreamId: source.substream_id }]);
+      if (page === "invalid_cursor") return null;
+      // The first event schedules the batch; its delivery shows the latest
+      // human reply, while its original id remains the receipt/idempotency key.
+      const latest = page.items.find((candidate) => candidate.kind === "new_message" && candidate.unread
+        && candidate.threadId === source.subject_id
+        && (candidate.breakout?.substreamId ?? "0") === source.substream_id) ?? null;
+      if (latest && replyCoveredByIntent(page.items, latest)) return null;
+      return latest;
+    }
+    const page = this.feed.page(viewer, null, null, []);
     if (page === "invalid_cursor") return null;
     const finish = itemId.startsWith("finished:") ? itemId.slice(0, itemId.lastIndexOf(":") + 1) : null;
     const item = page.items.find((candidate) => (
@@ -242,4 +365,11 @@ export class WorkspaceActivityPushes {
 /** The conversations a page says the person was added to. */
 function addedConversations(items: readonly ActivityItem[]): Set<string> {
   return new Set(items.filter((item) => item.kind === "added").map(itemConversation));
+}
+
+/** One explicit invitation or mention already asks for attention to this message. */
+function replyCoveredByIntent(items: readonly ActivityItem[], reply: ActivityItem): boolean {
+  return items.some((item) => item.kind === "mentioned" && `message:${item.id}` === reply.id
+    || item.kind === "added" && item.occurredAt === reply.occurredAt
+      && itemConversation(item) === itemConversation(reply));
 }
