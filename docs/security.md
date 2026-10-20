@@ -318,8 +318,7 @@ immutable versioned objects and promotes only validated mutable channel feeds.
 The trusted renderer's `checkForUpdates` preload method invokes the same manual
 update check as the application menu. Its argument-free `update:check` handler
 checks the IPC sender and accepts no feed URL, version, or connector-supplied
-destination. Unknown connector cards may request that check; their connector
-identity never authorizes an OAuth attempt.
+destination.
 
 ### Authentication and authorization
 

@@ -399,7 +399,7 @@ export interface RallyDesktopBridge {
   /** Main's `powerMonitor` suspend and resume, relayed to every Rally window. */
   onPowerStateChanged: (listener: (state: DesktopPowerState) => void) => () => void;
   getUpdateStatus: () => Promise<DesktopUpdateStatus>;
-  /** Starts the same manual update check as the application menu; reloads a browser client. */
+  /** Starts the same manual update check as the application menu. */
   checkForUpdates: () => Promise<void>;
   onUpdateStatusChanged: (listener: (status: DesktopUpdateStatus) => void) => () => void;
   /** Quits and installs a downloaded update; does nothing when none is ready. */

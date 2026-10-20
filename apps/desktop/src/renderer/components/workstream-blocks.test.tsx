@@ -1,11 +1,13 @@
-import { MemberPresentationContext } from '../lib/member-presentation';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { groupPluginToolMessages, withoutAgentWork } from '../lib/transcript';
-import { isUnrecognizedConnectorConnectionCard } from './connector-mentions';
-import { EmailMentionContext, emailMentionDirectory } from '../lib/workspace-invitees';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MessageExportRequest, MessageExportResult } from '../../common/message-export';
+import { CollaborationSessionProvider } from '../lib/collaboration-session';
+import { isUnrecognizedConnectorConnectionCard } from '../lib/connector-connection-card';
+import { MemberPresentationContext } from '../lib/member-presentation';
+import { groupPluginToolMessages, withoutAgentWork } from '../lib/transcript';
+import { EmailMentionContext, emailMentionDirectory } from '../lib/workspace-invitees';
+import * as connectorMentions from './connector-mentions';
 import type { ElicitationData, Message } from '../lib/types';
 import { applyTheme } from '../lib/theme';
 import {
@@ -54,6 +56,8 @@ vi.mock('../lib/platform', () => ({
     getRuntimeConfig,
     showDefinitionForSelection,
     shareText,
+    getUpdateStatus: async () => ({ kind: 'idle' }),
+    onUpdateStatusChanged: () => () => undefined,
   }),
   desktopRuntimeConfig: getRuntimeConfig,
   desktopServicesAvailable,
@@ -97,15 +101,27 @@ const actions = {
 };
 
 describe('MessageBlock model timing', () => {
+  it('keeps the tool row for a known connector when its local provider cannot offer a card', () => {
+    vi.spyOn(connectorMentions, 'connectorConnectionCardProvider').mockReturnValue(null);
+    const message: Message = { ...baseMessage, authorType: 'agent', author: undefined,
+      messageType: 'tool_event', toolEvent: { id: 'known-card', name: 'show_connector_connection',
+        status: 'completed', input: { connectorId: 'slack', scope: 'personal' } } };
+    render(<MessageBlock {...actions} message={message} connectorConnectionCards />);
+    expect(screen.getByText('show_connector_connection')).toBeInTheDocument();
+    expect(screen.queryByRole('article', { name: 'Connector update required' })).not.toBeInTheDocument();
+  });
+
   it('keeps a future connector actionable with agent work hidden and renders the update card', () => {
     const message: Message = { ...baseMessage, authorType: 'agent', author: undefined,
       messageType: 'tool_event', toolEvent: { id: 'future-card', name: 'show_connector_connection',
         status: 'completed', input: { connectorId: 'future-crm', scope: 'personal' } } };
     const messages = groupPluginToolMessages(withoutAgentWork([message], isUnrecognizedConnectorConnectionCard));
     expect(messages.map((row) => row.id)).toEqual(['message-human']);
-    render(<QueryClientProvider client={new QueryClient()}>
+    const connectorSetup = { pendingConnectorOAuth: null, setPendingConnectorOAuth: vi.fn(),
+      resourceAuthorizationAttempts: {}, setResourceAuthorizationAttempt: vi.fn(), openExternal: vi.fn(async () => undefined) };
+    render(<CollaborationSessionProvider api={null} session={null} connectorSetup={connectorSetup}><QueryClientProvider client={new QueryClient()}>
       <MessageBlock {...actions} message={messages[0]!} connectorConnectionCards />
-    </QueryClientProvider>);
+    </QueryClientProvider></CollaborationSessionProvider>);
     expect(screen.getByRole('article', { name: 'Connector update required' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Update Rally' })).toBeInTheDocument();
     expect(screen.queryByText('show_connector_connection')).not.toBeInTheDocument();

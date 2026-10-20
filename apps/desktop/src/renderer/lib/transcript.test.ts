@@ -50,6 +50,31 @@ const base = {
 };
 
 describe('transcript messages', () => {
+  it('deduplicates adjacent unknown connector cards while preserving scope, gaps and later requests', () => {
+    const first = createToolEventMessage({ ...base, id: 'unknown-first',
+      toolEvent: { id: 'call-first', name: 'show_connector_connection', status: 'completed',
+        input: { connectorId: 'future-crm', scope: 'personal' } },
+    });
+    const repeat = createToolEventMessage({ ...base, id: 'unknown-repeat',
+      toolEvent: { id: 'call-repeat', name: 'show_connector_connection', status: 'completed',
+        output: { connectorId: 'future-crm', scope: 'personal' } },
+    });
+    const workspace = createToolEventMessage({ ...base, id: 'unknown-workspace',
+      toolEvent: { id: 'call-workspace', name: 'show_connector_connection', status: 'completed',
+        input: { connectorId: 'future-crm', scope: 'workspace' } },
+    });
+    const other = createToolEventMessage({ ...base, id: 'other-connector',
+      toolEvent: { id: 'call-other', name: 'show_connector_connection', status: 'completed',
+        input: { connectorId: 'another-crm', scope: 'personal' } },
+    });
+    const gap = { ...repeat, id: 'after-gap', precededByTranscriptGap: true };
+    const answer = createTextMessage({ ...base, id: 'answer', text: 'Please update Rally.' });
+    const later = { ...repeat, id: 'later' };
+    const rows = dedupeAdjacentConnectorConnectionCards([first, repeat, gap, workspace, other, answer, later]);
+    expect(rows.map((row) => row.id)).toEqual(['unknown-first', 'after-gap', 'unknown-workspace', 'other-connector', 'answer', 'later']);
+    expect(rows[0]?.toolEvent?.id).toBe('call-repeat');
+  });
+
   it('collapses only adjacent repeats of the same connector card', () => {
     const first = createToolEventMessage({
       ...base,
