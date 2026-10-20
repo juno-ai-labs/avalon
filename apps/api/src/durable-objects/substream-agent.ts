@@ -95,8 +95,9 @@ import {
 } from "../lib/audience-containment";
 import { assertDurableObjectJurisdiction } from "../lib/durable-object-namespace";
 import { withDurableObjectSelf } from "../lib/durable-object-self";
+import { clientReadsResolutionSuggestions } from "../lib/client-contract";
 import { uuidV7 } from "../lib/uuid-v7";
-import { ConversationSuggestionStorage, MERGE_JUDGEMENT_KEY_PREFIX, observeTurnDisposition, suggestionForClient, type SuggestionParent, type SuggestionRow } from "./conversation-suggestions";
+import { ConversationSuggestionStorage, MERGE_JUDGEMENT_KEY_PREFIX, observeTurnDisposition, suggestionForClient, suggestionEventForClient, type SuggestionParent, type SuggestionRow } from "./conversation-suggestions";
 import { createClassifierDiagnosticSink } from "../services/classifier-diagnostics";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import { AUTHORITY_FENCED_CODE } from "../runtime/object-port-error";
@@ -325,6 +326,7 @@ function isPersistedElicitationOutcome(value: unknown): boolean {
 }
 
 const SocketAttachmentSchema = z.object({
+  readsResolutionSuggestions: z.boolean().default(false),
   connectionId: z.string().uuid(),
   workspaceId: WorkspaceIdSchema,
   /** The conversation parent's id, of either kind. */
@@ -515,6 +517,7 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
   // since it records a choice about a line only readers see and changes
   // nothing in the transcript. `docs/conversation-suggestions.md`.
   productOperation({ operation: z.literal("dismiss_suggestion"), suggestionId: IdSchema }),
+  productOperation({ operation: z.literal("resolve_suggestion"), suggestionId: IdSchema }),
   productOperation({ operation: z.literal("create_message"),
     input: WorkstreamObjectCreateMessageInputSchema }),
   productOperation({ operation: z.literal("import_source_get") }),
@@ -2963,6 +2966,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
               // Guarded: a suggestion's resolution must never fail the merge that resolves it.
               try {
                 resolvedSuggestions.push(...this.suggestions.resolveMergedThrough(appended.sequenceNumber, mergeMarker.mergedByUserId, Date.now()));
+                resolvedSuggestions.push(...this.suggestions.resolveCompleted(mergeMarker.mergedByUserId, Date.now()));
               } catch (error) {
                 logWarn(this.env, "conversation_suggestion_resolution_failed", {
                   workstream_id: this.objectStore.identity()?.parentId,
@@ -3591,6 +3595,33 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       }
       if (request.operation === "mark_unread") {
         return jsonResponse(await this.product.markUnread(current));
+      }
+      if (request.operation === "resolve_suggestion") {
+        await this.product.authorize(current);
+        if (identity.parentKind !== "workstream") return jsonResponse({ error: "conversation_resolution_unavailable" }, 409);
+        const existing = this.suggestions.byId(request.suggestionId);
+        if (!existing || existing.kind !== "mark_resolved") return jsonResponse({ error: "suggestion_not_found" }, 404);
+        if (existing.status !== "open") {
+          if (existing.status !== "accepted") return jsonResponse({ error: "suggestion_not_open" }, 409);
+          return jsonResponse({ suggestionId: existing.suggestion_id, status: existing.status, replayed: true });
+        }
+        const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
+          current.workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(current.workspaceId)));
+        const accepting = this.state.storage.transactionSync(() => this.suggestions.beginResolution(existing.suggestion_id, current.userId));
+        if (!accepting) return jsonResponse({ error: "suggestion_not_open" }, 409);
+        const resolution = await parent.resolveConversation({
+          workspaceId: current.workspaceId, parentId: identity.parentId,
+          substreamId: this.externalSubstreamId(), userId: current.userId,
+        });
+        if (resolution.outcome !== "resolved" && resolution.outcome !== "unchanged") {
+          this.state.storage.transactionSync(() => this.suggestions.cancelResolution(existing.suggestion_id));
+          const error = resolution.outcome === "forbidden" ? "conversation_participant_required"
+            : resolution.outcome === "not_ready" ? "conversation_not_ready" : "conversation_archived";
+          return jsonResponse({ error }, resolution.outcome === "forbidden" ? 403 : 409);
+        }
+        const accepted = this.state.storage.transactionSync(() => this.suggestions.resolveCompleted(current.userId, Date.now()));
+        for (const row of accepted) await this.publishSuggestionChanged(row);
+        return jsonResponse({ suggestionId: existing.suggestion_id, status: "accepted", replayed: !accepted.some((row) => row.suggestion_id === existing.suggestion_id) });
       }
       if (request.operation === "dismiss_suggestion") {
         // Archived included: an open row outlives archiving, and its readers keep the feed.
@@ -5826,6 +5857,20 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           ? { title: identityRow.title, description: identityRow.description, scope: identityRow.scope,
               archived_at: identityRow.archived_at, system_kind: identityRow.system_kind }
           : null,
+        readResolved: async () => {
+          try {
+            const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
+              input.workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(input.workspaceId)));
+            return await parent.readConversationResolved({ workspaceId: input.workspaceId, parentId: input.parentId, substreamId });
+          } catch (error) {
+            if (input.parentReadFailure === "throw") throw error;
+            logWarn(executionEnv, "turn_disposition_resolution_read_failed", {
+              workstream_id: input.parentId, substream_id: substreamId,
+              reason: diagnosticErrorCode(error, "turn_disposition_resolution_read_failed"),
+            });
+            return false;
+          }
+        },
         readParent: () => this.readSuggestionParent(executionEnv, input.workspaceId, input.parentId, substreamId, input.parentReadFailure),
         onDiagnostic: sink.record,
         traceId,
@@ -5892,6 +5937,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     substreamId: string,
     row: SuggestionRow,
   ): Promise<void> {
+    if (row.kind === "mark_resolved") return;
     const judged = this.suggestions.turn(row.judged_turn_id);
     const draft = judged
       ? await draftSuggestion(executionEnv, {
@@ -8255,6 +8301,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
 
     const attachment: SocketAttachment = {
+      readsResolutionSuggestions: clientReadsResolutionSuggestions((name) => request.headers.get(name) ?? undefined),
       connectionId: uuidV7(),
       workspaceId: identity.data.workspaceId,
       workstreamId: identity.data.workstreamId,
@@ -8678,7 +8725,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return false;
     }
     if (plan.type === "replay") {
-      for (const event of plan.events) socket.send(JSON.stringify(event));
+      for (const event of plan.events) socket.send(JSON.stringify(suggestionEventForClient(event, this.readAttachment(socket)?.readsResolutionSuggestions ?? false)));
       return true;
     }
     this.sendResyncRequired(socket, currentSequence, plan.reason);
@@ -8776,7 +8823,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           snapshot.event.transcript.activeTurns.length,
         ),
       });
-      socket.send(JSON.stringify(snapshot.event));
+      socket.send(JSON.stringify(suggestionEventForClient(snapshot.event, attachment.readsResolutionSuggestions)));
       for (const chunk of snapshot.initialContextChunks) socket.send(JSON.stringify(chunk));
       for (const [chunkIndex, inputs] of snapshot.pendingInputChunks.entries()) {
         const frame = JSON.stringify(ServerSocketEventSchema.parse({
@@ -9044,7 +9091,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       const attachment = this.readAttachment(socket);
       if (!attachment?.subscribed) continue;
       try {
-        socket.send(payload);
+        socket.send(attachment.readsResolutionSuggestions ? payload : JSON.stringify(suggestionEventForClient(event, false)));
       } catch {
         // The runtime will deliver close/error separately; one stale socket must
         // not prevent delivery to healthy clients.

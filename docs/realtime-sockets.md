@@ -71,7 +71,10 @@ admission is split in two.
    the current regional session ID, and, for a feed, the parent kind (`pk`),
    the parent id, the authenticated role (null for guests), the current authority generation,
    and whether the parent said it is archived (`parent_archived`). The
-   ticket also binds the authorized conversation membership version. Session
+   ticket also binds the authorized conversation membership version and the
+   contract-10 resolution-suggestion capability. The room persists the capability
+   in its attachment and adapts legacy snapshot, broadcast and replay delivery
+   as described in [conversation suggestions](conversation-suggestions.md#resolution-delivery-and-acceptance). Session
    validation retains the existing workspace membership-incarnation check. An implicit workspace-member Main read uses
    version zero; explicit grants use positive revisions and their existing local
    freshness check. A guest has no implicit Main admission. The
