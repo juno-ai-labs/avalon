@@ -1,3 +1,4 @@
+import { MERGE_CHANNELS_QUERY_KEY } from './use-merge-channels';
 import {
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
@@ -1033,6 +1034,7 @@ export function WorkspaceSocketProvider({
               : false;
             // A plan-change push is not replayed: an open meter reads again.
             if (sync.data.sidebar) {
+              void queryClient.invalidateQueries({ queryKey: MERGE_CHANNELS_QUERY_KEY });
               void queryClient.invalidateQueries({ queryKey: organizationUsageQueryKey(localCacheScope) });
               publishTopics(['usage'], Math.max(lastWaterline, sync.data.waterline));
             }
@@ -1250,6 +1252,7 @@ export function WorkspaceSocketProvider({
           }
           const reachChanged = safeParseSocketEvent(WorkspaceReachChangedEventSchema, decoded);
           if (reachChanged.success) {
+            void queryClient.invalidateQueries({ queryKey: MERGE_CHANNELS_QUERY_KEY });
             // This person joined or left a Channel or Breakout. A member's
             // sidebar already moved: the Channel row and the Space pages are
             // pushed on the same flip. A guest's is the associative read,
@@ -1284,6 +1287,9 @@ export function WorkspaceSocketProvider({
             // read again the next time one is shown, rather than re-reading
             // every loaded page for every message in the Organization.
             const refetchType = spaceConversations.data.placementChanged === false ? 'none' : 'active';
+            if (spaceConversations.data.placementChanged !== false) {
+              void queryClient.invalidateQueries({ queryKey: MERGE_CHANNELS_QUERY_KEY });
+            }
             void queryClient.invalidateQueries({ queryKey: MY_THREADS_QUERY_KEY, refetchType });
             void queryClient.invalidateQueries({ queryKey: CHANNEL_STATS_QUERY_KEY, refetchType });
             void queryClient.invalidateQueries({ queryKey: ACTIVITY_QUERY_KEY, refetchType });
