@@ -1,3 +1,4 @@
+import type { ArtifactWindowAction } from './artifact-window-actions';
 import type { Annotation, ArtifactPickerPin } from "@rally/contracts";
 import type { ClientSession } from "@rally/contracts/client-session";
 import type { NetworkRecoveryState, NetworkTicketObservation } from './network-recovery';
@@ -337,6 +338,9 @@ export interface DesktopArtifactPreviewRequest {
 }
 
 export interface DesktopSiteArtifactWindowRequest {
+  canonicalUrl?: string;
+  mode?: 'static' | 'active';
+  stateful?: boolean;
   annotationScope?: string;
   kind: 'site';
   restoreId?: string;
@@ -567,8 +571,8 @@ export interface RallyDesktopBridge {
   snapshotArtifactPreview: () => Promise<string | null>;
   /** Tear the preview down: the detail closed, or the work stream changed. */
   closeArtifactPreview: () => Promise<void>;
-  /** Open a generated artifact in its own isolated window. */
-  /** Resolves false when the host refuses or blocks the new window. */
+  /** Resource-confined operations for the registered detached window. Never accepts a resource id or API path. */
+  artifactWindowAction?: (action: ArtifactWindowAction) => Promise<unknown>;
   readArtifactWindow?: () => Promise<DesktopArtifactWindowRequest | null>;
   registerAnnotationComposer?: (scope: string, active: boolean) => Promise<void>;
   returnArtifactAnnotations?: (pins: { annotation: Annotation; image?: Uint8Array }[]) => Promise<boolean>;

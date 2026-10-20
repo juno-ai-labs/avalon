@@ -903,7 +903,7 @@ describe('a Channel', () => {
     // that frame lets the panel's delayed focus dismiss the menu under the test.
     await waitFor(() => expect(screen.getByRole('complementary', { name: 'Resource: Price model' })).toHaveFocus(), { timeout: 5_000 });
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Artifact menu: Price model' }), { button: 0, ctrlKey: false });
-    expect(await screen.findByRole('menuitem', { name: 'New window' })).toBeVisible();
+    expect(await screen.findByRole('menuitem', { name: 'Open in a new window' })).toBeVisible();
     fireEvent.click(screen.getByRole('menuitem', { name: /Versions/u }));
     fireEvent.click(await screen.findByRole('menuitem', { name: /V1/u }));
     expect(await screen.findByText('Version 1 · not current')).toBeInTheDocument();

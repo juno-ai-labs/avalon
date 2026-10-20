@@ -5,10 +5,10 @@ import { desktopBridge } from '../lib/platform';
 import { downloadPreview } from './attachment-lightbox';
 import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { IconArchive, IconArrowLeft, IconChevronRight, IconChevronsRight, IconDownload, IconExternalLink, IconEye, IconFileText, IconHistory, IconLink, IconLoader2, IconPencil, IconPin, IconPinnedOff, IconPlus, IconRefresh, IconUserPlus, IconWindowMaximize, IconX } from '@tabler/icons-react';
-import { ActionTile, ActionTiles, LevelRow, TitleMenuHeader, TitleMenuItem, TitleMenuSeparator, TitlePillClose, TitlePillHeader, useTitleMenuNav, type TitlePillLevel } from '@rally/ui/components/title-pill';
+import { IconArchive, IconArrowLeft, IconChevronRight, IconChevronsRight, IconDownload, IconExternalLink, IconEye, IconFileText, IconHistory, IconLink, IconLoader2, IconPencil, IconPin, IconDots, IconPlus, IconRefresh, IconUserPlus, IconWindowMaximize, IconX } from '@tabler/icons-react';
+import { ActionTile, ActionTiles, LevelRow, TitleMenuHeader, TitleMenuItem, TitlePillClose, TitlePillHeader, openLevel, useTitleMenuNav, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { classifyAttachmentKind } from '@rally/contracts';
-import { DetailHeaderActionsHost } from './detail-header-actions';
+import { DetailActionMenu, DetailHeaderActionsHost, type DetailHeaderAction } from './detail-header-actions';
 import type { IconGroupAction } from '@rally/ui/components/icon-group';
 import { useEffect, useRef, useState } from 'react';
 import { formatDateTime, formatSparseRelativeDate } from '../lib/format';
@@ -22,7 +22,8 @@ import type {
 import { type RailInspector, type RailVariant, useUiStore } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { ResourceIcon } from './markdown-citations';
-import { CopyButton } from './copy-button';
+import { CopyButton, CopyStatus, copyStateLabel } from './copy-button';
+import { useCopy } from '../lib/use-copy';
 import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, Modal } from './primitives';
 import { SiteResourceDetail, type SiteResourceDetailProps } from './site-resource-detail';
 import { RailSurface } from './rail-surface';
@@ -33,7 +34,10 @@ interface InspectorRailProps {
    * One resource in the conversation's right panel. Its caller owns the panel's
    * open state; this never reads or opens the parked shell rail.
    */
+  children?: React.ReactNode;
   panel?: {
+    detached?: boolean;
+    commentDisabledReason?: string;
     resourceId: string;
     onClose: () => void;
     /** Expand the panel over its conversation, or put it back: the stack's own control. */
@@ -559,16 +563,19 @@ function ResourceVersionsMenu(props: ResourceVersionsProps): React.JSX.Element {
 }
 
 const VERSIONS_VIEW = { key: 'versions', label: 'Versions' };
+const MORE_VIEW = { key: 'more', label: 'More' };
 
 /**
  * The resource panel's title-pill menu: what the resource is, then what can be
  * done to it, in the same tiles and levels a thread's menu uses.
  */
-function ResourcePanelMenu({ downloading, onDownload, onArchive, onCopyLink, onOpenSource, onPopOut, onRefresh, onRename, pinned, popOutDisabled, refreshing, resource, versions }: {
+function ResourcePanelMenu({ detailActions = [], downloading, onDownload, onArchive, onCopyLink, copyLinkLabel = 'Copy link', onOpenSource, onPopOut, onRefresh, onRename, pinned, popOutDisabled, refreshing, resource, versions }: {
+  detailActions?: readonly DetailHeaderAction[];
   downloading: boolean;
   onDownload?: (() => void) | undefined;
   onArchive?: (() => void) | undefined;
   onCopyLink?: (() => void) | undefined;
+  copyLinkLabel?: string;
   onOpenSource?: (() => void) | undefined;
   onPopOut?: (() => void) | undefined;
   onRefresh?: (() => void) | undefined;
@@ -581,31 +588,40 @@ function ResourcePanelMenu({ downloading, onDownload, onArchive, onCopyLink, onO
 }): React.JSX.Element {
   const nav = useTitleMenuNav();
   if (nav.view?.key === VERSIONS_VIEW.key) return <ResourceVersionItems {...versions} />;
-  return <>
+  if (nav.view?.key === MORE_VIEW.key) return <>
+    {onArchive && <TitleMenuItem danger icon={<IconArchive aria-hidden="true" size={16} />} onSelect={onArchive}>Archive</TitleMenuItem>}
+  </>;
+  const copyPublicLink = detailActions.find((action) => action.key === 'copy-link');
+  const openBrowser = detailActions.find((action) => action.key === 'open-browser');
+  const openingActions = detailActions.filter((action) => action.key === 'new-window');
+  return <DetailActionMenu actions={detailActions}>
     <TitleMenuHeader
       eyebrow={resource.direction === 'artifact' ? null : 'Resource'}
       icon={<ResourceIcon resource={resource} />}
       title={resource.title}
     />
-    <ActionTiles>
+    <ActionTiles className="artifact-menu-tiles">
       {onDownload && <ActionTile disabled={downloading} icon={<IconDownload aria-hidden="true" size={20} stroke={1.6} />} label="Download" onSelect={onDownload} />}
       {onRename && <ActionTile icon={<IconPencil aria-hidden="true" size={20} stroke={1.6} />} label="Rename" onSelect={onRename} />}
-      {onCopyLink && <ActionTile icon={<IconLink aria-hidden="true" size={20} stroke={1.6} />} label="Copy link" onSelect={onCopyLink} />}
-      {pinned && <ActionTile
-        icon={pinned.on ? <IconPinnedOff aria-hidden="true" size={20} stroke={1.6} /> : <IconPin aria-hidden="true" size={20} stroke={1.6} />}
-        label={pinned.on ? 'Unpin' : 'Pin'}
-        onSelect={() => pinned.onChange(!pinned.on)}
-      />}
-      {onPopOut && <ActionTile disabled={popOutDisabled} icon={<IconWindowMaximize aria-hidden="true" size={20} stroke={1.6} />} label="New window" onSelect={onPopOut} />}
-      {onOpenSource && <ActionTile icon={<IconExternalLink aria-hidden="true" size={20} stroke={1.6} />} label="Open source" onSelect={onOpenSource} />}
-      {onRefresh && <ActionTile disabled={refreshing} icon={<IconRefresh aria-hidden="true" size={20} stroke={1.6} />} label="Refresh" onSelect={onRefresh} />}
+      {copyPublicLink ? <ActionTile disabled={copyPublicLink.disabled} icon={copyPublicLink.icon} label={copyPublicLink.label} onSelect={copyPublicLink.onSelect} />
+        : onCopyLink && <ActionTile icon={<IconLink aria-hidden="true" size={20} stroke={1.6} />} label={copyLinkLabel} onSelect={onCopyLink} />}
+      {openBrowser && <ActionTile disabled={openBrowser.disabled} icon={openBrowser.icon} label={openBrowser.label} onSelect={openBrowser.onSelect} />}
+      {onArchive && <ActionTile icon={<IconDots aria-hidden="true" size={20} stroke={1.6} />} label="More" onSelect={openLevel(nav, MORE_VIEW)} />}
     </ActionTiles>
+
+    {pinned && <DropdownMenu.CheckboxItem checked={pinned.on} className="menu-item title-menu-switch-row" onCheckedChange={pinned.onChange} onSelect={(event) => event.preventDefault()}>
+      <IconPin aria-hidden="true" size={16} stroke={1.8} />
+      <span className="title-menu-item-copy">Pinned in my sidebar</span>
+      <span aria-hidden="true" className="title-menu-switch" data-checked={pinned.on ? '' : undefined} />
+    </DropdownMenu.CheckboxItem>}
+    {openingActions.map((action) => <TitleMenuItem disabled={action.disabled} icon={action.icon} key={action.key} onSelect={action.onSelect}>{action.label}</TitleMenuItem>)}
+    {onPopOut && <TitleMenuItem disabled={popOutDisabled} icon={<IconWindowMaximize aria-hidden="true" size={16} />} onSelect={onPopOut}>Open in a new window</TitleMenuItem>}
+    {onOpenSource && <TitleMenuItem icon={<IconExternalLink aria-hidden="true" size={16} />} onSelect={onOpenSource}>Open source</TitleMenuItem>}
+    {onRefresh && <TitleMenuItem disabled={refreshing} icon={<IconRefresh aria-hidden="true" size={16} />} onSelect={onRefresh}>Refresh</TitleMenuItem>}
+
+    <DetailActionMenu actions={detailActions} rowsOnly />
     <LevelRow icon={<IconHistory aria-hidden="true" size={17} stroke={1.7} />} label="Versions" view={VERSIONS_VIEW} />
-    {onArchive && <>
-      <TitleMenuSeparator />
-      <TitleMenuItem danger icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={onArchive}>Archive</TitleMenuItem>
-    </>}
-  </>;
+  </DetailActionMenu>;
 }
 
 function InspectorDetail({
@@ -717,7 +733,11 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
   const [poppingOut, setPoppingOut] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [downloadFailed, setDownloadFailed] = useState(false);
-  const [copyLinkFailed, setCopyLinkFailed] = useState(false);
+  const resourceCopy = resource && props.resourceLink?.(resource);
+  const { copy: copyResourceLink, state: copyLinkState } = useCopy({ value: '', copyText: async () => {
+    if (!resourceCopy) throw new Error('This artifact has no link');
+    await resourceCopy();
+  } });
   const [renameTarget, setRenameTarget] = useState<WorkstreamResource | null>(null);
   const [renameTitle, setRenameTitle] = useState('');
   const [renaming, setRenaming] = useState(false);
@@ -730,17 +750,11 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
     setArchiving(false);
     setPopOutFailed(false);
     setPoppingOut(false);
-    setCopyLinkFailed(false);
     setDownloadFailed(false);
     setRenameTarget(null);
     setRenameFailed(false);
     setRenaming(false);
   }, [inspector?.id]);
-
-  const copyResourceLink = (copy: () => Promise<void>): void => {
-    setCopyLinkFailed(false);
-    void copy().catch(() => setCopyLinkFailed(true));
-  };
 
   const closeRename = (): void => {
     if (renaming) return;
@@ -836,7 +850,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
   // that closes renders fewer hooks than the render before it, and React throws
   // rather than closing. Only the resource panel reaches this component today, so the
   // return is never taken, which is exactly how a hook-order defect waits.
-  const [detailActions, setDetailActions] = useState<readonly IconGroupAction[]>([]);
+  const [detailActions, setDetailActions] = useState<readonly DetailHeaderAction[]>([]);
 
   // Keep a closed rail on screen for exactly as long as its fade lasts.
   if (!props.panel && !railOpen && !props.leaving) return null;
@@ -844,8 +858,8 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
   const headerTitle = resource?.title ?? (inspector ? 'Details' : railTitle[railVariant]);
 
   const refreshable = Boolean(resource && resource.direction === 'source' && resource.refreshSupported && props.onRefreshResource);
-  const liveSite = Boolean(resource && isSiteResource(resource) && props.siteArtifacts);
-  const copyLink = resource && props.resourceLink?.(resource);
+  const liveSite = Boolean(resource && isSiteResource(resource) && (props.siteArtifacts || props.panel?.detached));
+  const copyLink = resourceCopy;
   const panelHeader = props.panel && (
     <TitlePillHeader
       className="panel-title-header"
@@ -855,16 +869,17 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         title: headerTitle,
         label: `${resource?.direction === 'artifact' ? 'Artifact' : 'Resource'} menu: ${headerTitle}`,
         ...(resource ? { menu: <ResourcePanelMenu
+          detailActions={props.panel?.detached ? detailActions.filter((action) => action.key !== 'new-window') : detailActions}
           downloading={downloading}
           {...(resource.contentAvailable && props.loadOriginalResourceContent && !isSiteResource(resource)
             ? { onDownload: () => void downloadResource() } : {})}
           {...(props.onDetachResource ? { onArchive: () => { setArchiveFailed(false); setArchiveTarget(resource); } } : {})}
-          {...(resource.canonicalUrl ? { onOpenSource: () => void openLink(resource.canonicalUrl!) } : {})}
+          {...(resource.canonicalUrl && !liveSite ? { onOpenSource: () => void openLink(resource.canonicalUrl!) } : {})}
           {...(resource.direction === 'artifact' && props.onRenameResource
             ? { onRename: () => { setRenameFailed(false); setRenameTitle(resource.title); setRenameTarget(resource); } } : {})}
-          {...(copyLink ? { onCopyLink: () => copyResourceLink(copyLink) } : {})}
+          {...(!liveSite && copyLink ? { onCopyLink: () => void copyResourceLink(), copyLinkLabel: copyStateLabel(copyLinkState, 'Copy link') } : {})}
           pinned={props.resourcePin?.(resource)}
-          {...(resource.direction === 'artifact' && !isSiteResource(resource) ? { onPopOut: () => void popOutGeneratedArtifact() } : {})}
+          {...(resource.direction === 'artifact' && !isSiteResource(resource) && !props.panel?.detached ? { onPopOut: () => void popOutGeneratedArtifact() } : {})}
           {...(refreshable ? { onRefresh: () => props.onRefreshResource?.(resource) } : {})}
           popOutDisabled={!hasGeneratedArtifactPreview(resource) || !props.loadResourceContent || poppingOut}
           refreshing={props.refreshingResourceId === resource.id}
@@ -881,7 +896,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
       // The detail's own actions, such as a live artifact's, join Expand in
       // the header's group. Comment mode and Expand stay directly accessible. A live site expands
       // like any other artifact: the panel takes the pane, not a lightbox.
-      actions={[...detailActions.filter((action) => action.key !== 'comment-mode'), ...detailActions.filter((action) => action.key === 'comment-mode').map((action) => ({...action,alwaysVisible:true})), ...(props.panel.expandAction ?? []).map((action) => ({...action,alwaysVisible:true}))]}
+      actions={[...detailActions.filter((action) => !['comment-mode', 'copy-link', 'new-window', 'open-browser', 'stored-data'].includes(action.key)), ...detailActions.filter((action) => action.key === 'comment-mode').map((action) => ({...action,alwaysVisible:true,...(props.panel?.commentDisabledReason ? {disabledReason:props.panel.commentDisabledReason} : {})})), ...(props.panel.expandAction ?? []).map((action) => ({...action,alwaysVisible:true}))]}
       ancestors={props.panel.ancestors ? [...props.panel.ancestors] : []}
       // A live site composites a native view under this header that paints
       // above all renderer DOM, so a label hanging down lands behind the page.
@@ -986,14 +1001,12 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         {popOutFailed && <div className="rail-inline-error"><InlineError>
           The artifact couldn’t be opened in a new window.
         </InlineError></div>}
-        {copyLinkFailed && <div className="rail-inline-error"><InlineError>
-          The link couldn’t be copied.
-        </InlineError></div>}
+        {copyLinkState !== 'idle' && <CopyStatus state={copyLinkState} visible />}
         {props.failure && <div className="rail-inline-error"><InlineError>
           {inspectorRailFailureCopy[props.failure]}
         </InlineError></div>}
         {inspector ? (
-          <InspectorDetail
+          props.children ?? <InspectorDetail
             {...(props.loadResourceContent ? { loadResourceContent: props.loadResourceContent } : {})}
             onRefreshResource={props.onRefreshResource}
             refreshingResourceId={props.refreshingResourceId}
@@ -1057,5 +1070,6 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
       </Modal>
     </>
   );
+  if (props.panel?.detached) return <section className="resource-panel artifact-window-panel">{content}</section>;
   return <RailSurface className={props.panel ? 'inspector-rail resource-panel' : 'inspector-rail'} dropTarget={props.dropTarget} label={props.panel ? `Resource: ${headerTitle}` : inspector ? 'Inspector detail' : railTitle[railVariant]} leaving={props.leaving} onClose={closeRail} onResize={setRailWidth} resizeLabel="Resize inspector" width={railWidth}>{content}</RailSurface>;
 }
