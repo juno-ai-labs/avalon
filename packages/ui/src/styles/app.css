@@ -7897,7 +7897,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
    to its mark, its title ending in an ellipsis. A Channel's name is short and
    says where you are, so the thread beside it gives way first. */
 .title-pill-ancestor { display: flex; min-width: 0; }
-.title-pill-ancestor:first-child:not(:last-child) { flex-shrink: 0; max-width: 45%; }
+.title-pill-ancestor:nth-child(1 of .title-pill-ancestor):not(:last-child) { flex-shrink: 0; max-width: 45%; }
 .title-pill.is-ancestor,
 .title-pill.is-ancestor .title-pill-select { min-width: 0; }
 .title-pill-current { justify-self: center; min-width: 0; }
