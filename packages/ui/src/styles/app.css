@@ -3540,23 +3540,6 @@ pre {
   overflow: hidden;
   pointer-events: none;
 }
-.message-block > header .message-collapse-all {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  color: var(--av-sys-color-text-muted);
-  cursor: pointer;
-  display: inline-flex;
-  flex: 0 0 auto;
-  height: 18px;
-  justify-content: center;
-  margin-left: 2px;
-  padding: 0;
-  width: 18px;
-}
-.message-block > header .message-collapse-all:hover,
-.message-block > header .message-collapse-all:focus-visible { color: var(--av-sys-color-text-subtle); }
-.message-block > header .message-collapse-all:focus-visible { outline: 2px solid var(--av-sys-color-border-highlight); outline-offset: 1px; }
 .markdown-body strong { color: var(--markdown-ink-strong); font-weight: var(--av-cmp-markdown-strong-weight); }
 .markdown-body em { font-style: italic; }
 .markdown-body a { color: var(--markdown-link); text-decoration: none; text-decoration-thickness: 1px; text-underline-offset: 2px; }
