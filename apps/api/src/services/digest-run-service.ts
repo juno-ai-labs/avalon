@@ -175,7 +175,8 @@ async function unreadActivity(env: Env, workspaceId: string, userId: string): Pr
   }));
   // Thrown, not read as "nothing unread": an empty settle would hide why.
   if (!result.ok) throw new Error(`digest_activity_unreadable:${result.code}`);
-  return result.page.items.filter((item) => item.unread);
+  const mentions = new Set(result.page.items.filter((item) => item.kind === "mentioned").map((item) => `message:${item.id}`));
+  return result.page.items.filter((item) => item.unread && !(item.kind === "new_message" && mentions.has(item.id)));
 }
 
 /**
@@ -209,6 +210,7 @@ export function splitByAge(
  */
 const SECTION_HEADINGS = {
   mentioned: "Mentions",
+  new_message: "New messages",
   added: "Added to a thread",
   thread_started: "New threads",
   breakout_started: "New breakouts",
@@ -259,6 +261,7 @@ export async function renderUnreadDigest(
         : `[${escapeMarkdown(item.threadTitle.trim() || UNNAMED_THREAD)}](${url})`;
       const breakout = item.breakout ? `[${escapeMarkdown(item.breakout.title.trim() || UNNAMED_BREAKOUT)}](${url})` : null;
       switch (item.kind) {
+        case "new_message": return `- ${actor} replied in ${breakout ?? thread}`;
         case "mentioned": return `- ${actor} mentioned you in ${breakout ?? thread}`;
         case "added": return `- ${actor} added you to ${breakout ?? thread}`;
         case "thread_started": return `- ${actor} started ${thread}`;

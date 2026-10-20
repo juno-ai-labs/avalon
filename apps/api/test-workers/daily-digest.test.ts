@@ -169,6 +169,27 @@ describe("the daily digest", () => {
     expect(kept!.summary_markdown).toMatch(/^1 unread item in your Activity\.\n\n## New threads\n- Maya started \[Q3 plan\]\(https:\/\/[^)]+\)$/u);
   });
 
+  it("counts a mentioned human reply once in the digest", async () => {
+    await startThread("Q3 plan");
+    await organization().recordActivityEvents({ workspaceId, userId: member,
+      events: [{ kind: "read", subject: { kind: "thread", threadId: thread }, through: 0 }] });
+    const event: ConversationEffect = {
+      kind: "activity_event", eventId: "00000000-0000-7000-8000-0000000d0f01",
+      eventType: "workstream_message_created", subjectSequenceNumber: 2,
+      actorType: "user", actorUserId: owner, actorLabel: "Maya", title: "Q3 plan", body: "Please review",
+      canonicalUrl: null, digestible: true, occurredAt: new Date().toISOString(), sourceKind: "workstream_message",
+      sourceId: "reply", dedupeKey: "reply", metadata: { substreamId: "0", attentionOrdinal: 2 },
+      targets: [{ userId: member, relation: "mentioned" }],
+    };
+    await organization().receiveChildEffects({ substreamId: asSubstreamId("0"),
+      envelopes: [envelope(viewer(member)), envelope(event)] });
+    expect(await fireDigestSchedule(env, { scheduleId, workspaceId, plannedFor })).toMatchObject({ sent: true, itemCount: 1 });
+    const kept = await occurrence();
+    expect(kept).toMatchObject({ event_count: 1 });
+    expect(kept!.summary_markdown).toContain("## Mentions");
+    expect(kept!.summary_markdown).not.toContain("## New messages");
+  });
+
   it("given nothing unread, then nothing is sent and the occurrence is settled as empty", async () => {
     await startThread("Q3 plan");
     await organization().markActivitySeen({ workspaceId, userId: member, seenThrough: Date.now() + 1_000 });

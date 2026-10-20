@@ -59,8 +59,9 @@ export const LEGACY_RALLY_HEADER_PREFIXES: readonly string[] = Object.freeze([
  * `8` reads an Activity row of kind `artifact_updated` and its `artifact`.
  * `9` reads a Channel merge's `private`, from a thread the reader cannot open.
  * `10` reads resolution suggestions in conversation snapshots and events.
+ * `11` reads human reply Activity, its preview and unread message count.
  */
-export const CLIENT_CONTRACT_VERSION = 10;
+export const CLIENT_CONTRACT_VERSION = 11;
 /** Import verification includes explicit check outcomes and parallel file downloads. */
 export const SESSION_IMPORT_CLIENT_CONTRACT = 3;
 /**
@@ -99,6 +100,8 @@ export const ARTIFACT_UPDATES_CLIENT_CONTRACT = 8;
  * desktop is served the feed without those merges, as before they existed.
  */
 export const CHANNEL_PRIVATE_MERGES_CLIENT_CONTRACT = 9;
+/** Human reply Activity rows and their preview. */
+export const NEW_MESSAGES_CLIENT_CONTRACT = 11;
 
 /** Conversation snapshots may contain the mark_resolved suggestion kind. */
 export const RESOLUTION_SUGGESTIONS_CLIENT_CONTRACT = 10;

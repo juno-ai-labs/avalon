@@ -38,6 +38,7 @@ function connectorOption(connection: WorkstreamConnection): ChannelOption {
 
 const KIND_SETTINGS: Record<NotificationKind, SettingDefinition> = {
   mentions: settings.notifyMentions,
+  newMessages: settings.notifyNewMessages,
   added: settings.notifyAdded,
   newThreads: settings.notifyNewThreads,
   newBreakouts: settings.notifyNewBreakouts,

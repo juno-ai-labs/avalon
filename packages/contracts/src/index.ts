@@ -1951,7 +1951,7 @@ export const DEFAULT_PUSH_PREFERENCES: PushPreferences = {
 export const NotificationChannelSchema = z.union([z.literal("push"), AutomationDeliveryTargetTypeSchema]);
 export type NotificationChannel = z.infer<typeof NotificationChannelSchema>;
 /** The kinds of Activity row a person chooses channels for, one per row in Settings. */
-export const NotificationKindSchema = z.enum(["mentions", "added", "newThreads", "newBreakouts", "runFinished", "merges", "artifactUpdates"]);
+export const NotificationKindSchema = z.enum(["mentions", "newMessages", "added", "newThreads", "newBreakouts", "runFinished", "merges", "artifactUpdates"]);
 export type NotificationKind = z.infer<typeof NotificationKindSchema>;
 /**
  * Lenient on read: a channel this build does not know (a newer server's, or
@@ -1967,6 +1967,7 @@ const NotificationChannelListSchema = z.array(z.string()).transform((channels) =
  */
 export const NotificationChannelsSchema = z.object({
   mentions: NotificationChannelListSchema,
+  newMessages: NotificationChannelListSchema.default(["push"]),
   added: NotificationChannelListSchema,
   newThreads: NotificationChannelListSchema,
   newBreakouts: NotificationChannelListSchema,
@@ -1984,12 +1985,14 @@ export type NotificationChannels = z.infer<typeof NotificationChannelsSchema>;
  */
 export const NotificationChannelsChoiceSchema = NotificationChannelsSchema
   .extend({
+    newMessages: NotificationChannelsSchema.shape.newMessages.unwrap(),
     merges: NotificationChannelsSchema.shape.merges.unwrap(),
     artifactUpdates: NotificationChannelsSchema.shape.artifactUpdates.unwrap(),
   })
   .partial();
 export const DEFAULT_NOTIFICATION_CHANNELS: NotificationChannels = {
   mentions: ["push", "slack_agent_dm"],
+  newMessages: ["push"],
   added: ["push", "slack_agent_dm"],
   newThreads: ["push"],
   newBreakouts: ["push"],

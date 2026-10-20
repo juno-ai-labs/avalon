@@ -1,5 +1,6 @@
 import {
   ARTIFACT_UPDATES_CLIENT_CONTRACT,
+  NEW_MESSAGES_CLIENT_CONTRACT,
   CHANNEL_MERGES_CLIENT_CONTRACT,
   CHANNEL_MESSAGES_CLIENT_CONTRACT,
   CHANNEL_PRIVATE_MERGES_CLIENT_CONTRACT,
@@ -133,4 +134,9 @@ function clientReads(header: ClientRequestHeaders, contract: number): boolean {
 /** Only these builds can decode the resolution kind inside a conversation snapshot. */
 export function clientReadsResolutionSuggestions(header: ClientRequestHeaders): boolean {
   return clientReads(header, RESOLUTION_SUGGESTIONS_CLIENT_CONTRACT);
+}
+
+/** Whether this build reads human reply Activity rows. */
+export function clientReadsNewMessages(header: ClientRequestHeaders): boolean {
+  return clientReads(header, NEW_MESSAGES_CLIENT_CONTRACT);
 }
