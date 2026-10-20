@@ -18,7 +18,8 @@ socket hooks' first frame.
 
 A first-time open can also seed an empty feed from the workspace's compact
 [conversation view projection](conversation-view-cache.md), requested on the
-already-connected Organization socket. That seed uses the same `local_cache`
+already-connected Organization socket after disk hydration finishes and only
+when neither in-memory feed query has data. That seed uses the same `local_cache`
 marker and write gates described here. It does not overwrite a resident disk,
 optimistic, or live feed, and is never persisted by the live-state mirror.
 

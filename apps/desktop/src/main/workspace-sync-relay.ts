@@ -2,11 +2,13 @@ import { WorkspaceSyncTopicSchema } from '@rally/contracts';
 import { RegionSchema } from '@rally/contracts/regions';
 import { codeShaped, describeZodIssues } from '@rally/contracts/zod-diagnostics';
 import { z } from 'zod';
+import { ConversationViewRequestSchema, WorkspaceConversationViewEventSchema } from '@rally/contracts/conversation-view';
 import {
   sameWorkspaceSyncIdentity,
   type WorkspaceSyncPublication,
   type WorkspaceSyncRelayEvent,
   type WorkspaceSyncSourceSnapshot,
+  type WorkspaceConversationViewRelayRequest,
 } from '../common/workspace-sync-relay';
 
 const identity = {
@@ -17,7 +19,8 @@ const identity = {
 /**
  * The one shape main accepts from the main window's renderer — the relay's
  * untrusted edge. Closed: an unknown key is refused, so nothing but an
- * identity, a connection state, topic names and a waterline can be relayed.
+ * identity, connection state, topic names, a waterline, or a typed preview reply
+ * can be relayed.
  */
 const WorkspaceSyncPublicationSchema: z.ZodType<WorkspaceSyncPublication> = z.discriminatedUnion('type', [
   z.strictObject({
@@ -32,6 +35,11 @@ const WorkspaceSyncPublicationSchema: z.ZodType<WorkspaceSyncPublication> = z.di
     waterline: z.number().int().nonnegative(),
     topics: z.array(z.union([WorkspaceSyncTopicSchema, z.literal('usage')])).min(1),
   }),
+  z.strictObject({ type: z.literal('conversation_view_response'), ...identity, event: WorkspaceConversationViewEventSchema }),
+]);
+const ConversationViewRelayRequestSchema = z.discriminatedUnion('type', [
+  ConversationViewRequestSchema.extend({ ...identity, type: z.literal('conversation_view_request') }),
+  z.strictObject({ ...identity, type: z.literal('conversation_view_cancel'), requestId: z.string().uuid() }),
 ]);
 
 /**
@@ -58,6 +66,13 @@ export class WorkspaceSyncRelay {
 
   snapshot(): WorkspaceSyncSourceSnapshot {
     return this.current;
+  }
+
+  /** A consumer may request only through the publisher for its Organization. */
+  conversationViewRequest(raw: unknown): WorkspaceConversationViewRelayRequest | null {
+    const parsed = ConversationViewRelayRequestSchema.safeParse(raw);
+    if (!parsed.success) throw new Error(codeShaped(`workspace_conversation_view_request_invalid:${describeZodIssues(parsed.error)}`));
+    return sameWorkspaceSyncIdentity(this.current.source, parsed.data) ? parsed.data : null;
   }
 
   /** Throws a code naming the rejected field on a publication main cannot read. */

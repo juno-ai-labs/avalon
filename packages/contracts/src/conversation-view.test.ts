@@ -41,4 +41,22 @@ it("keeps visible text, attachments, and plugin timing but strips every tool pay
   }]);
   expect(projectConversationView({ ...range, turns: [{ ...range.turns[0]!, blocks: [range.turns[0]!.blocks[1]!] }],
     pluginRuns: [] })).toBeNull();
+  expect(() => projectConversationView({ ...range, pluginRuns: [{ ...range.pluginRuns[0]!, durationMs: -1 }] }))
+    .toThrow(/conversation_view_content_invalid.*durationMs/u);
+});
+
+it("omits internal agent prose and keeps only the opening-message discriminator", () => {
+  const range = TranscriptRangeResultSchema.parse({
+    purpose: "latest", requested: { startInclusive: 1, endExclusive: 2 }, covered: { startInclusive: 1, endExclusive: 2 },
+    turns: [{
+      transcriptSequence: 1, turnId: "message", entryKind: "conversation", actor: "system",
+      authorUserId: null, authorSnapshot: null, attentionOrdinal: null, createdAtUtc: "2026-10-20T00:00:00.000Z",
+      revision: 1, activityId: null, blocks: [{
+        type: "text", blockId: "text", blockIndex: 0, text: "Delegated work", streaming: false,
+        structuredContent: { kind: "agent_message", internalContext: "private details" },
+      }],
+    }], activities: [], pluginRuns: [],
+  });
+  expect(projectConversationView(range)?.turn.blocks[0]?.structuredContent).toEqual({ kind: "agent_message" });
+  expect(projectConversationView({ ...range, turns: [{ ...range.turns[0]!, transcriptSequence: 2 }] })).toBeNull();
 });

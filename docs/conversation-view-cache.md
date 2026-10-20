@@ -22,22 +22,29 @@ The preview is read-only and the live snapshot replaces it unconditionally.
 
 Source triggers record changed turns in `conversation_view_changes`, under a
 monotonic conversation clock. Text, block, activity, interval, and header
-changes are covered. Activity triggers walk upward to the assistant turn; they
+changes are covered, including attachment link renames/removals and mention
+edits. Header and block triggers ignore unrelated workstream fields and
+tool-only block changes. Activity triggers walk upward to the assistant turn; they
 do not copy a tool's arguments or results. Repeated mutations coalesce into one
 pending reference per turn. A deletion keeps a small reference so its destination
 can remove the old text.
 
 The source's alarm publishes references through the existing activity Queue,
 using its existing 100-message batch size and five-second dispatch retry.
-Publication clears only the version it sent: a mutation during the send remains
-pending. The consumer reloads current content from SubstreamAgent, applies it
-to WorkspaceDO, then acknowledges. A failed destination write retries through
+Recent edits and the newest historical turns publish first, so opening does
+not wait for the oldest history. Only one page per conversation is in flight. The consumer reloads current
+content from SubstreamAgent, applies it to WorkspaceDO, then confirms the
+claimed revision at the source before acknowledging. That confirmation releases
+the next page; edits newer than the delivered snapshot remain pending. Queue
+acceptance alone does not release a page. A failed destination write retries through
 the Queue. Neither publication nor destination delivery gates the agent loop.
 
 The allowlist retains text blocks, author snapshots, mention and attachment
 references, and plugin display summaries with measured timing. Tool blocks,
 call identities, inputs, results, errors, reasoning, and arbitrary structured
-message payloads are excluded. A turn with no visible text or plugin work has
+message payloads are excluded. Internal agent-to-agent prose is omitted; an
+opening agent message retains only its display discriminator. A turn with no
+visible text or plugin work has
 no content row. The display of interactive structured messages and inherited
 context is completed by the live socket.
 
@@ -45,7 +52,8 @@ WorkspaceDO stores one header per conversation and one current value or
 deletion fence per turn. Generation advances clear the previous generation's
 turns. Within a generation, older and duplicate writes are ignored separately
 for each turn, so an unordered Queue cannot resurrect deleted text. Every
-visible turn is retained; the initial response reads the latest five visible
+visible turn is retained, as requested for this projection; the initial
+response reads the latest five visible
 turns, following the existing five-turn opening policy. Older history and
 unread-position reconciliation remain on the authoritative socket.
 
@@ -61,11 +69,17 @@ both return `view: null`. Responses stay within the existing realtime frame
 budget, dropping the oldest preview turns when necessary; an oversized single
 turn falls back to the normal socket opening.
 
-The renderer seeds only empty caches, using `local_cache` as the existing
-read-only lineage. Resident disk, optimistic, and live data win. A preview
+The renderer waits for disk hydration and requests a preview only if both feed
+caches are still empty, using `local_cache` as the existing read-only lineage.
+Resident disk, optimistic, and live data win. Dedicated Sidekick windows relay
+correlated requests, responses, and cancellations through the main window
+using the existing Organization-sync bridge; publisher changes retry pending
+requests. Each window still checks the Organization and conversation identity.
+A preview
 does not acknowledge reading, advance a realtime cursor, complete an opening,
 enable editing or sending, or persist itself as authoritative data. Active
-cached plugin work does not start a ticking timer. A late response after
+cached plugin work preserves its measured elapsed time without starting a
+ticking timer. A late response after
 navigation is ignored, and any live conversation snapshot replaces the seed.
 
 ### Backfill and rollout
@@ -78,11 +92,13 @@ Breakout, and Sidekick conversations, including archived conversations. Unlike
 the older summary jobs, this job does not use the open-thread directory as its
 universe.
 
-Each backfill delivery wakes the listed SubstreamAgent and marks its references
-pending. It completes only after that durable intent and its alarm are recorded.
+Each backfill delivery wakes a listed SubstreamAgent and arms any pending
+projection work seeded by migration 78. It does not re-mark delivered history.
+The parent remains claimed and later children wait until the current source
+has confirmed delivery of its pending rows to WorkspaceDO.
 A registered child whose source object no longer exists reports `missing` so
 it cannot hold the backfill lane indefinitely.
-The source then drains pages of references through the normal delivery path.
+The source drains pages through the delivery-confirmed path above.
 A repeated backfill is harmless.
 
 After deploying, force the WorkspaceDO fleet through the
@@ -134,10 +150,13 @@ retention policy or a different storage boundary is required.
 - `packages/contracts/src/conversation-view.test.ts`: display allowlist and
   exclusion of tool-only turns.
 - `apps/api/test/conversation-view-migrations.test.ts`: populated schema
-  upgrades, mutation triggers, and the complete backfill universe.
+  upgrades and mutation triggers; historical workspace coverage is exercised
+  in workerd.
 - `apps/api/test-workers/conversation-view-projection.test.ts`: real source
   projection, plugin timing, deletion and generation fences, Queue publication,
   and historical upgrades.
+- `apps/api/test-workers/thread-backfill.test.ts`: the Queue consumer keeps a
+  backfill claimed until the source projection reaches WorkspaceDO.
 - `apps/api/test-workers/workspace-socket-fanout.test.ts`: cached reads over a
   real socket, private-child admission, and membership removal.
 - `apps/desktop/src/renderer/lib/conversation-cache.test.ts` and
@@ -154,5 +173,8 @@ and answers over the Organization socket, allowing first-time viewing during
 attachment. Full transcript replication was rejected because tool inputs and
 results would consume the workspace SQLite quota. Source mutations and the
 existing-conversation backfill share one durable reference-delivery path.
+Delivery confirmation paces the pass so historical publication cannot race
+ahead of the workspace writes. Disk hydration precedes preview requests, and
+the desktop relay makes the same opening path available to Sidekick windows.
 Future changes must preserve exact-conversation admission and the distinction
 between a view seed and an authoritative socket snapshot.

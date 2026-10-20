@@ -35,6 +35,7 @@ import type {
 import type { BrowserImportContext, BrowserImportProgress } from './browser-import';
 import type {
   WorkspaceSyncPublication,
+  WorkspaceConversationViewRelayRequest,
   WorkspaceSyncRelayEvent,
   WorkspaceSyncSourceSnapshot,
 } from './workspace-sync-relay';
@@ -659,6 +660,7 @@ export interface RallyDesktopBridge {
    * the Settings and Sidekicks windows. Main refuses it from any other window.
    */
   publishWorkspaceSync: (publication: WorkspaceSyncPublication) => Promise<void>;
+  requestWorkspaceConversationView: (request: WorkspaceConversationViewRelayRequest) => Promise<void>;
   /** Settings and Sidekicks windows only: whose socket is being relayed right now, if anyone's. */
   getWorkspaceSyncSource: () => Promise<WorkspaceSyncSourceSnapshot>;
   /**

@@ -11,6 +11,7 @@ export const ConversationViewJobSchema = z.strictObject({
   substreamId: SubstreamIdSchema,
   // Empty names the header. Transcript turn IDs are nonempty.
   turnId: z.string(),
+  dispatchRevision: z.number().int().positive().optional(),
 });
 export const ConversationViewProjectionSchema = ConversationViewJobSchema.extend({
   generation: z.number().int().nonnegative(),
@@ -18,9 +19,14 @@ export const ConversationViewProjectionSchema = ConversationViewJobSchema.extend
   header: ConversationViewHeaderSchema,
   content: ConversationViewContentSchema.nullable(),
 });
+export const ConversationViewDeliverySchema = ConversationViewJobSchema.extend({
+  dispatchRevision: z.number().int().positive(),
+  projectedRevision: z.number().int().positive(),
+  generation: z.number().int().nonnegative(),
+});
 
 function markViewTurn(select: string): string {
-  return `UPDATE conversation_view_clock SET revision = revision + 1 WHERE id = 1;
+  return `UPDATE conversation_view_clock SET revision = revision + 1 WHERE id = 1 AND EXISTS (${select});
     INSERT INTO conversation_view_changes(turn_id, revision, pending, not_before)
       SELECT turn_id, (SELECT revision FROM conversation_view_clock WHERE id = 1), 1, 0
       FROM (${select}) WHERE true
@@ -42,33 +48,43 @@ export const CONVERSATION_VIEW_SOURCE_MIGRATION: readonly string[] = [
   `INSERT INTO conversation_view_clock VALUES (1, 1)`,
   `CREATE TABLE conversation_view_changes (
     turn_id TEXT PRIMARY KEY, revision INTEGER NOT NULL CHECK(revision > 0), pending INTEGER NOT NULL CHECK(pending IN (0, 1)),
-    not_before INTEGER NOT NULL CHECK(not_before >= 0)
+    not_before INTEGER NOT NULL CHECK(not_before >= 0),
+    in_flight_revision INTEGER
   ) STRICT`,
   `CREATE INDEX conversation_view_pending_idx ON conversation_view_changes(pending, not_before, turn_id)`,
+  `CREATE INDEX conversation_view_in_flight_idx ON conversation_view_changes(in_flight_revision) WHERE in_flight_revision IS NOT NULL`,
   ...(["INSERT", "UPDATE", "DELETE"] as const).flatMap((operation) => {
     const row = operation === "DELETE" ? "OLD" : "NEW";
     return [
-      ...(["participant_transcript_turns", "participant_transcript_blocks"] as const).map((table) =>
+      ...(["participant_transcript_turns", "participant_transcript_blocks", "participant_transcript_attachments", "participant_transcript_mentions"] as const).map((table) =>
         `CREATE TRIGGER conversation_view_${table}_${operation.toLowerCase()} AFTER ${operation} ON ${table}
+         ${table === "participant_transcript_blocks" ? `WHEN ${row}.block_kind = 'text'${operation === "UPDATE" ? " OR OLD.block_kind = 'text'" : ""}` : ""}
          BEGIN ${markViewTurn(`SELECT ${row}.turn_id AS turn_id`)} END`),
       ...(["transcript_activities", "transcript_activity_intervals"] as const).map((table) =>
         `CREATE TRIGGER conversation_view_${table}_${operation.toLowerCase()}
          ${operation === "DELETE" ? "BEFORE" : "AFTER"} ${operation} ON ${table}
          BEGIN ${markViewTurn(activityTurn(`${row}.activity_id`))} END`),
-      `CREATE TRIGGER conversation_view_header_${operation.toLowerCase()} AFTER ${operation} ON workstream
+      `CREATE TRIGGER conversation_view_resource_${operation.toLowerCase()}
+       ${operation === "DELETE" ? "BEFORE" : "AFTER"} ${operation} ON workstream_resource_links
+       BEGIN ${markViewTurn(`SELECT turn_id FROM participant_transcript_attachments WHERE resource_id = ${row}.resource_id`)} END`,
+      `CREATE TRIGGER conversation_view_header_${operation.toLowerCase()} AFTER ${operation === "UPDATE"
+        ? "UPDATE OF title, title_status, scope, exact_state, created_at, updated_at, authority_generation" : operation} ON workstream
        BEGIN ${markViewTurn("SELECT '' AS turn_id")} END`,
     ];
   }),
   `CREATE TRIGGER conversation_view_generation AFTER UPDATE OF authority_generation ON workstream
    WHEN NEW.authority_generation != OLD.authority_generation
-   BEGIN ${markViewTurn("SELECT turn_id FROM participant_transcript_turns")} END`,
-  `INSERT INTO conversation_view_changes SELECT turn_id, 1, 1, 0 FROM participant_transcript_turns`,
-  `INSERT INTO conversation_view_changes SELECT '', 1, 1, 0 WHERE EXISTS (SELECT 1 FROM workstream WHERE id = 1)`,
+   BEGIN UPDATE conversation_view_changes SET in_flight_revision = NULL;
+     ${markViewTurn("SELECT turn_id FROM participant_transcript_turns")} END`,
+  `INSERT INTO conversation_view_changes(turn_id, revision, pending, not_before) SELECT turn_id, 1, 1, 0 FROM participant_transcript_turns`,
+  `INSERT INTO conversation_view_changes(turn_id, revision, pending, not_before) SELECT '', 1, 1, 0 WHERE EXISTS (SELECT 1 FROM workstream WHERE id = 1)`,
 ];
 
 export function nextConversationViewAt(sql: SqlStorage): number | null {
   return sql.exec<{ due: number | null }>(
-    "SELECT MIN(not_before) AS due FROM conversation_view_changes WHERE pending = 1 AND EXISTS (SELECT 1 FROM workstream WHERE id = 1)",
+    `SELECT MIN(not_before) AS due FROM conversation_view_changes WHERE pending = 1
+     AND EXISTS (SELECT 1 FROM workstream WHERE id = 1)
+     AND NOT EXISTS (SELECT 1 FROM conversation_view_changes WHERE in_flight_revision IS NOT NULL)`,
   ).one().due;
 }
 
@@ -76,23 +92,37 @@ export function nextConversationViewAt(sql: SqlStorage): number | null {
 export async function publishConversationViews(
   sql: SqlStorage, queue: Queue, identity: Omit<z.infer<typeof ConversationViewJobSchema>, "turnId">,
 ): Promise<void> {
+  if (nextConversationViewAt(sql) === null) return;
   // The existing Queue batch maximum; payloads here contain identities only.
   const rows = sql.exec<{ turn_id: string; revision: number }>(
-    `SELECT turn_id, revision FROM conversation_view_changes
-      WHERE pending = 1 AND not_before <= ? ORDER BY not_before, turn_id LIMIT 100`, Date.now(),
+    `SELECT changes.turn_id, changes.revision FROM conversation_view_changes changes
+      LEFT JOIN participant_transcript_turns turns ON turns.turn_id = changes.turn_id
+      WHERE changes.pending = 1 AND changes.not_before <= ?
+      ORDER BY changes.revision DESC, turns.transcript_sequence DESC, changes.turn_id LIMIT 100`, Date.now(),
   ).toArray();
   if (!rows.length) return;
+  for (const row of rows) sql.exec(
+    "UPDATE conversation_view_changes SET in_flight_revision = ? WHERE turn_id = ?", row.revision, row.turn_id,
+  );
   try {
-    await queue.sendBatch(rows.map((row) => ({ body: { ...identity, turnId: row.turn_id } })));
-    for (const row of rows) sql.exec(
-      "UPDATE conversation_view_changes SET pending = 0 WHERE turn_id = ? AND revision = ?", row.turn_id, row.revision,
-    );
+    await queue.sendBatch(rows.map((row) => ({ body: { ...identity, turnId: row.turn_id, dispatchRevision: row.revision } })));
   } catch (error) {
     // Same dispatch retry as the other projection outboxes.
     for (const row of rows) sql.exec(
-      "UPDATE conversation_view_changes SET not_before = ? WHERE turn_id = ? AND revision = ?",
+      "UPDATE conversation_view_changes SET in_flight_revision = NULL, not_before = ? WHERE turn_id = ? AND in_flight_revision = ?",
       Date.now() + 5_000, row.turn_id, row.revision,
     );
     throw error;
   }
+}
+
+/** Delivery, rather than Queue acceptance, releases the next page. */
+export function completeConversationViewDelivery(sql: SqlStorage, delivery: z.infer<typeof ConversationViewDeliverySchema>): void {
+  sql.exec(
+    `UPDATE conversation_view_changes SET in_flight_revision = NULL,
+       pending = CASE WHEN revision <= ? THEN 0 ELSE 1 END
+     WHERE turn_id = ? AND in_flight_revision = ?
+       AND EXISTS (SELECT 1 FROM workstream WHERE id = 1 AND authority_generation = ?)`,
+    delivery.projectedRevision, delivery.turnId, delivery.dispatchRevision, delivery.generation,
+  );
 }

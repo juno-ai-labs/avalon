@@ -1,6 +1,7 @@
 import {
   ClientFeatureFlagsSchema,
   asSpaceId,
+  asSubstreamId,
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
   WORKSPACE_SYNC_TOPICS,
@@ -32,6 +33,7 @@ import type {
   WorkspaceSyncPublication,
   WorkspaceSyncRelayEvent,
   WorkspaceSyncSourceSnapshot,
+  WorkspaceConversationViewRelayRequest,
 } from '../../common/workspace-sync-relay';
 
 const reportTelemetryProductIntent = vi.hoisted(() => vi.fn());
@@ -50,6 +52,7 @@ const syncRelay = vi.hoisted(() => ({
   published: [] as WorkspaceSyncPublication[],
   listeners: new Set<(event: WorkspaceSyncRelayEvent) => void>(),
   snapshot: { revision: 0, source: null } as WorkspaceSyncSourceSnapshot,
+  requests: [] as WorkspaceConversationViewRelayRequest[],
 }));
 vi.mock('./platform', () => ({
   // This store-ordering suite exercises the browser-shaped transport. The
@@ -67,6 +70,9 @@ vi.mock('./platform', () => ({
     },
     publishWorkspaceSync: async (publication: WorkspaceSyncPublication) => {
       syncRelay.published.push(publication);
+    },
+    requestWorkspaceConversationView: async (request: WorkspaceConversationViewRelayRequest) => {
+      syncRelay.requests.push(request);
     },
     getWorkspaceSyncSource: async () => syncRelay.snapshot,
     onWorkspaceSyncRelayed: (listener: (event: WorkspaceSyncRelayEvent) => void) => {
@@ -188,6 +194,7 @@ afterEach(() => {
   syncRelay.published = [];
   syncRelay.listeners.clear();
   syncRelay.snapshot = { revision: 0, source: null };
+  syncRelay.requests = [];
   FakeWebSocket.instances = [];
   vi.restoreAllMocks();
 });
@@ -205,6 +212,71 @@ function initialSidebarFrame() {
 }
 
 describe('WorkspaceSocketProvider', () => {
+  it('relays consumer previews, retries on publisher handover, and cancels obsolete requests', async () => {
+    const workspaceId = '00000000-0000-7000-8000-000000000001';
+    const parentId = '00000000-0000-7000-8000-000000000020';
+    syncRelay.snapshot = { revision: 1, source: { region: 'global', workspaceId, state: 'connected' } };
+    const queryClient = new QueryClient();
+    const receive = vi.fn();
+    let requestView: ReturnType<typeof useWorkspaceSocket>['requestConversationView'] | undefined;
+    function Preview(): null {
+      requestView = useWorkspaceSocket().requestConversationView;
+      return null;
+    }
+    const getWorkspaceSocketTicket = vi.fn();
+    const rendered = render(<QueryClientProvider client={queryClient}>
+      <WorkspaceSocketProvider relay="consume" region="global" workspaceId={workspaceId} api={{ getWorkspaceSocketTicket }}>
+        <Preview />
+      </WorkspaceSocketProvider>
+    </QueryClientProvider>);
+    await flushPromises();
+    let cancel = () => {};
+    act(() => { cancel = requestView!(parentId, '0', receive); });
+    const request = syncRelay.requests[0]!;
+    expect(request).toMatchObject({ type: 'conversation_view_request', parentId, substreamId: '0' });
+    expect(getWorkspaceSocketTicket).not.toHaveBeenCalled();
+    relayToConsumer({ type: 'source', revision: 2, source: { region: 'global', workspaceId, state: 'connecting' } });
+    expect(syncRelay.requests.filter((value) => value.type === 'conversation_view_request')).toHaveLength(2);
+    const reply = { type: 'conversation_view_response' as const, region: 'global' as const, workspaceId,
+      event: { type: 'workspace_conversation_view' as const, requestId: request.requestId, parentId, substreamId: asSubstreamId('0'), view: null } };
+    relayToConsumer(reply);
+    expect(receive).toHaveBeenCalledWith(reply.event);
+    act(() => { cancel = requestView!(parentId, '0', receive); });
+    const cancelledRequest = syncRelay.requests.at(-1)!;
+    act(() => cancel());
+    expect(syncRelay.requests.at(-1)).toMatchObject({ type: 'conversation_view_cancel', requestId: cancelledRequest.requestId });
+    relayToConsumer({ ...reply, event: { ...reply.event, requestId: cancelledRequest.requestId } });
+    expect(receive).toHaveBeenCalledTimes(1);
+    rendered.unmount();
+    queryClient.clear();
+  });
+
+  it('serves a consumer request through the publishing window socket', async () => {
+    const workspaceId = '00000000-0000-7000-8000-000000000001';
+    const parentId = '00000000-0000-7000-8000-000000000020';
+    const requestId = '00000000-0000-7000-8000-000000000021';
+    const queryClient = new QueryClient();
+    const rendered = render(<QueryClientProvider client={queryClient}>
+      <WorkspaceSocketProvider relay="publish" region="global" workspaceId={workspaceId}
+        api={{ getWorkspaceSocketTicket: vi.fn().mockResolvedValue({
+          ticket: 'ticket-1', expiresAt: '2026-08-26T21:00:00.000Z', socketUrl: 'ws://localhost:8787/workspace/socket',
+        }) }}>{null}</WorkspaceSocketProvider>
+    </QueryClientProvider>);
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({ ...initialSidebarFrame(), conversationViews: true }));
+    relayToConsumer({ type: 'conversation_view_request', region: 'global', workspaceId, requestId, parentId, substreamId: '0' });
+    const sent = socket.send.mock.calls.map(([frame]) => JSON.parse(String(frame)) as Record<string, unknown>)
+      .find((frame) => frame.type === 'conversation_view');
+    expect(sent).toMatchObject({ parentId, substreamId: '0' });
+    act(() => socket.message({ ...sent, type: 'workspace_conversation_view', view: null }));
+    expect(syncRelay.published.at(-1)).toEqual({ type: 'conversation_view_response', region: 'global', workspaceId,
+      event: { type: 'workspace_conversation_view', requestId, parentId, substreamId: '0', view: null } });
+    rendered.unmount();
+    queryClient.clear();
+  });
+
   it.each([false, true])('requests previews only when advertised (%s) and ignores cancelled replies', async (supported) => {
     const queryClient = new QueryClient();
     const receive = vi.fn();

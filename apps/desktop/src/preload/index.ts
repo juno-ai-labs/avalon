@@ -359,6 +359,8 @@ const bridge: RallyDesktopBridge = {
   },
   publishWorkspaceSync: (publication) =>
     ipcRenderer.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.publish, publication) as Promise<void>,
+  requestWorkspaceConversationView: (request) =>
+    ipcRenderer.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.conversationView, request) as Promise<void>,
   getWorkspaceSyncSource: () =>
     ipcRenderer.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.source) as Promise<WorkspaceSyncSourceSnapshot>,
   onWorkspaceSyncRelayed: (listener) => workspaceSyncInbox.subscribe(listener),
