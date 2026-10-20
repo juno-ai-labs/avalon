@@ -151,7 +151,16 @@ describe("tool schema sanitization", () => {
       // These are ordinary Chat Completions tools, not strict structured output.
       expect(wireTool.strict).toBeUndefined();
       const wireSchema = ajv.compile(wireTool.parameters);
-      for (const { label, args, accepted } of cases) {
+      const draft = tool.name === "gmail.create_draft";
+      const attachmentCases = [
+        ...[null, [], ["00000000-0000-4000-8000-000000000001"]].map((attachmentResourceIds) => ({
+          label: `attachment IDs ${JSON.stringify(attachmentResourceIds)}`,
+          args: { message: newMessage, attachmentResourceIds }, accepted: draft,
+        })),
+        { label: "invalid attachment ID", args: { message: newMessage, attachmentResourceIds: ["not-a-resource-id"] }, accepted: false },
+        { label: "undeclared root field beside attachments", args: { message: newMessage, attachmentResourceIds: [], preview: true }, accepted: false },
+      ];
+      for (const { label, args, accepted } of [...cases, ...attachmentCases]) {
         expect(adapter.validateToolInput?.(tool.name, args) === null, `${tool.name}: ${label}, executor`).toBe(accepted);
         expect(authoredSchema(args), `${tool.name}: ${label}, authored`).toBe(accepted);
         expect(wireSchema(args), `${tool.name}: ${label}, ${provider} HTTP payload`).toBe(accepted);

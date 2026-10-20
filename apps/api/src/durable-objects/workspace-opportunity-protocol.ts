@@ -1,3 +1,4 @@
+import { MAX_EXTERNAL_PEOPLE, deduplicateExternalPeople } from "@rally/contracts";
 import { IdSchema, RegionSchema, UserIdSchema, WorkspaceIdSchema } from "@rally/contracts";
 import { TELEMETRY_CONNECTOR_TYPES } from "@rally/contracts/telemetry";
 import { z } from "zod";
@@ -99,7 +100,7 @@ export const WorkspaceOpportunitySourceSchema = deferredZodSchema(() => z.strict
   text: z.string().max(8_000),
   actor: z.record(z.string(), z.unknown()),
   subject: z.record(z.string(), z.unknown()),
-  externalPeople: z.array(z.unknown()).max(100),
+  externalPeople: z.array(z.unknown()).transform(deduplicateExternalPeople).pipe(z.array(z.unknown()).max(MAX_EXTERNAL_PEOPLE)),
   entityKeys: z.array(z.string().max(200)).max(20),
   canonicalUrl: z.string().max(2_000).nullable(),
   workstreamId: IdSchema.nullable(),

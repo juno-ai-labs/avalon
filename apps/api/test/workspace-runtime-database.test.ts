@@ -14,6 +14,12 @@ import { sqliteD1 } from "./helpers/sqlite-d1";
 const WORKSPACE_ID = "00000000-0000-7000-8000-000000000501";
 
 describe("workspace runtime database routing", () => {
+  it("routes connector person rows to their workspace authority", () => {
+    expect(__workspaceRuntimeDatabaseTesting.localStatement(
+      "SELECT person_json FROM workspace_connector_event_people WHERE event_id = ? ORDER BY position",
+    )).toBe(true);
+  });
+
   it("reads the conflict clause as part of the verb, not as the table", () => {
     // The resource-alias allocator's statement. Reading `OR` as the table made
     // the router refuse it as cross-authority, so allocation threw at prepare

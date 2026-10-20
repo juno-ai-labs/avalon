@@ -3,7 +3,25 @@ import { z } from "zod";
 
 export const WorkspaceConnectorEventSchema = z.strictObject({
   connectorType: z.string().min(1).max(120),
-  activity: NormalizedActivitySchema,
+  activity: NormalizedActivitySchema.superRefine((activity, context) => {
+    // Mirror existing canonical SQLite column constraints before Queue acceptance.
+    // These are storage limits, not a new connector payload policy.
+    const fields = {
+      actor: [JSON.stringify(activity.actor), 262144],
+      subject: [JSON.stringify(activity.subject), 262144],
+      metadata: [JSON.stringify(activity.metadata), 524288],
+      summary: [activity.summary, 65536],
+      visibility: [JSON.stringify(activity.visibility), 262144],
+      targetUserIds: [JSON.stringify(activity.targetUserIds), 262144],
+      entityKeys: [JSON.stringify(activity.entityKeys), 262144],
+    } as const;
+    for (const [field, [value, maximum]] of Object.entries(fields)) {
+      // SQLite length counts Unicode code points rather than UTF-16 units.
+      if ([...value].length > maximum) context.addIssue({
+        code: "too_big", origin: "string", maximum, inclusive: true, path: [field],
+      });
+    }
+  }),
 });
 
 export const WorkspaceConnectorEventIngestRequestSchema = z.strictObject({

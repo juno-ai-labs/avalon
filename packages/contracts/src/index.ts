@@ -1,6 +1,8 @@
 export * from './artifact-picker';
 import { AnnotationsSchema, validateAnnotationAttachments } from './artifact-annotations';
 export * from './artifact-annotations';
+import { ExternalPeopleSchema } from "./external-people";
+export { ExternalPeopleSchema, ExternalPersonSchema, MAX_EXTERNAL_PEOPLE, deduplicateExternalPeople } from "./external-people";
 import { z } from "zod";
 import { AttachmentKindSchema, ResourceSlugSchema, parseStoredSuggestedAttachmentToolCall } from "./attachment-contracts";
 import { AutomationLifecycleStateSchema,
@@ -3656,16 +3658,7 @@ export const NormalizedActivitySchema = z.object({
    * `metadata` so no caller can stand one in.
    */
   occurrenceKey: z.string().min(1).optional(),
-  externalPeople: z.array(z.strictObject({
-    provider: z.string().min(1).max(80),
-    providerTenantId: z.string().min(1).max(200).nullable(),
-    providerUserId: z.string().min(1).max(200).nullable(),
-    handle: z.string().min(1).max(200).nullable(),
-    email: z.string().email().max(254).nullable(),
-    displayName: z.string().min(1).max(180).nullable(),
-    role: z.string().min(1).max(80),
-    sourceText: z.string().min(1).max(1000),
-  })).max(100).optional()
+  externalPeople: ExternalPeopleSchema.optional()
 });
 
 export const ActivityQueueMessageSchema = z.object({

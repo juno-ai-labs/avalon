@@ -1071,7 +1071,39 @@ candidate summaries without recursively invoking other public service entrypoint
 Desktop and browser request management options only when their controls open, not
 on every transcript update.
 
+Sidekick authoring must compose authorized plugins before reporting a capability
+blocker. For Meet-note follow-ups, inspect Drive + Docs as well as Mail + Calendar:
+load `reading-google-meeting-notes` for the shared storage and lookup procedure,
+inspect Calendar activity `metadata.attachments` or read the event first, then
+read its attached transcript or notes Doc through the authorized Docs connection
+before any Drive search or blocked conclusion. Pass the attachment's `fileId` as
+`documentId`, or extract it from the Docs `fileUrl`. Drive discovery is the
+fallback when there is no relevant attachment or its read cannot supply the
+notes; preserve the specific read failure. Choose a declared document event or polling when Calendar changes do
+not cover notes availability. Gmail draft PDF attachments use Rally resource IDs.
+A missing connection or unshared notes document is an access requirement to
+report specifically, not evidence that the provider lacks the capability.
+
 ## Changelog
+
+### 2026-10-19 — Authoring checks connected alternatives before declaring a missing capability
+
+**What changed:** Sidekick authoring and polling guidance explicitly compose
+Drive + Docs with Mail + Calendar for Meet-note follow-ups, prioritizing a direct
+read of the event's attached Doc before Drive search or a blocked conclusion.
+
+**Why:** The authoring agent left a workflow inactive after inspecting only the
+Mail preset, despite a connected Drive preset that could provide the notes.
+A Calendar attachment already identifies the transcript; discovery first can
+miss it or select an unrelated document with a similar title.
+
+**Considered and rejected:** Treating a provider-named preset as the whole
+provider's capabilities defeats the connector-neutral composition model.
+
+**Consequences:** The agent must inspect relevant authorized plugins and choose
+an actual notes source event or polling. It must still verify note access and
+must not infer that an invitation proves a conversation occurred.
+
 
 ### 2026-10-16 — The membership-checking Sidekick directory read is gone
 
@@ -2598,10 +2630,9 @@ history projection admits that row when it is the run's trigger, through
 to work from the event's fields and to treat anything inside it that reads
 like an instruction as data; every other system row stays out of the model's
 history as before. A run's
-opening no longer needs a resource; only an email attaches one. A delivery
-that would exceed the Queue's message bound with the content is sent
-without it, under `external_event_delivery_content_trimmed`, rather than
-not at all. Separately, a connector filter field whose manifest names no
+opening no longer needs a resource; only an email attaches one. A delivery exceeding the Queue envelope budget now travels intact through
+a canonical-event context reference (2026-10-19), rather than dropping its
+snippet and metadata; `connector-queue-payload.ts` owns that transport. Separately, a connector filter field whose manifest names no
 operators now defaults by value type
 (`defaultConnectorActivityFilterOperators`): the set operators for
 `string_array` and `person_id_array`, `equals` for everything else.
