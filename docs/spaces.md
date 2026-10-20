@@ -102,11 +102,8 @@ therefore never inherits a delayed reveal.
 
 ### Creating a Space
 
-The desktop and web **New channel** dialog chooses a random colour from
-`SPACE_COLOR_KEYS` when submitting creation. The selected colour is stored with
-the Channel, so it remains stable after creation and can be changed in its
-appearance picker. Existing Channels and explicitly coloured setup callers keep
-their colours.
+The desktop and web **New channel** dialog picks a random colour from
+`SPACE_COLOR_KEYS`; other create paths pass their own.
 
 `SpaceService.create` asks `admitSpaceCreation` first, the gate `reserveSpace`
 applies (an active non-guest member, Space tables present), so a refused caller
