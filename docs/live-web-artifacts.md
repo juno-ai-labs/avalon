@@ -359,8 +359,12 @@ is the only place that can forward into it.
   hostile one would paint artifact content over the chrome a person needs to
   escape it. And a `WebContentsView` composites *above* the renderer's DOM, so
   any app surface that can overlap the rail — a dialog, the command palette, a
-  lightbox, or tooltip — must collapse the view to nothing while it is open,
-  or artifact content paints over it. The pane under it then shows a still of the page,
+  lightbox, or a tooltip — must collapse the view to nothing while it is open,
+  or artifact content paints over it. Tooltips only collapse it when their
+  positioned rectangle overlaps the visible pane, so hovering elsewhere leaves
+  the live page running. Radix can expose the tooltip role on a hidden label;
+  overlap uses its visible popper wrapper and is rechecked when that wrapper
+  is positioned after mount. The pane under the view shows a still of the page,
   taken with `capturePage` *before* the collapse (a collapsed view paints
   nothing to take), and dropped once the view is back.
   The same view takes the pointer from anything drawn under it, so the
@@ -520,7 +524,7 @@ facet that holds a stateful artifact's data. It does not own:
 | `pnpm --filter @rally/api exec vitest run test/terminal-site-publish.test.ts` | Kind resolution, the one-file refusal, the storage-class check, content types, the zip, and the asymmetric transition. |
 | `pnpm --filter @rally/api exec vitest run test/terminal-runtime.test.ts` | Directory publish end to end through the runtime, against a simulated sandbox shell. |
 | `pnpm --filter @rally/api exec vitest run test/artifact-open-service.test.ts` | Which authority answers which question at open time, that a refusal mints nothing, and that a missing artifact and an invisible one are indistinguishable. |
-| `pnpm --filter @rally/desktop exec vitest run src/renderer/components/site-resource-detail.test.tsx` | The detail: that the first access response drives the initial preview without a second mint, later surfaces get fresh single-use codes, it measures and hands over rather than embedding, its actions land in the host's header and each carries a tooltip, Copy link carries no code, the data toggle only exists for a site that keeps data and takes the composited view down with it, the pane never flashes its unavailable state, and dialogs, menus and tooltips hide the native view until they close. |
+| `pnpm --filter @rally/desktop exec vitest run src/renderer/components/site-resource-detail.test.tsx` | The detail: that the first access response drives the initial preview without a second mint, later surfaces get fresh single-use codes, it measures and hands over rather than embedding, its actions land in the host's header and each carries a tooltip, Copy link carries no code, the data toggle only exists for a site that keeps data and takes the composited view down with it, the pane never flashes its unavailable state, and dialogs, menus and overlapping tooltips hide the native view until they close (including tooltips positioned after mount). |
 | `pnpm --filter @rally/desktop exec vitest run src/main/artifact-viewers.test.ts` | What the desktop will load, the rectangle clamp (including CSS-pixel to window-point conversion at a non-1 zoom), the isolation contract, the activation gate (unattended navigation dropped, an activated link handed over and never followed in place, redirects and disallowed schemes refused either way, one press buying one departure and not a loop of them, a refused navigation leaving the press unspent, the press dropped when its document goes, a same-origin `_blank` shown in place, and the exact event set that does and does not arm it), the overlay collapse, and the teardown guards — each surface's lifecycle branch separately, since one guard covering both reads as covered while half of it is dead. |
 | `pnpm --filter @rally/api exec vitest run test/workstream-artifact-data-tools.test.ts` | The data tools' contract and the site read-remediation, including its round trip through the real structured-failure sanitizer. |
 | `pnpm --filter @rally/agent-harness exec vitest run` | The skill's shape and the standing policy's byte budget — the prompt bound is what keeps the policy six lines rather than nine. |

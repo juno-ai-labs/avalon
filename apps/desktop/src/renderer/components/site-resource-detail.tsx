@@ -262,14 +262,25 @@ export function SiteResourceDetail({
     };
   }, []);
 
-  // The owning lightbox is allowed; menus, dialogs and tooltips must win
-  // over Electron's native view, which otherwise paints above the DOM.
+  // The owning lightbox is allowed. Modal overlays always win; tooltips
+  // only pause the live page when they actually cover its visible rectangle.
   const occluded = React.useCallback((): boolean => {
     const pane = paneRef.current;
     if (!pane) return false;
     return [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="menu"], [role="tooltip"]')]
-      .some((overlay) => !overlay.contains(pane) && overlay.getAttribute('data-state') !== 'closed');
-  }, []);
+      .some((overlay) => {
+        if (overlay.contains(pane)) return false;
+        if (overlay.getAttribute('role') !== 'tooltip') return overlay.getAttribute('data-state') !== 'closed';
+        // With an aria-label Radix puts the role on a hidden span. Measure
+        // the positioned wrapper, and read open/closed off the content.
+        if (overlay.closest('[data-state]')?.getAttribute('data-state') === 'closed') return false;
+        const rect = (overlay.closest('[data-radix-popper-content-wrapper]') ?? overlay).getBoundingClientRect();
+        const bounds = measure();
+        return bounds !== null && rect.width > 0 && rect.height > 0
+          && rect.left < bounds.x + bounds.width && rect.right > bounds.x
+          && rect.top < bounds.y + bounds.height && rect.bottom > bounds.y;
+      });
+  }, [measure]);
 
   /**
    * The corner this pane draws, for the view that covers it.
@@ -395,8 +406,13 @@ export function SiteResourceDetail({
     window.addEventListener('scroll', update, true);
     const observer = new ResizeObserver(update);
     if (paneRef.current) observer.observe(paneRef.current);
-    const overlays = new MutationObserver(update);
-    overlays.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-state', 'role'] });
+    // Floating UI positions the wrapper after mount; its style mutation must
+    // recheck overlap even when the tooltip's own state has not changed.
+    const overlays = new MutationObserver((mutations) => {
+      if (mutations.some((mutation) => mutation.attributeName !== 'style'
+        || (mutation.target instanceof Element && mutation.target.matches('[data-radix-popper-content-wrapper]')))) update();
+    });
+    overlays.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-state', 'role', 'style'] });
     update();
     return () => {
       disposed = true;
