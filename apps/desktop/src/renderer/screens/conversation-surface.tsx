@@ -147,6 +147,7 @@ import {
   connectorConnectionCardInput,
   connectorResourceAuthorizationRequest,
 } from '../components/connector-mentions';
+import { isUnrecognizedConnectorConnectionCard } from '../lib/connector-connection-card';
 import type { ComposerMenuAction } from '../components/composer-input';
 import { WorkstreamComposer } from '../components/workstream-composer';
 import { useRailExitFade } from '../components/rail-surface';
@@ -2068,6 +2069,7 @@ function ConversationSurfaceContent({
             groupPluginToolMessages(showAgentWork ? composed : withoutAgentWork(composed, (message) => (
               connectorResourceAuthorizationRequest(message) !== null
                 || connectorConnectionCardInput(message) !== null
+                || isUnrecognizedConnectorConnectionCard(message)
             ))),
           ),
         ),
