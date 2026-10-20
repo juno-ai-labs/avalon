@@ -29,8 +29,8 @@ that clicking will pin. Option or Up grows to a containing list or section;
 Down shrinks. Click is immediate, double-click replaces its block pin with a
 word, and dragging selects a range. Escape exits the mode while preserving pins.
 The button and cursor use Tabler's `pointer-collaboration` icon. While enabled,
-the button has the update action's blue fill and light icon. Selection previews
-show no helper line; the active button indicates the mode.
+the button has the update action's blue fill and light icon. Standalone controls
+use dark label text for contrast on that fill.
 
 A pin opens a floating comment field. Website cards, chips and saved excerpts
 show the selected visible text (or “Selected area” for a selection without text);

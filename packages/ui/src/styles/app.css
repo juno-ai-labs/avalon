@@ -9151,13 +9151,22 @@ button.merged-into-label:hover { color: var(--av-sys-color-text-default); }
 .annotation-surface { position: relative; min-width: 0; width: 100%; }
 .annotation-toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; position:sticky; top:0; z-index:2; padding:8px 0; background:var(--av-sys-color-surface-default); }
 .annotation-toolbar button { border:1px solid var(--av-sys-color-border-default); border-radius:7px; padding:5px 10px; background:transparent; color:inherit; font-size:12px; cursor:pointer; }
+/* Keep after the title-pill toggle rule so active comment mode retains its blue fill. */
 .icon-button.annotation-mode-button[aria-pressed='true'],
-.icon-button.annotation-mode-button[aria-pressed='true']:hover:not(:disabled),
 .annotation-toolbar button[aria-pressed='true'] {
   background: var(--av-sys-color-project-blue);
   border-color: var(--av-sys-color-project-blue);
   color: var(--av-sys-color-palette-ink-light);
 }
+/* Preserve the shared interaction wash over the blue fill, as the update action does. */
+.icon-button.annotation-mode-button[aria-pressed='true']:hover:not(:disabled),
+.icon-button.annotation-mode-button[aria-pressed='true']:focus-visible {
+  background: var(--hover-layer), var(--av-sys-color-project-blue);
+  color: var(--av-sys-color-palette-ink-light);
+}
+/* The standalone control has small text, which needs more contrast than its icon. */
+.annotation-toolbar button[aria-pressed='true'] { color: var(--av-sys-color-palette-ink-dark); }
+.annotation-toolbar button[aria-pressed='true'] svg { color: var(--av-sys-color-palette-ink-light); }
 .annotation-body { position:relative; }
 .annotation-body iframe { width:100%; min-height:500px; border:0; }
 .annotation-body pre { white-space:pre-wrap; overflow-wrap:anywhere; }
