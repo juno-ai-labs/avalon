@@ -9,7 +9,7 @@ export async function restorePoppedOutArtifacts(input: {
   bridge: Pick<RallyDesktopBridge, 'getRestorableArtifactWindows' | 'popOutArtifact' | 'forgetRestorableArtifactWindow'>;
   getResourceVersions: (resourceId: string) => Promise<{ version: number; title: string; mimeType: string | null }[]>;
   loadResourceContent: (resourceId: string, signal?: AbortSignal) => Promise<Blob>;
-  openSiteArtifact: (resourceId: string) => Promise<{ artifactId: string; openUrl: string }>;
+  openSiteArtifact: (resourceId: string) => Promise<{ artifactId: string; openUrl: string; canonicalUrl?: string; mode?: 'static' | 'active'; stateful?: boolean }>;
   signal: AbortSignal;
 }): Promise<void> {
   const windows = await input.bridge.getRestorableArtifactWindows();
@@ -25,8 +25,9 @@ export async function restorePoppedOutArtifacts(input: {
         const access = await input.openSiteArtifact(saved.resourceId);
         if (input.signal.aborted) return;
         await input.bridge.popOutArtifact({
-          kind: 'site', ...(saved.annotationScope?{annotationScope:saved.annotationScope}:{}), restoreId: saved.id, resourceId: saved.resourceId,
+          kind: 'site', editable: saved.editable === true, ...(saved.annotationScope?{annotationScope:saved.annotationScope}:{}), restoreId: saved.id, resourceId: saved.resourceId,
           version, title, artifactId: access.artifactId, url: access.openUrl,
+          ...(access.stateful !== undefined ? { stateful: access.stateful, canonicalUrl: access.canonicalUrl, mode: access.mode } : {}),
         });
       } else {
         const content = await readResourcePreview(input.loadResourceContent, saved.resourceId,
@@ -34,7 +35,7 @@ export async function restorePoppedOutArtifacts(input: {
         const bytes = new Uint8Array(await content.arrayBuffer());
         if (input.signal.aborted) return;
         await input.bridge.popOutArtifact({
-          kind: 'generated', ...(saved.annotationScope?{annotationScope:saved.annotationScope}:{}), restoreId: saved.id, resourceId: saved.resourceId,
+          kind: 'generated', editable: saved.editable === true, ...(saved.annotationScope?{annotationScope:saved.annotationScope}:{}), restoreId: saved.id, resourceId: saved.resourceId,
           version, title, content: bytes, sourceMimeType:current ? current.mimeType ?? 'application/octet-stream' : saved.mimeType ?? 'application/octet-stream',
           mimeType: content.type || current?.mimeType || saved.mimeType || 'text/plain',
         });
@@ -57,6 +58,9 @@ export interface RefreshPoppedOutArtifactsInput {
   openSiteArtifact?: (resourceId: string) => Promise<{
     artifactId: string;
     openUrl: string;
+    canonicalUrl?: string;
+    mode?: 'static' | 'active';
+    stateful?: boolean;
   }>;
   resources: readonly Pick<WorkstreamResource, 'id' | 'currentVersion' | 'mimeType' | 'title'>[];
   signal?: AbortSignal;
@@ -98,6 +102,7 @@ export async function refreshPoppedOutArtifacts({
             version: resource.currentVersion,
             artifactId: navigation.artifactId,
             url: navigation.openUrl,
+            ...(navigation.stateful !== undefined ? { stateful: navigation.stateful, canonicalUrl: navigation.canonicalUrl, mode: navigation.mode } : {}),
             title: resource.title,
           });
         }

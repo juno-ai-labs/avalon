@@ -116,9 +116,10 @@ same as desktop.
   `artifact:window-action` admits only a registered detached renderer and maps a
   strict operation union to the resource in main's window record. Rename,
   Archive, pinning and navigation-link coordinates derive their thread from
-  that record's Main annotation scope; the server still authorizes each route.
+  that record's Main annotation scope and owning surface eligibility; the server
+  still authorizes each route.
   Read/content/version/site-data operations cannot name another resource or an
-  arbitrary API path. Credentials stay in main, which checks session ownership
+  arbitrary API path. Credentials stay in main, which checks session ownership, including the opening region,
   again after asynchronous work and uses fresh site access for external opens.
 - App-window navigation and popup creation are denied by default; Rally's own
   OAuth opens in the system browser. The embedded browser's isolated web
@@ -1130,7 +1131,9 @@ Canonical target read/version checks precede message admission. See
 `artifact:window-action`; they remain outside the shared trusted sender set.
 Main derives the resource and Main-thread context from its window record,
 validates a strict action union, keeps credentials private, and checks the
-session again after asynchronous work. Schema failures retain safe field codes.
+session and opening region again after asynchronous work. Schema failures retain safe field codes.
+Window restoration and refresh also stay within that region; legacy saved entries
+without a region must be reopened from their owning conversation.
 
 **Why:** Sharing the panel menu with a pop-out requires rename, archive, pins,
 versions, and fresh website navigation. Granting the detached renderer the full

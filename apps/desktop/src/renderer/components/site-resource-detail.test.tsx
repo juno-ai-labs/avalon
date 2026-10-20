@@ -556,7 +556,7 @@ describe('the actions the host draws in its header', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open in a new window' }));
     await waitFor(() => expect(props.surface.popOut).toHaveBeenCalled());
     expect(props.surface.popOut).toHaveBeenCalledWith({
-      kind: 'site',
+      kind: 'site', editable: false,
       resourceId: RESOURCE,
       version: 4,
       artifactId: ARTIFACT,
@@ -578,6 +578,22 @@ describe('the actions the host draws in its header', () => {
 });
 
 describe('the data a stateful site collected', () => {
+  it('retains keyboard focus while stored data loads and when its controls arrive', async () => {
+    let resolve!: (value: { tables: [] }) => void;
+    const pending = new Promise<{ tables: [] }>((done) => { resolve = done; });
+    const { props } = setup({ describeData: () => pending });
+    await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
+    const row = storedDataToggle();
+    row.focus();
+    fireEvent.click(row);
+    const section = await screen.findByRole('region', { name: 'Stored data' });
+    expect(section).toHaveFocus();
+    expect(screen.getByText('Reading…')).toBeVisible();
+    await act(async () => { resolve({ tables: [] }); });
+    expect(section).toHaveFocus();
+    expect(screen.getByText('No data yet')).toBeVisible();
+  });
+
   it('loads tables only when the data pop-out opens and retains the preview pane', async () => {
     const { props } = setup();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());

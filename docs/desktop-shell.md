@@ -380,15 +380,17 @@ from; reduced motion turns both off.
   menu closes. The main menu rows hold **Pinned in my sidebar**,
   **Open in a new window**, Open source for other resources, and Refresh where
   supported, followed by Versions. **Archive** lives inside More. A detached window
-  omits Open in a new window. Stateful sites expose **Stored data** as a
+  omits Open in a new window. Historical file previews identify their revision,
+  download those original bytes, and offer **Return to current**. Detached live-site
+  history is listed without opening manifest bytes as a document. Stateful sites expose **Stored data** as a
   navigation row above Versions. It opens the table picker, stored rows, and CSV
   export inside the pop-out menu; the preview stays mounted behind it.
-  Comment mode, Expand/Collapse, and Close remain in the header. All shared title-menu action,
-  navigation, and switch rows use the same 18px icon slot, text inset, and 46px
-  minimum height; glyph size does not move the text column.
+  Comment mode, Expand/Collapse, and Close remain in the header. Shared title-menu action,
+  navigation, and switch rows align their icons and labels consistently; compact
+  resource and breakout lists retain their own sizing.
   Rename, navigation links, and pinning need an artifact in the thread's Main;
   navigation links also need a Channel placement. Detached windows use their
-  saved conversation context for these actions and retain their annotation
+  saved Main thread eligibility and conversation context for these actions and retain their annotation
   draft when opening menus. Rename uses
   `PATCH /conversations/:parentId/resources/:resourceId`. Download reads original
   bytes separately from readable previews, including files without a preview.

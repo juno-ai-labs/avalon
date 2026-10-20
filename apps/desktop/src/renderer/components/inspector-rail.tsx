@@ -631,10 +631,11 @@ function InspectorDetail({
   onRefreshResource,
   refreshingResourceId,
   siteArtifacts,
+  artifactEditable,
 }: Pick<
   InspectorRailProps,
   'loadResourceContent' | 'onRefreshResource' | 'refreshingResourceId' | 'siteArtifacts'
-> & { resource: WorkstreamResource | undefined; settled: boolean }): React.JSX.Element | null {
+> & { resource: WorkstreamResource | undefined; settled: boolean; artifactEditable: boolean }): React.JSX.Element | null {
   if (!resource && !settled) return null;
 
   if (resource) {
@@ -645,6 +646,7 @@ function InspectorDetail({
     if (siteArtifacts && isSiteResource(resource)) {
       return (
         <SiteResourceDetail
+          editable={artifactEditable}
           describeData={siteArtifacts.describeData}
           loadTable={siteArtifacts.loadTable}
           openArtifact={siteArtifacts.openArtifact}
@@ -792,6 +794,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
       );
       const opened = await desktopBridge().popOutArtifact({
         kind: 'generated',
+        editable: Boolean(props.onRenameResource),
         ...(annotationDraft?.scopeKey ? { annotationScope: annotationDraft.scopeKey } : {}),
         sourceMimeType:resource.mimeType ?? 'application/octet-stream',
         resourceId: resource.id,
@@ -1001,12 +1004,14 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         {popOutFailed && <div className="rail-inline-error"><InlineError>
           The artifact couldn’t be opened in a new window.
         </InlineError></div>}
-        {copyLinkState !== 'idle' && <CopyStatus state={copyLinkState} visible />}
+        <CopyStatus state={copyLinkState} visible={copyLinkState !== 'failed'} />
+        {copyLinkState === 'failed' && <InlineError>The link couldn’t be copied.</InlineError>}
         {props.failure && <div className="rail-inline-error"><InlineError>
           {inspectorRailFailureCopy[props.failure]}
         </InlineError></div>}
         {inspector ? (
           props.children ?? <InspectorDetail
+            artifactEditable={Boolean(props.onRenameResource)}
             {...(props.loadResourceContent ? { loadResourceContent: props.loadResourceContent } : {})}
             onRefreshResource={props.onRefreshResource}
             refreshingResourceId={props.refreshingResourceId}

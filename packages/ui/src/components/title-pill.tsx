@@ -527,7 +527,7 @@ export function TitleMenuButton({ children, onSelect }: { children: ReactNode; o
 export function TitleMenuItem({ children, danger = false, disabled, icon, onSelect }: {
   children: ReactNode; danger?: boolean; disabled?: boolean; icon: ReactNode; onSelect: () => void;
 }): React.JSX.Element {
-  return <DropdownMenu.Item className={clsx('menu-item title-menu-item', danger && 'menu-item-danger')} disabled={disabled} onSelect={onSelect}>
+  return <DropdownMenu.Item className={clsx('menu-item title-menu-item title-menu-action', danger && 'menu-item-danger')} disabled={disabled} onSelect={onSelect}>
     {icon}{children}
   </DropdownMenu.Item>;
 }
