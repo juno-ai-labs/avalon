@@ -2631,8 +2631,8 @@ to work from the event's fields and to treat anything inside it that reads
 like an instruction as data; every other system row stays out of the model's
 history as before. A run's
 opening no longer needs a resource; only an email attaches one. A delivery exceeding the Queue envelope budget now travels intact through
-a verified R2 reference (2026-10-19), rather than dropping its snippet and
-metadata; `connector-queue-payload.ts` owns that transport. Separately, a connector filter field whose manifest names no
+a canonical-event context reference (2026-10-19), rather than dropping its
+snippet and metadata; `connector-queue-payload.ts` owns that transport. Separately, a connector filter field whose manifest names no
 operators now defaults by value type
 (`defaultConnectorActivityFilterOperators`): the set operators for
 `string_array` and `person_id_array`, `equals` for everything else.

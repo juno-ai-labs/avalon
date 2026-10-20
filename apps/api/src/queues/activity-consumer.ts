@@ -1,4 +1,4 @@
-import { ConnectorQueuePayloadSchema, readConnectorQueuePayload, sendConnectorQueuePayload } from "../services/connector-queue-payload";
+import { ConnectorDeliveryReferenceSchema, readConnectorDeliveryReference, sendConnectorEventDelivery } from "../services/connector-queue-payload";
 import { SidekickRunProvisionQueueMessageSchema } from "../durable-objects/automation-do-protocol";
 import { provisionSidekickRun } from "../services/sidekick-run-provisioning";
 import { publishAccessRevocation } from "../services/access-revocation";
@@ -60,7 +60,6 @@ import { runtimeDeferral } from "../lib/defer";
 import { admitExternalEventWithSemanticGate } from "../services/semantic-trigger-admission";
 import type { AuthContext } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { uuidV7 } from "../lib/uuid-v7";
 import { SlackAgentService } from "../services/slack-agent-service";
 import { consumeGitHubDeliveryMessage, isGitHubDeliveryQueueMessage } from "../services/github-routing-service";
 import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
@@ -69,9 +68,7 @@ import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { isRetirementRefusal } from "../durable-objects/object-retirement";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
-import {
-  enqueueWorkspaceConnectorEventProcess,
-} from "../services/workspace-connector-event-ingress";
+import { admitConnectorEvent } from "../services/workspace-connector-event-ingress";
 import {
   applyWorkstreamRegionalEffect,
   processWorkstreamNotificationIntent,
@@ -294,19 +291,22 @@ function searchSourceRevision(env: Env, reference: SearchSourceReference): (() =
 
 async function consumeOne(message: Message<unknown>, env: Env,
   indexSearch: ReturnType<typeof createSearchIndexingPipeline>): Promise<void> {
-  const stagedPayload = ConnectorQueuePayloadSchema.safeParse(message.body);
-  if (stagedPayload.success) {
+  const deliveryReference = ConnectorDeliveryReferenceSchema.safeParse(message.body);
+  if (deliveryReference.success) {
+    if (deliveryReference.data.delivery.region !== env.AVALON_REGION) { message.ack(); return; }
+    let body;
     try {
-      const body = await readConnectorQueuePayload(env, stagedPayload.data);
-      await consumeOne({
-        id: message.id, timestamp: message.timestamp, attempts: message.attempts, body,
-        ack: () => message.ack(), retry: (options) => message.retry(options),
-      }, env, indexSearch);
+      body = await readConnectorDeliveryReference(env, deliveryReference.data);
     } catch (error) {
-      logWarn(env, "connector_queue_payload_failed", { workspace_id: stagedPayload.data.workspaceId,
-        error_code: diagnosticErrorCode(error, "connector_queue_payload_failed"), queue_attempts: message.attempts });
+      if (isRetirementRefusal(error)) { message.ack(); return; }
+      logWarn(env, "connector_delivery_context_failed", { workspace_id: deliveryReference.data.delivery.workspaceId,
+        error_code: diagnosticErrorCode(error, "connector_delivery_context_failed"), queue_attempts: message.attempts });
       message.retry();
+      return;
     }
+    // Normal processing retains exactly the inline message's ack/retry/error policy.
+    await consumeOne({ id: message.id, timestamp: message.timestamp, attempts: message.attempts, body,
+      ack: () => message.ack(), retry: (options) => message.retry(options) }, env, indexSearch);
     return;
   }
   if (isGitHubDeliveryQueueMessage(message.body)) {
@@ -1394,60 +1394,6 @@ async function consumeEffect(
   }
 }
 
-async function admitConnectorEvent(
-  env: Env,
-  request: Parameters<Awaited<ReturnType<typeof workspaceDirectory>>["ingestConnectorEvent"]>[0],
-  requestedAttempt: number,
-) {
-  const workspace = await workspaceDirectory(env, request.workspaceId);
-  const accepted = await workspace.ingestConnectorEvent(request);
-  const processingAttempt = accepted.processingStatus === "processing"
-    ? accepted.processingAttempt
-    : accepted.processingStatus === "failed"
-      ? Math.max(requestedAttempt, accepted.processingAttempt + 1)
-      : Math.max(0, requestedAttempt);
-  const recordedAttempt = Math.min(processingAttempt, 5);
-  let processingOwnerId: string | null = null;
-  let processingOutcome:
-    | "enqueued" | "active_processing" | "already_processed" | "attempts_exhausted" | "unchanged_content";
-  if (accepted.unchangedContent) {
-    // A repeat of an earlier event's content. That event's own admission
-    // enqueued its processing; waking or retrying it again here would turn
-    // every re-stamp into more work.
-    processingOutcome = "unchanged_content";
-  } else if (
-    (accepted.processingStatus === "pending" || accepted.processingStatus === "failed")
-    && processingAttempt <= 5
-  ) {
-    processingOwnerId = uuidV7();
-    await enqueueWorkspaceConnectorEventProcess(env, {
-      region: env.AVALON_REGION,
-      workspaceId: request.workspaceId,
-      eventId: accepted.eventId,
-      processingOwnerId,
-      processingAttempt: recordedAttempt,
-    });
-    processingOutcome = "enqueued";
-  } else if (accepted.processingStatus === "processing") {
-    processingOutcome = "active_processing";
-  } else {
-    processingOutcome = accepted.processingStatus === "processed"
-      ? "already_processed"
-      : "attempts_exhausted";
-  }
-  if (accepted.restoredEventId) {
-    // Nothing else wakes a restored repeat: its own delivery was dropped.
-    await enqueueWorkspaceConnectorEventProcess(env, {
-      region: env.AVALON_REGION,
-      workspaceId: request.workspaceId,
-      eventId: accepted.restoredEventId,
-      processingOwnerId: uuidV7(),
-      processingAttempt: 0,
-    });
-  }
-  return { accepted, processingAttempt, recordedAttempt, processingOwnerId, processingOutcome };
-}
-
 /** The Queue consumer's idempotent product processing step; legacy Workflow also drains through it. */
 export async function processConnectorEvent(
   env: Env,
@@ -1471,7 +1417,7 @@ export async function processConnectorEvent(
     ? "claimed"
     : await enqueueActivityOpportunity(env, activity.id, asWorkspaceId(activity.workspace_id));
   await projectActivityEvent(env, activity);
-  await Promise.all(matched.deliveries.map((delivery) => sendConnectorQueuePayload(env, activity.workspace_id, delivery)));
+  await Promise.all(matched.deliveries.map((delivery) => sendConnectorEventDelivery(env, delivery)));
   logInfo(env, "connector_event_processing_completed", {
     workspace_id: activity.workspace_id,
     connection_id: activity.connection_id,

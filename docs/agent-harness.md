@@ -486,7 +486,7 @@ The package ships eight skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-ha
 
 The API also offers `reading-google-meeting-notes`
 (`google-meeting-notes-skill.ts`) when the frozen catalog contains a Google
-connection with Calendar, Drive, Docs, or Gmail read capability. The host binds
+connection with Calendar, Drive, or Docs read capability. The host binds
 one copy to an eligible connection's canonical id; it is not in the globally
 offered `BUILT_IN_SKILLS` list because connection ids vary per run. The procedure
 can compose separate Mail + Calendar and Drive + Docs connections. It reads a

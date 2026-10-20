@@ -571,21 +571,7 @@ function isTransientSourceHydrationError(error: unknown): boolean {
 function packBatches(events: Array<{ event: BatchEventRow; source: ModelSource }>): Array<Array<{ event: BatchEventRow; source: ModelSource }>> {
   const grouped = new Map<string, Array<{ event: BatchEventRow; source: ModelSource }>>();
   for (const original of events) {
-    let source = original.source;
-    if (jsonSize({ ...source, externalPeople: [] }) > MAX_BATCH_CHARACTERS) {
-      source = {
-        ...source,
-        actor: boundedRecord(source.actor, 2_000),
-        subject: boundedRecord(source.subject, 2_000),
-        externalPeople: source.externalPeople,
-        entityKeys: source.entityKeys.slice(0, 10).map((key) => key.slice(0, 120)),
-      };
-      for (const field of ["text", "summary", "title"] as const) {
-        const excess = jsonSize({ ...source, externalPeople: [] }) - MAX_BATCH_CHARACTERS;
-        if (excess <= 0) break;
-        source = { ...source, [field]: source[field].slice(0, Math.max(0, source[field].length - excess - 100)) };
-      }
-    }
+    const source = original.source;
     const item = { event: original.event, source };
     const key = item.source.workstreamId
       ?? item.source.entityKeys[0]
@@ -599,7 +585,7 @@ function packBatches(events: Array<{ event: BatchEventRow; source: ModelSource }
   let current: Array<{ event: BatchEventRow; source: ModelSource }> = [];
   let characters = 0;
   for (const item of ordered) {
-    const size = jsonSize(item.source);
+    const size = jsonSize(admissionSourceView(item.source));
     if (current.length > 0 && (current.length >= MAX_BATCH_EVENTS || characters + size > MAX_BATCH_CHARACTERS)) {
       batches.push(current);
       current = [];
@@ -612,33 +598,34 @@ function packBatches(events: Array<{ event: BatchEventRow; source: ModelSource }
   return batches;
 }
 
-/** Model windows cover every person; persistence always uses the original full sources. */
-function admissionSourceBatches(sources: ModelSource[]): ModelSource[][] {
-  const pages: ModelSource[][] = [];
-  let page: ModelSource[] = [];
-  let pageCharacters = 0;
-  const append = (source: ModelSource) => {
-    const size = jsonSize(source);
-    if (page.length && (page.length >= MAX_BATCH_EVENTS || pageCharacters + size > MAX_BATCH_CHARACTERS)) {
-      pages.push(page); page = []; pageCharacters = 0;
-    }
-    page.push(source); pageCharacters += size;
+/** The model receives a bounded view; the source and persisted roster remain complete. */
+function admissionSourceView(source: ModelSource) {
+  const view = {
+    ...persistedSource(source),
+    actor: boundedRecord(source.actor, 2_000),
+    subject: boundedRecord(source.subject, 2_000),
+    externalPeople: [] as unknown[],
+    externalPeopleCoverage: { shown: 0, total: source.externalPeople.length },
+    visibility: source.sourceAudience.scope === "workspace" ? "workspace" : "restricted",
   };
-  for (const source of sources) {
-    const base = jsonSize({ ...source, externalPeople: [] });
-    let people: unknown[] = [];
-    let characters = base;
-    for (const person of source.externalPeople) {
-      const size = jsonSize(person) + 1;
-      if (people.length && characters + size > MAX_BATCH_CHARACTERS) {
-        append({ ...source, externalPeople: people }); people = []; characters = base;
-      }
-      people.push(person); characters += size;
-    }
-    append({ ...source, externalPeople: people });
+  // Text and people share the existing source budget. A long body must leave
+  // room for people, and a large roster must leave room for the actual request.
+  const fixed = jsonSize({ ...view, text: "", summary: "" });
+  const peopleBudget = Math.max(0, (MAX_BATCH_CHARACTERS - fixed) / 2);
+  let characters = 2;
+  for (const person of source.externalPeople) {
+    const size = jsonSize(person) + 1;
+    if (characters + size > peopleBudget) break;
+    view.externalPeople.push(person);
+    characters += size;
   }
-  if (page.length) pages.push(page);
-  return pages;
+  view.externalPeopleCoverage.shown = view.externalPeople.length;
+  for (const field of ["text", "summary", "title"] as const) {
+    const excess = jsonSize(view) - MAX_BATCH_CHARACTERS;
+    if (excess <= 0) break;
+    view[field] = view[field].slice(0, Math.max(0, view[field].length - excess));
+  }
+  return view;
 }
 
 async function syncVerifiedIdentityDirectory(env: Env, workspaceId: WorkspaceId): Promise<void> {
@@ -846,118 +833,6 @@ async function markWorkspaceSuggestedWorkDue(
   await workspace.markWorkspaceOpportunityRankingDue(workspaceId, delayMs);
 }
 
-async function provenanceNodeForSource(
-  env: Env,
-  window: WindowRow,
-  source: ModelSource,
-): Promise<string> {
-  const existing = await env.DB.prepare(
-    `SELECT id FROM opportunity_provenance_nodes
-     WHERE workspace_id = ? AND node_kind = ? AND source_id = ?
-       AND visibility_scope = ? AND visibility_user_id IS ? LIMIT 1`,
-  ).bind(
-    window.workspace_id, source.kind, source.id, window.audience_scope, window.audience_user_id,
-  ).first<{ id: string }>();
-  if (existing) return existing.id;
-  const id = newId();
-  await env.DB.prepare(
-    `INSERT INTO opportunity_provenance_nodes
-     (id, workspace_id, node_kind, source_id, provider, provider_tenant_id, canonical_url,
-      label, occurred_at, visibility_scope, visibility_user_id, locator_json, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(
-    id, window.workspace_id, source.kind, source.id, source.provider, source.providerTenantId,
-    source.canonicalUrl, source.title.slice(0, 500), source.occurredAt, window.audience_scope,
-    window.audience_user_id,
-    JSON.stringify({ sourceId: source.id, connectionId: source.connectionId, workstreamId: source.workstreamId }),
-    nowIso(),
-  ).run();
-  if (source.canonicalUrl) {
-    const urlSourceId = `url:${await sha256(source.canonicalUrl)}`;
-    let urlNode = await env.DB.prepare(
-      `SELECT id FROM opportunity_provenance_nodes
-       WHERE workspace_id = ? AND node_kind = 'provider_url' AND source_id = ?
-         AND visibility_scope = ? AND visibility_user_id IS ? LIMIT 1`,
-    ).bind(
-      window.workspace_id, urlSourceId, window.audience_scope, window.audience_user_id,
-    ).first<{ id: string }>();
-    if (!urlNode) {
-      urlNode = { id: newId() };
-      await env.DB.prepare(
-        `INSERT INTO opportunity_provenance_nodes
-         (id, workspace_id, node_kind, source_id, provider, provider_tenant_id, canonical_url,
-          label, occurred_at, visibility_scope, visibility_user_id, locator_json, created_at)
-         VALUES (?, ?, 'provider_url', ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?)`,
-      ).bind(
-        urlNode.id, window.workspace_id, urlSourceId, source.provider, source.providerTenantId,
-        source.canonicalUrl, source.title.slice(0, 500), source.occurredAt, window.audience_scope,
-        window.audience_user_id, nowIso(),
-      ).run();
-    }
-    await env.DB.prepare(
-      `INSERT OR IGNORE INTO opportunity_provenance_edges
-       (workspace_id, parent_node_id, child_node_id, relationship, created_at)
-       VALUES (?, ?, ?, 'part_of', ?)`,
-    ).bind(window.workspace_id, id, urlNode.id, nowIso()).run();
-  }
-  for (const [index, reference] of source.externalPeople.entries()) {
-    const person = typeof reference === "object" && reference !== null
-      ? reference as Record<string, unknown>
-      : { sourceText: String(reference) };
-    const referenceText = String(person.sourceText ?? person.displayName ?? person.handle ?? person.email ?? "External person").slice(0, 1_000);
-    const personId = newId();
-    await env.DB.batch([
-      env.DB.prepare(
-        `INSERT OR IGNORE INTO opportunity_provenance_nodes
-         (id, workspace_id, node_kind, source_id, provider, provider_tenant_id, label,
-          occurred_at, visibility_scope, visibility_user_id, locator_json, created_at)
-         VALUES (?, ?, 'external_person', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(
-        personId, window.workspace_id, `${source.id}:external-person:${index}`, source.provider,
-        source.providerTenantId, referenceText, source.occurredAt, window.audience_scope,
-        window.audience_user_id, JSON.stringify(person), nowIso(),
-      ),
-      env.DB.prepare(
-        `INSERT OR IGNORE INTO opportunity_provenance_edges
-         (workspace_id, parent_node_id, child_node_id, relationship, created_at)
-         SELECT ?, ?, id, ?, ? FROM opportunity_provenance_nodes
-         WHERE workspace_id = ? AND node_kind = 'external_person' AND source_id = ?
-           AND visibility_scope = ? AND visibility_user_id IS ?`,
-      ).bind(
-        window.workspace_id, id, String(person.role ?? "mentions") === "assignee" ? "assigned_to" : "mentions",
-        nowIso(), window.workspace_id, `${source.id}:external-person:${index}`,
-        window.audience_scope, window.audience_user_id,
-      ),
-    ]);
-  }
-  if (source.workstreamId) {
-    let workstreamNode = await env.DB.prepare(
-      `SELECT id FROM opportunity_provenance_nodes
-       WHERE workspace_id = ? AND node_kind = 'workstream' AND source_id = ?
-         AND visibility_scope = ? AND visibility_user_id IS ? LIMIT 1`,
-    ).bind(
-      window.workspace_id, source.workstreamId, window.audience_scope, window.audience_user_id,
-    ).first<{ id: string }>();
-    if (!workstreamNode) {
-      workstreamNode = { id: newId() };
-      await env.DB.prepare(
-        `INSERT INTO opportunity_provenance_nodes
-         (id, workspace_id, node_kind, source_id, label, visibility_scope, visibility_user_id, locator_json, created_at)
-         VALUES (?, ?, 'workstream', ?, ?, ?, ?, ?, ?)`,
-      ).bind(
-        workstreamNode.id, window.workspace_id, source.workstreamId, source.title.slice(0, 500),
-        window.audience_scope, window.audience_user_id, JSON.stringify({ workstreamId: source.workstreamId }), nowIso(),
-      ).run();
-    }
-    await env.DB.prepare(
-      `INSERT OR IGNORE INTO opportunity_provenance_edges
-       (workspace_id, parent_node_id, child_node_id, relationship, created_at)
-       VALUES (?, ?, ?, 'part_of', ?)`,
-    ).bind(window.workspace_id, id, workstreamNode.id, nowIso()).run();
-  }
-  return id;
-}
-
 function audienceKey(window: WindowRow): string {
   return window.audience_scope === "workspace"
     ? "workspace"
@@ -1101,42 +976,24 @@ async function processModelBatch(
   const at = nowIso();
   await mutateOpportunityEvents(env, window, batch.map(({ event }) => event.id), "processing", null, durableLeaseId, at);
   try {
+    const sources = batch.map(({ source }) => source);
+    const sourceIds = new Set(sources.map((source) => source.id));
+    const { result } = await runStructuredInference(env, {
+      role: "work_opportunity_admission", activity: "work_opportunity",
+      context: { workspaceId: window.workspace_id, userId: window.audience_user_id ?? undefined },
+      messages: renderWorkOpportunityAdmissionMessages({
+        audience: { scope: window.audience_scope, userId: window.audience_user_id },
+        members: context.members, existingWork: context.existingWork, existingOpportunities: context.existingOpportunities,
+        sources: sources.map(admissionSourceView),
+      }),
+      schemaName: "work_opportunity_admission", jsonSchema: admissionJsonSchema,
+      parse: (value) => AdmissionResultSchema.parse(value), reasoningEffort: "low",
+    });
     const eagerUserIds: string[] = [];
-    for (const sources of admissionSourceBatches(batch.map(({ source }) => source))) {
-      const sourceIds = new Set(sources.map((source) => source.id));
-      const { result } = await runStructuredInference(env, {
-        role: "work_opportunity_admission",
-        activity: "work_opportunity",
-        context: {
-          workspaceId: window.workspace_id,
-          userId: window.audience_user_id ?? undefined,
-        },
-        messages: renderWorkOpportunityAdmissionMessages({
-          audience: { scope: window.audience_scope, userId: window.audience_user_id },
-          members: context.members,
-          existingWork: context.existingWork,
-          existingOpportunities: context.existingOpportunities,
-          sources: sources.map((source) => ({
-            ...persistedSource(source),
-            externalPeopleCoverage: { shown: source.externalPeople.length,
-              total: batch.find((item) => item.source.id === source.id)!.source.externalPeople.length },
-            visibility: source.sourceAudience.scope === "workspace" ? "workspace" : "restricted",
-          })),
-        }),
-        schemaName: "work_opportunity_admission",
-        jsonSchema: admissionJsonSchema,
-        parse: (value) => AdmissionResultSchema.parse(value),
-        // Admission is a coarse gate biased toward `ignore`, asked tens of
-        // thousands of times a day; the ranking's elimination rounds already run
-        // low for the same reason. At `high`, reasoning was a quarter of every
-        // admission call's output tokens.
-        reasoningEffort: "low",
-      });
-      for (const decision of result.decisions) {
-        if (!decision.sourceIds.every((sourceId) => sourceIds.has(sourceId))) continue;
-        const persisted = await persistDecision(env, window, decision, batch.map(({ source }) => source), context.members);
-        eagerUserIds.push(...persisted.eagerUserIds);
-      }
+    for (const decision of result.decisions) {
+      if (!decision.sourceIds.every((sourceId) => sourceIds.has(sourceId))) continue;
+      const persisted = await persistDecision(env, window, decision, sources, context.members);
+      eagerUserIds.push(...persisted.eagerUserIds);
     }
     await mutateOpportunityEvents(
       env, window, batch.map(({ event }) => event.id), "completed", null, durableLeaseId,
@@ -1739,12 +1596,11 @@ export const __workOpportunityTesting = {
   markSuggestedWorkDue,
   markWorkspaceSuggestedWorkDue,
   packBatches,
-  admissionSourceBatches,
+  admissionSourceView,
   mapConcurrent,
   boundRankingCandidate,
   rankingGroups,
   opportunityFingerprint,
-  provenanceNodeForSource,
   limits: {
     batchEvents: MAX_BATCH_EVENTS,
     batchCharacters: MAX_BATCH_CHARACTERS,

@@ -3812,7 +3812,7 @@ function normalizeCalendarActivity(
       htmlLink: detailed ? readString(source, "htmlLink") : null,
       ...(master ? { recurrence: readStringArray(master, "recurrence") } : {}),
       // A representative instance cannot speak for the series' attachments.
-      ...(detailed ? { attachments: sanitizeCalendarAttachments(source) } : {}),
+      ...(detailed && recordArray(source, "attachments").length ? { attachments: sanitizeCalendarAttachments(source) } : {}),
       attendeesOmitted: readBoolean(source, "attendeesOmitted") ?? false
     }
   };
@@ -3877,7 +3877,7 @@ function normalizeCalendarCompletionActivity(
     ]),
     metadata: {
       completedAt: endedAt,
-      attachments: sanitizeCalendarAttachments(event),
+      ...(recordArray(event, "attachments").length ? { attachments: sanitizeCalendarAttachments(event) } : {}),
       recurringEventId: readString(event, "recurringEventId"),
       eventType: readString(event, "eventType"),
       attendeesOmitted: readBoolean(event, "attendeesOmitted") ?? false
@@ -3980,7 +3980,7 @@ function googleMailboxPeople(
       email,
       displayName: null,
       role,
-      sourceText: header.slice(0, 1_000),
+      sourceText: match[0]!,
     }];
   });
 }
@@ -5873,11 +5873,7 @@ function serializeEmail(input: EmailToSerialize, attachments: Array<{ fileName: 
   // RFC 2045 base64 uses lines of at most 76 characters. The random boundary
   // cannot occur in a base64 part; encode the text body as well.
   const boundary = `rally_${crypto.randomUUID()}`;
-  const encodePart = (bytes: Uint8Array) => {
-    let binary = "";
-    for (const byte of bytes) binary += String.fromCharCode(byte);
-    return btoa(binary).match(/.{1,76}/gu)?.join("\r\n") ?? "";
-  };
+  const encodePart = (bytes: Uint8Array) => bytesToBase64(bytes).match(/.{1,76}/gu)?.join("\r\n") ?? "";
   const parts = [
     `--${boundary}\r\nContent-Type: text/plain; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n${encodePart(new TextEncoder().encode(input.body))}`,
     ...attachments.map((attachment) => {

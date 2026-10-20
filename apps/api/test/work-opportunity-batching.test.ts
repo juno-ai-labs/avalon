@@ -352,7 +352,7 @@ describe("suggested-work aggregation", () => {
   // reachable only with the authority closed. Deleted rather than rewired: they
   // asserted on rows this side no longer writes. The gap is in
   // `docs/potential-bugs.md`.
-  it("preserves every person in source storage and covers all people across model windows", () => {
+  it("preserves the full source while admission uses one bounded view", () => {
     const people = Array.from({ length: 10_000 }, (_, index) => ({
       provider: "google", providerTenantId: "account", providerUserId: null, handle: null,
       email: `guest${index}@example.com`, displayName: null, role: "recipient", sourceText: "evidence".repeat(40),
@@ -363,11 +363,31 @@ describe("suggested-work aggregation", () => {
     const packed = __workOpportunityTesting.packBatches([{ source,
       event: { id: "event", source_kind: "activity" as const, source_id: "source", occurred_at: source.occurredAt, input_characters: 10, attempt_count: 0 } }]);
     expect(packed[0]![0]!.source.externalPeople).toHaveLength(10_000);
-    const windows = __workOpportunityTesting.admissionSourceBatches(packed.flatMap((batch) => batch.map((item) => item.source)));
-    expect(windows.length).toBeGreaterThan(1);
-    const represented = windows.flatMap((batch) => batch.flatMap((item) => item.externalPeople));
-    expect(represented).toEqual(people);
-    expect(windows.every((batch) => JSON.stringify(batch).length <= 24_002)).toBe(true);
+    expect(packed).toHaveLength(1);
+    const view = __workOpportunityTesting.admissionSourceView(source);
+    expect(view.externalPeopleCoverage.total).toBe(10_000);
+    expect(view.externalPeopleCoverage.shown).toBeGreaterThan(0);
+    expect(view.externalPeopleCoverage.shown).toBeLessThan(10_000);
+    expect(JSON.stringify(view).length).toBeLessThanOrEqual(24_000);
+    expect(source.externalPeople).toEqual(people);
+
+  });
+
+  it.each([5, 20, 200, 10_000])("keeps a long source with %i recipients in one admission batch", (count) => {
+    const source = { id: "long-source", kind: "activity" as const, provider: "google", providerTenantId: "account", connectionId: null,
+      title: "Interview follow-up", summary: "Follow up", text: "body ".repeat(20_000), actor: {}, subject: {},
+      externalPeople: Array.from({ length: count }, (_, index) => ({ email: `guest${index}@example.com`, sourceText: "evidence".repeat(40) })),
+      entityKeys: [], canonicalUrl: null, workstreamId: null, occurredAt: "2026-10-19T00:00:00.000Z", sourceAudience: { scope: "workspace" as const } };
+    const batches = __workOpportunityTesting.packBatches([{ source,
+      event: { id: "event", source_kind: "activity" as const, source_id: source.id, occurred_at: source.occurredAt, input_characters: source.text.length, attempt_count: 0 } }]);
+    expect(batches).toHaveLength(1);
+    const view = __workOpportunityTesting.admissionSourceView(source);
+    expect(JSON.stringify(view).length).toBeLessThanOrEqual(24_000);
+    expect(view.externalPeopleCoverage.total).toBe(count);
+    expect(view.text).toContain("body");
+    expect(view.externalPeople.length).toBeGreaterThan(0);
+    if (count <= 20) expect(view.externalPeople).toHaveLength(count);
+    expect(batches[0]![0]!.source.externalPeople).toHaveLength(count);
   });
 
   it("enforces model batch bounds and maximum concurrency three", async () => {
@@ -379,7 +399,8 @@ describe("suggested-work aggregation", () => {
     expect(batches.map((batch) => batch.length)).toEqual([16, 16, 1]);
     expect(__workOpportunityTesting.packBatches([source(1, "x".repeat(13_000)), source(2, "x".repeat(13_000))])).toHaveLength(2);
     const bounded = __workOpportunityTesting.packBatches([source(1, "x".repeat(100_000))]);
-    expect(JSON.stringify(bounded[0]![0]!.source).length).toBeLessThanOrEqual(24_000);
+    expect(JSON.stringify(__workOpportunityTesting.admissionSourceView(bounded[0]![0]!.source)).length).toBeLessThanOrEqual(24_000);
+    expect(bounded[0]![0]!.source.text).toHaveLength(100_000);
 
     let active = 0;
     let maximum = 0;
@@ -480,7 +501,7 @@ describe("suggested-work aggregation", () => {
     expect(pool.length).toBeLessThanOrEqual(12);
   });
 
-  it("scopes source fingerprints and provenance roots to each personal target", async () => {
+  it("scopes source fingerprints to each personal target", async () => {
     const database = migratedDatabase();
     seed(database);
     const source = {
@@ -514,16 +535,7 @@ describe("suggested-work aggregation", () => {
     const secondFingerprint = await __workOpportunityTesting.opportunityFingerprint(windowFor(userTwo), [source]);
     expect(firstFingerprint).not.toBe(secondFingerprint);
 
-    const firstNode = await __workOpportunityTesting.provenanceNodeForSource(environment(database), windowFor(userOne), source);
-    const secondNode = await __workOpportunityTesting.provenanceNodeForSource(environment(database), windowFor(userTwo), source);
-    expect(firstNode).not.toBe(secondNode);
-    expect(database.prepare(`
-      SELECT visibility_user_id FROM opportunity_provenance_nodes
-      WHERE source_id = ? ORDER BY visibility_user_id
-    `).all(source.id)).toEqual([
-      { visibility_user_id: userOne },
-      { visibility_user_id: userTwo },
-    ]);
+
   });
 
   it("keeps execution prompts and reasoning out of the renderer contract and rejects stale starts", async () => {
