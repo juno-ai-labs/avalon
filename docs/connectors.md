@@ -64,13 +64,13 @@ Adjacent repeated presentations of the same connector and scope collapse to the
 newest durable row, while an intervening conversation row keeps a later request
 as a separate occasion.
 
-While the card has not observed `connected`, it follows the active connections
-query in the conversation surface. OAuth completion publishes the workspace
-socket's `connector_connections` topic, which invalidates that query and makes
-the card become **Connected** without polling or relying on application focus. The
-card latches that success: a historical card does not turn back into a recovery
-action if the provider later revokes the grant; a new agent state read owns that
-later decision.
+The card shows connection state alongside a separate **Reconnect** action for
+an existing connection, including one still reported as healthy. New connections
+show **Connect**. The active connections query owns the displayed state; the
+feed's success latch only bridges a loading/remount gap. OAuth completion
+publishes the workspace socket's `connector_connections` topic to refresh it.
+A healthy existing grant does not itself complete a new reauthorization attempt:
+the callback or OAuth-attempt reconciliation clears the waiting state.
 
 Apollo.io uses the personal-only [hosted-MCP connector](hosted-mcp-connectors.md).
 
@@ -1513,6 +1513,15 @@ active workspace guest is insufficient after the addressed share is revoked.
 Workspace-principal automation runs retain their separate lifecycle authority.
 
 ## Changelog
+
+### 2026-10-19 — Connection state and reauthorization remain separate
+
+A card could say Connected while the agent asked the person to reconnect, leaving
+no action to take. Cards now keep a Reconnect action beside current connection
+state, using the existing connection row even when it remains healthy. A cached
+success only bridges loading; it no longer hides later revocation. Pending OAuth
+is cleared by its outcome rather than by the old healthy grant, so reauthorizing
+a connected account cannot immediately enable another attempt.
 
 ### 2026-10-19 — Unknown connector requests offer a client update
 

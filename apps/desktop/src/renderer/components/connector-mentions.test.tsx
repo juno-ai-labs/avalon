@@ -338,7 +338,7 @@ describe('connector connection resolution', () => {
     });
   });
 
-  it('latches Connected after socket-refreshed connection state first becomes healthy', async () => {
+  it('shows live status and keeps re-connect available after connection success', async () => {
     const request = { connectorId: 'slack', scope: 'personal' } as const;
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const Harness = ({ status }: { status?: 'healthy' | 'reconnect_required' }) => {
@@ -370,8 +370,8 @@ describe('connector connection resolution', () => {
     await waitFor(() => expect(screen.getByText('Connected')).toBeInTheDocument());
 
     view.rerender(<Harness status="reconnect_required" />);
-    expect(screen.getByText('Connected')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Reconnect' })).not.toBeInTheDocument();
+    expect(screen.getByText('Reconnect required')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reconnect' })).toBeEnabled();
   });
 
   it('uses a feed-owned Connected latch after the card remounts', async () => {
@@ -379,7 +379,7 @@ describe('connector connection resolution', () => {
     const request = { connectorId: 'slack', scope: 'personal' } as const;
     const view = render(
       <QueryClientProvider client={queryClient}>
-        <ConnectorConnectionsProvider connections={[]}>
+        <ConnectorConnectionsProvider connections={undefined}>
           <ConnectorConnectionCard latchedConnected request={request} />
         </ConnectorConnectionsProvider>
       </QueryClientProvider>,
@@ -389,7 +389,7 @@ describe('connector connection resolution', () => {
     view.unmount();
   });
 
-  it('restarts OAuth from a reconnect-required card', async () => {
+  it.each(['healthy', 'reconnect_required'] as const)('restarts OAuth from a %s card', async (status) => {
     mocks.reconnectConnection.mockResolvedValue({
       attemptId: 'attempt-reconnect',
       url: 'https://slack.com/oauth/reconnect',
@@ -404,7 +404,7 @@ describe('connector connection resolution', () => {
           connectorType: 'slack',
           displayName: 'Slack',
           scope: 'you',
-          status: 'reconnect_required',
+          status,
           capabilities: ['slack.personal.mcp'],
         }]}>
           <ConnectorConnectionCard request={{ connectorId: 'slack', scope: 'personal' }} />
@@ -429,6 +429,30 @@ describe('connector connection resolution', () => {
       source: 'conversation',
       workspaceId: 'workspace-one',
     });
+  });
+
+  it('keeps reauthorization pending while the existing connection remains healthy', async () => {
+    mocks.pendingConnectorOAuth = {
+      attemptId: 'attempt-reconnect', connectorId: 'slack', provider: 'slack',
+      region: 'global', scope: 'personal', source: 'conversation', workspaceId: 'workspace-one',
+    };
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ConnectorConnectionsProvider connections={[{
+          id: 'connection-one', modelPluginId: 'plugin_slack', connectorType: 'slack',
+          displayName: 'Slack', scope: 'you', status: 'healthy', capabilities: ['slack.personal.mcp'],
+        }]}>
+          <ConnectorConnectionCard request={{ connectorId: 'slack', scope: 'personal' }} />
+        </ConnectorConnectionsProvider>
+      </QueryClientProvider>,
+    );
+    expect(screen.getByRole('status')).toHaveTextContent('Connected');
+    expect(screen.getByRole('button', { name: 'Waiting…' })).toBeDisabled();
+    expect(mocks.setPendingConnectorOAuth).not.toHaveBeenCalled();
+    mocks.getConnectorOAuthAttempt.mockResolvedValue({ status: 'succeeded' });
+    fireEvent.focus(window);
+    await waitFor(() => expect(mocks.setPendingConnectorOAuth).toHaveBeenCalledWith(null));
   });
 
   it('points a browser at the Mac app for a desktop-only connector, reconnect included', async () => {
