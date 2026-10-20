@@ -188,12 +188,7 @@ is what somebody tightening `parseCachedDirectory` later needs it to do — the
 alternative is every person on the branch getting a cold, empty sidebar on their
 next launch with nothing failing.
 
-Thread rows and breakout lists retain optional `resolved` state. Older rows
-without it paint as unresolved until the live directory answers. A merge's
-resolution can arrive at unchanged child projection waterlines: the receiver
-accepts the sticky flag without changing execution state, and later activity
-cannot clear it or resurrect a tombstoned row. [Merge-back](conversation-merge.md#resolution-and-archiving)
-owns the lifecycle.
+For cached and live resolved state, see [merge-back](conversation-merge.md#resolution-and-archiving).
 
 **Each listed Channel's breakout list is on the row too**, under `breakouts`,
 keyed by Channel id and holding only the Channels the row keeps. A cold launch

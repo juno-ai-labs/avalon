@@ -593,6 +593,9 @@ describe("space dashboard conversation page", () => {
       viewerEffect(OWNER) as ConversationEffect,
       viewerEffect(MEMBER) as ConversationEffect,
     ]);
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE parent_children SET resolved = 1 WHERE parent_id = ? AND substream_id = '0'", PRIVATE_CHANNEL);
+    });
     const listed = async (userId: UserId) => {
       const connection = await connectRaw(userId);
       const requestId = `00000000-0000-7000-8000-0000000${userId.slice(-5)}`;
@@ -611,6 +614,7 @@ describe("space dashboard conversation page", () => {
     // The owner, a participant of Main, is told Main's own fields.
     const ownerRow = (await listed(OWNER)).row;
     expect(ownerRow?.mainWithheld).toBeUndefined();
+    expect(ownerRow?.resolved).toBe(true);
     expect(pick(ownerRow)).toEqual({
       objective: "Who we hire next", createdByUserId: OWNER, harnessStatus: "needs_input", hasUnread: true, participantUserIds: [OWNER],
     });
@@ -620,6 +624,7 @@ describe("space dashboard conversation page", () => {
     expect(member.row?.title).toBe("Private Channel");
     // The row says so, so a client never has to guess before dialling Main.
     expect(member.row?.mainWithheld).toBe(true);
+    expect(member.row?.resolved).toBeUndefined();
     expect(pick(member.row)).toEqual({
       objective: "", createdByUserId: null, harnessStatus: "idle", hasUnread: false, participantUserIds: [],
     });

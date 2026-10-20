@@ -139,6 +139,7 @@ export const SharedWorkstreamRequestSchema = z.strictObject({
   membershipIncarnation: z.string().min(1),
   /** New navigation readers opt in; older strict response parsers keep their shape. */
   includeAttention: z.boolean().optional(),
+  includeResolution: z.boolean().optional(),
 });
 export const SharedWorkstreamSchema = z.strictObject({
   parentId: IdSchema,
@@ -164,6 +165,7 @@ export const SharedNavigationWorkstreamSchema = SharedWorkstreamSchema.omit({ co
     scope: z.enum(["personal", "workspace"]),
     archived: z.boolean(),
     needsAttention: z.boolean().optional(),
+    resolved: z.boolean().optional(),
     /** A breakout's Main transcript turn it was branched through; null when not branched from one. */
     originTurnId: z.string().min(1).nullable().optional(),
   })),

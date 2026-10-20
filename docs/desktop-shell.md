@@ -422,12 +422,8 @@ Each Breakout row the thread receives carries `originTurnId` and
   Breakout list to answer, since the rows drawn before it carry stand-in
   authors and dates. While the Breakout's run waits on a question
   (`harnessStatus` `needs_input`), a red **Needs input** badge takes the place
-  of the news, and the tick and its card say the same. A resolved Thread or
-  Breakout keeps its card and open action, with a faded title, summary,
-  byline and mark in light and dark themes, and a **Resolved** label. Hover and
-  keyboard focus restore emphasis; new-activity badges keep their full emphasis. Resolution comes from
-  saved parent state, independently of archiving; [merge-back](conversation-merge.md#resolution-and-archiving)
-  owns the write and backfill.
+  of the news, and the tick and its card say the same. Resolved cards use the
+  [merge-back presentation](conversation-merge.md#resolution-and-archiving).
 - **Tick bar:** down Main's leading edge, one tick per Breakout, in origin-turn
   order for turns that are loaded and by creation time after them. Colour says
   news and length says open, at the design's sizes: a quiet tick is 11×2 grey,
