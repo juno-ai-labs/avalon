@@ -8767,6 +8767,13 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 
 /* Activity: one row per thing that happened to this person. */
 .activity-row { align-items: flex-start; padding: 9px 10px; }
+/* Keep read history quiet, but restore legibility when interacting with it. */
+.activity-row.is-read { opacity: 0.3; }
+.activity-row.is-read:hover,
+.activity-row.is-read:focus-visible { opacity: 1; }
+@media (prefers-contrast: more) {
+  .activity-row.is-read { opacity: 1; }
+}
 .activity-request { align-items: center; box-shadow: 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-strong); cursor: default; }
 .activity-request .activity-row-body { background: transparent; border: 0; color: inherit; cursor: pointer; font: inherit; padding: 0; text-align: left; }
 .activity-request-actions { display: flex; flex: none; gap: 2px; }
