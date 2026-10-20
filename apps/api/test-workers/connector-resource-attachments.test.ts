@@ -80,5 +80,6 @@ it("stores the field-specific terminal poll reason in WorkspaceDO after workflow
   expect(JSON.parse(stored.error_json)).toEqual({
     code: "connector_poll_failed:externalPeople:too_big",
     message: "Connector poll failed after retries: connector_poll_failed:externalPeople:too_big",
+    source: "connector_poll",
   });
 });

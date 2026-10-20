@@ -4,6 +4,8 @@ import { ensureFreshConnectorCredentials } from "../src/services/connector-crede
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { commitConnectorCursor, recordConnectorPollFailure } from "../src/services/integrations";
+import { recordConnectorPollFailure as recordTerminalPollFailure } from "../src/services/connector-poll-failure";
+import { pollAttemptFailure } from "../src/workflows/connector-poll-result";
 import { markConnectorNeedsReconnect } from "../src/services/connector-connection-access";
 import { createTestWorkspaceDO } from "./helpers/workspace-object-rpcs";
 import { sqliteD1 } from "./helpers/sqlite-d1";
@@ -39,6 +41,24 @@ const commit = (db: D1Database, baseCursorJson = "{}") => commitConnectorCursor(
   { baseCursorJson, cursorJson: '{"page":2}' }, now);
 
 describe("connector authorization and polling health", () => {
+  it.each(["connector_poll_failed:externalPeople:too_big", "provider_error:http_404"])("preserves and recovers a specific terminal poll diagnostic: %s", async (code) => {
+    const { db, read } = fixture();
+    const replayed = pollAttemptFailure(new Error("provider detail omitted"), code);
+    await recordTerminalPollFailure(db, input, replayed, now);
+    expect(read()).toMatchObject({ status: "error", error_json: JSON.stringify({
+      code, message: `Connector poll failed after retries: ${code}`, source: "connector_poll",
+    }) });
+    await expect(commit(db)).resolves.toBe("committed");
+    expect(read()).toEqual({ status: "healthy", error_json: null, cursor_json: '{"page":2}' });
+  });
+
+  it.each(["needs_reconnect", "disabled", "error"])("keeps %s authority when the terminal poll recorder receives a specific reason", async (status) => {
+    const diagnosis = { code: "missing_scopes", reconnectRequired: true };
+    const { db, read } = fixture(status, diagnosis);
+    await recordTerminalPollFailure(db, input, pollAttemptFailure(new Error("private"), "provider_error:http_403"), now);
+    expect(read()).toMatchObject({ status, error_json: JSON.stringify(diagnosis) });
+  });
+
   it.each(["connector_poll_failed", "connector_poll_timeout"])("recovers %s after a successful committed poll", async (code) => {
     const { db, read } = fixture();
     await recordConnectorPollFailure(db, input, { ...pollError, code }, now);
