@@ -1,7 +1,9 @@
 import { MyThreadsPageSchema, PinListSchema, ArtifactPinListSchema, ChannelRailSchema, WorkstreamPrivateChildSchema } from '@rally/contracts';
 import { applyChannelRails, channelRailQueryKey, isRailStale, noteRailWaterline } from './channel-rails';
 import { QueryClient } from '@tanstack/react-query';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RallyApi } from './api';
+import { LOCAL_CACHE_WRITE_COALESCE_MS } from './local-cache-mirror';
 import { clearAllLocalCache, closeLocalCache, defineLocalCacheSlice, localCacheScope } from './local-cache';
 import type { AutomationSummary, WorkstreamSummary } from './types';
 import { applyChannelViewerState, workstreamChildrenQueryKey, type WorkstreamChildDirectory } from './channel-viewer-state';
@@ -61,9 +63,25 @@ function directory(overrides: Partial<CachedWorkspaceDirectory> = {}): CachedWor
   };
 }
 
+async function mappedThreads() {
+  const thread = {
+    ...summary(), kind: 'channel', workspaceId: '00000000-0000-7000-8000-000000000001',
+    objective: 'Keep this preview', createdByUserId: null, createdAt: '2026-10-19T19:00:00.000Z',
+    updatedAt: '2026-10-19T19:00:00.000Z', archivedAt: null,
+  };
+  const wire = MyThreadsPageSchema.parse({ items: [thread], pinned: [thread], nextCursor: 'page-2' });
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json(wire)));
+  const api = new RallyApi('https://api.rally.test', {
+    accessToken: 'test-token', expiresAt: '2027-01-01T00:00:00.000Z', apiBaseUrl: 'https://api.rally.test',
+    user: { id: '00000000-0000-7000-8000-0000000000aa', name: 'Me', email: 'me@rally.test' },
+    workspace: { id: thread.workspaceId, name: 'Rally', region: 'global', role: 'owner' },
+  });
+  return api.getMyThreads(null);
+}
+
 describe('organization directory cache', () => {
   beforeEach(() => clearAllLocalCache());
-  afterEach(() => closeLocalCache());
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); closeLocalCache(); });
 
   it('seeds every list the sidebar and the space dashboard read, when none is there yet', async () => {
     await workspaceDirectorySlice.write(scope, DIRECTORY_CACHE_KEY, directory());
@@ -78,7 +96,7 @@ describe('organization directory cache', () => {
     expect(queryClient.getQueryData(['spaces-inactive'])).toEqual({ waterline: 3, items: [] });
   });
 
-  it('restores pins and their rows together, including pin-only changes and the first thread page', async () => {
+  it('restores pins with API-mapped thread rows and keeps only the first thread page', async () => {
     const before = new QueryClient();
     const mirror = mirrorWorkspaceDirectory(before, scope, { live: () => true });
     setCachedWorkstreams(before, [summary()]);
@@ -90,14 +108,7 @@ describe('organization directory cache', () => {
       updatedAt: '2026-10-19T19:00:00.000Z', currentVersion: 1, unread: false,
       thread: { title: 'Remembered row', appearance: null, spaceIds: [] },
     }]);
-    const thread = {
-      ...summary(), kind: 'channel', workspaceId: '00000000-0000-7000-8000-000000000001',
-      objective: '', createdByUserId: null, createdAt: '2026-10-19T19:00:00.000Z',
-      updatedAt: '2026-10-19T19:00:00.000Z', archivedAt: null,
-    };
-    const threads = MyThreadsPageSchema.parse({
-      items: [thread], pinned: [thread], nextCursor: 'page-2',
-    });
+    const threads = await mappedThreads();
     before.setQueryData(['pins'], pins);
     before.setQueryData(['artifact-pins'], artifacts);
     before.setQueryData(['channel-stats'], []);
@@ -118,6 +129,14 @@ describe('organization directory cache', () => {
     expect(restored?.pages[0]?.items.map((row) => row.title)).toEqual(['Remembered row']);
     expect(restored?.pages[0]?.nextCursor).toBe('page-2');
     expect(restored?.pageParams).toEqual([null]);
+    expect(after.getQueryData<{ pages: Array<{ items: Array<{ preview: string }> }> }>(['my-threads'])?.pages[0]?.items[0]?.preview).toBe('Keep this preview');
+  });
+
+  it('keeps live navigation answers that beat disk hydration', async () => {
+    await workspaceDirectorySlice.write(scope, DIRECTORY_CACHE_KEY, directory({ navigation: {
+      pins: PinListSchema.parse([{ kind: 'thread', id: summary().id, parentId: null }]),
+      threads: await mappedThreads(),
+    } }));
 
     // A REST answer can beat disk hydration even before the socket arrives.
     const raced = new QueryClient();
@@ -128,6 +147,51 @@ describe('organization directory cache', () => {
     expect(raced.getQueryData(['pins'])).toEqual([]);
     expect(raced.getQueryData(['artifact-pins'])).toEqual([]);
     expect(raced.getQueryData(['my-threads'])).toEqual({ pages: [{ items: [], pinned: [], nextCursor: null }], pageParams: [null] });
+  });
+
+  it('seeds missing REST thread rows even when the socket directory arrived first', async () => {
+    await workspaceDirectorySlice.write(scope, DIRECTORY_CACHE_KEY, directory({ navigation: { threads: await mappedThreads() } }));
+    const client = new QueryClient();
+    setCachedWorkstreams(client, [summary({ title: 'Live row' })]);
+    client.setQueryData(['pins'], []);
+    await expect(hydrateWorkspaceDirectory(client, scope, () => true)).resolves.toBe(false);
+    expect(client.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.title).toBe('Live row');
+    expect(client.getQueryData(['pins'])).toEqual([]);
+    expect(client.getQueryData<{ pages: Array<{ pinned: Array<{ title: string }> }> }>(['my-threads'])?.pages[0]?.pinned[0]?.title).toBe('Remembered row');
+  });
+
+  it('keeps valid navigation lists when cached thread rows cannot be read', async () => {
+    const raw = defineLocalCacheSlice<unknown>({ kind: 'directory', version: 4, parse: (value) => value });
+    await raw.write(scope, DIRECTORY_CACHE_KEY, { ...directory(), navigation: {
+      pins: [{ kind: 'thread', id: summary().id, parentId: null }],
+      artifactPins: [], channelStats: [], threads: { items: [{ title: 'Broken' }], pinned: [], nextCursor: null },
+    } });
+    const client = new QueryClient();
+    await hydrateWorkspaceDirectory(client, scope, () => true);
+    expect(client.getQueryData(['pins'])).toEqual([{ kind: 'thread', id: summary().id, parentId: null }]);
+    expect(client.getQueryData(['artifact-pins'])).toEqual([]);
+    expect(client.getQueryData(['channel-stats'])).toEqual([]);
+    expect(client.getQueryData(['my-threads'])).toBeUndefined();
+  });
+
+  it.each([
+    ['pins', 'pins'], ['artifact-pins', 'artifactPins'], ['channel-stats', 'channelStats'], ['my-threads', 'threads'],
+  ] as const)('persists a %s-only change through the scheduled mirror', async (key, field) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const client = new QueryClient();
+    const mirror = mirrorWorkspaceDirectory(client, scope, { live: () => true });
+    setCachedWorkstreams(client, [summary()]);
+    await mirror.flush();
+    const value = field === 'threads' ? await mappedThreads() : [];
+    client.setQueryData([key], field === 'threads' ? { pages: [value], pageParams: [null] } : value);
+    await vi.advanceTimersByTimeAsync(LOCAL_CACHE_WRITE_COALESCE_MS);
+    // Neither flush nor stop may cause this write: only the query event can.
+    await vi.waitFor(async () => {
+      const saved = await workspaceDirectorySlice.read(scope, DIRECTORY_CACHE_KEY);
+      if (field === 'threads') expect(saved?.navigation?.threads?.items[0]?.title).toBe('Remembered row');
+      else expect(saved?.navigation?.[field]).toEqual([]);
+    });
+    mirror.stop();
   });
 
   it('does not write over a directory the socket already delivered', async () => {
