@@ -542,6 +542,9 @@ closing it and retries without waiting for a close event. Warm failures keep
 retrying through the existing 10/20/40-second ladder (remaining at 40 seconds); the cold-open three-attempt policy is unchanged. **Reconnect now** in
 the history status restarts only that feed through the same owner, retaining
 cached messages and unresolved commands with their original operation IDs.
+A conversation asked to resynchronize also retires its live transport immediately:
+its opening deadline has already finished, so waiting for close there could
+strand it forever.
 
 Both renderer owners retire transport ownership before closing on timeout,
 offline, or suspend. Resume obtains a new ticket; an aborted ticket that ignores

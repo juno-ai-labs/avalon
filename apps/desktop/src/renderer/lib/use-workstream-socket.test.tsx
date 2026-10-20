@@ -4652,6 +4652,34 @@ describe('useWorkstreamSocket', () => {
     ]);
   });
 
+  it('reconnects a synchronized feed when resync close never arrives', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const id = '00000000-0000-7000-8000-00000000074c';
+    const getSocketTicket = vi.fn<WorkstreamSocketApi['getSocketTicket']>(async () => ({
+      url: 'wss://api.rally.test/feed', ticket: 'socket-ticket',
+      protocols: socketTicketProtocols('socket-ticket'),
+    }));
+    const api = socketApiWith({ getSocketTicket });
+    renderHook(() => useWorkstreamSocket(api, id, true), { wrapper: createWrapper() });
+    await flushPromises();
+    const old = FakeWebSocket.instances[0]!;
+    act(() => { old.open(); old.message(snapshotFrame({ sequence: 1, workstream: { id } })); });
+    vi.spyOn(old, 'close').mockImplementation(() => { old.readyState = FakeWebSocket.CLOSING; });
+    act(() => old.message({
+      type: 'resync_required', sequence: 14, latestSequence: 14,
+      occurredAt: '2026-07-31T20:00:00.000Z', reason: 'history_unavailable',
+      activeStreams: [], activeCompaction: null,
+    }));
+    await act(async () => vi.advanceTimersByTimeAsync(750));
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    expect(getSocketTicket.mock.calls[1]?.[3]).toBe(0);
+    act(() => old.dispatchEvent(Object.assign(new Event('close'), { code: 1006 })));
+    expect(socketTelemetry().filter((event) => (event as { state: string }).state === 'retrying'))
+      .toEqual([expect.objectContaining({ cause: 'resync_required', attempts: 'zero' })]);
+  });
+
   it('releases an in-flight transcript range immediately when its socket closes', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const api = socketApiWith({
