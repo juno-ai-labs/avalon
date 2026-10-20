@@ -5,7 +5,7 @@ import { AnnotationDraftProvider, AnnotationChips, MessageAnnotations, useAnnota
 import { sourceSelectionPoint,annotationDomRange } from '../lib/annotation-source';
 import { AnnotationSurface } from './annotation-surface';
 const resourceId='00000000-0000-7000-8000-0000000000a1';
-function Observe():React.JSX.Element {const draft=useAnnotationDraft();return <><AnnotationChips /><output data-testid="pins">{JSON.stringify(draft?.pins.map(p=>p.annotation))}</output></>;}
+function Observe():React.JSX.Element {const draft=useAnnotationDraft();return <><AnnotationChips /><output data-testid="pins">{JSON.stringify(draft?.selections.map(p=>p.annotation))}</output></>;}
 afterEach(cleanup);
 describe('annotation source picker',()=>{
   it('shows website words instead of markup in saved annotations',()=>{
@@ -31,14 +31,38 @@ describe('annotation source picker',()=>{
     fireEvent.click(screen.getByRole('button',{name:'Comment mode'}));
     const item=screen.getByText('Starter').closest('li')!;
     fireEvent.mouseMove(item);fireEvent.click(item,{detail:1,clientX:10,clientY:10});
-    fireEvent.change(screen.getByRole('textbox',{name:'Comment on selection'}),{target:{value:'Make this monthly'}});
+    expect(screen.queryByLabelText('Annotation pins')).toBeNull();
+    const editor=screen.getByRole('textbox',{name:'Comment on selection'});
+    expect(screen.getByRole('button',{name:'Send comment'})).toBeDisabled();
+    fireEvent.keyDown(editor,{key:'Enter'});
+    expect(editor).toBeVisible();
+    fireEvent.change(editor,{target:{value:'Make this monthly'}});
+    expect(screen.queryByLabelText('Annotation pins')).toBeNull();
+    expect(editor.closest('[role=dialog]')?.querySelector('q')).toBeNull();
     const pins=JSON.parse(screen.getByTestId('pins').textContent??'[]');
     expect(pins).toEqual([{target:{resourceId,version:4,locator:{type:'markdown',start:9,end:37,headingPath:['Plans']}},content:{exact:'- **Starter**: $12 per seat.',source:'exact',before:'# Plans\n\n',after:'\n- Team: $24.\n',truncated:false},comment:'Make this monthly'}]);
     fireEvent.keyDown(screen.getByRole('textbox',{name:'Comment on selection'}),{key:'Enter'});
     expect(screen.queryByRole('textbox',{name:'Comment on selection'})).toBeNull();
     expect(screen.getByRole('button',{name:'Remove pin 1'})).toBeVisible();
+    expect(screen.getByText('Make this monthly')).toBeVisible();
     fireEvent.click(screen.getByRole('button',{name:'Remove pin 1'}));
     expect(screen.getByTestId('pins')).toHaveTextContent('[]');
+  });
+  it('adds a selection to the input only when Send confirms a nonempty comment',()=>{
+    render(<AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={1} name="Note.txt" mimeType="text/plain" text="Selected words" /><Observe /></AnnotationDraftProvider>);
+    fireEvent.click(screen.getByRole('button',{name:'Comment mode'}));
+    const text=screen.getByText('Selected words');
+    fireEvent.mouseMove(text);fireEvent.click(text);
+    const editor=screen.getByRole('textbox',{name:'Comment on selection'});
+    fireEvent.change(editor,{target:{value:'   '}});
+    expect(screen.getByRole('button',{name:'Send comment'})).toBeDisabled();
+    fireEvent.change(editor,{target:{value:'Shorten this'}});
+    fireEvent.keyDown(editor,{key:'Enter',keyCode:229});
+    expect(screen.queryByLabelText('Annotation pins')).toBeNull();
+    fireEvent.click(screen.getByRole('button',{name:'Send comment'}));
+    expect(screen.getByLabelText('Annotation pins')).toHaveTextContent('Selected words');
+    expect(screen.getByLabelText('Annotation pins')).toHaveTextContent('Shorten this');
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
   it('grows a list item to its list and then its section without consuming scroll input',()=>{
     render(<AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={1} name="Pricing.md" mimeType="text/markdown" text={'# Plans\n\n- One\n- Two\n\n## FAQ\n\nLater.'} /><Observe /></AnnotationDraftProvider>);
