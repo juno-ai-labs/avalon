@@ -1,4 +1,5 @@
 import { terminalPollFailure } from "../workflows/connector-poll-result";
+import { recordConnectorPollFailure as recordPollingHealthFailure } from "./integrations";
 
 /** The caller supplies the workspace-routed database that owns this connection. */
 export async function recordConnectorPollFailure(
@@ -8,10 +9,6 @@ export async function recordConnectorPollFailure(
   at: string,
 ): Promise<{ code: string; message: string }> {
   const reason = terminalPollFailure(error);
-  await database.prepare(
-    `UPDATE connector_connections
-     SET status = 'error', error_json = ?, updated_at = ?
-     WHERE id = ? AND workspace_id = ?`,
-  ).bind(JSON.stringify(reason), at, input.connectionId, input.workspaceId).run();
+  await recordPollingHealthFailure(database, input, { ...reason, source: "connector_poll" }, at);
   return reason;
 }

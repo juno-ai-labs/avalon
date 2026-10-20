@@ -6,8 +6,11 @@ The model state tool and desktop share `connectorAuthorizationStatus`: only
 `needs_reconnect` means **Reconnect required**. Generic
 `error` states, such as a failed background poll, display as healthy because
 they do not establish that authorization needs renewing. `disabled` remains
-distinct. A committed successful poll clears only `connector_poll_failed` and
-`connector_poll_timeout` errors; other diagnoses are preserved. Poll failure
+distinct. A committed successful poll clears only errors marked with
+`source: "connector_poll"` or legacy `connector_poll_failed` and
+`connector_poll_timeout` codes; other diagnoses are preserved. The ownership
+marker permits a specific schema/provider diagnostic code without losing the
+poll's recovery semantics. Poll failure
 cannot replace `needs_reconnect` or `disabled`. Provider refusals can replace
 generic errors, preserving the first authorization diagnosis.
 
@@ -1642,6 +1645,8 @@ as with the wire-name sequencing constraint documented on
 field-specific terminal errors, and exposes Calendar attachment references.
 Terminal logs retain their stable `connector_poll_failed` or
 `connector_poll_timeout` event name; `error_code` carries the specific cause.
+Stored specific reasons carry polling ownership so the shared state transition
+can recover them without replacing an authorization verdict or user disable.
 Legacy Google payloads converge on their enriched canonical event without
 reprocessing. Oversized ingress commits directly through canonical admission;
 large matched deliveries reload canonical context. The meeting-notes skill owns
