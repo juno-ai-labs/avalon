@@ -15,7 +15,10 @@ Raw production exports are customer content: keep them in an owner-only
 scratch directory (mode 0700, files 0600), never commit them, and delete them
 after the run. The runners refuse paths outside one protected directory.
 `synthetic-cases.jsonl` is a content-safe fixture for checking the runner; it
-is not a benchmark.
+is not a benchmark. Its merged-result cases explicitly include
+`judged_message.merged_from` for both person and Rally authors, with results
+that do and do not belong in the parent. The export builder currently omits
+this field, so a corpus built from exports does not yet measure provenance.
 
 ## Files in the export directory
 
