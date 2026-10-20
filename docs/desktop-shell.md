@@ -314,7 +314,10 @@ Thread and Breakout menus place **Resolve Thread** or **Resolve Breakout** direc
 below Merge. The action marks the conversation resolved without publishing a result
 or removing it, then returns to its parent after the write succeeds: a Breakout
 returns to its Thread, and a Thread to the Channel it was opened from (or its
-first visible Channel). A failed write keeps the conversation open.
+first visible Channel). A Breakout-only reader stays in the resolved Breakout
+when Main is inaccessible. Failed writes and results arriving after navigation
+or unmount never redirect. Members and guests can resolve within their admitted
+conversation scope; archived conversations offer no Resolve action.
 
 Each menu has a root and levels. The root is a row of action tiles (Add people,
 Rename, Copy link, More), under a header on a Breakout, and one row each for People,
