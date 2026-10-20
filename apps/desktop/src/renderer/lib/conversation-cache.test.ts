@@ -1,5 +1,6 @@
 import "../../../../../tests/isolated-region";
 import type { WorkstreamTranscriptSnapshot } from '@rally/contracts';
+import { WorkspaceConversationViewEventSchema } from '@rally/contracts/conversation-view';
 import { QueryClient } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -8,6 +9,7 @@ import {
   forgetConversation,
   forgetConversationParent,
   hydrateConversation,
+  seedWorkspaceConversation,
   mirrorConversation,
   retainConversationChildren,
   retainConversationParents,
@@ -123,6 +125,28 @@ async function settle(): Promise<void> {
 describe('conversation cache', () => {
   beforeEach(() => clearAllLocalCache());
   afterEach(() => closeLocalCache());
+
+  it('paints a workspace projection read-only and refuses late projections over live data', () => {
+    const client = new QueryClient();
+    const keys = keysFor('0');
+    const event = WorkspaceConversationViewEventSchema.parse({
+      type: 'workspace_conversation_view', parentId, substreamId: '0',
+      requestId: '00000000-0000-7000-8000-000000000012',
+      view: { header: {
+        title: 'Workspace preview', titleStatus: 'settled', scope: 'workspace', harnessStatus: 'completed',
+        createdAt: '2026-10-20T00:00:00.000Z', updatedAt: '2026-10-20T00:00:00.000Z',
+      }, transcript: transcript() },
+    });
+    expect(seedWorkspaceConversation(client, event, keys)).toBe(true);
+    expect(client.getQueryData<WorkstreamDetail>(keys.detail)?.title).toBe('Workspace preview');
+    expect(client.getQueryData(keys.feedSource)).toBe('local_cache');
+    client.setQueryData(keys.detail, detail({ title: 'Authoritative snapshot' }));
+    client.setQueryData(keys.feedSource, 'socket_snapshot');
+    expect(seedWorkspaceConversation(client, event, keys)).toBe(false);
+    expect(client.getQueryData<WorkstreamDetail>(keys.detail)?.title).toBe('Authoritative snapshot');
+    expect(client.getQueryData(keys.feedSource)).toBe('socket_snapshot');
+    client.clear();
+  });
 
   it('seeds empty caches from the row and marks them as a seed', async () => {
     await conversationSlice.write(scope, conversationCacheKey(parentId, '0'), {

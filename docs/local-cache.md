@@ -16,6 +16,13 @@ and it is never written back. Read this before changing what a screen paints
 before its socket answers, adding a surface that should, or touching the
 socket hooks' first frame.
 
+A first-time open can also seed an empty feed from the workspace's compact
+[conversation view projection](conversation-view-cache.md), requested on the
+already-connected Organization socket after disk hydration finishes and only
+when neither in-memory feed query has data. That seed uses the same `local_cache`
+marker and write gates described here. It does not overwrite a resident disk,
+optimistic, or live feed, and is never persisted by the live-state mirror.
+
 ## Where the code lives
 
 | Path | Responsibility |

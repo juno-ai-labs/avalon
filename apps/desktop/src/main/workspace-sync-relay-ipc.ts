@@ -8,15 +8,14 @@ interface WorkspaceSyncRelayIpcDependencies {
   ipc: Pick<IpcMain, 'handle'>;
   /** The main window's renderer, when there is one: the only publisher. */
   mainWindowContents: () => WebContents | null | undefined;
-  relay: Pick<WorkspaceSyncRelay, 'publish' | 'snapshot'>;
+  relay: Pick<WorkspaceSyncRelay, 'publish' | 'snapshot' | 'conversationViewRequest'>;
   /** The consumers' renderers (Settings and Sidekicks), whichever exist. */
   consumerWindowContents: () => readonly (WebContents | null | undefined)[];
 }
 
 /**
- * Register the relay's two invoke channels with their sender checks. The
- * third, `relayed`, is main's own send to the consumer windows and has no
- * handler.
+ * Register the relay's invoke channels with their sender checks. `relayed`
+ * is main's own send to the participating windows and has no handler.
  */
 export function registerWorkspaceSyncRelayIpc({
   assertTrustedSender,
@@ -37,5 +36,13 @@ export function registerWorkspaceSyncRelayIpc({
       throw new Error('Only the Settings and Sidekicks windows consume the relayed organization sync');
     }
     return relay.snapshot();
+  });
+  ipc.handle(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.conversationView, (event, raw: unknown) => {
+    assertTrustedSender(event);
+    if (!event.sender || !consumerWindowContents().includes(event.sender)) {
+      throw new Error('Only the Settings and Sidekicks windows request relayed conversation views');
+    }
+    const request = relay.conversationViewRequest(raw);
+    if (request) mainWindowContents()?.send(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.relayed, request);
   });
 }

@@ -686,6 +686,7 @@ const browserBridge: RallyDesktopBridge = {
   async publishWorkspaceSync() {
     // Nothing listens.
   },
+  async requestWorkspaceConversationView() {},
   async getWorkspaceSyncSource() {
     return { revision: 0, source: null };
   },

@@ -1,3 +1,4 @@
+import { WorkspaceConversationViewEventSchema, type WorkspaceConversationViewEvent } from '@rally/contracts/conversation-view';
 import { MERGE_CHANNELS_QUERY_KEY } from './use-merge-channels';
 import {
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
@@ -225,6 +226,8 @@ interface PendingDirectoryRequest {
 }
 
 interface WorkspaceSocketContextValue {
+  requestConversationView(parentId: string, substreamId: string,
+    receive: (event: WorkspaceConversationViewEvent) => void): () => void;
   state: WorkspaceSocketState;
   topicWaterlines: Readonly<Partial<Record<WorkspaceSyncTopic, number>>>;
   presenceUserIdsByWorkstream: Readonly<Record<string, readonly string[]>>;
@@ -402,6 +405,21 @@ export function WorkspaceSocketProvider({
   const relayedState = relaySnapshot?.source && sameWorkspaceSyncIdentity(relaySnapshot.source, { region, workspaceId })
     ? relaySnapshot.source.state
     : 'connecting';
+  const conversationViewRequests = useRef(new Map<string, {
+    parentId: string; substreamId: string; receive: (event: WorkspaceConversationViewEvent) => void; sentOn?: WebSocket;
+  }>());
+  const sendConversationViewRequestsRef = useRef<() => void>(() => undefined);
+  const cancelRelayedConversationViewRef = useRef<(requestId: string) => void>(() => undefined);
+  const completeRelayedConversationViewRef = useRef<(requestId: string) => void>(() => undefined);
+  const requestConversationView = useCallback((parentId: string, substreamId: string,
+    receive: (event: WorkspaceConversationViewEvent) => void): (() => void) => {
+    const requestId = uuidV7();
+    conversationViewRequests.current.set(requestId, { parentId, substreamId, receive });
+    sendConversationViewRequestsRef.current();
+    return () => {
+      if (conversationViewRequests.current.delete(requestId)) cancelRelayedConversationViewRef.current(requestId);
+    };
+  }, []);
   const foregroundWorkstreamIdRef = useRef<WorkstreamId | null>(null);
   const reportPresenceRef = useRef<() => void>(() => undefined);
   const scheduleRailPrefetchRef = useRef<() => void>(() => undefined);
@@ -478,6 +496,7 @@ export function WorkspaceSocketProvider({
     let railPrefetchRunning = false;
     let railPrefetchScheduled = false;
     let subscribed = false;
+    let conversationViewsAvailable = false;
     /**
      * Whether the lists in the query cache are the socket's. Until the first
      * subscribe answer they may be the local cache's own seed, and the mirror
@@ -488,6 +507,15 @@ export function WorkspaceSocketProvider({
     let applicationFocusObservation = 0;
     let windowForegrounded = document.visibilityState === 'visible' && document.hasFocus();
 
+    sendConversationViewRequestsRef.current = () => {
+      if (!subscribed || !conversationViewsAvailable || socket?.readyState !== WebSocket.OPEN) return;
+      for (const [requestId, request] of conversationViewRequests.current) {
+        if (request.sentOn === socket) continue;
+        request.sentOn = socket;
+        socket.send(JSON.stringify({ type: "conversation_view", requestId,
+          parentId: request.parentId, substreamId: request.substreamId }));
+      }
+    };
     const sendPresence = (target: WebSocket | null = socket): void => {
       if (!subscribed || target?.readyState !== WebSocket.OPEN) return;
       target.send(JSON.stringify({
@@ -914,6 +942,7 @@ export function WorkspaceSocketProvider({
     const releaseSocket = (): void => {
       clearSocketTimers();
       subscribed = false;
+      conversationViewsAvailable = false;
       socket = null;
       setPresenceUserIdsByWorkstream({});
       rejectPendingRailRequests(new ApiError('The organization connection closed.', 0, 'workspace_socket_closed'));
@@ -1042,8 +1071,19 @@ export function WorkspaceSocketProvider({
           } catch {
             return;
           }
+          const conversationView = safeParseSocketEvent(WorkspaceConversationViewEventSchema, decoded);
+          if (conversationView.success) {
+            const event = conversationView.data;
+            const request = conversationViewRequests.current.get(event.requestId);
+            if (request && request.parentId === event.parentId && request.substreamId === event.substreamId) {
+              conversationViewRequests.current.delete(event.requestId);
+              request.receive(event);
+            }
+            return;
+          }
           const sync = safeParseSocketEvent(WorkspaceSocketSyncEventSchema, decoded);
           if (sync.success) {
+            if (sync.data.conversationViews) conversationViewsAvailable = true;
             if (!firstSyncObserved) {
               firstSyncObserved = true;
               reportHandshake(diagnosticAttemptId, 'sync_received');
@@ -1051,6 +1091,7 @@ export function WorkspaceSocketProvider({
             if (!subscribed) {
               subscribed = true;
               sendPresence();
+              sendConversationViewRequestsRef.current();
             }
             if (sync.data.accessRequests) {
               queryClient.setQueryData(accessRequestsQueryKey(workspaceId), sync.data.accessRequests);
@@ -1582,6 +1623,7 @@ export function WorkspaceSocketProvider({
       walkSpaceChannelsRef.current = () => Promise.resolve(null);
       walkSpaceNowRef.current = () => undefined;
       scheduleRailPrefetchRef.current = () => undefined;
+      sendConversationViewRequestsRef.current = () => undefined;
       refreshChannelRailsRef.current = () => Promise.reject(new ApiError('The organization closed.', 409, 'workspace_socket_closed'));
       window.removeEventListener('online', online);
       window.removeEventListener('offline', offline);
@@ -1599,6 +1641,63 @@ export function WorkspaceSocketProvider({
       socket?.close();
     };
   }, [api, localCacheScope, onAccessRevoked, ownSocket, queryClient, region, relay, workspaceId]);
+
+  useEffect(() => {
+    if (relay !== 'publish') return;
+    const requests = new Map<string, () => void>();
+    const stop = desktopBridge().onWorkspaceSyncRelayed((request) => {
+      if (request.type !== 'conversation_view_request' && request.type !== 'conversation_view_cancel') return;
+      if (!sameWorkspaceSyncIdentity(request, { region, workspaceId })) return;
+      requests.get(request.requestId)?.();
+      requests.delete(request.requestId);
+      if (request.type === 'conversation_view_cancel') return;
+      requests.set(request.requestId, requestConversationView(request.parentId, request.substreamId, (event) => {
+        requests.delete(request.requestId);
+        publishToMain({ type: 'conversation_view_response', region, workspaceId,
+          event: { ...event, requestId: request.requestId } });
+      }));
+    });
+    return () => {
+      stop();
+      for (const cancel of requests.values()) cancel();
+    };
+  }, [region, relay, requestConversationView, workspaceId]);
+
+  useEffect(() => {
+    if (ownSocket || relay !== 'consume') return;
+    const bridge = desktopBridge();
+    const sent = new Set<string>();
+    const send = (): void => {
+      if (!sameWorkspaceSyncIdentity(relaySnapshot?.source, { region, workspaceId })) return;
+      for (const [requestId, request] of conversationViewRequests.current) {
+        if (sent.has(requestId)) continue;
+        sent.add(requestId);
+        void bridge.requestWorkspaceConversationView({
+          type: 'conversation_view_request', region, workspaceId, requestId,
+          parentId: request.parentId, substreamId: request.substreamId,
+        }).catch((error: unknown) => {
+          sent.delete(requestId);
+          logWarn('rally', 'could not relay conversation view request', error);
+        });
+      }
+    };
+    const cancel = (requestId: string): void => {
+      if (!sent.delete(requestId)) return;
+      void bridge.requestWorkspaceConversationView({
+        type: 'conversation_view_cancel', region, workspaceId, requestId,
+      }).catch((error: unknown) => logWarn('rally', 'could not cancel relayed conversation view', error));
+    };
+    sendConversationViewRequestsRef.current = send;
+    cancelRelayedConversationViewRef.current = cancel;
+    completeRelayedConversationViewRef.current = (requestId) => { sent.delete(requestId); };
+    send();
+    return () => {
+      for (const requestId of sent) cancel(requestId);
+      sendConversationViewRequestsRef.current = () => undefined;
+      cancelRelayedConversationViewRef.current = () => undefined;
+      completeRelayedConversationViewRef.current = () => undefined;
+    };
+  }, [ownSocket, region, relay, relaySnapshot, workspaceId]);
 
   // The publisher's lifetime. Its cleanup is what tells main the socket is
   // gone when the tree falls into the top-level error boundary: main would
@@ -1647,6 +1746,17 @@ export function WorkspaceSocketProvider({
         return;
       }
       if (!sameWorkspaceSyncIdentity(event, { region, workspaceId })) return;
+      if (event.type === 'conversation_view_response') {
+        const answer = event.event;
+        const request = conversationViewRequests.current.get(answer.requestId);
+        if (request && request.parentId === answer.parentId && request.substreamId === answer.substreamId) {
+          conversationViewRequests.current.delete(answer.requestId);
+          completeRelayedConversationViewRef.current(answer.requestId);
+          request.receive(answer);
+        }
+        return;
+      }
+      if (event.type !== 'topics') return;
       const topics = event.topics.filter((topic): topic is WorkspaceSyncTopic => topic !== 'usage');
       setTopicWaterlines((current) => withTopicWaterline(current, topics, event.waterline));
       if (topics.length < event.topics.length) {
@@ -1712,6 +1822,7 @@ export function WorkspaceSocketProvider({
       prioritizeSpace,
       loadedSpaceIds,
       refreshChannelRails,
+      requestConversationView,
     }),
     [
       listWorkstreams,
@@ -1719,6 +1830,7 @@ export function WorkspaceSocketProvider({
       prioritizeSpace,
       walkSpaceChannels,
       refreshChannelRails,
+      requestConversationView,
       presenceUserIdsByWorkstream,
       setForegroundWorkstreamId,
       sidebarConnect,

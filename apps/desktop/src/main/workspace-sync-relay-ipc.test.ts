@@ -11,7 +11,8 @@ const connected = { type: 'state', region, workspaceId, state: 'connected' };
 type Handler = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown;
 
 function harness(windows: { main?: boolean; settings?: boolean; sidekicks?: boolean } = { main: true, settings: true, sidekicks: true }) {
-  const mainContents = { id: 1 } as unknown as WebContents;
+  const send = vi.fn();
+  const mainContents = { id: 1, send } as unknown as WebContents;
   const settingsContents = { id: 2 } as unknown as WebContents;
   const sidekicksContents = { id: 3 } as unknown as WebContents;
   const handlers = new Map<string, Handler>();
@@ -40,15 +41,34 @@ function harness(windows: { main?: boolean; settings?: boolean; sidekicks?: bool
     invoke: (channel: string, event: IpcMainInvokeEvent, ...args: unknown[]) => handlers.get(channel)!(event, ...args),
     handlers,
     relay,
+    send,
   };
 }
 
 describe('workspace sync relay IPC', () => {
-  it('registers the two invoke channels, and nothing for main\'s own send', () => {
+  it('registers invoke channels, and nothing for main\'s own send', () => {
     expect([...harness().handlers.keys()].sort()).toEqual([
       WORKSPACE_SYNC_RELAY_IPC_CHANNELS.publish,
       WORKSPACE_SYNC_RELAY_IPC_CHANNELS.source,
+      WORKSPACE_SYNC_RELAY_IPC_CHANNELS.conversationView,
     ].sort());
+  });
+
+  it('forwards preview requests and cancellations only from a consumer of the attached Organization', () => {
+    const subject = harness();
+    subject.relay.publish(connected);
+    const request = { type: 'conversation_view_request', region, workspaceId,
+      requestId: '00000000-0000-7000-8000-000000000002',
+      parentId: '00000000-0000-7000-8000-000000000003', substreamId: '0' };
+    expect(() => subject.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.conversationView, subject.fromMain, request))
+      .toThrow('Only the Settings and Sidekicks windows request relayed conversation views');
+    subject.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.conversationView, subject.fromSidekicks, { ...request, region: 'eu' });
+    expect(subject.send).not.toHaveBeenCalled();
+    subject.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.conversationView, subject.fromSidekicks, request);
+    expect(subject.send).toHaveBeenCalledWith(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.relayed, request);
+    const cancel = { type: 'conversation_view_cancel', region, workspaceId, requestId: request.requestId };
+    subject.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.conversationView, subject.fromSidekicks, cancel);
+    expect(subject.send).toHaveBeenLastCalledWith(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.relayed, cancel);
   });
 
   it('takes publications from the main window only', () => {
