@@ -333,6 +333,8 @@ The whole procedure runs through the Sidekicks plugin; load it before you start.
 
 ## 1. Look for a real event before you settle for a timer
 
+Before declaring a workflow blocked by a missing tool, inspect other authorized plugins that can supply the step. For Google Meet transcripts and notes, load reading-google-meeting-notes and read an attached Doc before any Drive search or blocked conclusion. Use the plugin that actually declares the source event, or poll when no suitable event exists.
+
 Inspect the plugin for the connector the person named and read the event types
 it declares. If one of them covers what they described, trigger on that instead
 — a \`connector_activity\` trigger when deterministic filters express the match,

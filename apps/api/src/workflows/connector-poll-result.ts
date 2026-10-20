@@ -63,3 +63,10 @@ export function failedPollAttemptCode(error: unknown): string | null {
   const code = error.message.slice(POLL_ATTEMPT_FAILURE.length);
   return isCodeShaped(code) ? code : null;
 }
+
+/** Safe, replay-stable reason stored on the connection as well as logged. */
+export function terminalPollFailure(error: unknown): { code: string; message: string } {
+  const timedOut = error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError");
+  const code = timedOut ? "connector_poll_timeout" : failedPollAttemptCode(error) ?? pollAttemptErrorCode(error);
+  return { code, message: timedOut ? "Connector poll timed out" : `Connector poll failed after retries: ${code}` };
+}

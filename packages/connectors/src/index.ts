@@ -14,6 +14,9 @@ import { paginatedResult } from "./tool-pagination";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   ConnectorManifestSchema,
+  ExternalPersonSchema,
+  deduplicateExternalPeople,
+  IdSchema,
   NormalizedActivitySchema,
   type ConnectorActivityFilterField,
   type ConnectorManifest,
@@ -639,7 +642,12 @@ const EmailArgsSchema = z.strictObject({
   ]).describe("Choose kind new with a subject, or kind reply with an existing messageId. Supply the recipients and body in either case. Reply threading is resolved by Rally. Do not supply threadId, inReplyTo, or references, including empty or placeholder values. Supply only the keys listed for the chosen kind."),
 });
 
-const emailToolInputSchema = z.toJSONSchema(EmailArgsSchema, {
+const GmailDraftArgsSchema = EmailArgsSchema.extend({
+  attachmentResourceIds: z.array(IdSchema).nullish().describe("PDF resource IDs copied from list_resources or the conversation attachments. Rally reads the authorized original files and attaches them to the draft; never supply URLs, storage keys, or file bytes."),
+});
+
+function gmailInputSchema(schema: typeof EmailArgsSchema | typeof GmailDraftArgsSchema) {
+  return z.toJSONSchema(schema, {
   io: "input",
   override: ({ jsonSchema }) => {
     if (jsonSchema.type !== "object" || jsonSchema.additionalProperties !== false) return;
@@ -656,21 +664,33 @@ const emailToolInputSchema = z.toJSONSchema(EmailArgsSchema, {
       return;
     }
 
-    // Gmail's only optional field is cc. Expand its absent/present forms so
-    // omitting cc never frees a slot for an undeclared key such as preview.
+    // Each Gmail object level has one optional field: cc in message, or
+    // attachmentResourceIds at the draft root. Expand absent/present forms so
+    // an omission never frees a slot for an undeclared key such as preview.
     // Keep this local to Gmail; this is not a general schema powerset expander.
-    if (optional.length !== 1 || optional[0] !== "cc") {
+    if (optional.length !== 1 || !["cc", "attachmentResourceIds"].includes(optional[0]!)) {
       throw new Error("Gmail write schemas must explicitly handle new optional fields");
     }
-    const withoutCc = Object.fromEntries(Object.entries(properties).filter(([key]) => key !== "cc"));
+    const optionalKey = optional[0]!;
+    if (optionalKey === "attachmentResourceIds") {
+      // Root unions are repaired away by the harness for provider compatibility.
+      // propertyNames keeps this optional root key closed through that path.
+      jsonSchema.propertyNames = { type: "string", enum: Object.keys(properties) };
+      jsonSchema.maxProperties = Object.keys(properties).length;
+      return;
+    }
+    const withoutCc = Object.fromEntries(Object.entries(properties).filter(([key]) => key !== optionalKey));
     jsonSchema.anyOf = [
       { type: "object", properties: withoutCc, required, additionalProperties: false, maxProperties: required.length },
-      { type: "object", properties, required: [...required, "cc"], additionalProperties: false, maxProperties: required.length + 1 },
+      { type: "object", properties, required: [...required, optionalKey], additionalProperties: false, maxProperties: required.length + 1 },
     ];
     // Retain the enclosing properties too: providers that default objects to
     // closed must see their allowed keys on this object, not only in anyOf.
   },
-});
+  });
+}
+const emailToolInputSchema = gmailInputSchema(EmailArgsSchema);
+const gmailDraftToolInputSchema = gmailInputSchema(GmailDraftArgsSchema);
 
 // Google's free/busy endpoint expands at most 50 calendars per request:
 // https://developers.google.com/workspace/calendar/api/v3/reference/freebusy/query
@@ -846,11 +866,11 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "gmail.create_draft",
-    description: "Create a Gmail draft for the authorized user and return its id and a link to open it. Drafts are not sent. Set message.kind to new and provide a subject, or to reply and provide an existing messageId; Rally resolves the reply's subject and threading. Create a draft when a person is expected to review the message first.",
+    description: "Create a Gmail draft for the authorized user and return its id and a link to open it. Attach PDF files by passing their Rally resource IDs in attachmentResourceIds. Drafts are not sent. Set message.kind to new and provide a subject, or to reply and provide an existing messageId; Rally resolves the reply's subject and threading. Create a draft when a person is expected to review the message first.",
     capability: "gmail.draft",
     mode: "write",
     idempotency: "record_before_execute",
-    inputSchema: emailToolInputSchema
+    inputSchema: gmailDraftToolInputSchema
   },
   {
     name: "gmail.send",
@@ -2231,7 +2251,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       url.searchParams.set("maxResults", String(GOOGLE_POLL_PAGE_SIZE));
       url.searchParams.set(
         "fields",
-        "nextPageToken,items(id,status,summary,updated,location,creator,organizer,attendees(email,displayName,self,organizer,responseStatus),attendeesOmitted,start,end,recurringEventId,eventType)"
+        "nextPageToken,items(id,status,summary,updated,location,creator,organizer,attendees(email,displayName,self,organizer,responseStatus),attendeesOmitted,attachments(fileUrl,title,mimeType,fileId),start,end,recurringEventId,eventType)"
       );
       if (pageToken) url.searchParams.set("pageToken", pageToken);
       const payload = await api(connection, url.toString(), { signal }).then((response) =>
@@ -2723,8 +2743,9 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
     },
 
     validateToolInput(name, rawArgs) {
-      const schema = name === "gmail.create_draft" || name === "gmail.send"
-        ? EmailArgsSchema
+      const schema = name === "gmail.create_draft"
+        ? GmailDraftArgsSchema
+        : name === "gmail.send" ? EmailArgsSchema
         : name === "calendar.query_availability"
           ? CalendarAvailabilityArgsSchema
           : name === "calendar.create_event"
@@ -2899,9 +2920,19 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "gmail.create_draft" || name === "gmail.send") {
-        const args = await resolveGmailEmail(EmailArgsSchema.parse(rawArgs).message, context);
-        const raw = base64Url(serializeEmail(args));
-        const isDraft = name.endsWith("create_draft");
+        const isDraft = name === "gmail.create_draft";
+        const draft = isDraft ? GmailDraftArgsSchema.parse(rawArgs) : undefined;
+        const parsed = draft ?? EmailArgsSchema.parse(rawArgs);
+        const resourceIds = draft?.attachmentResourceIds ?? [];
+        const attachments = [];
+        for (const resourceId of new Set(resourceIds)) {
+          if (!context.readAttachment) throw new ConnectorError("unsupported_capability", "attachmentResourceIds: this execution host cannot read resource attachments", { field: "attachmentResourceIds" });
+          const attachment = await context.readAttachment(resourceId);
+          if (attachment.mimeType !== "application/pdf") throw new ConnectorError("invalid_payload", "attachmentResourceIds: only PDF resources can be attached", { field: "attachmentResourceIds" });
+          attachments.push(attachment);
+        }
+        const args = await resolveGmailEmail(parsed.message, context);
+        const raw = base64Url(serializeEmail(args, attachments));
         const endpoint = isDraft ? "drafts" : "messages/send";
         const body = isDraft
           ? { message: { raw, ...(args.threadId ? { threadId: args.threadId } : {}) } }
@@ -3537,11 +3568,11 @@ function normalizeGmailActivity(
     entityKeys: [`google:gmail:thread:${threadId}`, `google:gmail:message:${change.messageId}`],
     dedupeKey: identity,
     rawContentHash: null,
-    externalPeople: [
+    externalPeople: deduplicateExternalPeople([
       ...googleMailboxPeople(connection, fromHeader, "sender"),
       ...googleMailboxPeople(connection, toHeader, "recipient"),
       ...googleMailboxPeople(connection, ccHeader, "recipient"),
-    ],
+    ]),
     metadata: {
       changeType: change.kind,
       labelIds,
@@ -3558,7 +3589,7 @@ function normalizeGmailActivity(
  * the one field an instance never carries.
  */
 const CALENDAR_SERIES_MASTER_FIELDS =
-  "id,etag,status,updated,summary,location,htmlLink,creator,organizer,attendees(email,displayName,self,organizer,responseStatus),attendeesOmitted,start,end,recurrence,eventType";
+  "id,etag,status,updated,summary,location,htmlLink,creator,organizer,attendees(email,displayName,self,organizer,responseStatus),attendeesOmitted,attachments(fileUrl,title,mimeType,fileId),start,end,recurrence,eventType";
 
 function calendarEventsUrl(calendarId: string, syncToken?: string, pageToken?: string): URL {
   const url = new URL(
@@ -3569,7 +3600,7 @@ function calendarEventsUrl(calendarId: string, syncToken?: string, pageToken?: s
   url.searchParams.set("singleEvents", "true");
   url.searchParams.set(
     "fields",
-    "nextPageToken,nextSyncToken,items(id,etag,status,updated,summary,location,htmlLink,creator,organizer,attendees(email,displayName,self,organizer,responseStatus),attendeesOmitted,start,end,recurringEventId,originalStartTime,eventType)"
+    "nextPageToken,nextSyncToken,items(id,etag,status,updated,summary,location,htmlLink,creator,organizer,attendees(email,displayName,self,organizer,responseStatus),attendeesOmitted,attachments(fileUrl,title,mimeType,fileId),start,end,recurringEventId,originalStartTime,eventType)"
   );
   if (syncToken) url.searchParams.set("syncToken", syncToken);
   if (pageToken) url.searchParams.set("pageToken", pageToken);
@@ -3780,6 +3811,8 @@ function normalizeCalendarActivity(
       // occurrence. A representative instance's would differ by chunk.
       htmlLink: detailed ? readString(source, "htmlLink") : null,
       ...(master ? { recurrence: readStringArray(master, "recurrence") } : {}),
+      // A representative instance cannot speak for the series' attachments.
+      ...(detailed ? { attachments: sanitizeCalendarAttachments(source) } : {}),
       attendeesOmitted: readBoolean(source, "attendeesOmitted") ?? false
     }
   };
@@ -3844,6 +3877,7 @@ function normalizeCalendarCompletionActivity(
     ]),
     metadata: {
       completedAt: endedAt,
+      attachments: sanitizeCalendarAttachments(event),
       recurringEventId: readString(event, "recurringEventId"),
       eventType: readString(event, "eventType"),
       attendeesOmitted: readBoolean(event, "attendeesOmitted") ?? false
@@ -3948,7 +3982,7 @@ function googleMailboxPeople(
       role,
       sourceText: header.slice(0, 1_000),
     }];
-  }).slice(0, 100);
+  });
 }
 
 function googleStructuredPeople(
@@ -3956,15 +3990,11 @@ function googleStructuredPeople(
   candidates: Array<{ person: Record<string, unknown>; role: string }>,
 ): NonNullable<NormalizedActivity["externalPeople"]> {
   const people: NonNullable<NormalizedActivity["externalPeople"]> = [];
-  const seen = new Set<string>();
   for (const { person, role } of candidates) {
     const providerUserId = readString(person, "id");
     const email = readString(person, "emailAddress") ?? readString(person, "email");
     const displayName = readString(person, "displayName");
     if (!providerUserId && !email && !displayName) continue;
-    const key = `${role}:${providerUserId ?? ""}:${email ?? ""}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
     people.push({
       provider: "google",
       providerTenantId: googleProviderTenantId(connection),
@@ -3976,7 +4006,7 @@ function googleStructuredPeople(
       sourceText: JSON.stringify(person).slice(0, 1_000),
     });
   }
-  return people.slice(0, 100);
+  return deduplicateExternalPeople(people);
 }
 
 function googleDriveResourceType(mimeType: string | null): "drive_file" | "google_doc" | "google_sheet" {
@@ -4468,6 +4498,15 @@ function sanitizeGoogleCalendar(payload: Record<string, unknown>): Record<string
   };
 }
 
+function sanitizeCalendarAttachments(payload: Record<string, unknown>): Record<string, unknown>[] {
+  return recordArray(payload, "attachments").map((attachment) => ({
+    fileId: readString(attachment, "fileId"),
+    title: truncateNullable(readString(attachment, "title"), 1000),
+    mimeType: readString(attachment, "mimeType"),
+    fileUrl: readString(attachment, "fileUrl")
+  }));
+}
+
 function sanitizeCalendarEvent(payload: Record<string, unknown>, calendarId: string): Record<string, unknown> {
   return {
     resourceType: "calendar_event",
@@ -4495,12 +4534,7 @@ function sanitizeCalendarEvent(payload: Record<string, unknown>, calendarId: str
     })),
     attendeesTruncated: recordArray(payload, "attendees").length > 50,
     attendeesOmitted: readBoolean(payload, "attendeesOmitted") ?? false,
-    attachments: recordArray(payload, "attachments").slice(0, 20).map((attachment) => ({
-      fileId: readString(attachment, "fileId"),
-      title: truncateNullable(readString(attachment, "title"), 1000),
-      mimeType: readString(attachment, "mimeType"),
-      fileUrl: readString(attachment, "fileUrl")
-    })),
+    attachments: sanitizeCalendarAttachments(payload),
     visibility: readString(payload, "visibility"),
     transparency: readString(payload, "transparency"),
     eventType: readString(payload, "eventType")
@@ -5192,7 +5226,7 @@ const GenericWebhookEventSchema = z.looseObject({
   entity_keys: z.array(z.string().trim().min(1).max(500)).max(100).optional(),
   dedupe_key: z.string().trim().min(1).max(500).optional(),
   target_user_ids: z.array(z.string().uuid()).max(100).optional(),
-  external_people: z.array(z.unknown()).max(100).optional(),
+  external_people: z.array(z.unknown()).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -5813,7 +5847,7 @@ function foldMessageIdHeader(name: "In-Reply-To" | "References", ids: Iterable<s
   return lines.join("\r\n");
 }
 
-function serializeEmail(input: EmailToSerialize): string {
+function serializeEmail(input: EmailToSerialize, attachments: Array<{ fileName: string; mimeType: string; bytes: Uint8Array }> = []): string {
   const replyHeaders: string[] = [];
   if (input.inReplyTo) {
     // Preserve ancestor order in one pass, with the parent exactly once at the
@@ -5835,7 +5869,24 @@ function serializeEmail(input: EmailToSerialize): string {
     'Content-Type: text/plain; charset="UTF-8"',
     "Content-Transfer-Encoding: 8bit"
   ];
-  return `${headers.join("\r\n")}\r\n\r\n${input.body}`;
+  if (attachments.length === 0) return `${headers.join("\r\n")}\r\n\r\n${input.body}`;
+  // RFC 2045 base64 uses lines of at most 76 characters. The random boundary
+  // cannot occur in a base64 part; encode the text body as well.
+  const boundary = `rally_${crypto.randomUUID()}`;
+  const encodePart = (bytes: Uint8Array) => {
+    let binary = "";
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return btoa(binary).match(/.{1,76}/gu)?.join("\r\n") ?? "";
+  };
+  const parts = [
+    `--${boundary}\r\nContent-Type: text/plain; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n${encodePart(new TextEncoder().encode(input.body))}`,
+    ...attachments.map((attachment) => {
+      const fileName = encodeURIComponent(attachment.fileName).replace(/['()*]/gu, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+      return `--${boundary}\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename*=UTF-8''${fileName}\r\nContent-Transfer-Encoding: base64\r\n\r\n${encodePart(attachment.bytes)}`;
+    }),
+    `--${boundary}--`,
+  ];
+  return [...headers.slice(0, -2), `Content-Type: multipart/mixed; boundary="${boundary}"`, "", ...parts, ""].join("\r\n");
 }
 
 function serializeSubjectHeader(value: string): string {
@@ -5943,9 +5994,9 @@ function normalizeGenericWebhookExternalPeople(
   value: unknown,
 ): NonNullable<NormalizedActivity["externalPeople"]> {
   if (!Array.isArray(value)) return [];
-  const schema = NormalizedActivitySchema.shape.externalPeople.unwrap().element;
+  const schema = ExternalPersonSchema;
   const people: NonNullable<NormalizedActivity["externalPeople"]> = [];
-  for (const candidate of value.slice(0, 100)) {
+  for (const candidate of value) {
     if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
     const record = candidate as Record<string, unknown>;
     const required = (key: string, maximum: number): string | null => {

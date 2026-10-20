@@ -59,6 +59,7 @@ export const WORKSPACE_LOCAL_TABLES = [
   "connector_oauth_attempts",
   "external_user_identities",
   "workspace_connector_events",
+  "workspace_connector_event_people",
   "workspace_connector_event_ingress_receipts",
   "workspace_connector_event_latest_content",
   "slack_agent_policies",
