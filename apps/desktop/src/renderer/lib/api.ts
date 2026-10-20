@@ -2386,6 +2386,13 @@ export class RallyApi {
     });
   }
 
+  /** Resolve the parent-owned registry entry; its socket publishes the new state. */
+  async resolveConversation(parentId: string, substreamId: string): Promise<void> {
+    await this.requestVoid(this.substreamPath(parentId, substreamId), {
+      method: 'PATCH', body: { resolved: true },
+    });
+  }
+
   /** Take a substream out of its members' sidebars, or put it back. */
   async setSubstreamArchived(parentId: string, substreamId: string, archived: boolean): Promise<void> {
     await this.requestVoid(this.substreamPath(parentId, substreamId), {

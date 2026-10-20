@@ -2,7 +2,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { MemoryReviewFact } from '@rally/contracts';
 import { describe, expect, it, vi } from 'vitest';
-import { ChannelMenu } from '@rally/ui/components/conversation-menus';
+import { BreakoutMenu, ChannelMenu } from '@rally/ui/components/conversation-menus';
 import { TitlePill } from '@rally/ui/components/title-pill';
 
 const member = { id: 'user-1', name: 'Adam', email: 'adam@example.test', timezone: 'UTC' };
@@ -48,6 +48,29 @@ describe('a title pill menu with levels', () => {
     openMenu();
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Merge to GTM' }));
     expect(onSelect).toHaveBeenCalledOnce();
+  });
+
+  it('offers Resolve Thread immediately after Merge and passes its conversation target', async () => {
+    const onResolve = vi.fn();
+    renderChannelPill({ actions: { merge: { label: 'Merge to GTM', onSelect: vi.fn() }, onResolve } });
+    openMenu();
+    const resolve = await screen.findByRole('menuitem', { name: 'Resolve Thread' });
+    expect(resolve.previousElementSibling).toHaveTextContent('Merge to GTM');
+    fireEvent.click(resolve);
+    expect(onResolve).toHaveBeenCalledWith({ substreamId: '0', title: 'Launch' });
+  });
+
+  it('offers Resolve Breakout below Merge with the breakout target', async () => {
+    const onResolve = vi.fn();
+    render(<Tooltip.Provider><TitlePill level={{ key: 'breakout:b1', icon: null, title: 'Pricing', label: 'Breakout menu: Pricing',
+      menu: <BreakoutMenu breakout={{ substreamId: 'b1', title: 'Pricing' }} channel={{ id: 'c1', title: 'Launch' }}
+        participants={[]} presentUserIds={[]} actions={{ merge: { label: 'Merge to thread', onSelect: vi.fn() }, onResolve }} />,
+    }} /></Tooltip.Provider>);
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Breakout menu: Pricing' }), { button: 0, ctrlKey: false });
+    const resolve = await screen.findByRole('menuitem', { name: 'Resolve Breakout' });
+    expect(resolve.previousElementSibling).toHaveTextContent('Merge to thread');
+    fireEvent.click(resolve);
+    expect(onResolve).toHaveBeenCalledWith({ substreamId: 'b1', title: 'Pricing' });
   });
 
   it('has no Merge row where nothing can merge', async () => {

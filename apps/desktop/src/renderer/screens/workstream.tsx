@@ -822,12 +822,37 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     parentKind: 'workstream', substreamId: '0', guest, thread: parent.data, placements: row?.spaceIds,
     eligible: eligibleMergeChannels, spaces: activeSpaces?.items ?? [],
   });
+  const resolve = async (target: ConversationRowTarget): Promise<void> => {
+    if (!api || substreamPending) return;
+    const visit = routeRef.current.visit;
+    const parentId = id;
+    setSubstreamPending(true);
+    setSubstreamMenuFailure(null);
+    try {
+      await api.resolveConversation(parentId, target.substreamId);
+      if (routeRef.current.id !== parentId || routeRef.current.visit !== visit) return;
+      if (target.substreamId !== '0') openThreadAlone();
+      else {
+        const channelId = channelPane?.channelId ?? linkSpaceId;
+        if (channelId) void navigate(channelRoute(channelId));
+      }
+    } catch {
+      if (routeRef.current.id === parentId && routeRef.current.visit === visit) {
+        const noun = target.substreamId === '0' ? 'thread' : 'breakout';
+        setSubstreamMenuFailure({ title: `The ${noun} couldn’t be resolved`, copy: `The ${noun} couldn’t be resolved. Try again.` });
+      }
+    } finally {
+      if (routeRef.current.id === parentId && routeRef.current.visit === visit) setSubstreamPending(false);
+    }
+  };
   const mainActions = (conversationScoped ? mainVisible : parent.data) ? {
     merge: threadMerge ? {
       label: mergeLabel(threadMerge),
       target: threadMerge.kind === 'channel' && threadMerge.channels.length > 1 ? `${threadMerge.channels.length} Channels` : 'Channel',
       onSelect: () => setMergeRequest({ substreamId: '0', nonce: Date.now() }),
     } : undefined,
+    onResolve: !guest && !(row?.resolved ?? directoryEntry?.conversations.find((item) => item.substreamId === '0')?.resolved) && !conversationScoped ? (target: ConversationRowTarget) => { void resolve(target); } : undefined,
+    resolveDisabled: substreamPending,
     isPublic: parent.data?.scope === 'workspace',
     onSetPublic: !channelWritable || parent.data?.systemKind ? undefined : setPublic,
     publicDisabled: substreamPending,
@@ -836,6 +861,9 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     onArchive: !channelWritable ? undefined : (target: ConversationRowTarget) => { ++menuOperation.current; setArchiveTarget({ ...target, parentId: id }); setSubstreamMenuFailure(null); },
   } : undefined;
   const substreamActions = {
+    onResolve: !guest && !railChildren?.find((child) => child.substreamId === openBreakoutId)?.resolved
+      ? (target: ConversationRowTarget) => { void resolve(target); } : undefined,
+    resolveDisabled: substreamPending,
     // The Breakout's pane merges only when it has its Thread to merge into,
     // which a reader scoped to the Breakout alone does not.
     merge: openBreakoutId && !conversationScoped && parent.data ? {

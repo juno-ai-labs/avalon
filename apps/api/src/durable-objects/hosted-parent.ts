@@ -2593,6 +2593,37 @@ export class HostedParent {
     return this.requirePrivateChildPreparation(request.operationId);
   }
 
+  /** One idempotent parent-owned write for manual Thread and Breakout resolution. */
+  async resolveConversation(input: ConversationParentAuthorizeViewerRequest) {
+    const request = ConversationParentAuthorizeViewerRequestSchema.parse(input);
+    this.assertParent(request.workspaceId, request.parentId);
+    const substreamId = asSubstreamId(request.substreamId ?? "0");
+    const relationship = await this.host.readRelationship(request.workspaceId, request.userId);
+    const result = this.tx(() => {
+      if (!this.canReadConversation(request, substreamId, relationship)) return { outcome: "forbidden" as const };
+      const now = Date.now();
+      // Main may still be implicit on an older parent, as childRegistry permits.
+      if (substreamId === "0") this.registerChild("0", "main", null, now);
+      const child = this.sql.exec<{ status: string; archived_at: number | null }>(
+        "SELECT status, archived_at FROM parent_children WHERE parent_id = ? AND substream_id = ?",
+        this.parentId, substreamId,
+      ).toArray()[0];
+      if (!child || child.status !== "ready") return { outcome: "not_ready" as const };
+      if (this.metadataRow()?.archived_at != null || child.archived_at !== null) return { outcome: "archived" as const };
+      const moved = this.sql.exec(
+        "UPDATE parent_children SET resolved = 1 WHERE parent_id = ? AND substream_id = ? AND resolved = 0 RETURNING substream_id",
+        this.parentId, substreamId,
+      ).toArray().length > 0;
+      if (moved) {
+        this.advancePrivateChildrenVersionsFor(substreamId, now);
+        this.resolutionMoved = true;
+      }
+      return { outcome: moved ? "resolved" as const : "unchanged" as const };
+    });
+    if (result.outcome === "resolved") await this.broadcastMetadata();
+    return result;
+  }
+
   /** Archive the child registry entry without deleting membership or transcript. */
   async setPrivateChildArchived(input: SetPrivateChildArchivedRequest): Promise<SetPrivateChildArchivedResult> {
     const request = SetPrivateChildArchivedRequestSchema.parse(input);
