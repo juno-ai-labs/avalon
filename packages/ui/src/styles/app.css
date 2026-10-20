@@ -7877,8 +7877,8 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .channel-row-time { color: var(--av-sys-color-text-muted); flex: none; font-size: 12px; font-variant-numeric: tabular-nums; }
 
 /* ── Title pills ────────────────────────────────────────────────────────────
-   A conversation pane's header: its own floating pill centred, ancestors
-   stacked at the left, the pane's trailing controls at the right. */
+   A conversation pane's header: its glass crumbs and command pill centred
+   together, history at the left, the pane's trailing controls at the right. */
 .workstream-screen:has(> .title-pill-header) { grid-template-rows: 64px minmax(0, 1fr) auto; }
 .title-pill-header {
   align-items: center;
@@ -8699,6 +8699,11 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   min-width: 0;
   position: relative;
 }
+/* Attach the crumbs behind the existing command pill. Its own fill, ring,
+   shadow and interactive states remain the TitlePill's, without overrides. */
+.mark-bridge.has-trailing { align-items: center; display: inline-flex; gap: 6px; }
+.mark-bridge-spacer { flex: 0 1 auto; }
+.mark-bridge-trailing { display: flex; flex: 0 1 auto; min-width: 36px; position: relative; }
 .mark-bridge-glass {
   filter: drop-shadow(0 1px 2px rgb(0 0 0 / .08)) drop-shadow(0 4px 10px rgb(0 0 0 / .06));
   left: -1px;
@@ -8733,11 +8738,6 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .mark-bridge-cell { display: grid; flex: none; height: 36px; place-items: center; width: 36px; }
 .mark-bridge-cell > * { grid-area: 1 / 1; }
 .mark-bridge-label { flex: 0 1 auto; font-size: 14.5px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* A header's bridge names its nearest crumb on desktop only; a phone's header
-   has room for the marks alone. */
-@media (max-width: 640px) {
-  .title-pill-bridge .mark-bridge-label { display: none; }
-}
 button.mark-bridge-mark { cursor: pointer; }
 button.mark-bridge-mark:hover { background: var(--av-sys-color-state-hover); }
 button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-border-highlight); outline-offset: -2px; }
