@@ -386,6 +386,15 @@ export function TitlePillNavigation(): React.JSX.Element | null {
   return header ? <NavigationButton header={header} /> : null;
 }
 
+/** Optional host-owned controls before the breadcrumb. */
+export const TitlePillLeadingContext = createContext<ReactNode>(null);
+
+/** Shared by loaded headers and their opening skeletons. */
+export function TitlePillLeading(): React.JSX.Element | null {
+  const leading = useContext(TitlePillLeadingContext);
+  return leading ? <span className="title-pill-leading window-no-drag">{leading}</span> : null;
+}
+
 /**
  * A conversation pane's header: its own pill centered, any ancestors stacked
  * at the left in nesting order, and the pane's trailing controls at the right.
@@ -422,6 +431,7 @@ export function TitlePillHeader({ actions, ancestors = [], className, current, t
     style={shift ? { '--title-pill-shift': `${shift}px` } as React.CSSProperties : undefined}
   >
     <div className="title-pill-ancestors">
+      <TitlePillLeading />
       {phoneHeader ? <NavigationButton header={phoneHeader} /> : null}
       {bridged ? null : ancestors.map((level) => <span className="title-pill-ancestor window-no-drag" key={level.key}>
         <TitlePill level={level} variant="ancestor" />
