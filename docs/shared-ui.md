@@ -155,20 +155,15 @@ component test runner is needed for the same implementations.
 
 ### 2026-10-20 — Breadcrumbs attach to the command pill
 
-The product asked for the resource path to sit with the current command pill,
-with ancestors as icons and the current pill's appearance and two hover targets
-preserved. The header therefore attaches its marks through `MarkBridge`, with
-a fixed glass cap beneath the pill. The attached pill omits its standalone
-outline, which otherwise cuts across the glass neck; its fill, shadow and hover
-targets stay. The pill fill fades in over its left cap so the shared tint
-blend remains visible between every adjacent member. A separate raised
-connector would leave overlapping rims and
-shadows. The backing fades under the cap so the pill keeps its fill and shadow;
-future changes must preserve its independent appearance
-picker and command popout. No labels or trailing-width measurement remain:
-the only visible trailing glass is that fixed cap, regardless of title length.
-The pill stays mounted when ancestor metadata arrives, preserving open menus;
-the SVG paths fade before filtering so the crumbs keep their full shadow.
+The product asked for the resource path beside the current command pill, with
+ancestors as icons and the pill's two hover targets preserved. Reusing
+`MarkBridge` with a fixed cap avoids measuring titles or maintaining unused
+label modes. The pill fill fades over that cap so adjacent tints blend.
+
+A separate raised connector, or the pill's standalone outline and shadow,
+leaves a curved seam through the neck. The attached group therefore gets one
+shadow after composition. Keep the icon picker and title popout independent,
+and keep the pill mounted when ancestor metadata arrives so menus stay open.
 
 ### 2026-10-15 — A meter fills in the text colour, not the brand
 
