@@ -1,4 +1,4 @@
-import { WorkspaceConversationViewEventSchema, type WorkspaceConversationViewEvent } from "@rally/contracts/conversation-view";
+import { WorkspaceConversationViewEventSchema, type WorkspaceConversationViewEvent } from '@rally/contracts/conversation-view';
 import { MERGE_CHANNELS_QUERY_KEY } from './use-merge-channels';
 import {
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
@@ -409,12 +409,16 @@ export function WorkspaceSocketProvider({
     parentId: string; substreamId: string; receive: (event: WorkspaceConversationViewEvent) => void; sentOn?: WebSocket;
   }>());
   const sendConversationViewRequestsRef = useRef<() => void>(() => undefined);
+  const cancelRelayedConversationViewRef = useRef<(requestId: string) => void>(() => undefined);
+  const completeRelayedConversationViewRef = useRef<(requestId: string) => void>(() => undefined);
   const requestConversationView = useCallback((parentId: string, substreamId: string,
     receive: (event: WorkspaceConversationViewEvent) => void): (() => void) => {
     const requestId = uuidV7();
     conversationViewRequests.current.set(requestId, { parentId, substreamId, receive });
     sendConversationViewRequestsRef.current();
-    return () => { conversationViewRequests.current.delete(requestId); };
+    return () => {
+      if (conversationViewRequests.current.delete(requestId)) cancelRelayedConversationViewRef.current(requestId);
+    };
   }, []);
   const foregroundWorkstreamIdRef = useRef<WorkstreamId | null>(null);
   const reportPresenceRef = useRef<() => void>(() => undefined);
@@ -1638,6 +1642,63 @@ export function WorkspaceSocketProvider({
     };
   }, [api, localCacheScope, onAccessRevoked, ownSocket, queryClient, region, relay, workspaceId]);
 
+  useEffect(() => {
+    if (relay !== 'publish') return;
+    const requests = new Map<string, () => void>();
+    const stop = desktopBridge().onWorkspaceSyncRelayed((request) => {
+      if (request.type !== 'conversation_view_request' && request.type !== 'conversation_view_cancel') return;
+      if (!sameWorkspaceSyncIdentity(request, { region, workspaceId })) return;
+      requests.get(request.requestId)?.();
+      requests.delete(request.requestId);
+      if (request.type === 'conversation_view_cancel') return;
+      requests.set(request.requestId, requestConversationView(request.parentId, request.substreamId, (event) => {
+        requests.delete(request.requestId);
+        publishToMain({ type: 'conversation_view_response', region, workspaceId,
+          event: { ...event, requestId: request.requestId } });
+      }));
+    });
+    return () => {
+      stop();
+      for (const cancel of requests.values()) cancel();
+    };
+  }, [region, relay, requestConversationView, workspaceId]);
+
+  useEffect(() => {
+    if (ownSocket || relay !== 'consume') return;
+    const bridge = desktopBridge();
+    const sent = new Set<string>();
+    const send = (): void => {
+      if (!sameWorkspaceSyncIdentity(relaySnapshot?.source, { region, workspaceId })) return;
+      for (const [requestId, request] of conversationViewRequests.current) {
+        if (sent.has(requestId)) continue;
+        sent.add(requestId);
+        void bridge.requestWorkspaceConversationView({
+          type: 'conversation_view_request', region, workspaceId, requestId,
+          parentId: request.parentId, substreamId: request.substreamId,
+        }).catch((error: unknown) => {
+          sent.delete(requestId);
+          logWarn('rally', 'could not relay conversation view request', error);
+        });
+      }
+    };
+    const cancel = (requestId: string): void => {
+      if (!sent.delete(requestId)) return;
+      void bridge.requestWorkspaceConversationView({
+        type: 'conversation_view_cancel', region, workspaceId, requestId,
+      }).catch((error: unknown) => logWarn('rally', 'could not cancel relayed conversation view', error));
+    };
+    sendConversationViewRequestsRef.current = send;
+    cancelRelayedConversationViewRef.current = cancel;
+    completeRelayedConversationViewRef.current = (requestId) => { sent.delete(requestId); };
+    send();
+    return () => {
+      for (const requestId of sent) cancel(requestId);
+      sendConversationViewRequestsRef.current = () => undefined;
+      cancelRelayedConversationViewRef.current = () => undefined;
+      completeRelayedConversationViewRef.current = () => undefined;
+    };
+  }, [ownSocket, region, relay, relaySnapshot, workspaceId]);
+
   // The publisher's lifetime. Its cleanup is what tells main the socket is
   // gone when the tree falls into the top-level error boundary: main would
   // otherwise go on reporting a connected publisher, and the Settings window
@@ -1685,6 +1746,17 @@ export function WorkspaceSocketProvider({
         return;
       }
       if (!sameWorkspaceSyncIdentity(event, { region, workspaceId })) return;
+      if (event.type === 'conversation_view_response') {
+        const answer = event.event;
+        const request = conversationViewRequests.current.get(answer.requestId);
+        if (request && request.parentId === answer.parentId && request.substreamId === answer.substreamId) {
+          conversationViewRequests.current.delete(answer.requestId);
+          completeRelayedConversationViewRef.current(answer.requestId);
+          request.receive(answer);
+        }
+        return;
+      }
+      if (event.type !== 'topics') return;
       const topics = event.topics.filter((topic): topic is WorkspaceSyncTopic => topic !== 'usage');
       setTopicWaterlines((current) => withTopicWaterline(current, topics, event.waterline));
       if (topics.length < event.topics.length) {

@@ -1,5 +1,5 @@
 import { projectConversationView } from "@rally/contracts/conversation-view";
-import { ConversationViewJobSchema, ConversationViewProjectionSchema, nextConversationViewAt, publishConversationViews } from "./conversation-view-projection";
+import { ConversationViewDeliverySchema, ConversationViewJobSchema, ConversationViewProjectionSchema, completeConversationViewDelivery, nextConversationViewAt, publishConversationViews } from "./conversation-view-projection";
 import { zodDiagnosticCode, describeZodIssues } from "@rally/contracts/zod-diagnostics";
 import { cleanupCanvaTransactions } from "../services/canva-transaction-cleanup";
 import { parseRpcInput } from "../lib/rpc-input";
@@ -6226,7 +6226,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const content = row ? projectConversationView(this.transcript.range({
       snapshotId: uuidV7(now), snapshotThrough: row.transcript_sequence, snapshotAtUtc: new Date(now).toISOString(),
     }, { startInclusive: row.transcript_sequence, endExclusive: row.transcript_sequence + 1 })) : null;
-    return ConversationViewProjectionSchema.parse({
+    return parseRpcInput(ConversationViewProjectionSchema, {
       ...request, ...version,
       header: {
         title: root.title, titleStatus: root.title_status, scope: root.scope,
@@ -6234,17 +6234,29 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         createdAt: new Date(root.created_at).toISOString(), updatedAt: new Date(root.updated_at).toISOString(),
       },
       content,
-    });
+    }, "conversation_view_projection");
   }
 
-  async backfillConversationView(input: unknown): Promise<"queued" | "missing"> {
+  async completeConversationView(input: unknown): Promise<void> {
+    await this.storageReady;
+    const request = parseRpcInput(ConversationViewDeliverySchema, input, "conversation_view_delivery");
+    if (!this.objectStore.identity()) return;
+    this.searchProjectionIdentity(request);
+    completeConversationViewDelivery(this.state.storage.sql, request);
+    const next = nextConversationViewAt(this.state.storage.sql);
+    if (next !== null) await this.ensureAlarmNoLaterThan(next);
+  }
+
+  async backfillConversationView(input: unknown): Promise<"queued" | "delivered" | "missing"> {
     await this.storageReady;
     const request = parseRpcInput(ConversationViewJobSchema, input, "conversation_view_backfill");
     if (!this.objectStore.identity()) return "missing";
     this.searchProjectionIdentity(request);
-    this.state.storage.sql.exec("UPDATE conversation_view_changes SET pending = 1, not_before = 0");
-    await this.ensureAlarmNoLaterThan(Date.now());
-    return "queued";
+    const next = nextConversationViewAt(this.state.storage.sql);
+    if (next !== null) await this.ensureAlarmNoLaterThan(next);
+    return this.state.storage.sql.exec(
+      "SELECT 1 FROM conversation_view_changes WHERE pending = 1 LIMIT 1",
+    ).toArray().length ? "queued" : "delivered";
   }
 
   private async flushConversationViews(): Promise<void> {

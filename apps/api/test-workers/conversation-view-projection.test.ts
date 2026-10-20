@@ -86,10 +86,17 @@ it("keeps deletion and generation fences and serves only compact opening rows", 
           revision: 1, activityId: null, blocks: [
             { type: "text", blockId: "text-block", blockIndex: 0, text: "Cached answer", streaming: false },
           ] },
-        activities: [], pluginRuns: [],
+        activities: [], pluginRuns: [
+          { pluginRunId: "running", turnId: "text", pluginId: "terminal", displayName: "Terminal",
+            state: "active", durationMs: 1000, elapsedMsAtSnapshot: 30000, timingAccuracy: "observed" },
+          { pluginRunId: "unknown", turnId: "text", pluginId: "search", displayName: "Search",
+            state: "active", durationMs: null, elapsedMsAtSnapshot: 30000, timingAccuracy: "observed" },
+        ],
       },
     };
     views.apply(projection);
+    expect(views.opening({ requestId, parentId, substreamId }).view?.transcript.pluginRuns)
+      .toMatchObject([{ durationMs: 31000, elapsedMsAtSnapshot: null }, { durationMs: null, elapsedMsAtSnapshot: null }]);
     expect(views.opening({ requestId, parentId, substreamId }).view?.transcript.ranges[0]?.turns[0]?.blocks)
       .toEqual([{ type: "text", blockId: "text-block", blockIndex: 0, text: "Cached answer", streaming: false }]);
     views.apply({ ...projection, revision: 3, content: null });
@@ -102,6 +109,87 @@ it("keeps deletion and generation fences and serves only compact opening rows", 
     expect(() => views.apply({ ...projection, revision: 200, content: {
       ...projection.content, pluginRuns: [{ toolCallIds: ["secret"] }],
     } })).toThrow();
+  });
+});
+
+it("refreshes attachment names and removals after their first delivery", async () => {
+  const stub = source();
+  const resourceId = "00000000-0000-7000-8000-00000000ca04";
+  await runInDurableObject(stub, async (_instance, state) => {
+    seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: parentId });
+    await seedParticipantMessage(state, { id: "attachment", sequence: 1, text: "Attached" });
+    state.storage.sql.exec(`INSERT INTO workstream_resource_links
+      (resource_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
+      VALUES (?, 0, 'attachment', '{"title":"before.txt","mimeType":"text/plain","metadata":{"size":10}}', 1, 1)`, resourceId);
+    state.storage.sql.exec("INSERT INTO participant_transcript_attachments VALUES ('attachment', ?, 0, '{}')", resourceId);
+  });
+  expect((await stub.conversationViewProjection({ ...job, turnId: "attachment" }))?.content?.turn.blocks[0]?.attachments)
+    .toMatchObject([{ fileName: "before.txt" }]);
+  await runInDurableObject(stub, (_instance, state) => {
+    state.storage.sql.exec("UPDATE conversation_view_changes SET pending = 0");
+    state.storage.sql.exec("UPDATE workstream_resource_links SET resource_json = json_set(resource_json, '$.title', 'after.txt') WHERE resource_id = ?", resourceId);
+    expect(state.storage.sql.exec("SELECT turn_id FROM conversation_view_changes WHERE pending = 1").toArray())
+      .toEqual([{ turn_id: "attachment" }]);
+  });
+  expect((await stub.conversationViewProjection({ ...job, turnId: "attachment" }))?.content?.turn.blocks[0]?.attachments)
+    .toMatchObject([{ fileName: "after.txt" }]);
+  await runInDurableObject(stub, (_instance, state) => {
+    state.storage.sql.exec("UPDATE conversation_view_changes SET pending = 0");
+    state.storage.sql.exec("DELETE FROM workstream_resource_links WHERE resource_id = ?", resourceId);
+    expect(state.storage.sql.exec("SELECT turn_id FROM conversation_view_changes WHERE pending = 1").toArray())
+      .toEqual([{ turn_id: "attachment" }]);
+  });
+  expect((await stub.conversationViewProjection({ ...job, turnId: "attachment" }))?.content?.turn.blocks[0]?.attachments).toEqual([]);
+});
+
+it("waits for delivered batches and keeps edits made during delivery pending", async () => {
+  const stub = source();
+  await runInDurableObject(stub, async (_instance, state) => {
+    seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: parentId });
+    await seedParticipantMessage(state, { id: "changed", sequence: 1, text: "Before" });
+    await publishConversationViews(state.storage.sql, env.ACTIVITY_QUEUE, job);
+    expect(nextConversationViewAt(state.storage.sql)).toBeNull();
+    expect(state.storage.sql.exec("SELECT turn_id FROM conversation_view_changes WHERE in_flight_revision IS NOT NULL ORDER BY turn_id").toArray())
+      .toEqual([{ turn_id: "" }, { turn_id: "changed" }]);
+  });
+  const delivered = await stub.conversationViewProjection({ ...job, turnId: "changed" });
+  const claim = await runInDurableObject(stub, (_instance, state) => {
+    const rows = state.storage.sql.exec<{ turn_id: string; in_flight_revision: number }>(
+      "SELECT turn_id, in_flight_revision FROM conversation_view_changes ORDER BY turn_id",
+    ).toArray();
+    state.storage.sql.exec("UPDATE participant_transcript_turns SET revision = revision + 1 WHERE turn_id = 'changed'");
+    return rows;
+  });
+  for (const row of claim) await stub.completeConversationView({
+    ...job, turnId: row.turn_id, dispatchRevision: row.in_flight_revision,
+    projectedRevision: delivered!.revision, generation: delivered!.generation,
+  });
+  await runInDurableObject(stub, (_instance, state) => {
+    expect(nextConversationViewAt(state.storage.sql)).toBe(0);
+    expect(state.storage.sql.exec("SELECT turn_id FROM conversation_view_changes WHERE pending = 1").toArray())
+      .toEqual([{ turn_id: "changed" }]);
+  });
+  expect(await stub.backfillConversationView({ ...job, turnId: "" })).toBe("queued");
+  await runInDurableObject(stub, (_instance, state) => {
+    state.storage.sql.exec("UPDATE conversation_view_changes SET pending = 0");
+  });
+  expect(await stub.backfillConversationView({ ...job, turnId: "" })).toBe("delivered");
+});
+
+it("publishes the newest historical page first so previews do not wait for old history", async () => {
+  await runInDurableObject(source(), async (_instance, state) => {
+    seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: parentId });
+    for (let sequence = 1; sequence <= 101; sequence += 1) {
+      await seedParticipantMessage(state, { id: `history-${sequence}`, sequence, text: `Message ${sequence}` });
+    }
+    // Migration 78 seeds history at one revision, before any incremental edit.
+    state.storage.sql.exec("UPDATE conversation_view_changes SET revision = 1");
+    await publishConversationViews(state.storage.sql, env.ACTIVITY_QUEUE, job);
+    expect(state.storage.sql.exec(`SELECT MIN(turns.transcript_sequence) AS first,
+      MAX(turns.transcript_sequence) AS last, COUNT(*) AS count
+      FROM conversation_view_changes changes JOIN participant_transcript_turns turns USING (turn_id)
+      WHERE changes.in_flight_revision IS NOT NULL`).toArray())
+      .toEqual([{ first: 2, last: 101, count: 100 }]);
   });
 });
 
