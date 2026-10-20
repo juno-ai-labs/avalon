@@ -1,3 +1,4 @@
+import { navigateAppRoute } from './app-navigation';
 import {
   createContext,
   type PropsWithChildren,
@@ -251,7 +252,7 @@ function sessionsShareDraftScope(
  * their own route.
  */
 function leaveSupportRoute(): void {
-  if (!new URLSearchParams(window.location.search).has('surface')) window.location.hash = '/';
+  if (!new URLSearchParams(window.location.search).has('surface')) navigateAppRoute('/');
 }
 
 export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.Element {
@@ -580,7 +581,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       ? queryClient.getQueryData<AccountOnboarding>(accountKey)
       : undefined;
     const account = landing === 'creation' && held?.eligible !== true ? undefined : held;
-    if (workspaceChanged) window.location.hash = '/';
+    if (workspaceChanged) navigateAppRoute('/');
     applySession(nextSession);
     if (prefetched && target) {
       queryClient.setQueryData(['workspace', target.id, nextSession.user.id], prefetched);
@@ -957,7 +958,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         // resource action resolves; the default landing would open an unrelated
         // conversation before the deep-link destination arrives.
         if (entered.workspaceChanged) {
-          window.location.hash = '/opening';
+          navigateAppRoute('/opening');
         }
         await action(entered.api);
       };
@@ -1042,14 +1043,14 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         markSurfaceEntrypoint(navigation.entrypoint);
         // A Channel is started from a Space, which this link does not name, so
         // it opens the app; the sidebar's plus asks for the Space.
-        window.location.hash = '/';
+        navigateAppRoute('/');
         return;
       }
       if (intent.kind === 'space') {
         const openSpace = (): void => {
           setDeepLinkError(null);
           markSurfaceEntrypoint(navigation.entrypoint);
-          window.location.hash = `/spaces/${intent.spaceId}`;
+          navigateAppRoute(`/spaces/${intent.spaceId}`);
         };
         if (intent.target) await runInDeepLinkWorkspace(intent.target, openSpace);
         else if (requireActiveWorkspace('Sign in before opening this channel link.')) openSpace();
@@ -1064,7 +1065,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           if (intent.substreamId) query.set('substream', intent.substreamId);
           if (intent.spaceId) query.set('space', intent.spaceId);
           if (intent.artifactId) query.set('artifact', intent.artifactId);
-          window.location.hash = `/workstreams/${intent.workstreamId}${query.size ? `?${query}` : ''}`;
+          navigateAppRoute(`/workstreams/${intent.workstreamId}${query.size ? `?${query}` : ''}`);
         };
         if (intent.target) await runInDeepLinkWorkspace(intent.target, openWorkstream);
         else if (requireActiveWorkspace('Sign in before opening this thread link.')) openWorkstream();
@@ -1074,7 +1075,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         await runInDeepLinkWorkspace(intent.target, () => {
           setDeepLinkError(null);
           markSurfaceEntrypoint(navigation.entrypoint);
-          window.location.hash = `/sidekicks/${intent.sidekickId}`;
+          navigateAppRoute(`/sidekicks/${intent.sidekickId}`);
         });
         return;
       }
@@ -1102,7 +1103,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           // the sheet on that navigation, so ask it to open the sheet then.
           if (window.location.hash === '#/opening') {
             if (phone) ui.setSheetAfterNavigation(true);
-            window.location.hash = '/';
+            navigateAppRoute('/');
           } else if (phone) ui.setSidebarOpen(true);
         };
         if (intent.target) await runInDeepLinkWorkspace(intent.target, openActivity);
@@ -1115,7 +1116,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           markSurfaceEntrypoint(navigation.entrypoint);
           // The builder this used to open is gone; drafting is a conversation,
           // and a conversation is started from a Space this link does not name.
-          window.location.hash = '/';
+          navigateAppRoute('/');
         };
         if (intent.target) await runInDeepLinkWorkspace(intent.target, openAutomation);
         else if (requireActiveWorkspace('Sign in before creating an automation.')) openAutomation();

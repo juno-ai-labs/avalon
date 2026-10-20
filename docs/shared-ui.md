@@ -97,6 +97,12 @@ A mark may carry a `menu` of the objects it stands for and open it in place of
 nearest fold into one "…" mark (`Show path`) that lists them, so the bridge
 stays two crumbs wide.
 
+`TitlePillLeadingContext` lets a host supply controls before the breadcrumb.
+Electron supplies its history bridge; other hosts leave the slot empty.
+`TitlePillLeading` renders the slot in both loaded and opening headers.
+A `MarkBridgeItem` may be `disabled`, which disables its action button while
+retaining its accessible name.
+
 A title pill's menu always opens below the pill. Its bottom edge never counts
 as a Radix collision, so the menu never flips above; its sides still do, so it
 shifts to fit a phone's width. Opening it blurs any focused input, textarea or

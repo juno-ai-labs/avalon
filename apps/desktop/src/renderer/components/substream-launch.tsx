@@ -16,7 +16,7 @@ import { BreakoutOrigin } from './breakout-origin';
 import { ConnectingCardSlot } from './connecting-card';
 import type { AttachmentPreview } from './attachments';
 import { IconButton, TitleSkeleton } from './primitives';
-import { TitlePillNavigation } from '@rally/ui/components/title-pill';
+import { TitlePillLeading, TitlePillNavigation } from '@rally/ui/components/title-pill';
 import { MessageBlock } from './workstream-blocks';
 import { type ComposerConversation, WorkstreamComposer } from './workstream-composer';
 
@@ -286,7 +286,7 @@ export function SubstreamLaunchSurface({
       // the 64px row the created breakout's title pill sits in, so the header
       // neither moves nor changes shape when the breakout takes over.
       <header className="launch-header title-pill-header window-drag conversation-opening-header">
-        <div className="title-pill-ancestors"><TitlePillNavigation /></div>
+        <div className="title-pill-ancestors"><TitlePillLeading /><TitlePillNavigation /></div>
         <div className="title-pill-current"><span className="skeleton-bar title-pill-skeleton" /></div>
         <div className="title-pill-trailing" />
       </header>
