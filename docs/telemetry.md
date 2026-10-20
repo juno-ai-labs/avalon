@@ -368,19 +368,27 @@ coalesced to one report per five minutes through a 100-entry in-memory table. A
 handled network failure is diagnostic only: unlike a real JavaScript exception or
 rejection, it does not emit an essential `process_health` transition.
 
-The main process also owns deliberately narrow last-resort recovery for
-Electron's internal `SimpleURLLoaderWrapper`: an unhandled
-`ERR_CONNECTION_RESET` or `ERR_NETWORK_CHANGED` whose stack names Electron's
-built-in URL loader. Sleep/wake or a network change can interrupt an in-flight
-request; treating that transport interruption as a fatal JavaScript defect
-leaves Electron's generic error dialog over an otherwise recoverable app. Rally
-keeps the existing payload-free `process_health` rejection signal, logs the
-interruption and its code locally, and keeps running, allowing the socket,
-polling, and telemetry owners to take their existing reconnect or retry paths. The exact code and a single real stack frame
-containing both the loader and Electron `browser_init` markers are required.
-Every other unhandled rejection is reported with its original rejection origin,
-then thrown fatally on the next event-loop turn so sibling rejections already
-pending in the same batch are not discarded.
+Application uploads use the shared [Electron network bridge](electron-network.md)
+to handle Electron's detached upload-promise failures at the request boundary,
+regardless of network error code. Request owners receive failures normally;
+mutations are not automatically replayed.
+
+The main process also owns last-resort recovery for Chromium network failures
+from Electron's internal `SimpleURLLoaderWrapper`. It requires an exact
+`net::ERR_*` message (or a Chromium-shaped explicit code), and one real stack
+frame containing both the loader and `node:electron/js2c/browser_init` markers.
+It recognizes the network-error family rather than enumerating connection
+resets, offline transitions, suspended I/O, DNS, proxy, and TLS failures one at a
+time. An explicit code must not contradict a Chromium-formatted message.
+
+These errors fail their request, not the application. Recovery preserves the
+payload-free `process_health` rejection signal and the local code diagnostic,
+without replaying a request or relaxing certificate validation. Errors without
+the network signature, application errors with matching message text but no
+loader frame, and direct uncaught exceptions retain their fatal behavior. Other
+unhandled rejections are reported with their original rejection origin, then
+thrown on the next event-loop turn so sibling rejections in the same batch are
+not discarded.
 
 ### Route and identity
 
@@ -2037,22 +2045,28 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 ## Changelog
 
-### 2026-10-20 — Recover Electron network changes at the main-process boundary
+### 2026-10-20 — Own Electron network failures at their request boundary
 
-**What changed:** The narrow main-process recovery path now accepts Electron
-URL-loader network changes as well as connection resets, preserving the rejection
-health signal and local diagnostic while keeping Rally running.
+**What changed:** A shared [request bridge](electron-network.md) now owns HTTP
+upload and response failures across both Electron apps. Last-resort process
+recovery recognizes the Chromium network-error family with its real loader
+frame instead of maintaining a code allowlist.
 
-**Why:** An observed `net::ERR_NETWORK_CHANGED` reached the unhandled-rejection
-boundary and was deliberately rethrown because recovery recognized only
-connection resets, leaving an uncaught-exception dialog over the app.
+**Why:** `ERR_NETWORK_CHANGED` and `ERR_NETWORK_IO_SUSPENDED` reached the fatal
+boundary after an earlier connection-reset-only fix. Investigation also exposed
+a detached upload promise in Electron 43.2.0: its source-stream rejection is
+unhandled even when the public fetch promise is caught. New error names must
+not require another app release to avoid an uncaught-exception dialog.
 
-**Considered and rejected:** Swallowing all network errors would hide failures
-outside the observed transient loader cases.
+**Considered and rejected:** Adding codes individually leaves both the fatal
+classification and orphaned promise ownership defects. Suppressing arbitrary
+exceptions would hide programming errors; automatically retrying mutations
+would risk duplicate writes.
 
-**Consequences:** The explicit code list and real Electron loader frame remain
-required. Unknown rejections and direct exceptions keep their fatal behavior;
-request owners still own reconnect and retry.
+**Consequences:** Network failures remain visible to request owners and emit the
+existing process-health signal if they reach the fallback. Preserve the loader
+frame and Chromium namespace checks, keep unrelated failures fatal, and never
+replay a write from the global boundary.
 
 ### 2026-10-11 — `message_sent` is recorded by the API for every client
 

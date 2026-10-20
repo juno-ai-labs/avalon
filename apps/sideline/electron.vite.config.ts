@@ -10,7 +10,7 @@ export default defineConfig({
       // Read in src/main/index.ts: the updater prompts once a build is stale.
       __SIDELINE_BUILD_TIME__: JSON.stringify(new Date().toISOString()),
     },
-    plugins: [externalizeDepsPlugin({ exclude: ["@rally/contracts"] })],
+    plugins: [externalizeDepsPlugin({ exclude: ["@rally/contracts", "@rally/electron-network"] })],
   },
   preload: { plugins: [externalizeDepsPlugin()], build: { rollupOptions: { output: { format: "cjs", entryFileNames: "[name].cjs" } } } },
   renderer: {

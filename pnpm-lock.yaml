@@ -309,6 +309,9 @@ importers:
       '@rally/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@rally/electron-network':
+        specifier: workspace:*
+        version: link:../../packages/electron-network
       '@tabler/icons-react':
         specifier: ^3.46.0
         version: 3.46.0(react@19.2.8)
@@ -491,6 +494,9 @@ importers:
       '@rally/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@rally/electron-network':
+        specifier: workspace:*
+        version: link:../../packages/electron-network
       '@rally/ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -756,6 +762,18 @@ importers:
       wrangler:
         specifier: 4.126.0
         version: 4.126.0(@cloudflare/workers-types@5.20260827.1)
+
+  packages/electron-network:
+    devDependencies:
+      '@types/node':
+        specifier: 26.4.0
+        version: 26.4.0
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@26.4.0)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
 
   packages/ui:
     dependencies:
