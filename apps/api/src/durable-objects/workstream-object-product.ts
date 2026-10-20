@@ -1,4 +1,4 @@
-import { annotationCommentText } from "@rally/contracts";
+import { AnnotatedMessageContentSchema, annotationCommentText } from "@rally/contracts";
 import { AnnotationsSchema, validateAnnotationAttachments } from "@rally/contracts";
 import { ResourceService } from "../services/resource-service";
 import { mergeEmbedsOf, resolveShareableResources } from "../services/resource-share-rules";
@@ -81,6 +81,7 @@ import {
   resolveNewWorkstreamModelRouting,
 } from "../services/agent-model-flags";
 import { classifyWorkstreamMessage } from "../services/integrations";
+import { openingMessageStartsRun } from "../services/opening-message-classifier";
 import {
   isUnlistedResourceMetadata,
   listedResourceVisibilitySql,
@@ -266,7 +267,7 @@ export const InitializeWorkstreamObjectInputSchema = z.strictObject({
   telemetryRequestReceivedAt: z.number().int().nonnegative().optional(),
   telemetryJourney: z.enum(["workstream_create", "substream_create", "message_send"]).optional(),
   /**
-   * Present when a demo seed opens the work stream. An opening message always
+   * Present when a demo seed opens the work stream. A scripted opening always
    * starts a run, so the seed's turn is what that run says; a seed that says
    * nothing is refused rather than left to reach a provider.
    */
@@ -1061,7 +1062,7 @@ export class WorkstreamObjectProductService {
    * stream nobody typed into.
    *
    * Deliberately not `initialize`, which is the member path. That method
-   * requires an opening message and writes the first part, the first run and
+   * requires an opening message and writes the first part, an optional run and
    * the creator's attention row, leaving `next_sequence_number` at 2. A work
    * stream provisioned for an automation, a schedule or a digest has none of
    * those yet — content arrives on its first run — so sharing one method would
@@ -1421,7 +1422,7 @@ export class WorkstreamObjectProductService {
       throw new ApiError(
         422,
         "demo_seed_opening_without_script",
-        "An opening message always starts a run, so its seed must say what the run says",
+        "A scripted opening starts a run, so its seed must say what the run says",
       );
     }
     if (auth.workspaceId !== input.workspaceId || auth.userId !== input.creatorUserId) {
@@ -1478,7 +1479,7 @@ export class WorkstreamObjectProductService {
         `SELECT run_id, execution_context_json FROM runs
           WHERE trigger_part_id = ? ORDER BY created_at LIMIT 1`, part?.id ?? "",
       ));
-      if (part && !run && history) {
+      if (part && !run) {
         await this.enqueueDirectorySnapshot();
         return { workstream: await this.summary(existingRoot, auth.userId), turnId: part.id,
           harnessRunId: null, workflowInput: null };
@@ -1542,27 +1543,49 @@ export class WorkstreamObjectProductService {
     const now = Date.now();
     const messageId = await stableUuid(["conversation-initialization", input.workstreamId, input.clientMessageId]);
     const runId = asHarnessRunId(uuidV7(now));
-    const model = history ? null : input.modelOverride
-      ? pinnedModelRouting(input.modelOverride).model
-      : (await resolveNewWorkstreamModelRouting(this.env, {
-          workspaceId: input.workspaceId,
-          workstreamId: input.workstreamId,
-        })).model;
     const authorSnapshot = {
       displayName: names.get(input.creatorUserId)?.name ?? UNKNOWN_MEMBER_DISPLAY_NAME,
       avatarUrl: names.get(input.creatorUserId)?.avatar_url ?? null,
     };
-    const materialization = await this.prepareConversationMaterialization({
-      conversation: history ?? { messages: [{ role: "user", text: prepared.text,
-        structuredContent: input.openingStructuredContent, attachmentIds: input.attachmentIds }] },
-      operationId: input.clientMessageId, firstTurnId: messageId, clientMessageId: input.clientMessageId,
-      ...(input.initialization.kind === "history" && input.initialization.identityHash ? { identityHash: input.initialization.identityHash } : {}),
-      userId: input.creatorUserId, snapshot: authorSnapshot, now,
-      workspaceId: input.workspaceId, workstreamId: input.workstreamId,
-    });
+    const annotations = AnnotatedMessageContentSchema.safeParse(input.openingStructuredContent);
+    // Only member-composed openings need addressing. Explicit summons and
+    // started work already authorize a run, even when their text looks like a title.
+    const classifyOpening = input.reason === "opening_message" && !input.slackOrigin
+      && !input.createdFromOpportunityId && !input.seed;
+    const [startsRun, [routing], materialization] = await Promise.all([
+      history ? false : !classifyOpening || openingMessageStartsRun(this.env, {
+        workspaceId: input.workspaceId,
+        workstreamId: input.workstreamId,
+        substreamId: "0",
+        message: annotations.success
+          ? annotationCommentText(input.openingMessage, annotations.data.annotations)
+          : input.openingMessage,
+        humanMentions: mentionedPersonNames(prepared.mentions),
+        connectorMentions: prepared.mentions.flatMap((mention) => mention.type === "connector" && mention.connectorType ? [mention.connectorType] : []),
+        attachmentCount: input.attachmentIds.length,
+        defer: this.defer,
+      }),
+      // Overlap independent routing and materialization with JEV. A routing
+      // failure must not prevent a silent opening from being persisted.
+      Promise.allSettled([history ? null : input.modelOverride
+        ? pinnedModelRouting(input.modelOverride).model
+        : resolveNewWorkstreamModelRouting(this.env, {
+            workspaceId: input.workspaceId, workstreamId: input.workstreamId,
+          }).then((route) => route.model)]),
+      this.prepareConversationMaterialization({
+        conversation: history ?? { messages: [{ role: "user", text: prepared.text,
+          structuredContent: input.openingStructuredContent, attachmentIds: input.attachmentIds }] },
+        operationId: input.clientMessageId, firstTurnId: messageId, clientMessageId: input.clientMessageId,
+        ...(input.initialization.kind === "history" && input.initialization.identityHash ? { identityHash: input.initialization.identityHash } : {}),
+        userId: input.creatorUserId, snapshot: authorSnapshot, now,
+        workspaceId: input.workspaceId, workstreamId: input.workstreamId,
+      }),
+    ]);
+    if (startsRun && routing.status === "rejected") throw routing.reason;
+    const model = startsRun && routing.status === "fulfilled" ? routing.value : null;
     const { conversation, turns: transcriptMessages, attachments } = materialization;
     const initialMessages = conversation.messages;
-    const openingWorkflowInput = history ? null : this.workflowInput(input, runId, messageId);
+    const openingWorkflowInput = startsRun ? this.workflowInput(input, runId, messageId) : null;
     let initializedElsewhere = false;
     this.storage.transactionSync(() => {
       // Hashing and directory reads yield. Another delivery can initialize
@@ -1583,7 +1606,7 @@ export class WorkstreamObjectProductService {
              description_source = ?, system_kind = ?, title_status = ?, model_override = ?,
              appearance_json = COALESCE(appearance_json, ?), updated_at = ?
          WHERE id = 1 AND authority_mode = 'preparing'`,
-        input.generation, input.title, input.objective, input.scope, history ? "idle" : "scheduled",
+        input.generation, input.title, input.objective, input.scope, startsRun ? "scheduled" : "idle",
         input.reason, initialMessages.length + 1, initialMessages.length + 1, now, now, now,
         input.creatorUserId, input.emailAddress, input.createdFromOpportunityId, input.opportunityVersion,
         input.opportunityDisplayPromptHash, input.opportunityExecutionPromptHash,
@@ -4813,6 +4836,20 @@ export class WorkstreamObjectProductService {
       // scripted conversation cannot wait on a live guess about each line when
       // the pack is the authority on which lines start a run.
       shouldInvoke = input.seed.assistant !== null;
+    } else if (!input.forcedHarnessOrigin && this.objectStore.identity()?.parentKind === "workstream"
+      && this.root().next_sequence_number === 1 && !this.loops.hasInputAhead(preparation.input_sequence)) {
+      // Read current state after preparation's awaits. A prior input can have
+      // become canonical while this request was resolving people/attachments.
+      shouldInvoke = await openingMessageStartsRun(this.env, {
+        workspaceId: auth.workspaceId,
+        workstreamId: root.workstream_key,
+        substreamId: this.externalSubstreamId(),
+        message: annotationCommentText(input.text, input.annotations),
+        humanMentions: mentionedPersonNames(prepared.mentions),
+        connectorMentions,
+        attachmentCount: attachmentRows.length,
+        defer: this.defer,
+      });
     } else if (!shouldInvoke) {
       const activeTask = this.loops.loop()?.status === "executing";
       const classification = await classifyWorkstreamMessage(this.env, {
