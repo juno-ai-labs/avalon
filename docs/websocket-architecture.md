@@ -167,8 +167,9 @@ are its two consumers; only the browser-import window still dials its own. This 
 description; [`settings-window.md`](settings-window.md) and
 [`security.md`](security.md) link here.
 
-The protocol is three messages from the main window to main, and two from main
-to each consumer window. Each names its Organization as `{ region, workspaceId }`,
+The protocol carries connection/topic updates and correlated conversation
+preview requests and replies between the publishing and consuming windows.
+Each names its Organization as `{ region, workspaceId }`,
 because a workspace UUID is unique only within a region, and every comparison —
 main's, the preload inbox's, the consumer's — compares both.
 
@@ -177,6 +178,8 @@ main's, the preload inbox's, the consumer's — compares both.
 | `state` | main window → main (`workspace-sync:publish`) | The provider's connection state. Attaches it as the source. |
 | `detach` | main window → main (`workspace-sync:publish`) | That provider unmounted with no successor. Ends the source if it is still the attached one. |
 | `topics` | main window → main → Settings and Sidekicks (`workspace-sync:relayed`) | Topic names and the waterline they moved at. Besides the sync topics, the relay-only name `usage`. |
+| `conversation_view_request` / `conversation_view_cancel` | consumer → main → publishing window | An exact conversation request or cancellation, correlated by request ID. Main accepts only trusted consumer windows and the currently attached Organization. |
+| `conversation_view_response` | publishing window → main → consumers | A strictly parsed compact preview. Consumers accept only their pending request, Organization, and conversation. |
 | `source` | main → Settings and Sidekicks (`workspace-sync:relayed`, and the `workspace-sync:source` reply) | `{ revision, source: { region, workspaceId, state } \| null }`. |
 
 - **Publish (main window, `relay="publish"`).** The provider publishes its
@@ -190,8 +193,10 @@ main's, the preload inbox's, the consumer's — compares both.
   `automations` topic, the refetch that push amounts to for a window that does
   not hold the list. A `workspace_usage` push, and every subscribe answer, is
   published as `usage`, a relay-only name
-  ([`usage-metering.md`](usage-metering.md)). Nothing else crosses: no
-  sidebar, rows, presence, directory pages or meter values.
+  ([`usage-metering.md`](usage-metering.md)). Conversation preview replies are
+  the only content-bearing exception; no
+  sidebar, presence, directory pages or meter values cross. Pending preview
+  requests are reissued after publisher handover and cancelled on navigation.
 - **Detach on unmount, unless replaced.** The provider's cleanup publishes
   `detach` on a microtask, and only if no other publisher has mounted in the
   renderer since. An Organization switch — and StrictMode — unmounts a
@@ -922,6 +927,15 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-10-20 — Relay conversation previews into Sidekick windows
+
+The compact conversation cache would otherwise work only in the window owning
+the Organization socket. The existing relay now carries correlated preview
+requests, cancellations, and allowlisted replies so Sidekick conversations can
+paint before their live socket attaches. Main checks the consumer sender and
+attached Organization; a replacement publisher retries pending requests and a
+late reply cannot repaint a cancelled conversation.
 
 ### 2026-10-19 — Recover transport and application state across network and power changes
 

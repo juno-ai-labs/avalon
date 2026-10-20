@@ -300,6 +300,46 @@ beforeEach(async () => {
 });
 
 describe("a Channel's row on the workspace socket", () => {
+  it("admits cached conversation views separately for the parent and its private breakout", async () => {
+    const child = asSubstreamId("00000000-0000-7000-8000-0000000fd099");
+    await runInDurableObject(organization(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO parent_children(parent_id, substream_id, kind, created_by_user_id, created_at, title)
+        VALUES (?, ?, 'child', ?, 1, 'Private breakout')`, openChannel, child, owner);
+      state.storage.sql.exec(`INSERT INTO parent_breakout_members
+        (parent_id, substream_id, user_id, active, version, added_by_user_id, added_at, updated_at)
+        VALUES (?, ?, ?, 1, 1, ?, 1, 1)`, openChannel, child, owner, owner);
+    });
+    for (const substreamId of [asSubstreamId("0"), child]) {
+      await organization().applyConversationView({
+        type: "conversation_view_v1", region: "global", workspaceId, parentId: openChannel,
+        substreamId, turnId: "", generation: 1, revision: 1, content: null,
+        header: { title: substreamId === "0" ? "Shared preview" : "Private preview",
+          titleStatus: "settled", scope: "personal", harnessStatus: "completed", createdAt: at, updatedAt: at },
+      });
+    }
+    const ownerSocket = await connect(owner);
+    const outsiderSocket = await connect(outsider);
+    let request = 0;
+    const view = async (connection: Connected, substreamId: SubstreamId) => {
+      request += 1;
+      const requestId = `00000000-0000-7000-8003-${String(request).padStart(12, "0")}`;
+      const answer = connection.stream.next(
+        (frame) => frame.type === "workspace_conversation_view" && frame.requestId === requestId, "cached view",
+      );
+      connection.socket.send(JSON.stringify({ type: "conversation_view", requestId, parentId: openChannel, substreamId }));
+      return (await answer).view;
+    };
+    expect(await view(outsiderSocket, asSubstreamId("0"))).toMatchObject({ header: { title: "Shared preview" } });
+    expect(await view(outsiderSocket, child)).toBeNull();
+    expect(await view(ownerSocket, child)).toMatchObject({ header: { title: "Private preview" } });
+    await runInDurableObject(organization(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE parent_breakout_members SET active = 0 WHERE parent_id = ? AND substream_id = ?",
+        openChannel, child);
+    });
+    expect(await view(ownerSocket, child)).toBeNull();
+    close(ownerSocket, outsiderSocket);
+  });
+
   it("reaches the people who can see the Channel, and says nothing to anybody else", async () => {
     const memberSocket = await connect(member);
     const outsiderSocket = await connect(outsider);

@@ -1,3 +1,4 @@
+import { ConversationViewJobSchema } from "../durable-objects/conversation-view-projection";
 import { ConnectorDeliveryReferenceSchema, readConnectorDeliveryReference, sendConnectorEventDelivery } from "../services/connector-queue-payload";
 import { SidekickRunProvisionQueueMessageSchema } from "../durable-objects/automation-do-protocol";
 import { provisionSidekickRun } from "../services/sidekick-run-provisioning";
@@ -91,6 +92,12 @@ const THREAD_BACKFILL_HANDLERS: Record<ThreadBackfillJob, (env: Env, target: {
 }) => Promise<string>> = {
   description_summary: (env, target) => summarizeExistingDescription(env, target),
   suggestion_backfill: (env, target) => backfillSuggestion(env, target),
+  conversation_view: async (env, target) => {
+    const stub = await durableObjectStubForWorkspace(env, env.SUBSTREAM_AGENTS, target.workspaceId,
+      conversationObjectName(env.AVALON_REGION, asWorkspaceId(target.workspaceId), target.workstreamId, asSubstreamId(target.substreamId)));
+    return stub.backfillConversationView({ type: "conversation_view_v1", region: env.AVALON_REGION,
+      workspaceId: target.workspaceId, parentId: target.workstreamId, substreamId: target.substreamId, turnId: "" });
+  },
 };
 
 /**
@@ -291,6 +298,32 @@ function searchSourceRevision(env: Env, reference: SearchSourceReference): (() =
 
 async function consumeOne(message: Message<unknown>, env: Env,
   indexSearch: ReturnType<typeof createSearchIndexingPipeline>): Promise<void> {
+  const viewJob = ConversationViewJobSchema.safeParse(message.body);
+  if (viewJob.success) {
+    const job = viewJob.data;
+    if (job.region !== env.AVALON_REGION) { message.ack(); return; }
+    try {
+      const source = await durableObjectStubForWorkspace(env, env.SUBSTREAM_AGENTS, job.workspaceId,
+        conversationObjectName(job.region, job.workspaceId, job.parentId, job.substreamId));
+      const projection = await source.conversationViewProjection(job);
+      if (projection) {
+        const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, job.workspaceId,
+          workspaceDOName(job.region, job.workspaceId));
+        await workspace.applyConversationView(projection);
+        if (job.dispatchRevision !== undefined) await source.completeConversationView({
+          ...job, projectedRevision: projection.revision, generation: projection.generation,
+        });
+      }
+      message.ack();
+    } catch (error) {
+      if (isRetirementRefusal(error)) { message.ack(); return; }
+      logWarn(env, "conversation_view_delivery_failed", { workspace_id: job.workspaceId,
+        reason: diagnosticErrorCode(error, "conversation_view_delivery_failed") });
+      const attempts = Math.max(1, message.attempts);
+      message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
+    }
+    return;
+  }
   const deliveryReference = ConnectorDeliveryReferenceSchema.safeParse(message.body);
   if (deliveryReference.success) {
     if (deliveryReference.data.delivery.region !== env.AVALON_REGION) { message.ack(); return; }
@@ -631,6 +664,14 @@ async function consumeOne(message: Message<unknown>, env: Env,
             substream_id: substreamId,
             outcome,
           });
+          if (target.job === "conversation_view" && outcome === "queued") {
+            // Keep this parent claimed until its source has confirmed writes.
+            // Do not wake all its children and immediately admit another batch.
+            // Its durable retry gate will revisit it; ordinary pending work
+            // must not burn through Queue retries and land in the dead letter.
+            message.ack();
+            return;
+          }
         }
         await workspace.completeThreadBackfill(target);
       }

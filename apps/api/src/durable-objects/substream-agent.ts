@@ -1,3 +1,5 @@
+import { projectConversationView } from "@rally/contracts/conversation-view";
+import { ConversationViewDeliverySchema, ConversationViewJobSchema, ConversationViewProjectionSchema, completeConversationViewDelivery, nextConversationViewAt, publishConversationViews } from "./conversation-view-projection";
 import { zodDiagnosticCode, describeZodIssues } from "@rally/contracts/zod-diagnostics";
 import { cleanupCanvaTransactions } from "../services/canva-transaction-cleanup";
 import { parseRpcInput } from "../lib/rpc-input";
@@ -6204,6 +6206,76 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
   }
 
+  /** Internal delivery only. Content is allowlisted before it leaves this authority. */
+  async conversationViewProjection(input: unknown) {
+    await this.storageReady;
+    const request = parseRpcInput(ConversationViewJobSchema, input, "conversation_view_job");
+    if (!this.objectStore.identity()) return null;
+    this.searchProjectionIdentity(request);
+    const root = this.identityRows.identity();
+    if (!root) return null;
+    const sql = this.state.storage.sql;
+    const version = sql.exec<{ revision: number; generation: number }>(
+      `SELECT c.revision, w.authority_generation AS generation
+       FROM conversation_view_clock c, workstream w WHERE c.id = 1 AND w.id = 1`,
+    ).one();
+    const row = request.turnId ? sql.exec<{ transcript_sequence: number }>(
+      "SELECT transcript_sequence FROM participant_transcript_turns WHERE turn_id = ?", request.turnId,
+    ).toArray()[0] : undefined;
+    const now = Date.now();
+    const content = row ? projectConversationView(this.transcript.range({
+      snapshotId: uuidV7(now), snapshotThrough: row.transcript_sequence, snapshotAtUtc: new Date(now).toISOString(),
+    }, { startInclusive: row.transcript_sequence, endExclusive: row.transcript_sequence + 1 })) : null;
+    return parseRpcInput(ConversationViewProjectionSchema, {
+      ...request, ...version,
+      header: {
+        title: root.title, titleStatus: root.title_status, scope: root.scope,
+        harnessStatus: this.product.runtimeStatus(),
+        createdAt: new Date(root.created_at).toISOString(), updatedAt: new Date(root.updated_at).toISOString(),
+      },
+      content,
+    }, "conversation_view_projection");
+  }
+
+  async completeConversationView(input: unknown): Promise<void> {
+    await this.storageReady;
+    const request = parseRpcInput(ConversationViewDeliverySchema, input, "conversation_view_delivery");
+    if (!this.objectStore.identity()) return;
+    this.searchProjectionIdentity(request);
+    completeConversationViewDelivery(this.state.storage.sql, request);
+    const next = nextConversationViewAt(this.state.storage.sql);
+    if (next !== null) await this.ensureAlarmNoLaterThan(next);
+  }
+
+  async backfillConversationView(input: unknown): Promise<"queued" | "delivered" | "missing"> {
+    await this.storageReady;
+    const request = parseRpcInput(ConversationViewJobSchema, input, "conversation_view_backfill");
+    if (!this.objectStore.identity()) return "missing";
+    this.searchProjectionIdentity(request);
+    const next = nextConversationViewAt(this.state.storage.sql);
+    if (next !== null) await this.ensureAlarmNoLaterThan(next);
+    return this.state.storage.sql.exec(
+      "SELECT 1 FROM conversation_view_changes WHERE pending = 1 LIMIT 1",
+    ).toArray().length ? "queued" : "delivered";
+  }
+
+  private async flushConversationViews(): Promise<void> {
+    const identity = this.objectStore.identity();
+    if (!identity) return;
+    try {
+      await publishConversationViews(this.state.storage.sql, this.env.ACTIVITY_QUEUE, {
+        type: "conversation_view_v1", region: this.env.AVALON_REGION,
+        workspaceId: identity.workspaceId, parentId: identity.parentId, substreamId: this.externalSubstreamId(),
+      });
+    } catch (error) {
+      logWarn(this.env, "conversation_view_dispatch_deferred", {
+        workspace_id: identity.workspaceId, reason: diagnosticErrorCode(error, "conversation_view_dispatch_failed"),
+      });
+    }
+    const next = nextConversationViewAt(this.state.storage.sql);
+    if (next !== null) await this.ensureAlarmNoLaterThan(next);
+  }
+
   private async searchTurnIdentity(input: unknown) {
     await this.storageReady;
     const request = SearchProjectionMessageSchema.parse(input);
@@ -6448,6 +6520,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
     const authzDueAt = nextAuthorizationProjectionAt(this.state.storage.sql);
     if (authzDueAt !== null) await this.ensureAlarmNoLaterThan(authzDueAt);
+    const viewDueAt = nextConversationViewAt(this.state.storage.sql);
+    if (viewDueAt !== null) await this.ensureAlarmNoLaterThan(viewDueAt);
     const searchDueAt = nextSearchProjectionDueAt(this.state.storage.sql, this.env);
     if (searchDueAt !== null) await this.ensureAlarmNoLaterThan(searchDueAt);
     const nextDueAt = this.objectStore.nextSemanticRealtimeDueAt();
@@ -7789,6 +7863,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       nextAuthorizationProjectionDueAt, nextExternalBindingAt, nextLoopAt, nextExternalSettlementAt,
     } = due;
     const projectionDue = (nextRegionalEffectAt !== null && nextRegionalEffectAt <= now)
+      || (nextConversationViewAt(this.state.storage.sql) ?? Infinity) <= now
       || (nextSearchProjectionAt !== null && nextSearchProjectionAt <= now)
       || (nextAuthorizationProjectionDueAt !== null && nextAuthorizationProjectionDueAt <= now)
       || (nextExternalBindingAt !== null && nextExternalBindingAt <= now);
@@ -7864,6 +7939,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         });
       } catch { logWarn(this.env, 'authorization_projection_dispatch_deferred', { region: this.env.AVALON_REGION }); }
     }
+    await this.flushConversationViews();
     await this.flushSearchProjectionOutbox();
     await this.flushExternalBindingOutbox();
     const nextEffectAt = this.objectStore.nextRegionalEffectDueAt();
@@ -8387,6 +8463,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       derivedCandidates: [
         this.objectStore.nextRegionalEffectDueAt(),
         this.objectStore.nextSemanticRealtimeDueAt(),
+        nextConversationViewAt(this.state.storage.sql),
         nextSearchProjectionDueAt(this.state.storage.sql, this.env),
         nextAuthorizationProjectionAt(this.state.storage.sql),
         this.nextExternalSettlementAt(),
@@ -8482,6 +8559,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const candidates: Array<number | null> = [
       this.objectStore.nextRegionalEffectDueAt(),
       this.objectStore.nextSemanticRealtimeDueAt(),
+      nextConversationViewAt(this.state.storage.sql),
       nextSearchProjectionDueAt(this.state.storage.sql, this.env),
         nextAuthorizationProjectionAt(this.state.storage.sql),
       this.nextLoopWorkAt(now),

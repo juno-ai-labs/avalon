@@ -21,6 +21,7 @@ import {
 } from './workstream-socket-pool';
 
 vi.mock('./workspace-socket', () => ({
+  useOptionalWorkspaceSocket: () => null,
   useWorkspaceSocket: () => ({
     state: 'connected',
   }),
