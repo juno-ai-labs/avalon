@@ -12,12 +12,14 @@ import { resolveWorkstreamAppearance } from './workstream-glyph';
  * its threads with it, and a thread's feed draws its Breakouts with it. Both
  * sit on the trailing side: a person started them.
  */
-export function ConversationCard({ conversation, meta, onOpen, open, summary }: {
+export function ConversationCard({ conversation, meta, onOpen, open, private: isPrivate = false, summary }: {
   conversation: BreakoutMark;
   /** Who started it and when, as the host can name them. */
   meta?: ReactNode;
   onOpen: () => void;
   open: boolean;
+  /** The thread's own privacy, supplied by its host independently of resolution. */
+  private?: boolean;
   summary?: ReactNode;
 }): React.JSX.Element {
   // No "new" on the conversation the reader has open beside it, which they
@@ -27,7 +29,7 @@ export function ConversationCard({ conversation, meta, onOpen, open, summary }: 
     : conversation);
   const { Icon, tint, ink } = resolveWorkstreamAppearance(conversation.substreamId, conversation.appearance);
   return <button
-    aria-label={[conversation.naming ? 'Rally is choosing a name' : conversation.title, conversation.resolved && 'Resolved', news, open && 'Open'].filter(Boolean).join(', ')}
+    aria-label={[conversation.naming ? 'Rally is choosing a name' : conversation.title, conversation.resolved && 'Resolved', isPrivate && 'Private', news, open && 'Open'].filter(Boolean).join(', ')}
     aria-pressed={open}
     className={clsx('conversation-card', conversation.resolved && 'is-resolved', open && 'is-open')}
     onClick={onOpen}
@@ -42,9 +44,10 @@ export function ConversationCard({ conversation, meta, onOpen, open, summary }: 
         <IconChevronRight aria-hidden="true" className="conversation-card-caret" size={13} stroke={2} />
       </span>
       {summary && <span className="conversation-card-summary">{summary}</span>}
-      {(meta || conversation.resolved) && <span className="conversation-card-meta">
+      {(meta || conversation.resolved || isPrivate) && <span className="conversation-card-meta">
         {meta}
-        {conversation.resolved && <span className="conversation-card-resolved">Resolved</span>}
+        {conversation.resolved && <span className="conversation-card-pill">Resolved</span>}
+        {isPrivate && <span className="conversation-card-pill">Private</span>}
       </span>}
     </span>
     <span aria-hidden="true" className="conversation-card-mark" style={{ background: tint, color: ink }}>
