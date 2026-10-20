@@ -368,15 +368,15 @@ coalesced to one report per five minutes through a 100-entry in-memory table. A
 handled network failure is diagnostic only: unlike a real JavaScript exception or
 rejection, it does not emit an essential `process_health` transition.
 
-The main process also owns one deliberately narrow last-resort recovery case for
+The main process also owns deliberately narrow last-resort recovery for
 Electron's internal `SimpleURLLoaderWrapper`: an unhandled
-`ERR_CONNECTION_RESET` whose stack names Electron's built-in URL loader. macOS
-can reset an established connection while Rally is asleep or waking; treating
-that transport interruption as a fatal JavaScript defect leaves Electron's
-generic error dialog over an otherwise recoverable app. Rally keeps the existing
-payload-free `process_health` rejection signal, logs the reset locally, and keeps
-running, allowing the socket, polling, and telemetry owners to take their
-existing reconnect or retry paths. The exact code and a single real stack frame
+`ERR_CONNECTION_RESET` or `ERR_NETWORK_CHANGED` whose stack names Electron's
+built-in URL loader. Sleep/wake or a network change can interrupt an in-flight
+request; treating that transport interruption as a fatal JavaScript defect
+leaves Electron's generic error dialog over an otherwise recoverable app. Rally
+keeps the existing payload-free `process_health` rejection signal, logs the
+interruption and its code locally, and keeps running, allowing the socket,
+polling, and telemetry owners to take their existing reconnect or retry paths. The exact code and a single real stack frame
 containing both the loader and Electron `browser_init` markers are required.
 Every other unhandled rejection is reported with its original rejection origin,
 then thrown fatally on the next event-loop turn so sibling rejections already
@@ -2036,6 +2036,23 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 
 ## Changelog
+
+### 2026-10-20 — Recover Electron network changes at the main-process boundary
+
+**What changed:** The narrow main-process recovery path now accepts Electron
+URL-loader network changes as well as connection resets, preserving the rejection
+health signal and local diagnostic while keeping Rally running.
+
+**Why:** An observed `net::ERR_NETWORK_CHANGED` reached the unhandled-rejection
+boundary and was deliberately rethrown because recovery recognized only
+connection resets, leaving an uncaught-exception dialog over the app.
+
+**Considered and rejected:** Swallowing all network errors would hide failures
+outside the observed transient loader cases.
+
+**Consequences:** The explicit code list and real Electron loader frame remain
+required. Unknown rejections and direct exceptions keep their fatal behavior;
+request owners still own reconnect and retry.
 
 ### 2026-10-11 — `message_sent` is recorded by the API for every client
 

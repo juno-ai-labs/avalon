@@ -1,9 +1,14 @@
 export const ELECTRON_CONNECTION_RESET = 'ERR_CONNECTION_RESET' as const;
+export const ELECTRON_NETWORK_CHANGED = 'ERR_NETWORK_CHANGED' as const;
+
+export type ElectronTransientNetworkErrorCode =
+  | typeof ELECTRON_CONNECTION_RESET
+  | typeof ELECTRON_NETWORK_CHANGED;
 
 export type MainProcessFatalOrigin = 'uncaughtException' | 'unhandledRejection';
 
 export interface MainProcessNetworkRecoveryDependencies {
-  readonly recovered: (error: Error, code: typeof ELECTRON_CONNECTION_RESET) => void;
+  readonly recovered: (error: Error, code: ElectronTransientNetworkErrorCode) => void;
   readonly reportFatal: (error: Error, origin: MainProcessFatalOrigin) => void;
   readonly deferFatal: (fatal: () => never) => void;
 }
@@ -16,16 +21,16 @@ interface MainProcessExceptionEvents {
   on(event: 'unhandledRejection', listener: (reason: unknown) => void): unknown;
 }
 
-function errorCode(error: Error): string | null {
-  if ('code' in error) {
-    return error.code === ELECTRON_CONNECTION_RESET ? ELECTRON_CONNECTION_RESET : null;
-  }
-  return error.message === `net::${ELECTRON_CONNECTION_RESET}` ? ELECTRON_CONNECTION_RESET : null;
+function errorCode(error: Error): ElectronTransientNetworkErrorCode | null {
+  const code = 'code' in error
+    ? error.code
+    : error.message.startsWith('net::') ? error.message.slice('net::'.length) : null;
+  return code === ELECTRON_CONNECTION_RESET || code === ELECTRON_NETWORK_CHANGED ? code : null;
 }
 
 /**
- * Whether Chromium's URL loader lost an established connection and allowed its
- * rejected promise to reach the main-process boundary.
+ * Identify a connection reset or network change from Chromium's URL loader
+ * whose rejected promise reached the main-process boundary.
  *
  * The loader frame matters as much as the code. Application code can throw an
  * error with the same text, and swallowing that would turn a programming error
@@ -33,17 +38,20 @@ function errorCode(error: Error): string | null {
  * frame rather than in the error message. This signature was observed with
  * Electron 43.2.0 and must be re-verified when Electron's js2c layout changes.
  */
-export function isElectronConnectionReset(error: unknown): error is Error {
-  if (!(error instanceof Error) || errorCode(error) === null) return false;
+export function electronTransientNetworkErrorCode(error: unknown): ElectronTransientNetworkErrorCode | null {
+  if (!(error instanceof Error)) return null;
+  const code = errorCode(error);
+  if (code === null) return null;
   // V8 copies newlines from the rendered name and message into `stack` before
   // its real frames. Refuse those shapes so text cannot inject an `at ...`
   // line that impersonates Electron's loader frame.
-  if (/[\r\n\u2028\u2029]/u.test(error.name) || /[\r\n\u2028\u2029]/u.test(error.message)) return false;
-  return (error.stack ?? '').split('\n').slice(1).some((line) => (
+  if (/[\r\n\u2028\u2029]/u.test(error.name) || /[\r\n\u2028\u2029]/u.test(error.message)) return null;
+  const hasLoaderFrame = (error.stack ?? '').split('\n').slice(1).some((line) => (
     /^\s*at\s/u.test(line)
       && line.includes('SimpleURLLoaderWrapper')
       && line.includes('node:electron/js2c/browser_init')
   ));
+  return hasLoaderFrame ? code : null;
 }
 
 function normalizedRejection(reason: unknown): Error {
@@ -57,7 +65,7 @@ function normalizedRejection(reason: unknown): Error {
 }
 
 /**
- * Owns the only recoverable unhandled rejection in Rally's main process.
+ * Owns the recoverable Electron network rejections in Rally's main process.
  *
  * Unknown rejections are reported with their original origin before a fatal
  * throw is deferred to the next event-loop turn. Deferral lets Node finish
@@ -72,12 +80,13 @@ export class MainProcessNetworkRecovery {
     reason: unknown,
     dependencies: MainProcessNetworkRecoveryDependencies,
   ): void {
-    if (isElectronConnectionReset(reason)) {
-      dependencies.recovered(reason, ELECTRON_CONNECTION_RESET);
+    const error = normalizedRejection(reason);
+    const code = electronTransientNetworkErrorCode(error);
+    if (code !== null) {
+      dependencies.recovered(error, code);
       return;
     }
 
-    const error = normalizedRejection(reason);
     dependencies.reportFatal(error, 'unhandledRejection');
     this.deferredFatals.add(error);
     dependencies.deferFatal(() => { throw error; });

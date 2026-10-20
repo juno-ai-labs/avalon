@@ -5763,7 +5763,7 @@ installMainProcessNetworkRecovery(process, {
     // Preserve the payload-free fleet signal this rejection emitted before
     // it became recoverable; a packaged app's local warning is not observable.
     void telemetryReporter?.processHealth('main', 'rejection', 'unknown').catch(() => undefined);
-    logWarn('rally', 'recovered a transient main-process network reset', { code, error });
+    logWarn('rally', 'recovered a transient main-process network interruption', { code, error });
   },
   reportFatal: reportMainProcessFatal,
   // Throw only after Node has delivered every rejection already pending in
