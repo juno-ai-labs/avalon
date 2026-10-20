@@ -8699,23 +8699,24 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   min-width: 0;
   position: relative;
 }
-/* Let the shared tint blend show through the attached cap, ending in the
-   pill's own fill. Keep its two hover targets, without a rim across the neck. */
+/* Compose the attached group before shadowing it: a shadow on the pill
+   alone draws a curved seam through the neck, even without its border. */
 .mark-bridge.has-trailing { align-items: center; display: inline-flex; }
 .mark-bridge-spacer { flex: none; }
 .mark-bridge-trailing { display: flex; flex: 0 1 auto; min-width: 36px; position: relative; }
 .mark-bridge.has-trailing > .mark-bridge-trailing > .title-pill {
   --attached-pill-fill: var(--av-sys-color-surface-raised);
   background: linear-gradient(to right, transparent, var(--attached-pill-fill) var(--mark-bridge-cap));
-  box-shadow: var(--av-cmp-composer-shadow);
+  box-shadow: none;
 }
 .mark-bridge.has-trailing > .mark-bridge-trailing > .title-pill:hover { --attached-pill-fill: var(--av-sys-color-surface-raised-hover); }
 .mark-bridge.has-trailing > .mark-bridge-trailing > .title-pill:is([data-state='open'], .is-split:has(> [data-state='open'])) {
   --attached-pill-fill: color-mix(in srgb, var(--av-sys-color-surface-raised) 90%, var(--av-sys-color-text-disabled));
-  box-shadow: none;
 }
+.mark-bridge-glass,
+.mark-bridge.has-trailing { filter: drop-shadow(0 1px 2px rgb(0 0 0 / .08)) drop-shadow(0 4px 10px rgb(0 0 0 / .06)); }
+.mark-bridge.has-trailing > .mark-bridge-glass { filter: none; }
 .mark-bridge-glass {
-  filter: drop-shadow(0 1px 2px rgb(0 0 0 / .08)) drop-shadow(0 4px 10px rgb(0 0 0 / .06));
   left: -1px;
   overflow: visible;
   pointer-events: none;
