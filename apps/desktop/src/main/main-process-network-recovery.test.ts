@@ -1,15 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  ELECTRON_CONNECTION_RESET,
+  type ElectronNetworkErrorCode,
   installMainProcessNetworkRecovery,
-  isElectronConnectionReset,
+  electronNetworkErrorCode,
   MainProcessNetworkRecovery,
 } from './main-process-network-recovery';
 
-function electronReset(): Error {
-  const error = new Error('net::ERR_CONNECTION_RESET');
+const networkCodes = [
+  'ERR_CONNECTION_RESET', 'ERR_NETWORK_CHANGED', 'ERR_NETWORK_IO_SUSPENDED',
+  'ERR_INTERNET_DISCONNECTED', 'ERR_CONNECTION_CLOSED', 'ERR_NAME_NOT_RESOLVED',
+  'ERR_PROXY_CONNECTION_FAILED', 'ERR_CERT_AUTHORITY_INVALID', 'ERR_TIMED_OUT',
+  'ERR_ABORTED', 'ERR_FUTURE_TRANSPORT_FAILURE',
+] as const;
+
+function electronNetworkError(code: ElectronNetworkErrorCode = 'ERR_CONNECTION_RESET'): Error {
+  const error = new Error(`net::${code}`);
   error.stack = [
-    'Error: net::ERR_CONNECTION_RESET',
+    `Error: net::${code}`,
     '    at SimpleURLLoaderWrapper.<anonymous> (node:electron/js2c/browser_init:2:138087)',
     '    at SimpleURLLoaderWrapper.emit (node:events:509:28)',
   ].join('\n');
@@ -27,74 +34,93 @@ function setup() {
 }
 
 describe('main-process network recovery', () => {
-  it('recognizes Electron URL-loader connection resets', () => {
-    expect(isElectronConnectionReset(electronReset())).toBe(true);
+  it.each(networkCodes)('recognizes Electron URL-loader %s', (code) => {
+    expect(electronNetworkErrorCode(electronNetworkError(code))).toBe(code);
   });
 
-  it('accepts Electron errors that expose the reset as a code', () => {
-    const error = electronReset() as Error & { code: string };
+  it.each(networkCodes)('accepts Electron errors that expose %s as a code', (code) => {
+    const error = electronNetworkError(code) as Error & { code: string };
     error.message = 'request failed';
-    error.code = ELECTRON_CONNECTION_RESET;
+    error.code = code;
 
-    expect(isElectronConnectionReset(error)).toBe(true);
+    expect(electronNetworkErrorCode(error)).toBe(code);
   });
 
-  it('does not hide application errors that happen to use the same message', () => {
-    expect(isElectronConnectionReset(new Error('net::ERR_CONNECTION_RESET'))).toBe(false);
+  it('does not hide application errors with a Chromium network message', () => {
+    expect(electronNetworkErrorCode(new Error('net::ERR_NETWORK_CHANGED'))).toBe(null);
   });
 
-  it('does not let message text override a contradictory error code', () => {
-    const error = electronReset() as Error & { code: string };
+  it('does not let message text override a contradictory code', () => {
+    const error = electronNetworkError('ERR_NETWORK_CHANGED') as Error & { code: string };
+    error.code = 'APPLICATION_FAILURE';
+
+    expect(electronNetworkErrorCode(error)).toBe(null);
+  });
+
+  it('rejects disagreement between two Chromium network codes', () => {
+    const error = electronNetworkError('ERR_NETWORK_CHANGED') as Error & { code: string };
     error.code = 'ERR_TIMED_OUT';
-
-    expect(isElectronConnectionReset(error)).toBe(false);
+    expect(electronNetworkErrorCode(error)).toBe(null);
   });
 
-  it('requires both Electron markers on the same real stack frame', () => {
-    const messageOnly = electronReset();
+  it('requires both Electron markers on the same real frame', () => {
+    const code = 'ERR_NETWORK_CHANGED';
+    const messageOnly = electronNetworkError(code);
     messageOnly.stack = [
       'Error: SimpleURLLoaderWrapper node:electron/js2c/browser_init',
       '    at application.js:1:1',
     ].join('\n');
-    const separateFrames = electronReset();
+    const separateFrames = electronNetworkError(code);
     separateFrames.stack = [
-      'Error: net::ERR_CONNECTION_RESET',
+      `Error: net::${code}`,
       '    at SimpleURLLoaderWrapper.<anonymous> (application.js:1:1)',
       '    at callback (node:electron/js2c/browser_init:2:138087)',
     ].join('\n');
 
-    expect(isElectronConnectionReset(messageOnly)).toBe(false);
-    expect(isElectronConnectionReset(separateFrames)).toBe(false);
+    expect(electronNetworkErrorCode(messageOnly)).toBe(null);
+    expect(electronNetworkErrorCode(separateFrames)).toBe(null);
   });
 
   it('does not let multiline error text impersonate a stack frame', () => {
-    const error = electronReset() as Error & { code: string };
-    error.code = ELECTRON_CONNECTION_RESET;
+    const error = electronNetworkError('ERR_NETWORK_CHANGED') as Error & { code: string };
+    error.code = 'ERR_NETWORK_CHANGED';
     error.message = [
       'request failed',
       '    at SimpleURLLoaderWrapper.<anonymous> (node:electron/js2c/browser_init:2:138087)',
     ].join('\n');
     error.stack = `Error: ${error.message}\n    at application.js:1:1`;
 
-    expect(isElectronConnectionReset(error)).toBe(false);
+    expect(electronNetworkErrorCode(error)).toBe(null);
   });
 
-  it('does not classify a different Electron network failure as this incident', () => {
-    const error = electronReset();
-    error.message = 'net::ERR_TIMED_OUT';
-
-    expect(isElectronConnectionReset(error)).toBe(false);
+  it.each(['request failed', 'ERR_TIMED_OUT', 'net::OTHER_ERROR', 'net::ERR_'])('rejects an unrecognized loader message: %s', (message) => {
+    const error = electronNetworkError();
+    error.message = message;
+    expect(electronNetworkErrorCode(error)).toBe(null);
   });
 
-  it('keeps the process alive for the recognized reset and announces recovery', () => {
+  it.each(networkCodes)('keeps the process alive for %s and announces recovery', (code) => {
     const { dependencies, recovery } = setup();
-    const error = electronReset();
+    const error = electronNetworkError(code);
 
     recovery.handleUnhandledRejection(error, dependencies);
 
-    expect(dependencies.recovered).toHaveBeenCalledWith(error, ELECTRON_CONNECTION_RESET);
+    expect(dependencies.recovered).toHaveBeenCalledWith(error, code);
     expect(dependencies.reportFatal).not.toHaveBeenCalled();
     expect(dependencies.deferFatal).not.toHaveBeenCalled();
+  });
+
+  it('keeps non-network loader failures fatal', () => {
+    const { dependencies, recovery } = setup();
+    const error = electronNetworkError();
+    error.message = 'Unexpected loader state';
+
+    recovery.handleUnhandledRejection(error, dependencies);
+
+    expect(dependencies.recovered).not.toHaveBeenCalled();
+    expect(dependencies.reportFatal).toHaveBeenCalledWith(error, 'unhandledRejection');
+    expect(dependencies.deferFatal).toHaveBeenCalledTimes(1);
+    expect(() => dependencies.deferFatal.mock.calls[0]![0]()).toThrow(error);
   });
 
   it('reports unknown rejections with their original origin before deferring the exact error', () => {
@@ -142,7 +168,8 @@ describe('main-process network recovery', () => {
     expect(dependencies.deferFatal).toHaveBeenCalledTimes(2);
   });
 
-  it('registers executable process boundaries that recover resets and deduplicate deferred fatals', () => {
+  it('registers process boundaries that recover network errors and deduplicate deferred fatals', () => {
+    const code = 'ERR_NETWORK_CHANGED';
     const dependencies = {
       recovered: vi.fn(),
       reportFatal: vi.fn(),
@@ -155,9 +182,11 @@ describe('main-process network recovery', () => {
     expect(monitor).toBeTypeOf('function');
     expect(reject).toBeTypeOf('function');
 
-    const reset = electronReset();
-    reject!(reset);
-    expect(dependencies.recovered).toHaveBeenCalledWith(reset, ELECTRON_CONNECTION_RESET);
+    const networkError = electronNetworkError(code);
+    reject!(networkError);
+    expect(dependencies.recovered).toHaveBeenCalledWith(networkError, code);
+    expect(dependencies.reportFatal).not.toHaveBeenCalled();
+    expect(dependencies.deferFatal).not.toHaveBeenCalled();
 
     const programmingError = new Error('programming error');
     reject!(programmingError);
