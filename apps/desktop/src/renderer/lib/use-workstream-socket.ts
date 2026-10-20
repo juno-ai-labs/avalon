@@ -1468,20 +1468,19 @@ export function useWorkstreamSocket(
         canonicalResyncTarget = Math.max(canonicalResyncTarget ?? 0, event.latestSequence);
         clearHeartbeat();
         clearStabilityTimer();
-        // Armed only when a close is still coming, and never reported from
-        // here. `readyState` flips to CLOSED before the `close` event is
-        // dispatched, so a resync frame delivered in the same task batch as an
-        // abrupt close reaches this line with a socket that will still notify:
-        // reporting here as well would count one drop twice, the second time
-        // with the cause already consumed and so labelled as the server's. The
-        // other side is the same — a frame arriving after the close listener
-        // has run finds `socket` null, and that drop has been reported too. So
-        // the close listener makes the single report, and a cause armed with no
-        // close to consume it would be left to mislabel the next one.
+        // A completed feed no longer has an opening deadline. Retire it now:
+        // waiting for close here could otherwise strand resync indefinitely.
+        // A CLOSED socket may already have its close event queued; let that
+        // event report the transport failure once, as before.
         if (socket && socket.readyState !== REALTIME_SOCKET_CLOSED) {
-          socketTelemetry.willClose('resync_required');
-          socket.close();
-        } else scheduleReconnect();
+          retireTransport();
+          socketTelemetry.disconnected({
+            attempts: attempts.current,
+            retrying: !isOffline(),
+            cause: 'resync_required',
+          });
+        }
+        scheduleReconnect();
         return;
       }
       // A refusal the room correlated to one request is that request's answer,
