@@ -161,7 +161,7 @@ function installFeedGeometry(): void {
   });
 }
 
-function renderChannel(path = '/channels/outbound', seed: (client: QueryClient) => void = () => undefined, state: unknown = null) {
+function renderChannel(path = '/channels/outbound', seed: (client: QueryClient) => void = () => undefined, state: unknown = null, viewer: Workspace = workspace) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(CHANNEL_STATS_QUERY_KEY, [outboundStats({
     readThroughSequenceNumber: 2, firstUnreadSequenceNumber: null, hasUnread: false,
@@ -169,7 +169,7 @@ function renderChannel(path = '/channels/outbound', seed: (client: QueryClient) 
   seed(client);
   const view = render(<QueryClientProvider client={client}><Tooltip.Provider>
     <MemoryRouter initialEntries={[{ ...parsePath(path), state }]}>
-      <Routes><Route element={<ChannelScreen workspace={workspace} />} path="/channels/:channelId/*" /></Routes>
+      <Routes><Route element={<ChannelScreen workspace={viewer} />} path="/channels/:channelId/*" /></Routes>
       <Routes><Route element={<Location />} path="*" /></Routes>
       <Link to="/channels/outbound/threads/plan">Plain link to Q4 plan</Link>
       <Link to="/channels/empty">Empty Channel</Link>
@@ -204,6 +204,18 @@ describe('a Channel', () => {
   });
 
   describe('feed positioning', () => {
+
+    it('opens overflowing empty guidance at the top and preserves that position after a refresh', async () => {
+      api.getChannelFeed.mockResolvedValue({ nextCursor: null, items: [] });
+      const { container, client } = renderChannel();
+      await screen.findByText(/^Channels in Rally act as places to gather related work\./);
+      await waitFor(() => expect(screen.getByRole('list', { name: 'Outbound feed' })).toHaveAttribute('aria-busy', 'false'));
+      const feed = container.querySelector('.channel-feed')!;
+      expect(feed.scrollHeight).toBeGreaterThan(feed.clientHeight);
+      expect(feed.scrollTop).toBe(0);
+      await act(async () => { await client.invalidateQueries({ queryKey: channelFeedQueryKey('outbound') }); });
+      expect(feed.scrollTop).toBe(0);
+    });
 
     it('refreshes invalidated caught-up stats before freezing the opening waterline', async () => {
       let answer!: (rows: ChannelStats[]) => void;
@@ -369,7 +381,7 @@ describe('a Channel', () => {
         }), { ...outboundStats(), channelId: 'empty', latestAttentionSequenceNumber: 0,
           readThroughSequenceNumber: 0, firstUnreadSequenceNumber: null, hasUnread: false }]);
       });
-      await screen.findByText('No threads yet. Describe the work below and Rally starts a thread for it.');
+      await screen.findByText(/^Channels in Rally act as places to gather related work\./);
       fireEvent.click(screen.getByRole('link', { name: 'Outbound Channel' }));
       await waitFor(() => expect(container.querySelector('.channel-feed')!.scrollTop).toBe(200));
       expect(api.getChannelFeed).toHaveBeenCalledWith('outbound', 'older', expect.anything());
@@ -450,7 +462,7 @@ describe('a Channel', () => {
       feed.scrollTop = 700;
       fireEvent.scroll(feed);
       fireEvent.click(screen.getByRole('link', { name: 'Empty Channel' }));
-      await screen.findByText('No threads yet. Describe the work below and Rally starts a thread for it.');
+      await screen.findByText(/^Channels in Rally act as places to gather related work\./);
       feed.scrollTop = 0;
       fireEvent.scroll(feed);
       fireEvent.click(screen.getByRole('link', { name: 'Outbound Channel' }));
@@ -964,6 +976,17 @@ describe('a Channel', () => {
     spaces.data = outbound('through_channel');
     renderChannel();
     await screen.findByRole('list', { name: 'Outbound feed' });
+    expect(screen.queryByText('composer')).not.toBeInTheDocument();
+  });
+
+  it.each(['guest', 'through_channel'] as const)('shows neutral empty guidance to a %s viewer without a composer', async (access) => {
+    spaces.data = outbound(access === 'through_channel' ? 'through_channel' : 'organization');
+    api.getChannelFeed.mockResolvedValue({ nextCursor: null, items: [] });
+    renderChannel('/channels/outbound', undefined, null, access === 'guest'
+      ? { ...workspace, currentUser: { ...workspace.currentUser, accessClass: 'guest' } }
+      : workspace);
+    expect(await screen.findByText('No threads yet.')).toBeInTheDocument();
+    expect(screen.queryByText(/input box below/)).not.toBeInTheDocument();
     expect(screen.queryByText('composer')).not.toBeInTheDocument();
   });
 
