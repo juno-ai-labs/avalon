@@ -32,12 +32,17 @@ can remove the old text.
 The source's alarm publishes references through the existing activity Queue,
 using its existing 100-message batch size and five-second dispatch retry.
 Recent edits and the newest historical turns publish first, so opening does
-not wait for the oldest history. Only one page per conversation is in flight. The consumer reloads current
+not wait for the oldest history. Only one page per conversation has an unexpired
+delivery claim. The consumer reloads current
 content from SubstreamAgent, applies it to WorkspaceDO, then confirms the
 claimed revision at the source before acknowledging. That confirmation releases
 the next page; edits newer than the delivered snapshot remain pending. Queue
 acceptance alone does not release a page. A failed destination write retries through
-the Queue. Neither publication nor destination delivery gates the agent loop.
+the Queue with exponential backoff. Claims also carry a durable retry gate using
+the existing scheduled-alarm backoff, as the thread backfill lane does. If a
+delivery or acknowledgement is lost, the source alarm reclaims and republishes
+pending rows without waiting for another conversation edit. Neither publication
+nor destination delivery gates the agent loop.
 
 The allowlist retains text blocks, author snapshots, mention and attachment
 references, and plugin display summaries with measured timing. Tool blocks,
@@ -87,8 +92,11 @@ navigation is ignored, and any live conversation snapshot replaces the seed.
 SubstreamAgent migration 78 queues every historical turn and the conversation
 header. WorkspaceDO migration 124 also fills the existing
 [`thread_backfill`](thread-backfill.md) lane from `parent_children` and
-`sidekick_children`. Its `conversation_view` job includes Channel, Thread,
-Breakout, and Sidekick conversations, including archived conversations. Unlike
+`sidekick_children`, plus `channels`, `spaces`, and `parent_metadata`
+for legacy parents without a materialized Main child. Work lookup supplies
+the implicit Main, matching the hosted parent registry. Its `conversation_view`
+job includes Channel, Thread, Breakout, and Sidekick conversations, including
+archived conversations. Unlike
 the older summary jobs, this job does not use the open-thread directory as its
 universe.
 
@@ -174,7 +182,10 @@ attachment. Full transcript replication was rejected because tool inputs and
 results would consume the workspace SQLite quota. Source mutations and the
 existing-conversation backfill share one durable reference-delivery path.
 Delivery confirmation paces the pass so historical publication cannot race
-ahead of the workspace writes. Disk hydration precedes preview requests, and
+ahead of the workspace writes. Durable retry gates recover lost deliveries so
+an exhausted Queue retry cannot leave deleted text cached permanently. Legacy
+parents with an implicit Main are included even without a materialized child row.
+Disk hydration precedes preview requests, and
 the desktop relay makes the same opening path available to Sidekick windows.
 Future changes must preserve exact-conversation admission and the distinction
 between a view seed and an authoritative socket snapshot.
