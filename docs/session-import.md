@@ -464,6 +464,9 @@ HTML/code artifacts remain stored files; importing does not launch a site.
   failed, and the Organization's reservation watch: archiving a start cut off
   after its reservation, dropping the watch on one that opened, and gating a
   failed reclaim for a retry.
+  Reservation-watch tests wait for the durable watch to be removed before
+  checking the archive and receipt: the runtime may already be running a due
+  alarm when `runDurableObjectAlarm` returns.
 - `test/workspace-import-reservation-reclaim-migration.test.ts`: migration 119
   watches each listed, unopened import reservation and no other thread.
 - `test/session-import.test.ts`: which conversation and provider a source URL names.

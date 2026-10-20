@@ -32,7 +32,35 @@ Bind's `protocol_user_appended` transition, so the next Rally execution sees
 the updated source transcript without inventing a Rally run or treating imported
 assistant text as Rally's own output.
 
-Production message addressing is a two-stage cascade. JEV receives every
+Opening messages in Threads and Breakouts use `opening-message.ts` before any
+participant-count or attachment fast path. Its one JEV Choice distinguishes
+`prompt_to_process`, `human_to_human`, and `conversation_description` (including
+names). Only the latter two suppress a run; the message is still persisted.
+The original text, resolved mentions, attachment count, and annotation comments
+are the decision's evidence. Mixed work requests and ambiguity belong to
+`prompt_to_process`. Missing credentials, provider or schema failures, and
+confidence at or below the existing addressing floor (`0.5`) also process the
+prompt, without a generative fallback. The existing one-second JEV admission
+budget applies. These remain inherited operating defaults. See the [evaluation README](../packages/agent-harness/evals/opening-message/README.md)
+for comparison results and their limitations.
+
+Only member-composed openings (`opening_message`, without a Slack origin or
+started opportunity) use this gate. Explicit summons already authorize work.
+Thread initialization commits either an idle conversation with no run or its
+ordinary opening run. Replay reads that committed result without classifying
+again. Breakouts use the same gate on their first local message, before any
+canonical turn or earlier pending input; frozen parent context is not a local
+message. Later messages retain ordinary addressing. Imported history, merge
+posts, explicit system activations, and scripted demo seeds retain their own
+admission rules. Diagnostics use the metered `addressing_classifier` activity,
+the `opening_message_addressing` schema, and one
+`opening_message_classifier_outcome` row per decision.
+These are internal diagnostics only: the admission service returns a boolean,
+and neither the classifier prompt nor its label, confidence, or failure details
+are inserted into the conversation or the responding agent's context. A silent
+decision adds no assistant acknowledgement or explanation.
+
+Subsequent message addressing is a two-stage cascade. JEV receives every
 message passed to the classifier using the optimized TypeSafe choice question and
 structured state recorded by the eval. A choice is accepted only when its
 confidence is strictly greater than `0.5`; exactly `0.5`, lower confidence, an
@@ -231,7 +259,7 @@ Stream and checkpoint events for participant loops carry that same sequence.
 
 ### Addressing
 
-Before starting a loop, a lightweight classifier returns `agent_action`, `human_only`, `both`, or `uncertain` with confidence and a terse rationale code. Explicit Rally/connector mentions and clear work requests invoke the harness. Social acknowledgement and human-only coordination can remain unanswered — including a message aimed at a teammate: the caller passes the display names of the people the message mentions (`humanMentions`, resolved from validated mention rows), and the prompt rules that a message telling or asking a mentioned person something is that person's to act on, even mid-task, unless it also asks Rally for work. The same signal gates the deterministic fast paths: an opening imperative short-circuits to `agent_action` only while the message mentions nobody, since "Please review the deck @Alex" hands the work to Alex, not to Rally. Uncertain messages invoke only when an active task or explicit tool context exists. The current message is preserved in full. Only the newest ten context messages are retained; older ones are omitted, and each retained message is bounded to 1,000 Unicode code points by keeping its opening and conclusion around a middle ellipsis. JEV receives that history in its state payload, and the model-independent OpenRouter prompt receives the same bytes: Terra uses that renderer when evaluated directly, while the hosted cascade uses it for the pinned DeepSeek fallback. The label is not exposed in the UI.
+For subsequent messages that need addressing classification, a lightweight classifier returns `agent_action`, `human_only`, `both`, or `uncertain` with confidence and a terse rationale code. Explicit Rally/connector mentions and clear work requests invoke the harness. Social acknowledgement and human-only coordination can remain unanswered — including a message aimed at a teammate: the caller passes the display names of the people the message mentions (`humanMentions`, resolved from validated mention rows), and the prompt rules that a message telling or asking a mentioned person something is that person's to act on, even mid-task, unless it also asks Rally for work. The same signal gates the deterministic fast paths: an opening imperative short-circuits to `agent_action` only while the message mentions nobody, since "Please review the deck @Alex" hands the work to Alex, not to Rally. Uncertain messages invoke only when an active task or explicit tool context exists. The current message is preserved in full. Only the newest ten context messages are retained; older ones are omitted, and each retained message is bounded to 1,000 Unicode code points by keeping its opening and conclusion around a middle ellipsis. JEV receives that history in its state payload, and the model-independent OpenRouter prompt receives the same bytes: Terra uses that renderer when evaluated directly, while the hosted cascade uses it for the pinned DeepSeek fallback. The label is not exposed in the UI.
 
 A message that invokes nothing is still a turn the model reads. The conversation object appends every such human or external text turn to the loop's projection at the next text admission, in transcript order, ahead of the input that follows it — rendered with a header saying it was said to the room, not to Rally, and naming its author, so the model reads it as context rather than as a request ([`workstream-durable-object.md`](workstream-durable-object.md)). An elicitation answer carries no such fill; the turns said while the question was open wait for the next text input.
 
@@ -1455,6 +1483,29 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-10-20 — Opening messages can establish a conversation without starting work
+
+**What changed:** A shared three-way JEV decision gates the first message in a
+Thread or Breakout. Human-to-human messages and names/descriptions persist
+without a run; prompts and unavailable or uncertain classifications start one.
+
+**Why:** Thread creation previously always invoked Rally, and single-person
+Breakouts bypassed addressing. Naming a conversation or speaking to another
+person therefore elicited an unwanted agent reply.
+
+**Considered and rejected:** Reusing the later-message classifier unchanged:
+it does not distinguish naming a conversation, and its uncertain policy can
+silently drop an opening work request. A second generative fallback would add
+latency where the requested safe default is simply to process the prompt.
+
+**Consequences:** Silent initialization is a complete, retryable create.
+Subsequent messages must still activate normally. Public creation receipts must
+replay silent openings as well as openings with runs, and explicit Slack summons
+or started opportunities must bypass classification. Independent routing and
+materialization overlap with JEV to avoid serial latency. Classifier details stay
+internal; silence never becomes an explanation of classification. The prompt's
+synthetic evidence does not replace production calibration.
 
 ### 2026-10-19 — Google meeting knowledge loads against an authorized connection
 
