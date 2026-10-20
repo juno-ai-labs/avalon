@@ -1,6 +1,6 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import clsx from 'clsx';
-import { useId, useLayoutEffect, useRef, useState } from 'react';
+import { useId, type CSSProperties, type ReactNode } from 'react';
 
 import { ShapeOutline, type IdentityMark } from './identity-tile';
 import { Tip } from './primitives';
@@ -37,8 +37,6 @@ const ANGLE = Math.PI / 4;
 const HOLD = 9;
 /** Stops in each blend; enough that straight runs between them read as one curve. */
 const BLEND_STEPS = 8;
-/** Room after a labelled mark's name, before the shape's rounded end. */
-const LABEL_END = 12;
 
 /** The width of `count` marks on a bridge. */
 function markBridgeWidth(count: number): number {
@@ -47,10 +45,8 @@ function markBridgeWidth(count: number): number {
 
 /**
  * The outline of `count` circles in a row, each joined to the next by a neck.
- * `extra` stretches the last circle into a pill that much longer, its ends
- * still RADIUS round.
  */
-function bridgePath(count: number, extra: number): string {
+function bridgePath(count: number): string {
   const r = RADIUS;
   const centre = (index: number): number => r + index * SPAN;
   const dx = r * Math.cos(ANGLE);
@@ -64,7 +60,7 @@ function bridgePath(count: number, extra: number): string {
   const bottom = r + dy;
   const n = (value: number): string => value.toFixed(2);
   const last = count - 1;
-  const end = centre(last) + extra;
+  const end = centre(last);
   if (last === 0) return `M${r} 0 L${n(end)} 0 A${r} ${r} 0 0 1 ${n(end)} ${2 * r} L${r} ${2 * r} A${r} ${r} 0 0 1 ${r} 0 Z`;
   // Clockwise from the first neck's top: along the top, round the last
   // circle, back along the bottom, round the first. Each inner circle shows
@@ -76,7 +72,7 @@ function bridgePath(count: number, extra: number): string {
     path.push(`C${n(from + rx)} ${n(top + ry)} ${n(to - rx)} ${n(top + ry)} ${n(to)} ${n(top)}`);
     if (index + 1 < last) path.push(`A${r} ${r} 0 0 1 ${n(centre(index + 1) + dx)} ${n(top)}`);
   }
-  // Round the last mark: up to its top, along any stretch, round its end, back.
+  // Round the last mark, then travel back along the bottom.
   path.push(
     `A${r} ${r} 0 0 1 ${n(centre(last))} 0`,
     `L${n(end)} 0`,
@@ -127,67 +123,43 @@ function bridgeStops(tints: readonly string[]): { offset: number; color: string 
  * It says nothing about what the objects are or where they go: a caller hands
  * it marks, names, and what selecting each does.
  *
- * `labelLast` writes the last object's name beside its mark, stretching that
- * mark into a pill the name's width; the shape is measured from the name as
- * laid out, so it fits whatever font and size it renders in. The bridge never
- * grows past its container: a name too long for the room ends in an ellipsis
- * and the pill is drawn to the width it was given.
+ * `trailing` attaches a control that paints itself. One extra circle supplies
+ * the connecting neck, fading beneath the control's left cap. Its width never
+ * depends on the control's title, so the bridge needs no layout measurement.
  */
-export function MarkBridge({ className, items, labelLast = false }: {
+export function MarkBridge({ className, items, trailing }: {
   className?: string | undefined;
   items: readonly MarkBridgeItem[];
-  labelLast?: boolean | undefined;
+  trailing?: ReactNode;
 }): React.JSX.Element | null {
   const id = useId();
-  const root = useRef<HTMLSpanElement>(null);
-  const label = useRef<HTMLSpanElement>(null);
-  // The name's full width, however much of it shows, and the width the
-  // bridge was actually given once its container had its say.
-  const [size, setSize] = useState({ name: 0, given: 0 });
-  const labelled = labelLast && items.length > 0;
-  // A different last object is a new label element: observe that one.
-  const last = items.at(-1);
-  useLayoutEffect(() => {
-    const box = root.current;
-    const element = label.current;
-    if (!labelled || !box || !element) { setSize({ name: 0, given: 0 }); return undefined; }
-    const measure = (): void => setSize((current) => {
-      // scrollWidth rounds to the nearest pixel, which can undersize even a
-      // short name and trigger an ellipsis. A range measures the full text
-      // at subpixel precision even when the label is clipped.
-      const text = document.createRange();
-      text.selectNodeContents(element);
-      const next = { name: Math.ceil(text.getBoundingClientRect().width), given: box.getBoundingClientRect().width };
-      return next.name === current.name && next.given === current.given ? current : next;
-    });
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(box);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [labelled, last?.key, last?.name]);
   const count = items.length;
-  // Nothing to join: the geometry below assumes at least one mark.
-  if (count === 0) return null;
-  // The gradient spans the circles; past the last it holds the last tint.
-  const tintWidth = markBridgeWidth(count);
-  // Asked for the whole name; drawn to what the container allowed.
-  const wanted = labelled && size.name > 0 ? tintWidth + size.name + LABEL_END : tintWidth;
-  const width = labelled && size.name > 0 && size.given > 0 ? Math.max(tintWidth, Math.min(wanted, size.given)) : wanted;
-  const extra = width - tintWidth;
-  const path = bridgePath(count, extra);
-  const stops = bridgeStops(items.map((item) => item.mark.tint));
+  if (count === 0 && !trailing) return null;
+  const width = count > 0 ? markBridgeWidth(count) : 0;
+  const glassCount = count + (trailing ? 1 : 0);
+  const glassWidth = markBridgeWidth(glassCount);
+  const path = bridgePath(glassCount);
+  const tints = items.map((item) => item.mark.tint);
+  if (trailing) tints.push('var(--av-sys-color-surface-raised)');
+  const stops = bridgeStops(tints);
   const height = 2 * RADIUS;
-  return <span className={clsx('mark-bridge', className)} ref={root} style={{ height, minWidth: tintWidth, width: wanted }}>
-    <svg
+  return <span className={clsx('mark-bridge', trailing && count > 0 && 'has-trailing', className)} style={{
+    '--mark-bridge-cap': `${RADIUS}px`,
+    height,
+    minWidth: trailing ? glassWidth : width,
+    width: trailing ? undefined : width,
+    columnGap: trailing && count > 0 ? SPAN - 2 * RADIUS : undefined,
+  } as CSSProperties}>
+    {trailing && count > 0 ? <span aria-hidden="true" className="mark-bridge-spacer" style={{ width }} /> : null}
+    {count > 0 ? <svg
       aria-hidden="true"
       className="mark-bridge-glass"
       height={height + 2}
-      viewBox={`-1 -1 ${width + 2} ${height + 2}`}
-      width={width + 2}
+      viewBox={`-1 -1 ${glassWidth + 2} ${height + 2}`}
+      width={glassWidth + 2}
     >
       <defs>
-        <linearGradient gradientUnits="userSpaceOnUse" id={`${id}-tint`} x1="0" x2={tintWidth} y1="0" y2="0">
+        <linearGradient gradientUnits="userSpaceOnUse" id={`${id}-tint`} x1="0" x2={glassWidth} y1="0" y2="0">
           {stops.map((stop, index) => <stop key={index} offset={stop.offset} style={{ stopColor: stop.color }} />)}
         </linearGradient>
         {/* Ends above the symbols, so each one sits on its raw tint: the pair's
@@ -201,33 +173,39 @@ export function MarkBridge({ className, items, labelLast = false }: {
           <stop className="mark-bridge-rim-to" offset="0.45" />
         </linearGradient>
         <clipPath id={`${id}-inside`}><path d={path} /></clipPath>
+        {/* Fade paths before the outer drop-shadow filter, so the crumbs keep
+            their full shadow outside the SVG box. Color is irrelevant to alpha. */}
+        <linearGradient gradientUnits="userSpaceOnUse" id={`${id}-fade`} x1={width} x2={width + SPAN - RADIUS} y1="0" y2="0">
+          <stop offset="0" stopOpacity="1" />
+          <stop offset="1" stopOpacity="0" />
+        </linearGradient>
+        <mask height={height + 2} id={`${id}-fade-mask`} maskUnits="userSpaceOnUse" style={{ maskType: 'alpha' }} width={glassWidth + 2} x="-1" y="-1">
+          <rect fill={`url(#${id}-fade)`} height={height + 2} width={glassWidth + 2} x="-1" y="-1" />
+        </mask>
       </defs>
-      <path d={path} fill={`url(#${id}-tint)`} />
-      <path d={path} fill={`url(#${id}-sheen)`} />
-      <path clipPath={`url(#${id}-inside)`} d={path} fill="none" stroke={`url(#${id}-rim)`} strokeWidth="3" />
-      <path className="mark-bridge-edge" d={path} />
-    </svg>
+      <g mask={trailing ? `url(#${id}-fade-mask)` : undefined}>
+        <path d={path} fill={`url(#${id}-tint)`} />
+        <path d={path} fill={`url(#${id}-sheen)`} />
+        <path clipPath={`url(#${id}-inside)`} d={path} fill="none" stroke={`url(#${id}-rim)`} strokeWidth="3" />
+        <path className="mark-bridge-edge" d={path} />
+      </g>
+    </svg> : null}
     {items.map((item, index) => {
       const Icon = item.mark.icon;
-      const named = labelled && index === count - 1;
       const symbol = <>
         <ShapeOutline className="mark-bridge-outline" shape={item.mark.shape} size={2 * RADIUS} strokeWidth={1.1} />
         <Icon aria-hidden="true" className="mark-bridge-icon" size={14} strokeWidth={2} />
       </>;
-      const content = named ? <>
-        <span className="mark-bridge-cell">{symbol}</span>
-        <span className="mark-bridge-label" ref={label}>{item.name}</span>
-      </> : symbol;
-      const style = { color: item.mark.ink, left: index * SPAN, ...(named ? { paddingRight: LABEL_END, width: 2 * RADIUS + extra } : {}) };
-      const markClass = clsx('mark-bridge-mark', named && 'is-labelled');
+      const style = { color: item.mark.ink, left: index * SPAN };
+      const markClass = 'mark-bridge-mark';
       const accessibleName = item.action ? `${item.action}: ${item.name}` : item.name;
       const mark = item.menu
         ? <DropdownMenu.Trigger asChild>
-          <button aria-label={accessibleName} className={markClass} style={style} type="button">{content}</button>
+          <button aria-label={accessibleName} className={markClass} style={style} type="button">{symbol}</button>
         </DropdownMenu.Trigger>
         : item.onSelect
-          ? <button aria-label={accessibleName} className={markClass} disabled={item.disabled} onClick={item.onSelect} style={style} type="button">{content}</button>
-          : <span aria-label={accessibleName} className={markClass} role="img" style={style}>{content}</span>;
+          ? <button aria-label={accessibleName} className={markClass} disabled={item.disabled} onClick={item.onSelect} style={style} type="button">{symbol}</button>
+          : <span aria-label={accessibleName} className={markClass} role="img" style={style}>{symbol}</span>;
       // Not hoverable: the next mark sits 6px away, and the pointer's path
       // into an open tip would keep it up over the mark being aimed at.
       const tipped = <Tip
@@ -243,6 +221,8 @@ export function MarkBridge({ className, items, labelLast = false }: {
       // The tip's trigger sits directly on the menu's, so both reach the button.
       return item.menu ? <MarkBridgeMenu items={item.menu} key={item.key}>{tipped}</MarkBridgeMenu> : tipped;
     })}
+    {/* Keep the control at the same keyed position when ancestor marks arrive. */}
+    {trailing ? <span className="mark-bridge-trailing" key="trailing">{trailing}</span> : null}
   </span>;
 }
 

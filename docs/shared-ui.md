@@ -81,21 +81,18 @@ projection cannot authorize. At the existing 920px responsive boundary and
 below, the host shows an unsupported-width state instead of presenting a
 compressed or partial hierarchy.
 
-`MarkBridge` draws a row of `IdentityMark`s (`spaceMark` for a Channel,
-`workstreamMark` for a thread or Breakout) as one glass shape, each mark a
-control with its own tooltip. It knows nothing about routes; the caller hands
-it names, actions and handlers. `TitlePillHeader` draws its ancestor crumbs as one,
-at every width, whenever every level carries a `bridge` entry; pills are the
-fallback only while a level has none.
-`labelLast` writes the last object's name beside its mark and stretches that
-mark into a pill fitted to the full name, rounded up and constrained to the
-available space. The header sets it on every bridge so the nearest crumb is
-named on desktop; at phone width (640px and below) the stylesheet hides the
-name, the measured width drops to nothing, and the mark closes back to a circle.
-A mark may carry a `menu` of the objects it stands for and open it in place of
-`onSelect`. The header uses that at phone width: past two crumbs, all but the
-nearest fold into one "…" mark (`Show path`) that lists them, so the bridge
-stays two crumbs wide.
+`MarkBridge` draws a row of `IdentityMark`s as one tinted glass shape, each
+mark a control with its own tooltip. The caller supplies names and actions;
+the bridge knows nothing about routes. `trailing` joins a control through one
+more neck; that control paints itself and stays mounted as ancestor marks load.
+`TitlePillHeader` uses it to attach
+icon-only ancestors to the existing command pill, preserving its appearance
+picker, title popout and separate hover targets. Levels without marks retain
+the existing ancestor-pill fallback.
+
+A mark may carry a `menu` of the objects it stands for instead of `onSelect`.
+At phone width, past two crumbs, the header folds all but the nearest into one
+"…" mark (`Show path`) listing them, so the bridge stays two crumbs wide.
 
 `TitlePillLeadingContext` lets a host supply controls before the breadcrumb.
 Electron supplies its history bridge; other hosts leave the slot empty.
@@ -155,6 +152,18 @@ surfaces in Electron. The browser host in #825 adds Chrome verification; no seco
 component test runner is needed for the same implementations.
 
 ## Changelog
+
+### 2026-10-20 — Breadcrumbs attach to the command pill
+
+The product asked for the resource path beside the current command pill, with
+ancestors as icons and the pill's two hover targets preserved. Reusing
+`MarkBridge` with a fixed cap avoids measuring titles or maintaining unused
+label modes. The pill fill fades over that cap so adjacent tints blend.
+
+A separate raised connector, or the pill's standalone outline and shadow,
+leaves a curved seam through the neck. The attached group therefore gets one
+shadow after composition. Keep the icon picker and title popout independent,
+and keep the pill mounted when ancestor metadata arrives so menus stay open.
 
 ### 2026-10-15 — A meter fills in the text colour, not the brand
 
