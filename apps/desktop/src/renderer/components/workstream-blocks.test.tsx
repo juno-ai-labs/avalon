@@ -1856,6 +1856,22 @@ describe('MessageBlock text context menu', () => {
     await screen.findByRole('menuitem', { name: /^Copy$/ });
   }
 
+  it('keeps the body context menu open when the first heading streams in', async () => {
+    const { container, rerender } = render(
+      <MessageBlock {...actions} collapseHeadings message={{ ...agent, streaming: true }} />,
+    );
+    await openBodyMenu(container.querySelector('.markdown-body')!);
+    rerender(
+      <MessageBlock {...actions} collapseHeadings message={{
+        ...agent,
+        streaming: true,
+        text: `${agent.text}\n\n## Details\n\nMore context.`,
+      }} />,
+    );
+    expect(screen.getByRole('menuitem', { name: 'Copy as markdown' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Collapse section', hidden: true })).toBeInTheDocument();
+  });
+
   it('copies formatted HTML of the whole assistant body when nothing is selected', async () => {
     const { container } = render(<MessageBlock {...actions} message={agent} />);
     await openBodyMenu(container.querySelector('.agent-message .markdown-body')!);
@@ -2612,7 +2628,7 @@ describe('MarkdownBody heading collapse', () => {
 });
 
 describe('MessageBlock heading collapse control', () => {
-  it('keeps the byline free of bulk controls while sections toggle independently', () => {
+  it('wires individual section toggles through the message', () => {
     const message: Message = {
       ...baseMessage,
       id: 'agent-one',
@@ -2623,8 +2639,6 @@ describe('MessageBlock heading collapse control', () => {
     };
     const { container } = render(<MessageBlock {...actions} collapseHeadings message={message} />);
     expect(screen.getByText('Worked for 1m 23s')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Collapse all sections' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Expand all sections' })).not.toBeInTheDocument();
     expect(container.querySelectorAll('.markdown-collapse.is-expanded')).toHaveLength(2);
     fireEvent.click(screen.getAllByRole('button', { name: 'Collapse section' })[0]!);
     expect(container.querySelectorAll('.markdown-collapse.is-collapsed')).toHaveLength(1);
@@ -2633,18 +2647,6 @@ describe('MessageBlock heading collapse control', () => {
     expect(container.querySelectorAll('.markdown-collapse.is-expanded')).toHaveLength(2);
   });
 
-  it('hides the collapse-all control when the turn has no collapsible headings', () => {
-    const message: Message = {
-      ...baseMessage,
-      id: 'agent-plain',
-      authorType: 'agent',
-      author: undefined,
-      text: 'A paragraph with no headings.',
-      workSummary: { durationMs: 1_000 },
-    };
-    render(<MessageBlock {...actions} collapseHeadings message={message} />);
-    expect(screen.queryByRole('button', { name: 'Collapse all sections' })).toBeNull();
-  });
 });
 
 describe('a Sidekick result in the room', () => {

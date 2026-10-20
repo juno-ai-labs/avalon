@@ -1630,7 +1630,7 @@ export function MarkdownBody({
       ) : bodyInner}
     </CitationsProvider>
   );
-  if (!collapseParts) return body;
+  if (!collapseHeadings || glance || still) return body;
   return (
     <MarkdownCollapseController>
       {body}
