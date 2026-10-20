@@ -81,28 +81,17 @@ projection cannot authorize. At the existing 920px responsive boundary and
 below, the host shows an unsupported-width state instead of presenting a
 compressed or partial hierarchy.
 
-`MarkBridge` draws a row of `IdentityMark`s (`spaceMark` for a Channel,
-`workstreamMark` for a thread or Breakout) as one glass shape, each mark a
-control with its own tooltip. It knows nothing about routes; the caller hands
-it names, actions and handlers. `TitlePillHeader` draws its ancestor crumbs as one,
-attached to the current command pill, at every width, whenever every level
-carries a `bridge` entry; pills are the fallback only while a level has none.
-`trailing` joins a control to the bridge through one more neck, with a neutral
-glass lobe measured from the control. The header uses it for the current pill,
-which keeps its original fill, ring, shadow, menu and icon action. The glass
-backing fades beneath the pill's left cap, so it does not double the pill's shadow.
-The icon retains its circular hover fill and appearance picker; the title and
-chevron retain their separate rounded hover fill and command popout.
-The compound control is centred; history and phone navigation stay at the left.
-`labelLast` writes the last object's name beside its mark and stretches that
-mark into a pill fitted to the full name, rounded up and constrained to the
-available space. Pane headers keep every ancestor as an icon at every width;
-only the current command pill shows its icon and title. `labelLast` remains
-available to other bridge consumers that need a named last mark.
-A mark may carry a `menu` of the objects it stands for and open it in place of
-`onSelect`. The header uses that at phone width: past two crumbs, all but the
-nearest fold into one "…" mark (`Show path`) that lists them, so the bridge
-stays two crumbs wide.
+`MarkBridge` draws a row of `IdentityMark`s as one tinted glass shape, each
+mark a control with its own tooltip. The caller supplies names and actions;
+the bridge knows nothing about routes. `trailing` joins a control through one
+more neck; that control paints itself and stays mounted as ancestor marks load. `TitlePillHeader` uses it to attach
+icon-only ancestors to the original command pill, preserving its appearance
+picker, title popout and separate hover targets. Levels without marks retain
+the existing ancestor-pill fallback.
+
+A mark may carry a `menu` of the objects it stands for instead of `onSelect`.
+At phone width, past two crumbs, the header folds all but the nearest into one
+"…" mark (`Show path`) listing them, so the bridge stays two crumbs wide.
 
 `TitlePillLeadingContext` lets a host supply controls before the breadcrumb.
 Electron supplies its history bridge; other hosts leave the slot empty.
@@ -165,19 +154,16 @@ component test runner is needed for the same implementations.
 
 ### 2026-10-20 — Breadcrumbs attach to the command pill
 
-The product asked for the glass breadcrumbs and command pill to read as one
-connected control. `MarkBridge` now accepts a `trailing` control and measures
-its width, drawing another lobe through the same neck with a neutral fill.
-Its outline supports independently stretched lobes, keeping ancestor icons and
-the current title connected by a glass neck. The current `TitlePill` paints
-itself unchanged; the bridge fades under its left cap so its fill, ring,
-shadow and interactive states stay exactly those of the standalone command
-pill. A separate connector between two raised surfaces would retain their
-overlapping edges and shadows.
-`TitlePillHeader` centres the combined bridge; history, phone navigation and
-trailing actions keep their separate slots. The current pill retains its own
-menu and appearance controls. Ancestors show icons only at every width; phone
-crumbs still fold when there are more than two.
+The product asked for the resource path to sit with the current command pill,
+with ancestors as icons and the current pill's appearance and two hover targets
+preserved. The header therefore attaches its marks through `MarkBridge`, with
+a fixed glass cap beneath the unchanged pill. A separate raised connector would
+leave overlapping rims and shadows. The backing fades under the cap so the pill
+keeps painting itself; future changes must preserve its independent appearance
+picker and command popout. No labels or trailing-width measurement remain:
+the only visible trailing glass is that fixed cap, regardless of title length.
+The pill stays mounted when ancestor metadata arrives, preserving open menus;
+the SVG paths fade before filtering so the crumbs keep their full shadow.
 
 ### 2026-10-15 — A meter fills in the text colour, not the brand
 
