@@ -22,7 +22,10 @@ export const WORKSPACE_CONVERSATION_VIEW_MIGRATION: readonly string[] = [
     ON conversation_view_turns(parent_id, substream_id, transcript_sequence) WHERE content_json IS NOT NULL`,
   `INSERT OR IGNORE INTO thread_backfill(job, workstream_id, attempts, not_before)
     SELECT 'conversation_view', parent_id, 0, 0 FROM parent_children
-    UNION SELECT 'conversation_view', sidekick_id, 0, 0 FROM sidekick_children`,
+    UNION SELECT 'conversation_view', sidekick_id, 0, 0 FROM sidekick_children
+    UNION SELECT 'conversation_view', workstream_id, 0, 0 FROM channels
+    UNION SELECT 'conversation_view', space_id, 0, 0 FROM spaces
+    UNION SELECT 'conversation_view', parent_id, 0, 0 FROM parent_metadata`,
 ];
 
 export class WorkspaceConversationView {

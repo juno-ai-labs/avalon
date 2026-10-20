@@ -57,7 +57,7 @@ it("projects visible text and plugin timing without tool calls and queues edits 
   }]);
   expect((await stub.conversationViewProjection({ ...job, turnId: "tool" }))?.content).toBeNull();
   await runInDurableObject(stub, (_instance, state) => {
-    state.storage.sql.exec("UPDATE conversation_view_changes SET pending = 0");
+    state.storage.sql.exec("UPDATE conversation_view_changes SET pending = 0, in_flight_revision = NULL, in_flight_until = NULL");
     state.storage.sql.exec("UPDATE participant_transcript_turns SET revision = revision + 1 WHERE turn_id = 'visible'");
     expect(state.storage.sql.exec<{ turn_id: string }>(
       "SELECT turn_id FROM conversation_view_changes WHERE pending = 1",
@@ -126,7 +126,7 @@ it("refreshes attachment names and removals after their first delivery", async (
   expect((await stub.conversationViewProjection({ ...job, turnId: "attachment" }))?.content?.turn.blocks[0]?.attachments)
     .toMatchObject([{ fileName: "before.txt" }]);
   await runInDurableObject(stub, (_instance, state) => {
-    state.storage.sql.exec("UPDATE conversation_view_changes SET pending = 0");
+    state.storage.sql.exec("UPDATE conversation_view_changes SET pending = 0, in_flight_revision = NULL, in_flight_until = NULL");
     state.storage.sql.exec("UPDATE workstream_resource_links SET resource_json = json_set(resource_json, '$.title', 'after.txt') WHERE resource_id = ?", resourceId);
     expect(state.storage.sql.exec("SELECT turn_id FROM conversation_view_changes WHERE pending = 1").toArray())
       .toEqual([{ turn_id: "attachment" }]);
@@ -134,7 +134,7 @@ it("refreshes attachment names and removals after their first delivery", async (
   expect((await stub.conversationViewProjection({ ...job, turnId: "attachment" }))?.content?.turn.blocks[0]?.attachments)
     .toMatchObject([{ fileName: "after.txt" }]);
   await runInDurableObject(stub, (_instance, state) => {
-    state.storage.sql.exec("UPDATE conversation_view_changes SET pending = 0");
+    state.storage.sql.exec("UPDATE conversation_view_changes SET pending = 0, in_flight_revision = NULL, in_flight_until = NULL");
     state.storage.sql.exec("DELETE FROM workstream_resource_links WHERE resource_id = ?", resourceId);
     expect(state.storage.sql.exec("SELECT turn_id FROM conversation_view_changes WHERE pending = 1").toArray())
       .toEqual([{ turn_id: "attachment" }]);
@@ -148,7 +148,7 @@ it("waits for delivered batches and keeps edits made during delivery pending", a
     seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: parentId });
     await seedParticipantMessage(state, { id: "changed", sequence: 1, text: "Before" });
     await publishConversationViews(state.storage.sql, env.ACTIVITY_QUEUE, job);
-    expect(nextConversationViewAt(state.storage.sql)).toBeNull();
+    expect(nextConversationViewAt(state.storage.sql)).toBeGreaterThan(Date.now());
     expect(state.storage.sql.exec("SELECT turn_id FROM conversation_view_changes WHERE in_flight_revision IS NOT NULL ORDER BY turn_id").toArray())
       .toEqual([{ turn_id: "" }, { turn_id: "changed" }]);
   });
@@ -171,7 +171,7 @@ it("waits for delivered batches and keeps edits made during delivery pending", a
   });
   expect(await stub.backfillConversationView({ ...job, turnId: "" })).toBe("queued");
   await runInDurableObject(stub, (_instance, state) => {
-    state.storage.sql.exec("UPDATE conversation_view_changes SET pending = 0");
+    state.storage.sql.exec("UPDATE conversation_view_changes SET pending = 0, in_flight_revision = NULL, in_flight_until = NULL");
   });
   expect(await stub.backfillConversationView({ ...job, turnId: "" })).toBe("delivered");
 });
@@ -190,6 +190,32 @@ it("publishes the newest historical page first so previews do not wait for old h
       FROM conversation_view_changes changes JOIN participant_transcript_turns turns USING (turn_id)
       WHERE changes.in_flight_revision IS NOT NULL`).toArray())
       .toEqual([{ first: 2, last: 101, count: 100 }]);
+  });
+});
+
+it("requeues a deleted turn after delivery is lost without requiring another edit", async () => {
+  const stub = source();
+  await runInDurableObject(stub, async (_instance, state) => {
+    seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: parentId });
+    await seedParticipantMessage(state, { id: "lost", sequence: 1, text: "Remove me" });
+    await publishConversationViews(state.storage.sql, env.ACTIVITY_QUEUE, job);
+    await publishConversationViews(state.storage.sql, env.ACTIVITY_QUEUE, job);
+    expect(state.storage.sql.exec("SELECT attempts FROM conversation_view_changes WHERE turn_id = 'lost'").one())
+      .toEqual({ attempts: 1 });
+    state.storage.sql.exec("DELETE FROM participant_transcript_turns WHERE turn_id = 'lost'");
+    // No delivery callback arrives. Advance the durable gate rather than the
+    // global clock, which would also drive unrelated object alarms.
+    state.storage.sql.exec("UPDATE conversation_view_changes SET in_flight_until = 0");
+    expect(nextConversationViewAt(state.storage.sql)).toBe(0);
+    await publishConversationViews(state.storage.sql, env.ACTIVITY_QUEUE, job);
+    expect(state.storage.sql.exec(`SELECT attempts, pending,
+      in_flight_revision = revision AS current_claim FROM conversation_view_changes WHERE turn_id = 'lost'`).one())
+      .toEqual({ attempts: 2, pending: 1, current_claim: 1 });
+  });
+  expect((await stub.conversationViewProjection({ ...job, turnId: "lost" }))?.content).toBeNull();
+  expect(await stub.backfillConversationView({ ...job, turnId: "" })).toBe("queued");
+  await runInDurableObject(stub, async (_instance, state) => {
+    expect(await state.storage.getAlarm()).not.toBeNull();
   });
 });
 
@@ -213,7 +239,7 @@ it("backfills populated source storage and every hosted parent including archive
       "SELECT turn_id FROM conversation_view_changes WHERE pending = 1 ORDER BY turn_id",
     ).toArray()).toEqual([{ turn_id: "" }, { turn_id: "historical" }]);
     await publishConversationViews(state.storage.sql, env.ACTIVITY_QUEUE, job);
-    expect(nextConversationViewAt(state.storage.sql)).toBeNull();
+    expect(nextConversationViewAt(state.storage.sql)).toBeGreaterThan(Date.now());
   });
   const oldWorkspace = env.MIGRATION_PROBE_DO!.getByName("conversation-view-old-workspace");
   await oldWorkspace.ping();
@@ -223,10 +249,17 @@ it("backfills populated source storage and every hosted parent including archive
       component: "workspace_do", workerVersionId: "before",
     });
     state.storage.sql.exec(`INSERT INTO parent_children(parent_id, substream_id, kind, created_at, archived_at)
-      VALUES ('thread', '0', 'main', 1, NULL), ('thread', 'archived-child', 'child', 1, 2),
+      VALUES ('thread', 'archived-child', 'child', 1, 2),
              ('channel', '0', 'main', 1, NULL)`);
     state.storage.sql.exec(`INSERT INTO sidekick_children(sidekick_id, substream_id, kind, created_at)
       VALUES ('sidekick', '0', 'main', 1), ('sidekick', 'run', 'child', 1)`);
+    state.storage.sql.exec(`INSERT INTO channels (
+      workstream_id, authority_generation, waterline, source_event_id, payload_hash,
+      title, description, preview, scope, exact_state, origin_type, title_status,
+      latest_attention_ordinal, unread_tracking_start_ordinal, last_activity_at,
+      source_created_at, source_updated_at, projected_at
+    ) VALUES ('legacy-main', 1, 1, 'legacy-event', 'hash', 'Legacy', '', '',
+      'workspace', 'idle', 'ad_hoc', 'settled', 0, 0, 1, 1, 1, 1)`);
   });
   await runInDurableObject(oldWorkspace, (_instance, state) => {
     applyDurableObjectSqliteMigrations({
@@ -235,7 +268,10 @@ it("backfills populated source storage and every hosted parent including archive
     });
     expect(state.storage.sql.exec<{ workstream_id: string }>(
       "SELECT workstream_id FROM thread_backfill WHERE job = 'conversation_view' ORDER BY workstream_id",
-    ).toArray()).toEqual([{ workstream_id: "channel" }, { workstream_id: "sidekick" }, { workstream_id: "thread" }]);
+    ).toArray()).toEqual([{ workstream_id: "channel" }, { workstream_id: "legacy-main" },
+      { workstream_id: "sidekick" }, { workstream_id: "thread" }]);
+    expect(threadBackfillWork(state.storage.sql, { job: "conversation_view", workstreamId: "legacy-main" }))
+      .toEqual({ substreamIds: ["0"] });
     expect(threadBackfillWork(state.storage.sql, { job: "conversation_view", workstreamId: "thread" }))
       .toEqual({ substreamIds: ["0", "archived-child"] });
     expect(threadBackfillWork(state.storage.sql, { job: "conversation_view", workstreamId: "sidekick" }))

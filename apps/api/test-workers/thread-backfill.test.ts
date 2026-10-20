@@ -167,7 +167,7 @@ describe("a one-off job over every thread", () => {
       return getQueueResult(batch, createExecutionContext());
     };
     const backfill = { ...message(), job: "conversation_view" };
-    await consume([backfill]);
+    expect((await consume([backfill])).retryMessages).toEqual([]);
     expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
       "SELECT in_flight FROM thread_backfill WHERE job = 'conversation_view' AND workstream_id = ?", THREAD,
     ).toArray())).toEqual([{ in_flight: 1 }]);

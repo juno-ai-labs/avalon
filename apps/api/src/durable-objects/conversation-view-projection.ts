@@ -2,6 +2,7 @@ import { z } from "zod";
 import { IdSchema, SubstreamIdSchema, WorkspaceIdSchema } from "@rally/contracts";
 import { RegionSchema } from "@rally/contracts/regions";
 import { ConversationViewContentSchema, ConversationViewHeaderSchema } from "@rally/contracts/conversation-view";
+import { scheduledAlarmRetryDelay } from "./scheduled-alarms";
 
 export const ConversationViewJobSchema = z.strictObject({
   type: z.literal("conversation_view_v1"),
@@ -49,7 +50,8 @@ export const CONVERSATION_VIEW_SOURCE_MIGRATION: readonly string[] = [
   `CREATE TABLE conversation_view_changes (
     turn_id TEXT PRIMARY KEY, revision INTEGER NOT NULL CHECK(revision > 0), pending INTEGER NOT NULL CHECK(pending IN (0, 1)),
     not_before INTEGER NOT NULL CHECK(not_before >= 0),
-    in_flight_revision INTEGER
+    in_flight_revision INTEGER, in_flight_until INTEGER,
+    attempts INTEGER NOT NULL DEFAULT 0
   ) STRICT`,
   `CREATE INDEX conversation_view_pending_idx ON conversation_view_changes(pending, not_before, turn_id)`,
   `CREATE INDEX conversation_view_in_flight_idx ON conversation_view_changes(in_flight_revision) WHERE in_flight_revision IS NOT NULL`,
@@ -74,7 +76,7 @@ export const CONVERSATION_VIEW_SOURCE_MIGRATION: readonly string[] = [
   }),
   `CREATE TRIGGER conversation_view_generation AFTER UPDATE OF authority_generation ON workstream
    WHEN NEW.authority_generation != OLD.authority_generation
-   BEGIN UPDATE conversation_view_changes SET in_flight_revision = NULL;
+   BEGIN UPDATE conversation_view_changes SET in_flight_revision = NULL, in_flight_until = NULL, attempts = 0;
      ${markViewTurn("SELECT turn_id FROM participant_transcript_turns")} END`,
   `INSERT INTO conversation_view_changes(turn_id, revision, pending, not_before) SELECT turn_id, 1, 1, 0 FROM participant_transcript_turns`,
   `INSERT INTO conversation_view_changes(turn_id, revision, pending, not_before) SELECT '', 1, 1, 0 WHERE EXISTS (SELECT 1 FROM workstream WHERE id = 1)`,
@@ -82,9 +84,10 @@ export const CONVERSATION_VIEW_SOURCE_MIGRATION: readonly string[] = [
 
 export function nextConversationViewAt(sql: SqlStorage): number | null {
   return sql.exec<{ due: number | null }>(
-    `SELECT MIN(not_before) AS due FROM conversation_view_changes WHERE pending = 1
-     AND EXISTS (SELECT 1 FROM workstream WHERE id = 1)
-     AND NOT EXISTS (SELECT 1 FROM conversation_view_changes WHERE in_flight_revision IS NOT NULL)`,
+    `SELECT CASE WHEN EXISTS (SELECT 1 FROM workstream WHERE id = 1) THEN COALESCE(
+       (SELECT MAX(in_flight_until) FROM conversation_view_changes WHERE in_flight_revision IS NOT NULL AND in_flight_until > ?),
+       (SELECT MIN(not_before) FROM conversation_view_changes WHERE pending = 1))
+     END AS due`, Date.now(),
   ).one().due;
 }
 
@@ -92,24 +95,31 @@ export function nextConversationViewAt(sql: SqlStorage): number | null {
 export async function publishConversationViews(
   sql: SqlStorage, queue: Queue, identity: Omit<z.infer<typeof ConversationViewJobSchema>, "turnId">,
 ): Promise<void> {
-  if (nextConversationViewAt(sql) === null) return;
+  const now = Date.now();
+  const next = nextConversationViewAt(sql);
+  if (next === null || next > now) return;
+  // The same durable retry gate as thread_backfill: Queue exhaustion or a lost
+  // acknowledgement cannot leave a claim stuck forever. Retries are idempotent.
+  sql.exec(`UPDATE conversation_view_changes SET in_flight_revision = NULL, in_flight_until = NULL
+    WHERE in_flight_until <= ?`, now);
   // The existing Queue batch maximum; payloads here contain identities only.
-  const rows = sql.exec<{ turn_id: string; revision: number }>(
-    `SELECT changes.turn_id, changes.revision FROM conversation_view_changes changes
+  const rows = sql.exec<{ turn_id: string; revision: number; attempts: number }>(
+    `SELECT changes.turn_id, changes.revision, changes.attempts FROM conversation_view_changes changes
       LEFT JOIN participant_transcript_turns turns ON turns.turn_id = changes.turn_id
       WHERE changes.pending = 1 AND changes.not_before <= ?
-      ORDER BY changes.revision DESC, turns.transcript_sequence DESC, changes.turn_id LIMIT 100`, Date.now(),
+      ORDER BY changes.revision DESC, turns.transcript_sequence DESC, changes.turn_id LIMIT 100`, now,
   ).toArray();
   if (!rows.length) return;
   for (const row of rows) sql.exec(
-    "UPDATE conversation_view_changes SET in_flight_revision = ? WHERE turn_id = ?", row.revision, row.turn_id,
+    `UPDATE conversation_view_changes SET in_flight_revision = ?, in_flight_until = ?, attempts = attempts + 1
+     WHERE turn_id = ?`, row.revision, now + scheduledAlarmRetryDelay(row.attempts + 1), row.turn_id,
   );
   try {
     await queue.sendBatch(rows.map((row) => ({ body: { ...identity, turnId: row.turn_id, dispatchRevision: row.revision } })));
   } catch (error) {
     // Same dispatch retry as the other projection outboxes.
     for (const row of rows) sql.exec(
-      "UPDATE conversation_view_changes SET in_flight_revision = NULL, not_before = ? WHERE turn_id = ? AND in_flight_revision = ?",
+      "UPDATE conversation_view_changes SET in_flight_revision = NULL, in_flight_until = NULL, not_before = ? WHERE turn_id = ? AND in_flight_revision = ?",
       Date.now() + 5_000, row.turn_id, row.revision,
     );
     throw error;
@@ -119,7 +129,7 @@ export async function publishConversationViews(
 /** Delivery, rather than Queue acceptance, releases the next page. */
 export function completeConversationViewDelivery(sql: SqlStorage, delivery: z.infer<typeof ConversationViewDeliverySchema>): void {
   sql.exec(
-    `UPDATE conversation_view_changes SET in_flight_revision = NULL,
+    `UPDATE conversation_view_changes SET in_flight_revision = NULL, in_flight_until = NULL, attempts = 0,
        pending = CASE WHEN revision <= ? THEN 0 ELSE 1 END
      WHERE turn_id = ? AND in_flight_revision = ?
        AND EXISTS (SELECT 1 FROM workstream WHERE id = 1 AND authority_generation = ?)`,

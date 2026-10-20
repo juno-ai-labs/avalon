@@ -49,8 +49,9 @@ settled by `threadBackfillWork` without running anything.
 
 The `conversation_view` job is the exception to the open-thread universe:
 WorkspaceDO migration 124 lists every parent in `parent_children` and
-`sidekick_children`, and its work lookup returns all ready children, including
-archived conversations. Each child is woken to deliver its compact display
+`sidekick_children` and the hosted-parent directories, including legacy parents
+with no stored Main child. Its work lookup adds that implicit Main and returns
+all ready children, including archived conversations. Each child is woken to deliver its compact display
 projection. The parent stays claimed while that child has pending deliveries;
 the next child and completion wait for WorkspaceDO to receive the projection. [Conversation view cache](conversation-view-cache.md) owns
 the payload, delivery, and rollout details; this lane owns scheduling the pass.
