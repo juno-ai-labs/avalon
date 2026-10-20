@@ -180,6 +180,9 @@ Each tab runs the list motion on the shared scroll box;
 `screens/channel.tsx` draws a Channel: its pill and menu at the top, a feed of
 its threads and messages, and a composer at the foot.
 
+The feed and composer stay within the Channel pane when a Thread opens beside
+it or the divider is resized.
+
 - **Feed.** `GET /spaces/:id/feed`, newest nearest the composer; a visit opens
   at the server's first unread row with one preceding row for context, or at
   the newest row when caught up. The opening waterline is captured once per
