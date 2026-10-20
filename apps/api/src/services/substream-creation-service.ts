@@ -473,6 +473,17 @@ export class SubstreamCreationService {
     }
   }
 
+  /** Resolve within the caller’s admitted conversation scope. */
+  async resolve(parentId: string, substreamId: string): Promise<void> {
+    const parent = await this.parent(parentId, substreamId);
+    const result = await parent.resolveConversation({
+      workspaceId: this.auth.workspaceId, parentId, substreamId: asSubstreamId(substreamId), userId: asUserId(this.auth.userId),
+    });
+    if (result.outcome === "forbidden") throw new ApiError(403, "conversation_participant_required", "Only someone who can open this conversation can resolve it.");
+    if (result.outcome === "not_ready") throw new ApiError(404, "substream_not_found", "Conversation not found.");
+    if (result.outcome === "archived") throw new ApiError(409, "substream_archived", "Restore this conversation before resolving it.");
+  }
+
   /** Members retain read access after archive, so they can also restore the child. */
   async archive(parentId: string, substreamId: string, archived: boolean) {
     const parent = await this.parent(parentId, substreamId);
