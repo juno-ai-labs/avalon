@@ -1296,7 +1296,7 @@ export class ProviderWebhookService {
         await withWorkspaceRuntimeDatabase(this.env, connection.workspaceId).DB.prepare(
           `UPDATE connector_connections
            SET status = 'needs_reconnect', error_json = ?, updated_at = ?
-           WHERE id = ? AND connector_type = 'github' AND status = 'healthy'`,
+           WHERE id = ? AND connector_type = 'github' AND status IN ('healthy', 'error')`,
         ).bind(
           JSON.stringify({
             code: "github_user_authorization_expired",
@@ -1348,7 +1348,7 @@ export class ProviderWebhookService {
           await withWorkspaceRuntimeDatabase(this.env, connection.workspaceId).DB.prepare(
             `UPDATE connector_connections
              SET status = 'needs_reconnect', error_json = ?, updated_at = ?
-             WHERE id = ? AND connector_type = 'linear' AND status = 'healthy'`,
+             WHERE id = ? AND connector_type = 'linear' AND status IN ('healthy', 'error')`,
           ).bind(
             JSON.stringify({
               code: "linear_user_authorization_expired",
@@ -1730,7 +1730,7 @@ function githubLifecycle(
   }
   if (delivery.action === "suspend") {
     return {
-      status: "error",
+      status: "needs_reconnect",
       error: {
         code: "github_installation_suspended",
         message: "The GitHub App installation is suspended",
