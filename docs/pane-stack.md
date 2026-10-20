@@ -61,7 +61,8 @@ sits beside it with the same **Expand**; expanded it covers the pane (the shell'
 `rail-expanded`, which reuses the narrow window's full-pane rules). While it stands
 alone, expanded or in a window too narrow for it beside its conversation
 (`railFillsPane`, which every phone width is), its header carries the crumbs
-as one `MarkBridge`: the Channel, when it has stepped off, a breakout's thread
+as one `MarkBridge` attached to the panel's command pill: the Channel, when it
+has stepped off, a breakout's thread
 (handed down as `parentCrumbs`), and the conversation. That crumb collapses an expanded panel, and closes one that
 cannot sit beside, which also offers neither Expand nor Collapse.
 There is no lightbox over a panel any more: a full-window
@@ -139,12 +140,12 @@ rule inside a thread ([`desktop-shell.md`](desktop-shell.md#one-right-slot)).
 - **Narrow windows:** below two conversation minimums the right pane stands
   alone, with the crumbs: a breakout alone carries its Channel and its thread,
   each of which `onShownChange` reports at its own level. The crumbs are one
-  `MarkBridge` ([`shared-ui.md`](shared-ui.md)) at every width, each mark
-  linking where its pill would. Above phone width the nearest crumb's name ends
-  in an ellipsis rather than run under the pill, so the pane's own pill keeps
-  its room and truncates last; at 640px and below the bridge shows marks
-  alone, and past two crumbs folds all but the nearest into a "…" menu
-  ([`shared-ui.md`](shared-ui.md)).
+  `MarkBridge` attached to the current command pill
+  ([`shared-ui.md`](shared-ui.md)) at every width, each mark linking where its
+  pill would. Ancestors show icons alone at every width,
+  attached to the current command pill, which alone shows its title. At 640px
+  and below, past two crumbs the bridge folds all but the nearest into a "…"
+  menu ([`shared-ui.md`](shared-ui.md)).
 - **Collapse in a narrow window** clears the expansion, but the pane still
   stands alone, as it would unexpanded; Collapse then simply goes away.
 - **A thread with no visible Channel** opens on `/workstreams/:id`, alone; it

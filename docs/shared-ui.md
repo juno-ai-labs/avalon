@@ -85,13 +85,20 @@ compressed or partial hierarchy.
 `workstreamMark` for a thread or Breakout) as one glass shape, each mark a
 control with its own tooltip. It knows nothing about routes; the caller hands
 it names, actions and handlers. `TitlePillHeader` draws its ancestor crumbs as one,
-at every width, whenever every level carries a `bridge` entry; pills are the
-fallback only while a level has none.
+attached to the current command pill, at every width, whenever every level
+carries a `bridge` entry; pills are the fallback only while a level has none.
+`trailing` joins a control to the bridge through one more neck, with a neutral
+glass lobe measured from the control. The header uses it for the current pill,
+which keeps its original fill, ring, shadow, menu and icon action. The glass
+backing fades beneath the pill's left cap, so it does not double the pill's shadow.
+The icon retains its circular hover fill and appearance picker; the title and
+chevron retain their separate rounded hover fill and command popout.
+The compound control is centred; history and phone navigation stay at the left.
 `labelLast` writes the last object's name beside its mark and stretches that
 mark into a pill fitted to the full name, rounded up and constrained to the
-available space. The header sets it on every bridge so the nearest crumb is
-named on desktop; at phone width (640px and below) the stylesheet hides the
-name, the measured width drops to nothing, and the mark closes back to a circle.
+available space. Pane headers keep every ancestor as an icon at every width;
+only the current command pill shows its icon and title. `labelLast` remains
+available to other bridge consumers that need a named last mark.
 A mark may carry a `menu` of the objects it stands for and open it in place of
 `onSelect`. The header uses that at phone width: past two crumbs, all but the
 nearest fold into one "…" mark (`Show path`) that lists them, so the bridge
@@ -155,6 +162,22 @@ surfaces in Electron. The browser host in #825 adds Chrome verification; no seco
 component test runner is needed for the same implementations.
 
 ## Changelog
+
+### 2026-10-20 — Breadcrumbs attach to the command pill
+
+The product asked for the glass breadcrumbs and command pill to read as one
+connected control. `MarkBridge` now accepts a `trailing` control and measures
+its width, drawing another lobe through the same neck with a neutral fill.
+Its outline supports independently stretched lobes, keeping ancestor icons and
+the current title connected by a glass neck. The current `TitlePill` paints
+itself unchanged; the bridge fades under its left cap so its fill, ring,
+shadow and interactive states stay exactly those of the standalone command
+pill. A separate connector between two raised surfaces would retain their
+overlapping edges and shadows.
+`TitlePillHeader` centres the combined bridge; history, phone navigation and
+trailing actions keep their separate slots. The current pill retains its own
+menu and appearance controls. Ancestors show icons only at every width; phone
+crumbs still fold when there are more than two.
 
 ### 2026-10-15 — A meter fills in the text colour, not the brand
 

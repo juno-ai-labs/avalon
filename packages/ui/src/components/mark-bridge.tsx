@@ -1,6 +1,6 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import clsx from 'clsx';
-import { useId, useLayoutEffect, useRef, useState } from 'react';
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
 import { ShapeOutline, type IdentityMark } from './identity-tile';
 import { Tip } from './primitives';
@@ -46,51 +46,50 @@ function markBridgeWidth(count: number): number {
 }
 
 /**
- * The outline of `count` circles in a row, each joined to the next by a neck.
- * `extra` stretches the last circle into a pill that much longer, its ends
- * still RADIUS round.
+ * The outline of `count` marks, stretching the last for its label. An optional
+ * trailing control adds a neutral pill after it, through the same neck. Each
+ * lobe has independent start/end centres so both pills keep round ends.
  */
-function bridgePath(count: number, extra: number): string {
+function bridgePath(count: number, extra: number, trailingWidth = 0): string {
   const r = RADIUS;
-  const centre = (index: number): number => r + index * SPAN;
+  const lobes = Array.from({ length: count }, (_, index) => ({
+    start: r + index * SPAN,
+    end: r + index * SPAN + (index === count - 1 ? extra : 0),
+  }));
+  if (trailingWidth > 0) {
+    const start = lobes.at(-1)!.end + SPAN;
+    lobes.push({ start, end: start + Math.max(0, trailingWidth - 2 * r) });
+  }
   const dx = r * Math.cos(ANGLE);
   const dy = r * Math.sin(ANGLE);
-  // A cubic's midpoint sits at (p0 + 3c0 + 3c1 + p1) / 8; solving for the
-  // control length that lands it on the neck's half height.
   const reach = (dy - NECK) / (0.75 * Math.cos(ANGLE));
   const rx = reach * Math.sin(ANGLE);
   const ry = reach * Math.cos(ANGLE);
   const top = r - dy;
   const bottom = r + dy;
   const n = (value: number): string => value.toFixed(2);
-  const last = count - 1;
-  const end = centre(last) + extra;
-  if (last === 0) return `M${r} 0 L${n(end)} 0 A${r} ${r} 0 0 1 ${n(end)} ${2 * r} L${r} ${2 * r} A${r} ${r} 0 0 1 ${r} 0 Z`;
-  // Clockwise from the first neck's top: along the top, round the last
-  // circle, back along the bottom, round the first. Each inner circle shows
-  // a short arc between its two necks.
-  const path = [`M${n(centre(0) + dx)} ${n(top)}`];
-  for (let index = 0; index < last; index += 1) {
-    const from = centre(index) + dx;
-    const to = centre(index + 1) - dx;
-    path.push(`C${n(from + rx)} ${n(top + ry)} ${n(to - rx)} ${n(top + ry)} ${n(to)} ${n(top)}`);
-    if (index + 1 < last) path.push(`A${r} ${r} 0 0 1 ${n(centre(index + 1) + dx)} ${n(top)}`);
+  const path = [`M${r} 0`];
+  lobes.forEach((lobe, index) => {
+    path.push(`L${n(lobe.end)} 0`);
+    const next = lobes[index + 1];
+    if (next) path.push(
+      `A${r} ${r} 0 0 1 ${n(lobe.end + dx)} ${n(top)}`,
+      `C${n(lobe.end + dx + rx)} ${n(top + ry)} ${n(next.start - dx - rx)} ${n(top + ry)} ${n(next.start - dx)} ${n(top)}`,
+      `A${r} ${r} 0 0 1 ${n(next.start)} 0`,
+    );
+    else path.push(`A${r} ${r} 0 0 1 ${n(lobe.end)} ${2 * r}`);
+  });
+  for (let index = lobes.length - 1; index >= 0; index -= 1) {
+    const lobe = lobes[index]!;
+    path.push(`L${n(lobe.start)} ${2 * r}`);
+    const previous = lobes[index - 1];
+    if (previous) path.push(
+      `A${r} ${r} 0 0 1 ${n(lobe.start - dx)} ${n(bottom)}`,
+      `C${n(lobe.start - dx - rx)} ${n(bottom - ry)} ${n(previous.end + dx + rx)} ${n(bottom - ry)} ${n(previous.end + dx)} ${n(bottom)}`,
+      `A${r} ${r} 0 0 1 ${n(previous.end)} ${2 * r}`,
+    );
+    else path.push(`A${r} ${r} 0 0 1 ${r} 0 Z`);
   }
-  // Round the last mark: up to its top, along any stretch, round its end, back.
-  path.push(
-    `A${r} ${r} 0 0 1 ${n(centre(last))} 0`,
-    `L${n(end)} 0`,
-    `A${r} ${r} 0 0 1 ${n(end)} ${2 * r}`,
-    `L${n(centre(last))} ${2 * r}`,
-    `A${r} ${r} 0 0 1 ${n(centre(last) - dx)} ${n(bottom)}`,
-  );
-  for (let index = last; index > 0; index -= 1) {
-    const from = centre(index) - dx;
-    const to = centre(index - 1) + dx;
-    path.push(`C${n(from - rx)} ${n(bottom - ry)} ${n(to + rx)} ${n(bottom - ry)} ${n(to)} ${n(bottom)}`);
-    if (index - 1 > 0) path.push(`A${r} ${r} 0 0 1 ${n(centre(index - 1) - dx)} ${n(bottom)}`);
-  }
-  path.push(`A${r} ${r} 0 1 1 ${n(centre(0) + dx)} ${n(top)}`, 'Z');
   return path.join(' ');
 }
 
@@ -131,41 +130,47 @@ function bridgeStops(tints: readonly string[]): { offset: number; color: string 
  * mark into a pill the name's width; the shape is measured from the name as
  * laid out, so it fits whatever font and size it renders in. The bridge never
  * grows past its container: a name too long for the room ends in an ellipsis
- * and the pill is drawn to the width it was given.
+ * and the pill is drawn to the width it was given. `trailing` joins a control
+ * after the last mark in a neutral glass lobe, measured from its rendered width.
  */
-export function MarkBridge({ className, items, labelLast = false }: {
+export function MarkBridge({ className, items, labelLast = false, trailing }: {
   className?: string | undefined;
   items: readonly MarkBridgeItem[];
   labelLast?: boolean | undefined;
+  /** A control joined to the last mark with a neutral glass lobe. */
+  trailing?: ReactNode;
 }): React.JSX.Element | null {
   const id = useId();
   const root = useRef<HTMLSpanElement>(null);
+  const tail = useRef<HTMLSpanElement>(null);
   const label = useRef<HTMLSpanElement>(null);
   // The name's full width, however much of it shows, and the width the
   // bridge was actually given once its container had its say.
-  const [size, setSize] = useState({ name: 0, given: 0 });
+  const [size, setSize] = useState({ name: 0, given: 0, tail: 0 });
+  const hasTrailing = Boolean(trailing);
   const labelled = labelLast && items.length > 0;
   // A different last object is a new label element: observe that one.
   const last = items.at(-1);
   useLayoutEffect(() => {
     const box = root.current;
     const element = label.current;
-    if (!labelled || !box || !element) { setSize({ name: 0, given: 0 }); return undefined; }
+    if ((!labelled && !hasTrailing) || !box) { setSize({ name: 0, given: 0, tail: 0 }); return undefined; }
     const measure = (): void => setSize((current) => {
       // scrollWidth rounds to the nearest pixel, which can undersize even a
       // short name and trigger an ellipsis. A range measures the full text
       // at subpixel precision even when the label is clipped.
       const text = document.createRange();
-      text.selectNodeContents(element);
-      const next = { name: Math.ceil(text.getBoundingClientRect().width), given: box.getBoundingClientRect().width };
-      return next.name === current.name && next.given === current.given ? current : next;
+      if (element) text.selectNodeContents(element);
+      const next = { name: element ? Math.ceil(text.getBoundingClientRect().width) : 0, given: box.getBoundingClientRect().width, tail: tail.current?.getBoundingClientRect().width ?? 0 };
+      return next.name === current.name && next.given === current.given && next.tail === current.tail ? current : next;
     });
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(box);
-    observer.observe(element);
+    if (element) observer.observe(element);
+    if (tail.current) observer.observe(tail.current);
     return () => observer.disconnect();
-  }, [labelled, last?.key, last?.name]);
+  }, [labelled, last?.key, last?.name, hasTrailing]);
   const count = items.length;
   // Nothing to join: the geometry below assumes at least one mark.
   if (count === 0) return null;
@@ -173,21 +178,36 @@ export function MarkBridge({ className, items, labelLast = false }: {
   const tintWidth = markBridgeWidth(count);
   // Asked for the whole name; drawn to what the container allowed.
   const wanted = labelled && size.name > 0 ? tintWidth + size.name + LABEL_END : tintWidth;
-  const width = labelled && size.name > 0 && size.given > 0 ? Math.max(tintWidth, Math.min(wanted, size.given)) : wanted;
+  const width = labelled && size.name > 0 && size.given > 0 ? Math.max(tintWidth, Math.min(wanted, size.given - (trailing ? size.tail + SPAN - 2 * RADIUS : 0))) : wanted;
   const extra = width - tintWidth;
-  const path = bridgePath(count, extra);
+  const tailWidth = trailing ? Math.max(2 * RADIUS, size.tail) : 0;
+  const totalWidth = width + (trailing ? tailWidth + SPAN - 2 * RADIUS : 0);
+  const path = bridgePath(count, extra, tailWidth);
   const stops = bridgeStops(items.map((item) => item.mark.tint));
+  if (trailing) {
+    // Keep the last crumb tinted through its label, blending only at the neck.
+    stops.forEach((stop) => { stop.offset *= tintWidth / totalWidth; });
+    stops.push(
+      { offset: (width - HOLD) / totalWidth, color: last!.mark.tint },
+      { offset: (width + SPAN - 2 * RADIUS + HOLD) / totalWidth, color: 'var(--av-sys-color-surface-raised)' },
+      { offset: 1, color: 'var(--av-sys-color-surface-raised)' },
+    );
+  }
   const height = 2 * RADIUS;
-  return <span className={clsx('mark-bridge', className)} ref={root} style={{ height, minWidth: tintWidth, width: wanted }}>
+  return <span className={clsx('mark-bridge', trailing && 'has-trailing', className)} ref={root} style={{ height, minWidth: tintWidth, width: trailing ? undefined : wanted }}>
+    {trailing ? <span aria-hidden="true" className="mark-bridge-spacer" style={{ minWidth: tintWidth, width: wanted }} /> : null}
     <svg
       aria-hidden="true"
       className="mark-bridge-glass"
       height={height + 2}
-      viewBox={`-1 -1 ${width + 2} ${height + 2}`}
-      width={width + 2}
+      // The trailing control paints itself. Fade its backing glass underneath
+      // its left cap, preserving its own rim and shadow without a clipped edge.
+      style={trailing ? { maskImage: `linear-gradient(to right, #000 ${width}px, transparent ${width + SPAN - RADIUS}px)` } : undefined}
+      viewBox={`-1 -1 ${totalWidth + 2} ${height + 2}`}
+      width={totalWidth + 2}
     >
       <defs>
-        <linearGradient gradientUnits="userSpaceOnUse" id={`${id}-tint`} x1="0" x2={tintWidth} y1="0" y2="0">
+        <linearGradient gradientUnits="userSpaceOnUse" id={`${id}-tint`} x1="0" x2={trailing ? totalWidth : tintWidth} y1="0" y2="0">
           {stops.map((stop, index) => <stop key={index} offset={stop.offset} style={{ stopColor: stop.color }} />)}
         </linearGradient>
         {/* Ends above the symbols, so each one sits on its raw tint: the pair's
@@ -243,6 +263,7 @@ export function MarkBridge({ className, items, labelLast = false }: {
       // The tip's trigger sits directly on the menu's, so both reach the button.
       return item.menu ? <MarkBridgeMenu items={item.menu} key={item.key}>{tipped}</MarkBridgeMenu> : tipped;
     })}
+    {trailing ? <span className="mark-bridge-trailing" ref={tail}>{trailing}</span> : null}
   </span>;
 }
 
