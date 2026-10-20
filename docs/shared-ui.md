@@ -160,7 +160,9 @@ with ancestors as icons and the current pill's appearance and two hover targets
 preserved. The header therefore attaches its marks through `MarkBridge`, with
 a fixed glass cap beneath the pill. The attached pill omits its standalone
 outline, which otherwise cuts across the glass neck; its fill, shadow and hover
-targets stay. A separate raised connector would leave overlapping rims and
+targets stay. The pill fill fades in over its left cap so the shared tint
+blend remains visible between every adjacent member. A separate raised
+connector would leave overlapping rims and
 shadows. The backing fades under the cap so the pill keeps its fill and shadow;
 future changes must preserve its independent appearance
 picker and command popout. No labels or trailing-width measurement remain:
