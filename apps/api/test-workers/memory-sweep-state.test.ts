@@ -41,6 +41,9 @@ async function seeded(): Promise<{ workstreamId: string; stub: DurableObjectStub
   await boot(subject.stub);
   await runInDurableObject(subject.stub, (_instance, state) => {
     seedWorkstreamRoot(state, 1, { workstreamId: subject.workstreamId });
+    // Initial projections are delivered; this fixture owns only sweep alarms.
+    state.storage.sql.exec("DELETE FROM authorization_projection_outbox");
+    state.storage.sql.exec("UPDATE conversation_view_changes SET pending = 0, in_flight_revision = NULL, in_flight_until = NULL");
   });
   return subject;
 }
