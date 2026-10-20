@@ -15,7 +15,8 @@ interface AnnotationDraft {
   scopeKey?: string | undefined;
   pins: AnnotationPin[];
   selections: AnnotationPin[];
-  commit: (id: string) => void;
+  confirm: (id: string) => void;
+  discard: (id: string) => void;
   uploading: boolean;
   readResource?: ((id: string) => Promise<{ currentVersion: number }>) | undefined;
   readResourceVersion?: ((id:string,version:number,signal:AbortSignal)=>Promise<Blob>) | undefined;
@@ -67,20 +68,21 @@ export function AnnotationDraftProvider({ children, upload, readResource, readRe
   const readers=useRef({readResource,readResourceVersion}); readers.current={readResource,readResourceVersion};
   const read=useCallback((id:string)=>readers.current.readResource!(id),[]);
   const readVersion=useCallback((id:string,version:number,signal:AbortSignal)=>readers.current.readResourceVersion!(id,version,signal),[]);
-  const reveal=useCallback((pin:AnnotationPin):boolean=>{if(pin.reveal()===false){previewOpener.current?.({name:pin.name,resourceId:pin.annotation.target.resourceId,annotation:pin.annotation});return false;}return true;},[]);
+  const reveal=useCallback((pin:AnnotationPin):boolean=>{setPins((current)=>current.filter((selection)=>!selection.pending));if(pin.reveal()===false){previewOpener.current?.({name:pin.name,resourceId:pin.annotation.target.resourceId,annotation:pin.annotation});return false;}return true;},[]);
   const add=useCallback((annotation:Annotation,name:string,reveal:AnnotationPin['reveal'],replaceId?:string,pending=false):string=>{
     const id=replaceId??crypto.randomUUID();
     if(scopeRef.current!==scopeKey)return id;
-    setPins((current)=>[...current.filter((pin)=>pin.id!==id),{id,annotation,name,reveal,pending}]);
+    setPins((current)=>[...current.filter((pin)=>pin.id!==id && (!pending || !pin.pending)),{id,annotation,name,reveal,pending}]);
     return id;
   },[scopeKey]);
-  const commit=useCallback((id:string)=>setPins((current)=>current.map((pin)=>pin.id===id && pin.annotation.comment.trim()?{...pin,pending:false}:pin)),[]);
+  const confirm=useCallback((id:string)=>setPins((current)=>current.map((pin)=>pin.id===id?{...pin,pending:false}:pin)),[]);
+  const discard=useCallback((id:string)=>setPins((current)=>current.filter((pin)=>pin.id!==id || !pin.pending)),[]);
   const committedPins=useMemo(()=>pins.filter((pin)=>!pin.pending),[pins]);
   const remove=useCallback((id:string)=>setPins((current)=>current.filter((pin)=>pin.id!==id)),[]);
   const comment=useCallback((id:string,comment:string)=>setPins((current)=>current.map((pin)=>pin.id===id?{...pin,annotation:{...pin.annotation,comment}}:pin)),[]);
-  const clear=useCallback((ids:string[])=>setPins((current)=>current.filter((pin)=>!ids.includes(pin.id))),[]);
+  const clear=useCallback((ids:string[])=>setPins((current)=>current.filter((pin)=>!pin.pending && !ids.includes(pin.id))),[]);
   const uploadFile=useCallback(async(file:File):Promise<string>=>{if(scopeRef.current!==scopeKey)throw new Error('The conversation changed.');const upload=uploadRef.current;if(!upload)throw new Error('Annotation image upload unavailable');setUploads((count)=>count+1);try{return await upload(file);}finally{setUploads((count)=>count-1);}},[scopeKey]);
-  const value=useMemo(()=>({setPreviewOpener,reveal,pins:committedPins,selections:pins,commit,scopeKey,uploading:uploads>0,readResource:readResource?read:undefined,readResourceVersion:readResourceVersion?readVersion:undefined,upload:upload?uploadFile:undefined,add,remove,comment,clear}),[setPreviewOpener,reveal,pins,committedPins,commit,scopeKey,uploads,Boolean(readResource),read,Boolean(readResourceVersion),readVersion,Boolean(upload),uploadFile,add,remove,comment,clear]);
+  const value=useMemo(()=>({setPreviewOpener,reveal,pins:committedPins,selections:pins,confirm,discard,scopeKey,uploading:uploads>0,readResource:readResource?read:undefined,readResourceVersion:readResourceVersion?readVersion:undefined,upload:upload?uploadFile:undefined,add,remove,comment,clear}),[setPreviewOpener,reveal,pins,committedPins,confirm,discard,scopeKey,uploads,Boolean(readResource),read,Boolean(readResourceVersion),readVersion,Boolean(upload),uploadFile,add,remove,comment,clear]);
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 export function AnnotationChips(): React.JSX.Element | null {
@@ -110,7 +112,7 @@ export function AnnotationComment({pin, style, onClose, onEscape, label = 'Comme
   const draft = useAnnotationDraft();
   const submit = (): void => {
     if (!pin.annotation.comment.trim()) return;
-    draft?.commit(pin.id);
+    draft?.confirm(pin.id);
     onClose();
   };
   return <div className="annotation-comment" role="dialog" aria-label={label} data-state="open" style={style}>

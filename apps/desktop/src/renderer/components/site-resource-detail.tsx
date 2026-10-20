@@ -428,9 +428,9 @@ export function SiteResourceDetail({
   }, [annotationDraft, resourceId, title, version, surface.framed]);
   React.useEffect(()=>{
     if(!picking)return;
-    const cancel=(event:KeyboardEvent):void=>{if(isComposingKeyEvent(event))return;if(event.key==='Escape'){event.preventDefault();event.stopPropagation();setEditingPin(null);setPicking(false);}};
+    const cancel=(event:KeyboardEvent):void=>{if(isComposingKeyEvent(event))return;if(event.key==='Escape'){event.preventDefault();event.stopPropagation();if(editingPin)annotationDraft?.discard(editingPin);setEditingPin(null);setPicking(false);}};
     window.addEventListener('keydown',cancel,true);return()=>window.removeEventListener('keydown',cancel,true);
-  },[picking]);
+  },[picking,editingPin,annotationDraft?.discard]);
   const acceptPinRef = React.useRef(acceptPin);
   acceptPinRef.current = acceptPin;
   React.useEffect(() => {
@@ -564,7 +564,7 @@ export function SiteResourceDetail({
               />
             )}
           </div>
-      {editingSelection && <AnnotationComment pin={editingSelection} label="Comment on site selection" style={{left:commentAnchor.x,top:commentAnchor.y}} onClose={() => setEditingPin(null)} onEscape={() => setPicking(false)} />}
+      {editingSelection && <AnnotationComment pin={editingSelection} label="Comment on site selection" style={{left:commentAnchor.x,top:commentAnchor.y}} onClose={() => {annotationDraft?.discard(editingSelection.id);setEditingPin(null);}} onEscape={() => setPicking(false)} />}
     </div>
   );
 }
