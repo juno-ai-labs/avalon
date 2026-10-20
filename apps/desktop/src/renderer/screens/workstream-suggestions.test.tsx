@@ -8,7 +8,7 @@
  */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -20,6 +20,7 @@ const api = vi.hoisted(() => ({
   getConversation: vi.fn(),
   dismissSuggestion: vi.fn(),
   mergeConversation: vi.fn(),
+  mergeChannels: vi.fn(),
 }));
 const session = vi.hoisted(() => ({ current: null as unknown }));
 const retainedSocket = vi.hoisted(() => vi.fn());
@@ -56,11 +57,12 @@ vi.mock('../lib/use-transcript-follow', () => ({
 
 import { WorkstreamScreen } from './workstream';
 import { useUiStore } from '../lib/ui-store';
-import { clearAllDrafts } from '../lib/draft-cache';
+import { workstreamDraftKey } from '../lib/draft-keys';
+import { readDraftText, clearAllDrafts } from '../lib/draft-cache';
 import type { WorkstreamBoot, WorkstreamDetail } from '../lib/types';
 import type * as CollaborationSessionModule from '../lib/collaboration-session';
 import type { ClientSession } from '@rally/contracts/client-session';
-import type { ConversationSuggestion } from '@rally/contracts';
+import { asSpaceId, type ConversationSuggestion, type ConversationMergeChannels, type SpaceDirectory } from '@rally/contracts';
 
 const threadId = '00000000-0000-7000-8000-000000000901';
 const breakoutId = '00000000-0000-7000-8000-000000000902';
@@ -148,10 +150,11 @@ function renderBreakout(turns: Turn[], suggestions: ConversationSuggestion[]): v
   );
 }
 
-function renderThread(turns: Turn[], suggestions: ConversationSuggestion[]): void {
+function renderThread(turns: Turn[], suggestions: ConversationSuggestion[], configure?: (client: QueryClient) => void): void {
   socket(suggestions);
   const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } });
   seed(queryClient, ['workstream', threadId], ['ordered-transcript', threadId], boot(threadId, 'Pricing', turns));
+  configure?.(queryClient);
   render(
     <Tooltip.Provider>
       <QueryClientProvider client={queryClient}>
@@ -174,11 +177,46 @@ describe('the suggestion chip', () => {
     vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(800);
     vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(800);
     useUiStore.setState({ railOpen: false, railVariant: 'context', inspector: null });
+    api.mergeChannels.mockResolvedValue({ channels: [] });
     api.getWorkspaceMembers.mockResolvedValue([]);
     api.getConnections.mockResolvedValue([]);
     api.dismissSuggestion.mockResolvedValue({ suggestionId: '00000000-0000-7000-8000-000000000911', status: 'dismissed', replayed: false });
   });
   afterEach(() => { vi.restoreAllMocks(); });
+
+
+  it.each([
+    { name: 'replaced', channels: [{ id: '00000000-0000-7000-8000-000000000922', name: 'Board' }] },
+    { name: 'removed', channels: [] },
+  ])('closes an open merge card when its chosen Channel is $name, without changing its audience', async ({ channels }) => {
+    let finish!: (value: ConversationMergeChannels) => void;
+    api.mergeChannels.mockReturnValue(new Promise<ConversationMergeChannels>((resolve) => { finish = resolve; }));
+    const gtm = asSpaceId('00000000-0000-7000-8000-000000000921');
+    const board = asSpaceId('00000000-0000-7000-8000-000000000922');
+    renderThread(twoTurns, [], (client) => {
+      client.setQueryData<WorkstreamDetail>(['workstream', threadId], (held) => held ? { ...held, spaceIds: [gtm] } : held);
+      client.setQueryData<SpaceDirectory>(['spaces'], { waterline: 1, items: [gtm, board].map((id, index) => ({
+        id, name: index === 0 ? 'GTM' : 'Board', iconKey: 'briefcase', colorKey: 'blue', scope: 'workspace', reach: 'organization', status: 'active',
+        systemRole: null, revision: 1, participants: [], channelCount: 1, attentionCount: 0,
+        defaultResourceIds: [], defaultSidekickIds: [], createdAt: '2026-10-18T10:00:00.000Z', updatedAt: '2026-10-18T10:00:00.000Z',
+      })) });
+    });
+    const row = (await screen.findByText(judged)).closest('[data-arrival-id]') as HTMLElement;
+    fireEvent.click(within(row).getByRole('button', { name: 'Merge to GTM' }));
+    const card = await screen.findByRole('article', { name: 'Merge to GTM' });
+    fireEvent.change(within(card).getByRole('textbox', { name: 'Merge note' }), { target: { value: 'Keep this draft for the selected audience.' } });
+    await act(async () => { finish({ channels }); });
+    await waitFor(() => expect(screen.queryByRole('article', { name: 'Merge to GTM' })).toBeNull(), { timeout: 5000 });
+    expect(screen.queryByRole('article', { name: 'Merge to Board' })).toBeNull();
+    expect(api.mergeConversation).not.toHaveBeenCalled();
+    expect((await readDraftText(`${workstreamDraftKey('global', 'workspace', threadId, '0')}:merge`))?.text)
+      .toBe('Keep this draft for the selected audience.');
+    if (channels.length) {
+      fireEvent.click(within(row).getByRole('button', { name: 'Merge to Board' }));
+      const reopened = await screen.findByRole('article', { name: 'Merge to Board' });
+      expect(within(reopened).getByRole('textbox', { name: 'Merge note' })).toHaveValue(judged);
+    }
+  });
 
   it('draws a merge chip under the judged turn in a Breakout, with the drafted note as its excerpt', async () => {
     renderBreakout(twoTurns, [suggestion()]);
