@@ -1,6 +1,7 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import type { ActivityFilter, ActivityItem, ActivityPage, ArtifactPin, ConversationAccessRequestItem, PinKind, SpaceSummary, WorkstreamAppearance } from '@rally/contracts';
+import { SPACE_COLOR_KEYS } from '@rally/contracts';
 import { IdentityTile, ShapeOutline, type TileBadge } from '@rally/ui/components/identity-tile';
 import { resourceGlyph } from '@rally/ui/components/resource-icon';
 import { resolveWorkstreamAppearance, WORKSTREAM_ICON_COMPONENTS } from '@rally/ui/components/workstream-glyph';
@@ -1507,7 +1508,8 @@ function NewChannelDialog({ onClose }: { onClose: () => void }): React.JSX.Eleme
     setPending(true);
     setFailed(false);
     try {
-      const created = await api.createSpace({ name: name.trim(), colorKey: 'blue', scope: 'workspace' });
+      const colorKey = SPACE_COLOR_KEYS[Math.floor(Math.random() * SPACE_COLOR_KEYS.length)]!;
+      const created = await api.createSpace({ name: name.trim(), colorKey, scope: 'workspace' });
       queryClient.setQueryData<SpaceDirectory>(SPACES_QUERY_KEY, (current) => current && !current.items.some((item) => item.id === created.id)
         ? { ...current, items: [...current.items, created] }
         : current);
