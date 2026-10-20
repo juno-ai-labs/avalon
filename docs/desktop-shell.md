@@ -85,6 +85,8 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
   count. **Pinned**: each pinned Channel with new threads and each pinned
   thread or breakout whose row reads unread (a mention, never opened, or
   unread messages), from the copies the Pinned list draws.
+  The desktop host renders a top spacer for macOS window controls and a
+  window-drag region on Windows and Linux. The browser host omits it.
 - **One list**, titled with the section's name. Pinned's list is a section per
   kind, **Channels**, **Threads** (threads, then breakouts) and **Artifacts**, each the same
   Pinned part its own tab draws above everything else, reorderable the same
