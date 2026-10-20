@@ -47,10 +47,7 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
 
 - **The section switcher**, a 76px rail under the macOS window controls,
   which the main window centers over it per macOS version (the width is
-  `--navigation-rail-width`; change it and the light position together).
-  Only a shell with `has-overlay-window-controls` reserves the top spacer;
-  browser and other hosts begin the rail at the top (verified visually, no
-  automated guard):
+  `--navigation-rail-width`; change it and the light position together):
   **Pinned**, **Channels**, **Threads**, **Activity** and **Artifacts**, each an outline over
   its name, and the account menu at the bottom, labelled Settings. Every
   entry, the account menu's trigger included, is one `RailItem`: a 34px tile
@@ -71,6 +68,8 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
   count. **Pinned**: each pinned Channel with new threads and each pinned
   thread or breakout whose row reads unread (a mention, never opened, or
   unread messages), from the copies the Pinned list draws.
+  The desktop host renders a top spacer for macOS window controls and a
+  window-drag region on Windows and Linux. The browser host omits it.
 - **One list**, titled with the section's name. Pinned's list is a section per
   kind, **Channels**, **Threads** (threads, then breakouts) and **Artifacts**, each the same
   Pinned part its own tab draws above everything else, reorderable the same
