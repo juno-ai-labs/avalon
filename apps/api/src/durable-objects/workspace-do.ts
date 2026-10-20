@@ -6925,6 +6925,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).setPrivateChildArchived(input));
   }
 
+  async readConversationResolved(input: Parameters<HostedParent["readConversationResolved"]>[0]) {
+    return (await this.channelParent(input.parentId, input.workspaceId)).readConversationResolved(input);
+  }
+
   // Socket revocation for a parent's Channel control sockets.
 
   /**

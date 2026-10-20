@@ -1026,6 +1026,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const breakoutExpandAction = expandToggle(breakoutExpanded, shownMode === 'split', setBreakoutExpanded);
 
   const mainPane = !mainVisible ? null : <ConversationSurface
+    resolved={Boolean(threadResolved)}
     linkSpaceId={linkSpaceId}
     breakouts={breakoutMarks}
     mergeRequest={mergeRequest?.substreamId === '0' ? mergeRequest.nonce : null}
@@ -1073,6 +1074,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     }}
     workstreamContext={conversationScoped ? undefined : parent.data}
   /> : <ConversationSurface
+    resolved={Boolean(breakoutResolved)}
     linkSpaceId={linkSpaceId}
     mergeRequest={mergeRequest && mergeRequest.substreamId === openBreakoutId ? mergeRequest.nonce : null}
     onMerged={showMerge}

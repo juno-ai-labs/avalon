@@ -78,13 +78,13 @@ function recorder(authorized = true, objectAnswer: Recorded["objectAnswer"] = {
   };
 }
 
-async function dismiss(recorded: Recorded, substream: string): Promise<{ status: number; code: unknown; body: Record<string, unknown> | null }> {
+async function dismiss(recorded: Recorded, substream: string, action = "dismiss"): Promise<{ status: number; code: unknown; body: Record<string, unknown> | null }> {
   const app = new Hono<HonoAppEnv>();
   app.use("*", async (c, next) => { c.set("auth", auth); await next(); });
   app.route("/conversations", conversationRoutes);
   app.onError(errorHandler);
   const response = await app.request(
-    `https://api.example.com/conversations/${workstreamId}/substreams/${substream}/suggestions/${suggestionId}/dismiss`,
+    `https://api.example.com/conversations/${workstreamId}/substreams/${substream}/suggestions/${suggestionId}/${action}`,
     { method: "POST", headers: { "content-type": "application/json" } },
     environment(recorded),
   );
@@ -93,6 +93,14 @@ async function dismiss(recorded: Recorded, substream: string): Promise<{ status:
 }
 
 describe("POST /conversations/:parentId/substreams/:substreamId/suggestions/:suggestionId/dismiss", () => {
+  it("routes resolution to the readable writable conversation", async () => {
+    const recorded = recorder(true, { status: 200, body: { suggestionId, status: "accepted", replayed: false } });
+    const result = await dismiss(recorded, substreamId, "resolve");
+    expect(result.status).toBe(200);
+    expect(recorded.productRequests).toEqual([expect.objectContaining({ operation: "resolve_suggestion", suggestionId })]);
+    expect([...recorded.objectNames]).toEqual([conversationObjectName("global", workspaceId, workstreamId, substreamId)]);
+  });
+
   it("reaches the Breakout's own object as a read and answers the resolution", async () => {
     const recorded = recorder();
     const result = await dismiss(recorded, substreamId);

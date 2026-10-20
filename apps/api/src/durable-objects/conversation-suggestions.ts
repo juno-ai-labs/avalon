@@ -4,6 +4,7 @@ import {
   type ConversationSuggestion,
   type ConversationSuggestionKind,
   type ConversationSuggestionStatus,
+  type ServerSocketEvent,
 } from "@rally/contracts";
 import {
   judgeTurnDisposition,
@@ -78,6 +79,7 @@ export interface SuggestionRow extends Record<string, SqlStorageValue> {
   resolved_at: number | null;
   resolved_by_user_id: string | null;
   resolution: "accepted" | "dismissed" | "ignored" | null;
+  accepting_by_user_id: string | null;
 }
 
 interface TurnRow extends Record<string, SqlStorageValue> {
@@ -91,7 +93,7 @@ interface TurnRow extends Record<string, SqlStorageValue> {
 
 const SUGGESTION_COLUMNS = `suggestion_id, kind, judged_turn_id, judged_turn_sequence, run_id, status, draft_status,
   draft_text, draft_subject, target_kind, target_id, target_title, decision_choice, decision_confidence,
-  decision_model, created_at, resolved_at, resolved_by_user_id, resolution`;
+  decision_model, created_at, resolved_at, resolved_by_user_id, resolution, accepting_by_user_id`;
 
 /** The row as the client sees it. */
 export function suggestionForClient(row: SuggestionRow): ConversationSuggestion {
@@ -105,6 +107,20 @@ export function suggestionForClient(row: SuggestionRow): ConversationSuggestion 
       ? { kind: row.target_kind, id: row.target_id, title: row.target_title ?? "" }
       : null,
   };
+}
+
+/** Preserve a legacy socket's sequence while keeping new enum values out of its decoder. */
+export function suggestionEventForClient(event: ServerSocketEvent, readsResolutionSuggestions: boolean): ServerSocketEvent {
+  if (readsResolutionSuggestions) return event;
+  if (event.type === "snapshot") return { ...event,
+    suggestions: event.suggestions?.filter((suggestion) => suggestion.kind !== "mark_resolved"),
+  };
+  if (event.type === "conversation_suggestion_changed" && event.suggestion.kind === "mark_resolved") {
+    // A known withdrawn row is a harmless tombstone. Dropping this sequenced
+    // event entirely would make a legacy reader ask for reconciliation.
+    return { ...event, suggestion: { ...event.suggestion, kind: "merge_up", status: "withdrawn" } };
+  }
+  return event;
 }
 
 export class ConversationSuggestionStorage {
@@ -160,9 +176,9 @@ export class ConversationSuggestionStorage {
       `INSERT INTO conversation_suggestions
          (suggestion_id, kind, judged_turn_id, judged_turn_sequence, run_id, status, draft_status,
           target_kind, target_id, target_title, decision_choice, decision_confidence, decision_model, created_at)
-       VALUES (?, ?, ?, ?, ?, 'open', 'pending', ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING ${SUGGESTION_COLUMNS}`,
-      input.suggestionId, input.kind, input.judgedTurnId, input.judgedTurnSequence, input.runId,
+      input.suggestionId, input.kind, input.judgedTurnId, input.judgedTurnSequence, input.runId, input.kind === "mark_resolved" ? "ready" : "pending",
       input.target?.kind ?? null, input.target?.id ?? null, input.target?.title ?? null,
       input.decision.choice, input.decision.confidence, input.decision.model, input.now,
     ).one();
@@ -188,7 +204,7 @@ export class ConversationSuggestionStorage {
     return this.sql.exec<SuggestionRow>(
       `UPDATE conversation_suggestions
           SET status = 'dismissed', resolution = 'dismissed', resolved_at = ?, resolved_by_user_id = ?
-        WHERE suggestion_id = ? AND status = 'open' RETURNING ${SUGGESTION_COLUMNS}`,
+        WHERE suggestion_id = ? AND status = 'open' AND accepting_by_user_id IS NULL RETURNING ${SUGGESTION_COLUMNS}`,
       now, userId, suggestionId,
     ).toArray()[0] ?? null;
   }
@@ -200,6 +216,30 @@ export class ConversationSuggestionStorage {
           SET status = 'accepted', resolution = 'accepted', resolved_at = ?, resolved_by_user_id = ?
         WHERE status = 'open' AND kind = 'merge_up' AND judged_turn_sequence <= ? RETURNING ${SUGGESTION_COLUMNS}`,
       now, userId, sequence,
+    ).toArray();
+  }
+
+  /** Persist the click before yielding; dismissal and recency cannot overtake it. */
+  beginResolution(suggestionId: string, userId: string): SuggestionRow | null {
+    return this.sql.exec<SuggestionRow>(
+      `UPDATE conversation_suggestions SET accepting_by_user_id = COALESCE(accepting_by_user_id, ?)
+        WHERE suggestion_id = ? AND kind = 'mark_resolved' AND status = 'open'
+        RETURNING ${SUGGESTION_COLUMNS}`, userId, suggestionId,
+    ).toArray()[0] ?? null;
+  }
+
+  cancelResolution(suggestionId: string): void {
+    this.sql.exec(`UPDATE conversation_suggestions SET accepting_by_user_id = NULL
+      WHERE suggestion_id = ? AND status = 'open'`, suggestionId);
+  }
+
+  /** A person resolved this conversation; all open resolution suggestions were taken. */
+  resolveCompleted(userId: string | null, now: number): SuggestionRow[] {
+    return this.sql.exec<SuggestionRow>(
+      `UPDATE conversation_suggestions
+          SET status = 'accepted', resolution = 'accepted', resolved_at = ?, resolved_by_user_id = COALESCE(accepting_by_user_id, ?), accepting_by_user_id = NULL
+        WHERE status = 'open' AND kind = 'mark_resolved' RETURNING ${SUGGESTION_COLUMNS}`,
+      now, userId,
     ).toArray();
   }
 
@@ -223,7 +263,7 @@ export class ConversationSuggestionStorage {
     return this.sql.exec<SuggestionRow>(
       `UPDATE conversation_suggestions
           SET status = 'expired', resolution = 'ignored', resolved_at = ?
-        WHERE status = 'open'
+        WHERE status = 'open' AND accepting_by_user_id IS NULL
           AND (SELECT COUNT(*) FROM canonical_conversation_turn_details turn
                 WHERE ${READABLE_TURN.replaceAll(/\b(substream_id|message_type|author_type|content)\b/g, "turn.$1")}
                   AND turn.sequence_number > conversation_suggestions.judged_turn_sequence) >= ?
@@ -383,6 +423,7 @@ export interface TurnDispositionObservationInput {
    * withdraw the other's words.
    */
   draftInFlight?: (suggestionId: string) => boolean;
+  readResolved?: () => Promise<boolean>;
   threshold?: number;
   cooldownMs?: number;
   maximumPerDay?: number;
@@ -430,15 +471,12 @@ export async function observeTurnDisposition(input: TurnDispositionObservationIn
   }
   const now = input.now();
   const conversationKind = input.substreamId === "0" ? "thread" : "breakout";
-  // Gate 4: at least one kind this conversation can offer. A Breakout offers
-  // only merge_up, as does an incoming merged result. Other Thread outputs
-  // also offer start_breakout, even when there is no eligible Channel.
+  // Resolution is offerable without a merge destination. The parent read
+  // decides only whether merge is available; nested Breakouts stay excluded.
   const parent = await input.readParent();
   const mergeOfferable = parent !== null;
-  if ((conversationKind === "breakout" || mergedResult) && !mergeOfferable) return { outcome: "skipped", gate: "nothing_offerable" };
-  // Gate 5: not already carried up.
+  // Keep the merge history as classifier context; it fences only merge offers.
   const markers = input.storage.mergeMarkers(judged.sequence_number);
-  if (markers.after > 0) return { outcome: "skipped", gate: "already_carried_up" };
 
   const state = buildTurnDispositionState({
     storage: input.storage, judged, parent, conversationKind,
@@ -465,11 +503,18 @@ export async function observeTurnDisposition(input: TurnDispositionObservationIn
     : unavailable("typesafe_key_missing");
 
   const offered = suggestionForTurnDisposition(decision, conversationKind, threshold);
-  const kind: ConversationSuggestionKind | null = offered === "merge_up" && mergeOfferable ? "merge_up"
+  let kind: ConversationSuggestionKind | null = offered === "merge_up" && mergeOfferable ? "merge_up"
+    : offered === "mark_resolved" ? "mark_resolved"
     : offered === "start_breakout" && !mergedResult ? "start_breakout"
     : null;
   let code: string = decision.code;
-  if (decision.disposition !== null && decision.confidence !== null && decision.disposition !== "continue_here" && kind === null) {
+  // Merge also sets the shared bit, and later corrections and side work still
+  // deserve classification. Read resolution only for a resolution offer.
+  if (kind === "mark_resolved" && await input.readResolved?.()) {
+    kind = null;
+    code = "already_resolved";
+  }
+  if (decision.disposition !== null && decision.confidence !== null && decision.disposition !== "continue_here" && kind === null && code !== "already_resolved") {
     // Below threshold is about the confidence alone; a confident side question
     // in a Breakout, or a confident carry-up with no parent to offer, is a
     // positive the host could not offer, and the record says so.
@@ -486,7 +531,7 @@ export async function observeTurnDisposition(input: TurnDispositionObservationIn
     // Gate 5 again, inside the write: the classifier call yielded, and a merge
     // that landed meanwhile resolved no row because there was none yet
     // (docs/durable-object-sqlite.md, re-check a fence after an await).
-    if (input.storage.mergeMarkers(judged.sequence_number).after > 0) {
+    if (kind === "merge_up" && input.storage.mergeMarkers(judged.sequence_number).after > 0) {
       code = "already_carried_up";
     // Gate 3b: a settlement that lands behind three newer messages has
     // nothing to show; the decision is still recorded.

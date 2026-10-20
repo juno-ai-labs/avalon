@@ -2,7 +2,7 @@ import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { Hono } from "hono";
 import { requireSendableMessageLength, zValidator } from "../middleware/validation";
 import {
-  ConversationSuggestionDismissResultSchema,
+  ConversationSuggestionActionResultSchema,
   AcknowledgeWorkstreamReadRequestSchema,
   AgentModelOverrideSchema,
   ConversationMergeChannelsSchema,
@@ -19,6 +19,7 @@ import {
 } from "@rally/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
+import { clientReadsResolutionSuggestions } from "../lib/client-contract";
 import { ApiError } from "../lib/api-error";
 import { requestDeferral } from "../lib/defer";
 import { workspaceRealtimeInvalidation } from "../middleware/workspace-realtime";
@@ -328,6 +329,13 @@ conversationRoutes.patch("/:parentId/substreams/:substreamId/read-state",
     const client = await new ConversationService(c.env, getWorkspaceAuth(c)).client(param.parentId, false, param.substreamId);
     return c.json(WorkstreamSchema.parse(await client.acknowledgeRead(c.req.valid("json"))));
   });
+/** Mark a completed conversation resolved after exact-conversation write admission. */
+conversationRoutes.post("/:parentId/substreams/:substreamId/suggestions/:suggestionId/resolve",
+  zValidator("param", substreamSocketParam.extend({ suggestionId: IdSchema })), async (c) => {
+    const param = c.req.valid("param");
+    const client = await new ConversationService(c.env, getWorkspaceAuth(c)).writableClient(param.parentId, param.substreamId);
+    return c.json(ConversationSuggestionActionResultSchema.parse(await client.resolveSuggestion(param.suggestionId)));
+  });
 /**
  * Dismiss a suggestion under a turn, for everyone in the conversation. Read-
  * authorized, like acknowledging a read: it records a choice about a line only
@@ -340,7 +348,7 @@ conversationRoutes.post("/:parentId/substreams/:substreamId/suggestions/:suggest
   zValidator("param", substreamSocketParam.extend({ suggestionId: IdSchema })), async (c) => {
     const param = c.req.valid("param");
     const client = await new ConversationService(c.env, getWorkspaceAuth(c)).client(param.parentId, false, param.substreamId);
-    return c.json(ConversationSuggestionDismissResultSchema.parse(await client.dismissSuggestion(param.suggestionId)));
+    return c.json(ConversationSuggestionActionResultSchema.parse(await client.dismissSuggestion(param.suggestionId)));
   });
 conversationRoutes.get("/:parentId", zValidator("param", parentParam), async (c) => {
   const parentId = c.req.valid("param").parentId;
@@ -408,6 +416,7 @@ conversationRoutes.get(
           param.substreamId,
           afterSequence,
           speculative,
+          clientReadsResolutionSuggestions((name) => c.req.header(name)),
         ));
       // The upgrade this authorizes is a new connection, which the platform
       // traces as its own invocation with its own trace id. The ticket id is the

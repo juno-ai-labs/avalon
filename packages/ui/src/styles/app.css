@@ -9068,7 +9068,7 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   padding: 0 10px 0 8px;
   white-space: nowrap;
 }
-.suggestion-chip.is-merge .suggestion-chip-action { background: var(--av-sys-color-success-fill); color: var(--av-sys-color-success-base); }
+.suggestion-chip:is(.is-merge, .is-resolve) .suggestion-chip-action { background: var(--av-sys-color-success-fill); color: var(--av-sys-color-success-base); }
 .suggestion-chip.is-breakout .suggestion-chip-action { background: var(--av-sys-color-surface-sunken); color: var(--av-sys-color-text-default); }
 .suggestion-chip-action:hover:not(:disabled) { filter: brightness(.97); }
 .suggestion-chip-action:disabled { cursor: default; opacity: .45; }

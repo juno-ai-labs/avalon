@@ -2622,6 +2622,18 @@ export class HostedParent {
     return result;
   }
 
+  readConversationResolved(input: { workspaceId: string; parentId: string; substreamId: string }): boolean {
+    const request = parseRpcInput(z.strictObject({
+      workspaceId: WorkspaceIdSchema, parentId: IdSchema, substreamId: SubstreamIdSchema,
+    }), input, "conversation_resolution_read");
+    if (!this.metadataRow()) return false;
+    this.assertParent(request.workspaceId, request.parentId);
+    return first(this.sql.exec<{ resolved: number }>(
+      `SELECT resolved FROM parent_children WHERE parent_id = ? AND substream_id = ?`,
+      this.parentId, request.substreamId,
+    ))?.resolved === 1;
+  }
+
   /** Archive the child registry entry without deleting membership or transcript. */
   async setPrivateChildArchived(input: SetPrivateChildArchivedRequest): Promise<SetPrivateChildArchivedResult> {
     const request = SetPrivateChildArchivedRequestSchema.parse(input);

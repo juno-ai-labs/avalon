@@ -11,7 +11,7 @@ import {
 /**
  * What a message in a conversation calls for next, read as the parent
  * conversation's owner would read it: carry it up to the parent, break a side
- * question out, or nothing.
+ * question out, mark the purpose resolved, or continue here.
  *
  * The third JEV caller, written to the shape of `semantic-trigger-gate.ts`:
  * the state, the question, the criteria and the mapping live here, the
@@ -23,6 +23,7 @@ import {
 export const TURN_DISPOSITION_CHOICES = [
   "worth_carrying_up",
   "side_question_worth_a_breakout",
+  "mark_resolved",
   "continue_here",
 ] as const;
 export type TurnDisposition = (typeof TURN_DISPOSITION_CHOICES)[number];
@@ -189,7 +190,7 @@ export const turnDispositionQuestions = {
     instructions: {
       question: "Read as the owner of `parent`: what does `judged_message` call for?",
       focus: "`parent` is the conversation that would receive a merge and who reads it. `conversation.opening_request` and `conversation.purpose` are what this conversation exists to do. `so_far.summary`, when present, is where the work stood before the recent messages; `so_far.earlier_outputs` are the things already produced here, and `so_far.carried_up_before` how many times something was already carried to the parent. Use `recent_messages` only to tell whether the purpose is still in motion and whether a side question is new. `judged_message.outputs[].first_time_here` says whether an output is new or a revision. Optional `judged_message.merged_from` identifies a result carried here from a Breakout; origin alone does not mean the parent needs it.",
-      decision: "Choose exactly one.",
+      decision: "Choose exactly one. If a completed purpose also has something new the parent's readers need, choose worth_carrying_up. Otherwise, choose mark_resolved when the whole purpose is complete with no open work; completion takes priority over continue_here. An open side question is work still to do, not resolution.",
     },
     criteria: {
       worth_carrying_up: {
@@ -228,6 +229,21 @@ export const turnDispositionQuestions = {
           "The next step of the purpose",
         ],
       },
+      mark_resolved: {
+        meaning: "The conversation's whole purpose has been fulfilled or explicitly closed, with no outstanding work or question for the people here, and nothing new needs carrying to the parent.",
+        include: [
+          "The final requested revision is complete and no part of the purpose remains open",
+          "The result already reached the parent and the remaining local work is now finished",
+          "A person explicitly confirms the purpose is complete or no longer needed",
+        ],
+        exclude: [
+          "A completed run, a polite acknowledgement, or a finished subtask without evidence the whole purpose is settled",
+          "A draft awaiting review, approval, a decision, verification or another requested step",
+          "Blocked work, an unsuccessful attempt, or a question still awaiting an answer",
+          "A distinct side question that still needs its own conversation",
+          "Something new the parent's readers need now; choose worth_carrying_up instead",
+        ],
+      },
       continue_here: {
         meaning: "The message is a step of the work here, and nothing in it is new for the parent's readers.",
         include: [
@@ -240,6 +256,7 @@ export const turnDispositionQuestions = {
         exclude: [
           "Something new that the parent's readers need now",
           "A distinct piece of work beside the purpose",
+          "The whole purpose is complete with no open work; choose mark_resolved",
         ],
       },
     },
@@ -372,13 +389,14 @@ export async function judgeTurnDisposition(input: TurnDispositionInput): Promise
   }
 }
 
-export type SuggestionKind = "merge_up" | "start_breakout";
+export type SuggestionKind = "merge_up" | "start_breakout" | "mark_resolved";
 
 /**
  * The host's mapping from a decision to a suggestion, by conversation kind.
- * A Breakout offers only `merge_up`: there are no nested Breakouts, so the
+ * A Breakout offers merge and resolution: there are no nested Breakouts, so the
  * breakout outcome maps to nothing there. A confidence at or below the
  * threshold maps to nothing everywhere.
+ * Resolution uses the same confidence threshold as merge and Breakout.
  */
 export function suggestionForTurnDisposition(
   decision: TurnDispositionDecision,
@@ -387,6 +405,7 @@ export function suggestionForTurnDisposition(
 ): SuggestionKind | null {
   if (decision.disposition === null || decision.confidence === null) return null;
   if (!(decision.confidence > threshold)) return null;
+  if (decision.disposition === "mark_resolved") return "mark_resolved";
   if (decision.disposition === "worth_carrying_up") return "merge_up";
   if (decision.disposition === "side_question_worth_a_breakout" && conversationKind === "thread") return "start_breakout";
   return null;

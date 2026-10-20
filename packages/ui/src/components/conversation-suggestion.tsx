@@ -1,16 +1,16 @@
-import { IconCornerDownRight, IconCornerUpLeft, IconX } from '@tabler/icons-react';
+import { IconCheck, IconCornerDownRight, IconCornerUpLeft, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
 
 /**
  * A conversation suggestion: one quiet line under a settled turn saying the
  * result might be worth carrying up, or a side question might deserve its own
- * Breakout (docs/conversation-suggestions.md). A dashed outline, because the
+ * Breakout, or the whole purpose is ready to mark resolved (docs/conversation-suggestions.md). A dashed outline, because the
  * thing it names does not exist yet and because it is a suggestion rather
  * than something a person did; a title naming the action and its target; one
  * sentence; one cut line of the words the action would post or start with;
  * the action; and a dismiss. Nothing posts or starts without the person: the
- * action opens the response card or the launch pane to edit first.
+ * merge and Breakout actions open an editor; resolution runs only on a click.
  */
 export const SUGGESTION_EXCERPT_CHARACTERS = 72;
 
@@ -33,7 +33,7 @@ export function suggestionExcerpt(text: string): string {
 }
 
 export function SuggestionChip({ action, excerpt, kind, label, onDismiss, pending, sentence, title }: {
-  kind: 'merge_up' | 'start_breakout';
+  kind: 'merge_up' | 'start_breakout' | 'mark_resolved';
   /** The chip's accessible name. */
   label: string;
   /** "Merge to Cold Outreach", "Breakout: Starter tier"; the host fills the one slot. */
@@ -43,12 +43,12 @@ export function SuggestionChip({ action, excerpt, kind, label, onDismiss, pendin
   excerpt: string | null;
   /** The draft has not landed: a skeleton where the excerpt goes, the action disabled, Dismiss live. */
   pending: boolean;
-  action: { label: string; onAct: () => void };
+  action: { label: string; onAct: () => void; disabled?: boolean };
   onDismiss: () => void;
 }): React.JSX.Element {
-  const Icon = kind === 'merge_up' ? IconCornerUpLeft : IconCornerDownRight;
+  const Icon = kind === 'mark_resolved' ? IconCheck : kind === 'merge_up' ? IconCornerUpLeft : IconCornerDownRight;
   return (
-    <div aria-label={label} className={clsx('suggestion-chip', kind === 'merge_up' ? 'is-merge' : 'is-breakout')} role="group">
+    <div aria-label={label} className={clsx('suggestion-chip', kind === 'mark_resolved' ? 'is-resolve' : kind === 'merge_up' ? 'is-merge' : 'is-breakout')} role="group">
       <div className="suggestion-chip-text">
         <span className="suggestion-chip-title"><Icon aria-hidden="true" size={13} stroke={1.9} />{title}</span>
         <p className="suggestion-chip-sentence">{sentence}</p>
@@ -59,7 +59,7 @@ export function SuggestionChip({ action, excerpt, kind, label, onDismiss, pendin
           : excerpt !== null && <p className="suggestion-chip-excerpt">{excerpt}</p>}
       </div>
       <div className="suggestion-chip-controls">
-        <button className="suggestion-chip-action" disabled={pending} onClick={action.onAct} type="button">
+        <button className="suggestion-chip-action" disabled={pending || action.disabled} onClick={action.onAct} type="button">
           <Icon aria-hidden="true" size={12} stroke={2} />{action.label}
         </button>
         <button aria-label="Dismiss suggestion" className="suggestion-chip-dismiss" onClick={onDismiss} type="button">

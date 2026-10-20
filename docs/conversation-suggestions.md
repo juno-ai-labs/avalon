@@ -3,7 +3,7 @@
 After a run settles in a Thread's Main or in a Breakout, or a Breakout result
 lands in its Thread, a cheap classifier judges the result against the conversation's purpose and, rarely,
 offers one quiet suggestion under that turn: merge this result up to the
-parent, or start a Breakout on the side question. The suggestion is
+parent, start a Breakout on the side question, or mark the purpose resolved. The suggestion is
 conversation state keyed to the judged turn, never a transcript row; a person
 acts on it or dismisses it, and the feed's recency retires it. Rally never
 merges or starts a Breakout on its own. The product requirements are
@@ -15,6 +15,11 @@ now uses, and the marker that resolves a suggestion),
 [`substream-creation.md`](substream-creation.md) (the launch pane a Breakout
 suggestion opens), [`agent-harness.md`](agent-harness.md) (the JEV primitives
 and the settlement lane), [`jev-best-practices.md`](jev-best-practices.md).
+
+JEV also offers **Mark resolved** for completed work; `turn-disposition.ts` owns
+its completion criteria and priority rules. A person clicks to set the existing
+shared `parent_children.resolved` bit, independently of archive state. The row
+starts ready because resolution needs no drafted words.
 
 ## Where the code lives
 
@@ -60,16 +65,20 @@ cheapest first, each the reason not to pay for the next:
 | 1 | A completed run's final Rally text, or an admitted `conversation_merge` result | `run_not_completed`, `final_turn_not_text` |
 | 2 | A conversation people read: not a background agent, not archived, not a system conversation such as a digest | `background_agent`, `archived`, `system_conversation` |
 | 3 | This run or incoming merged turn was not judged before (`turn_disposition_judgements` by `run_id`), checked again inside the write; a judgement recording a classifier failure does not count, and a row left `pending` by an interrupted settlement resumes at the draft instead, unless this object is drafting it right now | `already_judged`, `draft_in_flight`, or `resumed` |
-| 4 | At least one kind is offerable: a Breakout offers only `merge_up` and needs its Thread; an incoming merge offers only `merge_up` and needs its Channel; other Thread outputs always offer `start_breakout`, and `merge_up` too when placed in an Organization-wide Channel, private thread or not | `nothing_offerable` |
-| 5 | The turn was not already carried up: no `conversation_merged_into` marker after it | `already_carried_up` |
+| 4 | Only a confident resolution offer reads the shared bit, once after inference. An existing resolution suppresses that offer, while merge and Breakout remain offerable | recorded as `already_resolved` |
+
+Resolution remains offerable without an eligible merge parent and after a
+result was carried up. Merge markers now suppress only another merge offer;
+they still feed the classifier's carried-up history. An incoming merged result
+can offer merge or resolution, but never a new Breakout.
 
 Past the gates it builds the state the design specifies, reading only this
-object's tables and one parent read over RPC (the Thread's identity for a
+object's tables and one parent context read over RPC (the Thread's identity for a
 Breakout; `threadMergePlacement` on WorkspaceDO for a Thread), asks JEV once
-through `judgeTurnDisposition`, and records the decision in
+through `judgeTurnDisposition`, reads shared resolution only for a resolution offer, and records the decision in
 `turn_disposition_judgements` whatever it was. A positive above the threshold
 of an offerable kind becomes an `open` row in `conversation_suggestions` with
-its draft `pending`, written in the same transaction as the judgement, unless
+its draft `pending` (or immediately `ready` for resolution), written in the same transaction as the judgement, unless
 gate 3b (the turn already has three newer messages: `late`) or gate 6 (pacing:
 `paced`) stops it. A positive the threshold rejects is recorded as
 `confidence_below_threshold`; a merge positive in a Thread with no Channel to
@@ -94,7 +103,7 @@ to replay; a pending draft resumes through the observer's existing gate.
 Transient classifier failures and step failures reuse the backfill's retry
 policy and the shared scheduler's backoff. Missing provider credentials settle
 without a suggestion, as they do in the backfill. A merge with no eligible
-Channel skips before context construction or a provider call. The classifier
+Channel can still be judged for resolution. The classifier
 receives the stored author's kind, so a person's merged result is `person`.
 Separately, `judged_message.merged_from` identifies its Breakout origin by kind
 and title, using the existing title bound. The JEV question and evaluation
@@ -102,7 +111,7 @@ prompt both explain that origin alone does not mean the parent needs the result.
 The candidate picker includes these merged results among the same newest three
 readable messages, and live alarms and backfill share `MERGE_JUDGEMENT_KEY_PREFIX` to use
 `merge:<turnId>` as the stable key in the existing `run_id` slot. Replays resume
-a pending draft or reuse the judgement. Only `merge_up` is offerable for this
+a pending draft or reuse the judgement. Merge and resolution are offerable for this
 candidate: the incoming result can move onward to a Channel, while an ordinary
 human message remains outside the classifier's candidates.
 
@@ -111,7 +120,7 @@ and permits another classification after a recorded classifier failure.
 
 ### The two-phase write
 
-The chip is up before the words are asked for. The row is inserted `pending`
+The chip is up before the words are asked for. Merge and Breakout rows are inserted `pending`
 and published as `conversation_suggestion_changed`; the client draws the chip
 at once with a skeleton where the excerpt goes. Then `draftSuggestion` runs the
 `suggestion_draft` role: a merge note for the parent's readers, or a Breakout's
@@ -128,7 +137,7 @@ cooldown.
 | Status | Written by | Resolution |
 | --- | --- | --- |
 | `open` | The observer, for a confident positive | |
-| `accepted` | A `conversation_merged_into` marker appended to this conversation resolves every open `merge_up` row on a turn at or before it, in the marker's own commit; `resolveBreakoutSuggestion`, called by `SubstreamCreationService` once the Breakout cut at that turn is ready, resolves the open `start_breakout` row on it | `accepted` |
+| `accepted` | Manual resolution accepts all open `mark_resolved` rows after WorkspaceDO confirms the shared bit; a `conversation_merged_into` marker appended to this conversation resolves every open `merge_up` row on a turn at or before it, in the marker's own commit; `resolveBreakoutSuggestion`, called by `SubstreamCreationService` once the Breakout cut at that turn is ready, resolves the open `start_breakout` row on it | `accepted` |
 | `dismissed` | The dismiss route, for everyone, with who did it | `dismissed` |
 | `expired` | The newest-three rule, on each admitted message, each appended system row and each judgement | `ignored` |
 | `withdrawn` | A failed draft | none |
@@ -170,7 +179,7 @@ from the migration tracker so every Organization fills its list
 
 The chip is drawn by the conversation surface in the feed's `afterTurn` slot
 under the last row of the judged turn, for a viewer who can take the action:
-`merge_up` when `mergeTargetFor` gives this viewer a target, `start_breakout`
+`mark_resolved` for a reader of an open Thread or Breakout, `merge_up` when `mergeTargetFor` gives this viewer a target, `start_breakout`
 when the viewer can start a Breakout here (a Thread's Main). The title and
 sentence are fixed strings with one slot: "Merge to **{target}**" and "This
 might be a good time to merge this back into **{target}**."; "Breakout:
@@ -263,13 +272,15 @@ What this version deliberately leaves out, and why:
 
 | Suite | Covers |
 | --- | --- |
+| `apps/api/test-workers/channel-viewer-state.test.ts` | Manual resolution, in-flight dismissal and expiry, recovery after parent commit and eviction, legacy/current socket snapshots and updates, live sidebar updates, and named admission refusals. No agent run or inference is admitted. |
 | `apps/api/test-workers/merge-suggestion-candidate.test.ts` (real workerd) | Canonical admission and queued delivery reach the observer without starting an agent run; classification and drafting finish during publication failure, and recovery broadcasts the ready suggestion after the turn without repeating provider calls; eviction with a pending draft resumes the draft and retires its durable intent. Removing the publication hook, moving it after publication, or dropping the required notification makes the corresponding assertion fail. |
-| `apps/api/test/conversation-suggestions.test.ts` (Node, real object schema, TypeSafe fetch double) | Every gate in order; one row and one judgement per confident positive; the recorded codes; a replayed settlement asking nothing and a pending row resumed; `late`; pacing at a finite and at the open value; the expiry at the third newer readable message and not the second; the three resolutions; a draft filled and a draft withdrawn; a recorded classifier failure asked again; a run judged by another caller during the call written nothing; a draft in flight not resumed; `newestSettledTurn` picking the newest completed final turn within three and nothing behind them or for a run still running. Proved by breaking: the expiry count, the idempotency gate, the failure re-ask and the completed-run join each made their test fail. |
+| `apps/api/test/conversation-suggestions.test.ts` (Node, real object schema, TypeSafe fetch double) | Ready resolution suggestions without drafting, acceptance in place, resolution without a merge parent, and resolution during classification; merge and Breakout offers after shared resolution; every gate in order; one row and one judgement per confident positive; the recorded codes; a replayed settlement asking nothing and a pending row resumed; `late`; pacing at a finite and at the open value; the expiry at the third newer readable message and not the second; the resolutions; a draft filled and a draft withdrawn; a recorded classifier failure asked again; a run judged by another caller during the call written nothing; a draft in flight not resumed; `newestSettledTurn` picking the newest completed final turn within three and nothing behind them or for a run still running. Proved by breaking: the expiry count, the idempotency gate, the failure re-ask and the completed-run join each made their test fail. |
 | `apps/api/test/suggestion-backfill-service.test.ts`, `apps/api/test/workspace-suggestion-backfill-migration.test.ts` | The backfill's answer to the lane (thrown on a classifier failure, settled on a missing key); migration 115 listing open threads and not archived ones. |
 | `apps/api/test/conversation-suggestions-route.test.ts` (Node, typed double) | The dismiss route's addressing (the Breakout's object, Main for `0`), read admission, and refusals. |
-| `apps/api/test/workstream-object-schema.test.ts` | Migration v75 and the table list. |
+| `apps/api/test/workstream-object-schema.test.ts` | Migration v75 and the table list; v79 preserves existing suggestion rows and their uniqueness constraint. |
 | `packages/contracts/src/conversation-suggestions.test.ts` | The visibility rule; the event and snapshot shapes; an older parser stripping the key. |
 | `packages/agent-harness/src/prompts.test.ts` | The two drafter prompts' golden hashes. |
+| `packages/agent-harness/src/turn-disposition.test.ts` | A `mark_resolved` provider answer survives parsing with confidence and model intact, maps to a resolve suggestion in both conversation kinds, and stays quiet at the confidence threshold. |
 | `packages/agent-harness/src/turn-disposition-provenance.test.ts` | An overlong Breakout title is bounded by code point without splitting an emoji. The API observer test checks that stored merge metadata reaches the classifier request. |
 | `apps/desktop/src/renderer/screens/workstream-suggestions.test.tsx` | The chip under the judged turn with the drafted excerpt; visible with two newer messages, hidden at the third; the pending skeleton with the action disabled; accept opening the response card in the chip's place and the composer staying ordinary; the card merging through the route; the hover action opening the same card under its turn; dismiss hiding at once and calling the route; no merge chip for a viewer with no target; the Breakout chip opening the launch pane seeded with the prompt. |
 | `apps/desktop/src/renderer/components/conversation-suggestion.test.tsx` | The excerpt cut, the chip's controls and pending state, the card's keys and controls. |
@@ -284,19 +295,42 @@ does not populate merge provenance; the new cases supply it explicitly.
 
 ## Data model
 
-Migration v75, in the conversation object:
+Migrations v75, v79 and v80, in the conversation object:
 
 - `conversation_suggestions`: `suggestion_id`, `kind`, `judged_turn_id`,
   `judged_turn_sequence`, `run_id`, `status`, `draft_status`, `draft_text`,
   `draft_subject`, `target_kind`, `target_id`, `target_title`,
   `decision_choice`, `decision_confidence`, `decision_model`, `created_at`,
-  `resolved_at`, `resolved_by_user_id`, `resolution`. One row per judged turn.
+  `resolved_at`, `resolved_by_user_id`, `resolution`, `accepting_by_user_id`. One row per judged turn.
   The sequence is stored beside the id so expiry and the merge marker compare
   integers; the target so the snapshot needs no parent read.
 - `turn_disposition_judgements`: `run_id`, `judged_turn_id`, `code`, `choice`,
   `confidence`, `carried_item_kind`, `model`, `suggestion_id`, `created_at`.
   Every decision, shown or not: gate 3's record, and what a later calibration
   re-scores without calling the provider again.
+
+### Resolution delivery and acceptance
+
+Client contract 10 opts into the new kind when requesting a socket ticket. The
+server signs that capability into the ticket and persists it in the hibernating
+socket attachment. Snapshot delivery filters resolution rows for older clients,
+including prepared snapshots. Broadcasts and replay replace their resolution
+events with a known withdrawn merge tombstone at the same sequence, so old
+clients keep their authoritative snapshot and contiguous cursor. Missing claims
+and pre-existing attachments default to legacy delivery.
+
+Before the parent RPC, `beginResolution` saves `accepting_by_user_id` on the open
+row. Dismissal and recency expiry cannot overwrite a click in progress. Parent
+success accepts the row; an explicit refusal clears the intent, while an
+uncertain transport failure keeps it for a retry. The intent survives eviction
+and retains the first clicker's identity. Merge markers also retire open
+resolution chips. Archived conversations show a disabled action with Dismiss
+still available.
+
+The shared resolved bit is also written by merges and is not cleared by later
+messages. It therefore suppresses only redundant resolution offers, never all
+classification. Settlement treats a failed resolution read as unresolved and
+logs the reason; backfill propagates the read failure for retry.
 
 ## Security and trust model
 
@@ -311,6 +345,23 @@ the Organization only to TypeSafe for the judgement and to the drafting route
 for the words, on the access-controlled inference path.
 
 ## Changelog
+
+### 2026-10-20 — Suggest marking completed conversations resolved
+
+The new choice and explicit action distinguish completion from continued work.
+The action reuses the parent registry's resolution bit; it does not archive or
+post. Resolution remains offerable without a merge destination. Prior merge
+markers fence only another merge, because later work can still need a Breakout.
+Since merges also set the shared bit, it suppresses redundant resolution offers
+without suppressing subsequent merge or Breakout classification.
+
+The suggestion starts ready, and v79 widens its kind constraint while preserving
+existing rows and indexes. V80 records an acceptance intent before crossing the
+parent RPC so dismissal, expiry and a lost confirmation cannot contradict a
+committed click. Contract 10 negotiates the new enum kind: older suggestion-aware
+clients reject unknown enum values inside snapshots, so delivery must filter
+those rows and preserve event sequences with compatible tombstones. The existing
+confidence threshold is unchanged.
 
 ### 2026-10-19 — Preserve merge provenance and schedule before publication
 

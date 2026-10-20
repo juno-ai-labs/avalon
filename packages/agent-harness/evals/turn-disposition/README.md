@@ -1,11 +1,11 @@
 # Turn-disposition evaluation
 
-Measures the decision behind the merge and Breakout suggestions
+Measures the decision behind merge, Breakout and resolution suggestions
 (`docs/PRDs/2026-10-17_merge-and-breakout-suggestions/design.md`): given one
 message in a Thread or a Breakout, a person's or Rally's, with its parent, its
 conversation's charter, what the conversation has produced so far and the
 messages around it, does the message call for carrying up to the parent,
-breaking a side question out, or nothing. Two targets answer the same state
+breaking a side question out, marking the whole purpose resolved, or continuing here. A new result for the parent takes merge priority; otherwise completion takes priority over `continue_here`. Two targets answer the same state
 bytes: JEV through `judgeTurnDisposition` (`--target typesafe`) and a
 generative model through `renderTurnDispositionMessages` over OpenRouter
 (`--target openrouter --models openai/gpt-5.6-terra`). The report records
@@ -15,7 +15,7 @@ Raw production exports are customer content: keep them in an owner-only
 scratch directory (mode 0700, files 0600), never commit them, and delete them
 after the run. The runners refuse paths outside one protected directory.
 `synthetic-cases.jsonl` is a content-safe fixture for checking the runner; it
-is not a benchmark. Its merged-result cases explicitly include
+is not a benchmark. It also includes completed revisions, closure after a merge, an explicitly cancelled purpose, and negative cases for pending approval, unfinished subtasks and blocked work. Its merged-result cases explicitly include
 `judged_message.merged_from` for both person and Rally authors, with results
 that do and do not belong in the parent. The export builder currently omits
 this field, so a corpus built from exports does not yet measure provenance.
