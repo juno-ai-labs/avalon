@@ -1,4 +1,5 @@
 import type { Region, WorkspaceSyncTopic } from '@rally/contracts';
+import type { WorkspaceConversationViewEvent } from '@rally/contracts/conversation-view';
 
 /**
  * The Organization-sync relay: what the main window's workspace socket learns,
@@ -19,6 +20,7 @@ export const WORKSPACE_SYNC_RELAY_IPC_CHANNELS = {
   source: 'workspace-sync:source',
   /** Main → Settings and Sidekicks renderers (send): every relayed event. */
   relayed: 'workspace-sync:relayed',
+  conversationView: 'workspace-sync:conversation-view',
 } as const;
 
 export type WorkspaceSyncConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
@@ -59,7 +61,13 @@ export type WorkspaceSyncPublication =
   | (WorkspaceSyncIdentity & { type: 'state'; state: WorkspaceSyncConnectionState })
   /** The publishing provider unmounted with no successor in its window. */
   | (WorkspaceSyncIdentity & { type: 'detach' })
-  | WorkspaceSyncTopicsEvent;
+  | WorkspaceSyncTopicsEvent
+  | (WorkspaceSyncIdentity & { type: 'conversation_view_response'; event: WorkspaceConversationViewEvent });
+
+export type WorkspaceConversationViewRelayRequest = WorkspaceSyncIdentity & (
+  | { type: 'conversation_view_request'; requestId: string; parentId: string; substreamId: string }
+  | { type: 'conversation_view_cancel'; requestId: string }
+);
 
 /**
  * The window whose socket is being relayed, or `null` when none is.
@@ -74,7 +82,9 @@ export interface WorkspaceSyncSourceSnapshot {
 
 export type WorkspaceSyncRelayEvent =
   | ({ type: 'source' } & WorkspaceSyncSourceSnapshot)
-  | WorkspaceSyncTopicsEvent;
+  | WorkspaceSyncTopicsEvent
+  | WorkspaceConversationViewRelayRequest
+  | (WorkspaceSyncIdentity & { type: 'conversation_view_response'; event: WorkspaceConversationViewEvent });
 
 /**
  * The structure the preload's inbox reads, and nothing more. Main built the
@@ -85,6 +95,10 @@ export function isWorkspaceSyncRelayEvent(raw: unknown): raw is WorkspaceSyncRel
   if (!raw || typeof raw !== 'object') return false;
   const event = raw as Partial<Record<string, unknown>>;
   if (event['type'] === 'source') return typeof event['revision'] === 'number';
+  if (event['type'] === 'conversation_view_response') return typeof event['event'] === 'object' && event['event'] !== null;
+  if (event['type'] === 'conversation_view_request' || event['type'] === 'conversation_view_cancel') {
+    return typeof event['requestId'] === 'string';
+  }
   return event['type'] === 'topics' && typeof event['waterline'] === 'number' && Array.isArray(event['topics']);
 }
 

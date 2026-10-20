@@ -310,6 +310,9 @@ async function consumeOne(message: Message<unknown>, env: Env,
         const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, job.workspaceId,
           workspaceDOName(job.region, job.workspaceId));
         await workspace.applyConversationView(projection);
+        if (job.dispatchRevision !== undefined) await source.completeConversationView({
+          ...job, projectedRevision: projection.revision, generation: projection.generation,
+        });
       }
       message.ack();
     } catch (error) {
@@ -660,6 +663,12 @@ async function consumeOne(message: Message<unknown>, env: Env,
             substream_id: substreamId,
             outcome,
           });
+          if (target.job === "conversation_view" && outcome === "queued") {
+            // Keep this parent claimed until its source has confirmed writes.
+            // Do not wake all its children and immediately admit another batch.
+            message.retry();
+            return;
+          }
         }
         await workspace.completeThreadBackfill(target);
       }

@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { IdSchema, SubstreamIdSchema } from "./identifiers";
 import { HarnessStatusSchema } from "./conversation-attention";
+import { agentMessageNotice, isAgentMessageContent } from "./agent-communication";
+import { codeShaped, describeZodIssues } from "./zod-diagnostics";
 import {
   TranscriptActivitySchema,
   TranscriptPluginRunSchema,
@@ -12,7 +14,9 @@ import {
 
 /** A display projection has no tool payloads, call identities, or reasoning. */
 export const ConversationViewTurnSchema = TranscriptTurnSchema.safeExtend({
-  blocks: z.array(TranscriptTextBlockSchema.omit({ structuredContent: true }).strict()),
+  blocks: z.array(TranscriptTextBlockSchema.extend({
+    structuredContent: z.strictObject({ kind: z.literal("agent_message") }).optional(),
+  }).strict()),
 });
 export const ConversationViewContentSchema = z.strictObject({
   turn: ConversationViewTurnSchema,
@@ -55,17 +59,23 @@ export function projectConversationView(range: TranscriptRangeResult): Conversat
   if (!turn) return null;
   const blocks = turn.blocks.flatMap((block) => {
     if (block.type !== "text") return [];
+    // The live feed collapses internal mailbox prose into activity. It is not
+    // room-visible text. Only the message that opens a conversation is prose.
+    if (isAgentMessageContent(block.structuredContent)
+      && (turn.transcriptSequence !== 1 || agentMessageNotice(block.structuredContent) !== null)) return [];
     const { structuredContent: _structuredContent, ...visible } = block;
-    void _structuredContent;
-    return [visible];
+    return [{ ...visible, ...(isAgentMessageContent(_structuredContent)
+      ? { structuredContent: { kind: "agent_message" as const } } : {}) }];
   });
   const pluginRuns = range.pluginRuns.filter((run) => run.toolCallIds.length > 0
     || (run.durationMs ?? 0) > 0 || (run.elapsedMsAtSnapshot ?? 0) > 0);
   if (!blocks.length && !pluginRuns.length) return null;
-  return ConversationViewContentSchema.parse({
+  const result = ConversationViewContentSchema.safeParse({
     turn: { ...turn, blocks, blockCount: blocks.length, blocksOmitted: false },
     activities: range.activities.filter((activity) =>
       activity.scope === "assistant_turn" || activity.scope === "plugin"),
     pluginRuns: pluginRuns.map(({ toolCallIds: _toolCallIds, ...run }) => { void _toolCallIds; return run; }),
   });
+  if (!result.success) throw new Error(codeShaped(`conversation_view_content_invalid:${describeZodIssues(result.error)}`));
+  return result.data;
 }

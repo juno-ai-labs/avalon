@@ -55,6 +55,7 @@ function overlayMessages(queryClient: QueryClient, workstreamId: string): Messag
 
 
 import type * as TelemetryModule from './telemetry';
+import type * as WorkspaceSocketModule from './workspace-socket';
 import {
   cancelWorkstreamFeedOpen,
   markWorkstreamFeedOpenStarted,
@@ -63,6 +64,11 @@ import {
 } from './telemetry';
 
 const reportTelemetryProductIntent = vi.hoisted(() => vi.fn());
+const previewContext = vi.hoisted(() => ({ enabled: false, requestConversationView: vi.fn(() => () => {}) }));
+vi.mock('./workspace-socket', async (importOriginal) => ({
+  ...await importOriginal<typeof WorkspaceSocketModule>(),
+  useOptionalWorkspaceSocket: () => previewContext.enabled ? previewContext : null,
+}));
 vi.mock('./telemetry', async (importOriginal) => ({
   ...await importOriginal<typeof TelemetryModule>(),
   reportTelemetryProductIntent,
@@ -325,6 +331,8 @@ function sentFrames(socket: FakeWebSocket): ClientSocketEvent[] {
 }
 
 afterEach(() => {
+  previewContext.enabled = false;
+  previewContext.requestConversationView.mockClear();
   vi.useRealTimers();
   vi.unstubAllGlobals();
   reportTelemetryProductIntent.mockClear();
@@ -5169,6 +5177,33 @@ describe('useWorkstreamSocket over the local cache', () => {
       cachedAt: '2026-09-01T00:00:00.000Z',
     }, workstreamId);
   }
+
+  it('waits for richer disk hydration before deciding whether a workspace preview is needed', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    previewContext.enabled = true;
+    const workstreamId = '00000000-0000-7000-8000-0000000007a8';
+    await remember(workstreamId, 'Remembered title');
+    const cached = await conversationSlice.read(scope, conversationCacheKey(workstreamId, '0'));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    vi.spyOn(conversationSlice, 'read').mockImplementationOnce(async () => {
+      await gate;
+      return cached;
+    });
+    const queryClient = new QueryClient();
+    const api = socketApiWith({ getSocketTicket: vi.fn(async () => ({
+      url: `wss://api.rally.test/workstreams/${workstreamId}`, ticket: 'socket-ticket',
+      protocols: socketTicketProtocols('socket-ticket'),
+    })) });
+    const rendered = renderHook(() => useWorkstreamSocket(api, workstreamId, true),
+      { wrapper: createScopedWrapper(queryClient) });
+    expect(previewContext.requestConversationView).not.toHaveBeenCalled();
+    await act(async () => { release(); await gate; });
+    await vi.waitFor(() => expect(queryDetail(queryClient, workstreamId)?.title).toBe('Remembered title'));
+    expect(previewContext.requestConversationView).not.toHaveBeenCalled();
+    rendered.unmount();
+    queryClient.clear();
+  });
 
   it('paints the remembered conversation before the socket answers, then lets the live snapshot replace it whatever its numbers say', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
