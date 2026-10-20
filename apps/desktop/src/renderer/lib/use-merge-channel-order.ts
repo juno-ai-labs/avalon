@@ -3,11 +3,11 @@ import { useQuery } from '@tanstack/react-query';
 import type { RallyApi } from './api';
 
 /**
- * The order a thread's Channels are offered for a merge: the server's, earliest
+ * The eligible Channels offered for a merge: the server's, earliest
  * placement first, so the first is the default it would choose
  * (docs/conversation-merge.md). Read in the background, so the Merge label
- * never waits on it; `undefined` until it lands, when the directory's order
- * stands in.
+ * never waits on it; until it lands the directory stands in. Once read, these
+ * IDs own eligibility too, including an empty list when no target is writable.
  */
 export function useMergeChannelOrder(
   api: Pick<RallyApi, 'mergeChannels'> | null | undefined,
