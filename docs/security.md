@@ -315,6 +315,10 @@ nested signatures, and a LaunchServices smoke all have to pass. The update
 transport is still treated as untrusted: electron-updater's macOS signature
 validation remains the execution trust boundary, while R2 publication uses
 immutable versioned objects and promotes only validated mutable channel feeds.
+The trusted renderer's `checkForUpdates` preload method invokes the same manual
+update check as the application menu. Its argument-free `update:check` handler
+checks the IPC sender and accepts no feed URL, version, or connector-supplied
+destination.
 
 ### Authentication and authorization
 
