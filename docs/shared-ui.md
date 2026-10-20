@@ -84,8 +84,9 @@ compressed or partial hierarchy.
 `MarkBridge` draws a row of `IdentityMark`s as one tinted glass shape, each
 mark a control with its own tooltip. The caller supplies names and actions;
 the bridge knows nothing about routes. `trailing` joins a control through one
-more neck; that control paints itself and stays mounted as ancestor marks load. `TitlePillHeader` uses it to attach
-icon-only ancestors to the original command pill, preserving its appearance
+more neck; that control paints itself and stays mounted as ancestor marks load.
+`TitlePillHeader` uses it to attach
+icon-only ancestors to the existing command pill, preserving its appearance
 picker, title popout and separate hover targets. Levels without marks retain
 the existing ancestor-pill fallback.
 
@@ -157,9 +158,11 @@ component test runner is needed for the same implementations.
 The product asked for the resource path to sit with the current command pill,
 with ancestors as icons and the current pill's appearance and two hover targets
 preserved. The header therefore attaches its marks through `MarkBridge`, with
-a fixed glass cap beneath the unchanged pill. A separate raised connector would
-leave overlapping rims and shadows. The backing fades under the cap so the pill
-keeps painting itself; future changes must preserve its independent appearance
+a fixed glass cap beneath the pill. The attached pill omits its standalone
+outline, which otherwise cuts across the glass neck; its fill, shadow and hover
+targets stay. A separate raised connector would leave overlapping rims and
+shadows. The backing fades under the cap so the pill keeps its fill and shadow;
+future changes must preserve its independent appearance
 picker and command popout. No labels or trailing-width measurement remain:
 the only visible trailing glass is that fixed cap, regardless of title length.
 The pill stays mounted when ancestor metadata arrives, preserving open menus;
