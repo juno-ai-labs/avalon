@@ -1408,6 +1408,10 @@ export class WorkspaceSpaceStorage {
         embeds: request.embeds,
         operationId: request.operationId,
       }, now);
+      this.storage.sql.exec(
+        `UPDATE parent_children SET resolved = 1 WHERE parent_id = ? AND substream_id = '0' AND resolved = 0`,
+        request.workstreamId,
+      );
       // Only a merge that was written shares what it embeds: a replay wrote
       // nothing, so embeds a retry adds are not the merge's and stay unshared.
       const linked = posted.replayed ? []

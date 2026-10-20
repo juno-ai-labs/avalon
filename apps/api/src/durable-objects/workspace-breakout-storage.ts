@@ -129,6 +129,7 @@ export const WORKSPACE_BREAKOUT_SCHEMA_STATEMENTS: readonly string[] = [
 
 /** One breakout's row, as the page reads it back. */
 export interface WorkspaceBreakoutRow extends Record<string, SqlStorageValue> {
+  resolved: number;
   workstream_id: string;
   substream_id: string;
   title: string;
@@ -162,6 +163,9 @@ export interface WorkspaceBreakoutRow extends Record<string, SqlStorageValue> {
  * own — and a second read per row would be a round trip per breakout.
  */
 export const SELECT_WORKSPACE_BREAKOUT = `SELECT breakout.workstream_id, breakout.substream_id,
+    EXISTS (SELECT 1 FROM parent_children resolved_child
+      WHERE resolved_child.parent_id = breakout.workstream_id AND resolved_child.substream_id = breakout.substream_id
+        AND resolved_child.resolved = 1) AS resolved,
     breakout.title, breakout.description, breakout.scope, breakout.exact_state,
     breakout.appearance_json,
     breakout.title_status, breakout.created_by_user_id, breakout.last_activity_at,

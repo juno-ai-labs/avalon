@@ -1349,6 +1349,8 @@ describe("Channel merges", () => {
 
     const feedItems = (await workspace().listChannelFeed({ workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: channelId, cursor: null }));
     if (!feedItems.ok) throw new Error("feed refused");
+    expect(feedItems.page.items.find((item) => item.kind === "thread" && item.thread.id === OPEN_THREAD))
+      .toMatchObject({ kind: "thread", thread: { resolved: true, archivedAt: null } });
     expect(feedItems.page.items[0]).toMatchObject({
       kind: "message",
       attentionSequenceNumber: 3,

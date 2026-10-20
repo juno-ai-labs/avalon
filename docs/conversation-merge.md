@@ -28,7 +28,7 @@ holds it.
 | `apps/api/src/durable-objects/workspace-do.ts` | The RPCs: `channelMergeTarget`, `mergeThreadIntoChannel`, `removeChannelMessage`, `breakoutMergeTitles`. |
 | `apps/api/src/routes/spaces.ts` | The feed's contract-7 stripping, and `DELETE /spaces/:id/messages/:messageId` (Remove). |
 | `apps/api/src/services/conversation-tools.ts` | `conversation_merge`; see [`conversation-tools.md`](conversation-tools.md). |
-| `apps/desktop/src/renderer/screens/conversation-surface.tsx` | `mergeTargetFor` (who can merge where), the one open merge draft behind the response card, `submitMerge`, the Breakout card's **Merged** chip. |
+| `apps/desktop/src/renderer/screens/conversation-surface.tsx` | `mergeTargetFor` (who can merge where), the one open merge draft behind the response card, `submitMerge`, the Breakout card's saved **Resolved** state. |
 | `packages/ui/src/components/merge-response-card.tsx` | `MergeResponseCard`, the merge as the parent will draw it, editable: where every merge is made. |
 | `packages/ui/src/components/merge-message.tsx` | `MergeMessage`, the one block every merge is drawn with, in a Thread and in a Channel; `MergedIntoDivider`, the source's mark of a merge. |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MergeButton`, after New breakout in both hover rows, and a Thread merge drawn as `MergeMessage`. |
@@ -69,8 +69,7 @@ The route, with `breakoutId`, runs in this order:
 Because it is an ordinary message, unread, mentions, the Thread's agent reading
 it later and Breakouts capturing it all work as for any message. The client
 draws it as a merge, not as its author's bubble (see "Every merge looks the
-same" below), and marks the Breakout's card **Merged** from the merge
-messages in the transcript. Merging again posts a new merge. A Thread merge
+same" below), and marks the Breakout **Resolved** from its saved parent registry state. Merging again posts a new merge. A Thread merge
 cannot be removed, like any message.
 
 ### Thread into a Channel
@@ -113,6 +112,32 @@ stored titles, with no per-viewer resource lookup, and an embed opens in the
 Channel's own panel (`/channels/:c/artifacts/:r`), read by its id alone. `DELETE /spaces/:id/messages/:messageId` deletes
 the row; its author or an Organization owner or admin may. The client offers
 no control for it.
+
+### Resolution and archiving
+
+A successful merge resolves its source conversation. `parent_children.resolved`
+is independent of the current agent run and `archived_at`: a resolved Thread or
+Breakout remains listed and openable, and may still receive messages. Archiving
+hides it; restoring it keeps it resolved. Removing or replacing the destination
+merge does not reopen its source.
+
+A Thread resolves in the same WorkspaceDO transaction that posts its Channel
+merge. A Breakout resolves when Main's durable `workstream_message_created`
+merge effect reaches its hosted parent, in the effect's receipted transaction.
+That update advances the viewer's child-list version and publishes the new row.
+Retries converge, and a failed merge resolves nothing. No additional cross-object
+call or execution-state transition is needed.
+
+WorkspaceDO migration 123 backfills Thread resolution from Channel merge rows
+and Breakout resolution from merge activity events, including archived sources.
+Directory reads and child lists expose the same registry flag as optional
+`resolved`; its absence in an older cached payload means unresolved. The shared
+`ConversationCard` renders **Resolved** and fades its title, summary, byline and mark in both
+light and dark themes. Hover and keyboard focus restore emphasis for reading
+and opening it; new-activity and needs-input badges retain their full emphasis. It does not infer
+resolution from the loaded transcript page. The directory receiver accepts
+resolution even when the child projection waterlines have not advanced, keeps it
+across later run updates, and never lets it restore a versioned tombstone.
 
 ### The source's merge divider
 
@@ -323,6 +348,19 @@ admission's own insert flag. The body's limit is the send path's
 
 ## Testing
 
+- `apps/api/test-workers/conversation-resolution-migration.test.ts` (workerd):
+  populated pre-resolution data upgrades with merged Threads and Breakouts
+  resolved, including archived sources, and unmerged conversations untouched.
+- `apps/api/test-workers/conversation-tools.test.ts`, "lands once in Main"
+  (workerd): a merged Breakout stays listed as resolved, archive hides it, and
+  restore retains resolution.
+- `apps/desktop/src/renderer/lib/workstream-state-store.test.ts`, "takes
+  resolution": an unchanged child version accepts resolution, later activity
+  retains it, and a stale resolved payload cannot restore a tombstone.
+- `apps/desktop/src/renderer/components/conversation-card.test.tsx`: resolved
+  conversations remain openable and show new-activity badges. The shared card
+  was also inspected in a real Electron window in light and dark themes.
+
 - `apps/api/test-workers/conversation-tools.test.ts`, "leaves one Merged
   marker in the Breakout" (workerd): the marker's tags, and one row however
   often the merge is retried.
@@ -376,6 +414,25 @@ choice, made in review: a source that always says where its work went is worth
 more than keeping a private Channel's name hidden.
 
 ## Changelog
+
+### 2026-10-20 — Resolve a merged conversation independently of its archive
+
+**What changed:** Merge-back marks the source registry entry resolved. Both kinds
+of conversation card use that saved flag, and migration 123 backfills existing
+merge records, preserving archive state.
+
+**Why:** A result that has been merged is done but should stay in its feed.
+Agent completion describes one run, and archiving removes the conversation;
+neither represents that product state. Deriving a badge from loaded messages
+also loses the state when the merge is outside the current page.
+
+**Considered and rejected:** Reusing the agent's completed state or archiving on
+merge. Those couple conversation lifecycle to execution or visibility.
+
+**Consequences:** Parent registry resolution is sticky across activity, retries,
+archive/restore and destination-merge removal. Any future reopen operation must
+change that registry flag explicitly rather than infer it from run state.
+
 
 ### 2026-10-19 — Server merge targets determine eligibility as well as order
 
