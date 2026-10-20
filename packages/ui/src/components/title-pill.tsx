@@ -396,9 +396,9 @@ export function TitlePillLeading(): React.JSX.Element | null {
 }
 
 /**
- * A conversation pane's header: its own pill centered, any ancestors stacked
- * at the left in nesting order, and the pane's trailing controls at the right.
- * The centre column stays centred however many ancestors there are. At phone
+ * A conversation pane's header: its own pill centered, any ancestors attached
+ * to its left in nesting order, and the pane's trailing controls at the right.
+ * The connected group stays centred however many ancestors there are. At phone
  * width it also carries `PhoneHeader`: the menu button leads the ancestors,
  * and the app-wide actions lead the folded "More" menu.
  */
@@ -436,12 +436,10 @@ export function TitlePillHeader({ actions, ancestors = [], className, current, t
       {bridged ? null : ancestors.map((level) => <span className="title-pill-ancestor window-no-drag" key={level.key}>
         <TitlePill level={level} variant="ancestor" />
       </span>)}
-      {/* The nearest crumb keeps its name, which a bare mark does not say. A
-          phone has no room for it and the stylesheet hides it there; the
-          shape is measured from the name, so it closes back to a circle. */}
-      {bridged ? <MarkBridge className="title-pill-bridge window-no-drag" items={phone ? foldCrumbs(bridge) : bridge} labelLast /> : null}
     </div>
-    <div className="title-pill-current window-no-drag" ref={currentRef}><TitlePill level={current} /></div>
+    <div className="title-pill-current window-no-drag" ref={currentRef}>
+      <MarkBridge items={bridged ? (phone ? foldCrumbs(bridge) : bridge) : []} trailing={<TitlePill level={current} />} />
+    </div>
     <div className="title-pill-trailing" ref={trailingRef}>{trailing || shownActions?.length
       ? <IconGroup actions={shownActions} buttonClassName="title-pill-action" className="window-no-drag" folded={crowded} tooltipSide={tooltipSide}>{trailing}</IconGroup>
       : null}</div>

@@ -1,3 +1,4 @@
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { fireEvent, render as renderBare, screen } from '@testing-library/react';
 import { MarkBridge, type MarkBridgeItem } from '@rally/ui/components/mark-bridge';
@@ -56,13 +57,6 @@ describe('MarkBridge', () => {
     expect(await screen.findByRole('tooltip')).toHaveTextContent('Show path');
   });
 
-  it('names only the last mark when asked to', () => {
-    render(<MarkBridge items={items(vi.fn(), vi.fn())} labelLast />);
-
-    expect(screen.getByRole('button', { name: /^Open channel/ }).textContent).toBe('');
-    expect(screen.getByRole('button', { name: /^Open thread/ })).toHaveTextContent('Prepare');
-  });
-
   it('draws nothing for no marks', () => {
     const { container } = render(<MarkBridge items={[]} />);
 
@@ -95,7 +89,7 @@ describe('TitlePillHeader', () => {
     expect(openChannel).toHaveBeenCalledOnce();
   });
 
-  it('gives the lone Channel crumb over a thread a bridge that names it', () => {
+  it('keeps the Channel crumb as an icon and names only the current thread', () => {
     const openChannel = vi.fn();
     render(<TitlePillHeader
       ancestors={[level('channel', 'General', { mark: channel, name: 'General', action: 'Open channel' }, openChannel)]}
@@ -103,10 +97,54 @@ describe('TitlePillHeader', () => {
     />);
 
     const crumb = screen.getByRole('button', { name: 'Open channel: General' });
-    expect(crumb).toHaveTextContent('General');
+    expect(crumb.textContent).toBe('');
+    expect(screen.getByText('Prepare')).toBeInTheDocument();
     fireEvent.click(crumb);
 
     expect(openChannel).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the current icon action separate from its menu while attached to crumbs', async () => {
+    const changeIcon = vi.fn();
+    render(<TitlePillHeader
+      ancestors={[level('channel', 'GTM', { mark: channel, name: 'GTM', action: 'Open channel' }, vi.fn())]}
+      current={{
+        ...level('thread', 'Cold email'),
+        iconAction: <button aria-label="Change Cold email icon" onClick={changeIcon} type="button">Icon</button>,
+        menu: <DropdownMenu.Item>Rename</DropdownMenu.Item>,
+      }}
+    />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Change Cold email icon' }));
+    expect(changeIcon).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: /^Cold email$/u }), { button: 0, ctrlKey: false, pointerType: 'mouse' });
+    expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeInTheDocument();
+    expect(changeIcon).toHaveBeenCalledOnce();
+  });
+
+  it('keeps its open menu while ancestor marks arrive and disappear', async () => {
+    const current = {
+      ...level('thread', 'Cold email'),
+      menu: <DropdownMenu.Item>Rename</DropdownMenu.Item>,
+    };
+    const openChannel = vi.fn();
+    const ancestor = level('channel', 'GTM', undefined, openChannel);
+    const { rerender } = render(<TitlePillHeader ancestors={[ancestor]} current={current} />);
+    const trigger = screen.getByRole('button', { name: 'Cold email' });
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: 'mouse' });
+    expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeInTheDocument();
+
+    rerender(<TitlePillHeader ancestors={[{
+      ...ancestor, bridge: { mark: channel, name: 'GTM', action: 'Open channel' },
+    }]} current={current} />);
+    expect(screen.getByRole('menuitem', { name: 'Rename' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cold email' })).toBe(trigger);
+
+    rerender(<TitlePillHeader ancestors={[ancestor]} current={current} />);
+    expect(screen.getByRole('menuitem', { name: 'Rename' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cold email' })).toBe(trigger);
   });
 
   it('keeps the pills alone when an ancestor has no mark to show', () => {
