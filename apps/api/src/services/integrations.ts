@@ -8620,13 +8620,13 @@ async function persistPolledActivity(
 
 // Only polling owns these diagnoses; other operational errors must survive its writes.
 const recoverableConnectorPollErrorSql =
-  "status = 'error' AND json_extract(error_json, '$.code') IN ('connector_poll_failed', 'connector_poll_timeout')";
+  "status = 'error' AND (json_extract(error_json, '$.source') = 'connector_poll' OR json_extract(error_json, '$.code') IN ('connector_poll_failed', 'connector_poll_timeout'))";
 
 /** Background failure must not overwrite a user's disable or an authorization verdict. */
 export async function recordConnectorPollFailure(
   database: D1Database,
   input: Pick<ConnectorPollWorkflowInput, "workspaceId" | "connectionId">,
-  error: { code: string; message: string },
+  error: { code: string; message: string; source?: "connector_poll" },
   now: string,
 ): Promise<void> {
   await database.prepare(
