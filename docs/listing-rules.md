@@ -70,7 +70,7 @@ projection (`breakoutsReady()`), which then lists by Main alone.
 keeps the name, appearance, scope, and this person's own placement, pins and
 Breakout counts. `mainWithheld` in `workspace-do.ts` empties the rest: Main's
 description, email address, author, run state, unread position, activity time,
-wake-up and roster. Its per-viewer state keeps the person's Breakouts and drops
+wake-up, resolution and roster. Its per-viewer state keeps the person's Breakouts and drops
 Main's agents and rail waterline. The rail (`channelRails`) answers only
 somebody who may open Main, and foregrounding the Channel does not wake Main.
 Presence is Main's audience too: someone listed only through a Breakout neither

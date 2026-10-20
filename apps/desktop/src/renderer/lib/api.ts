@@ -1277,7 +1277,7 @@ export class RallyApi {
   }
 
   async getSharedNavigationDirectory(signal?: AbortSignal) {
-    return this.request('/sharing/navigation?attention=1&shell=1', { schema: SharedNavigationDirectorySchema, signal });
+    return this.request('/sharing/navigation?attention=1&shell=1&resolution=1', { schema: SharedNavigationDirectorySchema, signal });
   }
 
   /**

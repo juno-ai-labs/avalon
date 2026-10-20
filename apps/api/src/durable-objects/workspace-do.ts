@@ -808,6 +808,7 @@ import {
   SPACE_INDIVIDUAL_SCOPE_MIGRATION,
   SPACE_MESSAGES_MIGRATION,
   SPACE_MESSAGE_MERGES_MIGRATION,
+  backfillRemovedThreadMerges,
   SPACE_INVITEES_MIGRATION,
   WorkspaceSpaceStorage,
   type WorkspaceSpaceIntentClaim,
@@ -5033,7 +5034,7 @@ function directoryWorkstream(
     createdAt: iso(row.source_created_at),
     updatedAt: iso(row.source_updated_at),
     archivedAt: iso(row.archived_at),
-    ...(row.resolved === 1 ? { resolved: true } : {}),
+    ...(mainOpen && row.resolved === 1 ? { resolved: true } : {}),
     scope: row.scope,
     systemKind: row.system_kind,
     nextPendingWakeup: row.next_wakeup_due_at !== null && row.next_wakeup_prompt
@@ -5181,7 +5182,6 @@ function breakoutConversation(
     createdAt: iso(row.source_created_at),
     updatedAt: iso(row.source_updated_at),
     archivedAt: iso(row.archived_at),
-    ...(row.resolved === 1 ? { resolved: true } : {}),
     scope: row.scope,
     systemKind: null,
     nextPendingWakeup: null,
@@ -5655,6 +5655,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
         component: MIGRATION_COMPONENT,
         workerVersionId: env.APP_VERSION ?? "unknown",
+        afterMigrations: backfillRemovedThreadMerges,
       }));
       this.detectUnheardLedger();
       await this.armNextAlarm();
@@ -14462,6 +14463,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
       component: MIGRATION_COMPONENT,
       workerVersionId: this.env.APP_VERSION ?? "unknown",
+      afterMigrations: backfillRemovedThreadMerges,
     }));
     this.detectUnheardLedger();
     return { schemaVersion: 58 };

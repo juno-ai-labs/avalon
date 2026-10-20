@@ -407,15 +407,8 @@ migration 92 dropped the ledger. A Sidekick still pending in a retired
 Organization was never imported; the Organization refuses new work, so nothing
 reads it.
 
-### Conversation resolution
-
-`parent_children.resolved` records that a Thread's Main or a Breakout has been
-merged. It is independent of the conversation's archive and agent-run state.
-Child lists and directory reads use this one saved flag. Main's durable merge
-activity resolves the named Breakout and advances its viewers' child-list
-versions; a Channel merge resolves the Thread atomically with its message.
-Migration 123 imports existing merge records. [Merge-back](conversation-merge.md#resolution-and-archiving)
-owns the lifecycle and its reasoning.
+Conversation resolution is owned by [merge-back](conversation-merge.md#resolution-and-archiving)
+and saved on the parent child registry independently of execution and archive state.
 
 ## Invariants
 

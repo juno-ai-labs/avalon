@@ -650,6 +650,25 @@ export const SPACE_MESSAGE_MERGES_MIGRATION: readonly string[] = [
     WHERE json_extract(metadata_json, '$.mergedFrom.breakoutId') IS NOT NULL`,
 ];
 
+/** Recover removed historical merges from their permanent operation receipts during migration 123. */
+export function backfillRemovedThreadMerges(sql: DurableObjectStorage["sql"], appliedVersions: readonly number[]): void {
+  if (!appliedVersions.includes(123)) return;
+  const receipts = new Set(sql.exec<{ message_id: string }>(
+    "SELECT DISTINCT message_id FROM space_message_operations",
+  ).toArray().map((row) => row.message_id));
+  if (receipts.size === 0) return;
+  const channels = sql.exec<{ space_id: string }>(
+    "SELECT space_id FROM spaces UNION SELECT space_id FROM space_messages",
+  ).toArray();
+  for (const thread of sql.exec<{ parent_id: string }>(
+    "SELECT parent_id FROM parent_children WHERE substream_id = '0' AND resolved = 0",
+  ).toArray()) {
+    if (channels.some(({ space_id }) => receipts.has(stableUuidSync(["space_message", space_id, `merge:${thread.parent_id}`])))) {
+      sql.exec("UPDATE parent_children SET resolved = 1 WHERE parent_id = ? AND substream_id = '0'", thread.parent_id);
+    }
+  }
+}
+
 /**
  * The run states a conversation is live in on its own account.
  *

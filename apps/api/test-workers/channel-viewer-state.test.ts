@@ -249,6 +249,26 @@ describe("a Channel's breakouts and background agents on the workspace socket", 
     ownerSocket.socket.close(1000, "done");
   });
 
+  it("publishes Breakout resolution to readers outside its private roster so shared navigation refreshes", async () => {
+    const memberSocket = await connect(member);
+    const ownerSocket = await connect(owner);
+    const memberRow = memberSocket.stream.next(stateOf(channelA), "resolved member row");
+    const effect: ConversationEffect = {
+      kind: "activity_event", eventId: crypto.randomUUID(), eventType: "workstream_message_created",
+      subjectSequenceNumber: 1, actorType: "user", actorUserId: owner, actorLabel: "Owner",
+      title: "Merged", body: "Done", canonicalUrl: null, digestible: false,
+      occurredAt: at, sourceKind: "workstream_message", sourceId: crypto.randomUUID(),
+      dedupeKey: "resolved-breakout", metadata: { mergedFrom: { breakoutId: breakoutA, title: "Breakout" } }, targets: [],
+    };
+    await organization().receiveChildEffects({ substreamId: asSubstreamId("0"),
+      envelopes: [envelope(channelA, asSubstreamId("0"), effect)] });
+    expect((await memberRow).workstream).toMatchObject({ privateChildren: [{ substreamId: breakoutA, resolved: true }] });
+    await drained(ownerSocket.socket, ownerSocket.stream);
+    expect(ownerSocket.stream.received.find(stateOf(channelA))?.workstream).toMatchObject({ privateChildren: [] });
+    memberSocket.socket.close(1000, "done");
+    ownerSocket.socket.close(1000, "done");
+  });
+
   it("pushes a changed breakout list to that breakout's members, and to nobody else", async () => {
     const memberSocket = await connect(member);
     const ownerSocket = await connect(owner);
