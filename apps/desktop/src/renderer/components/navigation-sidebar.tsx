@@ -1746,7 +1746,7 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
               {item.unreadMention ? `${item.unreadMessages > 0 ? ' · ' : ''}@mention` : ''}
             </span>}
             {item.rallyFinished && item.kind !== 'run_finished' && <span className="activity-row-detail">Rally also finished</span>}
-            {item.kind === 'breakout_started'  && item.breakout && <span className="breakout-chip activity-chip">
+            {item.kind === 'breakout_started' && item.breakout && <span className="breakout-chip activity-chip">
               <IconCornerDownRight aria-hidden="true" className="breakout-chip-icon" size={13} stroke={1.9} />
               <span className="breakout-chip-title">{item.breakout.title}</span>
             </span>}

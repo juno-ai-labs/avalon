@@ -263,3 +263,25 @@ it('sends each device the payload of the transport it registered with', async ()
   expect((web.init.headers as Record<string, string>)['content-encoding']).toBe('aes128gcm');
   expect(web.init.redirect).toBe('manual');
 });
+
+
+it('keeps mention alerts distinct from each other and from ordinary replies in the same conversation', async () => {
+  await addIntent('mention:two');
+  const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: 'sent' }));
+  await deliverPush(pushEnv(), message('mention:one'), send);
+  await deliverPush(pushEnv(), message('mention:two'), send);
+  await runInDurableObject(workspace(), (_instance, state) => {
+    state.storage.sql.exec(`INSERT INTO workspace_activity_events (
+      event_id, event_type, subject_type, subject_id, actor_type, actor_user_id, actor_label, title, body,
+      audience_kind, audience_workstream_id, digestible, occurred_at, created_at, source_kind, source_id, dedupe_key, metadata_json
+    ) VALUES ('reply', 'workstream_message_created', 'workstream', ?, 'user', ?, 'Author', 'Planning', 'Follow up',
+      'workstream', ?, 0, ?, ?, 'workstream_message', 'reply', 'reply', '{"substreamId":"0","attentionOrdinal":1}')`,
+      workstreamId, actorId, workstreamId, Date.now(), Date.now());
+  });
+  await deliverPush(pushEnv(), { workspaceId, recipientUserId: userId, region: 'global', activityItemId: 'message:reply' }, send);
+  const calls = send.mock.calls as unknown as Array<[unknown, unknown, PushPayloads, string]>;
+  // Each alert reaches two devices. Compare the three actual transport tags.
+  expect(new Set([calls[0]![3], calls[2]![3], calls[4]![3]]).size).toBe(3);
+  expect(payloads(send).map((payload) => JSON.parse(payload.apns).aps['thread-id']))
+    .toEqual([workstreamId, workstreamId, workstreamId, workstreamId, workstreamId, workstreamId]);
+});

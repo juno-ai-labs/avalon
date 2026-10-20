@@ -193,8 +193,11 @@ for one person, newest first:
 - the latest human reply by somebody else in each conversation they participate
   in (`new_message`), from the existing message-event log. Its
   `unreadMessageCount` counts replies above the viewer's message waterline and
-  Mark all read timestamp. A window function chooses the latest reply before
-  pagination, so a busy conversation cannot consume a whole page of replies.
+  Mark all read timestamp and the participant's initial read cursor. Migration
+  124 indexes replies by conversation and attention ordinal. The query starts
+  from participating conversations, seeks each latest reply and counts only
+  replies above its read floor; no window scans over read history. Pushes
+  restrict these seeks to the changed conversation before pagination.
   The author and nonparticipants receive no reply activity; AI and tool traffic
   never becomes `new_message`. Builds before client contract 10 omit these rows;
 - every thread and breakout somebody else started, read from its own
@@ -711,8 +714,9 @@ rows: neither ordinary replies nor conversation grouping existed in Activity.
 confuse explicit mentions with subscriptions. New per-event read state would
 duplicate the existing visible-message waterline.
 
-**Consequences:** Reply alerts and unread state use the same visibility gates as
-other activity. Private breakout text remains absent from the shared event log;
+**Consequences:** Reply activity uses current participation and listing gates; its read floor
+includes the participant cursor as well as Activity reads. Reply alerts bypass
+the foreground-thread presence shortcut and settle through visible-message reads. Private breakout text remains absent from the shared event log;
 its reply row identifies the author and conversation without a text preview.
 
 

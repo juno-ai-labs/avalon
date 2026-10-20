@@ -38,6 +38,8 @@ import { splitSqlStatements } from "../src/lib/sql-statements";
 import { deliverPush } from "../src/queues/push-delivery-consumer";
 import { registerPushDevice } from "../src/services/push-device-service";
 import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
+import { WorkspaceActivityFeed } from "../src/durable-objects/workspace-activity-feed";
+import type { WorkspaceSpaceStorage } from "../src/durable-objects/workspace-space-storage";
 import type { ApnsOutcome } from "../src/services/push/apns-transport";
 import type { PushPayloads } from "../src/services/push/push-payload";
 import { createTestEnv } from "../test/helpers/cloudflare-test";
@@ -231,9 +233,9 @@ describe("Activity rows pushed from the directory", () => {
 
     await publish(asSubstreamId("0"), [common("Q3 plan", { scope: "personal", state: "running" })]);
     await publish(asSubstreamId("0"), [finished()]);
-    // A second finish inside the per-conversation cooldown updates Activity
-    // without interrupting either participant again.
-    expect([await finishes(member), await finishes(owner)]).toEqual([1, 1]);
+    // Both are decided; the delivery consumer applies the cooldown only
+    // after a provider has accepted an alert, not after these decisions.
+    expect([await finishes(member), await finishes(owner)]).toEqual([2, 2]);
   });
 
   it("given a member with the thread open in a foreground window, when its run finishes, then they are not pushed", async () => {
@@ -487,12 +489,18 @@ describe("human reply activity", () => {
   async function expireCooldown() {
     await runInDurableObject(organization(), (_instance, state) => {
       state.storage.sql.exec(`UPDATE workspace_activity_pushes SET pushed_at = pushed_at - 120001`);
+      state.storage.sql.exec(`UPDATE workspace_activity_alerts SET alerted_at = alerted_at - 120001`);
     });
   }
 
   it("shows unmentioned replies to participants, excludes the author and bystanders, and batches their push onto the latest reply", async () => {
     await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner), viewer(member)]);
     await publish(asSubstreamId("0"), [reply(first, 1, "First draft")]);
+    // No production APNs credentials in workerd: seed the successful enqueue
+    // receipt, then exercise the production batching predicate on real SQL.
+    await runInDurableObject(organization(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE workspace_activity_pushes SET delivery_enqueued = 1 WHERE item_id = ?`, `message:${first}`);
+    });
     await publish(asSubstreamId("0"), [reply(second, 2, "Need advil?")]);
     expect(await activity()).toMatchObject([{ id: `message:${second}`, preview: "Need advil?", unread: true, unreadMessageCount: 2 }]);
     expect(await activity(owner)).toEqual([]);
@@ -540,6 +548,208 @@ describe("human reply activity", () => {
     await publish(asSubstreamId("0"), [{ ...event, targets: [{ userId: member, relation: "mentioned" }] }]);
     expect(await activity()).toMatchObject([{ unread: true, unreadMessageCount: 1 }]);
     expect((await pushed()).filter((row) => row.item_id.startsWith("message:"))).toEqual([]);
+  });
+
+  it("seeks only participating conversation history, independent of unrelated organization traffic", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner)]);
+    await publish(asSubstreamId("0"), [reply(first, 6, "Relevant")]);
+    await publish(asSubstreamId("0"), [{ ...viewer(member), seenAttentionOrdinal: 5 }]);
+    await runInDurableObject(organization(), (instance, state) => {
+      const internals = instance as unknown as { spaceStorage(): WorkspaceSpaceStorage };
+      const reads = (): number => {
+        const cursors: Array<{ rowsRead: number }> = [];
+        // Instrument the real runtime cursor, without substituting SQL or storage.
+        const sql = new Proxy(state.storage.sql, { get(target, key) {
+          if (key !== "exec") return Reflect.get(target, key, target);
+          return (...args: unknown[]) => {
+            const cursor = Reflect.apply(target.exec, target, args);
+            if (String(args[0]).includes("latest_replies AS")) cursors.push(cursor);
+            return cursor;
+          };
+        } });
+        const storage = new Proxy(state.storage, { get(target, key) { return key === "sql" ? sql : Reflect.get(target, key, target); } });
+        const feed = new WorkspaceActivityFeed(storage, internals.spaceStorage());
+        const page = feed.page({ userId: member, accessClass: "member" }, null);
+        if (page === "invalid_cursor") throw new Error("unexpected cursor error");
+        expect(page.items.filter((item) => item.kind === "new_message")).toMatchObject([{ unreadMessageCount: 1 }]);
+        expect(cursors).toHaveLength(1);
+        return cursors[0]!.rowsRead;
+      };
+      const before = reads();
+      // History in another conversation the recipient does not participate in.
+      for (let i = 0; i < 500; i++) state.storage.sql.exec(`INSERT INTO workspace_activity_events (
+        event_id, event_type, subject_type, subject_id, actor_type, actor_user_id, actor_label, title, body,
+        audience_kind, audience_workstream_id, digestible, occurred_at, created_at, source_kind, dedupe_key, metadata_json
+      ) VALUES (?, 'workstream_message_created', 'workstream', 'unrelated', 'user', ?, 'Other', 'Other', '',
+        'workstream', 'unrelated', 0, 1, 1, 'workstream_message', ?, '{"substreamId":"0","attentionOrdinal":1}')`, `unrelated:${i}`, owner, `unrelated:${i}`);
+      // Latest and unread seeks may each inspect one terminal index entry.
+      // Add already-read messages to the participating conversation too:
+      // the unread ordinal range must skip those rather than scan them.
+      for (let i = 0; i < 500; i++) state.storage.sql.exec(`INSERT INTO workspace_activity_events (
+        event_id, event_type, subject_type, subject_id, actor_type, actor_user_id, actor_label, title, body,
+        audience_kind, audience_workstream_id, digestible, occurred_at, created_at, source_kind, dedupe_key, metadata_json
+      ) VALUES (?, 'workstream_message_created', 'workstream', ?, 'user', ?, 'Maya', 'Q3 plan', '',
+        'workstream', ?, 0, 1, 1, 'workstream_message', ?, '{"substreamId":"0","attentionOrdinal":1}')`, `read:${i}`, thread, owner, thread, `read:${i}`);
+      expect(reads()).toBeLessThanOrEqual(before + 2);
+    });
+  });
+
+  it("preserves literal Markdown from a plain preview in alerts", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner), viewer(member)]);
+    await publish(asSubstreamId("0"), [reply(first, 1, "`**literal**`")]);
+    expect(await activity()).toMatchObject([{ preview: "**literal**" }]);
+    const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: "sent" }));
+    await deliverPush(pushEnv(), { region: "global", workspaceId, recipientUserId: member, activityItemId: `message:${first}` }, send);
+    const calls = (send as { mock: { calls: unknown[][] } }).mock.calls;
+    expect(JSON.parse((calls[0]![2] as PushPayloads).apns).aps.alert.body).toBe("**literal**");
+  });
+
+  it("reserves a reply batch before awaiting Queue backpressure", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner), viewer(member)]);
+    await publish(asSubstreamId("0"), [reply(first, 1, "First")]);
+    await organization().saveMemberPreferences({ workspaceId, userId: member, preferences: { notify: { newMessages: ["email"] } } });
+    await runInDurableObject(organization(), async (instance, state) => {
+      // Stage competing authority calls in one native I/O context. Holding a
+      // Queue promise between separate test RPC contexts crashes workerd's
+      // callback cleanup; storage and the producer below remain real.
+      let release!: () => void;
+      let entered!: () => void;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      const started = new Promise<void>((resolve) => { entered = resolve; });
+      let sends = 0;
+      const target = instance as unknown as { pushActivity(workspaceId: string, subjects: Array<{ threadId: string; substreamId: null; kind: "message" }>): Promise<void> };
+      const prototype = Object.getPrototypeOf(env.PUSH_DELIVERY_QUEUE) as {
+        send(body: unknown, options?: QueueSendOptions): Promise<void>;
+      };
+      const original = prototype.send;
+      const queued = vi.spyOn(prototype, "send").mockImplementation(async function (this: typeof prototype, body, options) {
+        if (typeof body === "object" && body !== null && "activityItemId" in body) {
+          sends++;
+          if (sends === 1) { entered(); await held; }
+        }
+        return original.call(this, body, options);
+      });
+      state.storage.sql.exec(`DELETE FROM workspace_activity_pushes WHERE item_id = ?`, `message:${first}`);
+      const sending = target.pushActivity(workspaceId, [{ threadId: thread, substreamId: null, kind: "message" }]);
+      try {
+        await started;
+        state.storage.sql.exec(`INSERT INTO workspace_activity_events (
+          event_id, event_type, subject_type, subject_id, actor_type, actor_user_id, actor_label, title, body,
+          audience_kind, audience_workstream_id, digestible, occurred_at, created_at, source_kind, dedupe_key, metadata_json
+        ) VALUES (?, 'workstream_message_created', 'workstream', ?, 'user', ?, 'Maya', 'Q3 plan', 'Second',
+          'workstream', ?, 0, ?, ?, 'workstream_message', ?, '{"substreamId":"0","attentionOrdinal":2}')`,
+          second, thread, owner, thread, Date.now(), Date.now(), `message:${second}`);
+        await target.pushActivity(workspaceId, [{ threadId: thread, substreamId: null, kind: "message" }]);
+        expect(state.storage.sql.exec<{ item_id: string }>(
+          `SELECT item_id FROM workspace_activity_pushes WHERE item_id LIKE 'message:%' ORDER BY item_id`,
+        ).toArray()).toEqual([]);
+        expect(sends).toBe(1);
+      } finally { release(); await sending; queued.mockRestore(); }
+      expect(state.storage.sql.exec<{ item_id: string }>(
+        `SELECT item_id FROM workspace_activity_pushes WHERE item_id LIKE 'message:%' ORDER BY item_id`,
+      ).toArray()).toEqual([{ item_id: `message:${first}` }]);
+    });
+  });
+
+  it("releases a failed enqueue reservation so the pending reply can be retried", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner), viewer(member)]);
+    await publish(asSubstreamId("0"), [reply(first, 1, "First")]);
+    await organization().saveMemberPreferences({ workspaceId, userId: member, preferences: { notify: { newMessages: ["email"] } } });
+    await runInDurableObject(organization(), async (instance, state) => {
+      const target = instance as unknown as { pushActivity(workspaceId: string, subjects: Array<{ threadId: string; substreamId: null; kind: "message" }>): Promise<void> };
+      state.storage.sql.exec(`DELETE FROM workspace_activity_pushes WHERE item_id = ?`, `message:${first}`);
+      const prototype = Object.getPrototypeOf(env.PUSH_DELIVERY_QUEUE) as { send(body: unknown, options?: QueueSendOptions): Promise<void> };
+      const original = prototype.send;
+      const unavailable = vi.spyOn(prototype, "send").mockImplementation(async function (this: typeof prototype, body, options) {
+        if (typeof body === "object" && body !== null && "activityItemId" in body) throw new Error("queue_unavailable");
+        return original.call(this, body, options);
+      });
+      try {
+        await expect(target.pushActivity(workspaceId, [{ threadId: thread, substreamId: null, kind: "message" }])).rejects.toThrow("queue_unavailable");
+        expect(state.storage.sql.exec(`SELECT item_id FROM workspace_activity_pushes WHERE item_id = ?`, `message:${first}`).toArray()).toEqual([]);
+      } finally { unavailable.mockRestore(); }
+      await target.pushActivity(workspaceId, [{ threadId: thread, substreamId: null, kind: "message" }]);
+      expect(state.storage.sql.exec<{ delivery_enqueued: number }>(`SELECT delivery_enqueued FROM workspace_activity_pushes WHERE item_id = ?`, `message:${first}`).one())
+        .toEqual({ delivery_enqueued: 1 });
+    });
+  });
+
+  it("honors the initial participation read cursor before the first Activity read", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner)]);
+    await publish(asSubstreamId("0"), [reply(first, 5, "History")]);
+    await publish(asSubstreamId("0"), [{ ...viewer(member), seenAttentionOrdinal: 5 }]);
+    expect(await activity()).toMatchObject([{ unread: false, unreadMessageCount: 0 }]);
+    await publish(asSubstreamId("0"), [reply(second, 6, "After joining")]);
+    expect(await activity()).toMatchObject([{ preview: "After joining", unread: true, unreadMessageCount: 1 }]);
+  });
+
+  it("keeps breakout replies private, text-free, and on their own participation read cursor", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner), viewer(member), viewer(bystander)]);
+    await publish(breakout, [common("Private breakout", { scope: "personal" }), viewer(owner), viewer(member)]);
+    await publish(breakout, [reply(first, 5, "Private text")]);
+    expect(await activity()).toMatchObject([{ breakout: { substreamId: breakout }, preview: "", unread: true, unreadMessageCount: 1 }]);
+    expect(await activity(bystander)).toEqual([]);
+    // Reading the parent does not settle a breakout message.
+    await publish(asSubstreamId("0"), [{ ...viewer(member), seenAttentionOrdinal: 99 }]);
+    expect(await activity()).toMatchObject([{ unread: true }]);
+    await publish(breakout, [{ ...viewer(bystander), seenAttentionOrdinal: 5 }]);
+    expect(await activity(bystander)).toMatchObject([{ unread: false, unreadMessageCount: 0 }]);
+    await runInDurableObject(organization(), (_instance, state) => {
+      expect(state.storage.sql.exec<{ body: string; audience_user_id: string }>(
+        `SELECT body, audience_user_id FROM workspace_activity_events WHERE event_id = ?`, first,
+      ).one()).toEqual({ body: "", audience_user_id: owner });
+    });
+  });
+
+  it("disabled or read-cancelled reply alerts do not suppress an enabled completion alert", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner), viewer(member)]);
+    await organization().saveMemberPreferences({ workspaceId, userId: member, preferences: { notify: { newMessages: [] } } });
+    await publish(asSubstreamId("0"), [reply(first, 1, "Disabled")]);
+    const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: "sent" }));
+    await deliverPush(pushEnv(), { region: "global", workspaceId, recipientUserId: member, activityItemId: `message:${first}` }, send);
+    await organization().saveMemberPreferences({ workspaceId, userId: member, preferences: { notify: { newMessages: ["push"] } } });
+    await publish(asSubstreamId("0"), [reply(second, 2, "Read before delivery")]);
+    await organization().recordActivityEvents({ workspaceId, userId: member,
+      events: [{ kind: "read", subject: { kind: "thread", threadId: thread }, through: 2 }] });
+    await deliverPush(pushEnv(), { region: "global", workspaceId, recipientUserId: member, activityItemId: `message:${second}` }, send);
+    expect(send).not.toHaveBeenCalled();
+    await publish(asSubstreamId("0"), [common("Q3 plan", { state: "completed", completedAt: new Date(Date.now() + 10).toISOString() })]);
+    const finished = (await pushed()).find((row) => row.user_id === member && row.item_id.startsWith("finished:"))!;
+    await deliverPush(pushEnv(), { region: "global", workspaceId, recipientUserId: member, activityItemId: finished.item_id }, send);
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it("a disabled completion does not suppress an enabled reply alert", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner), viewer(member)]);
+    await organization().saveMemberPreferences({ workspaceId, userId: member, preferences: { notify: { runFinished: [] } } });
+    await publish(asSubstreamId("0"), [common("Q3 plan", { state: "completed", completedAt: new Date().toISOString() })]);
+    const finished = (await pushed()).find((row) => row.user_id === member && row.item_id.startsWith("finished:"))!;
+    const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: "sent" }));
+    await deliverPush(pushEnv(), { region: "global", workspaceId, recipientUserId: member, activityItemId: finished.item_id }, send);
+    expect(send).not.toHaveBeenCalled();
+    await publish(asSubstreamId("0"), [reply(first, 1, "New reply")]);
+    await deliverPush(pushEnv(), { region: "global", workspaceId, recipientUserId: member, activityItemId: `message:${first}` }, send);
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it("starts the shared cooldown only after an actual alert, per delivery channel", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner), viewer(member)]);
+    await publish(asSubstreamId("0"), [reply(first, 1, "First")]);
+    const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: "sent" }));
+    const address = { region: "global" as const, workspaceId, recipientUserId: member };
+    await deliverPush(pushEnv(), { ...address, activityItemId: `message:${first}` }, send);
+    await publish(asSubstreamId("0"), [reply(second, 2, "Later")]);
+    await deliverPush(pushEnv(), { ...address, activityItemId: `message:${second}` }, send);
+    expect(send).toHaveBeenCalledOnce();
+    // A push must not suppress an independently chosen email for the same item.
+    await organization().saveMemberPreferences({ workspaceId, userId: member, preferences: { notify: { newMessages: ["push", "email"] } } });
+    const email = vi.fn(async () => "sent" as const);
+    await deliverPush(pushEnv(), { ...address, activityItemId: `message:${second}`, channel: "email" }, undefined, undefined,
+      { email, slack: vi.fn(async () => "sent" as const) });
+    expect(email).toHaveBeenCalledOnce();
+    await expireCooldown();
+    await deliverPush(pushEnv(), { ...address, activityItemId: `message:${second}` }, send);
+    expect(send).toHaveBeenCalledTimes(2);
   });
 
   it("sends the next ordinary reply after the two-minute cooldown", async () => {
