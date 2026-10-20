@@ -352,6 +352,24 @@ describe("suggested-work aggregation", () => {
   // reachable only with the authority closed. Deleted rather than rewired: they
   // asserted on rows this side no longer writes. The gap is in
   // `docs/potential-bugs.md`.
+  it("preserves every person in source storage and covers all people across model windows", () => {
+    const people = Array.from({ length: 10_000 }, (_, index) => ({
+      provider: "google", providerTenantId: "account", providerUserId: null, handle: null,
+      email: `guest${index}@example.com`, displayName: null, role: "recipient", sourceText: "evidence".repeat(40),
+    }));
+    const source = { id: "source", kind: "activity" as const, provider: "google", providerTenantId: "account", connectionId: null,
+      title: "A large meeting", summary: "", text: "Meeting details", actor: {}, subject: {}, externalPeople: people,
+      entityKeys: [], canonicalUrl: null, workstreamId: null, occurredAt: "2026-10-19T00:00:00.000Z", sourceAudience: { scope: "workspace" as const } };
+    const packed = __workOpportunityTesting.packBatches([{ source,
+      event: { id: "event", source_kind: "activity" as const, source_id: "source", occurred_at: source.occurredAt, input_characters: 10, attempt_count: 0 } }]);
+    expect(packed[0]![0]!.source.externalPeople).toHaveLength(10_000);
+    const windows = __workOpportunityTesting.admissionSourceBatches(packed.flatMap((batch) => batch.map((item) => item.source)));
+    expect(windows.length).toBeGreaterThan(1);
+    const represented = windows.flatMap((batch) => batch.flatMap((item) => item.externalPeople));
+    expect(represented).toEqual(people);
+    expect(windows.every((batch) => JSON.stringify(batch).length <= 24_002)).toBe(true);
+  });
+
   it("enforces model batch bounds and maximum concurrency three", async () => {
     const source = (index: number, text = "x") => ({
       event: { id: String(index), source_kind: "activity" as const, source_id: String(index), occurred_at: "2026-08-07T00:00:00.000Z", input_characters: text.length, attempt_count: 0 },

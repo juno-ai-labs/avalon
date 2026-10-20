@@ -54,6 +54,14 @@ connector activity / Rally mention
   → GET /work-opportunities → typed WorkspaceDO RPC reads the stored set, nothing more
 ```
 
+Connector sources retain up to 10,000 deduplicated people, including every
+reference's source evidence. The canonical source and stored provenance never
+use the former 100-person, 30-person or 2,000-character roster prefixes. Admission
+presents large lists in successive windows under its existing character budget,
+with `externalPeopleCoverage` stating the window and total counts. Each decision
+is resolved and persisted against the original full sources. A model window is
+a presentation of part of the evidence, not a replacement for it.
+
 ### Admission
 
 An activity only becomes a candidate if no resource watch or matching automation
@@ -434,6 +442,24 @@ of how the last ranking ended — and `request_seq` against the scheduler's clai
 value.
 
 ## Changelog
+
+### 2026-10-19 — Admission windows preserve complete connector people lists
+
+**What changed:** Sources and provenance retain up to 10,000 deduplicated people.
+Large rosters are presented across bounded model windows, with coverage counts;
+persistence always receives the full source rather than a window's subset.
+
+**Why:** Truncating at 100 references, or again at the character-budget step,
+could remove the very person a meeting or email follow-up concerned.
+
+**Considered and rejected:** Passing a single oversized prompt replaces silent
+data loss with provider rejection. Windowing inference keeps the existing
+prompt budget without deleting canonical evidence.
+
+**Consequences:** Every window is processed before the batch completes; source
+fingerprints and opportunity persistence retain their existing replay rules.
+User-link inference and visible provenance views keep their separate contracts.
+
 
 ### 2026-10-19 — Shared MCP resources are not verified people
 

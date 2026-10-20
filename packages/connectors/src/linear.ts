@@ -1,7 +1,7 @@
 import { RegionSchema } from "@rally/contracts/regions";
 import { linearPage } from "./tool-pagination";
 import type { Region } from "@rally/contracts/regions";
-import type { NormalizedActivity, ToolDefinition } from "@rally/contracts";
+import { deduplicateExternalPeople, type NormalizedActivity, type ToolDefinition } from "@rally/contracts";
 import { z } from "zod";
 import {
   base64,
@@ -1201,7 +1201,6 @@ function linearWebhookPeople(
     },
   ];
   const people: NonNullable<NormalizedActivity["externalPeople"]> = [];
-  const seen = new Set<string>();
   for (const candidate of candidates) {
     const values = Array.isArray(candidate.value) ? candidate.value : [candidate.value];
     for (const value of values) {
@@ -1216,9 +1215,6 @@ function linearWebhookPeople(
       const email = stringValue(value, "email") ?? null;
       const displayName = stringValue(value, "displayName") ?? stringValue(value, "name") ?? null;
       if (!providerUserId && !handle && !email && !displayName) continue;
-      const key = `${candidate.role}:${providerUserId ?? ""}:${handle ?? ""}:${email ?? ""}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
       people.push({
         provider: "linear",
         providerTenantId,
@@ -1231,7 +1227,7 @@ function linearWebhookPeople(
       });
     }
   }
-  return people.slice(0, 100);
+  return deduplicateExternalPeople(people);
 }
 
 function normalizeLinearAgentSessionEvent(

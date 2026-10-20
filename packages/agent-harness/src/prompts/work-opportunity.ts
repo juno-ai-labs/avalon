@@ -16,6 +16,8 @@ For each add or update, write two different prompts. displayPrompt is a crisp on
 
 admissionReasoning is an extensive plain-text decision memo, not private chain-of-thought. Explain what happened, the ask, importance and cost of inaction, people and roles, deadlines/blockers/dependencies, expected impact, identity evidence and ambiguity, distinctness, access limitations, and why Rally can make progress. Never place instructions needed for execution only in admissionReasoning.
 
+A source may report externalPeopleCoverage with shown and total counts: when shown is smaller, this request contains one window of its people and other requests examine the rest. Do not infer that a person absent from this window was absent from the source.
+
 Resolve external people conservatively. Exact tenant-scoped verified identities are strongest. Then verified email/known alias. Infer a free-form reference only when exactly one plausible active member is strongly supported. "You" in a personal source means the connection owner. Ambiguous names/team aliases stay ambiguous or unresolved. Copy member IDs only from the supplied member list. Identity inference never expands source access; for personal audiences, it may explain a link but cannot target anyone except the audience user.
 
 For each linked user, retain the exact structured tag or free-form sourceText that supplied the person reference. When sourceText occurs exactly in the source text field, include its zero-based startOffset and exclusive endOffset; otherwise use null offsets. Never invent offsets.

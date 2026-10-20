@@ -1,3 +1,4 @@
+import { ConnectorQueuePayloadSchema, readConnectorQueuePayload, sendConnectorQueuePayload } from "../services/connector-queue-payload";
 import { SidekickRunProvisionQueueMessageSchema } from "../durable-objects/automation-do-protocol";
 import { provisionSidekickRun } from "../services/sidekick-run-provisioning";
 import { publishAccessRevocation } from "../services/access-revocation";
@@ -69,7 +70,6 @@ import { isRetirementRefusal } from "../durable-objects/object-retirement";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import {
-  MAX_CONNECTOR_EVENT_QUEUE_BYTES,
   enqueueWorkspaceConnectorEventProcess,
 } from "../services/workspace-connector-event-ingress";
 import {
@@ -294,6 +294,21 @@ function searchSourceRevision(env: Env, reference: SearchSourceReference): (() =
 
 async function consumeOne(message: Message<unknown>, env: Env,
   indexSearch: ReturnType<typeof createSearchIndexingPipeline>): Promise<void> {
+  const stagedPayload = ConnectorQueuePayloadSchema.safeParse(message.body);
+  if (stagedPayload.success) {
+    try {
+      const body = await readConnectorQueuePayload(env, stagedPayload.data);
+      await consumeOne({
+        id: message.id, timestamp: message.timestamp, attempts: message.attempts, body,
+        ack: () => message.ack(), retry: (options) => message.retry(options),
+      }, env, indexSearch);
+    } catch (error) {
+      logWarn(env, "connector_queue_payload_failed", { workspace_id: stagedPayload.data.workspaceId,
+        error_code: diagnosticErrorCode(error, "connector_queue_payload_failed"), queue_attempts: message.attempts });
+      message.retry();
+    }
+    return;
+  }
   if (isGitHubDeliveryQueueMessage(message.body)) {
     // A GitHub delivery the Global receiver verified and answered; routing it
     // to its regions happens here, off GitHub's ten-second clock.
@@ -1456,7 +1471,7 @@ export async function processConnectorEvent(
     ? "claimed"
     : await enqueueActivityOpportunity(env, activity.id, asWorkspaceId(activity.workspace_id));
   await projectActivityEvent(env, activity);
-  await Promise.all(matched.deliveries.map((delivery) => env.ACTIVITY_QUEUE.send(deliveryWithinQueueBound(env, delivery))));
+  await Promise.all(matched.deliveries.map((delivery) => sendConnectorQueuePayload(env, activity.workspace_id, delivery)));
   logInfo(env, "connector_event_processing_completed", {
     workspace_id: activity.workspace_id,
     connection_id: activity.connection_id,
@@ -1471,30 +1486,6 @@ export async function processConnectorEvent(
     opportunity_outcome: opportunity,
     outcome: "processed",
   });
-}
-
-/**
- * A delivery carries the event's snippet and metadata for the run to read. The
- * event itself fit the Queue's message bound on ingress, but a delivery adds
- * the destination and registration on top, so one near the bound is sent
- * without the content rather than not at all: the run still fires, and reads
- * from its opening that the content was too large to carry.
- */
-function deliveryWithinQueueBound<T extends { event: { textSnippet: string; metadata: Record<string, unknown> } }>(
-  env: Env,
-  delivery: T,
-): T {
-  const bytes = new TextEncoder().encode(JSON.stringify(delivery)).byteLength;
-  if (bytes <= MAX_CONNECTOR_EVENT_QUEUE_BYTES) return delivery;
-  logWarn(env, "external_event_delivery_content_trimmed", {
-    workspace_id: (delivery as { workspaceId?: string }).workspaceId ?? null,
-    connector_event_id: (delivery.event as { id?: string }).id ?? null,
-    payload_bytes: bytes,
-  });
-  return {
-    ...delivery,
-    event: { ...delivery.event, textSnippet: "", metadata: { contentTrimmed: true } },
-  };
 }
 
 function activityRowFromWorkspaceEvent(event: WorkspaceConnectorEvent): ActivityRow {

@@ -1,3 +1,4 @@
+import { CONNECTOR_EVENT_PEOPLE_MIGRATION, writeConnectorEventPeople, readConnectorEventPeople, copyConnectorEventPeople } from "./connector-event-people";
 import { CANVA_POLL_SECONDS } from "@rally/connectors";
 import { SCOPE_GRANT_DIRECTORY_SCHEMA, applyScopeGrantDirectory, scopeGrantCandidates, ScopeGrantCandidatesRequestSchema } from "./scope-grant-directory";
 import {
@@ -4712,6 +4713,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       WHERE telemetry_operation_id IS NOT NULL`,
     ...workspaceIdentityFencesFor("connector_oauth_attempts"),
   ],
+}, {
+  version: 122,
+  description: "preserve up to 10,000 connector people as ordered rows rather than one bounded JSON cell",
+  statements: CONNECTOR_EVENT_PEOPLE_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -4892,6 +4897,7 @@ function workflowAlreadyExists(error: unknown): boolean {
 }
 
 function connectorEventFromRow(
+  sql: SqlStorage,
   row: WorkspaceConnectorEventRow,
   workspaceId: string,
   region: Env["AVALON_REGION"],
@@ -4924,7 +4930,7 @@ function connectorEventFromRow(
       dedupeKey: row.dedupe_key,
       rawContentHash: row.raw_content_hash,
       metadata: JSON.parse(row.metadata_json) as unknown,
-      externalPeople: JSON.parse(row.external_people_json) as unknown,
+      externalPeople: readConnectorEventPeople(sql, row.event_id),
     },
   });
 }
@@ -11834,6 +11840,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       entityKeys: activity.entityKeys,
     });
     const resolvedPeople = (activity.externalPeople ?? []).flatMap((person) => {
+      // SQL equality with NULL cannot match an identity; Gmail addresses have
+      // no provider user ID, so avoid a query per address on large messages.
+      if (!person.providerUserId || !person.providerTenantId) return [];
       const row = this.state.storage.sql.exec<{ user_id: string }>(
         `SELECT user_id FROM external_user_identities
           WHERE workspace_id = ? AND provider = ?
@@ -12031,10 +12040,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             activity.dedupeKey,
             activity.rawContentHash,
             JSON.stringify(evaluatorMetadata),
-            JSON.stringify(activity.externalPeople ?? []),
+            '[]',
             now,
             now,
           );
+          writeConnectorEventPeople(this.state.storage.sql, activity.id, activity.externalPeople ?? []);
           eventId = activity.id;
           processingStatus = "pending";
           if (contentFingerprint && inOrder) {
@@ -12099,6 +12109,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
               activity.eventType,
               activity.providerResourceId,
             );
+            copyConnectorEventPeople(this.state.storage.sql, latest.event_id, dropped.eventId);
             restoredEventId = dropped.eventId;
           }
         }
@@ -12156,7 +12167,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       `SELECT * FROM workspace_connector_events WHERE event_id = ?`,
       request.eventId,
     ).toArray()[0];
-    return row ? connectorEventFromRow(row, request.workspaceId, this.env.AVALON_REGION) : null;
+    return row ? connectorEventFromRow(this.state.storage.sql, row, request.workspaceId, this.env.AVALON_REGION) : null;
   }
 
   async claimConnectorEvent(
@@ -12249,7 +12260,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         );
         return {
           outcome: "claimed" as const,
-          event: connectorEventFromRow(row, request.workspaceId, this.env.AVALON_REGION),
+          event: connectorEventFromRow(this.state.storage.sql, row, request.workspaceId, this.env.AVALON_REGION),
           processingLeaseId,
           processingLeaseExpiresAt,
         };
@@ -12653,7 +12664,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         eventId,
       ).toArray()[0];
       return row
-        ? [connectorEventFromRow(row, request.workspaceId, this.env.AVALON_REGION)]
+        ? [connectorEventFromRow(this.state.storage.sql, row, request.workspaceId, this.env.AVALON_REGION)]
         : [];
     });
     return WorkspaceOpportunityOriginEventsResultSchema.parse(events);
