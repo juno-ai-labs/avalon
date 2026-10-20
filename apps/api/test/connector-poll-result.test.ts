@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { describe, expect, it } from "vitest";
 import { DIAGNOSTIC_CODE_MAX_LENGTH } from "@rally/contracts/zod-diagnostics";
 
@@ -8,6 +9,7 @@ import {
   pollAttemptErrorCode,
   pollAttemptFailure,
   PollResultSchema,
+  terminalPollFailure,
 } from "../src/workflows/connector-poll-result";
 
 /** A degraded stream, shaped as the connector layer returns it. */
@@ -62,5 +64,25 @@ describe("a poll attempt's code crossing the step boundary", () => {
   it("rethrows a timeout as itself so the workflow still tells it apart", () => {
     const timeout = new DOMException("deadline", "TimeoutError");
     expect(pollAttemptFailure(timeout, "connector_poll_failed")).toBe(timeout);
+  });
+});
+
+describe("the stored terminal poll reason", () => {
+  it("retains the schema field after the workflow step serializes its failure", () => {
+    const rejection = z.object({ externalPeople: z.array(z.string()).max(100) }).safeParse({ externalPeople: Array(101).fill("person") });
+    if (rejection.success) throw new Error("expected a rejection");
+    const thrown = pollAttemptFailure(rejection.error, pollAttemptErrorCode(rejection.error));
+    const replayed = new Error((thrown as Error).message);
+    expect(terminalPollFailure(replayed)).toEqual({
+      code: "connector_poll_failed:externalPeople:too_big",
+      message: "Connector poll failed after retries: connector_poll_failed:externalPeople:too_big",
+    });
+  });
+
+  it("never stores arbitrary provider messages and retains timeout identity", () => {
+    expect(terminalPollFailure(new ConnectorError("provider_error", "private provider response", { status: 403 }))).toEqual({
+      code: "provider_error:http_403", message: "Connector poll failed after retries: provider_error:http_403",
+    });
+    expect(terminalPollFailure(new DOMException("private", "TimeoutError"))).toEqual({ code: "connector_poll_timeout", message: "Connector poll timed out" });
   });
 });

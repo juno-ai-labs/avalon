@@ -543,6 +543,106 @@ describe("connectors", () => {
     expect(requested.find((url) => url.pathname.endsWith("/history"))?.searchParams.get("startHistoryId")).toBe("100");
   });
 
+  it("preserves 10,000 combined Gmail people and deduplicates To and Cc recipients", async () => {
+    const recipients = Array.from({ length: 9_998 }, (_, index) => `guest${index}@example.com`);
+    const adapter = googleAdapter(async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname.endsWith("/history")) return googleJson({ historyId: "102", history: [{ id: "101", messagesAdded: [{ message: { id: "large-mail" } }] }] });
+      if (url.pathname.endsWith("/messages/large-mail")) return googleJson({
+        id: "large-mail", historyId: "101", labelIds: ["INBOX"],
+        payload: { headers: [
+          { name: "From", value: "sender@example.com" },
+          { name: "To", value: recipients.join(", ") },
+          { name: "Cc", value: "guest0@example.com, overflow@example.com" },
+        ] },
+      });
+      throw new Error(`Unexpected request: ${url.pathname}`);
+    });
+    const result = await adapter.poll!(googleConnection(["gmail.read"], { gmail: { historyId: "100" } }), neverAborts());
+    expectNormalized(result.activities);
+    const people = result.activities[0]!.externalPeople!;
+    expect(people).toHaveLength(10_000);
+    expect(people[0]).toMatchObject({ email: "sender@example.com", role: "sender" });
+    expect(people.filter((person) => person.email === "guest0@example.com")).toHaveLength(1);
+    expect(people.at(-1)?.email).toBe("overflow@example.com");
+    expect(people.find((person) => person.email === "guest0@example.com")?.sourceText).toBe("guest0@example.com");
+    expect(people.at(-1)?.sourceText).toBe("overflow@example.com");
+    expect(result.cursor).toMatchObject({ gmail: { historyId: "102" } });
+  });
+
+  it("preserves 10,000 people on a Google Calendar activity", async () => {
+    const source = calendarEvent("large-calendar", "A large meeting", "etag-large");
+    source.attendees = Array.from({ length: 9_999 }, (_, index) => ({ email: `guest${index}@example.com` }));
+    const adapter = googleAdapter(async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname.endsWith("/events")) return googleJson({ items: [source], nextSyncToken: "calendar-next" });
+      throw new Error(`Unexpected request: ${url.pathname}`);
+    });
+    const result = await adapter.poll!(googleConnection(["calendar.read"], { calendar: { syncToken: "calendar-old" } }), neverAborts());
+    const changed = result.activities.find((activity) => activity.eventType === "calendar.event_changed");
+    expect(changed?.externalPeople).toHaveLength(10_000);
+    expect(changed?.externalPeople?.at(-1)?.email).toBe("guest9998@example.com");
+    expectNormalized(result.activities);
+  });
+
+  // Google APIs cannot run locally. The HTTP double honors the attachment
+  // field mask so omitting it loses the observable transcript, as in production.
+  it.each(["change", "completion", "series"] as const)("exposes a Calendar %s transcript and reads its attached Doc without Drive search", async (kind) => {
+    const attachment = {
+      fileId: "meeting-transcript-doc", title: "Customer interview - Transcript",
+      mimeType: "application/vnd.google-apps.document",
+      fileUrl: "https://docs.google.com/document/d/meeting-transcript-doc/edit",
+    };
+    const requests: string[] = [];
+    const source = {
+      ...calendarEvent("interview", "Customer interview", "etag-interview"),
+      updated: "2026-08-01T18:01:00Z",
+      attachments: [{ ...attachment, iconLink: "not-needed", extra: "not-forwarded" }],
+    };
+    const adapter = googleAdapter(async (input) => {
+      const url = requestUrl(input);
+      requests.push(url.pathname);
+      if (url.pathname.includes("/users/me/calendarList/")) return googleJson({ timeZone: "UTC" });
+      if (url.hostname === "docs.googleapis.com") return googleJson({
+        documentId: "meeting-transcript-doc", title: "Customer interview - Transcript",
+        body: { content: [{ paragraph: { elements: [{ textRun: { content: "Candidate discussed product design.\n" } }] } }] },
+      });
+      const selected = {
+        ...source,
+        attachments: url.searchParams.get("fields")?.includes("attachments(fileUrl,title,mimeType,fileId)")
+          ? source.attachments : undefined,
+      };
+      if (kind === "completion" && url.searchParams.has("syncToken")) {
+        return googleJson({ items: [], nextSyncToken: "calendar-next" });
+      }
+      if (kind === "series" && url.pathname.endsWith("/events/interview")) return googleJson(selected);
+      if (kind === "series") return googleJson({
+        items: [{ ...source, id: "interview_20260801T170000Z", recurringEventId: "interview", attachments: [] }],
+        nextSyncToken: "calendar-next",
+      });
+      return googleJson({ items: [selected], nextSyncToken: "calendar-next" });
+    });
+    const result = await adapter.poll!(googleConnection(["calendar.read"], {
+      calendar: {
+        syncToken: "calendar-old",
+        ...(kind === "completion" ? { completionCheckedAt: "2026-08-01T17:30:00Z" } : {}),
+      },
+    }), neverAborts());
+    expectNormalized(result.activities);
+    expect(result.activities).toHaveLength(1);
+    const activity = result.activities[0]!;
+    expect(activity.metadata?.attachments).toEqual([attachment]);
+    expect(activity.eventType).toBe(kind === "completion" ? "calendar.event_completed" : "calendar.event_changed");
+    const attachments = activity.metadata!.attachments as Array<{ fileId: string }>;
+    const read = await adapter.executeTool("docs.read_document", { documentId: attachments[0]!.fileId }, {
+      connection: googleConnection(["drive.read", "docs.read"]),
+      principal: { type: "user", userId: TEST_USER_ID }, signal: neverAborts(),
+    });
+    expect(read.output).toMatchObject({ documentId: "meeting-transcript-doc", textContent: "Candidate discussed product design.\n" });
+    expect(requests.at(-1)).toBe("/v1/documents/meeting-transcript-doc");
+    expect(requests.some((path) => path.includes("/drive/"))).toBe(false);
+  });
+
   it("baselines all newly granted Google capabilities atomically without emitting historical activity", async () => {
     const fetcher: typeof fetch = async (input) => {
       const url = requestUrl(input);
@@ -769,7 +869,8 @@ describe("connectors", () => {
       id: `offsite_2026100${index % 10}T160000Z`,
       etag: `cancel-etag-${index}`,
       status: "cancelled",
-      updated: "2026-09-02T11:00:00Z"
+      updated: "2026-09-02T11:00:00Z",
+      attachments: [{ fileId: `occurrence-doc-${index}` }],
     }));
     const fetcher = calendarFetcher(
       () => googleJson({ items: stripped, nextSyncToken: "calendar-sync-new" }),
@@ -792,6 +893,7 @@ describe("connectors", () => {
     });
     expect(result.activities[0]?.dedupeKey).toBe("calendar:primary:offsite:series:2026-09-02T11:00:00.000Z");
     expect(result.activities[0]?.metadata).not.toHaveProperty("recurrence");
+    expect(result.activities[0]?.metadata).not.toHaveProperty("attachments");
     expectNormalized(result.activities);
   });
 
@@ -2416,6 +2518,67 @@ describe("connectors", () => {
       message: { id: "message-sent", threadId: "thread-sent" },
       webUrl: "https://mail.google.com/mail/u/0/#all/thread-sent",
     });
+  });
+
+  it("creates a Gmail draft with original PDF bytes as a MIME attachment", async () => {
+    let raw = "";
+    const adapter = googleAdapter(async (_input, init) => {
+      const payload = JSON.parse(String(init?.body)) as { message: { raw: string } };
+      raw = atob(payload.message.raw.replace(/-/gu, "+").replace(/_/gu, "/"));
+      return googleJson({ id: "draft-with-pdf", message: { id: "message", threadId: "thread" } });
+    });
+    const read = vi.fn(async () => ({ fileName: "Calm dossier.pdf", mimeType: "application/pdf", bytes: new TextEncoder().encode("%PDF-1.7\nOriginal dossier\n%%EOF") }));
+    const result = await adapter.executeTool("gmail.create_draft", {
+      message: { kind: "new", to: ["candidate@example.com"], subject: "Follow-up", body: "Thank you for meeting." },
+      attachmentResourceIds: [TEST_WORKSPACE_ID, TEST_WORKSPACE_ID],
+    }, {
+      connection: googleConnection(["gmail.draft"]), principal: { type: "user", userId: TEST_USER_ID },
+      signal: neverAborts(), readAttachment: read,
+    });
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(raw).toContain("Content-Type: multipart/mixed;");
+    const boundary = /boundary="([^"]+)"/u.exec(raw)![1]!;
+    const parts = raw.split(`--${boundary}`).slice(1, -1);
+    expect(parts).toHaveLength(2);
+    expect(atob(parts[0]!.split("\r\n\r\n")[1]!.trim())).toBe("Thank you for meeting.");
+    expect(parts[1]).toContain("Content-Type: application/pdf");
+    expect(parts[1]).toContain("filename*=UTF-8''Calm%20dossier.pdf");
+    expect(atob(parts[1]!.split("\r\n\r\n")[1]!.trim())).toBe("%PDF-1.7\nOriginal dossier\n%%EOF");
+    expect(result.output).toMatchObject({ id: "draft-with-pdf" });
+  });
+
+  it("round-trips binary PDF bytes across many base64 chunks and folds MIME lines", async () => {
+    const bytes = new Uint8Array(2 * 1024 * 1024).map((_, index) => index % 256);
+    let mime = "";
+    const adapter = googleAdapter(async (_input, init) => {
+      const payload = JSON.parse(String(init?.body)) as { message: { raw: string } };
+      mime = atob(payload.message.raw.replace(/-/gu, "+").replace(/_/gu, "/"));
+      return googleJson({ id: "binary-draft" });
+    });
+    await adapter.executeTool("gmail.create_draft", {
+      message: { kind: "new", to: ["candidate@example.com"], subject: "Dossier", body: "Attached." }, attachmentResourceIds: [TEST_WORKSPACE_ID],
+    }, { connection: googleConnection(["gmail.draft"]), principal: { type: "user", userId: TEST_USER_ID }, signal: neverAborts(),
+      readAttachment: async () => ({ fileName: "dossier.pdf", mimeType: "application/pdf", bytes }),
+    });
+    const boundary = /boundary="([^"]+)"/u.exec(mime)![1]!;
+    const part = mime.split(`--${boundary}`)[2]!.split("\r\n\r\n")[1]!.trim();
+    expect(part.split("\r\n").every((line) => line.length <= 76)).toBe(true);
+    const decoded = atob(part);
+    expect(decoded).toHaveLength(2_097_152);
+    expect(Array.from(decoded.slice(120, 132), (value) => value.charCodeAt(0))).toEqual([120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131]);
+    expect(Array.from(decoded.slice(-4), (value) => value.charCodeAt(0))).toEqual([252, 253, 254, 255]);
+  });
+
+  it("does not create an incomplete Gmail draft when a resource cannot be read", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    await expect(googleAdapter(fetcher).executeTool("gmail.create_draft", {
+      message: { kind: "new", to: ["candidate@example.com"], subject: "Follow-up", body: "Thanks" },
+      attachmentResourceIds: [TEST_WORKSPACE_ID],
+    }, {
+      connection: googleConnection(["gmail.draft"]), principal: { type: "user", userId: TEST_USER_ID }, signal: neverAborts(),
+      readAttachment: async () => { throw new Error("attachmentResourceIds: resource is not visible"); },
+    })).rejects.toThrow("attachmentResourceIds: resource is not visible");
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it.each(["gmail.create_draft", "gmail.send"])("%s rejects undeclared write options before any provider request", async (name) => {

@@ -193,6 +193,8 @@ export function authorizedConnection(
 }
 
 export interface ConnectorToolContext {
+  /** Host-authorized original bytes. Never supplied by the model or exposed in results. */
+  readAttachment?: (resourceId: string) => Promise<{ fileName: string; mimeType: string; bytes: Uint8Array }>;
   connection: AuthorizedConnectorConnection;
   principal: ExecutionPrincipal;
   /** Stable host receipt key when the provider supports idempotent writes. */

@@ -27,10 +27,11 @@ import {
 } from "./helpers/durable-authority";
 import { responsesStreamResponse } from "@rally/agent-harness/test-support/responses-stream";
 
-// Frozen from the real pre-cutover definitions at d7289cdbe, not from the
-// compatibility helper under test. Input-schema prose participates in this hash.
+// Frozen from the real pre-cutover definitions at d7289cdbe, except Google:
+// adding draft attachment inputs intentionally changes its receipt digest, so
+// older receipts remain fenced. Input-schema prose participates in this hash.
 it.each([
-  ["google", googleTools, "ee3d58df9c6be517cf31c61c24ff0a9e48496b6985952f2b1fb233c9e17107f3"],
+  ["google", googleTools, "c1cdc3618c75ded8035ec4ab8b203604199eae5155fe29fbfffef1645d3e4a6d"],
   ["slack", slackTools, "4252e614c1b846896edb924fd3210d89339b1536a81b22b19e8c5010baa27820"],
   ["notion", notionTools, "9df5f6fbfe14255d35486d5efb4f90545bdf2919cab5a4321a5b3c43014f3ef6"],
   ["granola", granolaTools, "68ee12b5c978b26d85e9d8893c0f9f5d3bdd5d6f42a1c4ef0f36654a6550c807"],
@@ -1327,7 +1328,7 @@ describe("connector tools selected for harness runs", () => {
     expect(mail?.searchAliases).toEqual(expect.arrayContaining(["gmail", "email", "inbox", "calendar"]));
     expect(mail?.systemMessage).toContain("use the Gmail search tool first");
     expect(mail?.systemMessage).toContain("do not substitute public web search");
-    expect(mail?.systemMessage).not.toContain("Drive search");
+    expect(mail?.systemMessage).not.toContain("Search names and contents together");
     // The plugin message carries only Gmail mechanics; not inventing an address
     // is platform policy and lives in the work-stream system prompt.
     expect(mail?.systemMessage).toContain("Resolve an unknown recipient address");
@@ -1391,12 +1392,57 @@ describe("connector tools selected for harness runs", () => {
       displayName: "Google Drive + Docs + Sheets",
     });
     expect(drive?.description).toContain("file, document, spreadsheet");
-    expect(drive?.searchAliases).toEqual(expect.arrayContaining(["drive", "files", "docs", "sheets"]));
+    expect(drive?.searchAliases).toEqual(expect.arrayContaining(["drive", "files", "docs", "sheets", "meet", "notes", "transcripts"]));
     expect(drive?.systemMessage).toContain("use the Drive search tool");
     expect(drive?.systemMessage).toContain("do not substitute public web search");
     expect(drive?.systemMessage).toContain("writableByRally=true");
     expect(drive?.systemMessage).not.toContain("Gmail search");
     expect(drive?.tools.map((tool) => tool.definition.name)).toEqual(GOOGLE_WORKSPACE_TOOLS);
+  });
+
+  it("offers no Google meeting skill without an eligible Google read capability", async () => {
+    expect(__integrationTesting.connectorSkillsForPlugins([])).toEqual([]);
+    for (const capabilities of [["gmail.send"], ["docs.write"], ["gmail.read"]]) {
+      const database = new ToolSelectionDatabase([connection(OWNER_CONNECTION_ID, "personal", USER_ID, capabilities)]);
+      const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+      expect(__integrationTesting.connectorSkillsForPlugins(selected.plugins)).toEqual([]);
+    }
+  });
+
+  it("offers one meeting skill across separate Calendar and Drive connections", async () => {
+    const database = new ToolSelectionDatabase([
+      connection(OWNER_CONNECTION_ID, "personal", USER_ID, ["calendar.read"]),
+      connection(WORKSPACE_CONNECTION_ID, "workspace", null, ["drive.read", "docs.read"]),
+    ]);
+    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const skills = __integrationTesting.connectorSkillsForPlugins(selected.plugins);
+    expect(skills).toHaveLength(1);
+    expect(skills[0]?.name).toBe("reading-google-meeting-notes");
+    expect(selected.plugins.map((plugin) => plugin.canonicalId)).toContain(skills[0]?.ownerPlugin);
+  });
+
+  it.each([
+    ["calendar.read"],
+    ["drive.read", "docs.read"],
+    ["calendar.read", "drive.read", "docs.read"],
+  ])("prioritizes the attached transcript in the Google plugin with grants %j", async (...capabilities) => {
+    const database = new ToolSelectionDatabase([
+      connection(OWNER_CONNECTION_ID, "personal", USER_ID, capabilities),
+    ]);
+    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const plugin = selected.plugins.find((item) => item.canonicalId === `connection:${OWNER_CONNECTION_ID}`)!;
+    // Assert the presentation the harness actually receives, including Calendar-
+    // only credentials that must load a separate Docs plugin to read the file.
+
+    expect(plugin.systemMessage).toContain("load the reading-google-meeting-notes skill");
+    const skills = __integrationTesting.connectorSkillsForPlugins(selected.plugins);
+    expect(skills.map((skill) => ({ name: skill.name, owner: skill.ownerPlugin }))).toEqual([
+      { name: "reading-google-meeting-notes", owner: plugin.canonicalId },
+    ]);
+    expect(skills[0]?.body).toContain("pass fileId as documentId");
+    const examples = workedExampleCalls(plugin.systemMessage ?? "");
+    if (capabilities.includes("docs.read")) expect(workedExampleCallsAgainstSchemas(plugin)).toEqual([]);
+    expect(examples.some((call) => call.wireName.endsWith("_docs_read_document"))).toBe(false);
   });
 
   it.each([

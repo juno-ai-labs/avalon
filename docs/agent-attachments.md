@@ -239,6 +239,16 @@ admitted, frozen, and read exactly as in a work stream. The compiler request
 that once carried up to ten draft uploads under `automation_*` wire names is
 gone with the compiler ([`automation-lifecycle.md`](automation-lifecycle.md)).
 
+### Connector draft attachments
+
+Gmail draft `attachmentResourceIds` resolves original PDFs through
+`connector-resource-attachments.ts`, using the same current conversation links
+and visibility predicate as resource tools. The execution host reads the
+original R2 object and verifies its recorded hash and PDF signature before the
+connector serializes MIME. Models see resource IDs and draft results, never
+storage keys or binary content. Inaccessible or unavailable resources fail
+before the draft write; the adapter cannot resolve arbitrary URLs.
+
 ### Terminal resource exchange
 
 The Terminal plugin reuses the same authorized resource and lifecycle boundary
@@ -704,6 +714,22 @@ existing ten-file cap. Target read/version authorization is independent from
 attachment reservation, since a pin usually names an already-sent resource.
 
 ## Changelog
+
+### 2026-10-19 — Gmail draft attachments use authorized original resources
+
+**What changed:** A connector host reader resolves visible conversation resources
+and passes verified original PDF bytes directly to Gmail draft MIME serialization.
+
+**Why:** Candidate follow-up drafts need the attached dossier PDF, whereas model
+text derivatives cannot reconstruct the original file.
+
+**Considered and rejected:** Model-supplied base64 or arbitrary download URLs
+would bypass the resource visibility boundary and unnecessarily expose binary
+content to the model.
+
+**Consequences:** Original bytes must exist and current run visibility must
+permit access. File hashes and PDF signatures are checked before a draft writes.
+The text hydration and resource-discovery contracts remain the source of IDs.
 
 ### 2026-10-19 — Project quoted annotations with their source fidelity
 

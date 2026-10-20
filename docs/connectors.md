@@ -6,8 +6,11 @@ The model state tool and desktop share `connectorAuthorizationStatus`: only
 `needs_reconnect` means **Reconnect required**. Generic
 `error` states, such as a failed background poll, display as healthy because
 they do not establish that authorization needs renewing. `disabled` remains
-distinct. A committed successful poll clears only `connector_poll_failed` and
-`connector_poll_timeout` errors; other diagnoses are preserved. Poll failure
+distinct. A committed successful poll clears only errors marked with
+`source: "connector_poll"` or legacy `connector_poll_failed` and
+`connector_poll_timeout` codes; other diagnoses are preserved. The ownership
+marker permits a specific schema/provider diagnostic code without losing the
+poll's recovery semantics. Poll failure
 cannot replace `needs_reconnect` or `disabled`. Provider refusals can replace
 generic errors, preserving the first authorization diagnosis.
 
@@ -95,6 +98,9 @@ Apollo.io uses the personal-only [hosted-MCP connector](hosted-mcp-connectors.md
 
 | Path | Responsibility |
 | --- | --- |
+| `packages/contracts/src/external-people.ts` | Shared deduplication and the 10,000-person activity limit. |
+| `apps/api/src/durable-objects/connector-event-people.ts` | Ordered event-owned person rows, legacy readback, and schema-only v122. |
+| `apps/api/src/services/connector-queue-payload.ts` | Canonical-event references for oversized connector delivery context. |
 | `apps/api/src/durable-objects/workspace-event-resources.ts` | Exact workspace/connection/provider identity resolution for incoming event relationships. |
 | `packages/connectors/src/index.ts` | The registry, and the cross-validation that runs at its construction. |
 | `packages/connectors/src/types.ts` | The manifest and descriptor types, and the unexported symbol that brands `AuthorizedConnectorConnection`. |
@@ -525,6 +531,14 @@ Every Google tool parses its arguments with a strict schema, so an undeclared ke
   | New conversation | `{ "message": { "kind": "new", "to": ["dana@example.com"], "subject": "Renewal", "body": "Hello Dana." } }` |
   | Reply to a message | `{ "message": { "kind": "reply", "messageId": "id-from-a-search-hit", "to": ["dana@example.com"], "body": "Thank you." } }` |
 
+  Gmail drafts additionally accept `attachmentResourceIds` beside `message`,
+  containing PDF resource IDs from the conversation's resource tools. The host
+  resolves current conversation visibility under the execution principal, reads
+  the original stored file, verifies its hash and PDF type, and sends its bytes
+  as a base64 MIME attachment. No file bytes or storage keys enter model input
+  or output. A missing, inaccessible, or non-PDF resource stops before creating
+  the draft; repeated IDs attach once. `gmail.send` does not accept this field.
+
   `cc` is optional in either shape; omitted, `null`, and `[]` all mean none.
   Recipients remain explicit, including for replies: the adapter does not infer
   reply-all recipients or copy the original's recipient list. A new message has
@@ -568,10 +582,11 @@ Every Google tool parses its arguments with a strict schema, so an undeclared ke
   Bind's `toolWireDefinition` sanitizes even `rawJsonSchema` before Rally's root
   repair. Its xAI compatibility pass removes `additionalProperties: false`.
   Gmail therefore also expresses each closed object as a complete required-key
-  set with `maxProperties` equal to that set's size. The optional `cc` field has
-  two generated variants, absent and present; omitting it cannot free a slot
-  for an undeclared field. The root likewise permits only the required
-  `message` property. These constraints survive Bind without changing its
+  set with `maxProperties` equal to that set's size. Optional `cc` has absent
+  and present variants inside `message`. A draft's optional root
+  `attachmentResourceIds` uses `propertyNames` to allow only that key and
+  `message`: root unions are repaired away by the harness for provider
+  compatibility, so a union there would silently admit undeclared fields. These constraints survive Bind without changing its
   treatment of other tools or relaxing execution. Ignoring
   undeclared write options could change intent, such as turning an invented
   `preview: true` into an actual send. The regression test captures the real
@@ -606,6 +621,25 @@ Google activity ingestion is polling-only. Gmail, Calendar, and Drive are indepe
 A revoked refresh grant marks the connection `needs_reconnect`. Production smoke tests should create a Gmail draft rather than send unsolicited mail. A personal Gmail send tool is available only to its owner; if an administrator creates a workspace-scoped Gmail connection through the backend, its granted send capability rolls down to every work stream like every other workspace capability.
 
 The two records are isolated by Rally capability checks, not by separate Google OAuth principals. Because both presets use one OAuth client with incremental authorization, Google may return a token containing scopes previously granted to that account; Rally still exposes only the capabilities recorded on the particular connection. Disconnect is local when another Google connection for that account remains. Operators must not describe the presets as provider-level credential isolation.
+
+Calendar change and completion polls carry sanitized `metadata.attachments`
+entries (`fileId`, `fileUrl`, `title`, and `mimeType`), using the same reader as
+event tools. An attachment-only edit therefore changes the activity content.
+Recurring-series activities use the master's attachments; when the master is
+unavailable, a representative instance's attachments are omitted to keep the
+series identity stable across pages and avoid attributing one occurrence's
+transcript to the whole series.
+
+The `reading-google-meeting-notes` skill carries the reusable lookup procedure
+and a sourced storage/access reference. It is offered only with an eligible
+Google read connection, once even when Calendar and Drive are separate presets.
+It distinguishes Meet transcripts, Gemini notes, and manual Docs that may never
+be attached to Calendar. Folder names are hints rather than search requirements.
+
+The skill owns the attached-Doc-first procedure and Drive fallback. Connector
+presentations point to it rather than duplicating the lookup instructions.
+A Gmail-only connection does not offer it. Calendar attachment visibility does
+not establish permission to read the referenced Doc.
 
 ### GitHub App
 
@@ -995,7 +1029,7 @@ The request body must be a JSON object no larger than the regional provider-webh
 - `actor` and `subject`: optional JSON objects describing the source actor and object.
 - `entity_keys`: up to 100 stable correlation keys; `dedupe_key`: an optional stable idempotency key.
 - `target_user_ids`: for workspace connections only, up to 100 active members of that same Rally workspace. Personal connections always target their owner and ignore supplied targets.
-- `external_people`: up to 100 bounded external-person references. Generic-webhook claims remain unverified source evidence and can never create a reusable verified identity mapping.
+- `external_people`: up to 10,000 distinct external-person references after deduplication. Generic-webhook claims remain unverified source evidence and can never create a reusable verified identity mapping.
 - `metadata`: optional provider-specific JSON metadata.
 
 Rally verifies the HMAC over the exact received bytes before UTF-8 decoding or JSON parsing. Invalid signatures return `401`, malformed or schema-invalid bodies return `400`, disallowed events or non-member targets return `422`, identity/dedupe collisions return `409`, oversized bodies return `413`, and new deliveries return `202` (`200` when the same delivery is already known). Senders should retry network failures and `5xx` responses with exponential backoff using the same identity and exact body; they must not reuse an identity or dedupe key with changed content.
@@ -1040,6 +1074,30 @@ requires it, then verify delivery. Keep provider-specific storage and commands i
 the provider's module document; extract shared code only when a second connector
 actually needs the pattern. Notion's implementation, retry rules, regional fan-out,
 and operator commands are documented in [`notion-ingress.md`](notion-ingress.md).
+
+Gmail person evidence is deduplicated by role and address across From, To and
+Cc, with sender first. The shared `ExternalPeopleSchema` enforces the
+user-selected 10,000-person limit after deduplication; 10,001 distinct people
+are rejected explicitly, never silently truncated. A role and provider tenant
+remain part of identity, and email matching is case insensitive. There is no
+per-header cutoff. Each evidence item holds its matched address rather than a
+copy of the entire recipient header. Terminal poll failures retain the safe,
+field-specific diagnostic code in the connection's `error_json` and message,
+including across Workflow retries and replay. Provider response text is never
+copied into the stored diagnosis.
+
+WorkspaceDO migration 122 creates `workspace_connector_event_people`, one
+ordered row per person, without rewriting retained events at startup. Legacy
+bounded JSON rosters remain readable until replacement or normal retention. Positions are
+constrained to 0–9,999 and the event foreign key cascades deletion. New events
+keep the compatibility JSON cell empty and insert people in the same transaction
+as their event; reads and claims reconstruct the full ordered list. Restoring a
+late repeat copies its people too. This avoids the old 262,144-character cell
+constraint and Cloudflare's 2 MB row limit without widening historical DDL.
+
+Suggested Work retains that complete list in sources and provenance. Its single
+bounded model view reports shown and total counts without changing the canonical
+source; see [`suggested-work.md`](suggested-work.md).
 
 ### Activity ingestion
 
@@ -1138,9 +1196,12 @@ Manifests and facets are cross-validated at registry construction: a connector t
 1. The provider-facing Worker verifies a webhook or a poll Workflow reads the provider. Large raw bodies remain in regional R2.
 2. Resolve every authorized connector installation. A single raw provider delivery may fan out to multiple workspaces only when that account is independently installed in each one; normalization produces a separate event for every connection/workspace target.
 3. Normalize the bounded event for one workspace target and retain any large raw body in regional R2.
-4. Enqueue the region, bounded normalized event, ingress UUID, and canonical
-   content hash on that region's Cloudflare Queue. Large/raw provider bytes stay
-   in R2 behind `payloadRef`; the Queue message is independently parseable and
+4. Enqueue the region, normalized event, ingress UUID, and canonical
+   content hash on that region's Cloudflare Queue. Events above the existing
+   120,000-byte envelope budget are stored intact in R2 and sent as
+   `connector_queue_payload` references; the consumer verifies their region,
+   body hash and message type before ordinary admission. Raw provider bytes
+   remain separate behind `payloadRef`; the Queue message is independently parseable and
    does not need a D1 activity-body lookup.
 5. The Queue consumer resolves the workspace's jurisdiction and placement affinity and calls `WorkspaceDO.ingestConnectorEvent`. Provider identity and dedupe uniqueness are enforced inside that object's transaction, and an ingress receipt makes Queue/provider replay idempotent.
 6. After the object commits, the consumer sends an ID-only
@@ -1173,7 +1234,7 @@ Manifests and facets are cross-validated at registry construction: a connector t
    consumer then settles the authoritative event as processed or failed. A
    transient failure calls per-message `retry()` and an exhausted message enters
    the existing regional activities DLQ.
-9. Each match becomes its own message on the same regional Queue, carrying the registration, the destination, and the event inline. The consumer calls `AutomationDO.admitExternalEvent` or `SubstreamAgent.appendWatchedResourceEvent`; the destination re-checks its own lifecycle and activation boundary and admits at most one occurrence per canonical event, keyed on the event id, so there is no delivery ledger and no lease to settle.
+9. Each match becomes its own message on the same regional Queue, carrying the registration, the destination, and the event inline or with a canonical-event reference for oversized context. No snippet or metadata is discarded to fit the Queue. The consumer calls `AutomationDO.admitExternalEvent` or `SubstreamAgent.appendWatchedResourceEvent`; the destination re-checks its own lifecycle and activation boundary and admits at most one occurrence per canonical event, keyed on the event id, so there is no delivery ledger and no lease to settle.
 10. WorkspaceDO deletes a `processed` event 90 days after it was received, on its alarm's `connector_event_reap` phase; pending, processing and failed events never age out. The retention and its arithmetic are in [`workstream-durable-object.md`](workstream-durable-object.md). Legacy D1 `activities` rows are imported and scrubbed before the route opens; live events never create a D1 body handoff.
 
 When it enqueues a delivery (step 4), provider webhook ingestion (GitHub,
@@ -1184,23 +1245,31 @@ there is Organization-scope, otherwise only the owners of the personal ones,
 since a personal connection's resources are its owner's alone. `activity` goes
 to the whole Organization.
 
-**Why the event is present in ingress but absent from processing:** the first
-Queue message must be self-contained because no canonical WorkspaceDO event
-exists yet. Once step 5 commits, WorkspaceDO is the only event authority. A
-second event copy would either have to be ignored or hash-checked against that
-authority, so it cannot remove the claim/load RPC; it could also become stale,
-increase every retry's payload, and leave normalized provider content in the DLQ when
-processing exhausts. The ID-only pointer makes processing retries and exhausted
-messages content-free. The cost is one additional same-Queue send after commit.
-That handoff is closed by acknowledging ingress only after Cloudflare accepts
-the pointer: if the send or invocation fails first, the self-contained ingress
-message replays and WorkspaceDO deduplicates it.
+**Processing carries only IDs; oversized ingress commits before queueing IDs.**
+Storage-field validation mirrors the existing SQLite constraints before enqueue,
+so an oversized metadata, actor, subject, or summary fails with its field name
+rather than accepting an event that can only retry into the DLQ.
+Small first-stage events travel inline. An event above the existing 120,000-byte
+Queue envelope budget calls the same typed WorkspaceDO admission primitive
+directly, then queues the processing IDs after its canonical commit. A failed
+send replays idempotent admission before retrying the wake-up. Processing always
+reloads canonical state from WorkspaceDO.
 
-A single-message alternative—ingest, process, and retry the original full
-message—would also be correct if every retry re-ingested idempotently and still
-loaded WorkspaceDO authority. It was rejected because it retains the normalized
-event for the entire processing retry/DLQ lifetime in exchange for saving only
-the second Queue send, not an object round trip.
+Oversized matched deliveries keep registration, destination, and event identity
+in the Queue envelope and reload `textSnippet` and `metadata` through the
+canonical event's context projection. They create no second copy in R2, so
+canonical event retention also owns their context. Hydration failures retry
+separately from destination processing, whose existing acknowledgment policy
+applies unchanged.
+
+Google normalization rollouts accept a legacy payload and its enriched replay
+under one event identity. Missing Calendar attachments, the historical 100-person
+prefix, and compact Gmail address evidence are compared in their legacy shape;
+the richer roster and attachment metadata replace canonical context atomically,
+without changing processing status or firing another occurrence. Other content
+changes, including conflicting nonempty attachment lists, still fail identity
+validation. The compatibility check rechecks the canonical hash after its async
+comparison before committing enrichment.
 
 Every durable boundary above emits a structured outcome rather than leaving a
 Queue acknowledgement to stand in for downstream success. Follow one event by
@@ -1498,8 +1567,9 @@ independent change condition, mixed batches, and URL/metadata merge behavior.
 | `apps/api/test/connector-oauth-error.test.ts` | `isRevokedGrantError` and the three-answer classification. |
 | `apps/api/test/connector-actor-identity.test.ts` | The three tiers, the monotonic write, and that only `verified_email` is recorded. |
 | `apps/api/test/connector-catalog-discovery.test.ts` | `searchAliases`, the catalog wording, and the load sentence. |
-| `apps/api/test/connector-tool-selection.test.ts` | Capability intersection, capability-gated Gmail new/reply examples, and the `connectorCapabilityRefused` shape. |
+| `apps/api/test/connector-tool-selection.test.ts` | Capability intersection, capability-gated Gmail new/reply examples, attached-transcript-first guidance and valid Docs examples across Calendar-only, files-only, and combined grants, and the `connectorCapabilityRefused` shape. |
 | `packages/connectors/src/index.test.ts`, `apps/api/test/tool-schema-sanitization.test.ts` | Gmail new/reply MIME and request bodies, metadata/read-capability failures before writes, and equivalent acceptance of valid and invalid arguments in the authored/provider schema and executor. Gmail HTTP is the capability double; no email is sent by these tests. |
+| `packages/connectors/src/index.test.ts` | Calendar change, completion, and recurring-master attachments survive provider field masks and lead directly to a Docs read; unreadable-master fallback never attributes an occurrence attachment to the series. Google HTTP is doubled because the provider cannot run locally. |
 | `apps/api/test/connector-poll-reliability.test.ts` | `normalizeHighWatermark` on both load and commit, the bounded retries, and backlog scheduling. |
 | `apps/api/test/connector-event-authority.test.ts` | WorkspaceDO event admission/replay and frozen pre-cutover activity rows ignored once object authority is open. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | Real-workerd WorkspaceDO schema, Queue/provider replay dedupe, Queue claim fencing and recovery, terminal settlement, and the alarm aging processed events out at 90 days while keeping every event still in flight. |
@@ -1568,6 +1638,36 @@ clients containing the fallback; it cannot retrofit already-installed clients.
 Release a desktop build supporting a connector before enabling it on the Worker,
 as with the wire-name sequencing constraint documented on
 `isConnectorConnectionCardWireName`, so an available update can resolve the card.
+
+### 2026-10-19 — Google polling preserves people, diagnostics, and attached documents
+
+**What changed:** Polling admits up to 10,000 deduplicated people, retains safe
+field-specific terminal errors, and exposes Calendar attachment references.
+Terminal logs retain their stable `connector_poll_failed` or
+`connector_poll_timeout` event name; `error_code` carries the specific cause.
+Stored specific reasons carry polling ownership so the shared state transition
+can recover them without replacing an authorization verdict or user disable.
+Legacy Google payloads converge on their enriched canonical event without
+reprocessing. Oversized ingress commits directly through canonical admission;
+large matched deliveries reload canonical context. The meeting-notes skill owns
+lookup guidance. [`agent-attachments.md`](agent-attachments.md) owns Gmail PDF
+authorization, [`workstream-durable-object.md`](workstream-durable-object.md)
+owns roster storage, and [`suggested-work.md`](suggested-work.md) owns admission.
+
+**Why:** Real recipient lists exceeded the old schema and the displayed error
+lost the cause. Calendar polling omitted attached transcript Docs that event
+reads already exposed, leaving follow-up workflows without their best source.
+
+**Considered and rejected:** Raising only a schema cap moves failure to Queue
+or SQLite limits. Truncation loses recipients. R2 transport copies would outlive
+canonical event retention and require another cleanup protocol; canonical
+admission and context reads reuse the existing authority instead.
+
+**Consequences:** The 10,000-person limit applies after deduplication; larger
+lists fail explicitly. Queue messages preserve full event context through the
+canonical owner, and rollout enrichment preserves identity and processing state.
+Read access to an attached Doc remains the connected account's responsibility.
+
 
 ### 2026-10-19: Polling failure is not a reconnect verdict
 

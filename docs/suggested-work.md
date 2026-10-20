@@ -54,6 +54,14 @@ connector activity / Rally mention
   → GET /work-opportunities → typed WorkspaceDO RPC reads the stored set, nothing more
 ```
 
+Connector sources retain up to 10,000 deduplicated people, including every
+reference's source evidence. Canonical sources and stored provenance never use
+the former roster prefixes. Admission presents one bounded view under its
+existing character budget, sharing space between people and source text, with
+`externalPeopleCoverage` stating shown and total counts. Decisions resolve and
+persist against the full original sources. This view may omit people from model
+consideration but never removes them from canonical storage or provenance.
+
 ### Admission
 
 An activity only becomes a candidate if no resource watch or matching automation
@@ -434,6 +442,26 @@ of how the last ranking ended — and `request_seq` against the scheduler's clai
 value.
 
 ## Changelog
+
+### 2026-10-19 — Full canonical rosters have a bounded admission view
+
+**What changed:** Sources and provenance retain up to 10,000 deduplicated people.
+Each packed batch receives one bounded inference view with shown/total coverage;
+persistence receives the complete original source once per decision.
+
+**Why:** Canonical truncation lost real people. Splitting long source text across
+roster windows could instead require hundreds of sequential calls and let later
+decisions overwrite earlier user links or ignore an earlier opportunity.
+
+**Considered and rejected:** An oversized prompt fails at the provider. Windowing
+would need cross-window decision reconciliation and resumable checkpoints for a
+coarse admission gate. A bounded view uses the existing character budget while
+keeping all canonical evidence for subsequent work.
+
+**Consequences:** Model sampling is explicit and does not promise every person
+was considered. Source fingerprints and persisted provenance retain the full
+roster, and one batch cannot repeatedly replace links for the same source.
+
 
 ### 2026-10-19 — Shared MCP resources are not verified people
 
