@@ -458,7 +458,7 @@ export function SiteResourceDetail({
    * sits against the composited page below.
    */
   const headerActions = React.useMemo((): IconGroupAction[] => [
-    ...(annotationDraft ? [{ key: 'comment-mode', label: 'Comment mode', disabledReason: surface.framed ? 'Website comments require the Rally Mac app.' : undefined, icon: <IconPointerCollaboration aria-hidden="true" size={16} stroke={1.9} />, pressed: picking, disabled: Boolean(surface.framed) || previewShown !== true || showingData, onSelect: () => { if (!surface.framed) setPicking((value) => !value); } }] : []),
+    ...(annotationDraft ? [{ key: 'comment-mode', className: 'annotation-mode-button', label: 'Comment mode', disabledReason: surface.framed ? 'Website comments require the Rally Mac app.' : undefined, icon: <IconPointerCollaboration aria-hidden="true" size={16} stroke={1.9} />, pressed: picking, disabled: Boolean(surface.framed) || previewShown !== true || showingData, onSelect: () => { if (!surface.framed) setPicking((value) => !value); } }] : []),
     ...(access?.stateful ? [{
       key: 'stored-data',
       // The name stays the same in both states: `pressed` is what says which
@@ -517,7 +517,6 @@ export function SiteResourceDetail({
   return (
     <div className="site-detail">
       <CopyStatus state={copyState} />
-      {picking && <p className="annotation-site-hint">Click to pin · ⌥ grow · drag range · Esc</p>}
       {pickError && <p role="alert">{pickError}</p>}
 
       {showingData && access
