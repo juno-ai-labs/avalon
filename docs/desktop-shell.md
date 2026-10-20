@@ -47,7 +47,10 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
 
 - **The section switcher**, a 76px rail under the macOS window controls,
   which the main window centers over it per macOS version (the width is
-  `--navigation-rail-width`; change it and the light position together):
+  `--navigation-rail-width`; change it and the light position together).
+  Only a shell with `has-overlay-window-controls` reserves the top spacer;
+  browser and other hosts begin the rail at the top (verified visually, no
+  automated guard):
   **Pinned**, **Channels**, **Threads**, **Activity** and **Artifacts**, each an outline over
   its name, and the account menu at the bottom, labelled Settings. Every
   entry, the account menu's trigger included, is one `RailItem`: a 34px tile
