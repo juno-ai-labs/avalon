@@ -308,7 +308,8 @@ function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, provid
     ? undefined
     : connectorScopeStates(provider.provider, connections, catalog.capabilityPrefixes)
         .find((candidate) => candidate.scope === scope);
-  const reconnect = scopeState?.connections.find((connection) => connection.status === 'reconnect_required');
+  const reconnect = scopeState?.connections.find((connection) => connection.status === 'reconnect_required')
+    ?? scopeState?.connections[0];
   const availability = useQuery({
     queryKey: ['connector-catalog'],
     queryFn: ({ signal }) => api!.getAvailableConnectorTypes(signal),
@@ -317,19 +318,12 @@ function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, provid
   });
   const selectionKey = connectorConnectionCardSelectionKey(request);
   const liveConnected = scopeState?.status === 'healthy';
-  const connected = liveConnected || latchedConnected;
-  // The workspace socket's `connector_connections` topic refreshes the shared
-  // query feeding this context after OAuth commits. Keep believing that live
-  // state until it first reports success; a later provider revocation is both
-  // unlikely while this historical card remains visible and better handled by
-  // a fresh agent state check than by turning an old success back into a CTA.
+  const connected = scopeState ? liveConnected : latchedConnected;
+  // A cached success can bridge loading/remounts, but current connection state
+  // owns the status once available. Reauthorization remains an explicit action.
   useEffect(() => {
-    if (!liveConnected) return;
-    onConnected?.(selectionKey);
-    if (pendingConnectorOAuth?.source === 'conversation'
-      && pendingConnectorOAuth.connectorId === request.connectorId
-      && pendingConnectorOAuth.scope === request.scope) setPendingConnectorOAuth(null);
-  }, [liveConnected, onConnected, pendingConnectorOAuth, request.connectorId, request.scope, selectionKey, setPendingConnectorOAuth]);
+    if (liveConnected) onConnected?.(selectionKey);
+  }, [liveConnected, onConnected, selectionKey]);
   const awaiting = pendingConnectorOAuth?.source === 'conversation'
     && pendingConnectorOAuth.provider === provider.provider
     && pendingConnectorOAuth.connectorId === request.connectorId
@@ -400,6 +394,7 @@ function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, provid
       adminRequired={adminRequired}
       checkingAvailability={availability.isLoading}
       connected={connected}
+      status={scopeState?.status}
       error={connect.error?.message}
       macAppOnly={!connectorStartsHere(session, provider.provider)}
       onConnect={() => connect.mutate()}
@@ -425,10 +420,12 @@ export function ConnectorConnectionCardView({
   reconnect,
   request,
   unavailable = false,
+  status,
 }: {
   adminRequired?: boolean;
   checkingAvailability?: boolean;
   connected: boolean;
+  status?: ConnectorScopeStatus;
   error?: string;
   /** This client cannot start this connection; point at the Mac app instead of a button. */
   macAppOnly?: boolean;
@@ -439,7 +436,10 @@ export function ConnectorConnectionCardView({
   request: ConnectorConnectionCardInput;
   unavailable?: boolean;
 }): React.JSX.Element {
-  const actionLabel = reconnect ? 'Reconnect' : `Connect ${provider.name}`;
+  const actionLabel = reconnect || connected ? 'Reconnect' : `Connect ${provider.name}`;
+  const displayStatus = status ?? (connected ? 'healthy' : undefined);
+  const statusLabel = displayStatus === 'reconnect_required' ? 'Reconnect required'
+    : displayStatus ? connectorStatusLabel(displayStatus) : 'Checking…';
   const buttonLabel = pending
     ? 'Waiting…'
     : adminRequired
@@ -462,23 +462,27 @@ export function ConnectorConnectionCardView({
           {provider.provider === 'canva' && <p>{CANVA_CONNECTION_DISCLOSURE}</p>}
           <small>{request.scope === 'personal' ? 'Personal connection' : 'Organization connection'}</small>
         </div>
-        {connected ? (
-          <span aria-live="polite" className="connector-connection-card-status" role="status"><Check aria-hidden="true" size={14} /> Connected</span>
-        ) : macAppOnly ? (
-          MAC_APP_DOWNLOADABLE
-            ? <a className="connector-connection-card-status" href={MAC_APP_DOWNLOAD_URL}>{MAC_APP_CONNECT_NOTE}</a>
-            : <span className="connector-connection-card-status">{MAC_APP_CONNECT_NOTE}</span>
-        ) : (
-          <Button
-            className="connector-connection-card-action button-primary"
-            disabled={adminRequired || unavailable || pending}
-            onClick={onConnect}
-            title={adminRequired ? 'Only an organization owner or admin can connect an organization account.' : undefined}
-          >
-            {pending ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : null}
-            {buttonLabel}
-          </Button>
-        )}
+        <div className="connector-connection-card-controls">
+          <span aria-live="polite" className="connector-connection-card-status" data-status={displayStatus ?? 'checking'} role="status">
+            {displayStatus ? <StatusGlyph status={displayStatus} /> : <LoaderCircle aria-hidden="true" className="spin" size={14} />}
+            {statusLabel}
+          </span>
+          {macAppOnly ? (
+            MAC_APP_DOWNLOADABLE
+              ? <a className="connector-connection-card-status" href={MAC_APP_DOWNLOAD_URL}>{MAC_APP_CONNECT_NOTE}</a>
+              : <span className="connector-connection-card-status">{MAC_APP_CONNECT_NOTE}</span>
+          ) : (
+            <Button
+              className="connector-connection-card-action button-primary"
+              disabled={adminRequired || unavailable || pending}
+              onClick={onConnect}
+              title={adminRequired ? 'Only an organization owner or admin can connect an organization account.' : undefined}
+            >
+              {pending ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : null}
+              {buttonLabel}
+            </Button>
+          )}
+        </div>
       </div>
       {error ? <InlineError>{error}</InlineError> : null}
     </article>
