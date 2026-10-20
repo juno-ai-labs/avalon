@@ -193,6 +193,10 @@ describe('token references', () => {
     // The width a title menu level may take: what Radix reports as available,
     // less the frame's padding. Layout arithmetic, the same in every theme.
     '--title-menu-room',
+    // The attached command pill's current surface token, selected by its
+    // default, hover and open states. This aliases existing theme colours;
+    // it introduces no palette value of its own.
+    '--attached-pill-fill',
     // The feed's spacing steps, each a multiple of the one `ref.space.unit`
     // token; the multiples are the stylesheet's, not a theme's.
     '--space-1', '--space-2', '--space-3', '--space-4', '--space-5', '--space-6', '--space-7', '--space-8',
@@ -228,6 +232,9 @@ describe('token references', () => {
     // How far a crowded pane header moves its pill left, set by
     // TitlePillHeader from the gap it measured.
     '--title-pill-shift',
+    // The glass bridge's cap radius, supplied by MarkBridge so the pill's
+    // background fade uses the same geometry as the connecting shape.
+    '--mark-bridge-cap',
     // The dictation level ring, 0 to 1 from the capture worklet's RMS, written
     // onto the microphone control by the composer while a recording runs.
     '--dictation-level',
