@@ -538,7 +538,9 @@ opening. Empty replay has no completion marker, so a pong-responsive connection
 with no application state by its deadline gets one `request_snapshot` fallback
 and one more opening budget. This preserves cheap replay without racing its
 first event against a platform auto-pong. Snapshot assembly must finish,
-including pending-input chunks, before confirming the ticket as live.
+including pending-input chunks, before confirming the ticket as live. Abandoning
+either chunk assembly resets the subscription cursor: chunks share the snapshot
+sequence and cannot be replayed after that sequence.
 
 Ownership is retired before close on timeout, resync, offline, and suspend;
 late events and obsolete ticket completions cannot affect replacements. Resume

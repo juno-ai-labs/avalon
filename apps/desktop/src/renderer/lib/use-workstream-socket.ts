@@ -1958,6 +1958,21 @@ export function useWorkstreamSocket(
       }, SOCKET_STABLE_CONNECTION_MS);
     };
 
+    const abandonSnapshotAssembly = (): void => {
+      const incomplete = initialContextSnapshot !== null || pendingInputSnapshot !== null;
+      if (initialContextSnapshot !== null) {
+        queryClient.removeQueries({ queryKey: contextQueryKey, exact: true });
+      }
+      initialContextSnapshot = null;
+      pendingInputSnapshot = null;
+      if (incomplete) {
+        // Chunks share the baseline's sequence and are not replayable after it.
+        resumeState.lastSequence = 0;
+        openingCompleted = false;
+        setSendReady(false);
+      }
+    };
+
     // Retire ownership before close(): browsers and Node can leave a dead
     // transport CLOSING long after the network has become usable again.
     const retireTransport = (): void => {
@@ -1967,14 +1982,7 @@ export function useWorkstreamSocket(
       const retired = socket;
       socket = null;
       rejectPendingTranscriptRanges('The thread connection is restarting.');
-      pendingInputSnapshot = null;
-      if (initialContextSnapshot !== null) {
-        queryClient.removeQueries({ queryKey: contextQueryKey, exact: true });
-        resumeState.lastSequence = 0;
-        openingCompleted = false;
-        setSendReady(false);
-      }
-      initialContextSnapshot = null;
+      abandonSnapshotAssembly();
       try { retired?.close(); } catch { /* The old transport no longer owns this feed. */ }
     };
     const cancelTicketAttempt = (): void => {
@@ -2375,15 +2383,7 @@ export function useWorkstreamSocket(
           rejectPendingTranscriptRanges(
             'The thread connection closed while loading transcript ranges.',
           );
-          pendingInputSnapshot = null;
-          const contextAssemblyWasIncomplete = initialContextSnapshot !== null;
-          initialContextSnapshot = null;
-          if (contextAssemblyWasIncomplete) {
-            queryClient.removeQueries({ queryKey: contextQueryKey, exact: true });
-            resumeState.lastSequence = 0;
-            openingCompleted = false;
-            setSendReady(false);
-          }
+          abandonSnapshotAssembly();
           socket = null;
           if (closeEvent.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE) {
             socketTelemetry.disconnected({
