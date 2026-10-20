@@ -14,6 +14,7 @@ import { useUiStore } from '../lib/ui-store';
 import { NavigationSidebar } from './navigation-sidebar';
 
 const api = vi.hoisted(() => ({
+  createSpace: vi.fn(),
   getMyThreads: vi.fn(),
   getActivity: vi.fn(),
   markActivitySeen: vi.fn(async () => undefined),
@@ -711,6 +712,31 @@ describe('the navigation sidebar', () => {
     renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
     fireEvent.click(screen.getByRole('button', { name: 'New channel' }));
     expect(screen.getByRole('dialog', { name: 'New channel' })).toBeInTheDocument();
+  });
+
+  describe('creating a Channel with an automatic color', () => {
+    beforeEach(() => {
+      vi.spyOn(Math, 'random');
+      api.createSpace.mockResolvedValue(channel('growth', 'Growth'));
+    });
+
+    afterEach(() => {
+      vi.mocked(Math.random).mockRestore();
+    });
+
+    it.each([
+      { random: 0, colorKey: 'rose' },
+      { random: 1 - Number.EPSILON, colorKey: 'pink' },
+    ])('submits $colorKey for random value $random', async ({ random, colorKey }) => {
+      vi.mocked(Math.random).mockReturnValue(random);
+      renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [] }));
+      fireEvent.click(screen.getByRole('button', { name: 'New channel' }));
+      fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Growth' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Create channel' }));
+
+      await waitFor(() => expect(api.createSpace).toHaveBeenCalledWith({ name: 'Growth', colorKey, scope: 'workspace' }));
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New channel' })).not.toBeInTheDocument());
+    });
   });
 
   describe('the Activity tab’s filters', () => {
