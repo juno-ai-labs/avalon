@@ -1,5 +1,5 @@
 import type { ArtifactWindowAction } from './artifact-window-actions';
-import type { Annotation, ArtifactPickerPin } from "@rally/contracts";
+import type { AnnotationCommentPins, AnnotationCommentAction, Annotation, ArtifactPickerPin } from "@rally/contracts";
 import type { ClientSession } from "@rally/contracts/client-session";
 import type { NetworkRecoveryState, NetworkTicketObservation } from './network-recovery';
 import type {
@@ -573,6 +573,7 @@ export interface RallyDesktopBridge {
   setArtifactPreviewHidden: (hidden: boolean) => Promise<void>;
   /** A still of the live preview as an image data URL, or `null` when none is showing. */
   pickArtifactPreview?: () => Promise<ArtifactPickerPin | null>;
+  showArtifactPreviewComments?: (pins: AnnotationCommentPins) => Promise<AnnotationCommentAction | null>;
   stopPickingArtifactPreview?: () => Promise<void>;
   snapshotArtifactPreview: () => Promise<string | null>;
   /** Tear the preview down: the detail closed, or the work stream changed. */

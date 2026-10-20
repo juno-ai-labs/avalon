@@ -1,5 +1,5 @@
 import { artifactWindowActionRequest, artifactWindowSessionMatches } from './artifact-window-actions';
-import { ARTIFACT_PICKER_SOURCE, ArtifactPickerPinSchema, AnnotationSchema } from "@rally/contracts";
+import { ARTIFACT_COMMENTS_SOURCE, AnnotationCommentPinsSchema, AnnotationCommentActionSchema, ARTIFACT_PICKER_SOURCE, ArtifactPickerPinSchema, AnnotationSchema } from "@rally/contracts";
 import { startCanvaConnection } from './canva-loopback';
 import { clampWindowBounds, readMainWindowState, writeMainWindowState } from './main-window-state';
 import { macosMajorVersion } from './macos-version';
@@ -3544,6 +3544,15 @@ function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
           const screenshot = captured.isEmpty() ? undefined : 'data:image/png;base64,'+captured.crop({x,y,width:Math.max(1,Math.min(size.width-x,Math.ceil((rect?.width ?? size.width)*scaleX))),height:Math.max(1,Math.min(size.height-y,Math.ceil((rect?.height ?? size.height)*scaleY)))}).toPNG().toString('base64');
           return { ...pin, ...(screenshot ? { screenshot } : {}) };
         },
+        comments: async (pins) => {
+          const raw: unknown = await contents.executeJavaScriptInIsolatedWorld(1001,[{code:`new Promise(resolve=>{
+            globalThis.__rallyClearComments?.();
+            const cleanup=${ARTIFACT_COMMENTS_SOURCE}(${JSON.stringify(pins)},resolve);
+            globalThis.__rallyClearComments=()=>{cleanup();resolve(null);};
+            if(!${pins.length})resolve(null);
+          })`}]);
+          return raw===null ? null : AnnotationCommentActionSchema.parse(raw);
+        },
         stopPicking: async () => { if (!contents.isDestroyed()) await contents.executeJavaScriptInIsolatedWorld(1001, [{ code: 'globalThis.__rallyCancelPicker?.()' }]); },
         capture: async () => {
           const captured = await contents.capturePage();
@@ -4305,6 +4314,12 @@ function registerIpc(): void {
     assertArtifactSurfaceSender(event);
     const window = BrowserWindow.fromWebContents(event.sender);
     return window ? await artifactPreviews.get(window)?.pick() ?? null : null;
+  });
+  ipcMain.handle('artifact:preview-comments', async (event, raw: unknown) => {
+    assertArtifactSurfaceSender(event);
+    const pins=AnnotationCommentPinsSchema.parse(raw);
+    const window=BrowserWindow.fromWebContents(event.sender);
+    return window ? await artifactPreviews.get(window)?.comments(pins) ?? null : null;
   });
   ipcMain.handle('artifact:stop-picking-preview', async (event) => {
     assertArtifactSurfaceSender(event);
