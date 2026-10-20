@@ -69,6 +69,7 @@ async function readyAgent(): Promise<DurableObjectStub> {
     seedWorkstreamRoot(state);
     // This fixture starts after initial projection delivery; only the receipt/timer is pending.
     state.storage.sql.exec('DELETE FROM authorization_projection_outbox');
+    state.storage.sql.exec('UPDATE conversation_view_changes SET pending = 0');
   });
   return stub;
 }
