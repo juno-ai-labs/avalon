@@ -303,8 +303,8 @@ describe("a Channel's row on the workspace socket", () => {
   it("admits cached conversation views separately for the parent and its private breakout", async () => {
     const child = asSubstreamId("00000000-0000-7000-8000-0000000fd099");
     await runInDurableObject(organization(), (_instance, state) => {
-      state.storage.sql.exec(`INSERT INTO parent_children(parent_id, substream_id, kind, created_at)
-        VALUES (?, ?, 'child', 1)`, openChannel, child);
+      state.storage.sql.exec(`INSERT INTO parent_children(parent_id, substream_id, kind, created_by_user_id, created_at, title)
+        VALUES (?, ?, 'child', ?, 1, 'Private breakout')`, openChannel, child, owner);
       state.storage.sql.exec(`INSERT INTO parent_breakout_members
         (parent_id, substream_id, user_id, active, version, added_by_user_id, added_at, updated_at)
         VALUES (?, ?, ?, 1, 1, ?, 1, 1)`, openChannel, child, owner, owner);
