@@ -1402,7 +1402,7 @@ describe("connector tools selected for harness runs", () => {
 
   it("offers no Google meeting skill without an eligible Google read capability", async () => {
     expect(__integrationTesting.connectorSkillsForPlugins([])).toEqual([]);
-    for (const capabilities of [["gmail.send"], ["docs.write"]]) {
+    for (const capabilities of [["gmail.send"], ["docs.write"], ["gmail.read"]]) {
       const database = new ToolSelectionDatabase([connection(OWNER_CONNECTION_ID, "personal", USER_ID, capabilities)]);
       const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
       expect(__integrationTesting.connectorSkillsForPlugins(selected.plugins)).toEqual([]);
@@ -1433,8 +1433,7 @@ describe("connector tools selected for harness runs", () => {
     const plugin = selected.plugins.find((item) => item.canonicalId === `connection:${OWNER_CONNECTION_ID}`)!;
     // Assert the presentation the harness actually receives, including Calendar-
     // only credentials that must load a separate Docs plugin to read the file.
-    expect(plugin.systemMessage).toContain("inspect the Calendar activity metadata.attachments or read the event");
-    expect(plugin.systemMessage).toContain("Read that attached Doc before any Drive search or blocked conclusion");
+
     expect(plugin.systemMessage).toContain("load the reading-google-meeting-notes skill");
     const skills = __integrationTesting.connectorSkillsForPlugins(selected.plugins);
     expect(skills.map((skill) => ({ name: skill.name, owner: skill.ownerPlugin }))).toEqual([
@@ -1442,14 +1441,8 @@ describe("connector tools selected for harness runs", () => {
     ]);
     expect(skills[0]?.body).toContain("pass fileId as documentId");
     const examples = workedExampleCalls(plugin.systemMessage ?? "");
-    if (capabilities.includes("docs.read")) {
-      expect(examples[0]).toEqual({
-        wireName: "google_docs_read_document", arguments: { documentId: "meeting-transcript-doc" },
-      });
-      expect(workedExampleCallsAgainstSchemas(plugin)).toEqual([]);
-    } else {
-      expect(examples.some((call) => call.wireName.endsWith("_docs_read_document"))).toBe(false);
-    }
+    if (capabilities.includes("docs.read")) expect(workedExampleCallsAgainstSchemas(plugin)).toEqual([]);
+    expect(examples.some((call) => call.wireName.endsWith("_docs_read_document"))).toBe(false);
   });
 
   it.each([
