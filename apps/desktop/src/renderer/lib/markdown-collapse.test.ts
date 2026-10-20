@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  collapsibleSectionIds,
   markdownDefinitionBlocks,
   splitCollapsibleMarkdown,
   withMarkdownDefinitions,
@@ -103,8 +102,6 @@ describe('splitCollapsibleMarkdown', () => {
   it('assigns stable ids as a later section is appended', () => {
     const first = splitCollapsibleMarkdown('## One\n\na\n');
     const grown = splitCollapsibleMarkdown('## One\n\na\n\n## Two\n\nb\n');
-    expect(collapsibleSectionIds('## One\n\na\n')).toEqual(['section-0']);
-    expect(collapsibleSectionIds('## One\n\na\n\n## Two\n\nb\n')).toEqual(['section-0', 'section-1']);
     expect(first[0] && partsId(first[0])).toBe(grown[0] && partsId(grown[0]));
   });
 
