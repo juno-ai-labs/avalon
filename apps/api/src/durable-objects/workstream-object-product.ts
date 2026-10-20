@@ -1,4 +1,4 @@
-import { annotationCommentText } from "@rally/contracts";
+import { AnnotatedMessageContentSchema, annotationCommentText } from "@rally/contracts";
 import { AnnotationsSchema, validateAnnotationAttachments } from "@rally/contracts";
 import { ResourceService } from "../services/resource-service";
 import { mergeEmbedsOf, resolveShareableResources } from "../services/resource-share-rules";
@@ -1540,41 +1540,49 @@ export class WorkstreamObjectProductService {
         ))
       : [];
     const actorName = names.get(input.creatorUserId)?.name ?? UNKNOWN_MEMBER_DISPLAY_NAME;
-    const startsRun = !history && (Boolean(input.seed) || await openingMessageStartsRun(this.env, {
-      workspaceId: input.workspaceId,
-      workstreamId: input.workstreamId,
-      substreamId: "0",
-      message: input.openingStructuredContent && typeof input.openingStructuredContent === "object"
-        && "kind" in input.openingStructuredContent && input.openingStructuredContent.kind === "artifact_annotations"
-        && "annotations" in input.openingStructuredContent
-        ? annotationCommentText(input.openingMessage, AnnotationsSchema.parse(input.openingStructuredContent.annotations))
-        : input.openingMessage,
-      humanMentions: mentionedPersonNames(prepared.mentions),
-      connectorMentions: prepared.mentions.flatMap((mention) => mention.type === "connector" && mention.connectorType ? [mention.connectorType] : []),
-      attachmentCount: input.attachmentIds.length,
-      defer: this.defer,
-    }));
     const now = Date.now();
     const messageId = await stableUuid(["conversation-initialization", input.workstreamId, input.clientMessageId]);
     const runId = asHarnessRunId(uuidV7(now));
-    const model = !startsRun ? null : input.modelOverride
-      ? pinnedModelRouting(input.modelOverride).model
-      : (await resolveNewWorkstreamModelRouting(this.env, {
-          workspaceId: input.workspaceId,
-          workstreamId: input.workstreamId,
-        })).model;
     const authorSnapshot = {
       displayName: names.get(input.creatorUserId)?.name ?? UNKNOWN_MEMBER_DISPLAY_NAME,
       avatarUrl: names.get(input.creatorUserId)?.avatar_url ?? null,
     };
-    const materialization = await this.prepareConversationMaterialization({
-      conversation: history ?? { messages: [{ role: "user", text: prepared.text,
-        structuredContent: input.openingStructuredContent, attachmentIds: input.attachmentIds }] },
-      operationId: input.clientMessageId, firstTurnId: messageId, clientMessageId: input.clientMessageId,
-      ...(input.initialization.kind === "history" && input.initialization.identityHash ? { identityHash: input.initialization.identityHash } : {}),
-      userId: input.creatorUserId, snapshot: authorSnapshot, now,
-      workspaceId: input.workspaceId, workstreamId: input.workstreamId,
-    });
+    const annotations = AnnotatedMessageContentSchema.safeParse(input.openingStructuredContent);
+    // Only member-composed openings need addressing. Explicit summons and
+    // started work already authorize a run, even when their text looks like a title.
+    const classifyOpening = input.reason === "opening_message" && !input.slackOrigin
+      && !input.createdFromOpportunityId && !input.seed;
+    const [startsRun, [routing], materialization] = await Promise.all([
+      history ? false : !classifyOpening || openingMessageStartsRun(this.env, {
+        workspaceId: input.workspaceId,
+        workstreamId: input.workstreamId,
+        substreamId: "0",
+        message: annotations.success
+          ? annotationCommentText(input.openingMessage, annotations.data.annotations)
+          : input.openingMessage,
+        humanMentions: mentionedPersonNames(prepared.mentions),
+        connectorMentions: prepared.mentions.flatMap((mention) => mention.type === "connector" && mention.connectorType ? [mention.connectorType] : []),
+        attachmentCount: input.attachmentIds.length,
+        defer: this.defer,
+      }),
+      // Overlap independent routing and materialization with JEV. A routing
+      // failure must not prevent a silent opening from being persisted.
+      Promise.allSettled([history ? null : input.modelOverride
+        ? pinnedModelRouting(input.modelOverride).model
+        : resolveNewWorkstreamModelRouting(this.env, {
+            workspaceId: input.workspaceId, workstreamId: input.workstreamId,
+          }).then((route) => route.model)]),
+      this.prepareConversationMaterialization({
+        conversation: history ?? { messages: [{ role: "user", text: prepared.text,
+          structuredContent: input.openingStructuredContent, attachmentIds: input.attachmentIds }] },
+        operationId: input.clientMessageId, firstTurnId: messageId, clientMessageId: input.clientMessageId,
+        ...(input.initialization.kind === "history" && input.initialization.identityHash ? { identityHash: input.initialization.identityHash } : {}),
+        userId: input.creatorUserId, snapshot: authorSnapshot, now,
+        workspaceId: input.workspaceId, workstreamId: input.workstreamId,
+      }),
+    ]);
+    if (startsRun && routing.status === "rejected") throw routing.reason;
+    const model = startsRun && routing.status === "fulfilled" ? routing.value : null;
     const { conversation, turns: transcriptMessages, attachments } = materialization;
     const initialMessages = conversation.messages;
     const openingWorkflowInput = startsRun ? this.workflowInput(input, runId, messageId) : null;

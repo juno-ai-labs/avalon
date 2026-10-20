@@ -564,9 +564,11 @@ sequence. The desktop's idempotent `POST /workstreams` includes the opening
 message. The regional creation coordinator reserves the D1 route/receipt and
 email address, then reserves the Channel in `WorkspaceDO` and initializes main `SubstreamAgent("0")` with
 metadata, audience, attachments, and the opening message. The opening JEV
-classifier creates the first run only for a prompt to process; a human-to-human
+classifier applies to member-composed openings; explicit Slack summons and
+started opportunities retain their run. For classified openings, a human-to-human
 message or conversation name/description commits idle with no run. A retry
-returns that committed silent opening without classifying again. Breakouts apply
+returns that committed silent opening without classifying again, including
+replay through the regional creation receipt with a null run ID. Breakouts apply
 the same decision to their first local message through `createMessage`; ordinary
 messages thereafter keep their existing admission policy.
 [`agent-harness.md`](agent-harness.md) owns the classifier and fallback contract.

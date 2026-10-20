@@ -380,7 +380,7 @@ export class WorkstreamObjectCreationService {
       this.auth.workspaceId,
       workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
     );
-    if (receipt.state === "completed" && receipt.message_id && (receipt.harness_run_id || (options.initialization?.kind === "history"))) {
+    if (receipt.state === "completed" && receipt.message_id) {
       // A replayed create is a different latency question from a first one, so
       // it is labelled rather than folded into the same distribution.
       span.setAttributes({ "rally.create.path": "replayed_receipt" });
