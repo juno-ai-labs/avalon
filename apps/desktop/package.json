@@ -38,6 +38,7 @@
     "@radix-ui/react-select": "latest",
     "@radix-ui/react-tooltip": "latest",
     "@rally/contracts": "workspace:*",
+    "@rally/electron-network": "workspace:*",
     "@rally/ui": "workspace:*",
     "@tabler/icons-react": "^3.46.0",
     "@tanstack/react-query": "latest",

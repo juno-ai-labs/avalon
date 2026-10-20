@@ -1,14 +1,9 @@
-export const ELECTRON_CONNECTION_RESET = 'ERR_CONNECTION_RESET' as const;
-export const ELECTRON_NETWORK_CHANGED = 'ERR_NETWORK_CHANGED' as const;
-
-export type ElectronTransientNetworkErrorCode =
-  | typeof ELECTRON_CONNECTION_RESET
-  | typeof ELECTRON_NETWORK_CHANGED;
+export type ElectronNetworkErrorCode = `ERR_${string}`;
 
 export type MainProcessFatalOrigin = 'uncaughtException' | 'unhandledRejection';
 
 export interface MainProcessNetworkRecoveryDependencies {
-  readonly recovered: (error: Error, code: ElectronTransientNetworkErrorCode) => void;
+  readonly recovered: (error: Error, code: ElectronNetworkErrorCode) => void;
   readonly reportFatal: (error: Error, origin: MainProcessFatalOrigin) => void;
   readonly deferFatal: (fatal: () => never) => void;
 }
@@ -21,15 +16,23 @@ interface MainProcessExceptionEvents {
   on(event: 'unhandledRejection', listener: (reason: unknown) => void): unknown;
 }
 
-function errorCode(error: Error): ElectronTransientNetworkErrorCode | null {
-  const code = 'code' in error
-    ? error.code
-    : error.message.startsWith('net::') ? error.message.slice('net::'.length) : null;
-  return code === ELECTRON_CONNECTION_RESET || code === ELECTRON_NETWORK_CHANGED ? code : null;
+function isChromiumNetworkCode(code: unknown): code is ElectronNetworkErrorCode {
+  return typeof code === 'string' && /^ERR_[A-Z0-9_]+$/u.test(code);
+}
+
+function errorCode(error: Error): ElectronNetworkErrorCode | null {
+  // Match Chromium's namespace and real origin, not a growing list of network
+  // conditions. A certificate or DNS failure fails the request, not the app.
+  const messageCode = error.message.startsWith('net::') ? error.message.slice('net::'.length) : null;
+  const code = 'code' in error ? error.code : messageCode;
+  if (!isChromiumNetworkCode(code)) return null;
+  // Do not allow an explicit code to contradict a Chromium-formatted message.
+  if (messageCode !== null && messageCode !== code) return null;
+  return code;
 }
 
 /**
- * Identify a connection reset or network change from Chromium's URL loader
+ * Identify a Chromium network failure from its URL loader
  * whose rejected promise reached the main-process boundary.
  *
  * The loader frame matters as much as the code. Application code can throw an
@@ -38,7 +41,7 @@ function errorCode(error: Error): ElectronTransientNetworkErrorCode | null {
  * frame rather than in the error message. This signature was observed with
  * Electron 43.2.0 and must be re-verified when Electron's js2c layout changes.
  */
-export function electronTransientNetworkErrorCode(error: unknown): ElectronTransientNetworkErrorCode | null {
+export function electronNetworkErrorCode(error: unknown): ElectronNetworkErrorCode | null {
   if (!(error instanceof Error)) return null;
   const code = errorCode(error);
   if (code === null) return null;
@@ -81,7 +84,7 @@ export class MainProcessNetworkRecovery {
     dependencies: MainProcessNetworkRecoveryDependencies,
   ): void {
     const error = normalizedRejection(reason);
-    const code = electronTransientNetworkErrorCode(error);
+    const code = electronNetworkErrorCode(error);
     if (code !== null) {
       dependencies.recovered(error, code);
       return;
