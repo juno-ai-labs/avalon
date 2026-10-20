@@ -407,7 +407,8 @@ migration 92 dropped the ledger. A Sidekick still pending in a retired
 Organization was never imported; the Organization refuses new work, so nothing
 reads it.
 
-Conversation resolution is owned by [merge-back](conversation-merge.md#resolution-and-archiving)
+Resolution suggestions reuse `resolveConversation` and read the same bit through
+`readConversationResolved`. Conversation resolution is owned by [merge-back](conversation-merge.md#resolution-and-archiving)
 and saved on the parent child registry independently of execution and archive state.
 
 ## Invariants

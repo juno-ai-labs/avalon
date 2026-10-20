@@ -54,6 +54,7 @@ const QuestionSchema = z.object({
   criteria: z.object({
     worth_carrying_up: CriterionSchema,
     side_question_worth_a_breakout: CriterionSchema,
+    mark_resolved: CriterionSchema,
     continue_here: CriterionSchema,
   }),
 });
@@ -315,7 +316,7 @@ const proposalJsonSchema = {
         criteria: {
           type: "object",
           additionalProperties: false,
-          required: ["worth_carrying_up", "side_question_worth_a_breakout", "continue_here"],
+          required: [...TURN_DISPOSITION_CHOICES],
           properties: Object.fromEntries(TURN_DISPOSITION_CHOICES.map((choice) => [choice, {
             type: "object",
             additionalProperties: false,
@@ -357,7 +358,7 @@ const REFLECTION_SYSTEM = `You improve a classifier request for JEV, a small fas
 
 2. The context policy: which fields of the state JEV sees, how much of each, and whether the judged message comes before or after the context. The state's fields are: parent {kind, title, purpose} (the conversation that would receive a merge), conversation {kind, title, purpose, opening_request, messages_before} (this conversation's charter), so_far {summary (a compaction summary, rarely present), earlier_outputs [{title, messages_ago}], carried_up_before}, recent_messages [{author, text}], judged_message {author, text, outputs [{title, first_time_here}]}. The focus text must only name fields the policy includes. A field is worth sending only if it changes the answer; every extra field is more for a small model to weigh and more bytes of latency.
 
-The decision: read as the owner of the parent conversation, does the judged message call for carrying something up to the parent (worth_carrying_up), does it open a distinct piece of work that deserves its own conversation (side_question_worth_a_breakout), or is it a step of the work here (continue_here). A suggestion is shown only when the answer is worth_carrying_up or side_question_worth_a_breakout with confidence above a threshold, so the scoring treats a low-confidence positive as continue_here. Both false positives (a suggestion on a message that is a revision, progress, chatter, a test, an automation's output) and false negatives (a missed first deliverable, finding, decision or answer) count.
+The decision: read as the owner of the parent conversation, does the judged message call for carrying something up to the parent (worth_carrying_up), does it open a distinct piece of work that deserves its own conversation (side_question_worth_a_breakout), is the whole purpose complete or explicitly closed with nothing left open and no new result for the parent (mark_resolved), or is it a step of the work here (continue_here). Carry-up takes priority when a completed purpose also has something new for the parent. Completion takes priority over continue_here; an open side question prevents resolution. Merge, Breakout and resolution suggestions are shown above a confidence threshold. Scoring treats any low-confidence positive as continue_here. Both false positives (a suggestion on a message that is a revision, progress, chatter, a test, an automation's output) and false negatives (a missed first deliverable, finding, decision or answer) count.
 
 You will be given the parent candidate, its scores and confusion on the development set, a sample of its failures with the state exactly as the policy rendered it, and a few successes to protect. Propose exactly one child candidate as JSON. Explain in the rationale which recurring error class the change targets and what you removed.`;
 

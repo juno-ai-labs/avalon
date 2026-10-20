@@ -16,6 +16,9 @@
 import { env } from "cloudflare:workers";
 import { evictDurableObject, reset, runInDurableObject } from "cloudflare:test";
 import {
+  ServerSocketEventSchema,
+  ConversationSuggestionSchema,
+  safeParseSocketEvent,
   asSubstreamId,
   asUserId,
   asWorkspaceId,
@@ -27,9 +30,15 @@ import {
   type UserId,
   type WorkstreamId,
 } from "@rally/contracts";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { z } from "zod";
+import { issueSocketTicket, SocketService } from "../src/services/socket-service";
+import { createMessageObjectPort } from "../src/runtime/message-port";
+import { seedCanonicalMessageRecord } from "./helpers/substream-fixture";
 import { conversationObjectName } from "../src/durable-objects/names";
+import { HostedParent } from "../src/durable-objects/hosted-parent";
+import { ConversationSuggestionStorage, observeTurnDisposition } from "../src/durable-objects/conversation-suggestions";
 import { hostedParentStub } from "./helpers/hosted-parent";
 
 const workspaceId = asWorkspaceId("00000000-0000-4000-8000-0000000f0001");
@@ -190,6 +199,9 @@ function rowIn(answer: { sidebar: { workstreams: { items: Row[] } } }, channelId
 beforeEach(async () => {
   await reset();
   await env.DB.batch([
+    env.DB.prepare(`CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT)`),
+    ...[owner, member].map((userId) => env.DB.prepare(`INSERT INTO users (id, email, name, timezone, created_at)
+      VALUES (?, ?, 'Member', 'UTC', '2026-01-01T00:00:00.000Z')`).bind(userId, `${userId}@example.test`)),
     env.DB.prepare(`CREATE TABLE workstream_authority_control (id INTEGER PRIMARY KEY, phase TEXT NOT NULL,
       generation INTEGER NOT NULL, required_serving_contract_version INTEGER NOT NULL,
       serving_contract_version INTEGER NOT NULL)`),
@@ -233,6 +245,30 @@ beforeEach(async () => {
   await publishMain(channelA, "Channel A");
   await publishMain(channelB, "Channel B");
 });
+
+afterEach(() => vi.restoreAllMocks());
+
+const completionSuggestionId = "00000000-0000-7000-8000-000000000911";
+async function completionConversation(substreamId = breakoutA) {
+  // Bootstrap only: no agent run or inference is admitted.
+  const stub = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", workspaceId, channelA, substreamId));
+  expect((await stub.bootstrapRuntime({ workspaceId, parentKind: "workstream", parentId: channelA, substreamId, generation: 1 })).status).toBe(200);
+  await runInDurableObject(stub, async (_instance, state) => {
+    state.storage.sql.exec("UPDATE workstream SET title = 'Pricing', description = 'Decide pricing' WHERE id = 1");
+    state.storage.sql.exec(`INSERT INTO participants
+      (user_id, participation_reason, added_by_user_id, status, participant_epoch, added_at, updated_at)
+      VALUES (?, 'creator', ?, 'active', 0, 1, 1)`, member, member);
+    await seedCanonicalMessageRecord(state, { id: "turn-done", sequence: 1, messageType: "text", text: "The request is complete." });
+    new ConversationSuggestionStorage(state.storage.sql).insertOpen({
+      suggestionId: completionSuggestionId, kind: "mark_resolved", judgedTurnId: "turn-done", judgedTurnSequence: 1,
+      runId: "run-done", target: null, decision: { choice: "mark_resolved", confidence: 0.9, model: "test" }, now: 1,
+    });
+  });
+  return stub;
+}
+
+const completionRequest = () => ({ operation: "resolve_suggestion" as const, suggestionId: completionSuggestionId,
+  auth: { workspaceId, userId: member, sessionId: `session-${member}`, region: "global", role: "member" as const } });
 
 describe("a Channel's breakouts and background agents on the workspace socket", () => {
   it("hands each viewer only their own breakouts, per Channel, in the connect sidebar", async () => {
@@ -291,6 +327,167 @@ describe("a Channel's breakouts and background agents on the workspace socket", 
     });
     await expect(organization().resolveConversation({ workspaceId, parentId: channelA, substreamId: breakoutA, userId: member }))
       .resolves.toEqual({ outcome: "archived" });
+  });
+
+  it("accepts the resolution chip through the conversation product operation and replays the click", async () => {
+    // Bootstrap only: no agent run is admitted and this test makes no inference calls.
+    const stub = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", workspaceId, channelA, breakoutA));
+    expect((await stub.bootstrapRuntime({ workspaceId, parentKind: "workstream", parentId: channelA, substreamId: breakoutA, generation: 1 })).status).toBe(200);
+    const suggestionId = "00000000-0000-7000-8000-000000000911";
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO participants
+        (user_id, participation_reason, added_by_user_id, status, participant_epoch, added_at, updated_at)
+        VALUES (?, 'creator', ?, 'active', 0, 1, 1)`, member, member);
+      new ConversationSuggestionStorage(state.storage.sql).insertOpen({
+        suggestionId, kind: "mark_resolved", judgedTurnId: "turn-done", judgedTurnSequence: 1,
+        runId: "run-done", target: null, decision: { choice: "mark_resolved", confidence: 0.9, model: "test" }, now: 1,
+      });
+    });
+    const request = { operation: "resolve_suggestion" as const, suggestionId,
+      auth: { workspaceId, userId: member, sessionId: `session-${member}`, region: "global", role: "member" as const } };
+    const accepted = await stub.handleProductRequest(request);
+    expect(accepted.status).toBe(200);
+    expect(JSON.parse(accepted.bodyJson)).toEqual({ suggestionId, status: "accepted", replayed: false });
+    expect(await organization().readConversationResolved({ workspaceId, parentId: channelA, substreamId: breakoutA })).toBe(true);
+    expect(await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec("SELECT status, resolution FROM conversation_suggestions WHERE suggestion_id = ?", suggestionId).one(),
+    )).toEqual({ status: "accepted", resolution: "accepted" });
+    const replay = await stub.handleProductRequest(request);
+    expect(JSON.parse(replay.bodyJson)).toEqual({ suggestionId, status: "accepted", replayed: true });
+  });
+
+  it.each(["dismiss", "expiry"])("retains acceptance when %s runs during the parent RPC", async (change) => {
+    const stub = await completionConversation();
+    const original = HostedParent.prototype.resolveConversation;
+    vi.spyOn(HostedParent.prototype, "resolveConversation").mockImplementation(async function (this: HostedParent, input) {
+      const parentResult = await original.call(this, input);
+      const localStub = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", workspaceId, channelA, breakoutA));
+      if (change === "dismiss") {
+        const dismissed = await localStub.handleProductRequest({ ...completionRequest(), operation: "dismiss_suggestion" });
+        expect(JSON.parse(dismissed.bodyJson)).toMatchObject({ status: "open" });
+      } else {
+        await runInDurableObject(localStub, async (_instance, state) => {
+          for (let index = 2; index <= 4; index += 1) await seedCanonicalMessageRecord(state, {
+            id: `new-${index}`, sequence: index, messageType: "text", text: "More conversation",
+          });
+          expect(new ConversationSuggestionStorage(state.storage.sql).expireBehindNewest(Date.now())).toEqual([]);
+        });
+      }
+      return parentResult;
+    });
+    const result = await stub.handleProductRequest(completionRequest());
+    expect(JSON.parse(result.bodyJson)).toMatchObject({ status: "accepted", replayed: false });
+    expect(await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec("SELECT status, resolved_by_user_id FROM conversation_suggestions").one(),
+    )).toEqual({ status: "accepted", resolved_by_user_id: member });
+    expect(JSON.parse((await stub.handleProductRequest(completionRequest())).bodyJson)).toMatchObject({ status: "accepted", replayed: true });
+  });
+
+  it("recovers a persisted click after the parent committed and the conversation was evicted", async () => {
+    const stub = await completionConversation();
+    await runInDurableObject(stub, (_instance, state) => {
+      new ConversationSuggestionStorage(state.storage.sql).beginResolution(completionSuggestionId, member);
+    });
+    await organization().resolveConversation({ workspaceId, parentId: channelA, substreamId: breakoutA, userId: member });
+    await evictDurableObject(stub);
+    expect(JSON.parse((await stub.handleProductRequest(completionRequest())).bodyJson)).toMatchObject({ status: "accepted" });
+    expect(await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec("SELECT status, accepting_by_user_id FROM conversation_suggestions").one(),
+    )).toEqual({ status: "accepted", accepting_by_user_id: null });
+  });
+
+  it("releases the acceptance intent after a named parent refusal", async () => {
+    const stub = await completionConversation();
+    vi.spyOn(HostedParent.prototype, "resolveConversation").mockResolvedValue({ outcome: "archived" });
+    expect((await stub.handleProductRequest(completionRequest())).status).toBe(409);
+    expect(await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec("SELECT status, accepting_by_user_id FROM conversation_suggestions").one(),
+    )).toEqual({ status: "open", accepting_by_user_id: null });
+  });
+
+  it("retires a completion chip when a merge marker lands", async () => {
+    const stub = await completionConversation();
+    await createMessageObjectPort(env, workspaceId, channelA, undefined, breakoutA).appendMessage({
+      messageId: crypto.randomUUID(), clientMessageId: "merged-into-thread", authorType: "system",
+      authorUserId: null, externalActorJson: null, messageType: "system", text: "Merged into Thread",
+      structuredContentJson: JSON.stringify({ type: "conversation_merged_into", mergedByUserId: member }),
+      producedByRunId: null, now: Date.now(),
+    });
+    expect(await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec("SELECT status, resolution FROM conversation_suggestions").one(),
+    )).toEqual({ status: "accepted", resolution: "accepted" });
+  });
+
+  it("classifies new work after a merge sets shared resolution", async () => {
+    const stub = await completionConversation();
+    const effect: ConversationEffect = {
+      kind: "activity_event", eventId: crypto.randomUUID(), eventType: "workstream_message_created",
+      subjectSequenceNumber: 1, actorType: "user", actorUserId: owner, actorLabel: "Owner",
+      title: "Merged", body: "Done", canonicalUrl: null, digestible: false,
+      occurredAt: at, sourceKind: "workstream_message", sourceId: crypto.randomUUID(),
+      dedupeKey: "merged-before-new-work", metadata: { mergedFrom: { breakoutId: breakoutA, title: "Breakout" } }, targets: [],
+    };
+    await organization().receiveChildEffects({ substreamId: asSubstreamId("0"), envelopes: [envelope(channelA, asSubstreamId("0"), effect)] });
+    expect(await organization().readConversationResolved({ workspaceId, parentId: channelA, substreamId: breakoutA })).toBe(true);
+    await runInDurableObject(stub, async (_instance, state) => {
+      await seedCanonicalMessageRecord(state, { id: "later-correction", sequence: 2, messageType: "text", text: "The verified result changes the recommendation we merged." });
+      const result = await observeTurnDisposition({
+        env: { TYPESAFE_API_KEY: "test-key" }, storage: new ConversationSuggestionStorage(state.storage.sql),
+        workspaceId, workstreamId: channelA, substreamId: breakoutA, runId: "later-run", finalTurnId: "later-correction",
+        completed: true, backgroundAgent: false,
+        identity: { title: "Pricing", description: "Decide pricing", scope: "workspace", archived_at: null, system_kind: null },
+        readResolved: () => organization().readConversationResolved({ workspaceId, parentId: channelA, substreamId: breakoutA }),
+        readParent: async () => ({ kind: "thread", id: channelA, title: "Pricing", purpose: undefined }),
+        fetch: async () => Response.json({ model: "jev-test", answers: {
+          disposition: { type: "choice", choice: "worth_carrying_up", confidence: 0.95 },
+          carried_item_kind: { type: "choice", choice: "update", confidence: 0.95 },
+        } }),
+        onDiagnostic: () => undefined, traceId: "later-merge-test", now: () => Date.now(), newId: () => crypto.randomUUID(),
+        commit: (mutate) => state.storage.transactionSync(mutate),
+      });
+      expect(result).toMatchObject({ outcome: "judged", suggestion: { kind: "merge_up" } });
+    });
+  });
+
+  it.each([false, true])("delivers legacy-compatible snapshots and sequenced updates (new client: %s)", async (supported) => {
+    const stub = await completionConversation(asSubstreamId("0"));
+    await runInDurableObject(stub, async (instance, state) => {
+      const publisher = instance as unknown as { publishSuggestionChanged(row: NonNullable<ReturnType<ConversationSuggestionStorage["byId"]>>): Promise<void> };
+      await publisher.publishSuggestionChanged(new ConversationSuggestionStorage(state.storage.sql).byId(completionSuggestionId)!);
+    });
+    const socketEnv = { ...env, SESSION_SIGNING_KEY: "resolution-socket-test-key", ALLOWED_ORIGINS: "app://avalon" };
+    const ticket = await issueSocketTicket(socketEnv, completionRequest().auth, { kind: "workstream", id: channelA }, "0", undefined, undefined, false,
+      { readsResolutionSuggestions: supported });
+    const response = await new SocketService(socketEnv).upgrade(channelA, "0", ticket, new Request("https://api.test/socket", {
+      headers: { Upgrade: "websocket", Origin: "app://avalon", "x-rally-client-contract": "999" },
+    }));
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    try {
+      const stream = frames(socket);
+      const initial = stream.next((frame) => frame.type === "snapshot" || frame.type === "resync_required" || frame.type === "error", "conversation snapshot");
+      socket.send(JSON.stringify({ type: "subscribe", afterSequence: 0, publishPresence: false }));
+      const snapshot = await initial;
+      expect(snapshot).toMatchObject({ type: "snapshot" });
+      const oldSuggestion = ConversationSuggestionSchema.extend({ kind: z.enum(["merge_up", "start_breakout"]) });
+      const oldSnapshot = ServerSocketEventSchema.options[0]!.extend({ suggestions: z.array(oldSuggestion).optional() });
+      if (supported) expect(snapshot.suggestions).toMatchObject([{ kind: "mark_resolved" }]);
+      else {
+        expect(safeParseSocketEvent(oldSnapshot, snapshot).success).toBe(true);
+        expect(snapshot.suggestions).toEqual([]);
+      }
+      const next = stream.next((frame) => frame.type === "conversation_suggestion_changed", "suggestion update");
+      await stub.handleProductRequest(completionRequest());
+      const changed = await next;
+      expect(changed).toMatchObject({ type: "conversation_suggestion_changed", suggestion: {
+        kind: supported ? "mark_resolved" : "merge_up", status: supported ? "accepted" : "withdrawn",
+      } });
+      if (!supported) expect(safeParseSocketEvent(z.object({ type: z.literal("conversation_suggestion_changed"), sequence: z.number(), occurredAt: z.string(), suggestion: oldSuggestion }), changed).success).toBe(true);
+      const replay = stream.next((frame) => frame.type === "conversation_suggestion_changed", "replayed update");
+      socket.send(JSON.stringify({ type: "subscribe", afterSequence: snapshot.sequence, publishPresence: false }));
+      expect(await replay).toEqual(changed);
+    } finally { socket.close(1000, "done"); }
   });
 
   it("publishes Breakout resolution to readers outside its private roster so shared navigation refreshes", async () => {
