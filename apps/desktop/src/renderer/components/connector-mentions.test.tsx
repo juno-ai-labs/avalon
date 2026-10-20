@@ -379,6 +379,10 @@ describe('connector connection resolution', () => {
     view.rerender(<Harness status="reconnect_required" />);
     expect(screen.getByText('Reconnect required')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reconnect' })).toBeEnabled();
+    view.rerender(<Harness status="disabled" />);
+    expect(screen.queryByText('Connected')).not.toBeInTheDocument();
+    expect(screen.getByText('Disabled')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reconnect' })).toBeEnabled();
   });
 
   it('uses a feed-owned Connected latch only while live connections are loading', async () => {
