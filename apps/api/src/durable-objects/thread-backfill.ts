@@ -183,7 +183,15 @@ export function threadBackfillWork(
   if (input.job === "conversation_view") {
     const substreamIds = sql.exec<{ substream_id: string }>(
       `SELECT substream_id FROM parent_children WHERE parent_id = ? AND status = 'ready'
-       UNION SELECT substream_id FROM sidekick_children WHERE sidekick_id = ? ORDER BY substream_id`,
+       UNION SELECT substream_id FROM sidekick_children WHERE sidekick_id = ?
+       UNION SELECT '0' WHERE EXISTS (SELECT 1 FROM channels WHERE workstream_id = ?)
+         OR EXISTS (SELECT 1 FROM spaces WHERE space_id = ?)
+         OR EXISTS (SELECT 1 FROM parent_metadata WHERE parent_id = ?)
+         OR EXISTS (SELECT 1 FROM parent_children WHERE parent_id = ?)
+       ORDER BY substream_id`,
+      // HostedParent.childRegistry also supplies an implicit Main for legacy
+      // parents whose registry has not materialized its "0" row yet.
+      input.workstreamId, input.workstreamId, input.workstreamId, input.workstreamId,
       input.workstreamId, input.workstreamId,
     ).toArray().map((row) => row.substream_id);
     if (substreamIds.length) return { substreamIds };

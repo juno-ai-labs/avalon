@@ -1128,7 +1128,7 @@ describe("an agent's own wake-ups", () => {
     await runInDurableObject(agent, (_instance, state) => {
       // Arrange a delivered initial projection so the next alarm belongs to these timers.
       state.storage.sql.exec('DELETE FROM authorization_projection_outbox');
-      state.storage.sql.exec('UPDATE conversation_view_changes SET pending = 0');
+      state.storage.sql.exec('UPDATE conversation_view_changes SET pending = 0, in_flight_revision = NULL, in_flight_until = NULL');
       for (const [index, id] of ["wake-one", "wake-two"].entries()) {
         state.storage.sql.exec(
           `INSERT INTO workstream_wakeups
@@ -1191,6 +1191,9 @@ describe("an agent's own wake-ups", () => {
       generation: 1,
     });
     await runInDurableObject(agent, (_instance, state) => {
+      // This case owns only timer work; initial projections have been delivered.
+      state.storage.sql.exec("DELETE FROM authorization_projection_outbox");
+      state.storage.sql.exec("UPDATE conversation_view_changes SET pending = 0, in_flight_revision = NULL, in_flight_until = NULL");
       state.storage.sql.exec(
         `INSERT INTO workstream_wakeups
            (wakeup_id, created_by_run_id, execution_principal_json, prompt, due_at, status,
@@ -1247,7 +1250,7 @@ describe("an agent's own wake-ups", () => {
     }
     await runInDurableObject(breakout, (_instance, state) => {
       state.storage.sql.exec("DELETE FROM authorization_projection_outbox");
-      state.storage.sql.exec("UPDATE conversation_view_changes SET pending = 0");
+      state.storage.sql.exec("UPDATE conversation_view_changes SET pending = 0, in_flight_revision = NULL, in_flight_until = NULL");
       // A principal of another workspace: the fire claims the row and then
       // declines to run it, so the test stops short of a model.
       state.storage.sql.exec(

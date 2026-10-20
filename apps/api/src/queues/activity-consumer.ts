@@ -319,7 +319,8 @@ async function consumeOne(message: Message<unknown>, env: Env,
       if (isRetirementRefusal(error)) { message.ack(); return; }
       logWarn(env, "conversation_view_delivery_failed", { workspace_id: job.workspaceId,
         reason: diagnosticErrorCode(error, "conversation_view_delivery_failed") });
-      message.retry();
+      const attempts = Math.max(1, message.attempts);
+      message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
     }
     return;
   }
@@ -666,7 +667,9 @@ async function consumeOne(message: Message<unknown>, env: Env,
           if (target.job === "conversation_view" && outcome === "queued") {
             // Keep this parent claimed until its source has confirmed writes.
             // Do not wake all its children and immediately admit another batch.
-            message.retry();
+            // Its durable retry gate will revisit it; ordinary pending work
+            // must not burn through Queue retries and land in the dead letter.
+            message.ack();
             return;
           }
         }
