@@ -16,6 +16,7 @@ describe('ConversationCard', () => {
     const card = screen.getByRole('button', { name: 'Pricing, 1 new' });
     expect(card).toHaveAttribute('aria-pressed', 'false');
     expect(card).toHaveTextContent('1 newPricingCompare the three plans.Ada · 2h');
+    expect(screen.queryByText('Private')).not.toBeInTheDocument();
     fireEvent.click(card);
     expect(onOpen).toHaveBeenCalledOnce();
   });
@@ -51,6 +52,22 @@ describe('ConversationCard', () => {
     />);
     const card = screen.getByRole('button', { name: 'Pricing, Resolved, 2 new' });
     expect(card).toHaveTextContent('Resolved');
+    fireEvent.click(card);
+    expect(onOpen).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])('labels private conversations independently of resolution (resolved=%s), even without a byline', (resolved) => {
+    const onOpen = vi.fn();
+    render(<ConversationCard
+      conversation={{ substreamId: 'private', title: 'Planning', resolved }}
+      onOpen={onOpen}
+      open={false}
+      private
+    />);
+
+    const card = screen.getByRole('button', { name: resolved ? 'Planning, Resolved, Private' : 'Planning, Private' });
+    expect(screen.getByText('Private')).toBeVisible();
+    expect(card).toHaveTextContent(resolved ? 'PlanningResolvedPrivate' : 'PlanningPrivate');
     fireEvent.click(card);
     expect(onOpen).toHaveBeenCalledOnce();
   });
