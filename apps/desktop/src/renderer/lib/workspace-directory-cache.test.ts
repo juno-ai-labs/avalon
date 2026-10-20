@@ -1,6 +1,6 @@
 import { MyThreadsPageSchema, PinListSchema, ArtifactPinListSchema, ChannelRailSchema, WorkstreamPrivateChildSchema } from '@rally/contracts';
 import { applyChannelRails, channelRailQueryKey, isRailStale, noteRailWaterline } from './channel-rails';
-import { QueryClient } from '@tanstack/react-query';
+import { QueryClient, QueryObserver } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RallyApi } from './api';
 import { LOCAL_CACHE_WRITE_COALESCE_MS } from './local-cache-mirror';
@@ -147,6 +147,23 @@ describe('organization directory cache', () => {
     expect(raced.getQueryData(['pins'])).toEqual([]);
     expect(raced.getQueryData(['artifact-pins'])).toEqual([]);
     expect(raced.getQueryData(['my-threads'])).toEqual({ pages: [{ items: [], pinned: [], nextCursor: null }], pageParams: [null] });
+  });
+
+  it('marks seeded Channel stats stale for Infinity readers without invalidating a live answer', async () => {
+    await workspaceDirectorySlice.write(scope, DIRECTORY_CACHE_KEY, directory({ navigation: { channelStats: [] } }));
+    const client = new QueryClient();
+    await hydrateWorkspaceDirectory(client, scope, () => true);
+    const observer = new QueryObserver(client, { queryKey: ['channel-stats'], staleTime: Infinity });
+    expect(observer.getCurrentResult().data).toEqual([]);
+    expect(observer.getCurrentResult().isStale).toBe(true);
+    observer.destroy();
+
+    const live = new QueryClient();
+    live.setQueryData(['channel-stats'], []);
+    await hydrateWorkspaceDirectory(live, scope, () => true);
+    const liveObserver = new QueryObserver(live, { queryKey: ['channel-stats'], staleTime: Infinity });
+    expect(liveObserver.getCurrentResult().isStale).toBe(false);
+    liveObserver.destroy();
   });
 
   it('seeds missing REST thread rows even when the socket directory arrived first', async () => {
