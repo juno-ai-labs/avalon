@@ -180,10 +180,8 @@ Each tab runs the list motion on the shared scroll box;
 `screens/channel.tsx` draws a Channel: its pill and menu at the top, a feed of
 its threads and messages, and a composer at the foot.
 
-The Channel grid has one `minmax(0, 1fr)` column and its feed pane allows a
-zero minimum width. Both must shrink to the split pane's width when a Thread
-opens or is resized; an automatic grid minimum can otherwise push the feed
-and composer across the divider. Verified visually in a real window.
+The feed and composer stay within the Channel pane when a Thread opens beside
+it or the divider is resized.
 
 - **Feed.** `GET /spaces/:id/feed`, newest nearest the composer; a visit opens
   at the server's first unread row with one preceding row for context, or at
