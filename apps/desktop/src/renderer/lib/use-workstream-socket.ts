@@ -1,3 +1,4 @@
+import { useOptionalWorkspaceSocket } from "./workspace-socket";
 import type { Annotation } from '@rally/contracts';
 import { useConversationAdmission } from './conversation-admission';
 import { mainReachable, useConversationDirectory } from './conversation-directory';
@@ -91,6 +92,7 @@ import {
 import {
   conversationSeededFromLocalCache,
   hydrateConversation,
+  seedWorkspaceConversation,
   mirrorConversation,
   type ConversationCacheKeys,
 } from './conversation-cache';
@@ -749,6 +751,7 @@ export function useWorkstreamSocket(
   enabled = enabled && !mainOutOfReach;
   const admissionAllowed = useConversationAdmission();
   const localCacheScope = useLocalCacheScope();
+  const requestConversationView = useOptionalWorkspaceSocket()?.requestConversationView;
   const effectiveOpenCommitted = openCommitted && admissionAllowed;
   const admissionAllowedRef = useRef(admissionAllowed);
   admissionAllowedRef.current = admissionAllowed;
@@ -2524,6 +2527,9 @@ export function useWorkstreamSocket(
         () => !closedByEffect && !accessRevoked,
       );
     }
+    const stopConversationView = requestConversationView?.(parentId, substreamId, (event) => {
+      if (!closedByEffect && !accessRevoked) seedWorkspaceConversation(queryClient, event, localCacheKeys);
+    });
     void connect();
     // The cursors survive this effect — they live in the resume state — so a
     // remount can inherit a reveal already in progress. Without this the held
@@ -2538,6 +2544,7 @@ export function useWorkstreamSocket(
     )) scheduleReveal();
     return () => {
       closedByEffect = true;
+      stopConversationView?.();
       reconnectRef.current = null;
       localCacheMirror?.stop();
       releaseData();
@@ -2594,6 +2601,7 @@ export function useWorkstreamSocket(
     };
   }, [
     openingRetryGeneration,
+    requestConversationView,
     api,
     enabled,
     localCacheScope,
