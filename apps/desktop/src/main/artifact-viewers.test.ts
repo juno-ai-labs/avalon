@@ -1,3 +1,4 @@
+import type { AnnotationCommentAction } from '@rally/contracts';
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -452,6 +453,7 @@ describe('the rail preview controller', () => {
     loadFailure: Error | null = null,
     load?: (url: string) => Promise<void>,
     zoom = 1,
+    comments?: () => Promise<AnnotationCommentAction | null>,
   ) {
     const views: {
       url: string | null;
@@ -497,6 +499,7 @@ describe('the rail preview controller', () => {
               if (loadFailure) throw loadFailure;
             });
           },
+          comments,
           capture: async () => `still of ${state.url ?? 'nothing'}`,
           close: () => { state.closed = true; },
         };
@@ -513,6 +516,16 @@ describe('the rail preview controller', () => {
     expect(views).toHaveLength(1);
     expect(views[0]?.url).toBe(`${ORIGIN}/`);
     expect(views[0]?.bounds.at(-1)).toEqual(bounds);
+  });
+
+  it('discards a comment action after the native view has been replaced', async () => {
+    let answer: ((action: AnnotationCommentAction) => void) | undefined;
+    const {controller}=harness(DOMAIN,null,undefined,1,()=>new Promise((resolve)=>{answer=resolve;}));
+    await controller.present({artifactId:ARTIFACT,url:`${ORIGIN}/`,bounds,cornerRadius:16});
+    const action=controller.comments([]);
+    await controller.present({artifactId:OTHER_ARTIFACT,url:`https://${OTHER_ARTIFACT}-g.${DOMAIN}/`,bounds,cornerRadius:16});
+    answer?.({id:'old-pin',action:'remove'});
+    expect(await action).toBeNull();
   });
 
   it('rounds the view once, to the corner its host drew, and not on every scroll', async () => {

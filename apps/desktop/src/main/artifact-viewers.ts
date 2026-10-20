@@ -1,3 +1,4 @@
+import type { AnnotationCommentPins, AnnotationCommentAction } from '@rally/contracts';
 /**
  * The two surfaces that show a live artifact, and the one isolation contract
  * both are built from.
@@ -67,6 +68,7 @@ export interface ArtifactViewHandle {
   capture(): Promise<string | null>;
   pick?: () => Promise<unknown>;
   stopPicking?: () => Promise<void>;
+  comments?: (pins: AnnotationCommentPins) => Promise<AnnotationCommentAction | null>;
   close(): void;
 }
 
@@ -642,6 +644,12 @@ export class ArtifactPreviewController {
     if (!view || view.destroyed() || this.pendingLoad?.view === view) return null;
     const result = await view.pick?.() ?? null;
     return this.view === view && !view.destroyed() ? result : null;
+  }
+  async comments(pins: AnnotationCommentPins): Promise<AnnotationCommentAction | null> {
+    const view=this.view;
+    if (!view || view.destroyed() || this.pendingLoad?.view===view) return null;
+    const result=await view.comments?.(pins) ?? null;
+    return this.view===view && !view.destroyed() ? result : null;
   }
   async stopPicking(): Promise<void> { await this.view?.stopPicking?.(); }
 

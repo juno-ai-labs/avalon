@@ -123,3 +123,24 @@ export function AnnotationComment({pin, style, onClose, onEscape, label = 'Comme
     <button className="annotation-comment-send" aria-label="Send comment" disabled={!pin.annotation.comment.trim()} onClick={submit} type="button">Send</button>
   </div>;
 }
+
+/** Recompute from the element, rather than remembering the original click. */
+export function AnchoredAnnotationComment({pin, resolveAnchor, onEdit, onRemove}: {pin: AnnotationPin; resolveAnchor: () => DOMRect | null; onEdit: () => void; onRemove: () => void}): React.JSX.Element | null {
+  const [box,setBox] = useState<DOMRect | null>(null);
+  useEffect(() => {
+    const update = (): void => setBox(resolveAnchor());
+    update();
+    window.addEventListener('scroll',update,true);
+    window.addEventListener('resize',update);
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
+    observer?.observe(document.body);
+    const changes = new MutationObserver(update);
+    changes.observe(document.body,{childList:true,subtree:true});
+    return () => {window.removeEventListener('scroll',update,true);window.removeEventListener('resize',update);observer?.disconnect();changes.disconnect();};
+  },[resolveAnchor]);
+  if (!box || box.bottom < 0 || box.top > window.innerHeight) return null;
+  return <aside className="annotation-comment annotation-comment-kept" aria-label="Pinned comment" style={{left:Math.max(8,Math.min(box.right + 12,window.innerWidth - 308)),top:box.top}}>
+    <button className="annotation-comment-remove" aria-label="Remove comment" onClick={onRemove} type="button">×</button>
+    <button className="annotation-comment-text" onClick={onEdit} type="button">{pin.annotation.comment}</button>
+  </aside>;
+}
