@@ -11,7 +11,7 @@ import type { Viewer } from "./listing-rules";
  */
 
 /** The kinds this path pushes, in the push payload's words; `added` and `mentioned` have their own. */
-export const ACTIVITY_PUSH_KINDS = ["thread_started", "breakout_started", "run_finished", "merged", "artifact_updated"] as const satisfies readonly ActivityItemKind[];
+export const ACTIVITY_PUSH_KINDS = ["new_message", "thread_started", "breakout_started", "run_finished", "merged", "artifact_updated"] as const satisfies readonly ActivityItemKind[];
 
 const PUSHED_KINDS: ReadonlySet<ActivityItemKind> = new Set(ACTIVITY_PUSH_KINDS);
 
@@ -31,7 +31,7 @@ export interface ActivityPushSubject {
   threadId: string;
   /** Null for the thread itself; always null on `merge` and `artifact`. */
   substreamId: string | null;
-  kind: "start" | "finish" | "joined" | "merge" | "artifact";
+  kind: "start" | "finish" | "joined" | "merge" | "artifact" | "message";
   /** The person, on `joined` and `artifact` only. */
   userId?: string | undefined;
   /** The Activity row, on `merge` and `artifact` only. */
@@ -45,6 +45,7 @@ export interface ActivityPushSubject {
 
 /** The kinds of row a subject can push. A join pushes the start alone. */
 function subjectKinds(subject: ActivityPushSubject): ReadonlySet<ActivityItemKind> {
+  if (subject.kind === "message") return new Set(["new_message"]);
   if (subject.kind === "merge") return new Set(["merged"]);
   if (subject.kind === "artifact") return new Set(["artifact_updated"]);
   return subject.kind === "finish" ? new Set(["run_finished"]) : STARTS;
@@ -131,7 +132,7 @@ export class WorkspaceActivityPushes {
           ).toArray()[0];
         if (row?.scope === "workspace") return { everyone: true, userIds: [] };
       }
-      const reach = subject.kind === "finish" ? "viewer.is_participant = 1"
+      const reach = subject.kind === "finish" || subject.kind === "message" ? "viewer.is_participant = 1"
         : "(viewer.is_participant = 1 OR viewer.listable = 1)";
       const viewers = subject.substreamId === null
         ? this.storage.sql.exec<{ user_id: string }>(
@@ -196,7 +197,12 @@ export class WorkspaceActivityPushes {
         : item.kind === "artifact_updated" ? artifacts.has(item.id)
           : wanted.get(itemConversation(item))?.has(item.kind) === true)
       && Date.parse(item.occurredAt) >= origin
-      && !onScreen.has(item.threadId)
+      // A reply remains eligible while this thread is open but scrolled away.
+      // The consumer rechecks the visible-message waterline after batching.
+      && (item.kind === "new_message" || !onScreen.has(item.threadId))
+      && !(item.kind === "new_message" && page.items.some((other) => other.kind === "mentioned"
+        && `message:${other.id}` === item.id))
+      && !((item.kind === "new_message" || item.kind === "run_finished") && this.recentlyPushed(viewer.userId, item))
       && !(STARTS.has(item.kind) && added.has(itemConversation(item)))
     ));
     if (candidates.length === 0) return [];
@@ -207,6 +213,21 @@ export class WorkspaceActivityPushes {
       JSON.stringify(candidates.map((item) => item.id)),
     ).toArray().map((row) => row.item_id));
     return candidates.filter((item) => !pushed.has(item.id));
+  }
+
+  /** Product policy: at most one ordinary reply/finish alert per conversation every two minutes. */
+  private recentlyPushed(userId: string, item: ActivityItem): boolean {
+    const substreamId = item.breakout?.substreamId ?? "0";
+    const finishedPrefix = `finished:${substreamId === "0" ? item.threadId : substreamId}:`;
+    return this.storage.sql.exec<{ found: number }>(
+      `SELECT 1 AS found FROM workspace_activity_pushes pushed
+         LEFT JOIN workspace_activity_events event
+           ON event.event_id = substr(pushed.item_id, 9) AND substr(pushed.item_id, 1, 8) = 'message:'
+        WHERE pushed.user_id = ? AND pushed.pushed_at > ?
+          AND ((event.subject_id = ? AND COALESCE(json_extract(event.metadata_json, '$.substreamId'), '0') = ?)
+            OR substr(pushed.item_id, 1, length(?)) = ?) LIMIT 1`,
+      userId, Date.now() - 120_000, item.threadId, substreamId, finishedPrefix, finishedPrefix,
+    ).toArray().length > 0;
   }
 
   /** Note that this row has been handed to delivery for this person, so no later batch sends it again. */
@@ -229,6 +250,21 @@ export class WorkspaceActivityPushes {
   item(viewer: Viewer, itemId: string): ActivityItem | null {
     const page = this.feed.page(viewer, null);
     if (page === "invalid_cursor") return null;
+    if (itemId.startsWith("message:")) {
+      const source = this.storage.sql.exec<{ subject_id: string; substream_id: string }>(
+        `SELECT subject_id, COALESCE(json_extract(metadata_json, '$.substreamId'), '0') AS substream_id
+           FROM workspace_activity_events WHERE event_id = ?`, itemId.slice("message:".length),
+      ).toArray()[0];
+      if (!source) return null;
+      // The first event schedules the batch; its delivery shows the latest
+      // human reply, while its original id remains the receipt/idempotency key.
+      const latest = page.items.find((candidate) => candidate.kind === "new_message" && candidate.unread
+        && candidate.threadId === source.subject_id
+        && (candidate.breakout?.substreamId ?? "0") === source.substream_id) ?? null;
+      if (latest && page.items.some((candidate) => candidate.kind === "mentioned"
+        && `message:${candidate.id}` === latest.id)) return null;
+      return latest;
+    }
     const finish = itemId.startsWith("finished:") ? itemId.slice(0, itemId.lastIndexOf(":") + 1) : null;
     const item = page.items.find((candidate) => (
       finish === null ? candidate.id === itemId : candidate.kind === "run_finished" && candidate.id.startsWith(finish)

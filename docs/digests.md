@@ -190,6 +190,13 @@ is the second reader of this log, behind `GET /navigation/activity`. It reads,
 for one person, newest first:
 
 - events naming them as an `added` or `mentioned` target;
+- the latest human reply by somebody else in each conversation they participate
+  in (`new_message`), from the existing message-event log. Its
+  `unreadMessageCount` counts replies above the viewer's message waterline and
+  Mark all read timestamp. A window function chooses the latest reply before
+  pagination, so a busy conversation cannot consume a whole page of replies.
+  The author and nonparticipants receive no reply activity; AI and tool traffic
+  never becomes `new_message`. Builds before client contract 10 omit these rows;
 - every thread and breakout somebody else started, read from its own
   directory row (`channels` / `breakouts`: `created_by_user_id`,
   `source_created_at`) rather than from an event; and
@@ -228,11 +235,20 @@ rows one subject at a time, unread is no longer a run at the top of the feed,
 so the Unread chip can show a short page with more behind it; **Show more**
 reads the next. A server filter like `only=mentions` is the fix if that bites.
 
-**A breakout's mentions** reach the log in one narrow shape
+**The sidebar flattens conversations.** `groupActivityItems` in the contracts
+package folds the loaded pages into one row per thread or breakout. The latest
+human reply supplies the preview, any unread event keeps the row unread, and an
+unread mention survives later AI completions. The row sorts at its latest event,
+uses a stable conversation key, and shows the reply count and an @mention
+indicator. The Activity badge and macOS menu use the same grouping. Artifact
+updates and merges into Channels retain their own destinations so their read
+waterlines remain actionable. Showing Activity clears nothing.
+
+**A breakout's mentions and human replies** reach the log in one narrow shape
 (`breakout-activity.ts`). A breakout is private to the people in it, and a
 `workstream`-audience event reaches every participant of the parent thread
 through any reader of the log. So the parent (`HostedParent`) forwards a
-breakout's message event only when it names somebody, stamps
+breakout's message event when it names somebody or has a human author, stamps
 `metadata.substreamId` on it, and forwards it emptied: no body, `digestible:
 false`, its targets the mentions alone. WorkspaceDO stores any event that
 carries a `substreamId` with its author as the only (`user`) audience, the one
@@ -680,6 +696,25 @@ semantics. [Push notifications](push-notifications.md) owns the channels,
 device registration, provider delivery and retry receipts.
 
 ## Changelog
+
+### 2026-10-20 — Human replies join Activity and conversations collapse into one row
+
+**What changed:** Human messages in conversations the reader participates in
+produce reply activity without requiring an @mention. Latest replies are selected
+before pagination, with counts from the message waterline. The sidebar and menu
+fold events by conversation, retaining unread mentions and a human preview.
+
+**Why:** An ongoing human exchange could disappear behind Rally completion
+rows: neither ordinary replies nor conversation grouping existed in Activity.
+
+**Considered and rejected:** Manufacturing mention edges for every reply would
+confuse explicit mentions with subscriptions. New per-event read state would
+duplicate the existing visible-message waterline.
+
+**Consequences:** Reply alerts and unread state use the same visibility gates as
+other activity. Private breakout text remains absent from the shared event log;
+its reply row identifies the author and conversation without a text preview.
+
 
 ### 2026-10-16 — The email is light and says Rally, and old rows are counted, not repeated
 

@@ -1032,7 +1032,7 @@ describe("Activity tab", () => {
       }
     });
 
-    expect((await activity(MEMBER)).items.map((item) => item.kind).sort()).toEqual(["added", "mentioned", "thread_started"]);
+    expect((await activity(MEMBER)).items.map((item) => item.kind).sort()).toEqual(["added", "mentioned", "new_message", "thread_started"]);
     const mentions = await activity(MEMBER, "mentions");
     expect(mentions.items.map((item) => [item.kind, item.id])).toEqual([["mentioned", "mention-event"]]);
     expect(mentions.nextCursor).toBeNull();

@@ -86,6 +86,21 @@ predates the field sends no `viewerPreferences`, which also reads as defaults.
 
 ## Changelog
 
+### 2026-10-20 — Human replies have their own notification channels
+
+**What changed:** `newMessages` defaults to push and appears as **New messages**
+in Notifications, independently of mentions and Rally completions.
+
+**Why:** Participants need replies without another @mention, and need to control
+those alerts without losing explicit mentions.
+
+**Considered and rejected:** Reusing the mentions switch would couple ordinary
+conversation traffic to explicit calls for attention.
+
+**Consequences:** The field defaults when talking to older servers; partial
+saves unwrap that default so unrelated saves cannot overwrite it.
+
+
 ### 2026-10-15 — Channels per kind replace the push switches
 
 **What changed:** The record carries `notify`, a channel list for each of five

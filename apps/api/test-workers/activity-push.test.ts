@@ -231,8 +231,9 @@ describe("Activity rows pushed from the directory", () => {
 
     await publish(asSubstreamId("0"), [common("Q3 plan", { scope: "personal", state: "running" })]);
     await publish(asSubstreamId("0"), [finished()]);
-    // Rally's finish goes to everyone taking part, the person who asked included.
-    expect([await finishes(member), await finishes(owner)]).toEqual([2, 2]);
+    // A second finish inside the per-conversation cooldown updates Activity
+    // without interrupting either participant again.
+    expect([await finishes(member), await finishes(owner)]).toEqual([1, 1]);
   });
 
   it("given a member with the thread open in a foreground window, when its run finishes, then they are not pushed", async () => {
@@ -462,5 +463,92 @@ describe("how each person chose to hear about each kind", () => {
         push: { ...DEFAULT_PUSH_PREFERENCES, added: false },
         notify: { ...DEFAULT_NOTIFICATION_CHANNELS, added: ["slack_agent_dm"] },
       });
+  });
+});
+
+/** Human traffic without an @mention: participant replies must still reach Activity. */
+describe("human reply activity", () => {
+  const first = "00000000-0000-7000-8000-0000000a0f01";
+  const second = "00000000-0000-7000-8000-0000000a0f02";
+  function reply(eventId: string, ordinal: number, text: string): ConversationEffect {
+    return {
+      kind: "activity_event", eventId, eventType: "workstream_message_created",
+      subjectSequenceNumber: ordinal, actorType: "user", actorUserId: owner, actorLabel: "Maya",
+      title: "Q3 plan", body: text, canonicalUrl: null, digestible: true,
+      occurredAt: new Date(Date.now() + ordinal).toISOString(), sourceKind: "workstream_message", sourceId: eventId,
+      dedupeKey: `message:${eventId}`, metadata: { substreamId: "0", attentionOrdinal: ordinal }, targets: [],
+    };
+  }
+  async function activity(userId = member) {
+    const result = await organization().listActivity({ workspaceId, userId, cursor: null, only: null });
+    if (!result.ok) throw new Error(result.code);
+    return result.page.items.filter((item) => item.kind === "new_message");
+  }
+  async function expireCooldown() {
+    await runInDurableObject(organization(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE workspace_activity_pushes SET pushed_at = pushed_at - 120001`);
+    });
+  }
+
+  it("shows unmentioned replies to participants, excludes the author and bystanders, and batches their push onto the latest reply", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner), viewer(member)]);
+    await publish(asSubstreamId("0"), [reply(first, 1, "First draft")]);
+    await publish(asSubstreamId("0"), [reply(second, 2, "Need advil?")]);
+    expect(await activity()).toMatchObject([{ id: `message:${second}`, preview: "Need advil?", unread: true, unreadMessageCount: 2 }]);
+    expect(await activity(owner)).toEqual([]);
+    expect(await activity(bystander)).toEqual([]);
+    expect((await pushed()).filter((row) => row.item_id.startsWith("message:")))
+      .toEqual([{ user_id: member, item_id: `message:${first}` }]);
+    const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: "sent" }));
+    await deliverPush(pushEnv(), { region: "global", workspaceId, recipientUserId: member, activityItemId: `message:${first}` }, send);
+    const calls = (send as { mock: { calls: unknown[][] } }).mock.calls;
+    expect(JSON.parse((calls[0]![2] as PushPayloads).apns).aps.alert)
+      .toEqual({ title: "Maya replied in Q3 plan", body: "Need advil?" });
+  });
+
+  it("keeps a reply unread while an earlier message is visible, then cancels delivery once the reply is read", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner), viewer(member)]);
+    await publish(asSubstreamId("0"), [reply(first, 5, "Please review")]);
+    const read = (through: number) => organization().recordActivityEvents({
+      workspaceId, userId: member, events: [{ kind: "read", subject: { kind: "thread", threadId: thread }, through }],
+    });
+    await read(4);
+    expect(await activity()).toMatchObject([{ unread: true, unreadMessageCount: 1 }]);
+    await read(5);
+    expect(await activity()).toMatchObject([{ unread: false, unreadMessageCount: 0 }]);
+    const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: "sent" }));
+    await deliverPush(pushEnv(), { region: "global", workspaceId, recipientUserId: member, activityItemId: `message:${first}` }, send);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("keeps reply activity when alerts are disabled, then withdraws it when participation ends", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner), viewer(member)]);
+    await publish(asSubstreamId("0"), [reply(first, 1, "First draft")]);
+    await organization().saveMemberPreferences({ workspaceId, userId: member, preferences: { notify: { newMessages: [] } } });
+    expect(await activity()).toMatchObject([{ unread: true }]);
+    const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: "sent" }));
+    await deliverPush(pushEnv(), { region: "global", workspaceId, recipientUserId: member, activityItemId: `message:${first}` }, send);
+    expect(send).not.toHaveBeenCalled();
+    await publish(asSubstreamId("0"), [{ ...viewer(member), isParticipant: false }]);
+    expect(await activity()).toEqual([]);
+  });
+
+  it("leaves an explicit mention on its own immediate path instead of duplicating it as a reply alert", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner), viewer(member)]);
+    const event = reply(first, 1, "Please review");
+    if (event.kind !== "activity_event") throw new Error("expected activity event");
+    await publish(asSubstreamId("0"), [{ ...event, targets: [{ userId: member, relation: "mentioned" }] }]);
+    expect(await activity()).toMatchObject([{ unread: true, unreadMessageCount: 1 }]);
+    expect((await pushed()).filter((row) => row.item_id.startsWith("message:"))).toEqual([]);
+  });
+
+  it("sends the next ordinary reply after the two-minute cooldown", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner), viewer(member)]);
+    await publish(asSubstreamId("0"), [reply(first, 1, "First")]);
+    await expireCooldown();
+    await publish(asSubstreamId("0"), [reply(second, 2, "Later")]);
+    expect((await pushed()).filter((row) => row.item_id.startsWith("message:"))).toEqual([
+      { user_id: member, item_id: `message:${first}` }, { user_id: member, item_id: `message:${second}` },
+    ]);
   });
 });
