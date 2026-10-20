@@ -51,6 +51,20 @@ describe('browser fallback single-platform identity boundary', () => {
     expect(states).toEqual(['suspended', 'resumed']);
   });
 
+  it('recovers back-forward cache restores and deduplicates overlapping freeze events', () => {
+    const states: string[] = [];
+    const stop = desktopBridge().onPowerStateChanged(state => states.push(state));
+    window.dispatchEvent(new PageTransitionEvent('pagehide', {persisted: true}));
+    window.dispatchEvent(new PageTransitionEvent('pageshow', {persisted: true}));
+    window.dispatchEvent(new PageTransitionEvent('pagehide', {persisted: true}));
+    document.dispatchEvent(new Event('freeze'));
+    document.dispatchEvent(new Event('resume'));
+    window.dispatchEvent(new PageTransitionEvent('pageshow', {persisted: true}));
+    stop();
+    window.dispatchEvent(new PageTransitionEvent('pagehide', {persisted: true}));
+    expect(states).toEqual(['suspended', 'resumed', 'suspended', 'resumed']);
+  });
+
   it('opens an external page in a new tab with no opener, and reports a blocked popup', async () => {
     const popup = { opener: window as Window | null, location: { href: '' } };
     const open = vi.spyOn(window, 'open').mockReturnValueOnce(popup as unknown as Window).mockReturnValueOnce(null);

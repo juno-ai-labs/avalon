@@ -58,11 +58,12 @@ export type ReachWatchDiagnostic =
   | { code: "ticket_failed"; error: unknown }
   | { code: "open_failed"; error: unknown }
   | { code: "closed"; closeCode: number }
-  | { code: "stopped"; closeCode: number };
+  | { code: "stopped"; closeCode: number }
+  | { code: "timeout"; phase: "ticket" | "open" | "sync" | "heartbeat" };
 
 export interface ReachWatchDependencies {
   /** A fresh workspace socket ticket from `GET /workspace/socket`. */
-  ticket(): Promise<{ url: string; ticket: string }>;
+  ticket(signal?: AbortSignal): Promise<{ url: string; ticket: string }>;
   open(url: string, ticket: string): ReachSocket;
   /**
    * The host's list may no longer match the server: somebody it shows joined
@@ -89,7 +90,7 @@ export interface WorkspaceSocketConnection {
 
 export interface WorkspaceSocketWatchDependencies {
   /** A fresh workspace socket ticket from `GET /workspace/socket`. */
-  ticket(): Promise<{ url: string; ticket: string }>;
+  ticket(signal?: AbortSignal): Promise<{ url: string; ticket: string }>;
   open(url: string, ticket: string): ReachSocket;
   /**
    * The answer to this connection's `subscribe`: the whole sidebar, sent on
@@ -135,6 +136,10 @@ export function watchWorkspaceSocket(dependencies: WorkspaceSocketWatchDependenc
   let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   let pongTimer: ReturnType<typeof setTimeout> | null = null;
   let attempt = 0;
+  let generation = 0;
+  let ticketAbort: AbortController | null = null;
+  let deadline: ReturnType<typeof setTimeout> | null = null;
+  let currentConnection: WorkspaceSocketConnection | null = null;
 
   const clearHeartbeat = (): void => {
     if (heartbeatTimer !== null) clearTimeout(heartbeatTimer);
@@ -142,15 +147,48 @@ export function watchWorkspaceSocket(dependencies: WorkspaceSocketWatchDependenc
     heartbeatTimer = null;
     pongTimer = null;
   };
+  const clearDeadline = (): void => {
+    if (deadline !== null) clearTimeout(deadline);
+    deadline = null;
+  };
+  const retire = (): void => {
+    clearDeadline();
+    clearHeartbeat();
+    const retired = socket;
+    const connection = currentConnection;
+    socket = null;
+    currentConnection = null;
+    if (connection) dependencies.onClosed?.(connection);
+    try { retired?.close(); } catch { /* The old connection is no longer addressable. */ }
+  };
+  const timeout = (phase: "ticket" | "open" | "sync" | "heartbeat"): void => {
+    generation += 1;
+    ticketAbort?.abort();
+    ticketAbort = null;
+    retire();
+    dependencies.onDiagnostic?.({code: "timeout", phase});
+    scheduleReconnect();
+  };
+  const armDeadline = (phase: "ticket" | "open" | "sync"): void => {
+    clearDeadline();
+    const expected = generation;
+    deadline = setTimeout(() => {
+      if (!stopped && generation === expected) timeout(phase);
+    }, WORKSPACE_SOCKET_OPEN_TIMEOUT_MS);
+  };
   const scheduleHeartbeat = (target: ReachSocket): void => {
     clearHeartbeat();
     heartbeatTimer = setTimeout(() => {
       heartbeatTimer = null;
       if (stopped || socket !== target) return;
-      target.send("ping");
+      try { target.send("ping"); } catch {
+        retire();
+        scheduleReconnect();
+        return;
+      }
       pongTimer = setTimeout(() => {
         pongTimer = null;
-        if (!stopped && socket === target) target.close();
+        if (!stopped && socket === target) timeout("heartbeat");
       }, WORKSPACE_SOCKET_PONG_TIMEOUT_MS);
     }, WORKSPACE_SOCKET_HEARTBEAT_MS);
   };
@@ -165,16 +203,24 @@ export function watchWorkspaceSocket(dependencies: WorkspaceSocketWatchDependenc
 
   const connect = async (): Promise<void> => {
     if (stopped) return;
+    const expected = ++generation;
+    armDeadline("ticket");
+    const controller = new AbortController();
+    ticketAbort = controller;
     let ticket: { url: string; ticket: string };
     try {
-      ticket = await dependencies.ticket();
+      ticket = await dependencies.ticket(controller.signal);
     } catch (error) {
-      if (stopped) return;
+      if (stopped || generation !== expected) return;
+      clearDeadline();
+      ticketAbort = null;
       dependencies.onDiagnostic?.({ code: "ticket_failed", error });
       scheduleReconnect();
       return;
     }
-    if (stopped) return;
+    if (stopped || generation !== expected) return;
+    clearDeadline();
+    ticketAbort = null;
     let next: ReachSocket;
     try {
       // A constructor can throw synchronously (a malformed URL, a refused
@@ -186,17 +232,24 @@ export function watchWorkspaceSocket(dependencies: WorkspaceSocketWatchDependenc
       return;
     }
     socket = next;
+    armDeadline("open");
     let subscribed = false;
     const connection: WorkspaceSocketConnection = {
       send: (event) => {
         if (stopped || socket !== next) return false;
-        next.send(JSON.stringify(event));
+        try { next.send(JSON.stringify(event)); } catch {
+          retire();
+          scheduleReconnect();
+          return false;
+        }
         return true;
       },
     };
+    currentConnection = connection;
     next.addEventListener("open", () => {
       if (stopped || socket !== next) return;
-      next.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+      armDeadline("sync");
+      if (!connection.send({ type: "subscribe", afterWaterline: 0 })) return;
       scheduleHeartbeat(next);
     });
     next.addEventListener("message", (event) => {
@@ -214,6 +267,7 @@ export function watchWorkspaceSocket(dependencies: WorkspaceSocketWatchDependenc
       }
       if (!subscribed && isSubscribeAnswer(decoded)) {
         subscribed = true;
+        clearDeadline();
         attempt = 0;
         dependencies.onSubscribed(decoded, connection);
         return;
@@ -223,6 +277,8 @@ export function watchWorkspaceSocket(dependencies: WorkspaceSocketWatchDependenc
     next.addEventListener("close", (event) => {
       if (socket !== next) return;
       socket = null;
+      currentConnection = null;
+      clearDeadline();
       clearHeartbeat();
       dependencies.onClosed?.(connection);
       if (stopped) return;
@@ -230,6 +286,7 @@ export function watchWorkspaceSocket(dependencies: WorkspaceSocketWatchDependenc
       // Reconnecting would only be refused again; the host decides what next.
       if (event.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE
         || event.code === WORKSPACE_SOCKET_SESSION_INACTIVE_CODE) {
+        stopped = true;
         dependencies.onDiagnostic?.({ code: "stopped", closeCode: event.code });
         return;
       }
@@ -237,13 +294,20 @@ export function watchWorkspaceSocket(dependencies: WorkspaceSocketWatchDependenc
       scheduleReconnect();
     });
     next.addEventListener("error", () => {
-      if (!stopped && socket === next) next.close();
+      if (!stopped && socket === next) {
+        retire();
+        scheduleReconnect();
+      }
     });
   };
 
   void connect();
   return () => {
     stopped = true;
+    generation += 1;
+    ticketAbort?.abort();
+    ticketAbort = null;
+    clearDeadline();
     if (reconnectTimer !== null) clearTimeout(reconnectTimer);
     reconnectTimer = null;
     clearHeartbeat();
@@ -270,7 +334,7 @@ export function watchWorkspaceSocket(dependencies: WorkspaceSocketWatchDependenc
  */
 export function watchWorkspaceReach(dependencies: ReachWatchDependencies): () => void {
   return watchWorkspaceSocket({
-    ticket: () => dependencies.ticket(),
+    ticket: (signal) => dependencies.ticket(signal),
     open: (url, ticket) => dependencies.open(url, ticket),
     onSubscribed: () => dependencies.onStale(),
     onMessage: (message) => {

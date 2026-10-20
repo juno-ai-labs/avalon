@@ -166,7 +166,8 @@ transport with its own lifecycle, not one of the room sockets.
 The cause is stated where it is known rather than derived from a close code,
 which carries none of it — a heartbeat that went unanswered, a transport error, a
 ticket that could not be issued, a room that could not replay, going offline, a
-socket that never opened (`open_timeout`), the machine going to sleep
+socket that never opened (`open_timeout`), an Organization socket that opened
+but never delivered its initial sidebar (`sync_timeout`), the machine going to sleep
 (`suspended`), and losing access are each their own value, and a close nobody
 asked for is the server's. Offline is checked once more after the socket ticket resolves, because
 a client that drops off the network while that request is in flight has no socket
@@ -180,9 +181,10 @@ The singleton organization socket also emits `workspace_socket_handshake` for
 each connection attempt. Its UUIDv7 `attemptId` joins the content-free desktop
 phases `ticket_requested`, `ticket_received`, `transport_open`,
 `subscribe_sent`, `sync_received`, and `sync_applied`; `offline_blocked`,
-`sync_rejected`, and `open_timeout` identify three early exits. The phases after
+`sync_rejected`, `open_timeout`, and `sync_timeout` distinguish offline admission,
+invalid sync, stalled transport, and stalled initial application synchronization. The phases after
 `ticket_requested` that report on the dial (`ticket_received`, `transport_open`,
-`open_timeout`) also carry `sinceTicketRequested`, a duration bucket of wall
+`open_timeout`, and `sync_timeout`) also carry `sinceTicketRequested`, a duration bucket of wall
 clock since the ticket was asked for, and `windowVisible`. A 10-second ticket
 timeout that reports minutes later is a renderer that was not running, which is
 how a sleeping Mac is told apart from a stuck server. This reliability event is
