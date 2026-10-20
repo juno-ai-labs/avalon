@@ -3738,6 +3738,8 @@ pre {
 /* Agent-requested connector action. Dimensions follow the installed Grok Bot
    connector-card primitive; color and type stay on Rally's system tokens. */
 .connector-connection-card {
+  box-sizing: border-box;
+  container-type: inline-size;
   background: var(--av-sys-color-surface-elevated);
   border: 1px solid var(--av-ref-color-line-3);
   border-radius: 16px;
@@ -3762,6 +3764,11 @@ pre {
   margin: 0;
 }
 .connector-connection-card-body > small { color: var(--av-sys-color-text-disabled); font-size: 11px; line-height: 1.35; }
+.connector-connection-card-controls { align-items: flex-end; display: flex; flex: 0 0 auto; flex-direction: column; gap: 8px; }
+.connector-connection-card-controls .connector-connection-card-status:not([data-status="healthy"]) {
+  background: var(--av-sys-color-surface-elevated);
+  color: var(--av-sys-color-text-muted);
+}
 .connector-connection-card-action.button { border-radius: var(--av-sys-size-radius-pill); flex: 0 0 auto; min-height: 34px; padding: 6px 14px; }
 .connector-connection-card-status {
   align-items: center;
@@ -3773,6 +3780,10 @@ pre {
   font-size: 13px;
   gap: 6px;
   padding: 8px 14px;
+}
+@container (max-width: 420px) {
+  .connector-connection-card-header:has(.connector-connection-card-controls) { flex-wrap: wrap; }
+  .connector-connection-card-controls { align-items: center; flex: 1 1 100%; flex-direction: row; flex-wrap: wrap; justify-content: flex-end; }
 }
 .connector-connection-card > .inline-error { margin: 0 0 0 52px; }
 
