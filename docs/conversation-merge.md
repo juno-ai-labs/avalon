@@ -182,6 +182,12 @@ source, the target and the reason. It does not fail the merge: a reader told
 who reaches only the Breakout, not its thread, sees the divider as a label,
 since there is nowhere for them to go.
 
+The divider's sentence wraps as ordinary inline text, including the full
+destination name, so narrow feeds do not squeeze each phrase into a separate
+column. The arrow keeps its size and stays vertically centered beside the text,
+and the separator and timestamp stay together.
+The clickable and label-only forms share this layout.
+
 ### Every merge looks the same
 
 `MergeMessage` (`packages/ui`) draws every merge, in a Thread and in a
