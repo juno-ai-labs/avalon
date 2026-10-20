@@ -194,7 +194,7 @@ for one person, newest first:
   in (`new_message`), from the existing message-event log. Its
   `unreadMessageCount` counts replies above the viewer's message waterline and
   Mark all read timestamp and the participant's initial read cursor. Migration
-  124 indexes replies by conversation and attention ordinal. The query starts
+  125 indexes replies by conversation and attention ordinal. The query starts
   from participating conversations, seeks each latest reply and counts only
   replies above its read floor; no window scans over read history. Pushes
   restrict these seeks to the changed conversation before pagination.
