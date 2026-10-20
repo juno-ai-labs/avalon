@@ -118,7 +118,7 @@ import {
 import { useRetainedWorkstreamSocket, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { WORKSTREAMS_QUERY_KEY, useCachedWorkstreamPlacements } from '../lib/use-workstreams-query';
-import { useMergeChannelOrder } from '../lib/use-merge-channel-order';
+import { useMergeChannels } from '../lib/use-merge-channels';
 import { evictCachedWorkstream, patchCachedWorkstream, workstreamDetailQueryKey } from '../lib/workstreams-cache';
 import {
   SubstreamLaunchSurface,
@@ -1167,27 +1167,22 @@ export function mergeTargetFor(input: {
   thread: Pick<WorkstreamDetail, 'title' | 'scope' | 'spaceIds'> | null | undefined;
   /** The thread's placements from the directory, which wins over the detail's when present. */
   placements?: readonly string[] | undefined;
-  /** The server's order, earliest placement first; its first is the default. Absent until read. */
-  order?: readonly string[] | undefined;
+  /** The server's eligible Channels, earliest placement first. Absent until read. */
+  eligible?: readonly string[] | undefined;
   spaces: readonly Pick<SpaceSummary, 'id' | 'name' | 'scope' | 'reach'>[];
 }): MergeTarget | null {
   if (input.parentKind !== 'workstream' || !input.thread) return null;
   if (input.substreamId !== '0') return { kind: 'thread', threadTitle: input.thread.title };
   if (input.guest) return null;
   const byId = new Map(input.spaces.map((space) => [space.id as string, space]));
-  // A Channel reached only through a thread in it is read-only to this
-  // person, and the server refuses a merge there.
-  const channels = (input.placements ?? input.thread.spaceIds).flatMap((spaceId) => {
+  // The server owns eligibility; the directory stands in until that read lands.
+  const channels = (input.eligible ?? input.placements ?? input.thread.spaceIds).flatMap((spaceId) => {
     const space = byId.get(spaceId);
+    // A Channel reached only through a Thread is read-only to this person.
     return space && space.reach !== 'through_channel'
       ? [{ id: space.id as string, name: space.name, scope: space.scope }]
       : [];
   });
-  if (input.order) {
-    // A Channel the server has not listed yet keeps its place after the ones it has.
-    const rank = (id: string): number => { const at = input.order!.indexOf(id); return at < 0 ? input.order!.length : at; };
-    channels.sort((a, b) => rank(a.id) - rank(b.id));
-  }
   return channels.length > 0 ? { kind: 'channel', channels, threadPrivate: input.thread.scope !== 'workspace' } : null;
 }
 
@@ -1710,8 +1705,25 @@ function ConversationSurfaceContent({
   );
   const routedDetail = payloadBelongsToRoute ? workstream.data : undefined;
   // Only a thread's Main merges into a Channel; nothing else asks.
-  const mergeChannelOrder = useMergeChannelOrder(api, id,
+  const eligibleMergeChannels = useMergeChannels(api, id,
     parentKind === 'workstream' && substreamId === '0' && !guest && routedDetail !== undefined);
+  const merge = mergeTargetFor({
+    parentKind,
+    substreamId,
+    guest,
+    thread: substreamId === '0' ? routedDetail : workstreamContext?.id === id ? workstreamContext : null,
+    placements: threadPlacements,
+    eligible: eligibleMergeChannels,
+    spaces: activeSpaces?.items ?? [],
+  });
+  const mergeChannel = merge?.kind === 'channel'
+    ? mergeCard ? merge.channels.find((channel) => channel.id === mergeCard.channelId) ?? null : merge.channels[0]!
+    : null;
+  // An open draft keeps its chosen audience. If it disappears, close the
+  // card and preserve its draft rather than choosing another Channel for it.
+  useEffect(() => {
+    if (mergeCard?.channelId && !mergeChannel) setMergeCard(null);
+  }, [mergeCard, mergeChannel]);
   const feedSource = useQuery<WorkstreamFeedSource | null>({
     queryKey: workstreamFeedSourceQueryKey(id, substreamId),
     queryFn: async () => null,
@@ -3227,18 +3239,6 @@ function ConversationSurfaceContent({
       presenceUserIdsByWorkstream[id] ?? [],
     ),
   };
-  const merge = mergeTargetFor({
-    parentKind,
-    substreamId,
-    guest,
-    thread: substreamId === '0' ? displayedDetail : workstreamContext?.id === id ? workstreamContext : null,
-    placements: threadPlacements,
-    order: mergeChannelOrder,
-    spaces: activeSpaces?.items ?? [],
-  });
-  const mergeChannel = merge?.kind === 'channel'
-    ? merge.channels.find((channel) => channel.id === mergeCard?.channelId) ?? merge.channels[0]!
-    : null;
   const mergeDraftKey = `${workstreamDraftKey(workspaceRegion, workspaceId, id, substreamId)}:merge`;
   // Opens the card. The words given win; an empty request from the title menu
   // reopens whatever an earlier card left under the draft key.
@@ -3318,7 +3318,7 @@ function ConversationSurfaceContent({
   // The response card (docs/conversation-merge.md): the merge as the parent
   // will draw it, editable, under the turn it was asked from or at the end.
   const mergeResources = [...displayedDetail.resources, ...(workstreamContext?.id === id ? workstreamContext.resources : [])];
-  const mergeCardNode = mergeCard && merge ? <MergeResponseCard
+  const mergeCardNode = mergeCard && merge && (merge.kind === 'thread' || mergeChannel) ? <MergeResponseCard
     audience={mergeAudience(
       merge,
       mergeChannel,
@@ -3423,7 +3423,7 @@ function ConversationSurfaceContent({
     }
   };
   const submitMerge = async (text: string, mentions: MentionIdentity[], confirmedParticipantUserIds?: string[]): Promise<void> => {
-    if (!api || !merge) return;
+    if (!api || !merge || !mergeCard || (merge.kind === 'channel' && !mergeChannel)) return;
     const nonce = mergeCard?.nonce ?? null;
     const draftKey = mergeDraftKey;
     setMerging(true);
