@@ -35,7 +35,7 @@ function integrityOf(bytes: ArrayBuffer): string {
 
 export interface ThemeFontCacheOptions {
   directory: string;
-  /** `net.fetch` in the application; a stub in tests. */
+  /** The shared Electron fetch adapter in the application; a stub in tests. */
   fetch: (url: string) => Promise<Response>;
   fonts?: Record<string, { url: string; integrity?: string }>;
 }

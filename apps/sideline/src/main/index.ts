@@ -1,3 +1,4 @@
+import { createElectronFetch } from '@rally/electron-network';
 import {
   SessionSchema,
   SidelineCatalogSchema,
@@ -153,8 +154,10 @@ async function loadSession(): Promise<Session | null> {
   }
 }
 
+const electronFetch = createElectronFetch(net);
+
 async function jsonRequest(url: string, init: RequestInit = {}): Promise<unknown> {
-  const response = await net.fetch(url, init);
+  const response = await electronFetch(url, init);
   const body = await response.json().catch(() => null);
   if (!response.ok) {
     const error = body && typeof body === "object" && "error" in body
