@@ -3,6 +3,7 @@ import { personMentionMarkdownRanges } from '@rally/contracts/citations';
 import { prepareMentionMarkdown } from '@rally/contracts/message-mentions';
 import type { MentionIdentity } from './api';
 import { resolveMentionPayload } from './mention-draft';
+import { connectorConnectionCardDisplayInputFromToolEvent } from './connector-connection-card';
 import type { ElicitationData, Message, MessageMention, PluginActivityData, ThoughtEventData, ToolEventData, WorkSpan, WorkTotal, WorkspaceMember } from './types';
 import {
   AGENT_MESSAGES_INBOUND_GROUP,
@@ -22,7 +23,6 @@ import {
   ElicitationSchema,
   agentMessageNotice,
   agentMessageNoticeReason,
-  connectorConnectionCardInputFromToolEvent,
   connectorResourceAuthorizationRequestFromToolEvent,
   isAgentMessageContent,
   isAgentMessageSendWireName,
@@ -1274,9 +1274,9 @@ export function composeTranscript(
 export function dedupeAdjacentConnectorConnectionCards(messages: readonly Message[]): Message[] {
   const rows: Message[] = [];
   for (const message of messages) {
-    const card = connectorConnectionCardInputFromToolEvent(message.toolEvent);
+    const card = connectorConnectionCardDisplayInputFromToolEvent(message.toolEvent);
     const previous = rows.at(-1);
-    const previousCard = connectorConnectionCardInputFromToolEvent(previous?.toolEvent);
+    const previousCard = connectorConnectionCardDisplayInputFromToolEvent(previous?.toolEvent);
     if (card && previous && previousCard
       && message.precededByTranscriptGap !== true
       && card.connectorId === previousCard.connectorId

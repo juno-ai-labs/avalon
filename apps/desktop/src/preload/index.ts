@@ -165,6 +165,7 @@ const bridge: RallyDesktopBridge = {
     return () => powerStateListeners.delete(listener);
   },
   getUpdateStatus: () => ipcRenderer.invoke('update:get-status') as Promise<DesktopUpdateStatus>,
+  checkForUpdates: () => ipcRenderer.invoke('update:check') as Promise<void>,
   onUpdateStatusChanged: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, status: DesktopUpdateStatus): void => listener(status);
     ipcRenderer.on('update:status-changed', handler);

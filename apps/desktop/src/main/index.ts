@@ -3918,6 +3918,10 @@ function registerIpc(): void {
     assertTrustedIpcSender(event);
     autoUpdateController?.installDownloadedUpdate();
   });
+  ipcMain.handle('update:check', (event) => {
+    assertTrustedIpcSender(event);
+    autoUpdateController?.checkForUpdates();
+  });
   ipcMain.handle('application-settings:get', async (event) => {
     assertTrustedIpcSender(event);
     return desktopApplicationSettings(await lockdownModeController.settings());
