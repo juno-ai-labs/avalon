@@ -41,14 +41,11 @@ are the decision's evidence. Mixed work requests and ambiguity belong to
 `prompt_to_process`. Missing credentials, provider or schema failures, and
 confidence at or below the existing addressing floor (`0.5`) also process the
 prompt, without a generative fallback. The existing one-second JEV admission
-budget applies. These remain inherited operating defaults. The evaluation
-under `packages/agent-harness/evals/opening-message` compared three questions
-on a pre-split 88-case synthetic English corpus, repeating each comparison
-three times. The selected explicit-boundary question had no missed prompts or
-unwanted runs on the 44-case holdout (43/44 exact labels; one confusion between
-the two silent categories), compared with two unwanted runs per repeat for the
-original question. This is synthetic evidence, not a production accuracy claim.
+budget applies. These remain inherited operating defaults. See the [evaluation README](../packages/agent-harness/evals/opening-message/README.md)
+for comparison results and their limitations.
 
+Only member-composed openings (`opening_message`, without a Slack origin or
+started opportunity) use this gate. Explicit summons already authorize work.
 Thread initialization commits either an idle conversation with no run or its
 ordinary opening run. Replay reads that committed result without classifying
 again. Breakouts use the same gate on their first local message, before any
@@ -1365,12 +1362,6 @@ outputs, summaries, token content, and provider responses remain excluded.
 
 ## Testing
 
-`packages/agent-harness/src/opening-message.test.ts` covers the opening Choice
-wire contract and safe fallbacks. The real-workerd suite
-`apps/api/test-workers/opening-message-classification.test.ts` covers Thread
-and Breakout silence, prompt admission, retry stability, and follow-up
-activation with only the JEV provider doubled.
-
 Sidekick catalog naming is covered by `apps/api/test/sidekick-presentation.test.ts`
 (`pnpm --filter @rally/api exec vitest run test/sidekick-presentation.test.ts`).
 The load, durable attachment, and next-execution instruction restoration path is
@@ -1509,19 +1500,12 @@ silently drop an opening work request. A second generative fallback would add
 latency where the requested safe default is simply to process the prompt.
 
 **Consequences:** Silent initialization is a complete, retryable create.
-Subsequent messages must still activate normally. Live JEV comparison favored
-explicit addressee and conversation-labeling boundaries over the original or a
-shorter question: the 44-case synthetic holdout's two unwanted invocations fell
-to zero in all three repeats, without missing a prompt. The unchanged confidence
-floor still needs independent production calibration; the retained synthetic
-cases and aggregate report are regression evidence, and provider doubles prove
-admission behavior rather than semantic quality.
-Follow-up comparisons of generic conversation vocabulary, an explicit
-AI-assistant definition, and short examples each introduced two unwanted runs
-on the same 88-case regression corpus, so the measured boundary wording stays.
-Familiar wording alone is not evidence of matching JEV's training data.
-Classifier details remain internal; silence must never become an explanatory
-message about classification.
+Subsequent messages must still activate normally. Public creation receipts must
+replay silent openings as well as openings with runs, and explicit Slack summons
+or started opportunities must bypass classification. Independent routing and
+materialization overlap with JEV to avoid serial latency. Classifier details stay
+internal; silence never becomes an explanation of classification. The prompt's
+synthetic evidence does not replace production calibration.
 
 ### 2026-10-19 — Google meeting knowledge loads against an authorized connection
 

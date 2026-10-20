@@ -33,7 +33,6 @@ otherwise direct fetches fail or time out and only measure the fallback.
 
 `optimization-cases.jsonl` contains 88 agent-authored synthetic English cases,
 split into 44 development and 44 holdout cases before comparing candidates.
-`candidate-*.json` preserves all three complete question documents;
 `baseline-2026-10-20.json` records aggregate results, corpus and question hashes,
 latency, failures, and resolved model (`jev-1.13.0`). Each comparison was repeated
 three times with the existing strict `> 0.5` confidence floor and one-second
@@ -72,10 +71,9 @@ held out. Production examples and multilingual coverage remain future work.
 Following the request to assist a small model with familiar vocabulary, three
 additional candidates tested replacing Thread/Breakout with conversation,
 explicitly defining Rally as the AI assistant, and adding short contrasting
-examples. Their exact questions are `candidate-plain-language.json`,
-`candidate-defined-assistant.json`, and `candidate-familiar-terms.json`.
-`vocabulary-comparison-2026-10-20.json` records the complete content-free
-comparison. JEV's training corpus is unknown; familiar wording is a hypothesis,
+examples. The single baseline report includes these comparisons. Exact historical
+candidate questions remain in commit `55daddc8f`; the selected prompt has one
+source of truth, `src/opening-message.ts`. JEV's training corpus is unknown; familiar wording is a hypothesis,
 not evidence that a prompt matches its training data.
 
 The existing boundary prompt was retained. A fresh baseline run made no missed
