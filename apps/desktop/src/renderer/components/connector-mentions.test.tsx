@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { CONNECTOR_CONNECTION_CARD_WIRE_NAME, ConnectorResourceAuthorizationRequestSchema } from '@rally/contracts';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useState } from 'react';
+import type { DesktopUpdateStatus } from '../../common/desktop';
 import {
   ConnectorConnectionCard,
   ConnectorConnectionUpdateCard,
@@ -11,7 +12,6 @@ import {
   ConnectorEmbedCard,
   ConnectorMentionChip,
   connectorConnectionCardInput,
-  isUnrecognizedConnectorConnectionCard,
   connectorResourceAuthorizationRequest,
 } from './connector-mentions';
 
@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   getUpdateStatus: vi.fn(),
   checkForUpdates: vi.fn(),
   installDownloadedUpdate: vi.fn(),
+  reload: vi.fn(),
+  updateListeners: new Set<(status: DesktopUpdateStatus) => void>(),
   getAvailableConnectorTypes: vi.fn(),
   getConnectorOAuthAttempt: vi.fn(),
   openExternal: vi.fn(),
@@ -76,13 +78,20 @@ vi.mock('../lib/collaboration-session', () => ({
 }));
 vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({ openExternal: mocks.openExternal, getUpdateStatus: mocks.getUpdateStatus,
-    checkForUpdates: mocks.checkForUpdates, installDownloadedUpdate: mocks.installDownloadedUpdate }),
+    checkForUpdates: mocks.checkForUpdates, installDownloadedUpdate: mocks.installDownloadedUpdate,
+    onUpdateStatusChanged: (listener: (status: DesktopUpdateStatus) => void) => {
+      mocks.updateListeners.add(listener);
+      return () => mocks.updateListeners.delete(listener);
+    },
+  }),
   desktopServicesAvailable: () => mocks.desktop,
 }));
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.updateListeners.clear();
   mocks.desktop = false;
+  vi.stubGlobal('location', { reload: mocks.reload });
   mocks.getUpdateStatus.mockResolvedValue({ kind: 'idle' });
   mocks.checkForUpdates.mockResolvedValue(undefined);
   mocks.installDownloadedUpdate.mockResolvedValue(undefined);
@@ -106,50 +115,67 @@ beforeEach(() => {
 });
 
 describe('connector connection resolution', () => {
-  it('recognizes future connectors from completed input, output and exact recovery summaries', () => {
-    for (const facts of [
-      { input: { connectorId: 'future-crm', scope: 'personal' } },
-      { output: { connectorId: 'future-crm', scope: 'workspace' } },
-      { summary: 'Presented the future-crm personal connection card' },
-    ]) {
-      expect(isUnrecognizedConnectorConnectionCard({ toolEvent: {
-        name: 'show_connector_connection', status: 'completed', ...facts,
-      } })).toBe(true);
-    }
-    for (const toolEvent of [
-      { name: 'another_tool', status: 'completed', input: { connectorId: 'future-crm', scope: 'personal' } },
-      { name: 'show_connector_connection', status: 'failed', input: { connectorId: 'future-crm', scope: 'personal' } },
-      { name: 'show_connector_connection', status: 'completed', input: { connectorId: 'future-crm', scope: 'invalid' } },
-      { name: 'show_connector_connection', status: 'completed', input: { connectorId: 'slack', scope: 'personal' } },
-      { name: 'show_connector_connection', status: 'completed', summary: 'Please present the future-crm personal connection card' },
-    ]) expect(isUnrecognizedConnectorConnectionCard({ toolEvent })).toBe(false);
+  it('omits the update card for guests and hosts without connector setup', () => {
+    mocks.setupEnabled = false;
+    const { container } = render(<ConnectorConnectionUpdateCard />);
+    expect(container).toBeEmptyDOMElement();
+    expect(mocks.getUpdateStatus).not.toHaveBeenCalled();
+    expect(mocks.checkForUpdates).not.toHaveBeenCalled();
   });
 
-  it.each(['idle', 'downloaded'])('offers an update through the existing updater when %s', async (kind) => {
+  it.each([
+    ['checking', 'Checking…'],
+    ['downloading', 'Downloading…'],
+  ] as const)('shows %s progress and switches to restart when ready', async (kind, label) => {
     mocks.desktop = true;
-    mocks.getUpdateStatus.mockResolvedValue({ kind, ...(kind === 'downloaded' ? { version: '2.0.0' } : {}) });
+    mocks.getUpdateStatus.mockResolvedValue({ kind });
+    render(<QueryClientProvider client={new QueryClient()}><ConnectorConnectionUpdateCard /></QueryClientProvider>);
+    expect(await screen.findByRole('button', { name: label })).toBeDisabled();
+    expect(mocks.checkForUpdates).not.toHaveBeenCalled();
+    mocks.getUpdateStatus.mockResolvedValue({ kind: 'downloaded', version: '2.0.0' });
+    act(() => {
+      for (const listener of mocks.updateListeners) listener({ kind: 'downloaded', version: '2.0.0' });
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Restart to update' }));
+    await waitFor(() => expect(mocks.installDownloadedUpdate).toHaveBeenCalledOnce());
+  });
+
+  it('checks for a desktop update when none has been downloaded', async () => {
+    mocks.desktop = true;
     render(<QueryClientProvider client={new QueryClient()}><ConnectorConnectionUpdateCard /></QueryClientProvider>);
     expect(screen.getByText('Connector not recognized')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Update Rally' }));
-    await waitFor(() => expect(kind === 'downloaded' ? mocks.installDownloadedUpdate : mocks.checkForUpdates).toHaveBeenCalledOnce());
-    expect(kind === 'downloaded' ? mocks.checkForUpdates : mocks.installDownloadedUpdate).not.toHaveBeenCalled();
+    await waitFor(() => expect(mocks.checkForUpdates).toHaveBeenCalledOnce());
+    expect(mocks.installDownloadedUpdate).not.toHaveBeenCalled();
+    expect(mocks.startProviderConnection).not.toHaveBeenCalled();
+  });
+
+  it('installs an already-downloaded desktop update', async () => {
+    mocks.desktop = true;
+    mocks.getUpdateStatus.mockResolvedValue({ kind: 'downloaded', version: '2.0.0' });
+    render(<QueryClientProvider client={new QueryClient()}><ConnectorConnectionUpdateCard /></QueryClientProvider>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Restart to update' }));
+    await waitFor(() => expect(mocks.installDownloadedUpdate).toHaveBeenCalledOnce());
+    expect(mocks.checkForUpdates).not.toHaveBeenCalled();
     expect(mocks.startProviderConnection).not.toHaveBeenCalled();
   });
 
   it('offers a browser reload without trying to install a desktop update', async () => {
     render(<QueryClientProvider client={new QueryClient()}><ConnectorConnectionUpdateCard /></QueryClientProvider>);
     fireEvent.click(screen.getByRole('button', { name: 'Reload Rally' }));
-    await waitFor(() => expect(mocks.checkForUpdates).toHaveBeenCalledOnce());
+    await waitFor(() => expect(mocks.reload).toHaveBeenCalledOnce());
+    expect(mocks.checkForUpdates).not.toHaveBeenCalled();
     expect(mocks.getUpdateStatus).not.toHaveBeenCalled();
     expect(mocks.installDownloadedUpdate).not.toHaveBeenCalled();
   });
 
   it('shows a failed update action so the person can retry', async () => {
+    mocks.desktop = true;
     mocks.checkForUpdates.mockRejectedValueOnce(new Error('Unable to check for updates.'));
     render(<QueryClientProvider client={new QueryClient()}><ConnectorConnectionUpdateCard /></QueryClientProvider>);
-    fireEvent.click(screen.getByRole('button', { name: 'Reload Rally' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Update Rally' }));
     expect(await screen.findByText('Unable to check for updates.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Reload Rally' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Update Rally' })).toBeEnabled();
   });
 
   it('restores a resource authorization card only from a valid failed tool result', () => {

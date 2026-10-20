@@ -249,7 +249,7 @@ const browserBridge: RallyDesktopBridge = {
     return { kind: 'idle' } as const;
   },
   async checkForUpdates() {
-    window.location.reload();
+    // Browser clients have no desktop updater.
   },
   onUpdateStatusChanged() {
     // The browser build has no updater.

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { desktopBridge } from './platform';
+import type { DesktopUpdateStatus } from '../../common/desktop';
 
 /**
  * The version of an update the main process has downloaded and can install on
@@ -7,23 +8,30 @@ import { desktopBridge } from './platform';
  * through the `update:status-changed` broadcast.
  */
 export function useDownloadedUpdate(): string | null {
+  const status = useUpdateStatus();
+  return status?.kind === 'downloaded' ? status.version : null;
+}
+
+/** The updater's live state, shared by restart and progress affordances. */
+export function useUpdateStatus(enabled = true): DesktopUpdateStatus | null {
   const bridge = useMemo(() => desktopBridge(), []);
-  const [version, setVersion] = useState<string | null>(null);
+  const [status, setStatus] = useState<DesktopUpdateStatus | null>(null);
 
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
     // Invoke replies and live events use independent Electron channels. Once a
     // live transition arrives, the pending mount-time read is obsolete.
     let liveUpdateGeneration = 0;
     const unsubscribe = bridge.onUpdateStatusChanged((status) => {
       liveUpdateGeneration += 1;
-      if (!cancelled) setVersion(status.kind === 'downloaded' ? status.version : null);
+      if (!cancelled) setStatus(status);
     });
     const generationAtRead = liveUpdateGeneration;
     void bridge.getUpdateStatus()
       .then((status) => {
         if (!cancelled && liveUpdateGeneration === generationAtRead) {
-          setVersion(status.kind === 'downloaded' ? status.version : null);
+          setStatus(status);
         }
       })
       // The restart affordance stays hidden when the status is unreadable.
@@ -32,7 +40,7 @@ export function useDownloadedUpdate(): string | null {
       cancelled = true;
       unsubscribe();
     };
-  }, [bridge]);
+  }, [bridge, enabled]);
 
-  return version;
+  return enabled ? status : null;
 }

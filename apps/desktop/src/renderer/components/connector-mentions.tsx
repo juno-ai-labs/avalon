@@ -5,15 +5,14 @@ import {
   ConnectorConnectionCardCatalog,
   ConnectorOAuthProviderSchema,
   connectorConnectionCardInputFromToolEvent,
-  isConnectorConnectionCardWireName,
   connectorResourceAuthorizationRequestFromToolEvent,
   type ConnectorConnectionCardInput,
   type ConnectorResourceAuthorizationRequest,
 } from '@rally/contracts';
 import { Check, AlertTriangle, LoaderCircle, Minus, Plug } from 'lucide-react';
 import { createContext, useContext, useEffect } from 'react';
-import { z } from 'zod';
 import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
+import { useUpdateStatus } from '../lib/use-downloaded-update';
 import { useOptionalCollaborationSession, type CollaborationSessionValue, type ConnectorSetupCapability } from '../lib/collaboration-session';
 import { useViewerIsWorkspaceAdmin } from '../lib/use-workspace';
 import {
@@ -77,32 +76,27 @@ export function connectorConnectionCardInput(message: {
   return connectorConnectionCardInputFromToolEvent(message.toolEvent);
 }
 
-// Display compatibility is deliberately wider than the tool's execution schema.
-// An unknown id may offer an app update, but must never start authorization.
-const connectionCardEnvelopeSchema = z.strictObject({
-  connectorId: z.string().min(1),
-  scope: z.enum(['personal', 'workspace']),
-});
-
-export function isUnrecognizedConnectorConnectionCard(message: Parameters<typeof connectorConnectionCardInput>[0]): boolean {
-  const event = message.toolEvent;
-  if (!isConnectorConnectionCardWireName(event?.name) || event?.status !== 'completed') return false;
-  const summary = /^Presented the ([a-z][a-z0-9-]*) (personal|workspace) connection card$/u.exec(event.summary ?? '');
-  for (const candidate of [event.input, event.output, summary && { connectorId: summary[1], scope: summary[2] }]) {
-    const parsed = connectionCardEnvelopeSchema.safeParse(candidate);
-    if (parsed.success && !Object.hasOwn(ConnectorConnectionCardCatalog, parsed.data.connectorId)) return true;
-  }
-  return false;
+export function ConnectorConnectionUpdateCard(): React.JSX.Element | null {
+  const collaboration = useOptionalCollaborationSession();
+  if (!collaboration?.connectorSetup) return null;
+  return <ResolvedConnectorConnectionUpdateCard />;
 }
 
-export function ConnectorConnectionUpdateCard(): React.JSX.Element {
+function ResolvedConnectorConnectionUpdateCard(): React.JSX.Element {
   const desktop = desktopServicesAvailable();
+  const status = useUpdateStatus(desktop);
+  const busy = status?.kind === 'checking' || status?.kind === 'downloading';
   const update = useMutation({
     mutationFn: async () => {
+      if (!desktop) {
+        globalThis.location.reload();
+        return;
+      }
       const bridge = desktopBridge();
-      if (desktop && (await bridge.getUpdateStatus()).kind === 'downloaded') {
+      const current = await bridge.getUpdateStatus();
+      if (current.kind === 'downloaded') {
         await bridge.installDownloadedUpdate();
-      } else {
+      } else if (current.kind === 'idle') {
         await bridge.checkForUpdates();
       }
     },
@@ -115,8 +109,11 @@ export function ConnectorConnectionUpdateCard(): React.JSX.Element {
           <strong>Connector not recognized</strong>
           <p>{desktop ? 'Update Rally to connect this account.' : 'Reload Rally to connect this account.'}</p>
         </div>
-        <Button className="connector-connection-card-action button-primary" disabled={update.isPending} onClick={() => update.mutate()}>
-          {desktop ? 'Update Rally' : 'Reload Rally'}
+        <Button className="connector-connection-card-action button-primary" disabled={update.isPending || busy} onClick={() => update.mutate()}>
+          {status?.kind === 'checking' ? 'Checking…'
+            : status?.kind === 'downloading' ? 'Downloading…'
+              : status?.kind === 'downloaded' ? 'Restart to update'
+                : desktop ? 'Update Rally' : 'Reload Rally'}
         </Button>
       </div>
       {update.error ? <InlineError>{update.error.message}</InlineError> : null}
