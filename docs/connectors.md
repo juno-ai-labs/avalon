@@ -11,6 +11,14 @@ distinct. A committed successful poll clears only `connector_poll_failed` and
 cannot replace `needs_reconnect` or `disabled`. Provider refusals can replace
 generic errors, preserving the first authorization diagnosis.
 
+This availability rule covers every generic error, including
+`custom_mcp_unreachable` and Linear, Notion, or Slack route-registration failures.
+Connected describes authorization availability, not provider reachability or
+inbound delivery health: route registration can fail while outbound tools remain
+usable, and an unreachable custom MCP endpoint still reports its execution error.
+These diagnostics remain stored; only a provider authorization refusal establishes
+a reconnect verdict.
+
 OAuth deliberately crosses one authority boundary. Regional D1 owns the
 single-use encrypted `oauth_states` row because the callback must be validated
 and routed before a WorkspaceDO can be addressed. The selected WorkspaceDO owns

@@ -8586,6 +8586,10 @@ async function persistPolledActivity(
   return [...new Set(canonical.results.map((row) => row.id))];
 }
 
+// Only polling owns these diagnoses; other operational errors must survive its writes.
+const recoverableConnectorPollErrorSql =
+  "status = 'error' AND json_extract(error_json, '$.code') IN ('connector_poll_failed', 'connector_poll_timeout')";
+
 /** Background failure must not overwrite a user's disable or an authorization verdict. */
 export async function recordConnectorPollFailure(
   database: D1Database,
@@ -8596,7 +8600,7 @@ export async function recordConnectorPollFailure(
   await database.prepare(
     `UPDATE connector_connections SET status = 'error', error_json = ?, updated_at = ?
      WHERE id = ? AND workspace_id = ? AND (status = 'healthy' OR
-       (status = 'error' AND json_extract(error_json, '$.code') IN ('connector_poll_failed', 'connector_poll_timeout')))`,
+       (${recoverableConnectorPollErrorSql}))`,
   ).bind(JSON.stringify(error), now, input.connectionId, input.workspaceId).run();
 }
 
@@ -8618,10 +8622,9 @@ export async function commitConnectorCursor(
         SET cursor_json = ?1,
             last_sync_at = ?2,
             error_json = CASE WHEN status = 'healthy' OR
-              (status = 'error' AND json_extract(error_json, '$.code') IN ('connector_poll_failed', 'connector_poll_timeout'))
+              (${recoverableConnectorPollErrorSql})
               THEN ?6 ELSE error_json END,
-            status = CASE WHEN status = 'error' AND
-              json_extract(error_json, '$.code') IN ('connector_poll_failed', 'connector_poll_timeout')
+            status = CASE WHEN ${recoverableConnectorPollErrorSql}
               THEN 'healthy' ELSE status END,
             updated_at = ?2
       WHERE id = ?3
