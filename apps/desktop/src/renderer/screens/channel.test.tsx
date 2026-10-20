@@ -203,6 +203,16 @@ describe('a Channel', () => {
     expect(screen.getByText('composer')).toBeInTheDocument();
   });
 
+  it.each([false, true])('labels personal threads as Private in the feed (resolved=%s)', async (resolved) => {
+    api.getChannelFeed.mockResolvedValue({ nextCursor: null, latestAttentionSequenceNumber: 1, items: [
+      { kind: 'thread', placedAt: '2026-10-02T00:00:00.000Z', attentionSequenceNumber: 1, thread: { ...plan, scope: 'personal', resolved } },
+    ] });
+    renderChannel();
+    const card = await screen.findByRole('button', { name: resolved ? 'Q4 plan, Resolved, Private' : 'Q4 plan, Private' });
+    expect(within(card).getByText('Private')).toBeVisible();
+    expect(card).toHaveTextContent('A four-week outbound setup plan.');
+  });
+
   describe('feed positioning', () => {
 
     it('opens overflowing empty guidance at the top and preserves that position after a refresh', async () => {
