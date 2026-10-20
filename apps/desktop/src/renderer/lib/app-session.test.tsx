@@ -1,6 +1,13 @@
+import * as Tooltip from '@radix-ui/react-tooltip';
+import { TitlePillHeader } from '@rally/ui/components/title-pill';
+import { IconCircle } from '@tabler/icons-react';
+import { HashRouter, useLocation, useNavigate } from 'react-router-dom';
+import { AppRouteNavigation } from './app-navigation';
+import { NavigationHistoryProvider } from '../components/navigation-history';
+import type { ReactNode } from 'react';
 import "../../../../../tests/isolated-region";
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   RallyDesktopBridge,
@@ -164,11 +171,21 @@ function SessionProbe(): React.JSX.Element {
   );
 }
 
-function renderProvider(): QueryClient {
+function DeepLinkHistoryProbe(): React.JSX.Element {
+  const navigate = useNavigate();
+  const location = useLocation();
+  return <>
+    <TitlePillHeader current={{ key: 'current', title: 'Thread', icon: <IconCircle />, label: 'Thread menu' }} />
+    <output data-testid="history-route">{location.pathname}</output>
+    <button onClick={() => void navigate('/workstreams/ordinary-visit')}>Visit another thread</button>
+  </>;
+}
+
+function renderProvider(route?: ReactNode): QueryClient {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <AppSessionProvider><SessionProbe /></AppSessionProvider>
+      <AppSessionProvider><SessionProbe />{route}</AppSessionProvider>
     </QueryClientProvider>,
   );
   return client;
@@ -1939,10 +1956,14 @@ describe('single-platform desktop identity routing', () => {
     };
     window.location.hash = '/workstreams/00000000-0000-7000-8000-000000000041';
     bridge.getSession.mockResolvedValueOnce(activeSession);
-    bridge.reselectActiveWorkspace.mockResolvedValueOnce(activeSession);
-    const client = renderProvider();
+    bridge.reselectActiveWorkspace.mockResolvedValue(activeSession);
+    const client = renderProvider(<Tooltip.Provider><HashRouter>
+      <AppRouteNavigation />
+      <NavigationHistoryProvider enabled><DeepLinkHistoryProbe /></NavigationHistoryProvider>
+    </HashRouter></Tooltip.Provider>);
     expect(await screen.findByText('global:Juno Labs')).toBeVisible();
     client.setQueryData(['members'], ['cached']);
+    fireEvent.click(screen.getByRole('button', { name: 'Visit another thread' }));
 
     await dispatchDeepLink(
       `rallywithai://workspace/global/${activeWorkspaceId}/workstreams/00000000-0000-7000-8000-000000000042`,
@@ -1956,6 +1977,19 @@ describe('single-platform desktop identity routing', () => {
     expect(bridge.activateWorkspace).not.toHaveBeenCalled();
     expect(client.getQueryData(['members'])).toEqual(['cached']);
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
+    expect(window.history.state).toMatchObject({ idx: 2 });
+    expect(screen.getByRole('button', { name: 'Back' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Forward' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    await waitFor(() => expect(screen.getByTestId('history-route')).toHaveTextContent('/workstreams/ordinary-visit'));
+    fireEvent.click(screen.getByRole('button', { name: 'Forward' }));
+    await waitFor(() => expect(screen.getByTestId('history-route')).toHaveTextContent('/workstreams/00000000-0000-7000-8000-000000000042'));
+    // A new deep link from an earlier visit discards the old forward branch.
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    await waitFor(() => expect(screen.getByTestId('history-route')).toHaveTextContent('/workstreams/ordinary-visit'));
+    await dispatchDeepLink(`rallywithai://workspace/global/${activeWorkspaceId}/workstreams/00000000-0000-7000-8000-000000000043`);
+    await waitFor(() => expect(screen.getByTestId('history-route')).toHaveTextContent('/workstreams/00000000-0000-7000-8000-000000000043'));
+    expect(screen.getByRole('button', { name: 'Forward' })).toBeDisabled();
   });
 
   it('activates an organization that is not the active one, even when its credential is stored', async () => {

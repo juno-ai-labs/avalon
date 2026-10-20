@@ -59,7 +59,7 @@ import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useBrowserRailLinks } from '../lib/browser-rail-links';
 import { BreakoutTickBar, breakoutsByOrigin, orderBreakoutsForTicks, type BreakoutMark } from '@rally/ui/components/breakout-marks';
 import type { TitleMenuPeople } from '@rally/ui/components/conversation-menus';
-import { TitlePillNavigation, type TitlePillLevel } from '@rally/ui/components/title-pill';
+import { TitlePillLeading, TitlePillNavigation, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { WorkstreamGlyph, workstreamMark } from '@rally/ui/components/workstream-glyph';
 import { RelativeTime } from '../components/relative-time';
 import { BreakoutOrigin, breakoutOriginMessages, originExcerpt } from '../components/breakout-origin';
@@ -241,7 +241,7 @@ function ConversationOpeningFeed({ label, parentKind, caption = false, openingMe
           </header>
         ) : (
           <header className="title-pill-header window-drag conversation-opening-header">
-            <div className="title-pill-ancestors"><TitlePillNavigation /></div>
+            <div className="title-pill-ancestors"><TitlePillLeading /><TitlePillNavigation /></div>
             <div className="title-pill-current"><span className="skeleton-bar title-pill-skeleton" /></div>
             <div className="title-pill-trailing" />
           </header>

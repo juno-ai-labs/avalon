@@ -45,7 +45,12 @@ The leftmost visible pane header carries Back and Forward before its breadcrumb,
 as one neutral two-mark liquid glass bridge with Tabler chevrons. The desktop
 shell's `NavigationHistoryProvider` supplies the shared header's leading slot;
 the browser host leaves it empty. Buttons traverse HashRouter's existing entries,
-including query parameters and location state. PUSH drops the forward branch,
+including query parameters and location state. Session actions and desktop deep
+links use `navigateAppRoute`, bridged to the main window's router by
+`AppRouteNavigation`, so each visit has the same index as an in-app link. Before
+the router mounts, the helper sets the initial hash for the router to index.
+Opening and launch skeletons carry the same leading slot as loaded headers.
+PUSH drops the forward branch,
 REPLACE keeps it, and POP moves the cursor. Unavailable directions are disabled.
 The cursor belongs to the shell, so changing the pane that draws the controls
 does not reset it. A new shell starts at the current entry with no forward visits
@@ -535,19 +540,11 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
 
 ### 2026-10-19 — Electron history controls before the breadcrumb
 
-**What changed:** The leftmost header offers Back and Forward in a two-icon
-liquid glass bridge. The shell owns the history cursor and passes the controls
-through the shared header's leading slot.
-
-**Why:** The product asked for direct history navigation beside the breadcrumb.
-Reusing HashRouter preserves route queries and expansion state; a separate
-resource stack would lose those details and duplicate the router's behavior.
-The browser keeps its existing navigation controls.
-
-**Consequences:** Split panes show the controls only in their leftmost header,
-and an expanded resource panel carries them when it covers its conversation.
-`navigation-history.test.tsx` exercises traversal, replacement and branching
-against HashRouter and the browser history API.
+The product asked for direct history navigation beside the breadcrumb. Reusing
+the router instead of a separate resource stack preserves queries and expansion
+state. Session actions and deep links must use that router too: direct hash
+writes create unindexed visits and break traversal. The browser keeps its own
+controls.
 
 ### 2026-10-19 — Open Channels at the server read waterline
 

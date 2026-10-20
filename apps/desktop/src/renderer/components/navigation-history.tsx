@@ -10,7 +10,7 @@ export function NavigationHistoryProvider({ children, enabled }: PropsWithChildr
   const navigate = useNavigate();
   const action = useNavigationType();
   // HashRouter owns idx; using its cursor keeps POP and replace navigations in
-  // the same history as links, deep links and the native navigation gestures.
+  // the same history as in-app links and desktop deep links.
   const state: unknown = window.history.state;
   const index = state && typeof state === 'object' && 'idx' in state && typeof state.idx === 'number' ? state.idx : 0;
   const [lastIndex, setLastIndex] = useState(index);
