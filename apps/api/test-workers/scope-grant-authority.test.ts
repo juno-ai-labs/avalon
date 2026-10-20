@@ -452,6 +452,11 @@ it("opts guest navigation into attention for each granted Breakout without relea
   expect(await room().mutateScopeGrant(mutation())).toMatchObject({ status: "committed" });
   expect(await room().mutateScopeGrant(mutation(sibling))).toMatchObject({ status: "committed" });
   const request = { workspaceId, parentId, userId: recipientId, membershipIncarnation: recipientId };
+  await exec("UPDATE parent_children SET resolved = 1 WHERE parent_id = ? AND substream_id = ?", parentId, childId);
+  expect((await readSharedWorkstream(room(), { ...request, includeResolution: true }))?.conversations).toEqual([
+    { substreamId: childId, title: "Shared breakout", scope: "personal", archived: false, originTurnId: null, resolved: true },
+    { substreamId: siblingId, title: "Second shared breakout", scope: "personal", archived: false, originTurnId: null },
+  ]);
   expect((await readSharedWorkstream(room(), request))?.conversations).toEqual([
     { substreamId: childId, title: "Shared breakout", scope: "personal", archived: false, originTurnId: null },
     { substreamId: siblingId, title: "Second shared breakout", scope: "personal", archived: false, originTurnId: null },

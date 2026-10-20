@@ -42,6 +42,19 @@ describe('ConversationCard', () => {
     expect(screen.getByRole('button', { name: 'Hiring, Open' })).toHaveTextContent(/^Hiring$/u);
   });
 
+  it('keeps a resolved conversation openable and exposes its state alongside new activity', () => {
+    const onOpen = vi.fn();
+    render(<ConversationCard
+      conversation={{ substreamId: 'resolved', title: 'Pricing', resolved: true, unreadCount: 2 }}
+      onOpen={onOpen}
+      open={false}
+    />);
+    const card = screen.getByRole('button', { name: 'Pricing, Resolved, 2 new' });
+    expect(card).toHaveTextContent('Resolved');
+    fireEvent.click(card);
+    expect(onOpen).toHaveBeenCalledOnce();
+  });
+
   it('stands a skeleton in for the title while Rally names it', () => {
     render(<ConversationCard
       conversation={{ substreamId: 'three', title: 'New thread', naming: true }}

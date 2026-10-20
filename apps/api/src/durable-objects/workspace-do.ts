@@ -808,6 +808,7 @@ import {
   SPACE_INDIVIDUAL_SCOPE_MIGRATION,
   SPACE_MESSAGES_MIGRATION,
   SPACE_MESSAGE_MERGES_MIGRATION,
+  backfillRemovedThreadMerges,
   SPACE_INVITEES_MIGRATION,
   WorkspaceSpaceStorage,
   type WorkspaceSpaceIntentClaim,
@@ -1387,6 +1388,7 @@ interface ChannelRowShared {
 }
 
 interface WorkspaceDirectoryRow extends Record<string, SqlStorageValue> {
+  resolved: number;
   workstream_id: string;
   authority_generation: number;
   common_waterline: number;
@@ -4717,6 +4719,21 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 122,
   description: "preserve up to 10,000 connector people as ordered rows rather than one bounded JSON cell",
   statements: CONNECTOR_EVENT_PEOPLE_MIGRATION,
+}, {
+  version: 123,
+  description: "resolve merged conversations independently of execution and archive state",
+  statements: [
+    `ALTER TABLE parent_children ADD COLUMN resolved INTEGER NOT NULL DEFAULT 0 CHECK (resolved IN (0, 1))`,
+    `UPDATE parent_children SET resolved = 1
+      WHERE (substream_id = '0' AND parent_id IN (
+        SELECT source_workstream_id FROM space_messages WHERE source_workstream_id IS NOT NULL
+      )) OR (parent_id, substream_id) IN (
+        SELECT subject_id, json_extract(metadata_json, '$.mergedFrom.breakoutId')
+          FROM workspace_activity_events
+          WHERE event_type = 'workstream_message_created' AND subject_type = 'workstream'
+            AND json_extract(metadata_json, '$.mergedFrom.breakoutId') IS NOT NULL
+      )`,
+  ],
 }];
 
 function conversationToolEntry(conversation: {
@@ -5017,6 +5034,7 @@ function directoryWorkstream(
     createdAt: iso(row.source_created_at),
     updatedAt: iso(row.source_updated_at),
     archivedAt: iso(row.archived_at),
+    ...(mainOpen && row.resolved === 1 ? { resolved: true } : {}),
     scope: row.scope,
     systemKind: row.system_kind,
     nextPendingWakeup: row.next_wakeup_due_at !== null && row.next_wakeup_prompt
@@ -5436,6 +5454,9 @@ function mergeViewerChanges(
 }
 
 const SELECT_WORKSPACE_DIRECTORY = `SELECT directory.workstream_id,
+    EXISTS (SELECT 1 FROM parent_children resolved_child
+      WHERE resolved_child.parent_id = directory.workstream_id AND resolved_child.substream_id = '0'
+        AND resolved_child.resolved = 1) AS resolved,
     directory.authority_generation, directory.waterline AS common_waterline,
     directory.source_event_id AS common_event_id, directory.title,
     directory.description, directory.scope, directory.exact_state,
@@ -5634,6 +5655,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
         component: MIGRATION_COMPONENT,
         workerVersionId: env.APP_VERSION ?? "unknown",
+        afterMigrations: backfillRemovedThreadMerges,
       }));
       this.detectUnheardLedger();
       await this.armNextAlarm();
@@ -11216,6 +11238,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       operationId: request.operationId,
     }, now);
     if (result.ok && !result.replayed) {
+      this.publishChannelRowToReaders(request.workstreamId);
       this.publishSpaceConversationsChanged({ spaceIds: [result.spaceId] });
       // The merge queued its search projection; publish it now rather than at the next wake.
       await this.armNextAlarm();
@@ -14440,6 +14463,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
       component: MIGRATION_COMPONENT,
       workerVersionId: this.env.APP_VERSION ?? "unknown",
+      afterMigrations: backfillRemovedThreadMerges,
     }));
     this.detectUnheardLedger();
     return { schemaVersion: 58 };

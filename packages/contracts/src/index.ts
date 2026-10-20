@@ -549,6 +549,8 @@ export const WORKSTREAM_DESCRIPTION_MAX_CHARACTERS = 4_000;
  * unarchived breakouts with that viewer on their roster are listed.
  */
 export const WorkstreamPrivateChildSchema = z.strictObject({
+  /** Done, independently of whether it is archived or an agent run is active. */
+  resolved: z.boolean().optional(),
   substreamId: SubstreamIdSchema.refine((value) => value !== "0", "A private child must be nonzero"),
   title: z.string().min(1).max(500),
   appearance: WorkstreamAppearanceSchema.optional(),
@@ -572,6 +574,8 @@ export const WorkstreamPrivateChildSchema = z.strictObject({
 export const WorkstreamBackgroundAgentCountsSchema = z.record(SubstreamIdSchema, z.number().int().positive());
 
 export const WorkstreamSchema = z.object({
+  /** Done, independently of archiving and the current agent run. */
+  resolved: z.boolean().optional(),
   appearance: WorkstreamAppearanceSchema.optional(),
   id: IdSchema,
   workspaceId: IdSchema,

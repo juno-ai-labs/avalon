@@ -188,6 +188,8 @@ is what somebody tightening `parseCachedDirectory` later needs it to do — the
 alternative is every person on the branch getting a cold, empty sidebar on their
 next launch with nothing failing.
 
+For cached and live resolved state, see [merge-back](conversation-merge.md#resolution-and-archiving).
+
 **Each listed Channel's breakout list is on the row too**, under `breakouts`,
 keyed by Channel id and holding only the Channels the row keeps. A cold launch
 seeds them into the `workstream-children` entries the Channel menu and the

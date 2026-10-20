@@ -60,7 +60,7 @@ sharingRoutes.get("/navigation", requireWorkspaceAuth, async (c) => {
   c.header("Cache-Control", "no-store");
   return c.json(SharedNavigationDirectorySchema.parse(
     await listSharedNavigationDirectory(
-      c.env, auth.workspaceId, auth.userId, c.req.query("attention") === "1", c.req.query("shell") === "1",
+      c.env, auth.workspaceId, auth.userId, c.req.query("attention") === "1", c.req.query("shell") === "1", c.req.query("resolution") === "1",
     ),
   ));
 });
