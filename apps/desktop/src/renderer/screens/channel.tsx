@@ -410,7 +410,7 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
       const unread = unreadIndex < 0 ? null : element.querySelector<HTMLElement>(
         `[data-feed-row-id="${CSS.escape(feedRowId(ordered[unreadIndex]!))}"]`,
       );
-      let top = target === null ? element.scrollHeight
+      let top = rows.length === 0 ? 0 : target === null ? element.scrollHeight
         : element.scrollTop + target.getBoundingClientRect().top - element.getBoundingClientRect().top;
       if (unread && !degradedOpening.current) {
         const bounds = unread.getBoundingClientRect();
@@ -423,7 +423,7 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
       scheduleRead();
     } else if (loadedEarlier) {
       element.scrollTop = heldScrollTop.current + element.scrollHeight - previousHeight.current;
-    } else if (atNewest.current) {
+    } else if (atNewest.current && rows.length > 0) {
       element.scrollTop = element.scrollHeight;
     } else if (restoreScroll.current) {
       element.scrollTop = heldScrollTop.current;
@@ -587,7 +587,14 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
               return [<DaySeparator key={`day:${feedRowId(row)}`} placedAt={row.placedAt} />, card];
             })}
           </ol></EmailMentionContext.Provider>
-          {feed.isSuccess && rows.length === 0 && <p className="channel-feed-empty">No threads yet. Describe the work below and Rally starts a thread for it.</p>}
+          {feed.isSuccess && rows.length === 0 && <div className="channel-feed-empty">
+            {canStart ? <>
+              <p>Channels in Rally act as places to gather related work. You can't talk directly in a channel with Rally or another person. Instead you create a thread for a specific piece of work you want to accomplish by typing it into the input box below.</p>
+              <p>Rally will then create a thread for that work. In the thread you'll be able to work with Rally and other people (you can invite them manually using Add people in the thread's title pill or just tag them).</p>
+              <p>One more thing... Once you're inside a thread you can create a breakout from any message. This is a private (but you can add people at any time) work area where you can work on first drafts, exploratory work, or anything else.</p>
+              <p>You can always merge work back from a breakout into a thread (for example when the first draft is ready and you want to collaborate on it) or merge a thread back into this channel (for example when some work is complete).</p>
+            </> : <p>No threads yet.</p>}
+          </div>}
         </div>
       </div>
       {canStart && <ChannelComposer channelColor={space.colorKey} channelId={channelId} channelName={space.name} channelScope={space.scope === 'workspace' ? 'workspace' : 'personal'} threadOpen={openThreadId !== null} workspace={workspace} />}

@@ -221,9 +221,11 @@ its threads and messages, and a composer at the foot.
   the sidebar's lock like any private Channel. Its menu's **Add people** is
   disabled, and it offers no audience switch and no archive: it is its
   owner's alone.
-- **Empty and failed.** An empty feed says "No threads yet. Describe the work
-  below and Rally starts a thread for it." A failed page says "The threads in
-  this channel couldn't be loaded." A Channel the person cannot see (archived,
+- **Empty and failed.** An empty feed explains Channels, Threads, Breakouts and
+  merging to people who can start a Thread, and says "No threads yet." to other
+  viewers. It opens at the top so long guidance starts with its first paragraph.
+  A failed page says "The threads in this channel couldn't be loaded."
+  A Channel the person cannot see (archived,
   made private, or access lost) is "Channel not found".
 - **Menu.** The Channel menu above. **Archive channel** asks first and says
   which threads move to General
