@@ -147,8 +147,10 @@ thread and breakout rows). Restoring just the directory would first draw every
 Channel unpinned, then animate the pins into place when the socket answers.
 The mirror watches these queries too, so pinning without a directory change
 updates the next launch. Only the first thread page is kept, with its cursor;
-My Threads refreshes through REST and Channel stats through the socket connect
-payload. Thread rows are validated as mapped client summaries, preserving
+My Threads refreshes through REST. Seeded Channel stats are explicitly
+invalidated without starting a refetch: they can paint immediately, but even
+Infinity-stale-time readers must refresh before choosing an opening unread
+position. A fresh REST or socket answer replaces the seed. Thread rows are validated as mapped client summaries, preserving
 fields such as preview, rather than as server wire objects. Each navigation
 list is parsed independently so an unreadable list does not discard the others.
 Existing in-memory answers always win over disk.

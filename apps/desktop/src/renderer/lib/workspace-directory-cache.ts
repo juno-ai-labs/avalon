@@ -254,6 +254,11 @@ export async function hydrateWorkspaceDirectory(
     ] as const) {
       if (value !== undefined && queryClient.getQueryData(key) === undefined) {
         queryClient.setQueryData(key, value);
+        // Stats can paint immediately, but a Channel must refresh the seed
+        // before fixing its opening unread position (readers use Infinity).
+        if (key === CHANNEL_STATS_QUERY_KEY) {
+          void queryClient.invalidateQueries({ queryKey: key, refetchType: 'none' });
+        }
       }
     }
     if (!seedDirectory) return;
