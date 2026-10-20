@@ -433,6 +433,7 @@ merge. Those couple conversation lifecycle to execution or visibility.
 archive/restore and destination-merge removal. Any future reopen operation must
 change that registry flag explicitly rather than infer it from run state.
 
+Shipped in [#1345](https://github.com/juno-ai-labs/avalon/pull/1345).
 
 ### 2026-10-19 — Server merge targets determine eligibility as well as order
 
