@@ -321,7 +321,6 @@ export function ChannelComposer({ channelColor, channelId, channelName, channelS
           fileInputRef={fileInputRef}
           members={members.data ?? []}
           invitees={visibleInvitees}
-          markNonParticipants={false}
           menuActions={menuActions}
           model={{ kind: 'choice', value: modelOverride, onChange: setModelOverride }}
           onAttach={attachmentDraft.addFiles}
