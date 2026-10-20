@@ -102,6 +102,9 @@ therefore never inherits a delayed reveal.
 
 ### Creating a Space
 
+The desktop and web **New channel** dialog picks a random colour from
+`SPACE_COLOR_KEYS`; other create paths pass their own.
+
 `SpaceService.create` asks `admitSpaceCreation` first, the gate `reserveSpace`
 applies (an active non-guest member, Space tables present), so a refused caller
 writes nothing outside WorkspaceDO. Then two steps, the second a single
