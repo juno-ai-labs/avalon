@@ -88,9 +88,40 @@ function harness(options: { ticket?: () => Promise<{ url: string; ticket: string
 }
 
 beforeEach(() => { vi.useFakeTimers(); });
-afterEach(() => { vi.useRealTimers(); });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("watchWorkspaceReach", () => {
+  it.each(["open", "sync"] as const)("replaces a stalled %s without depending on close", async (phase) => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const {sockets, diagnostics} = harness();
+    await vi.advanceTimersByTimeAsync(0);
+    const old = sockets[0]!;
+    if (phase === "sync") {
+      old.emit("open");
+      old.message("pong");
+    }
+    await vi.advanceTimersByTimeAsync(15_750);
+    expect(sockets).toHaveLength(2);
+    expect(old.closed).toBe(true);
+    expect(diagnostics).toContainEqual({code: "timeout", phase});
+    old.emit("close", {code: 1006});
+    expect(sockets).toHaveLength(2);
+  });
+
+  it("abandons an unresolved ticket and ignores its late completion", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    let resolve!: (value: {url: string; ticket: string}) => void;
+    const ticket = vi.fn().mockImplementationOnce(() => new Promise(r => {resolve = r;}))
+      .mockResolvedValue({url: "wss://api.example/socket/workspaces/w", ticket: "new"});
+    const {sockets, diagnostics} = harness({ticket});
+    await vi.advanceTimersByTimeAsync(15_750);
+    expect(sockets).toHaveLength(1);
+    resolve({url: "wss://api.example/socket/workspaces/w", ticket: "old"});
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(1);
+    expect(diagnostics).toContainEqual({code: "timeout", phase: "ticket"});
+  });
+
   it("subscribes, and reports the first subscribe answer and a reach change, but not a broadcast", async () => {
     const { onStale, opened } = harness();
     const socket = await opened();
@@ -123,7 +154,7 @@ describe("watchWorkspaceReach", () => {
     first.emit("close", { code: 1006 });
     expect(diagnostics).toEqual([{ code: "closed", closeCode: 1006 }]);
 
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(1_500);
     expect(sockets).toHaveLength(2);
     const second = await opened();
     second.message(subscribeAnswer);
@@ -134,7 +165,7 @@ describe("watchWorkspaceReach", () => {
     const { onStale, opened } = harness();
     const first = await opened();
     first.emit("close", { code: 1006 });
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(1_500);
     await opened();
 
     first.message(reachChanged);
@@ -144,6 +175,7 @@ describe("watchWorkspaceReach", () => {
   it("pings when quiet, and closes and reconnects when the pong does not come", async () => {
     const { sockets, opened } = harness();
     const socket = await opened();
+    socket.message(subscribeAnswer);
 
     await vi.advanceTimersByTimeAsync(WORKSPACE_SOCKET_HEARTBEAT_MS);
     expect(socket.sent.at(-1)).toBe("ping");
@@ -151,13 +183,14 @@ describe("watchWorkspaceReach", () => {
     expect(socket.closed).toBe(true);
 
     socket.emit("close", { code: 1006 });
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(1_500);
     expect(sockets).toHaveLength(2);
   });
 
   it("keeps the socket when the pong arrives", async () => {
     const { opened } = harness();
     const socket = await opened();
+    socket.message(subscribeAnswer);
     await vi.advanceTimersByTimeAsync(WORKSPACE_SOCKET_HEARTBEAT_MS);
     socket.message("pong");
     await vi.advanceTimersByTimeAsync(WORKSPACE_SOCKET_PONG_TIMEOUT_MS);
@@ -178,7 +211,7 @@ describe("watchWorkspaceReach", () => {
     expect(diagnostics).toEqual([{ code: "ticket_failed", error: failure }]);
     expect(sockets).toHaveLength(0);
 
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(1_500);
     expect(sockets).toHaveLength(1);
   });
 
@@ -198,7 +231,7 @@ describe("watchWorkspaceReach", () => {
     expect(diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["open_failed"]);
     expect(sockets).toHaveLength(0);
 
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(1_500);
     expect(sockets).toHaveLength(1);
   });
 

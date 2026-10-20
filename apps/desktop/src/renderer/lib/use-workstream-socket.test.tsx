@@ -1,3 +1,4 @@
+import { emptyTranscriptSnapshot, snapshotFrame } from './workstream-socket.test-fixtures';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import {
   ClientSocketEventSchema,
@@ -236,21 +237,6 @@ function workstreamDetail(overrides: Partial<WorkstreamDetail> = {}): Workstream
   };
 }
 
-function emptyTranscriptSnapshot(): WorkstreamBoot['transcript'] {
-  return {
-    snapshotId: '00000000-0000-7000-8000-000000000777',
-    snapshotThrough: 0,
-    eventSequence: 0,
-    snapshotAtUtc: '2026-07-31T19:00:00.000Z',
-    unreadAnchorSequence: null,
-    unreadReason: 'no_unread',
-    ranges: [],
-    activities: [],
-    activeActivities: [],
-    pluginRuns: [],
-    activeTurns: [], pendingInputs: [],
-  };
-}
 
 function transcriptTurn(sequence: number, text: string) {
   return {
@@ -301,33 +287,6 @@ function pendingInput(sequence: number, text: string): PendingTranscriptInput {
  * `WorkstreamDetail` is rejected as malformed and silently ignored — a test
  * written that way passes its assertions against the state it set up itself.
  */
-function wireWorkstreamDetail(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    id: '00000000-0000-7000-8000-000000000091',
-    workspaceId: '00000000-0000-7000-8000-000000000001',
-    title: 'Wire channel',
-    objective: 'Wire objective',
-    createdByUserId: null,
-    harnessStatus: 'completed',
-    latestAttentionSequenceNumber: 0,
-    readThroughSequenceNumber: 0,
-    manualUnreadFromSequenceNumber: null,
-    manualUnreadGeneration: 0,
-    hasUnread: false,
-    firstUnreadSequenceNumber: null,
-    lastActivityAt: '2026-07-31T19:00:00.000Z',
-    createdAt: '2026-07-31T19:00:00.000Z',
-    updatedAt: '2026-07-31T19:00:00.000Z',
-    archivedAt: null,
-    participants: [],
-    viewers: [],
-    resources: [],
-    connections: [],
-    openElicitations: [],
-    latestHarnessRunId: null,
-    ...overrides,
-  };
-}
 
 function legacySuggestedResource(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -356,27 +315,6 @@ function legacySuggestedResource(overrides: Record<string, unknown> = {}): Recor
   };
 }
 
-function snapshotFrame(input: {
-  sequence: number;
-  reason?: 'initial' | 'reconciliation' | 'history_unavailable';
-  workstream?: Record<string, unknown>;
-  transcript?: WorkstreamBoot['transcript'];
-  pendingInputChunkCount?: number;
-  initialContextChunkCount?: number;
-}): Record<string, unknown> {
-  return {
-    type: 'snapshot',
-    reason: input.reason ?? 'initial',
-    sequence: input.sequence,
-    occurredAt: '2026-07-31T19:20:00.000Z',
-    workstream: wireWorkstreamDetail(input.workstream),
-    transcript: input.transcript ?? emptyTranscriptSnapshot(),
-    pendingInputChunkCount: input.pendingInputChunkCount ?? 0,
-    initialContextChunkCount: input.initialContextChunkCount ?? 0,
-    activeStreams: [],
-    activeCompaction: null,
-  };
-}
 
 /** The frames a socket was asked to send, in order, excluding raw keepalives. */
 function sentFrames(socket: FakeWebSocket): ClientSocketEvent[] {
@@ -638,6 +576,107 @@ describe('useWorkstreamSocket', () => {
     expect(result.current.openingError).toBeUndefined();
   });
 
+  it.each(['sleep', 'offline'] as const)('replaces a feed across %s without waiting for close', async (transition) => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const id = '00000000-0000-7000-8000-00000000074c';
+    const getSocketTicket = vi.fn(async () => ({url: 'wss://api.rally.test/feed',
+      ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket')}));
+    const socketApi = socketApiWith({getSocketTicket});
+    const {result} = renderHook(() => useWorkstreamSocket(socketApi, id, true), {wrapper: createWrapper()});
+    await flushPromises();
+    const old = FakeWebSocket.instances[0]!;
+    act(() => { old.open(); old.message(snapshotFrame({sequence: 1, workstream: {id}})); });
+    vi.spyOn(old, 'close').mockImplementation(() => undefined);
+    act(() => {
+      if (transition === 'sleep') document.dispatchEvent(new Event('freeze'));
+      else window.dispatchEvent(new Event('offline'));
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(120_000));
+    expect(getSocketTicket).toHaveBeenCalledTimes(1);
+    act(() => {
+      if (transition === 'sleep') document.dispatchEvent(new Event('resume'));
+      else window.dispatchEvent(new Event('online'));
+    });
+    await flushPromises();
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    act(() => {
+      FakeWebSocket.instances[1]!.open();
+      FakeWebSocket.instances[1]!.message(snapshotFrame({sequence: 1, workstream: {id}}));
+      old.dispatchEvent(Object.assign(new Event('close'), {code: 1006}));
+    });
+    expect(result.current.state).toBe('connected');
+  });
+
+  it.each(['handshake', 'silent open', 'pong without snapshot', 'manual'] as const)(
+    'replaces a stranded warm connection: %s, without awaiting close', async (phase) => {
+      vi.useFakeTimers();
+      vi.spyOn(Math, 'random').mockReturnValue(0);
+      vi.stubGlobal('WebSocket', FakeWebSocket);
+      const workstreamId = '00000000-0000-7000-8000-00000000074b';
+      const api = socketApiWith({ getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
+      })) });
+      const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+        wrapper: createWrapper(),
+      });
+      await flushPromises();
+      act(() => {
+        FakeWebSocket.instances[0]!.open();
+        FakeWebSocket.instances[0]!.message(snapshotFrame({
+          sequence: 1, workstream: { id: workstreamId, title: 'Opened feed' },
+        }));
+        FakeWebSocket.instances[0]!.close(1012);
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(750));
+      const stranded = FakeWebSocket.instances[1]!;
+      vi.spyOn(stranded, 'close').mockImplementation(() => { stranded.readyState = FakeWebSocket.CLOSING; });
+      if (phase === 'silent open' || phase === 'pong without snapshot') act(() => stranded.open());
+      if (phase === 'pong without snapshot') {
+        act(() => stranded.rawMessage('pong'));
+        expect(sentFrames(stranded)).toContainEqual({type: 'request_snapshot'});
+      }
+      if (phase === 'manual') {
+        act(() => result.current.retryOpening());
+        await flushPromises();
+      } else {
+        await act(async () => vi.advanceTimersByTimeAsync(10_000 + 1_500));
+      }
+      expect(FakeWebSocket.instances).toHaveLength(3);
+      const replacement = FakeWebSocket.instances[2]!;
+      act(() => {
+        replacement.open();
+        replacement.rawMessage('pong');
+        replacement.message(snapshotFrame({sequence: 1, workstream: {id: workstreamId}}));
+        stranded.dispatchEvent(Object.assign(new Event('close'), { code: 1006 }));
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(10_000));
+      expect(result.current.state).toBe('connected');
+      expect(FakeWebSocket.instances).toHaveLength(3);
+    },
+  );
+
+  it('recovers a reading-only feed on foreground without a pending command', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const api = socketApiWith({ getSocketTicket: vi.fn(async () => ({
+      url: 'wss://api.rally.test/feed', ticket: 'socket-ticket',
+      protocols: socketTicketProtocols('socket-ticket'),
+    })) });
+    renderHook(() => useWorkstreamSocket(api, 'reading-feed', true), { wrapper: createWrapper() });
+    await flushPromises();
+    const first = FakeWebSocket.instances[0]!;
+    act(() => first.open());
+    act(() => window.dispatchEvent(new Event('focus')));
+    expect(first.send).toHaveBeenCalledWith('ping');
+    act(() => first.close(1006));
+    act(() => window.dispatchEvent(new Event('focus')));
+    await flushPromises();
+    expect(FakeWebSocket.instances).toHaveLength(2);
+  });
+
   it('times out a stranded reconnect ticket after the feed already opened', async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);
@@ -803,7 +842,8 @@ describe('useWorkstreamSocket', () => {
     expect(getSocketTicket).toHaveBeenCalledTimes(2);
     await act(async () => vi.advanceTimersByTimeAsync(120_000));
     expect(result.current.openingError).toBeUndefined();
-    expect(getSocketTicket).toHaveBeenCalledTimes(2);
+    // Cached content keeps recovery automatic; it cannot excuse a new stuck dial.
+    expect(getSocketTicket.mock.calls.length).toBeGreaterThan(2);
   });
 
   it.each([
@@ -1123,6 +1163,14 @@ describe('useWorkstreamSocket', () => {
     );
     await flushPromises();
     const firstSocket = FakeWebSocket.instances[0]!;
+    firstSocket.send.mockImplementation((frame: string) => {
+      if (frame === 'ping') queueMicrotask(() => firstSocket.rawMessage('pong'));
+      else if (frame.includes('request_snapshot')) queueMicrotask(() => firstSocket.message(snapshotFrame({
+        sequence: 1, workstream: {id: firstWorkstreamId},
+      })));
+    });
+    act(() => firstSocket.open());
+    await flushPromises();
     const firstClose = vi.spyOn(firstSocket, 'close');
 
     view.rerender(
@@ -1131,10 +1179,19 @@ describe('useWorkstreamSocket', () => {
       </WorkstreamSocketPool>,
     );
     await flushPromises();
+    const secondSocket = FakeWebSocket.instances[1]!;
+    secondSocket.send.mockImplementation((frame: string) => {
+      if (frame === 'ping') queueMicrotask(() => secondSocket.rawMessage('pong'));
+      else if (frame.includes('request_snapshot')) queueMicrotask(() => secondSocket.message(snapshotFrame({
+        sequence: 1, workstream: {id: secondWorkstreamId},
+      })));
+    });
+    act(() => secondSocket.open());
+    await flushPromises();
     expect(FakeWebSocket.instances).toHaveLength(2);
     expect(firstClose).not.toHaveBeenCalled();
 
-    act(() => vi.advanceTimersByTime(RECENT_WORKSTREAM_SOCKET_RETENTION_MS - 1));
+    await act(async () => vi.advanceTimersByTimeAsync(RECENT_WORKSTREAM_SOCKET_RETENTION_MS - 1));
     view.rerender(
       <WorkstreamSocketPool activeWorkstreamId={firstWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
         <ActiveConnection workstreamId={firstWorkstreamId} />
@@ -1175,6 +1232,14 @@ describe('useWorkstreamSocket', () => {
     );
     await flushPromises();
     const firstSocket = FakeWebSocket.instances[0]!;
+    firstSocket.send.mockImplementation((frame: string) => {
+      if (frame === 'ping') queueMicrotask(() => firstSocket.rawMessage('pong'));
+      else if (frame.includes('request_snapshot')) queueMicrotask(() => firstSocket.message(snapshotFrame({
+        sequence: 1, workstream: {id: firstWorkstreamId},
+      })));
+    });
+    act(() => firstSocket.open());
+    await flushPromises();
     const firstClose = vi.spyOn(firstSocket, 'close');
 
     view.rerender(
@@ -1183,14 +1248,14 @@ describe('useWorkstreamSocket', () => {
       </WorkstreamSocketPool>,
     );
     await flushPromises();
-    act(() => vi.advanceTimersByTime(RECENT_WORKSTREAM_SOCKET_RETENTION_MS - 1));
+    await act(async () => vi.advanceTimersByTimeAsync(RECENT_WORKSTREAM_SOCKET_RETENTION_MS - 1));
     expect(firstClose).not.toHaveBeenCalled();
 
     act(() => vi.advanceTimersByTime(1));
     expect(firstClose).toHaveBeenCalledTimes(1);
   });
 
-  it('queues a message on the authenticated room socket and resolves its private receipt', async () => {
+  it.each(['close', 'manual'] as const)('preserves a pending message and its receipt across %s recovery', async (recovery) => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);
     vi.stubGlobal('WebSocket', FakeWebSocket);
@@ -1240,8 +1305,11 @@ describe('useWorkstreamSocket', () => {
         runMode: 'queue',
       },
     }));
-    act(() => socket.close(1006));
-    act(() => vi.advanceTimersByTime(750));
+    if (recovery === 'manual') act(() => result.current.retryOpening());
+    else {
+      act(() => socket.close(1006));
+      act(() => vi.advanceTimersByTime(750));
+    }
     await flushPromises();
     const reconnectedSocket = FakeWebSocket.instances[1]!;
     act(() => reconnectedSocket.open());
@@ -1393,7 +1461,8 @@ describe('useWorkstreamSocket', () => {
 
       const settledCallCount = socket.send.mock.calls.length;
       act(() => window.dispatchEvent(new Event('focus')));
-      expect(socket.send).toHaveBeenCalledTimes(settledCallCount);
+      expect(socket.send).toHaveBeenCalledTimes(settledCallCount + 1);
+      expect(socket.send).toHaveBeenLastCalledWith('ping');
     } finally {
       hasFocus.mockRestore();
     }
@@ -4498,7 +4567,11 @@ describe('useWorkstreamSocket', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
     expect(FakeWebSocket.instances).toHaveLength(3);
 
-    act(() => FakeWebSocket.instances[2]?.open());
+    act(() => {
+      FakeWebSocket.instances[2]?.open();
+      FakeWebSocket.instances[2]?.rawMessage('pong');
+      FakeWebSocket.instances[2]?.message(snapshotFrame({sequence: 1, workstream: {id: workstreamId}}));
+    });
     await act(async () => { await vi.advanceTimersByTimeAsync(SOCKET_STABLE_CONNECTION_MS); });
     act(() => FakeWebSocket.instances[2]?.close());
     await act(async () => { await vi.advanceTimersByTimeAsync(749); });

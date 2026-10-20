@@ -191,6 +191,18 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function initialSidebarFrame() {
+  return {
+    type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000008',
+    waterline: 8, occurredAt: '2026-08-17T20:00:00.000Z',
+    topics: ['workstream_directory'], reason: 'initial',
+    sidebar: {
+      workstreams: { directoryWaterline: 8, nextCursor: null, stateVersions: [], items: [] },
+      automations: { waterline: 0, items: [] }, notes: { waterline: 0, items: [] },
+    },
+  };
+}
+
 describe('WorkspaceSocketProvider', () => {
   it('reports app and channel foreground separately and receives viewer-scoped presence', async () => {
     applicationFocus.foregrounded = true;
@@ -827,6 +839,70 @@ describe('WorkspaceSocketProvider', () => {
       );
     }
 
+    it('replaces an expired handshake without waiting for its close event', async () => {
+      vi.useFakeTimers();
+      vi.spyOn(Math, 'random').mockReturnValue(0);
+      renderProvider(vi.fn(async () => ticket));
+      await flushPromises();
+      const old = FakeWebSocket.instances[0]!;
+      vi.spyOn(old, 'close').mockImplementation(() => undefined);
+      await act(async () => vi.advanceTimersByTimeAsync(15_750));
+      expect(FakeWebSocket.instances).toHaveLength(2);
+      act(() => old.dispatchEvent(Object.assign(new Event('close'), {code: 1006})));
+      expect(FakeWebSocket.instances).toHaveLength(2);
+    });
+
+    it('replaces a transport answering pongs without its initial sidebar', async () => {
+      vi.useFakeTimers();
+      vi.spyOn(Math, 'random').mockReturnValue(0);
+      renderProvider(vi.fn(async () => ticket));
+      await flushPromises();
+      const old = FakeWebSocket.instances[0]!;
+      act(() => old.open());
+      await act(async () => vi.advanceTimersByTimeAsync(10_000));
+      act(() => old.dispatchEvent(new MessageEvent('message', {data: 'pong'})));
+      await act(async () => vi.advanceTimersByTimeAsync(5_750));
+      expect(FakeWebSocket.instances).toHaveLength(2);
+      expect(socketTelemetry()).toContainEqual(expect.objectContaining({cause: 'sync_timeout'}));
+    });
+
+    it('probes on foreground and keeps the first unanswered pong deadline', async () => {
+      vi.useFakeTimers();
+      vi.spyOn(Math, 'random').mockReturnValue(0);
+      renderProvider(vi.fn(async () => ticket));
+      await flushPromises();
+      const old = FakeWebSocket.instances[0]!;
+      act(() => { old.open(); old.message(initialSidebarFrame()); });
+      vi.spyOn(old, 'close').mockImplementation(() => undefined);
+      act(() => setApplicationForeground(true));
+      expect(old.send).toHaveBeenCalledWith('ping');
+      await act(async () => vi.advanceTimersByTimeAsync(10_000));
+      act(() => setApplicationForeground(true));
+      await act(async () => vi.advanceTimersByTimeAsync(5_750));
+      expect(FakeWebSocket.instances).toHaveLength(2);
+      expect(socketTelemetry()).toContainEqual(expect.objectContaining({cause: 'heartbeat_timeout'}));
+    });
+
+    it.each(['sleep', 'offline'] as const)('fences old tickets across %s, even if abort never settles', async (transition) => {
+      let first!: (value: typeof ticket) => void;
+      let second!: (value: typeof ticket) => void;
+      const getTicket = vi.fn()
+        .mockImplementationOnce(() => new Promise<typeof ticket>(resolve => { first = resolve; }))
+        .mockImplementationOnce(() => new Promise<typeof ticket>(resolve => { second = resolve; }));
+      renderProvider(getTicket);
+      await flushPromises();
+      if (transition === 'sleep') { setPowerState('suspended'); setPowerState('resumed'); }
+      else act(() => { window.dispatchEvent(new Event('offline')); window.dispatchEvent(new Event('online')); });
+      await flushPromises();
+      expect(getTicket).toHaveBeenCalledTimes(2);
+      await act(async () => first(ticket));
+      act(() => window.dispatchEvent(new Event('online')));
+      expect(getTicket).toHaveBeenCalledTimes(2);
+      expect(FakeWebSocket.instances).toHaveLength(0);
+      await act(async () => second(ticket));
+      expect(FakeWebSocket.instances).toHaveLength(1);
+    });
+
     // 2026-09-29: the server sent `101`, the Mac never saw it, and the socket
     // sat CONNECTING for twelve minutes while the server held it unheard.
     it('gives up on a socket that never opens, says why, and dials again', async () => {
@@ -855,12 +931,12 @@ describe('WorkspaceSocketProvider', () => {
       expect(FakeWebSocket.instances).toHaveLength(2);
     });
 
-    it('does not give up on a socket that opened', async () => {
+    it('does not give up on a socket that opened and synchronized', async () => {
       vi.useFakeTimers();
       renderProvider(vi.fn(async () => ticket));
       await flushPromises();
       const socket = FakeWebSocket.instances[0]!;
-      act(() => socket.open());
+      act(() => { socket.open(); socket.message(initialSidebarFrame()); });
 
       await act(async () => { await vi.advanceTimersByTimeAsync(WORKSPACE_SOCKET_OPEN_TIMEOUT_MS * 2); });
 
@@ -980,7 +1056,7 @@ describe('WorkspaceSocketProvider', () => {
     );
     await flushPromises();
     const socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
+    act(() => { socket.open(); socket.message(initialSidebarFrame()); });
     reportTelemetryProductIntent.mockClear();
 
     // The heartbeat closes the socket itself when no pong answers, and the
