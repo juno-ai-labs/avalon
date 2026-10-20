@@ -1317,6 +1317,8 @@ const menuBarSocketFactory = createNodeRealtimeSocketFactory(
 function logMenuBarSocketDiagnostic(diagnostic: ReachWatchDiagnostic): void {
   if (diagnostic.code === 'ticket_failed' || diagnostic.code === 'open_failed') {
     logWarn('rally', `menu bar workspace socket ${diagnostic.code}`, diagnostic.error);
+  } else if (diagnostic.code === 'timeout' || diagnostic.code === 'transport_error') {
+    logWarn('rally', `menu bar workspace socket ${diagnostic.phase}_${diagnostic.code}`);
   } else {
     logWarn('rally', `menu bar workspace socket ${diagnostic.code}: ${diagnostic.closeCode}`);
   }
@@ -1329,7 +1331,7 @@ function logMenuBarSocketDiagnostic(diagnostic: ReachWatchDiagnostic): void {
  */
 const channelDirectoryWatch = new ChannelDirectoryWatch({
   socket: (handlers) => watchWorkspaceSocket({
-    ticket: async () => SocketTicketSchema.parse(await rallyApiRequest('/workspace/socket')),
+    ticket: async (signal) => SocketTicketSchema.parse(await rallyApiRequest('/workspace/socket', undefined, signal)),
     open: (url, ticket) => reachSocketFromRealtimeClient(menuBarSocketFactory(url, socketTicketProtocols(ticket))),
     ...handlers,
     onDiagnostic: (diagnostic) => {
@@ -1639,7 +1641,9 @@ async function readDeveloperSettingsFlag(): Promise<boolean> {
 async function rallyApiRequest(
   path: string,
   init?: { method: 'POST'; body: unknown },
+  signal?: AbortSignal,
 ): Promise<unknown> {
+  signal?.throwIfAborted();
   const stored = await loadStoredAuth();
   if (!stored) throw new Error('No Rally session is available');
   const apiBaseUrl = apiBaseForAuth(stored);
@@ -1653,7 +1657,9 @@ async function rallyApiRequest(
       ...(init ? { 'Content-Type': 'application/json' } : {}),
     },
     ...(init ? { body: JSON.stringify(init.body) } : {}),
-    signal: AbortSignal.timeout(MENU_BAR_REQUEST_TIMEOUT_MS),
+    signal: signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(MENU_BAR_REQUEST_TIMEOUT_MS)])
+      : AbortSignal.timeout(MENU_BAR_REQUEST_TIMEOUT_MS),
   });
   let response = await ask(stored.accessToken);
   if (response.status === 401) {

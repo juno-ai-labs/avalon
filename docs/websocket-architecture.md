@@ -523,13 +523,39 @@ terminates and forgets the affected socket.
 Server access revocation remains terminal and prevents the affected state
 machine from reconnecting.
 
-Application foreground is also a recovery edge for an unresolved conversation
-command. The renderer listens to main's application-focus signal rather than
+Application foreground is also a recovery edge for the visible conversation
+and for any unresolved conversation command. The renderer listens to main's application-focus signal rather than
 document visibility alone, because a visible window can lose application focus
 without becoming hidden. An already-closed feed bypasses its throttled reconnect
 timer immediately. An open feed replays the unresolved operation IDs once more,
 requests a single-flight canonical snapshot, and probes liveness without
-replacing an older pong deadline. Feeds with no pending command do nothing.
+replacing an older pong deadline. A visible feed without pending commands still
+probes liveness or bypasses reconnect backoff; background-only feeds do nothing.
+
+Every attempt is bounded by the existing opening policy. A warm feed accepts
+ordered application replay over its canonical cache; pongs alone cannot finish
+opening. Empty replay has no completion marker, so a pong-responsive connection
+with no application state by its deadline gets one `request_snapshot` fallback
+and one more opening budget. This preserves cheap replay without racing its
+first event against a platform auto-pong. Snapshot assembly must finish,
+including pending-input chunks, before confirming the ticket as live. Abandoning
+either chunk assembly resets the subscription cursor: chunks share the snapshot
+sequence and cannot be replayed after that sequence.
+
+Ownership is retired before close on timeout, resync, offline, and suspend;
+late events and obsolete ticket completions cannot affect replacements. Resume
+redials, browser restoration supplies equivalent lifecycle signals, and activating
+a retained conversation probes it independently of its sticky admission state.
+A previously synchronized feed keeps retrying even if replacement context chunks
+are incomplete. Cold opens retain the three-attempt policy. **Reconnect now**
+keeps pending command IDs; explicit retry after terminal failure or revoked
+access restarts the owner to re-check admission. Automatic access retry stays off.
+
+Organization and shared main-process watchers use the existing 15-second opening
+policy for their handshake and initial subscription state; shared watchers also
+bound ticket acquisition. Pongs never clear the sync deadline. Backoff resets
+only after application state arrives, and every transport failure reports its
+cause before retirement. Offline/suspend telemetry requires an active attempt.
 
 ### Desktop network recovery
 
@@ -896,6 +922,25 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-10-19 — Recover transport and application state across network and power changes
+
+**What changed:** Bounded every feed attempt, fenced stale ticket completions,
+and retired failed transports without waiting for close. Added read-only
+foreground/activation recovery, power/browser restoration, initial subscription
+watchdogs, and **Reconnect now**. Warm feeds accept cheap replay, with a delayed
+snapshot fallback for an otherwise silent subscription.
+
+**Why:** Cached content disabled the opening deadline, focus recovery required a
+pending mutation, and several paths depended on a close event that might never
+arrive. Auto-pongs could hide a missing application subscription. These gaps
+left readers on “Waiting to reconnect…” indefinitely.
+
+**Considered and rejected:** App reload discards unrelated state; parallel REST
+history duplicates socket authority; snapshot-on-first-pong defeats cheap replay.
+Recovery reuses the existing timing policy. Preserve pending command IDs, keep
+warm recovery alive through partial chunks, require application state for live
+confirmation, and keep automatic access-revocation recovery terminal.
 
 ### 2026-10-19 — A new version reaches a Channel's readers
 
