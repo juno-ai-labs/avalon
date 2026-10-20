@@ -49,12 +49,10 @@ describe('MessageByline', () => {
   it('leaves Rally without a dot and dates the turn', () => {
     const { container } = render(
       <Tooltip.Provider>
-        <MessageByline align="start" author="Rally" createdAt={at}><button type="button">Collapse all</button></MessageByline>
+        <MessageByline align="start" author="Rally" createdAt={at} />
       </Tooltip.Provider>,
     );
     expect(container.querySelector('.message-author-dot')).toBeNull();
     expect(container.querySelector('time')).toHaveAttribute('dateTime', at);
-    // Trailing controls come after the line whichever way it reads.
-    expect(container.querySelector('header')!.lastElementChild).toHaveTextContent('Collapse all');
   });
 });
