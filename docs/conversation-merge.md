@@ -242,11 +242,12 @@ come from its directory row until the merge-target read lands, not from the
 conversation detail, which a socket install leaves without them. Then both
 eligibility and order are the server's: `GET /conversations/:parentId/merge-channels` lists the
 Channels this person can merge into, earliest placement first, read in the
-background (`useMergeChannelOrder`). The Merge label, the title menu and the
+background (`useMergeChannels`). The Merge label, the title menu and the
 picker therefore lead with the Channel the server would choose, as the PRD
-sets the default. A missing or stale directory placement cannot hide a target
-the server returned, and an empty server list removes cached targets. Until
-that read lands, the directory's placements stand in. The
+sets the default. Placement and access changes, and workspace reconnects,
+refresh this read. Until it lands, the directory's placements stand in. An open
+card closes if its chosen Channel is no longer eligible, preserving its draft
+without silently changing its audience. The
 card has no attach control: a merge embeds artifacts by link. A title-menu
 request opens the card once; returning to the pane does not reopen it. A
 Channel merge card's artifact opens in the Channel's own panel.
@@ -382,12 +383,14 @@ more than keeping a private Channel's name hidden.
 eligible Channel IDs once loaded, falling back to directory placements only
 while that read is pending.
 
-**Why:** The private U.S. B2B AI funding Thread in Laurel AI showed no Merge
+**Why:** A private Thread showed no Merge
 action despite its active Channel placement. Using the server response only to
 sort cached placements left an empty cache with nothing to sort. Requiring a
 directory refresh adds latency and leaves the same dependency in place; the
 existing merge read already owns the eligible targets. An empty response must
-also remove stale cached targets. Channel labels and scope still come from the
+also remove stale cached targets. Placement/access events and reconnects refresh
+the eligible targets; an open card closes if its selected target disappears,
+keeping the draft for an explicit new choice. Channel labels and scope still come from the
 reader's Channel directory, and the server rechecks admission when merging.
 
 ### 2026-10-19 — A private thread merges into its Channel, and a merge shares its artifacts with its parent

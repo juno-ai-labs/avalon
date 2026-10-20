@@ -35,7 +35,7 @@ describe('where a conversation merges', () => {
 
   it('leads with the server’s default, earliest placement first, once it has read it', () => {
     const target = mergeTargetFor({
-      parentKind: 'workstream', substreamId: '0', guest: false, thread, order: [BOARD, GTM],
+      parentKind: 'workstream', substreamId: '0', guest: false, thread, eligible: [BOARD, GTM],
       spaces: [space(GTM, 'GTM', 'organization'), space(BOARD, 'Board', 'participant')],
     });
     expect(target).toEqual({ kind: 'channel', channels: [
@@ -52,16 +52,16 @@ describe('where a conversation merges', () => {
     })).toEqual({ kind: 'channel', channels: [{ id: GTM, name: 'GTM', scope: 'workspace' }], threadPrivate: true });
   });
 
-  it('offers Merge to Laurel AI from the server when a private Thread has no cached placements', () => {
+  it('offers Merge to GTM from the server when a private Thread has no cached placements', () => {
     const target = mergeTargetFor({
       parentKind: 'workstream', substreamId: '0', guest: false,
-      thread: { title: 'U.S. B2B AI funding', scope: 'personal', spaceIds: [] },
-      placements: [], order: [GTM], spaces: [space(GTM, 'Laurel AI', 'organization')],
+      thread: { title: 'Private thread', scope: 'personal', spaceIds: [] },
+      placements: [], eligible: [GTM], spaces: [space(GTM, 'GTM', 'organization')],
     });
     expect(target).toEqual({ kind: 'channel', channels: [
-      { id: GTM, name: 'Laurel AI', scope: 'workspace' },
+      { id: GTM, name: 'GTM', scope: 'workspace' },
     ], threadPrivate: true });
-    expect(mergeLabel(target!)).toBe('Merge to Laurel AI');
+    expect(mergeLabel(target!)).toBe('Merge to GTM');
   });
 
   it('drops stale cached targets when the server lists different eligible Channels or none', () => {
@@ -69,10 +69,10 @@ describe('where a conversation merges', () => {
       parentKind: 'workstream', substreamId: '0', guest: false, thread,
       placements: [GTM], spaces: [space(GTM, 'GTM', 'organization'), space(BOARD, 'Board', 'participant')],
     };
-    expect(mergeTargetFor({ ...input, order: [BOARD] })).toEqual({
+    expect(mergeTargetFor({ ...input, eligible: [BOARD] })).toEqual({
       kind: 'channel', channels: [{ id: BOARD, name: 'Board', scope: 'workspace' }], threadPrivate: false,
     });
-    expect(mergeTargetFor({ ...input, order: [] })).toBeNull();
+    expect(mergeTargetFor({ ...input, eligible: [] })).toBeNull();
   });
 
   it('offers nothing when every Channel is read-only to the reader, and a Breakout its Thread', () => {

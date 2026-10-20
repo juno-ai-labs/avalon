@@ -24,6 +24,7 @@ import { organizationUsageQueryKey, usageCacheSlice, useOrganizationUsage, type 
 import { requestSocketTicket, SOCKET_TICKET_REQUEST_TIMEOUT_MS } from './socket-ticket-request';
 import { WORKSPACE_SOCKET_OPEN_TIMEOUT_MS } from '@rally/contracts/workspace-reach-watch';
 import { DIRECTORY_CACHE_KEY, workspaceDirectorySlice } from './workspace-directory-cache';
+import { useMergeChannels } from './use-merge-channels';
 import { SPACES_QUERY_KEY } from './sidebar-list-store';
 
 import type * as TelemetryModule from './telemetry';
@@ -1985,6 +1986,7 @@ describe('WorkspaceSocketProvider', () => {
     expect(keys).toEqual([
       ['channel-feed', '00000000-0000-7000-8000-0000000000f2'],
       ['channel-feed', '00000000-0000-7000-8000-0000000000f3'],
+      ['merge-channels'],
       ['my-threads'],
       ['channel-stats'],
       ['activity'],
@@ -1992,7 +1994,7 @@ describe('WorkspaceSocketProvider', () => {
     expect(queryClient.getQueryData<SpaceDirectory>(SPACES_QUERY_KEY)?.items[0]?.attentionCount).toBe(3);
   });
 
-  it('reads the guest navigation again when a reach change arrives, and nothing else', async () => {
+  it('reads guest navigation and eligible merge Channels again when reach changes', async () => {
     const queryClient = new QueryClient();
     const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
     const getWorkspaceSocketTicket = vi.fn(async () => ({
@@ -2023,7 +2025,53 @@ describe('WorkspaceSocketProvider', () => {
 
     // A member's Channel rows and Space pages are pushed on the same flip, so
     // the associative read a guest's sidebar is drawn from is the one to redo.
-    expect(invalidate.mock.calls.map(([filters]) => filters?.queryKey)).toEqual([['shared-navigation']]);
+    expect(invalidate.mock.calls.map(([filters]) => filters?.queryKey)).toEqual([['merge-channels'], ['shared-navigation']]);
+  });
+
+
+  it.each(['placement', 'reach', 'reconnect'] as const)('refreshes the open Thread merge targets after a %s change', async (change) => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let eligible = false;
+    const api = {
+      getWorkspaceSocketTicket: async () => ({
+        url: 'wss://api.rally.test/socket/workspaces/workspace-1', ticket: 'workspace-ticket',
+        protocols: socketTicketProtocols('workspace-ticket'),
+      }),
+      mergeChannels: async () => ({ channels: eligible ? [{ id: '00000000-0000-7000-8000-0000000000f2', name: 'GTM' }] : [] }),
+    };
+    function Probe(): JSX.Element {
+      const ids = useMergeChannels(api, 'thread-1', true);
+      return <output data-testid="merge-targets">{ids === undefined ? 'loading' : ids.join(',') || 'none'}</output>;
+    }
+    render(<QueryClientProvider client={queryClient}>
+      <WorkspaceSocketProvider region="global" api={api} workspaceId="00000000-0000-7000-8000-000000000001">
+        <Probe />
+      </WorkspaceSocketProvider>
+    </QueryClientProvider>);
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    await vi.waitFor(() => expect(screen.getByTestId('merge-targets').textContent).toBe('none'), { timeout: 5000 });
+    eligible = true;
+    const event = change === 'placement' ? {
+      type: 'space_conversations_changed', occurredAt: '2026-10-19T00:00:00.000Z',
+      spaceIds: ['00000000-0000-7000-8000-0000000000f2'], attentionCounts: [], placementChanged: true,
+    } : change === 'reach' ? {
+      type: 'workspace_reach_changed', occurredAt: '2026-10-19T00:00:00.000Z',
+      userIds: ['00000000-0000-7000-8000-000000000003'],
+    } : {
+      type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000018', waterline: 9,
+      occurredAt: '2026-10-19T00:00:00.000Z', topics: [], reason: 'resume',
+      sidebar: {
+        workstreams: { directoryWaterline: 1, nextCursor: null, stateVersions: [], items: [] },
+        automations: { waterline: 0, items: [] }, notes: { waterline: 0, items: [] },
+      },
+    };
+    act(() => socket.message(event));
+    await vi.waitFor(() => expect(screen.getByTestId('merge-targets').textContent).toBe('00000000-0000-7000-8000-0000000000f2'), { timeout: 5000 });
+    eligible = false;
+    act(() => socket.message(event));
+    await vi.waitFor(() => expect(screen.getByTestId('merge-targets').textContent).toBe('none'), { timeout: 5000 });
   });
 
   it('fails an in-flight directory page immediately when the desktop goes offline', async () => {
