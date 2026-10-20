@@ -50,7 +50,7 @@ export async function listSharedDirectory(env: Env, workspaceId: WorkspaceId, us
  * they do not know, so only a client that asks for them gets them.
  */
 export async function listSharedNavigationDirectory(
-  env: Env, workspaceId: WorkspaceId, userId: UserId, includeAttention = false, includeShellFields = false,
+  env: Env, workspaceId: WorkspaceId, userId: UserId, includeAttention = false, includeShellFields = false, includeResolution = false,
 ) {
   const relationship = await readWorkspaceRelationship(env.DB, workspaceId, userId);
   if (relationship?.status !== "active") {
@@ -66,7 +66,7 @@ export async function listSharedNavigationDirectory(
   // shared anything with most members, and that answer needs no round trip.
   const items = candidates.length === 0 ? [] : SharedNavigationWorkstreamSchema.nullable().array().parse(
     await workspace.readSharedWorkstreams({
-      workspaceId, parentIds: candidates, userId, membershipIncarnation: relationship.incarnation, includeAttention,
+      workspaceId, parentIds: candidates, userId, membershipIncarnation: relationship.incarnation, includeAttention, includeResolution,
     }),
   );
   const workstreams = items.filter((item) => item !== null);

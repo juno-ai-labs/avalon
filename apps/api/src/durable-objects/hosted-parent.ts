@@ -1,3 +1,4 @@
+import { ConversationMergeV1Schema } from "@rally/contracts";
 import type { ScopeGrant } from "@rally/contracts/scope-grants";
 import {
   ClaimScopeInvitationsSchema,
@@ -601,6 +602,7 @@ export class HostedParent {
 
   /** Viewers whose breakout list moved in this call, for `publishChannelRow`. */
   private readonly childrenMovedFor = new Set<string>();
+  private resolutionMoved = false;
   /** The running background agents before this call's child effects, when it applied any. */
   private publishedBackgroundAgents: string | null = null;
 
@@ -773,6 +775,21 @@ export class HostedParent {
         this.recordChildReceipt(substreamId, envelope, now);
         return;
       }
+      if (substreamId === "0" && envelope.effect.kind === "activity_event"
+        && envelope.effect.eventType === "workstream_message_created") {
+        const source = ConversationMergeV1Schema.shape.mergedFrom.safeParse(envelope.effect.metadata.mergedFrom);
+        if (source.success) {
+          const resolved = this.sql.exec(
+            `UPDATE parent_children SET resolved = 1
+              WHERE parent_id = ? AND substream_id = ? AND resolved = 0 RETURNING substream_id`,
+            this.parentId, source.data.breakoutId,
+          ).toArray();
+          if (resolved.length > 0) {
+            this.advancePrivateChildrenVersionsFor(source.data.breakoutId, now);
+            this.resolutionMoved = true;
+          }
+        }
+      }
       const forwards = this.forwardsChildEffect(substreamId, envelope.effect);
       if (envelope.effect.kind === "directory_common") {
         const accepted = this.upsertChildProjection("common", substreamId, null, envelope, now);
@@ -800,19 +817,6 @@ export class HostedParent {
           );
         }
       } else if (forwards) {
-        if (substreamId === "0" && envelope.effect.kind === "activity_event"
-          && envelope.effect.eventType === "workstream_message_created") {
-          const mergedFrom = envelope.effect.metadata?.mergedFrom;
-          if (mergedFrom && typeof mergedFrom === "object" && "breakoutId" in mergedFrom
-            && typeof mergedFrom.breakoutId === "string") {
-            const resolved = this.sql.exec(
-              `UPDATE parent_children SET resolved = 1
-                WHERE parent_id = ? AND substream_id = ? AND resolved = 0 RETURNING substream_id`,
-              this.parentId, mergedFrom.breakoutId,
-            ).toArray();
-            if (resolved.length > 0) this.advancePrivateChildrenVersionsFor(mergedFrom.breakoutId, now);
-          }
-        }
         this.enqueueImmutable(substreamId, envelope, now);
       }
       this.recordChildReceipt(substreamId, envelope, now);
@@ -2171,9 +2175,9 @@ export class HostedParent {
       : null;
     const conversations = this.sql.exec<{
       substream_id: string; title: string | null; archived_at: number | null; audience: "restricted" | "inherits_workstream";
-      origin_turn_id: string | null;
+      origin_turn_id: string | null; resolved: number;
     }>(
-      `SELECT child.substream_id, child.title, child.archived_at, child.audience,
+      `SELECT child.substream_id, child.title, child.archived_at, child.audience, child.resolved,
               json_extract(preparation.request_json, '$.sourceThroughTurnId') AS origin_turn_id
          FROM parent_children child
          LEFT JOIN parent_breakout_preparations preparation
@@ -2187,6 +2191,7 @@ export class HostedParent {
         const appearance = common?.appearance;
         return {
           substreamId: child.substream_id,
+          ...(request.includeResolution && child.resolved === 1 ? { resolved: true } : {}),
           archived: metadata.archived_at !== null || child.archived_at !== null,
           title: child.substream_id === "0" ? "Main" : child.title ?? "Shared breakout",
           scope: child.substream_id === "0" || child.audience === "inherits_workstream" ? metadata.scope : "personal",
@@ -3150,7 +3155,8 @@ export class HostedParent {
   private async publishChannelRow(): Promise<void> {
     if (!this.role.admitsClientSockets) return;
     const counts = JSON.stringify([...runningBackgroundAgents(this.sql, [this.parentId]).get(this.parentId) ?? []]);
-    const everyone = this.publishedBackgroundAgents !== null && counts !== this.publishedBackgroundAgents;
+    const everyone = this.resolutionMoved || (this.publishedBackgroundAgents !== null && counts !== this.publishedBackgroundAgents);
+    this.resolutionMoved = false;
     this.publishedBackgroundAgents = counts;
     const users = [...this.childrenMovedFor];
     this.childrenMovedFor.clear();

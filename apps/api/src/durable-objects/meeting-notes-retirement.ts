@@ -86,7 +86,7 @@ export async function purgeRetiredMeetingObjects(
  * Keep the adopted-schema shim around 57 alone, never around other migrations.
  */
 export function applyMeetingRetirementMigrations(
-  options: Omit<ApplyDurableObjectSqliteMigrationsOptions, 'afterMigrations'>,
+  options: ApplyDurableObjectSqliteMigrationsOptions,
 ): readonly number[] {
   const { storage } = options;
   const ledgerExists = storage.sql.exec("SELECT 1 FROM sqlite_schema WHERE name = '_sql_schema_migrations'").toArray().length > 0;
