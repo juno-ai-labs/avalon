@@ -1,6 +1,6 @@
 import { isComposingKeyEvent } from '@rally/ui/lib/ime';
 import { buildAnnotation, type ArtifactPickerPin } from '@rally/contracts';
-import { annotationQuote, useAnnotationDraft } from './artifact-annotations';
+import { AnnotationComment, useAnnotationDraft } from './artifact-annotations';
 import { IconAlertCircle, IconCheck, IconCopy, IconDatabase, IconExternalLink, IconPointerCollaboration, IconWindowMaximize } from '@tabler/icons-react';
 import React from 'react';
 import { flushSync } from 'react-dom';
@@ -420,7 +420,7 @@ export function SiteResourceDetail({
     }
     if (!pickingRef.current) return;
     const id = annotationDraft.add(buildAnnotation({ target: { resourceId, version, locator: { type: 'element', pagePath: pin.pagePath, css: pin.css, box: pin.box, visibleText: pin.visibleText } },
-      content: { exact: pin.html, source: 'rendered', before: '', after: '', truncated: false, ...(imageAttachmentId ? { imageAttachmentId } : {}) }, comment: '' }), title, () => {if(!paneRef.current?.isConnected)return false;paneRef.current.scrollIntoView({block:'center'});setEditingPin(id);return true;}, pin.replace ? lastPin.current : undefined);
+      content: { exact: pin.html, source: 'rendered', before: '', after: '', truncated: false, ...(imageAttachmentId ? { imageAttachmentId } : {}) }, comment: '' }), title, () => {if(!paneRef.current?.isConnected)return false;paneRef.current.scrollIntoView({block:'center'});setEditingPin(id);return true;}, pin.replace ? lastPin.current : undefined, true);
     const pane=paneRef.current?.getBoundingClientRect();
     if(pane)setCommentAnchor({x:Math.max(12,Math.min(pane.x+(pin.point?.x??12),window.innerWidth-320)),y:Math.max(12,Math.min(pane.y+(pin.point?.y??12)+12,window.innerHeight-190))});
     lastPin.current = id; setEditingPin(id);
@@ -516,7 +516,7 @@ export function SiteResourceDetail({
   const orderedHeaderActions = React.useMemo(() => [...headerActions.filter((action) => action.key !== 'comment-mode'), ...headerActions.filter((action) => action.key === 'comment-mode')], [headerActions]);
   useDetailHeaderActions(orderedHeaderActions);
 
-  const editingAnnotation = annotationDraft?.pins.find((p) => p.id === editingPin)?.annotation;
+  const editingSelection = annotationDraft?.selections.find((p) => p.id === editingPin);
   return (
     <div className="site-detail">
       <CopyStatus state={copyState} visible />
@@ -551,11 +551,7 @@ export function SiteResourceDetail({
               />
             )}
           </div>
-      {editingPin && annotationDraft?.pins.some((p) => p.id === editingPin) && <div className="annotation-site-comment" role="dialog" aria-label="Comment on site selection" data-state="open" style={{left:commentAnchor.x,top:commentAnchor.y}}>
-        <q>{editingAnnotation ? annotationQuote(editingAnnotation,title).slice(0,120) : ''}</q>
-        <textarea autoFocus aria-label="Comment on site selection" placeholder="Ask Rally to change this…" value={annotationDraft.pins.find((p) => p.id === editingPin)?.annotation.comment ?? ''} onChange={(e) => annotationDraft.comment(editingPin,e.target.value)} onKeyDown={(e) => { if(isComposingKeyEvent(e.nativeEvent))return; if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); setEditingPin(null); } }} />
-        <button type="button" onClick={() => { annotationDraft.remove(editingPin); setEditingPin(null); }}>Remove pin</button>
-      </div>}
+      {editingSelection && <AnnotationComment pin={editingSelection} label="Comment on site selection" style={{left:commentAnchor.x,top:commentAnchor.y}} onClose={() => setEditingPin(null)} onEscape={() => setPicking(false)} />}
     </div>
   );
 }
