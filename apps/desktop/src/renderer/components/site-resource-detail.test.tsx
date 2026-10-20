@@ -1,11 +1,12 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import React from 'react';
+import { TitlePill } from '@rally/ui/components/title-pill';
 import { describe, expect, it, vi } from 'vitest';
 
 import { AnnotationDraftProvider } from './artifact-annotations';
-import { DetailHeaderActionsHost } from './detail-header-actions';
-import { IconGroup, type IconGroupAction } from '@rally/ui/components/icon-group';
+import { DetailActionMenu, DetailHeaderActionsHost, type DetailHeaderAction } from './detail-header-actions';
+import { IconGroup } from '@rally/ui/components/icon-group';
 import {
   formatCell,
   SiteResourceDetail,
@@ -83,16 +84,17 @@ function setup(overrides: Partial<SiteResourceDetailProps> = {}, options: { stri
  * The detail as its host mounts it: a header `IconGroup` drawing the actions it
  * declares, and the tooltip provider the application keeps at its root.
  */
-/** The one control whose pressed state, not its name, says which way it is. */
+/** Open the same lazy menu section that an artifact host renders. */
 function storedDataToggle(): HTMLElement {
-  return screen.getByRole('button', { name: 'Stored data' });
+  fireEvent.pointerDown(screen.getByRole('button', { name: 'Artifact data menu' }), { button: 0, ctrlKey: false });
+  return screen.getByRole('menuitem', { name: 'Stored data' });
 }
 
 function Harness({ props }: { props: SiteResourceDetailProps }): React.JSX.Element {
-  const [actions, setActions] = React.useState<readonly IconGroupAction[]>([]);
+  const [actions, setActions] = React.useState<readonly DetailHeaderAction[]>([]);
   return (
     <Tooltip.Provider>
-      <div data-testid="host-header"><IconGroup actions={actions} /></div>
+      <div data-testid="host-header"><IconGroup actions={actions.filter((action) => action.menu === undefined)} /><TitlePill level={{key: props.resourceId, title: props.title, icon: null, label: 'Artifact data menu', menu: <DetailActionMenu actions={actions} />}} /></div>
       <DetailHeaderActionsHost onActions={setActions}>
         <SiteResourceDetail {...props} />
       </DetailHeaderActionsHost>
@@ -475,7 +477,7 @@ describe('showing a live artifact in the rail', () => {
     // A second copy here made the lightbox open on the same words twice.
     const { props } = setup();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
-    expect(screen.queryByText('Offsite RSVP')).not.toBeInTheDocument();
+    expect(within(document.querySelector('.site-detail')!).queryByText('Offsite RSVP')).not.toBeInTheDocument();
   });
 
   it('says so plainly when the artifact could not be opened', async () => {
@@ -526,7 +528,7 @@ describe('the actions the host draws in its header', () => {
     const { props } = setup();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
     const header = within(screen.getByTestId('host-header'));
-    for (const name of [/Open in a new window/u, /Copy public link/u, /Open in browser/u, /Stored data/u]) {
+    for (const name of [/Open in a new window/u, /Copy public link/u, /Open in browser/u]) {
       const action = header.getByRole('button', { name });
       expect(action).toBeInTheDocument();
       // Every one of them is an icon alone, so every one of them owes a
@@ -559,6 +561,9 @@ describe('the actions the host draws in its header', () => {
       version: 4,
       artifactId: ARTIFACT,
       url: expect.stringContaining('/__rally/open#'),
+      canonicalUrl: CANONICAL,
+      mode: 'active',
+      stateful: true,
       title: 'Offsite RSVP',
     });
     expect(vi.mocked(props.surface.popOut).mock.calls[0]?.[0]?.url).not.toBe(presented);
@@ -573,29 +578,29 @@ describe('the actions the host draws in its header', () => {
 });
 
 describe('the data a stateful site collected', () => {
-  it('shows the tables in place of the page, and takes the view down with it', async () => {
-    // The composited view is positioned against the pane. Left up while the
-    // pane is gone it would paint over whatever replaced it, which is the
-    // table a person just asked for.
+  it('loads tables only when the data pop-out opens and retains the preview pane', async () => {
     const { props } = setup();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
+    const closes = vi.mocked(props.surface.close).mock.calls.length;
+    expect(props.describeData).not.toHaveBeenCalled();
     fireEvent.click(storedDataToggle());
     expect(await screen.findByText('Ada')).toBeInTheDocument();
     expect(screen.getByText('yes')).toBeInTheDocument();
-    expect(screen.queryByTestId('site-preview-pane')).not.toBeInTheDocument();
-    await waitFor(() => expect(props.surface.close).toHaveBeenCalled());
+    expect(screen.getByTestId('site-preview-pane')).toBeInTheDocument();
+    expect(props.surface.close).toHaveBeenCalledTimes(closes);
   });
 
-  it('returns to the page, and puts the view back over it', async () => {
+  it('dismisses stored data back to the original preview without minting access again', async () => {
     const { props } = setup();
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
     fireEvent.click(storedDataToggle());
     await screen.findByText('Ada');
-    expect(storedDataToggle()).toHaveAttribute('aria-pressed', 'true');
-    fireEvent.click(storedDataToggle());
-    expect(await screen.findByTestId('site-preview-pane')).toBeInTheDocument();
-    expect(storedDataToggle()).toHaveAttribute('aria-pressed', 'false');
-    await waitFor(() => expect(props.surface.present).toHaveBeenCalledTimes(2));
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByText('Ada')).toBeNull());
+    expect(screen.getByTestId('site-preview-pane')).toBeInTheDocument();
+    expect(props.openArtifact).toHaveBeenCalledOnce();
+    expect(props.surface.present).toHaveBeenCalledOnce();
   });
 
   it('leaves the data view behind when the detail moves to another artifact', async () => {
@@ -626,7 +631,8 @@ describe('the data a stateful site collected', () => {
       })),
     });
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
-    expect(screen.queryByRole('button', { name: /stored data/iu })).not.toBeInTheDocument();
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Artifact data menu' }), { button: 0, ctrlKey: false });
+    expect(screen.queryByRole('menuitem', { name: /stored data/iu })).not.toBeInTheDocument();
   });
 
   it('loads the table a person picks, not only the one it opened on', async () => {

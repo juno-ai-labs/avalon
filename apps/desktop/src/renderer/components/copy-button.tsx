@@ -76,8 +76,8 @@ export function copyStateLabel(state: CopyState, label: string): string {
   return state === 'idle' ? label : stateLabel[state];
 }
 
-export function CopyStatus({ state }: { state: CopyState }): React.JSX.Element {
-  return <span aria-live="polite" className="sr-only" role="status">{stateStatus[state]}</span>;
+export function CopyStatus({ state, visible = false }: { state: CopyState; visible?: boolean }): React.JSX.Element {
+  return <span aria-live="polite" className={visible && state !== 'idle' ? 'copy-status' : 'sr-only'} role="status">{stateStatus[state]}</span>;
 }
 
 /**

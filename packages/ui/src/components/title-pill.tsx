@@ -548,8 +548,8 @@ export function TitlePillAction({ children, label, onClick, tooltipSide }: {
 }
 
 /** A row of square actions under the menu's header, the most used things done to it. */
-export function ActionTiles({ children }: { children: ReactNode }): React.JSX.Element {
-  return <div className="title-menu-tiles" role="group" aria-label="Actions">{children}</div>;
+export function ActionTiles({ children, className }: { children: ReactNode; className?: string }): React.JSX.Element {
+  return <div className={clsx('title-menu-tiles', className)} role="group" aria-label="Actions">{children}</div>;
 }
 
 export function ActionTile({ icon, label, onSelect, disabled }: {

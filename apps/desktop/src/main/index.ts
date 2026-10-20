@@ -1,3 +1,4 @@
+import { artifactWindowActionRequest } from './artifact-window-actions';
 import { ARTIFACT_PICKER_SOURCE, ArtifactPickerPinSchema, AnnotationSchema } from "@rally/contracts";
 import { startCanvaConnection } from './canva-loopback';
 import { clampWindowBounds, readMainWindowState, writeMainWindowState } from './main-window-state';
@@ -8,7 +9,9 @@ import { BrowserImportContextSchema, BrowserImportedBreakoutIdSchema, BrowserImp
 import { describeZodIssues, zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { watchWorkspaceSocket, type ReachWatchDiagnostic } from '@rally/contracts/workspace-reach-watch';
-import { spaceDeepLink } from '@rally/contracts/workstream-links';
+import { ArtifactPinListSchema } from '@rally/contracts';
+import { ArtifactWindowActionSchema } from '../common/artifact-window-actions';
+import { spaceDeepLink, workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import { z, type ZodType } from 'zod';
 import {
   ActivateWorkspaceRequestSchema,
@@ -3740,6 +3743,9 @@ function parseArtifactWindowRequest(raw: unknown): DesktopArtifactWindowRequest 
   if (value.kind === 'site' && typeof value.resourceId === 'string' && version !== null
     && typeof value.artifactId === 'string' && typeof value.url === 'string') return {
     kind: 'site',
+    ...(typeof value.canonicalUrl === 'string' && isArtifactUrl(value.canonicalUrl, artifactServingDomain()) ? { canonicalUrl: value.canonicalUrl } : {}),
+    ...(value.mode === 'static' || value.mode === 'active' ? { mode: value.mode } : {}),
+    ...(typeof value.stateful === 'boolean' ? { stateful: value.stateful } : {}),
     ...(typeof value.annotationScope === 'string' ? { annotationScope: value.annotationScope } : {}),
     ...(typeof value.restoreId === 'string' ? { restoreId: value.restoreId } : {}),
     resourceId: value.resourceId,
@@ -4322,6 +4328,63 @@ function registerIpc(): void {
     // and with it a second `closed` listener on the same window, until Node
     // starts warning about the leak.
     artifactPreviews.get(window)?.destroy();
+  });
+  ipcMain.handle('artifact:window-action', async (event, raw: unknown) => {
+    try {
+      assertArtifactRenderer(event);
+      const window = BrowserWindow.fromWebContents(event.sender)!;
+      const record = poppedOutArtifacts.get(window)!;
+      const command = artifactWindowActionRequest(record.request, raw);
+      const session = inMemorySession;
+      const authForWindow = async () => {
+        assertArtifactRenderer(event);
+        const auth = await loadStoredAuth();
+        assertArtifactRenderer(event);
+        if (!auth || auth.binding.userId !== record.userId || auth.binding.workspaceId !== record.workspaceId || !session || inMemorySession?.user.id !== session.user.id
+          || inMemorySession?.workspace?.id !== session.workspace?.id) throw new Error('The Rally session changed');
+        return auth;
+      };
+      const send = async () => {
+        const auth = await authForWindow();
+        return net.fetch(`${apiBaseForAuth(auth)}${command.path}`, {
+          method: command.method,
+          headers: { Authorization: `Bearer ${auth.accessToken}`, [RALLY_HEADERS.CLIENT_CONTRACT]: String(CLIENT_CONTRACT_VERSION),
+            ...(command.body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+          ...(command.body === undefined ? {} : { body: JSON.stringify(command.body) }),
+        });
+      };
+      let response = await send();
+      if (response.status === 401) {
+        await response.body?.cancel();
+        await authForWindow();
+        await coalescedRefreshSession();
+        response = await send();
+      }
+      if (!response.ok) throw await responseError(response);
+      if (command.binary) {
+        const content = new Uint8Array(await response.arrayBuffer());
+        await authForWindow();
+        return { content, mimeType: response.headers.get('content-type') ?? 'application/octet-stream' };
+      }
+      const result = response.status === 204 ? null : await readJsonBody(response);
+      await authForWindow();
+      const action = ArtifactWindowActionSchema.parse(raw);
+      if (action.type === 'pin-state') return ArtifactPinListSchema.parse(result).some((pin) => pin.id === record.resourceId);
+      if (action.type === 'link') {
+        const { spaceIds } = z.object({ spaceIds: z.array(IdSchema) }).parse(result);
+        const workspace = session?.workspace;
+        if (!workspace || !spaceIds[0]) throw new Error('This artifact has no linkable Channel');
+        return workstreamCanonicalUrl(runtimeConfig().webBaseUrl, {
+          region: workspace.region, workspaceId: workspace.id, spaceId: spaceIds[0],
+          workstreamId: record.request.annotationScope!.split(':')[0]!, artifactId: record.resourceId,
+        });
+      }
+      return result;
+    } catch (error) {
+      const diagnostic = zodDiagnosticCode(error, 'artifact_window_response');
+      if (diagnostic) throw new Error(diagnostic, { cause: error });
+      throw error;
+    }
   });
   ipcMain.handle('artifact:read-window', (event) => {
     assertArtifactRenderer(event);
