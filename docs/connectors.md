@@ -17,7 +17,10 @@ Connected describes authorization availability, not provider reachability or
 inbound delivery health: route registration can fail while outbound tools remain
 usable, and an unreachable custom MCP endpoint still reports its execution error.
 These diagnostics remain stored; only a provider authorization refusal establishes
-a reconnect verdict.
+a reconnect verdict. GitHub installation suspension also records
+`needs_reconnect`; its unsuspend webhook restores healthy authorization. Every
+diagnosis-carrying refusal path promotes both healthy and operational-error rows,
+while preserving disabled connections and existing authorization diagnoses.
 
 OAuth deliberately crosses one authority boundary. Regional D1 owns the
 single-use encrypted `oauth_states` row because the callback must be validated
@@ -1568,7 +1571,7 @@ as with the wire-name sequencing constraint documented on
 
 ### 2026-10-19: Polling failure is not a reconnect verdict
 
-**What changed:** Model and UI use one authorization-status mapping. Historical card success bridges loading only; live revocation or disable wins over the latch. Generic errors remain usable. Cursor-fenced poll success recovers only polling errors; poll failure preserves disabled connections and authorization diagnoses. Provider refusals can promote an operational error to a reconnect verdict.
+**What changed:** Model and UI use one authorization-status mapping. Historical card success bridges loading only; live revocation or disable wins over the latch. Generic errors remain usable. Cursor-fenced poll success recovers only polling errors; poll failure preserves disabled connections and authorization diagnoses. Provider refusals across resource hydration, notifications, agent calls, and webhook access probes can promote an operational error to a reconnect verdict; GitHub suspension records authorization unavailability directly.
 
 **Why:** Gmail successfully fetched six activities forty-two seconds before the state tool demanded a reconnect. A retained polling error was mapped to reconnect by the model tool and Connected by the UI, repeatedly blocking usable accounts across connectors.
 
