@@ -1073,6 +1073,38 @@ describe('useWorkstreamSocket', () => {
     expect(confirmSocketTicket).toHaveBeenCalledOnce();
   });
 
+  it.each(['manual', 'close'] as const)('resets the baseline after pending-input assembly is abandoned by %s', async (reason) => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const id = '00000000-0000-7000-8000-000000000750';
+    const queryClient = new QueryClient();
+    const getSocketTicket = vi.fn<WorkstreamSocketApi['getSocketTicket']>(async () => ({
+      url: 'wss://api.rally.test/feed', ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
+    }));
+    const api = socketApiWith({ getSocketTicket });
+    const { result } = renderHook(() => useWorkstreamSocket(api, id, true), { wrapper: createWrapper(queryClient) });
+    await flushPromises();
+    const old = FakeWebSocket.instances[0]!;
+    act(() => {
+      old.open(); old.message(snapshotFrame({ sequence: 1, workstream: { id } }));
+      old.message(snapshotFrame({ sequence: 2, workstream: { id }, pendingInputChunkCount: 2 }));
+      old.message({ type: 'pending_inputs_snapshot_chunk', sequence: 2,
+        occurredAt: '2026-07-31T19:20:00.000Z', snapshotId: emptyTranscriptSnapshot().snapshotId,
+        chunkIndex: 0, chunkCount: 2, inputs: [pendingInput(1, 'Partial')] });
+      if (reason === 'manual') result.current.retryOpening();
+      else old.close(1006);
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(750));
+    expect(getSocketTicket.mock.calls[1]?.[3]).toBe(0);
+    const next = FakeWebSocket.instances[1]!;
+    act(() => {
+      next.open(); next.message(snapshotFrame({ sequence: 3, workstream: { id },
+        transcript: { ...emptyTranscriptSnapshot(), pendingInputs: [pendingInput(2, 'Fresh queue')] } }));
+    });
+    expect(overlayMessages(queryClient, id).map(message => message.text)).toEqual(['Fresh queue']);
+  });
+
   it('restarts from a baseline after a partial initial-context close', async () => {
     vi.useFakeTimers();
     vi.stubGlobal('WebSocket', FakeWebSocket);
