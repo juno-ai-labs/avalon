@@ -386,6 +386,9 @@ export function TitlePillNavigation(): React.JSX.Element | null {
   return header ? <NavigationButton header={header} /> : null;
 }
 
+/** Optional host-owned controls before the breadcrumb. */
+export const TitlePillLeadingContext = createContext<ReactNode>(null);
+
 /**
  * A conversation pane's header: its own pill centered, any ancestors stacked
  * at the left in nesting order, and the pane's trailing controls at the right.
@@ -405,6 +408,7 @@ export function TitlePillHeader({ actions, ancestors = [], className, current, t
 }): React.JSX.Element {
   // Ancestors that all have marks are drawn as one bridge of them, at every
   // width; pills are the fallback while any lacks one.
+  const leading = useContext(TitlePillLeadingContext);
   const bridge: MarkBridgeItem[] = [];
   for (const level of ancestors) {
     if (level.bridge) bridge.push({ key: level.key, ...level.bridge, onSelect: level.onSelect });
@@ -422,6 +426,7 @@ export function TitlePillHeader({ actions, ancestors = [], className, current, t
     style={shift ? { '--title-pill-shift': `${shift}px` } as React.CSSProperties : undefined}
   >
     <div className="title-pill-ancestors">
+      {leading ? <span className="title-pill-leading window-no-drag">{leading}</span> : null}
       {phoneHeader ? <NavigationButton header={phoneHeader} /> : null}
       {bridged ? null : ancestors.map((level) => <span className="title-pill-ancestor window-no-drag" key={level.key}>
         <TitlePill level={level} variant="ancestor" />
