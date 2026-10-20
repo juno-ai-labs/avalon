@@ -602,8 +602,8 @@ describe('WorkstreamComposer mention confirmation', () => {
     // exactly this reason.
     const options = await screen.findAllByRole('option');
     expect(options.map(mentionOptionCopy)).toEqual([
-      { badge: null, description: null, label: 'Rally' },
-      { badge: null, description: 'adam@example.com', label: 'Adam' },
+      { description: null, label: 'Rally' },
+      { description: 'adam@example.com', label: 'Adam' },
     ]);
   });
 
@@ -619,13 +619,13 @@ describe('WorkstreamComposer mention confirmation', () => {
       .toEqual(['Rally', 'Participants', 'Org members', 'Guests']);
     expect(within(screen.getByRole('group', { name: 'Participants' })).getAllByRole('option').map(mentionOptionCopy))
       .toEqual([
-        { badge: null, description: 'adam@example.com', label: 'Adam' },
-        { badge: null, description: 'cara@example.com', label: 'Cara Chen' },
+        { description: 'adam@example.com', label: 'Adam' },
+        { description: 'cara@example.com', label: 'Cara Chen' },
       ]);
     expect(within(screen.getByRole('group', { name: 'Org members' })).getAllByRole('option').map(mentionOptionCopy))
-      .toEqual([{ badge: null, description: 'bob@example.com', label: 'Bob Member' }]);
+      .toEqual([{ description: 'bob@example.com', label: 'Bob Member' }]);
     expect(within(screen.getByRole('group', { name: 'Guests' })).getAllByRole('option').map(mentionOptionCopy))
-      .toEqual([{ badge: null, description: 'bob@example.com', label: 'Bob Builder' }]);
+      .toEqual([{ description: 'bob@example.com', label: 'Bob Builder' }]);
 
     fireEvent.change(composer, { target: { value: '@Bob' } });
     expect(within(list).getAllByRole('group').map((group) => group.getAttribute('aria-label')))
@@ -663,10 +663,10 @@ describe('WorkstreamComposer mention confirmation', () => {
 
     const options = await screen.findAllByRole('option');
     expect(options.map(mentionOptionCopy)).toEqual([
-      { badge: null, description: null, label: 'Rally' },
-      { badge: null, description: 'adam@example.com', label: 'Adam' },
-      { badge: null, description: 'bob@example.com', label: 'Bob Builder' },
-      { badge: null, description: 'cara@example.com', label: 'Cara Chen' },
+      { description: null, label: 'Rally' },
+      { description: 'adam@example.com', label: 'Adam' },
+      { description: 'bob@example.com', label: 'Bob Builder' },
+      { description: 'cara@example.com', label: 'Cara Chen' },
     ]);
     expect(options[0]).toHaveAccessibleName('Rally — Ask Rally to join this part of the conversation — AI');
     expect(options[1]).toHaveAccessibleName('Adam — adam@example.com — Member');
@@ -925,12 +925,13 @@ describe('WorkstreamComposer invitees', () => {
 
     const options = await screen.findAllByRole('option');
     expect(options.map(mentionOptionCopy)).toEqual([
-      { badge: null, description: null, label: 'Rally' },
-      { badge: null, description: 'adam@example.com', label: 'Adam' },
-      { badge: null, description: null, label: 'dana@example.com' },
-      { badge: null, description: 'bob@example.com', label: 'Bob Builder' },
+      { description: null, label: 'Rally' },
+      { description: 'adam@example.com', label: 'Adam' },
+      { description: null, label: 'dana@example.com' },
+      { description: 'bob@example.com', label: 'Bob Builder' },
     ]);
     expect(options[2]).toHaveClass('is-invited');
+    expect(screen.getByRole('listbox', { name: 'Mentions' })).not.toHaveTextContent(/\b(?:AI|Member|Guest|Invited)\b/u);
   });
 
   it('writes the address and hands the host the invitees the message names', async () => {
