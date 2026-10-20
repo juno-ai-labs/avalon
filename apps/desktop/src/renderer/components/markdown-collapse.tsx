@@ -1,6 +1,6 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import clsx from 'clsx';
-import { ChevronRight, ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import {
   createContext,
   useCallback,
@@ -10,33 +10,23 @@ import {
   type ComponentPropsWithoutRef,
   type ReactNode,
 } from 'react';
-import { collapsibleSectionIds } from '../lib/markdown-collapse';
 
 interface MarkdownCollapseValue {
   /** Sections the reader has closed. A missing id is open. */
   readonly collapsed: ReadonlySet<string>;
-  readonly sectionIds: readonly string[];
-  /**
-   * Whether every section is closed. The bulk control reads this rather than
-   * its opposite: with open as the default, "some are closed" is a reader who
-   * is folding, and the action to offer them is folding the rest.
-   */
-  readonly allCollapsed: boolean;
   expand: (id: string) => void;
   toggle: (id: string) => void;
-  setAll: (expanded: boolean) => void;
 }
 
 const MarkdownCollapseContext = createContext<MarkdownCollapseValue | null>(null);
 const MarkdownCollapseSectionIdContext = createContext<string | null>(null);
 
-export function useMarkdownCollapse(): MarkdownCollapseValue | null {
+function useMarkdownCollapse(): MarkdownCollapseValue | null {
   return useContext(MarkdownCollapseContext);
 }
 
 /**
- * Holds which heading sections are expanded for one markdown body (or for
- * the agent turn that hosts the collapse-all control next to **Worked for**).
+ * Holds which heading sections are expanded for one markdown body.
  *
  * Default is expanded: the set holds the sections the reader has closed, so a
  * missing id is open. New sections that stream in are therefore open without
@@ -44,26 +34,9 @@ export function useMarkdownCollapse(): MarkdownCollapseValue | null {
  */
 export function MarkdownCollapseController({
   children,
-  markdown,
-  sectionIds: sectionIdsProp,
 }: {
   children: ReactNode;
-  markdown?: string;
-  sectionIds?: readonly string[];
 }): React.JSX.Element {
-  const computedIds = useMemo(
-    () => sectionIdsProp ?? (markdown === undefined ? [] : collapsibleSectionIds(markdown)),
-    [markdown, sectionIdsProp],
-  );
-  // Keep the same array identity while the heading set is unchanged so a
-  // streaming tail append does not rebuild the collapse context (and with
-  // it every heading chevron) on every paced-reveal commit. setState during
-  // render is the supported way to snap to a new snapshot; a ref write
-  // during render is not.
-  const [sectionIds, setSectionIds] = useState(computedIds);
-  if (computedIds.join('\0') !== sectionIds.join('\0')) {
-    setSectionIds(computedIds);
-  }
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const toggle = useCallback((id: string) => {
     setCollapsed((current) => {
@@ -81,13 +54,9 @@ export function MarkdownCollapseController({
       return next;
     });
   }, []);
-  const setAll = useCallback((nextExpanded: boolean) => {
-    setCollapsed(nextExpanded ? new Set() : new Set(sectionIds));
-  }, [sectionIds]);
-  const allCollapsed = sectionIds.length > 0 && sectionIds.every((id) => collapsed.has(id));
   const value = useMemo<MarkdownCollapseValue>(
-    () => ({ allCollapsed, collapsed, expand, sectionIds, setAll, toggle }),
-    [allCollapsed, collapsed, expand, sectionIds, setAll, toggle],
+    () => ({ collapsed, expand, toggle }),
+    [collapsed, expand, toggle],
   );
   return (
     <MarkdownCollapseContext.Provider value={value}>
@@ -210,44 +179,4 @@ export function MarkdownCollapseH5(props: ComponentPropsWithoutRef<'h5'> & { nod
 }
 export function MarkdownCollapseH6(props: ComponentPropsWithoutRef<'h6'> & { node?: unknown }): React.JSX.Element {
   return <CollapseHeading Tag="h6" {...props} />;
-}
-
-/**
- * Expand or collapse every heading section in this turn. Lives in the
- * message header, to the right of **Worked for**, and is absent when the
- * body has no collapsible headings.
- *
- * It offers **Collapse all** until every section is already closed. A turn
- * with some sections closed is a reader who has been folding, and the mirror
- * of that — offering **Expand all** to someone in the middle of closing
- * things — is what the pre-default-open control did.
- */
-export function MarkdownCollapseAllButton(): React.JSX.Element | null {
-  const collapse = useMarkdownCollapse();
-  if (!collapse || collapse.sectionIds.length === 0) return null;
-  const label = collapse.allCollapsed ? 'Expand all sections' : 'Collapse all sections';
-  const Icon = collapse.allCollapsed ? ChevronsUpDown : ChevronsDownUp;
-  return (
-    <Tooltip.Provider>
-      <Tooltip.Root delayDuration={450}>
-        <Tooltip.Trigger asChild>
-          <button
-            aria-expanded={!collapse.allCollapsed}
-            aria-label={label}
-            className="message-collapse-all"
-            onClick={() => collapse.setAll(collapse.allCollapsed)}
-            type="button"
-          >
-            <Icon aria-hidden="true" size={14} strokeWidth={1.8} />
-          </button>
-        </Tooltip.Trigger>
-        <Tooltip.Portal>
-          <Tooltip.Content className="tooltip" side="top" sideOffset={6}>
-            {label}
-            <Tooltip.Arrow className="tooltip-arrow" />
-          </Tooltip.Content>
-        </Tooltip.Portal>
-      </Tooltip.Root>
-    </Tooltip.Provider>
-  );
 }
