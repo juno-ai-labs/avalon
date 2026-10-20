@@ -784,6 +784,7 @@ function ThreadCard({ attentionSequenceNumber, author, members, onOpen, open, pl
       </>}
       onOpen={() => onOpen(thread.id)}
       open={open}
+      private={thread.scope === 'personal'}
       summary={thread.objective && <MarkdownBody glance mentions={summary.mentions} preserveLineBreaks rallyMentions verbatim>{summary.text}</MarkdownBody>}
     />
   </li>;

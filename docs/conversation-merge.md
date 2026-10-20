@@ -143,7 +143,10 @@ Breakout. Shared navigation opts into resolution with `resolution=1`, retaining
 the older strict HTTP response shape for clients that omit it. Socket readers
 already strip unknown additive fields through `safeParseSocketEvent`.
 `ConversationCard` renders **Resolved** as a small muted pill that remains
-distinct when the card is hovered or open. Resolved titles, summaries, bylines
+distinct when the card is hovered or open. Private threads show **Private**
+using the same pill, whether active or resolved; resolved private threads show
+both labels. Privacy alone does not soften the rest of the card. Both pills
+gain contrast on hover and keyboard focus. Resolved titles, summaries, bylines
 and avatar initials share subdued ink in both appearances. Personalized
 initials use a neutral backing while retaining their chosen shape.
 Hover and keyboard focus strengthen text contrast, including the pill and
