@@ -8210,13 +8210,13 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .title-pill-menu .menu-item { border-radius: 8px; font-size: 13.5px; min-height: 34px; padding: 0 8px; }
 /* Every shared title-menu row uses one icon column and one rhythm, whether
    it performs an action, navigates a level, or toggles a switch. */
-.title-pill-menu .menu-item:is(.title-menu-item, .title-menu-level-row, .title-menu-switch-row) {
+.title-pill-menu .menu-item:is(.title-menu-action, .title-menu-level-row, .title-menu-switch-row) {
   font-size: 15px;
   gap: 12px;
   min-height: 46px;
   padding: 0 10px;
 }
-.title-pill-menu :is(.title-menu-item, .title-menu-level-row, .title-menu-switch-row) > svg:first-child {
+.title-pill-menu :is(.title-menu-action, .title-menu-level-row, .title-menu-switch-row) > svg:first-child {
   flex: none;
   height: 18px;
   width: 18px;

@@ -110,8 +110,7 @@ provider above it.
 Artifact title menus use `useCopy` for their copy tile and keep a `CopyStatus`
 live region outside the menu so the outcome survives closing it. Artifact menus
 show that status visibly above the preview; other copy controls retain their
-screen-reader-only status because their outcome remains on the visible icon. Live sites
-copy the canonical public URL; other artifact links retain Rally navigation.
+screen-reader-only status because their outcome remains on the visible icon.
 
 The surfaces' own tests — the inbound-webhook dialog, the invite link, the
 inspector rail, the run-failure notice, the site detail, the code block —

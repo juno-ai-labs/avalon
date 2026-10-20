@@ -1023,7 +1023,7 @@ describe('resource detail content preview', () => {
     fireEvent.click(button);
 
     await waitFor(() => expect(popOutArtifact).toHaveBeenCalledWith({
-      kind: 'generated',
+      kind: 'generated', editable: false,
       resourceId: note.id,
       version: note.currentVersion,
       content: expect.any(Uint8Array),
@@ -1095,7 +1095,7 @@ describe('resource detail content preview', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Copy public link' }));
     await waitFor(() => expect(artifacts.surface.copyText).toHaveBeenCalledWith('https://3f2504e0-4f89-41d3-9a0c-0305e82c3301-g.rallyusercontent.test'));
     expect(internalCopy).not.toHaveBeenCalled();
-    expect(await screen.findByRole('status')).toHaveTextContent('Copied');
+    expect(await screen.findByText('Copied.')).toBeVisible();
     open();
     expect(screen.getByRole('menuitemcheckbox', { name: 'Pinned in my sidebar' })).toBeChecked();
     expect(screen.queryByRole('menuitem', { name: 'Archive' })).toBeNull();
@@ -1327,7 +1327,7 @@ describe('resource detail content preview', () => {
       .mockResolvedValueOnce(new Blob(['## Extracted\n\nRevenue grew 40%.']));
     openDetail({ ...note, mimeType: 'application/pdf', title: 'Contract.pdf' }, loadResourceContent);
 
-    expect(screen.getByRole('status')).toHaveTextContent('Loading preview');
+    expect(screen.getByText('Loading preview…')).toBeVisible();
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Extracted' })).toBeInTheDocument());
     expect(loadResourceContent).toHaveBeenCalledTimes(3);
     expect(screen.queryByText(/preview is not available/iu)).not.toBeInTheDocument();

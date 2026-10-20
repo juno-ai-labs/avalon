@@ -1,6 +1,6 @@
 import { SITE_MANIFEST_MIME_TYPE, ResourceSchema, ResourceRevisionSchema } from '@rally/contracts';
 import { z } from 'zod';
-import { zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
+import { isDiagnosticCode, zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
 import { InspectorRail } from '../components/inspector-rail';
 import { mapResource, mapResourceVersion } from '../lib/api';
 import type { WorkstreamResource, ResourceVersion } from '../lib/types';
@@ -14,8 +14,15 @@ import { desktopBridge } from '../lib/platform';
 import * as Tooltip from '@radix-ui/react-tooltip';
 
 function actionFailure(error: unknown, fallback: string): string {
-  const diagnostic = zodDiagnosticCode(error, 'artifact_window_response');
+  const message = error instanceof Error ? error.message.replace(/^Error invoking remote method 'artifact:window-action': Error: /u, '') : '';
+  const diagnostic = zodDiagnosticCode(error, 'artifact_window_response') ?? (isDiagnosticCode(message) ? message : null);
   return diagnostic ? `${fallback} (${diagnostic})` : fallback;
+}
+
+async function command(action: ArtifactWindowAction): Promise<unknown> {
+  const execute = window.rally?.artifactWindowAction;
+  if (!execute) throw new Error('Artifact actions are unavailable.');
+  return execute(action);
 }
 
 export function ArtifactWindow(): React.JSX.Element {
@@ -37,12 +44,7 @@ export function ArtifactWindowContent({preview: request,files}: {preview:Desktop
   const [versionsFailed, setVersionsFailed] = useState(false);
   const [pinned, setPinned] = useState<boolean>();
   const [error,setError] = useState<string>();
-  const editable = Boolean(request.annotationScope?.endsWith(':0'));
-  const command = (action: ArtifactWindowAction): Promise<unknown> => {
-    const execute = window.rally?.artifactWindowAction;
-    if (!execute) return Promise.reject(new Error('Artifact actions are unavailable.'));
-    return execute(action);
-  };
+  const editable = request.editable === true && Boolean(request.annotationScope?.endsWith(':0'));
   useEffect(() => {
     setSelected(null);
     if (!window.rally?.artifactWindowAction) return;
@@ -64,7 +66,7 @@ export function ArtifactWindowContent({preview: request,files}: {preview:Desktop
     return () => { active = false; window.removeEventListener('focus', refreshPin); };
   }, [request, editable]);
   const currentResource: WorkstreamResource = resource ?? {
-    id: preview.resourceId, title: preview.title, currentVersion: preview.version,
+    id: request.resourceId, title: request.title, currentVersion: request.version,
     mimeType: preview.kind === 'site' ? SITE_MANIFEST_MIME_TYPE : preview.sourceMimeType ?? preview.mimeType,
     resourceType: preview.kind === 'site' ? 'site' : 'file', direction: 'artifact', relationshipType: 'attachment',
     refreshSupported: false, watchEnabled: false, watchStatus: 'unsupported', contentAvailable: true,
@@ -105,24 +107,24 @@ export function ArtifactWindowContent({preview: request,files}: {preview:Desktop
       {...(editable ? {
         onRenameResource: async (_resource: WorkstreamResource, title: string) => {
           await command({ type: 'rename', title });
-          setResource({ ...shownResource, title });
-          document.title = title;
+          setResource((current) => ({ ...(current ?? currentResource), title }));
         },
         onDetachResource: async () => { await command({ type: 'archive' }); window.close(); },
         resourceLink: () => async () => { await desktopBridge().copyText(z.string().parse(await command({ type: 'link' }))); },
         resourcePin: () => pinned === undefined ? undefined : { on: pinned, onChange: (next: boolean) => {
-          void command({ type: 'pin', pinned: next }).then(() => setPinned(next)).catch(() => setError('The pin could not be updated.'));
+          void command({ type: 'pin', pinned: next }).then(() => setPinned(next)).catch((error: unknown) => setError(actionFailure(error, 'The pin could not be updated.')));
         } },
       } : {})}
-      loadOriginalResourceContent={() => loadContent(true)}
-      onOpenResourceVersion={(_resource, version) => {
+      loadOriginalResourceContent={() => loadContent(true, selected?.version)}
+      onOpenResourceVersion={request.kind === 'site' ? undefined : (_resource, version) => {
         void loadContent(false, version.version).then(async (blob) => {
           setSelected({ kind: 'generated', resourceId: preview.resourceId, version: version.version,
             title: version.title ?? preview.title, mimeType: blob.type, content: new Uint8Array(await blob.arrayBuffer()),
             ...(preview.annotationScope ? { annotationScope: preview.annotationScope } : {}) });
-        }).catch(() => setError('The version could not be opened.'));
+        }).catch((error: unknown) => setError(actionFailure(error, 'The version could not be opened.')));
       }}
     >
+    {selected && <p className="attachment-lightbox-superseded attachment-panel-superseded" role="status">Version {selected.version} · not current <button onClick={() => setSelected(null)} type="button">Return to current</button></p>}
     {preview.kind==='generated' ? <div className="artifact-annotation-window-body">{preview.mimeType.startsWith('audio/') ? <audio controls src={src} aria-label={preview.title} /> : preview.mimeType.startsWith('video/') ? <video controls src={src} aria-label={preview.title} /> : <AnnotationSurface resourceId={preview.resourceId} version={preview.version} name={preview.title} mimeType={preview.sourceMimeType ?? preview.mimeType} src={src} text={preview.mimeType.startsWith('image/')?undefined:new TextDecoder().decode(preview.content)} />}</div>
       : <ArtifactSiteWindow preview={preview} />}
     </InspectorRail>
@@ -133,10 +135,6 @@ export function ArtifactWindowContent({preview: request,files}: {preview:Desktop
 function ArtifactSiteWindow({preview}: {preview: Extract<DesktopArtifactWindowRequest,{kind:'site'}>}): React.JSX.Element {
   const options = useMemo(() => {
     const bridge=desktopBridge();
-    const command = async (action: ArtifactWindowAction) => {
-      if (!window.rally?.artifactWindowAction) throw new Error('Artifact actions are unavailable.');
-      return window.rally.artifactWindowAction(action);
-    };
     // The initial navigation was minted by the parent. Every departure mints again.
     let initial = true;
     return {openArtifact:async()=>{
