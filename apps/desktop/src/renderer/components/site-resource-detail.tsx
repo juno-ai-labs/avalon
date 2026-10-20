@@ -1,5 +1,5 @@
 import { isComposingKeyEvent } from '@rally/ui/lib/ime';
-import { buildAnnotation, type ArtifactPickerPin } from '@rally/contracts';
+import { buildAnnotation, type AnnotationCommentPins, type AnnotationCommentAction, type ArtifactPickerPin } from '@rally/contracts';
 import { AnnotationComment, useAnnotationDraft } from './artifact-annotations';
 import { IconAlertCircle, IconCheck, IconCopy, IconDatabase, IconExternalLink, IconPointerCollaboration, IconWindowMaximize } from '@tabler/icons-react';
 import React from 'react';
@@ -70,6 +70,7 @@ export interface SiteResourceDetailProps {
     /** A still of the live view as an image data URL. */
     snapshot: () => Promise<string | null>;
     pick?: (() => Promise<ArtifactPickerPin | null>) | undefined;
+    comments?: ((pins: AnnotationCommentPins) => Promise<AnnotationCommentAction | null>) | undefined;
     stopPicking?: (() => Promise<void>) | undefined;
     close: () => Promise<void>;
     popOut: (request: DesktopSiteArtifactWindowRequest) => Promise<boolean>;
@@ -515,6 +516,18 @@ export function SiteResourceDetail({
   ], [access, copy, copyState, mintAccess, resourceId, surface, title, version, annotationDraft, picking, previewShown, describeData, loadTable, editable]);
   const orderedHeaderActions = React.useMemo(() => [...headerActions.filter((action) => action.key !== 'comment-mode'), ...headerActions.filter((action) => action.key === 'comment-mode')], [headerActions]);
   useDetailHeaderActions(orderedHeaderActions);
+
+  React.useEffect(() => {
+    if (!annotationDraft || !surface.comments || previewShown!==true) return;
+    let active=true;
+    const pins=annotationDraft.pins.filter((pin)=>pin.id!==editingPin && pin.annotation.target.resourceId===resourceId && pin.annotation.target.version===version).map(({id,annotation})=>({id,annotation}));
+    void surface.comments(pins).then((action)=>{
+      if(!active || !action || !pins.some((pin)=>pin.id===action.id))return;
+      if(action.action==='remove')annotationDraft.remove(action.id);
+      else {const pane=paneRef.current?.getBoundingClientRect();if(action.point && pane)setCommentAnchor({x:Math.max(8,Math.min(pane.x+action.point.x,window.innerWidth-308)),y:pane.y+action.point.y});setEditingPin(action.id);}
+    }).catch(()=>{});
+    return ()=>{active=false;};
+  },[annotationDraft?.pins,editingPin,resourceId,version,surface,previewShown]);
 
   const editingSelection = annotationDraft?.selections.find((p) => p.id === editingPin);
   return (

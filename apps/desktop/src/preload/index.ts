@@ -1,4 +1,4 @@
-import type { ArtifactPickerPin } from "@rally/contracts";
+import type { AnnotationCommentAction, ArtifactPickerPin } from "@rally/contracts";
 import type { AccountOnboarding, OrganizationNameSuggestion, SupportPerson, SupportWorkspace } from '@rally/contracts';
 import { NETWORK_RECOVERY_IPC, NetworkRecoveryInbox } from '../common/network-recovery';
 import { contextBridge, ipcRenderer } from 'electron';
@@ -281,6 +281,7 @@ const bridge: RallyDesktopBridge = {
   setArtifactPreviewHidden: (hidden) =>
     ipcRenderer.invoke('artifact:set-preview-hidden', hidden) as Promise<void>,
   pickArtifactPreview: () => ipcRenderer.invoke('artifact:pick-preview') as Promise<ArtifactPickerPin | null>,
+  showArtifactPreviewComments: (pins) => ipcRenderer.invoke('artifact:preview-comments', pins) as Promise<AnnotationCommentAction | null>,
   stopPickingArtifactPreview: () => ipcRenderer.invoke('artifact:stop-picking-preview') as Promise<void>,
   snapshotArtifactPreview: () => ipcRenderer.invoke('artifact:snapshot-preview') as Promise<string | null>,
   closeArtifactPreview: () => ipcRenderer.invoke('artifact:close-preview') as Promise<void>,
