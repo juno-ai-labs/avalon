@@ -8872,6 +8872,8 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .conversation-card-title { align-items: center; color: var(--av-sys-color-text-default); display: flex; font-size: 15.5px; font-weight: 650; gap: 6px; max-width: 100%; }
 .conversation-card-title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conversation-card.is-resolved :is(.conversation-card-title, .conversation-card-summary, .conversation-card-meta, .avatar-fallback) { color: var(--av-ref-color-neutral-7); }
+.conversation-card.is-resolved .personal-avatar svg:has(text) { fill: var(--av-ref-color-neutral-5); }
+.conversation-card.is-resolved .personal-avatar text { fill: var(--av-ref-color-neutral-7); }
 .conversation-card.is-resolved .conversation-card-title { font-size: 14px; font-weight: 400; }
 .conversation-card.is-resolved .conversation-card-summary { -webkit-line-clamp: 1; font-size: 12.5px; }
 .conversation-card.is-resolved .conversation-card-meta { font-size: 11px; }
@@ -8889,6 +8891,7 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   line-height: 1.4;
   padding: 2px 9px;
 }
+.conversation-card.is-resolved:is(:hover, .is-open) .conversation-card-resolved { background: var(--av-sys-color-state-hover); }
 .conversation-card-caret { color: var(--av-sys-color-text-subtle); flex: none; }
 .conversation-card-news { color: var(--av-sys-color-workstream-news); flex: none; font-size: 12.5px; font-weight: 600; }
 .conversation-card-summary {
