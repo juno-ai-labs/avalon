@@ -436,16 +436,22 @@ more than keeping a private Channel's name hidden.
 
 ### 2026-10-20 — Resolve a conversation without merging
 
-**What:** Thread and Breakout title menus offer Resolve below Merge, backed by
+**What changed:** Thread and Breakout title menus offer Resolve below Merge, backed by
 one parent-owned, access-checked resolution write, live directory publication,
 and navigation back to the parent after success. Older parents register their
 implicit Main entry through the existing registry helper.
 
-**Why:** Finishing work does not always produce a result to publish. Reusing
-merge would force an unwanted message; archiving would hide work the person
-still wants visible. Manual resolution shares the persistent registry flag and
-must remain independent of both execution and archiving.
+**Why:** Finishing work does not always produce a result to publish, and the
+person needs to return to the containing conversation after marking it done.
 
+**Considered and rejected:** Using merge would force an unwanted message;
+archiving would hide work the person still wants visible.
+
+**Consequences:** Manual resolution shares the persistent registry flag and
+must remain independent of execution and archiving. Parent navigation follows
+a successful write and must not interrupt a later visit.
+
+Shipped in [#1354](https://github.com/juno-ai-labs/avalon/pull/1354).
 
 ### 2026-10-20 — Resolve a merged conversation independently of its archive
 
