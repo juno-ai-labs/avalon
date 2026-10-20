@@ -43,6 +43,7 @@ export interface SiteArtifactTable {
 }
 
 export interface SiteResourceDetailProps {
+  editable?: boolean;
   resourceId: string;
   version: number;
   title: string;
@@ -135,6 +136,7 @@ async function stillWithin(take: () => Promise<string | null>): Promise<string |
 const HIDDEN = { x: 0, y: 0, width: 0, height: 0 };
 
 export function SiteResourceDetail({
+  editable = false,
   resourceId,
   version,
   title,
@@ -463,7 +465,7 @@ export function SiteResourceDetail({
       key: 'stored-data',
       label: 'Stored data',
       icon: <IconDatabase aria-hidden="true" size={16} stroke={1.9} />,
-      menu: <SiteDataPanel describeData={describeData} loadTable={loadTable} resourceId={resourceId} surface={surface} />,
+      menu: <section aria-label="Stored data" data-title-menu-autofocus="" tabIndex={-1}><SiteDataPanel describeData={describeData} loadTable={loadTable} resourceId={resourceId} surface={surface} /></section>,
       onSelect: () => undefined,
     }] : []),
     {
@@ -476,6 +478,7 @@ export function SiteResourceDetail({
         void mintAccess().then(
           async (navigation) => await surface.popOut({
             kind: 'site',
+            editable,
             resourceId,
             version,
             canonicalUrl: navigation.canonicalUrl,
@@ -509,7 +512,7 @@ export function SiteResourceDetail({
         async (navigation) => await surface.openExternal(navigation.openUrl),
       ),
     },
-  ], [access, copy, copyState, mintAccess, resourceId, surface, title, version, annotationDraft, picking, previewShown, describeData, loadTable]);
+  ], [access, copy, copyState, mintAccess, resourceId, surface, title, version, annotationDraft, picking, previewShown, describeData, loadTable, editable]);
   const orderedHeaderActions = React.useMemo(() => [...headerActions.filter((action) => action.key !== 'comment-mode'), ...headerActions.filter((action) => action.key === 'comment-mode')], [headerActions]);
   useDetailHeaderActions(orderedHeaderActions);
 

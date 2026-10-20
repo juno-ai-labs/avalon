@@ -341,6 +341,8 @@ export interface DesktopSiteArtifactWindowRequest {
   canonicalUrl?: string;
   mode?: 'static' | 'active';
   stateful?: boolean;
+  /** Whether the owning surface exposes Main thread artifact actions. */
+  editable?: boolean;
   annotationScope?: string;
   kind: 'site';
   restoreId?: string;
@@ -353,6 +355,8 @@ export interface DesktopSiteArtifactWindowRequest {
 }
 
 export interface DesktopGeneratedArtifactWindowRequest {
+  /** Whether the owning surface exposes Main thread artifact actions. */
+  editable?: boolean;
   annotationScope?: string;
   sourceMimeType?: string;
   kind: 'generated';
@@ -371,6 +375,8 @@ export type DesktopArtifactWindowRequest =
   | DesktopGeneratedArtifactWindowRequest;
 
 export interface DesktopRestorableArtifactWindow {
+  /** Whether the owning surface exposes Main thread artifact actions. */
+  editable?: boolean;
   annotationScope?: string;
   id: string;
   kind: 'site' | 'generated';
