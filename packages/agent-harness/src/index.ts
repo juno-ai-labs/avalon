@@ -112,6 +112,7 @@ export {
   undescribedParameters,
   weakenedCompositionBranches,
 } from "./tool-schema-safety";
+export { READING_GOOGLE_MEETING_NOTES_SKILL } from "./google-meeting-notes-skill";
 export {
   BUILDING_LIVE_SITES_SKILL,
   BUILT_IN_SKILLS,

@@ -484,6 +484,18 @@ Three bounds keep a looping model from loading its way into a context-limit erro
 
 The package ships eight skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet. Three are unowned and offered to every run: `deep-research`, `writing-an-email`, and `scheduling-a-calendar-event`. The other five each set an `ownerPlugin` and are offered only to a run whose scope already carries that plugin: `polling-for-events` below, `building-live-sites` above, and the three AI-chat readers — `reading-an-ai-chat`, `reading-chatgpt-conversations` and `reading-claude-conversations` (`reading-ai-chats-skills.ts`) — owned by Rally's browser plugin, `avalon:browser`. The generic reader is written against what every chat page must have (conversation data the page loaded, messages with authors, ids and parent links) rather than any markup, and ends in a self-check against the page; the provider companions carry routes and shapes as hints to verify, so a provider redesign degrades to the generic procedure instead of a wrong import. The latter two of the unowned three are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
 
+The API also offers `reading-google-meeting-notes`
+(`google-meeting-notes-skill.ts`) when the frozen catalog contains a Google
+connection with Calendar, Drive, Docs, or Gmail read capability. The host binds
+one copy to an eligible connection's canonical id; it is not in the globally
+offered `BUILT_IN_SKILLS` list because connection ids vary per run. The procedure
+can compose separate Mail + Calendar and Drive + Docs connections. It reads a
+known or Calendar-attached Doc first, searches Drive for missing artifacts, and
+keeps generated notes distinct from transcripts. Its bundled storage/access
+reference records official Google sources, including unattached manual notes,
+current and legacy Drive folders, shortcuts, and independent sharing rules.
+Loading it activates neither its owning connection nor the other Google preset.
+
 `polling-for-events` is what a run reads when somebody asks to be told whenever something happens. Its first instruction is to *not* poll: most connectors declare events Rally can trigger on, so the skill sends the model to `plugin_inspect` before it reaches for a timer, and the interval is the fallback for what inspection rules out. It then carries the three things a model gets wrong unaided: the cadence floor (no `interval` trigger faster than every ten minutes, slower is fine, and the person's own stated cadence wins), the keyed memory table that stops a run re-reporting what the last one already saw, and the steer away from `resource_watch`, which a model reaches for when told to watch one document and which `SidekickDO` builds neither a schedule nor an evaluator for. It sets `ownerPlugin: "rally:sidekicks"` because the whole procedure is drafting a Sidekick, which also keeps it out of an automation occurrence's catalog — an occurrence is deliberately never given the drafting tools.
 
 All of them are offered to every production run the API starts, subject to the owner filter. Nothing is withheld by surface. A skill
@@ -1443,6 +1455,27 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-10-19 — Google meeting knowledge loads against an authorized connection
+
+**What changed:** A reusable meeting-notes skill covers Calendar references,
+Drive-only Docs, transcript segments, Gemini summaries, and access failures.
+The API offers one copy owned by an eligible frozen Google connection; authoring
+and connector messages point to it instead of repeating the procedure.
+
+**Why:** Repeated follow-up workflows confused Calendar attachment metadata with
+where Google stores the document, and a missing attachment or Meet-specific
+tool was treated as proof that notes could not be read. Google also has both
+new and legacy folder layouts, and manual notes may never be attached.
+
+**Considered and rejected:** Offering a Google-specific skill globally would
+advertise it to runs with no usable Google connection. One copy per connection
+would duplicate the same catalog entry when Mail and Drive are separate presets.
+
+**Consequences:** Connection selection stays in the host's frozen authorization
+scope. Loading instructions grants no tools. Future guidance should extend the
+shared skill and its sourced reference rather than expanding standing prompts.
+
 
 ### 2026-10-19 — A wake-up fires in the conversation that scheduled it
 

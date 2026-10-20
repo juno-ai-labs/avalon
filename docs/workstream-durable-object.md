@@ -1815,6 +1815,26 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 
 ## Changelog
 
+### 2026-10-19 — Connector event people occupy ordered rows
+
+**What changed:** WorkspaceDO migration 122 backfills each existing event's
+people into `workspace_connector_event_people`, clears its compatibility JSON
+cell, and constrains per-event positions to 0–9,999. Ingestion, restoration,
+claims and reads write or reconstruct the complete ordered list. Deleting an
+event cascades to its people.
+
+**Why:** The requested 10,000-person limit exceeds both the old JSON cell guard
+and SQLite's 2 MB row limit when references carry their source evidence.
+
+**Considered and rejected:** Enlarging one JSON column still fails at the
+platform row ceiling. A separate row per person keeps event ownership, ordering
+and atomicity inside the same object and needs no second authority.
+
+**Consequences:** Never write a new roster into the historical JSON cell. Person
+rows commit with the event, and late-event restoration must copy them alongside
+the event identity. Applied migrations remain untouched.
+
+
 ### 2026-10-18 — The conversation object keeps one suggestion per judged turn
 
 **What changed:** Migration v75 adds `conversation_suggestions` and

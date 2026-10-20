@@ -1,3 +1,5 @@
+import { sendConnectorQueuePayload } from "./connector-queue-payload";
+export { MAX_CONNECTOR_EVENT_QUEUE_BYTES } from "./connector-queue-payload";
 import type { NormalizedActivity } from "@rally/contracts";
 
 import {
@@ -12,7 +14,6 @@ import type { Env } from "../env";
 import { sha256Hex } from "../lib/crypto";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 
-export const MAX_CONNECTOR_EVENT_QUEUE_BYTES = 120_000;
 
 /**
  * Two-stage handoff on one Queue:
@@ -108,19 +109,8 @@ export async function enqueueWorkspaceConnectorEvent(
 ): Promise<void> {
   const message = await workspaceConnectorEventQueueMessage(input);
   const payloadBytes = new TextEncoder().encode(JSON.stringify(message)).byteLength;
-  if (payloadBytes > MAX_CONNECTOR_EVENT_QUEUE_BYTES) {
-    logWarn(env, "connector_event_enqueue_failed", {
-      workspace_id: message.request.workspaceId,
-      connector_type: message.request.event.connectorType,
-      ingress_event_id: message.request.ingressEventId,
-      attempt: message.attempt,
-      payload_bytes: payloadBytes,
-      reason: "queue_payload_too_large",
-    });
-    throw new Error("workspace_connector_event_queue_payload_too_large");
-  }
   try {
-    await env.ACTIVITY_QUEUE.send(message);
+    await sendConnectorQueuePayload(env, input.activity.workspaceId, message);
   } catch (error) {
     logWarn(env, "connector_event_enqueue_failed", {
       workspace_id: message.request.workspaceId,
