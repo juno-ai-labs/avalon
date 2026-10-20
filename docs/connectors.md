@@ -96,8 +96,8 @@ Apollo.io uses the personal-only [hosted-MCP connector](hosted-mcp-connectors.md
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/external-people.ts` | Shared deduplication and the 10,000-person activity limit. |
-| `apps/api/src/durable-objects/connector-event-people.ts` | Ordered event-owned person rows and the frozen v122 backfill. |
-| `apps/api/src/services/connector-queue-payload.ts` | Immutable R2 references for connector Queue bodies that exceed the envelope budget. |
+| `apps/api/src/durable-objects/connector-event-people.ts` | Ordered event-owned person rows, legacy readback, and schema-only v122. |
+| `apps/api/src/services/connector-queue-payload.ts` | Canonical-event references for oversized connector delivery context. |
 | `apps/api/src/durable-objects/workspace-event-resources.ts` | Exact workspace/connection/provider identity resolution for incoming event relationships. |
 | `packages/connectors/src/index.ts` | The registry, and the cross-validation that runs at its construction. |
 | `packages/connectors/src/types.ts` | The manifest and descriptor types, and the unexported symbol that brands `AuthorizedConnectorConnection`. |
@@ -633,16 +633,10 @@ Google read connection, once even when Calendar and Drive are separate presets.
 It distinguishes Meet transcripts, Gemini notes, and manual Docs that may never
 be attached to Calendar. Folder names are hints rather than search requirements.
 
-For Meet notes, inspect Calendar activity attachments or read the event first.
-Read an attached transcript or notes Doc through the authorized Drive + Docs
-connection with `docs.read_document`: its `fileId` is the `documentId`, or extract
-the ID between `/d/` and `/edit` from `fileUrl`. Do this before searching Drive or
-concluding the workflow is blocked. Search Drive only when no relevant Doc is
-attached or the attached Doc cannot supply the notes. Preserve any failed read's
-specific access or availability reason.
-A missing Meet-specific tool does not establish that notes cannot be read.
-Choose a source's declared document events or polling instead of assuming every
-new notes document produces a Calendar change.
+The skill owns the attached-Doc-first procedure and Drive fallback. Connector
+presentations point to it rather than duplicating the lookup instructions.
+A Gmail-only connection does not offer it. Calendar attachment visibility does
+not establish permission to read the referenced Doc.
 
 ### GitHub App
 
@@ -1083,23 +1077,24 @@ Cc, with sender first. The shared `ExternalPeopleSchema` enforces the
 user-selected 10,000-person limit after deduplication; 10,001 distinct people
 are rejected explicitly, never silently truncated. A role and provider tenant
 remain part of identity, and email matching is case insensitive. There is no
-per-header cutoff. Terminal poll failures retain the safe,
+per-header cutoff. Each evidence item holds its matched address rather than a
+copy of the entire recipient header. Terminal poll failures retain the safe,
 field-specific diagnostic code in the connection's `error_json` and message,
 including across Workflow retries and replay. Provider response text is never
 copied into the stored diagnosis.
 
-WorkspaceDO migration 122 moves existing `external_people_json` arrays into
-`workspace_connector_event_people`, one ordered row per person. Positions are
+WorkspaceDO migration 122 creates `workspace_connector_event_people`, one
+ordered row per person, without rewriting retained events at startup. Legacy
+bounded JSON rosters remain readable until replacement or normal retention. Positions are
 constrained to 0–9,999 and the event foreign key cascades deletion. New events
 keep the compatibility JSON cell empty and insert people in the same transaction
 as their event; reads and claims reconstruct the full ordered list. Restoring a
 late repeat copies its people too. This avoids the old 262,144-character cell
 constraint and Cloudflare's 2 MB row limit without widening historical DDL.
 
-Suggested Work retains that complete list in sources and provenance. Model
-requests cover it in successive windows under the existing character budget;
-every window's decision is persisted against the full canonical sources, never
-the window's subset.
+Suggested Work retains that complete list in sources and provenance. Its single
+bounded model view reports shown and total counts without changing the canonical
+source; see [`suggested-work.md`](suggested-work.md).
 
 ### Activity ingestion
 
@@ -1236,7 +1231,7 @@ Manifests and facets are cross-validated at registry construction: a connector t
    consumer then settles the authoritative event as processed or failed. A
    transient failure calls per-message `retry()` and an exhausted message enters
    the existing regional activities DLQ.
-9. Each match becomes its own message on the same regional Queue, carrying the registration, the destination, and the event inline or through the same immutable R2 envelope when large. No snippet or metadata is discarded to fit the Queue. The consumer calls `AutomationDO.admitExternalEvent` or `SubstreamAgent.appendWatchedResourceEvent`; the destination re-checks its own lifecycle and activation boundary and admits at most one occurrence per canonical event, keyed on the event id, so there is no delivery ledger and no lease to settle.
+9. Each match becomes its own message on the same regional Queue, carrying the registration, the destination, and the event inline or with a canonical-event reference for oversized context. No snippet or metadata is discarded to fit the Queue. The consumer calls `AutomationDO.admitExternalEvent` or `SubstreamAgent.appendWatchedResourceEvent`; the destination re-checks its own lifecycle and activation boundary and admits at most one occurrence per canonical event, keyed on the event id, so there is no delivery ledger and no lease to settle.
 10. WorkspaceDO deletes a `processed` event 90 days after it was received, on its alarm's `connector_event_reap` phase; pending, processing and failed events never age out. The retention and its arithmetic are in [`workstream-durable-object.md`](workstream-durable-object.md). Legacy D1 `activities` rows are imported and scrubbed before the route opens; live events never create a D1 body handoff.
 
 When it enqueues a delivery (step 4), provider webhook ingestion (GitHub,
@@ -1247,22 +1242,31 @@ there is Organization-scope, otherwise only the owners of the personal ones,
 since a personal connection's resources are its owner's alone. `activity` goes
 to the whole Organization.
 
-**Ingress carries the event or an immutable reference; processing carries only IDs.**
-Before admission there is no canonical WorkspaceDO event to read. An oversized
-first-stage body lives at
-`<region>/connector-queue/<workspace id>/<sha256>.json`; its Queue envelope
-contains only region, workspace and hash. Small events remain inline. The
-consumer verifies the stored bytes before parsing the same ingress contract.
-Staging objects are retained for Queue retry and DLQ redrive; never delete a
-shared content-addressed body merely because one sender failed or one delivery
-acknowledged. They are retained in the payload bucket; this path introduces no acknowledgment-time deletion. After admission,
-processing retries still reload canonical state from WorkspaceDO by ID.
+**Processing carries only IDs; oversized ingress commits before queueing IDs.**
+Storage-field validation mirrors the existing SQLite constraints before enqueue,
+so an oversized metadata, actor, subject, or summary fails with its field name
+rather than accepting an event that can only retry into the DLQ.
+Small first-stage events travel inline. An event above the existing 120,000-byte
+Queue envelope budget calls the same typed WorkspaceDO admission primitive
+directly, then queues the processing IDs after its canonical commit. A failed
+send replays idempotent admission before retrying the wake-up. Processing always
+reloads canonical state from WorkspaceDO.
 
-A single-message alternative—ingest, process, and retry the original full
-message—would also be correct if every retry re-ingested idempotently and still
-loaded WorkspaceDO authority. It was rejected because it retains the normalized
-event for the entire processing retry/DLQ lifetime in exchange for saving only
-the second Queue send, not an object round trip.
+Oversized matched deliveries keep registration, destination, and event identity
+in the Queue envelope and reload `textSnippet` and `metadata` through the
+canonical event's context projection. They create no second copy in R2, so
+canonical event retention also owns their context. Hydration failures retry
+separately from destination processing, whose existing acknowledgment policy
+applies unchanged.
+
+Google normalization rollouts accept a legacy payload and its enriched replay
+under one event identity. Missing Calendar attachments, the historical 100-person
+prefix, and compact Gmail address evidence are compared in their legacy shape;
+the richer roster and attachment metadata replace canonical context atomically,
+without changing processing status or firing another occurrence. Other content
+changes, including conflicting nonempty attachment lists, still fail identity
+validation. The compatibility check rechecks the canonical hash after its async
+comparison before committing enrichment.
 
 Every durable boundary above emits a structured outcome rather than leaving a
 Queue acknowledgement to stand in for downstream success. Follow one event by
@@ -1631,39 +1635,33 @@ clients containing the fallback; it cannot retrofit already-installed clients.
 Release a desktop build supporting a connector before enabling it on the Worker,
 as with the wire-name sequencing constraint documented on
 `isConnectorConnectionCardWireName`, so an available update can resolve the card.
-### 2026-10-19 — Connector people lists survive ingestion and Gmail drafts attach authorized PDFs
 
-**What changed:** Shared contracts admit up to 10,000 deduplicated people.
-Migration 122 stores ordered per-person rows; large Queue bodies use verified R2
-references, and Suggested Work reads every person through model windows while
-persisting the complete source. Gmail retains specific terminal polling errors. Drafts can attach original PDF resources through a
-host-authorized binary reader. Google and Sidekick guidance checks Drive + Docs
-for Meet notes and selects the actual notes source's events or polling. Calendar
-change, completion, and series-master polls expose attachment references, and
-the agent reads the attached transcript Doc before Drive discovery. A scoped
-meeting-notes skill now owns this procedure and the sourced Google storage map,
-including Drive-only notes and legacy folder layouts.
+### 2026-10-19 — Google polling preserves people, diagnostics, and attached documents
 
-**Why:** A large recipient list exceeded the shared activity schema despite
-per-header bounds, leaving the connection in a generic error state. The Calm
-follow-up workflow also required a PDF attachment, while its agent treated the
-Mail preset's missing Meet tool as proof that no connected plugin could read notes.
-Calendar tool reads exposed attached transcripts, but polling omitted them,
-making an attachment-only edit invisible to content deduplication.
+**What changed:** Polling admits up to 10,000 deduplicated people, retains safe
+field-specific terminal errors, and exposes Calendar attachment references.
+Terminal logs retain their stable `connector_poll_failed` or
+`connector_poll_timeout` event name; `error_code` carries the specific cause.
+Legacy Google payloads converge on their enriched canonical event without
+reprocessing. Oversized ingress commits directly through canonical admission;
+large matched deliveries reload canonical context. The meeting-notes skill owns
+lookup guidance. [`agent-attachments.md`](agent-attachments.md) owns Gmail PDF
+authorization, [`workstream-durable-object.md`](workstream-durable-object.md)
+owns roster storage, and [`suggested-work.md`](suggested-work.md) owns admission.
 
-**Considered and rejected:** Raising only a schema cap moves the failure to
-the Queue message or SQLite row size. Truncating after 100 loses real recipients.
-The full roster therefore crosses both boundaries intact. Passing file bytes or arbitrary URLs through the model bypasses resource
-authority. Requiring a new Meet integration ignores existing Drive documents.
-Searching by meeting title first can pick a different document, so the event's
-attached Doc is read directly before discovery.
+**Why:** Real recipient lists exceeded the old schema and the displayed error
+lost the cause. Calendar polling omitted attached transcript Docs that event
+reads already exposed, leaving follow-up workflows without their best source.
 
-**Consequences:** The 10,000-person limit applies after deduplication and
-oversized lists fail explicitly. Historical event DDL remains unchanged; roster
-rows share event retention, while immutable Queue staging remains available for
-retries and DLQ redrive. PDF bytes remain host-only and current resource access is required at execution.
-Draft attachment support does not enable attachments on immediate sends or
-prove that any particular meeting's notes are shared with the connected account.
+**Considered and rejected:** Raising only a schema cap moves failure to Queue
+or SQLite limits. Truncation loses recipients. R2 transport copies would outlive
+canonical event retention and require another cleanup protocol; canonical
+admission and context reads reuse the existing authority instead.
+
+**Consequences:** The 10,000-person limit applies after deduplication; larger
+lists fail explicitly. Queue messages preserve full event context through the
+canonical owner, and rollout enrichment preserves identity and processing state.
+Read access to an attached Doc remains the connected account's responsibility.
 
 
 ### 2026-10-19: Polling failure is not a reconnect verdict

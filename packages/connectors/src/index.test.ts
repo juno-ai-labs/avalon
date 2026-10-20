@@ -565,6 +565,8 @@ describe("connectors", () => {
     expect(people[0]).toMatchObject({ email: "sender@example.com", role: "sender" });
     expect(people.filter((person) => person.email === "guest0@example.com")).toHaveLength(1);
     expect(people.at(-1)?.email).toBe("overflow@example.com");
+    expect(people.find((person) => person.email === "guest0@example.com")?.sourceText).toBe("guest0@example.com");
+    expect(people.at(-1)?.sourceText).toBe("overflow@example.com");
     expect(result.cursor).toMatchObject({ gmail: { historyId: "102" } });
   });
 
@@ -2543,6 +2545,28 @@ describe("connectors", () => {
     expect(parts[1]).toContain("filename*=UTF-8''Calm%20dossier.pdf");
     expect(atob(parts[1]!.split("\r\n\r\n")[1]!.trim())).toBe("%PDF-1.7\nOriginal dossier\n%%EOF");
     expect(result.output).toMatchObject({ id: "draft-with-pdf" });
+  });
+
+  it("round-trips binary PDF bytes across many base64 chunks and folds MIME lines", async () => {
+    const bytes = new Uint8Array(2 * 1024 * 1024).map((_, index) => index % 256);
+    let mime = "";
+    const adapter = googleAdapter(async (_input, init) => {
+      const payload = JSON.parse(String(init?.body)) as { message: { raw: string } };
+      mime = atob(payload.message.raw.replace(/-/gu, "+").replace(/_/gu, "/"));
+      return googleJson({ id: "binary-draft" });
+    });
+    await adapter.executeTool("gmail.create_draft", {
+      message: { kind: "new", to: ["candidate@example.com"], subject: "Dossier", body: "Attached." }, attachmentResourceIds: [TEST_WORKSPACE_ID],
+    }, { connection: googleConnection(["gmail.draft"]), principal: { type: "user", userId: TEST_USER_ID }, signal: neverAborts(),
+      readAttachment: async () => ({ fileName: "dossier.pdf", mimeType: "application/pdf", bytes }),
+    });
+    const boundary = /boundary="([^"]+)"/u.exec(mime)![1]!;
+    const part = mime.split(`--${boundary}`)[2]!.split("\r\n\r\n")[1]!.trim();
+    expect(part.split("\r\n").every((line) => line.length <= 76)).toBe(true);
+    const decoded = atob(part);
+    expect(decoded).toHaveLength(2_097_152);
+    expect(Array.from(decoded.slice(120, 132), (value) => value.charCodeAt(0))).toEqual([120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131]);
+    expect(Array.from(decoded.slice(-4), (value) => value.charCodeAt(0))).toEqual([252, 253, 254, 255]);
   });
 
   it("does not create an incomplete Gmail draft when a resource cannot be read", async () => {

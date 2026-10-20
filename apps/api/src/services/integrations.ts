@@ -373,7 +373,7 @@ function legacyConnectorCanonicalToolName(connectorType: string, currentName: st
 /** One shared playbook, owned by an eligible connection rather than a guessed plugin id. */
 function connectorSkillsForPlugins(plugins: readonly HarnessPlugin[]): HarnessSkill[] {
   const google = plugins.find((plugin) => plugin.connectorType === "google"
-    && plugin.tools.some((tool) => ["calendar.read", "drive.read", "docs.read", "gmail.read"].includes(tool.definition.capability)));
+    && plugin.tools.some((tool) => ["calendar.read", "drive.read", "docs.read"].includes(tool.definition.capability)));
   return google ? [{ ...READING_GOOGLE_MEETING_NOTES_SKILL, ownerPlugin: google.canonicalId }] : [];
 }
 
@@ -5784,11 +5784,6 @@ function googleMailWorkedExamples(wirePrefix: string, granted: ReadonlySet<strin
  */
 function googleFilesWorkedExamples(wirePrefix: string, granted: ReadonlySet<string>): string {
   const examples: string[] = [];
-  if (granted.has("docs.read")) {
-    examples.push(
-      `Read a Calendar-attached transcript first — for an attachment with fileId "meeting-transcript-doc", call \`${wirePrefix}_docs_read_document {"documentId": "meeting-transcript-doc"}\`. If only fileUrl is present, take the ID between /d/ and /edit. Read this Doc before searching Drive or declaring the workflow blocked; search is the fallback when no relevant Doc is attached or its read cannot provide the notes.`,
-    );
-  }
   if (granted.has("drive.read")) {
     examples.push(
       `Search names and contents together — \`${wirePrefix}_drive_search {"query": "Q3 pricing", "fileType": "document"}\`. \`query\` is plain text, not a Drive expression, so express a filter with \`fileType\` and \`modifiedAfter\` rather than writing it into the query. For the newest rather than the closest match, add \`"orderBy": "modified"\`.`,
@@ -5925,7 +5920,9 @@ function connectorPluginPresentation(
   const hasCommunication = hasMail || hasCalendar;
   const hasFiles = hasDrive || hasDocs || hasSheets;
 
-  const meetingNotesGuidance = "For Google Meet notes or transcripts, load the reading-google-meeting-notes skill. First inspect the Calendar activity metadata.attachments or read the event. Read that attached Doc before any Drive search or blocked conclusion, using an authorized Drive + Docs connection. Mail + Calendar and Drive + Docs may be separate plugins. Use an actual declared source event or scheduled polling; Calendar changes do not announce every edit inside an existing Doc.";
+  const meetingNotesGuidance = granted.has("calendar.read") || granted.has("docs.read") || granted.has("drive.read")
+    ? "For Google Meet notes or transcripts, load the reading-google-meeting-notes skill."
+    : "";
   const mailGuidance = hasMail
     ? [
       ...(granted.has("gmail.draft") ? ["Gmail drafts can attach PDF resources: pass attachmentResourceIds at the root beside message, using IDs from list_resources. The host resolves original bytes under the run's current access; never provide file bytes or storage keys."] : []),
@@ -5950,7 +5947,7 @@ function connectorPluginPresentation(
     : [];
   const filesGuidance = hasFiles
     ? [
-      "For file, document, or spreadsheet discovery without a known file ID or link, use the Drive search tool before claiming the requested workspace content is unavailable; do not substitute public web search for authorized Drive search.",
+      "For file, document, or spreadsheet discovery, use the Drive search tool when you need to find a file; do not substitute public web search for authorized Drive search.",
       "Drive search matches file names and file contents, and narrows by file type and modification date through its own parameters; a search that returns nothing means those terms were not found, not that the tool cannot see contents.",
       GoogleFileWriteAuthorizationGuidance,
     ]

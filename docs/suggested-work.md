@@ -55,12 +55,12 @@ connector activity / Rally mention
 ```
 
 Connector sources retain up to 10,000 deduplicated people, including every
-reference's source evidence. The canonical source and stored provenance never
-use the former 100-person, 30-person or 2,000-character roster prefixes. Admission
-presents large lists in successive windows under its existing character budget,
-with `externalPeopleCoverage` stating the window and total counts. Each decision
-is resolved and persisted against the original full sources. A model window is
-a presentation of part of the evidence, not a replacement for it.
+reference's source evidence. Canonical sources and stored provenance never use
+the former roster prefixes. Admission presents one bounded view under its
+existing character budget, sharing space between people and source text, with
+`externalPeopleCoverage` stating shown and total counts. Decisions resolve and
+persist against the full original sources. This view may omit people from model
+consideration but never removes them from canonical storage or provenance.
 
 ### Admission
 
@@ -443,22 +443,24 @@ value.
 
 ## Changelog
 
-### 2026-10-19 — Admission windows preserve complete connector people lists
+### 2026-10-19 — Full canonical rosters have a bounded admission view
 
 **What changed:** Sources and provenance retain up to 10,000 deduplicated people.
-Large rosters are presented across bounded model windows, with coverage counts;
-persistence always receives the full source rather than a window's subset.
+Each packed batch receives one bounded inference view with shown/total coverage;
+persistence receives the complete original source once per decision.
 
-**Why:** Truncating at 100 references, or again at the character-budget step,
-could remove the very person a meeting or email follow-up concerned.
+**Why:** Canonical truncation lost real people. Splitting long source text across
+roster windows could instead require hundreds of sequential calls and let later
+decisions overwrite earlier user links or ignore an earlier opportunity.
 
-**Considered and rejected:** Passing a single oversized prompt replaces silent
-data loss with provider rejection. Windowing inference keeps the existing
-prompt budget without deleting canonical evidence.
+**Considered and rejected:** An oversized prompt fails at the provider. Windowing
+would need cross-window decision reconciliation and resumable checkpoints for a
+coarse admission gate. A bounded view uses the existing character budget while
+keeping all canonical evidence for subsequent work.
 
-**Consequences:** Every window is processed before the batch completes; source
-fingerprints and opportunity persistence retain their existing replay rules.
-User-link inference and visible provenance views keep their separate contracts.
+**Consequences:** Model sampling is explicit and does not promise every person
+was considered. Source fingerprints and persisted provenance retain the full
+roster, and one batch cannot repeatedly replace links for the same source.
 
 
 ### 2026-10-19 — Shared MCP resources are not verified people
