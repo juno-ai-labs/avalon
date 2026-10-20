@@ -527,6 +527,22 @@ describe('patchCachedWorkstreamViewerState', () => {
       .toEqual(['space-a', 'space-b']);
   });
 
+  it('takes resolution at the same child version and retains it across later activity without restoring a tombstone', () => {
+    const queryClient = new QueryClient();
+    const apply = (resolved: boolean | undefined, waterline = 2, visible = true) => applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id, stateVersion: version(waterline, 1), visible,
+      ...workstreamSummaryState(summary(resolved === undefined ? {} : { resolved })),
+    });
+    apply(undefined);
+    apply(true);
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.resolved).toBe(true);
+    apply(undefined, 3);
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.resolved).toBe(true);
+    apply(undefined, 4, false);
+    apply(true, 3);
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)).toEqual([]);
+  });
+
   it('takes a changed Breakout attention total from a duplicate parent version', () => {
     const queryClient = new QueryClient();
     setCachedWorkstreams(queryClient, [summary({ breakoutAttentionCount: 2 })]);

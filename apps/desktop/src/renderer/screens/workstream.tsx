@@ -294,6 +294,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
             createdAt: '1970-01-01T00:00:00.000Z',
             updatedAt: '1970-01-01T00:00:00.000Z',
           }),
+          resolved: live?.resolved ?? item.resolved,
           scope: item.scope,
           originTurnId: live?.originTurnId ?? item.originTurnId ?? null,
           ...(live?.appearance ?? item.appearance ? { appearance: live?.appearance ?? item.appearance } : {}),
@@ -691,6 +692,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const channelAppearance = rowAppearance ?? parent.data?.appearance ?? sharedParent?.appearance;
   const breakoutMarks = useMemo<BreakoutMark[] | undefined>(() => railChildren?.map((child) => ({
     substreamId: child.substreamId,
+    resolved: 'resolved' in child ? child.resolved : undefined,
     title: child.title,
     appearance: child.appearance,
     originTurnId: child.originTurnId ?? null,

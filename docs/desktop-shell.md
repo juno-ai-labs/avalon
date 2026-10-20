@@ -422,7 +422,8 @@ Each Breakout row the thread receives carries `originTurnId` and
   Breakout list to answer, since the rows drawn before it carry stand-in
   authors and dates. While the Breakout's run waits on a question
   (`harnessStatus` `needs_input`), a red **Needs input** badge takes the place
-  of the news, and the tick and its card say the same.
+  of the news, and the tick and its card say the same. Resolved cards use the
+  [merge-back presentation](conversation-merge.md#resolution-and-archiving).
 - **Tick bar:** down Main's leading edge, one tick per Breakout, in origin-turn
   order for turns that are loaded and by creation time after them. Colour says
   news and length says open, at the design's sizes: a quiet tick is 11×2 grey,

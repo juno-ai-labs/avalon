@@ -8887,6 +8887,14 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .conversation-card-body { align-items: flex-end; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .conversation-card-title { align-items: center; color: var(--av-sys-color-text-default); display: flex; font-size: 15.5px; font-weight: 650; gap: 6px; max-width: 100%; }
 .conversation-card-title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-card.is-resolved .conversation-card-title { color: var(--av-sys-color-text-muted); font-size: 14px; font-weight: 400; }
+.conversation-card.is-resolved .conversation-card-summary { -webkit-line-clamp: 1; font-size: 12.5px; }
+.conversation-card.is-resolved .conversation-card-meta { color: var(--av-sys-color-text-muted); font-size: 11px; }
+.conversation-card.is-resolved .conversation-card-caret { opacity: 0.4; }
+.conversation-card.is-resolved .conversation-card-mark { filter: grayscale(1); opacity: 0.3; }
+.conversation-card.is-resolved:is(:hover, :focus-visible) .conversation-card-summary { -webkit-line-clamp: 3; }
+.conversation-card.is-resolved:is(:hover, :focus-visible) :is(.conversation-card-caret, .conversation-card-mark) { opacity: 0.55; }
+.conversation-card-resolved { color: var(--av-sys-color-text-muted); font-size: 11px; font-weight: 500; }
 .conversation-card-caret { color: var(--av-sys-color-text-subtle); flex: none; }
 .conversation-card-news { color: var(--av-sys-color-workstream-news); flex: none; font-size: 12.5px; font-weight: 600; }
 .conversation-card-summary {
@@ -8975,16 +8983,6 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
    stay whole. */
 .message-actions { flex-wrap: nowrap; white-space: nowrap; }
 .message-merge { white-space: nowrap; }
-/* A Breakout card whose result is in its Thread. */
-.breakout-merged-chip {
-  align-items: center;
-  color: var(--av-sys-color-success-base);
-  display: inline-flex;
-  font-size: 12px;
-  font-weight: 550;
-  gap: 2px;
-  margin-left: 4px;
-}
 /* The composer's merge mode (docs/conversation-merge.md): who will see it,
    over the toolbar; where it goes, as a pill among the tools; and Merge, a
    labelled button where Send is. */

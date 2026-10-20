@@ -27,9 +27,9 @@ export function ConversationCard({ conversation, meta, onOpen, open, summary }: 
     : conversation);
   const { Icon, tint, ink } = resolveWorkstreamAppearance(conversation.substreamId, conversation.appearance);
   return <button
-    aria-label={[conversation.naming ? 'Rally is choosing a name' : conversation.title, news, open && 'Open'].filter(Boolean).join(', ')}
+    aria-label={[conversation.naming ? 'Rally is choosing a name' : conversation.title, conversation.resolved && 'Resolved', news, open && 'Open'].filter(Boolean).join(', ')}
     aria-pressed={open}
-    className={clsx('conversation-card', open && 'is-open')}
+    className={clsx('conversation-card', conversation.resolved && 'is-resolved', open && 'is-open')}
     onClick={onOpen}
     type="button"
   >
@@ -42,7 +42,10 @@ export function ConversationCard({ conversation, meta, onOpen, open, summary }: 
         <IconChevronRight aria-hidden="true" className="conversation-card-caret" size={13} stroke={2} />
       </span>
       {summary && <span className="conversation-card-summary">{summary}</span>}
-      {meta && <span className="conversation-card-meta">{meta}</span>}
+      {(meta || conversation.resolved) && <span className="conversation-card-meta">
+        {meta}
+        {conversation.resolved && <span className="conversation-card-resolved">Resolved</span>}
+      </span>}
     </span>
     <span aria-hidden="true" className="conversation-card-mark" style={{ background: tint, color: ink }}>
       <Icon size={19} strokeWidth={1.8} />
