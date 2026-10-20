@@ -34,6 +34,7 @@ import { Link, matchPath, useLocation, useNavigate } from 'react-router-dom';
 
 import type { AttentionItem } from '../lib/attention-items';
 import { useAppSession } from '../lib/app-session';
+import { useShellCapabilities } from '../lib/collaboration-session';
 import { consumeDeepLinkWorkstreamNavigation, useDeepLinkWorkstreamNavigation } from '../lib/deep-link-navigation';
 import { desktopBridge } from '../lib/platform';
 import { formatDateTime, formatSidebarActivityTime, formatTime, readerMarkerStatus } from '../lib/format';
@@ -175,6 +176,7 @@ export function NavigationSidebar({
   onOpenSearch?: (() => void) | undefined;
   workspace: Workspace;
 }): React.JSX.Element {
+  const { host } = useShellCapabilities();
   const chosenSection = useUiStore((state) => state.sidebarSection);
   const setSection = useUiStore((state) => state.setSidebarSection);
   const sidebarOpen = useUiStore((state) => state.sidebarOpen);
@@ -265,7 +267,7 @@ export function NavigationSidebar({
   >
     <div className="navigation-body">
       <nav aria-label="Sections" className="navigation-rail">
-        <div className="navigation-rail-top window-drag" />
+        {host === 'desktop' && <div className="navigation-rail-top window-drag" />}
         {shown.map((candidate) => <RailItem
           active={candidate.id === section}
           aria-current={candidate.id === section ? 'page' : undefined}
