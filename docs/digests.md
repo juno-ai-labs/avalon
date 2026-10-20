@@ -245,6 +245,10 @@ Nothing here changes what a digest reads.
 
 **An item is done two ways**, and neither is a row per item.
 
+Read rows are visually de-emphasized, with full opacity restored on hover,
+keyboard focus, or an increased-contrast preference. Unread rows and pending
+access requests retain full opacity.
+
 - **Mark all read** moves one time per person (`workspace_activity_seen`,
   migration 97) through `PUT /navigation/activity/seen`; every item at or
   before it is done. Showing the tab reads nothing. Moving the mark publishes

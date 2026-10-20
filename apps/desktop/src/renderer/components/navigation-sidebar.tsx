@@ -1717,7 +1717,7 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
         const actor = actorBadge(item, member, name);
         const thread = resolveWorkstreamAppearance(item.threadId, live.data?.find((candidate) => candidate.id === item.threadId)?.appearance);
         return <Link
-          className={clsx('activity-row', item.unread && 'is-unread')}
+          className={clsx('activity-row', item.unread ? 'is-unread' : 'is-read')}
           data-motion-key={`activity:${item.id}`}
           key={item.id}
           state={linkState(item)}
