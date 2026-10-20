@@ -292,14 +292,10 @@ async function markNeedsReconnect(
   connection: Pick<ConnectorConnectionContext, "id" | "workspaceId">,
 ): Promise<void> {
   await database.prepare(
-    // Still `= 'healthy'`, and deliberately not relaxed with the gates around
-    // it: this one is a *write*, not a refusal to try. A row already marked
-    // carries the first and most specific diagnosis of why it broke, and
-    // re-marking would overwrite it with this generic one on every later
-    // attempt — the exact way a `missing_scopes: reactions:read` verdict was
-    // lost behind a bare `unauthorized` hours after the fact.
+    // A provider refusal supersedes an operational error, but preserves an
+    // existing reconnect diagnosis and a person's disabled state.
     `UPDATE connector_connections SET status = 'needs_reconnect', error_json = ?, updated_at = ?
-     WHERE id = ? AND workspace_id = ? AND status = 'healthy'`,
+     WHERE id = ? AND workspace_id = ? AND status IN ('healthy', 'error')`,
   ).bind(
     JSON.stringify({
       code: "connector_reauthorization_required",

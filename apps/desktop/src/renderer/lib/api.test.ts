@@ -483,6 +483,15 @@ describe('Rally API wire adapter', () => {
     expect(mapWorkstreamDetail(detail).modelOverride).toBeUndefined();
   });
 
+  it.each([
+    ['healthy', 'healthy'], ['error', 'healthy'],
+    ['needs_reconnect', 'reconnect_required'], ['disabled', 'disabled'],
+  ] as const)('maps stored %s to renderer authorization %s', (status, expected) => {
+    expect(mapWorkstreamDetail({ ...detail,
+      connections: detail.connections.map((connection) => ({ ...connection, status })),
+    }).connections).toMatchObject([{ status: expected }]);
+  });
+
   it('maps representative channel and resource wire records into renderer models', () => {
     expect(mapWorkstreamDetail(detail)).toMatchObject({
       id: workstreamId,
