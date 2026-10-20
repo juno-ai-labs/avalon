@@ -70,7 +70,9 @@ show **Connect**. The active connections query owns the displayed state; the
 feed's success latch only bridges a loading/remount gap. OAuth completion
 publishes the workspace socket's `connector_connections` topic to refresh it.
 A healthy existing grant does not itself complete a new reauthorization attempt:
-the callback or OAuth-attempt reconciliation clears the waiting state.
+the callback or OAuth-attempt reconciliation clears the waiting state. The card
+checks the attempt on mount, focus, connection refresh, and workspace OAuth topic
+updates. Multiple matching connections require an explicit account selection.
 
 Apollo.io uses the personal-only [hosted-MCP connector](hosted-mcp-connectors.md).
 
@@ -1516,12 +1518,17 @@ Workspace-principal automation runs retain their separate lifecycle authority.
 
 ### 2026-10-19 — Connection state and reauthorization remain separate
 
-A card could say Connected while the agent asked the person to reconnect, leaving
-no action to take. Cards now keep a Reconnect action beside current connection
+**What changed:** Cards now keep a Reconnect action beside current connection
 state, using the existing connection row even when it remains healthy. A cached
 success only bridges loading; it no longer hides later revocation. Pending OAuth
 is cleared by its outcome rather than by the old healthy grant, so reauthorizing
-a connected account cannot immediately enable another attempt.
+a connected account cannot immediately enable another attempt. Account selection
+is explicit when several connections match, and OAuth topic updates reconcile
+completion without requiring another focus event.
+
+**Why:** A card could say Connected while the agent asked the person to reconnect,
+leaving no action to take. The action must target the intended account and stop
+waiting when its authorization completes.
 
 ### 2026-10-19 — Unknown connector requests offer a client update
 
