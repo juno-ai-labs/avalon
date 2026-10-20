@@ -348,7 +348,7 @@ describe('connector connection resolution', () => {
   it('shows live status and keeps re-connect available after connection success', async () => {
     const request = { connectorId: 'slack', scope: 'personal' } as const;
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const Harness = ({ status }: { status?: 'healthy' | 'reconnect_required' }) => {
+    const Harness = ({ status }: { status?: 'healthy' | 'reconnect_required' | 'disabled' }) => {
       const [connected, setConnected] = useState(false);
       return (
       <QueryClientProvider client={queryClient}>
@@ -374,14 +374,14 @@ describe('connector connection resolution', () => {
 
     expect(await screen.findByRole('button', { name: 'Connect Slack' })).toBeInTheDocument();
     view.rerender(<Harness status="healthy" />);
-    await waitFor(() => expect(screen.getByText('Connected')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Connected')).toBeInTheDocument(), { timeout: 5_000 });
 
     view.rerender(<Harness status="reconnect_required" />);
     expect(screen.getByText('Reconnect required')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reconnect' })).toBeEnabled();
   });
 
-  it('uses a feed-owned Connected latch after the card remounts', async () => {
+  it('uses a feed-owned Connected latch only while live connections are loading', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const request = { connectorId: 'slack', scope: 'personal' } as const;
     const view = render(

@@ -10,6 +10,7 @@ import { diagnosticErrorCode, logStructuredEvent } from "../observability/logger
 import {
   advanceOwningPollTarget,
   commitConnectorCursor,
+  recordConnectorPollFailure,
   pollConnectorConnection,
   type ConnectorCursorCommit,
 } from "../services/integrations";
@@ -128,11 +129,7 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
       const timedOut = error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError");
       const code = timedOut ? "connector_poll_timeout" : "connector_poll_failed";
       const message = timedOut ? "Connector poll timed out" : "Connector poll failed after retries";
-      await workspaceEnv.DB.prepare(
-        `UPDATE connector_connections
-         SET status = 'error', error_json = ?, updated_at = ?
-         WHERE id = ? AND workspace_id = ?`,
-      ).bind(JSON.stringify({ code, message }), at, input.connectionId, input.workspaceId).run();
+      await recordConnectorPollFailure(workspaceEnv.DB, input, { code, message }, at);
       logStructuredEvent(this.env, "error", code, {
         workspace_id: input.workspaceId,
         connection_id: input.connectionId,
