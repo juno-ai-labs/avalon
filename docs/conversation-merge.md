@@ -142,9 +142,14 @@ resolution is withheld from readers who reach the Thread only through a
 Breakout. Shared navigation opts into resolution with `resolution=1`, retaining
 the older strict HTTP response shape for clients that omit it. Socket readers
 already strip unknown additive fields through `safeParseSocketEvent`.
-`ConversationCard` renders **Resolved** using smaller, lighter-weight opaque
-text and muted decorative marks. Resolved summaries occupy one line until hover
-or keyboard focus; activity badges retain emphasis. It does not infer
+`ConversationCard` renders **Resolved** as a small muted pill that remains
+distinct when the card is hovered or open. Resolved titles, summaries, bylines
+and avatar initials share subdued ink in both appearances. Personalized
+initials use a neutral backing while retaining their chosen shape.
+Hover and keyboard focus strengthen text contrast, including the pill and
+initials. Resolved summaries stay on one line in every state, so interaction
+changes emphasis without revealing additional text or shifting the card.
+Activity badges retain emphasis. It does not infer
 resolution from the loaded transcript page. The directory receiver accepts
 resolution even when the child projection waterlines have not advanced, keeps it
 across later run updates, and never lets it restore a versioned tombstone.
