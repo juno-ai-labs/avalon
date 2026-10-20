@@ -737,6 +737,7 @@ export function useWorkstreamSocket(
   openCommitted = true,
   substreamId = '0',
   parentKind: ConversationParentKind = 'workstream',
+  active = openCommitted,
 ): WorkstreamSocketConnection {
   // Main of a Channel this person reaches only through some of its
   // conversations is not theirs to open; every Main feed, pooled or direct,
@@ -758,10 +759,12 @@ export function useWorkstreamSocket(
   initialReasonRef.current = initialReason;
   const openCommittedRef = useRef(effectiveOpenCommitted);
   openCommittedRef.current = effectiveOpenCommitted;
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const markOpenedRef = useRef<() => void>(() => undefined);
   useEffect(() => {
-    if (effectiveOpenCommitted) markOpenedRef.current();
-  }, [effectiveOpenCommitted]);
+    if (effectiveOpenCommitted && active) markOpenedRef.current();
+  }, [effectiveOpenCommitted, active]);
   const resumeState = useWorkstreamSocketResumeState(parentId, substreamId);
   const [state, setState] = useState<SocketState>('idle');
   const [openingError, setOpeningError] = useState<string>();
@@ -775,12 +778,7 @@ export function useWorkstreamSocket(
   const attempts = useRef(0);
   const reconnectRef = useRef<(() => void) | null>(null);
   const retryOpening = useCallback((): void => {
-    if (reconnectRef.current) {
-      reconnectRef.current();
-      return;
-    }
-    setOpeningError(undefined);
-    setOpeningRetryGeneration((current) => current + 1);
+    reconnectRef.current?.();
   }, []);
   const createMessageRef = useRef<(input: CreateWorkstreamMessageInput) => Promise<AcceptedWorkstreamTurn>>(
     () => Promise.reject(new ApiError(
@@ -1024,6 +1022,7 @@ export function useWorkstreamSocket(
       ) !== undefined
       && (substreamId === '0' || queryClient.getQueryData(contextQueryKey) !== undefined);
     let openingCompleted = canonicalCachesAvailable();
+    let hasOpenedCanonically = openingCompleted;
     let connectGeneration = 0;
     let activeTicketAbort: AbortController | null = null;
     let ticketRequestInFlight = false;
@@ -1118,7 +1117,7 @@ export function useWorkstreamSocket(
      */
     const handleApplicationForegroundChange = (foregrounded: boolean): void => {
       if (!foregrounded) return;
-      if (!openCommittedRef.current && pendingSubstreamCommands.size === 0) return;
+      if ((!openCommittedRef.current || !activeRef.current) && pendingSubstreamCommands.size === 0) return;
       if (socket?.readyState === REALTIME_SOCKET_CONNECTING) return;
       if (socket?.readyState !== REALTIME_SOCKET_OPEN) {
         clearReconnectTimer();
@@ -1944,6 +1943,7 @@ export function useWorkstreamSocket(
       if (!canonicalCachesAvailable() || initialContextSnapshot !== null || pendingInputSnapshot !== null) return false;
       clearOpeningTimer();
       openingCompleted = true;
+      hasOpenedCanonically = true;
       openingTimedOutAttempts = 0;
       setOpeningError(undefined);
       return true;
@@ -2094,16 +2094,29 @@ export function useWorkstreamSocket(
       });
       openTrace?.end({ outcome: 'superseded' });
       openTrace = trace;
+      let transportProbed = false;
       let effectiveAfterSequence = openingCompleted ? resumeState.lastSequence : 0;
       {
         // Reuse the opening budget for every attempt: cached data cannot
         // bound a stranded handshake. Warm attempts keep retrying.
         const timeoutMs = workstreamOpenTimeoutMs(openingTimedOutAttempts);
         clearOpeningTimer();
-        openingTimer = window.setTimeout(() => {
+        let snapshotFallbackRequested = false;
+        const openingTimedOut = (): void => {
           if (closedByEffect || openingTerminal || generation !== connectGeneration) return;
           openingTimer = null;
-          const recoveredCanonically = canonicalCachesAvailable();
+          // Let cheap replay finish first. Only an otherwise silent warm
+          // subscription needs a snapshot fallback, with the same time budget.
+          if (openingCompleted && transportProbed && socket?.readyState === REALTIME_SOCKET_OPEN
+            && !snapshotFallbackRequested && !snapshotRequestInFlight
+            && initialContextSnapshot === null && pendingInputSnapshot === null) {
+            snapshotFallbackRequested = true;
+            requestCanonicalSnapshot();
+            openingTimer = window.setTimeout(openingTimedOut, timeoutMs);
+            return;
+          }
+          hasOpenedCanonically ||= canonicalCachesAvailable();
+          const recoveredCanonically = hasOpenedCanonically;
           const timedOutDuringTicket = activeTicketAbort === ticketAbort;
           connectGeneration += 1;
           if (activeTicketAbort === ticketAbort) {
@@ -2145,7 +2158,8 @@ export function useWorkstreamSocket(
             return;
           }
           scheduleReconnect();
-        }, timeoutMs);
+        };
+        openingTimer = window.setTimeout(openingTimedOut, timeoutMs);
       }
       reportWorkstreamSocketStarted(
         parentId,
@@ -2267,10 +2281,7 @@ export function useWorkstreamSocket(
         nextSocket.addEventListener('message', (messageEvent) => {
           if (closedByEffect || socket !== nextSocket) return;
           if (String(messageEvent.data) === 'pong') {
-            // Hibernation can answer pings while application subscription is
-            // stuck. Empty replay has no completion frame, so ask the existing
-            // snapshot path to confirm authority once on a warm replacement.
-            if (openingCompleted && !attemptReconciled) requestCanonicalSnapshot();
+            transportProbed = true;
             scheduleHeartbeat(nextSocket);
             return;
           }
@@ -2312,17 +2323,20 @@ export function useWorkstreamSocket(
                   event.data.code,
                 ));
               }
+              const sequenceBeforeFrame = resumeState.lastSequence;
               applyEvent(event.data);
               const completedFromFrame = (
                 event.data.type === 'snapshot'
                 || event.data.type === 'initial_context_snapshot_chunk'
                 || event.data.type === 'pending_inputs_snapshot_chunk'
+                || (openingCompleted && event.data.type !== 'error'
+                  && resumeState.lastSequence > sequenceBeforeFrame)
               ) && completeOpeningFromCanonicalCaches();
               if (completedFromFrame && !attemptReconciled) {
                 attemptReconciled = true;
                 scheduleStabilityReset(nextSocket);
               }
-              if (completedFromFrame && (event.data.type === 'snapshot' || event.data.type === 'initial_context_snapshot_chunk')) {
+              if (completedFromFrame) {
                 api.confirmSocketTicket?.(socketTicket);
               }
               if (completedFromFrame && openTrace === trace) {
@@ -2420,7 +2434,14 @@ export function useWorkstreamSocket(
     };
 
     reconnectRef.current = (): void => {
-      if (closedByEffect || accessRevoked) return;
+      if (closedByEffect) return;
+      if (accessRevoked || openingTerminal) {
+        // An explicit retry can re-check restored access; automatic retries
+        // remain stopped. Terminal owners have already rejected their queue.
+        setOpeningError(undefined);
+        setOpeningRetryGeneration(current => current + 1);
+        return;
+      }
       clearReconnectTimer();
       suspended = false;
       cancelTicketAttempt();
@@ -2450,10 +2471,11 @@ export function useWorkstreamSocket(
     const handleOffline = (): void => {
       if (closedByEffect || accessRevoked) return;
       clearReconnectTimer();
+      const hadAttempt = socket !== null || ticketRequestInFlight;
       cancelTicketAttempt();
       retireTransport();
       setState('unavailable');
-      socketTelemetry.disconnected({ attempts: attempts.current, retrying: false, cause: 'offline' });
+      if (hadAttempt) socketTelemetry.disconnected({ attempts: attempts.current, retrying: false, cause: 'offline' });
     };
     const stopPowerState = desktopBridge().onPowerStateChanged((state) => {
       if (closedByEffect || accessRevoked) return;
@@ -2468,10 +2490,11 @@ export function useWorkstreamSocket(
       }
       suspended = true;
       clearReconnectTimer();
+      const hadAttempt = socket !== null || ticketRequestInFlight;
       cancelTicketAttempt();
       retireTransport();
       setState('reconnecting');
-      socketTelemetry.disconnected({ attempts: attempts.current, retrying: true, cause: 'suspended' });
+      if (hadAttempt) socketTelemetry.disconnected({ attempts: attempts.current, retrying: true, cause: 'suspended' });
     });
 
     window.addEventListener('online', handleOnline);
@@ -2570,10 +2593,10 @@ export function useWorkstreamSocket(
       socket?.close();
     };
   }, [
+    openingRetryGeneration,
     api,
     enabled,
     localCacheScope,
-    openingRetryGeneration,
     queryClient,
     resolvedSocketLeaseId,
     resumeState,

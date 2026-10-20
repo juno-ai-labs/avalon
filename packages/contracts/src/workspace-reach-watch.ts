@@ -59,6 +59,7 @@ export type ReachWatchDiagnostic =
   | { code: "open_failed"; error: unknown }
   | { code: "closed"; closeCode: number }
   | { code: "stopped"; closeCode: number }
+  | { code: "transport_error"; phase: "heartbeat" | "send" | "socket" }
   | { code: "timeout"; phase: "ticket" | "open" | "sync" | "heartbeat" };
 
 export interface ReachWatchDependencies {
@@ -182,6 +183,7 @@ export function watchWorkspaceSocket(dependencies: WorkspaceSocketWatchDependenc
       heartbeatTimer = null;
       if (stopped || socket !== target) return;
       try { target.send("ping"); } catch {
+        dependencies.onDiagnostic?.({ code: "transport_error", phase: "heartbeat" });
         retire();
         scheduleReconnect();
         return;
@@ -238,6 +240,7 @@ export function watchWorkspaceSocket(dependencies: WorkspaceSocketWatchDependenc
       send: (event) => {
         if (stopped || socket !== next) return false;
         try { next.send(JSON.stringify(event)); } catch {
+          dependencies.onDiagnostic?.({ code: "transport_error", phase: "send" });
           retire();
           scheduleReconnect();
           return false;
@@ -295,6 +298,7 @@ export function watchWorkspaceSocket(dependencies: WorkspaceSocketWatchDependenc
     });
     next.addEventListener("error", () => {
       if (!stopped && socket === next) {
+        dependencies.onDiagnostic?.({ code: "transport_error", phase: "socket" });
         retire();
         scheduleReconnect();
       }

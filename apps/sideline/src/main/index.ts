@@ -234,7 +234,7 @@ function logReachDiagnostic(diagnostic: ReachWatchDiagnostic): void {
     ? diagnostic.error instanceof HttpResponseError
       ? `${diagnostic.code} (${diagnostic.error.status})`
       : `${diagnostic.code} (${diagnostic.error instanceof Error ? diagnostic.error.name : "unknown"})`
-    : diagnostic.code === "timeout" ? `${diagnostic.phase}_timeout`
+    : diagnostic.code === "timeout" || diagnostic.code === "transport_error" ? `${diagnostic.phase}_${diagnostic.code}`
       : `${diagnostic.code} (close ${diagnostic.closeCode})`;
   console.warn(`[sideline] membership updates paused: ${reason}`);
 }
