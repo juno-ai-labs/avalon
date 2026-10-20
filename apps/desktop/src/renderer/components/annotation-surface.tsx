@@ -1,21 +1,22 @@
 import { isComposingKeyEvent } from '@rally/ui/lib/ime';
 import { Tip } from './primitives';
+import { annotationRange } from '../lib/annotation-cells';
 import { resolveAnnotationCells } from '../lib/annotation-cells';
 import { IconPointerCollaboration } from '@tabler/icons-react';
 import { useDetailHeaderActions } from './detail-header-actions';
 import { AnnotationSheet } from './annotation-sheet';
 import { useEffect, useRef, useState, useMemo } from 'react';
-import { ARTIFACT_COMMENT_CURSOR, isHtmlResource, ANNOTATION_CONTEXT_CHARACTERS, ArtifactPickerPinSchema, AnnotationLocatorSchema, buildAnnotation, classifyAttachmentKind, type Annotation, type AnnotationLocator } from '@rally/contracts';
-import { annotationQuote, useAnnotationDraft } from './artifact-annotations';
+import { ARTIFACT_COMMENT_CURSOR, isHtmlResource, ANNOTATION_CONTEXT_CHARACTERS, AnnotationCommentActionSchema, ArtifactPickerPinSchema, AnnotationLocatorSchema, buildAnnotation, classifyAttachmentKind, type Annotation, type AnnotationLocator } from '@rally/contracts';
+import { AnchoredAnnotationComment, AnnotationComment, annotationQuote, useAnnotationDraft } from './artifact-annotations';
 import { annotationDomRange, sourceSelectionPoint } from '../lib/annotation-source';
 import { MarkdownBody } from './workstream-blocks';
 
-export function annotationHtml(source: string, nonce?: string, saved?: Annotation): string {
+export function annotationHtml(source: string, nonce?: string, saved?: Annotation, picking = true): string {
   const policy = `default-src 'none'; img-src data: blob:; font-src data:; style-src 'unsafe-inline';${nonce ? ` script-src 'nonce-${nonce}';` : ''}`;
   // Policy and trusted script precede file markup, including malformed heads.
   const scriptUrl = new URL('/annotation-frame.js',window.location.href).href;
   const data = saved?.target.locator.type === 'element' ? JSON.stringify({locator:saved.target.locator,exact:saved.content.exact}).replaceAll('&','&amp;').replaceAll('"','&quot;').replaceAll('<','&lt;') : '';
-  return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${policy}"></head><body>${nonce ? `<script nonce="${nonce}" src="${scriptUrl}"${data ? ` data-annotation-saved="${data}"` : ''}></script>` : ''}${source}</body></html>`;
+  return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${policy}"></head><body>${nonce ? `<script nonce="${nonce}" data-annotation-picking="${picking}" src="${scriptUrl}"${data ? ` data-annotation-saved="${data}"` : ''}></script>` : ''}${source}</body></html>`;
 }
 export interface AnnotationSurfaceProps {
   className?: string | undefined;
@@ -64,7 +65,21 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
     void props.loadSavedImage(controller.signal).then((blob)=>{if(!controller.signal.aborted){url=URL.createObjectURL(blob);setSavedImage(url);}}).catch(()=>{});
     return ()=>{controller.abort();if(url)URL.revokeObjectURL(url);};
   },[props.loadSavedImage]);
-  const current = draft?.pins.find((p) => p.id === editing);
+  const htmlPins = draft?.pins.filter((pin)=>pin.annotation.target.resourceId===resourceId && pin.annotation.target.version===version) ?? [];
+  const syncHtmlComments = (): void => frame.current?.contentWindow?.postMessage({type:'rally-annotation-comments',pins:htmlPins.filter((pin)=>pin.id!==editing).map(({id,annotation})=>({id,annotation}))},'*');
+  useEffect(()=>{if(html)syncHtmlComments();},[draft?.pins,editing,html]);
+  useEffect(()=>{
+    if(!html)return;
+    const receive=(event:MessageEvent):void=>{
+      if(event.source!==frame.current?.contentWindow || event.data?.type!=='rally-annotation-comment-action')return;
+      const parsed=AnnotationCommentActionSchema.safeParse(event.data.action);
+      if(!parsed.success || !htmlPins.some((pin)=>pin.id===parsed.data.id))return;
+      if(parsed.data.action==='remove')draft?.remove(parsed.data.id);
+      else {const box=frame.current?.getBoundingClientRect();if(box && parsed.data.point)setAnchor({x:box.x+parsed.data.point.x,y:box.y+parsed.data.point.y-12});setEditing(parsed.data.id);}
+    };
+    window.addEventListener('message',receive);return()=>window.removeEventListener('message',receive);
+  },[html,draft,htmlPins]);
+  const current = draft?.selections.find((p) => p.id === editing);
 
   const commit = (locator: AnnotationLocator, exact: string, start = 0, end = 0, replace = false, imageAttachmentId?: string): void => {
     if (!draft) return;
@@ -72,12 +87,33 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
       source: locator.type === 'element' ? 'rendered' : ['pdf', 'document', 'presentation', 'spreadsheet'].includes(kind) ? 'converted' : 'exact',
       before: text?.slice(Math.max(0, start - ANNOTATION_CONTEXT_CHARACTERS), start) ?? '', after: text?.slice(end, end + ANNOTATION_CONTEXT_CHARACTERS) ?? '', truncated: false,
       ...(imageAttachmentId ? { imageAttachmentId } : {}),
-    }, comment: replace ? draft.pins.find((p) => p.id === lastPin.current)?.annotation.comment ?? '' : '' });
+    }, comment: replace ? draft.selections.find((p) => p.id === lastPin.current)?.annotation.comment ?? '' : '' });
     let pinId = '';
     const reveal = (): boolean => { if(!root.current?.isConnected)return false; const range = text !== undefined && 'start' in locator && root.current ? annotationDomRange(root.current,text,locator.start,locator.end) : null; (range?.startContainer.parentElement ?? root.current)?.scrollIntoView({ block:'center' }); setEditing(pinId); return true; };
-    const id = draft.add(annotation, name, reveal, replace ? lastPin.current : undefined);
+    const id = draft.add(annotation, name, reveal, replace ? lastPin.current : undefined, true);
     pinId = id;
     lastPin.current = id; setEditing(id);
+  };
+  const resolveCommentAnchor = (annotation: Annotation): DOMRect | null => {
+    const container = root.current;
+    if (!container) return null;
+    const locator = annotation.target.locator;
+    if ('start' in locator && text !== undefined) {
+      const range = annotationDomRange(container,text,locator.start,locator.end);
+      if (range?.getBoundingClientRect) return range.getBoundingClientRect();
+      return [...container.querySelectorAll<HTMLElement>('[data-annotation-start]')].find((node) => Number(node.dataset.annotationStart) <= locator.start && Number(node.dataset.annotationEnd) >= locator.end)?.getBoundingClientRect() ?? null;
+    }
+    if (locator.type === 'region') {
+      const image = container.querySelector('img')?.getBoundingClientRect();
+      return image ? new DOMRect(image.x+image.width*locator.x,image.y+image.height*locator.y,image.width*locator.w,image.height*locator.h) : null;
+    }
+    if (locator.type === 'cells') {
+      const range = annotationRange(locator.range);
+      const sheet = container.querySelector<HTMLElement>('[data-annotation-sheet]');
+      if (!range || sheet?.dataset.annotationSheet !== locator.sheet) return null;
+      return sheet.querySelector(`[data-annotation-cell="${range.start[0]},${range.start[1]}"]`)?.getBoundingClientRect() ?? null;
+    }
+    return locator.type === 'file' ? container.querySelector('.annotation-body')?.getBoundingClientRect() ?? null : null;
   };
   const offsets = (element: HTMLElement): { element: HTMLElement; start: number; end: number } | null => {
     if (text === undefined) return null;
@@ -122,7 +158,7 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
     const key=(event:KeyboardEvent):void=>{
       if(isComposingKeyEvent(event))return;
       if(event.target instanceof HTMLElement && event.target.closest('textarea,input,[role=menu],[role=dialog]'))return;
-      if(event.key==='Escape'){event.preventDefault();event.stopPropagation();setPicking(false);return;}
+      if(event.key==='Escape'){event.preventDefault();event.stopPropagation();if(editing)draft?.discard(editing);setEditing(null);setPicking(false);return;}
       if(hover&&['Alt','ArrowUp','ArrowDown'].includes(event.key)){event.preventDefault();event.stopPropagation();grow(event.key!=='ArrowDown');}
     };
     window.addEventListener('keydown',key,true);return()=>window.removeEventListener('keydown',key,true);
@@ -133,7 +169,7 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
       if (event.source !== frame.current?.contentWindow) return;
       if (event.data?.type === 'rally-annotation-restored' && saved) { setMissing(event.data.resolved !== true); return; }
       if (!picking || event.data?.type !== 'rally-artifact-pin') return;
-      if (event.data.pin === null) { setPicking(false); return; }
+      if (event.data.pin === null) { if(editing)draft?.discard(editing);setEditing(null);setPicking(false); return; }
       const parsedPin = ArtifactPickerPinSchema.safeParse(event.data.pin);
       if (!parsedPin.success) return;
       const pin = parsedPin.data;
@@ -149,7 +185,7 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
     const container = root.current;
     if (!container) return;
     container.querySelectorAll('[data-annotation-start].annotation-highlight').forEach((e) => e.classList.remove('annotation-highlight'));
-    const pins = saved ? [saved] : (draft?.pins.filter((p) => p.annotation.target.resourceId === resourceId && p.annotation.target.version === version).map((p) => p.annotation) ?? []);
+    const pins = saved ? [saved] : (draft?.selections.filter((p) => p.annotation.target.resourceId === resourceId && p.annotation.target.version === version).map((p) => p.annotation) ?? []);
     let resolved = !saved;
     const ranges: Range[] = [];
     for (const pin of pins) {
@@ -173,7 +209,7 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
     if(saved?.target.locator.type==='region'&&src&&!imageReady)return;
     setMissing(!resolved);
     return () => { highlightedRanges.delete(surfaceKey.current); if (typeof Highlight !== 'undefined') CSS.highlights.set('rally-annotations',new Highlight(...[...highlightedRanges.values()].flat())); };
-  }, [draft?.pins, resourceId, saved, src, text, version,imageReady]);
+  }, [draft?.selections, resourceId, saved, src, text, version,imageReady]);
   useEffect(()=>{
     if(!picking||!root.current||typeof ResizeObserver==='undefined')return;
     const observer=new ResizeObserver(()=>setHover((current)=>current?{...current}:null));
@@ -200,7 +236,7 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
   const hoverRange = hover && text !== undefined && root.current ? annotationDomRange(root.current,text,hover.start,hover.end) : null;
   const hoverBox = hoverRange?.getBoundingClientRect?.() ?? hover?.element.getBoundingClientRect();
   const bodyBox = root.current?.querySelector('.annotation-body')?.getBoundingClientRect();
-  const imageRegions=(saved?[saved]:(draft?.pins.filter((p)=>p.annotation.target.resourceId===resourceId&&p.annotation.target.version===version).map((p)=>p.annotation)??[])).flatMap((a)=>a.target.locator.type==='region'?[a.target.locator]:[]);
+  const imageRegions=(saved?[saved]:(draft?.selections.filter((p)=>p.annotation.target.resourceId===resourceId&&p.annotation.target.version===version).map((p)=>p.annotation)??[])).flatMap((a)=>a.target.locator.type==='region'?[a.target.locator]:[]);
   const hoverRegion=draftRegion??(picking&&imageHover?{x:0,y:0,w:1,h:1}:null);
   const canPick = Boolean(draft && (version > 0 || props.preparePicking) && (!html || window.rally) && kind !== 'audio' && (text !== undefined || src || kind === 'other'));
   const disabledReason = html && !window.rally ? 'Website comments require the Rally Mac app.' : undefined;
@@ -228,16 +264,13 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
         if (start === null || end === null) { if (!hover) return; start = hover.start; end = hover.end; }
         commit(locatorFor(start, end), text.slice(start, end), start, end, e.detail > 1);
       }} onDoubleClick={(e) => { if (!picking || html || !text) return; e.preventDefault(); const sel = window.getSelection(); if (!sel?.rangeCount) return; const r = sel.getRangeAt(0); const start = sourceSelectionPoint(r.startContainer, r.startOffset, text); const end = sourceSelectionPoint(r.endContainer, r.endOffset, text); if (start !== null && end !== null && end > start) commit(locatorFor(start, end), text.slice(start,end), start,end,true); }}>
-      {html && text !== undefined ? <iframe ref={frame} sandbox={(picking || saved) && window.rally ? 'allow-scripts' : ''} srcDoc={annotationHtml(text, (picking || saved) && window.rally ? nonce : undefined, picking ? undefined : saved)} title={`Preview of ${name}`} />
+      {html && text !== undefined ? <iframe ref={frame} onLoad={syncHtmlComments} sandbox={(picking || saved || htmlPins.length > 0) && window.rally ? 'allow-scripts' : ''} srcDoc={annotationHtml(text, (picking || saved || htmlPins.length > 0) && window.rally ? nonce : undefined, picking ? undefined : saved, picking)} title={`Preview of ${name}`} />
         : src ? <div className="annotation-image"><img alt={name} style={{display:saved&&missing?'none':undefined}} src={src} onLoad={()=>setImageReady(true)} onError={()=>{setImageReady(false);setMissing(Boolean(saved));}} draggable={false} onPointerEnter={()=>setImageHover(true)} onPointerLeave={()=>setImageHover(false)} onPointerMove={(e)=>{const start=startDrag.current;if(!picking||!start)return;const r=e.currentTarget.getBoundingClientRect();const x=Math.max(0,Math.min(1,(e.clientX-r.x)/r.width));const y=Math.max(0,Math.min(1,(e.clientY-r.y)/r.height));setDraftRegion({x:Math.min(start.x,x),y:Math.min(start.y,y),w:Math.abs(start.x-x),h:Math.abs(start.y-y)});}} onPointerDown={(e) => { if (!picking) return; e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); const r = e.currentTarget.getBoundingClientRect(); startDrag.current = { x: (e.clientX-r.x)/r.width, y: (e.clientY-r.y)/r.height }; }} onPointerUp={(e) => void imagePin(e)} />{[...imageRegions,...(hoverRegion?[hoverRegion]:[])].map((region,index)=><div key={index} className="annotation-image-region" style={{left:`${region.x*100}%`,top:`${region.y*100}%`,width:`${region.w*100}%`,height:`${region.h*100}%`}} />)}</div>
-          : text !== undefined ? kind === 'spreadsheet' ? <AnnotationSheet text={text} pins={draft?.pins.filter((p)=>p.annotation.target.resourceId===resourceId&&p.annotation.target.version===version).map((p)=>p.annotation)??[]} picking={picking} onPin={commit} saved={saved} /> : kind === 'text' && !html ? <PlainAnnotationText text={text} /> : <MarkdownBody verbatim sourcePositions={picking||Boolean(saved)||Boolean(draft?.pins.some((p)=>p.annotation.target.resourceId===resourceId))}>{text}</MarkdownBody> : <p>{name}</p>}
+          : text !== undefined ? kind === 'spreadsheet' ? <AnnotationSheet text={text} pins={draft?.selections.filter((p)=>p.annotation.target.resourceId===resourceId&&p.annotation.target.version===version).map((p)=>p.annotation)??[]} picking={picking} onPin={commit} saved={saved} /> : kind === 'text' && !html ? <PlainAnnotationText text={text} /> : <MarkdownBody verbatim sourcePositions={picking||Boolean(saved)||Boolean(draft?.selections.some((p)=>p.annotation.target.resourceId===resourceId))}>{text}</MarkdownBody> : <p>{name}</p>}
       {picking && hover && !html && <div className="annotation-hover" style={{ left: (hoverBox?.x ?? 0) - (bodyBox?.x ?? 0), top: (hoverBox?.y ?? 0) - (bodyBox?.y ?? 0), width: hoverBox?.width, height: hoverBox?.height }} />}
     </div>
-    {current && <div className="annotation-comment" style={{ left: Math.min(anchor.x, window.innerWidth - 320), top: Math.min(anchor.y + 12, window.innerHeight - 190) }}>
-      <div><span className="annotation-number">{(draft?.pins.findIndex((p) => p.id === current.id) ?? 0) + 1}</span><q>{annotationQuote(current.annotation,name).slice(0,120)}</q><button aria-label="Remove pin" onClick={() => { draft?.remove(current.id); setEditing(null); }} type="button">×</button></div>
-      <textarea aria-label="Comment on selection" autoFocus placeholder="Ask Rally to change this…" value={current.annotation.comment} onChange={(e) => draft?.comment(current.id,e.target.value)} onKeyDown={(e) => { if(isComposingKeyEvent(e.nativeEvent))return; if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); setEditing(null); root.current?.focus(); } if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setEditing(null); setPicking(false); } }} />
-      <small>Enter to keep pin · you can pin more before sending</small>
-    </div>}
+    {!html && draft?.pins.filter((pin) => pin.id !== editing && pin.annotation.comment.trim() && pin.annotation.target.resourceId === resourceId && pin.annotation.target.version === version).map((pin) => <AnchoredAnnotationComment key={pin.id} pin={pin} resolveAnchor={() => resolveCommentAnchor(pin.annotation)} onEdit={() => {if(editing)draft.discard(editing);const box=resolveCommentAnchor(pin.annotation);if(box)setAnchor({x:box.right,y:box.top-12});setEditing(pin.id);}} onRemove={() => draft.remove(pin.id)} />)}
+    {current && <AnnotationComment pin={current} style={{ left: Math.min(anchor.x, window.innerWidth - 320), top: Math.min(anchor.y + 12, window.innerHeight - 190) }} onClose={() => {draft?.discard(current.id);setEditing(null); root.current?.focus();}} onEscape={() => setPicking(false)} />}
     {busy && <p role="status">Uploading annotation image…</p>}{error && <p role="alert">{error}</p>}
     {missing && saved && <aside className="annotation-saved-quote"><p>The original page cannot be shown again.</p><q>{annotationQuote(saved,name)}</q>{savedImage && <img alt="Saved selection" src={savedImage} />}{saved.comment && <p>{saved.comment}</p>}</aside>}
   </div>;

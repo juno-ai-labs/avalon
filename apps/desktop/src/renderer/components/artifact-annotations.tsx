@@ -1,5 +1,5 @@
 import { isComposingKeyEvent } from '@rally/ui/lib/ime';
-import { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo, type CSSProperties, type ReactNode } from 'react';
 import { AnnotatedMessageContentSchema, type Annotation } from '@rally/contracts';
 import type { AttachmentPreview } from './attachments';
 
@@ -10,15 +10,18 @@ export function annotationQuote(annotation: Annotation, name: string): string {
   return annotation.content.exact || name;
 }
 
-export interface AnnotationPin { id: string; annotation: Annotation; name: string; reveal: () => boolean | void }
+export interface AnnotationPin { id: string; annotation: Annotation; name: string; reveal: () => boolean | void; pending?: boolean }
 interface AnnotationDraft {
   scopeKey?: string | undefined;
   pins: AnnotationPin[];
+  selections: AnnotationPin[];
+  confirm: (id: string) => void;
+  discard: (id: string) => void;
   uploading: boolean;
   readResource?: ((id: string) => Promise<{ currentVersion: number }>) | undefined;
   readResourceVersion?: ((id:string,version:number,signal:AbortSignal)=>Promise<Blob>) | undefined;
   upload?: ((file: File) => Promise<string>) | undefined;
-  add: (annotation: Annotation, name: string, reveal: () => boolean | void, replaceId?: string) => string;
+  add: (annotation: Annotation, name: string, reveal: () => boolean | void, replaceId?: string, pending?: boolean) => string;
   remove: (id: string) => void;
   comment: (id: string, comment: string) => void;
   clear: (ids: string[]) => void;
@@ -65,18 +68,21 @@ export function AnnotationDraftProvider({ children, upload, readResource, readRe
   const readers=useRef({readResource,readResourceVersion}); readers.current={readResource,readResourceVersion};
   const read=useCallback((id:string)=>readers.current.readResource!(id),[]);
   const readVersion=useCallback((id:string,version:number,signal:AbortSignal)=>readers.current.readResourceVersion!(id,version,signal),[]);
-  const reveal=useCallback((pin:AnnotationPin):boolean=>{if(pin.reveal()===false){previewOpener.current?.({name:pin.name,resourceId:pin.annotation.target.resourceId,annotation:pin.annotation});return false;}return true;},[]);
-  const add=useCallback((annotation:Annotation,name:string,reveal:AnnotationPin['reveal'],replaceId?:string):string=>{
+  const reveal=useCallback((pin:AnnotationPin):boolean=>{setPins((current)=>current.filter((selection)=>!selection.pending));if(pin.reveal()===false){previewOpener.current?.({name:pin.name,resourceId:pin.annotation.target.resourceId,annotation:pin.annotation});return false;}return true;},[]);
+  const add=useCallback((annotation:Annotation,name:string,reveal:AnnotationPin['reveal'],replaceId?:string,pending=false):string=>{
     const id=replaceId??crypto.randomUUID();
     if(scopeRef.current!==scopeKey)return id;
-    setPins((current)=>[...current.filter((pin)=>pin.id!==id),{id,annotation,name,reveal}]);
+    setPins((current)=>[...current.filter((pin)=>pin.id!==id && (!pending || !pin.pending)),{id,annotation,name,reveal,pending}]);
     return id;
   },[scopeKey]);
+  const confirm=useCallback((id:string)=>setPins((current)=>current.map((pin)=>pin.id===id?{...pin,pending:false}:pin)),[]);
+  const discard=useCallback((id:string)=>setPins((current)=>current.filter((pin)=>pin.id!==id || !pin.pending)),[]);
+  const committedPins=useMemo(()=>pins.filter((pin)=>!pin.pending),[pins]);
   const remove=useCallback((id:string)=>setPins((current)=>current.filter((pin)=>pin.id!==id)),[]);
   const comment=useCallback((id:string,comment:string)=>setPins((current)=>current.map((pin)=>pin.id===id?{...pin,annotation:{...pin.annotation,comment}}:pin)),[]);
-  const clear=useCallback((ids:string[])=>setPins((current)=>current.filter((pin)=>!ids.includes(pin.id))),[]);
+  const clear=useCallback((ids:string[])=>setPins((current)=>current.filter((pin)=>!pin.pending && !ids.includes(pin.id))),[]);
   const uploadFile=useCallback(async(file:File):Promise<string>=>{if(scopeRef.current!==scopeKey)throw new Error('The conversation changed.');const upload=uploadRef.current;if(!upload)throw new Error('Annotation image upload unavailable');setUploads((count)=>count+1);try{return await upload(file);}finally{setUploads((count)=>count-1);}},[scopeKey]);
-  const value=useMemo(()=>({setPreviewOpener,reveal,pins,scopeKey,uploading:uploads>0,readResource:readResource?read:undefined,readResourceVersion:readResourceVersion?readVersion:undefined,upload:upload?uploadFile:undefined,add,remove,comment,clear}),[setPreviewOpener,reveal,pins,scopeKey,uploads,Boolean(readResource),read,Boolean(readResourceVersion),readVersion,Boolean(upload),uploadFile,add,remove,comment,clear]);
+  const value=useMemo(()=>({setPreviewOpener,reveal,pins:committedPins,selections:pins,confirm,discard,scopeKey,uploading:uploads>0,readResource:readResource?read:undefined,readResourceVersion:readResourceVersion?readVersion:undefined,upload:upload?uploadFile:undefined,add,remove,comment,clear}),[setPreviewOpener,reveal,pins,committedPins,confirm,discard,scopeKey,uploads,Boolean(readResource),read,Boolean(readResourceVersion),readVersion,Boolean(upload),uploadFile,add,remove,comment,clear]);
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 export function AnnotationChips(): React.JSX.Element | null {
@@ -99,4 +105,44 @@ export function MessageAnnotations({ content, onOpen }: { content: unknown; onOp
       <q>{annotationQuote(annotation, name)}</q>{annotation.comment && <span>{annotation.comment}</span>}
     </button>;
   })}</div>;
+}
+
+/** The selection stays in the preview until its comment is explicitly kept. */
+export function AnnotationComment({pin, style, onClose, onEscape, label = 'Comment on selection'}: {pin: AnnotationPin; style: CSSProperties; onClose: () => void; onEscape?: () => void; label?: string}): React.JSX.Element {
+  const draft = useAnnotationDraft();
+  const submit = (): void => {
+    if (!pin.annotation.comment.trim()) return;
+    draft?.confirm(pin.id);
+    onClose();
+  };
+  return <div className="annotation-comment" role="dialog" aria-label={label} data-state="open" style={style}>
+    <button className="annotation-comment-remove" aria-label="Remove pin" onClick={() => {draft?.remove(pin.id); onClose();}} type="button">×</button>
+    <textarea aria-label={label} autoFocus placeholder="Ask Rally to change this…" value={pin.annotation.comment} onChange={(event) => draft?.comment(pin.id,event.target.value)} onKeyDown={(event) => {
+      if (isComposingKeyEvent(event.nativeEvent)) return;
+      if (event.key === 'Enter' && !event.shiftKey) {event.preventDefault(); event.stopPropagation(); submit();}
+      if (event.key === 'Escape') {event.preventDefault(); event.stopPropagation(); onClose(); onEscape?.();}
+    }} />
+    <button className="annotation-comment-send" aria-label="Send comment" disabled={!pin.annotation.comment.trim()} onClick={submit} type="button">Send</button>
+  </div>;
+}
+
+/** Recompute from the element, rather than remembering the original click. */
+export function AnchoredAnnotationComment({pin, resolveAnchor, onEdit, onRemove}: {pin: AnnotationPin; resolveAnchor: () => DOMRect | null; onEdit: () => void; onRemove: () => void}): React.JSX.Element | null {
+  const [box,setBox] = useState<DOMRect | null>(null);
+  useEffect(() => {
+    const update = (): void => setBox(resolveAnchor());
+    update();
+    window.addEventListener('scroll',update,true);
+    window.addEventListener('resize',update);
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
+    observer?.observe(document.body);
+    const changes = new MutationObserver(update);
+    changes.observe(document.body,{childList:true,subtree:true});
+    return () => {window.removeEventListener('scroll',update,true);window.removeEventListener('resize',update);observer?.disconnect();changes.disconnect();};
+  },[resolveAnchor]);
+  if (!box || box.bottom < 0 || box.top > window.innerHeight) return null;
+  return <aside className="annotation-comment annotation-comment-kept" aria-label="Pinned comment" style={{left:Math.max(8,Math.min(box.right + 12,window.innerWidth - 308)),top:box.top}}>
+    <button className="annotation-comment-remove" aria-label="Remove comment" onClick={onRemove} type="button">×</button>
+    <button className="annotation-comment-text" onClick={onEdit} type="button">{pin.annotation.comment}</button>
+  </aside>;
 }

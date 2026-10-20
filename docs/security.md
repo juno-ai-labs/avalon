@@ -1123,6 +1123,13 @@ bridge, require an active originating composer scope and wait for its ACK.
 Canonical target read/version checks precede message admission. See
 [artifact annotations](artifact-annotations.md) for the protocol and failure modes.
 
+Confirmed comment cards use the same isolated world and opaque-frame transport as
+the picker. Cards insert comments with `textContent` in closed shadow roots and
+recheck the saved element quote before anchoring. The owner-window-only
+`artifact:preview-comments` IPC validates pin and action schemas and fences delayed
+actions against the current native view. Edit/remove actions require trusted
+clicks; artifact scripts receive no application bridge.
+
 ## Changelog
 
 ### 2026-10-19 — Confine detached artifact menu operations to their window
