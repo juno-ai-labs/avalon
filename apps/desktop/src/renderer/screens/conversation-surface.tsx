@@ -2166,31 +2166,23 @@ function ConversationSurfaceContent({
   // bar's order, which follows the turns as they are loaded. A card's byline
   // says who started the Breakout and when, as a Channel's thread card does.
   //
-  // A Breakout reads as Merged once its result is in this feed: derived from
-  // the merge messages themselves, so nothing about the Breakout is stored.
-  const mergedBreakoutIds = useMemo(() => new Set(transcript.flatMap((message) =>
-    message.mergedFrom ? [message.mergedFrom.breakoutId] : [])), [transcript]);
   const breakoutCards = useMemo(() => breakouts && onOpenBreakout && breakouts.length > 0
     ? {
       byTurn: breakoutsByOrigin(breakouts),
       openSubstreamId: openBreakoutId,
       onOpen: onOpenBreakout,
       renderMeta: (breakout: BreakoutMark): React.ReactNode => {
-        const merged = mergedBreakoutIds.has(breakout.substreamId)
-          ? <span className="breakout-merged-chip"><IconCheck aria-hidden="true" size={12} stroke={2} />Merged</span>
-          : null;
-        if (!breakout.createdByUserId || !breakout.createdAt) return merged;
+        if (!breakout.createdByUserId || !breakout.createdAt) return null;
         const author = visibleMembers.find((member) => member.id === breakout.createdByUserId);
         return <>
           {author && <Avatar member={author} size="small" title={null} />}
           <span>{author?.name ?? 'Someone'}</span>
           <span aria-hidden="true">·</span>
           <RelativeTime value={breakout.createdAt} />
-          {merged}
         </>;
       },
     }
-    : undefined, [breakouts, mergedBreakoutIds, onOpenBreakout, openBreakoutId, visibleMembers]);
+    : undefined, [breakouts, onOpenBreakout, openBreakoutId, visibleMembers]);
   const tickBreakouts = useMemo(() => breakouts && breakouts.length > 0
     ? orderBreakoutsForTicks(breakouts, transcript.flatMap((message) => message.transcriptTurnId ?? []))
     : [], [breakouts, transcript]);

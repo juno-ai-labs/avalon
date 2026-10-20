@@ -756,6 +756,7 @@ function ThreadCard({ attentionSequenceNumber, author, members, onOpen, open, pl
   // skeleton while Rally names it, never the request's first line.
   const mark: BreakoutMark = {
     substreamId: thread.id,
+    resolved: thread.resolved,
     title: thread.title,
     naming: thread.pending === true || thread.titleStatus === 'naming',
     unreadCount: thread.hasUnread ? 1 : 0,
