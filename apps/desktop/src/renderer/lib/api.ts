@@ -1,3 +1,4 @@
+import { connectorAuthorizationStatus } from '@rally/contracts';
 import type { Annotation } from '@rally/contracts';
 import { ManagedScopeGrantsSchema, RevokeScopeGrantSchema, ScopeGrantMutationResultSchema } from "@rally/contracts/scope-grants";
 import { ScopeSharingOptionsSchema, ScopeInvitationsListSchema, ScopeInvitationResultSchema, type ScopeGrantTarget, type CreateScopeInvitations } from "@rally/contracts/scope-grants";
@@ -380,11 +381,7 @@ function mapConnection(connection: WireConnection): WorkstreamConnection {
     scope: connection.scope === 'personal' ? 'you' : 'workspace',
     ...(connection.ownerUserId ? { ownerUserId: connection.ownerUserId } : {}),
     ...(connection.ownerName ? { ownerName: connection.ownerName } : {}),
-    status: connection.status === 'needs_reconnect'
-      ? 'reconnect_required'
-      : connection.status === 'disabled'
-        ? 'disabled'
-        : 'healthy',
+    status: connectorAuthorizationStatus(connection.status),
     capabilities: connection.grantedCapabilities,
     ...(connection.settingsKind ? { settingsKind: connection.settingsKind } : {}),
     ...(connection.userDelivery ? { userDelivery: connection.userDelivery } : {}),
