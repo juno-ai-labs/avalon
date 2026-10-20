@@ -31,6 +31,8 @@ import {
 } from "@rally/contracts";
 import type { WorkspaceRelationship } from "@rally/contracts/scope-grants";
 
+import pushDevicesMigration from "../../../packages/db/migrations/0107_user_push_devices.sql?raw";
+import { splitSqlStatements } from "../src/lib/sql-statements";
 import type { Env } from "../src/env";
 import { hostedParentStub } from "./helpers/hosted-parent";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
@@ -48,6 +50,7 @@ beforeEach(async () => {
   await seedWorkspaceControlPlane(env.DB, { workspaceId: WORKSPACE_ID, userId: USER_ID, sessionId: SESSION_ID });
   await env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
     VALUES (?, ?, 'active', 'member', '2026-08-18T20:00:00.000Z')`).bind(WORKSPACE_ID, OTHER_USER_ID).run();
+  await env.DB.batch(splitSqlStatements(pushDevicesMigration).map((sql) => env.DB.prepare(sql)));
   await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
 }, 30_000);
 
@@ -261,7 +264,7 @@ describe("a hosted parent's write", () => {
     });
   });
 
-  it("forwards a breakout's mention without its text or a reader beyond its author, and drops one that names nobody", async () => {
+  it("forwards breakout human message metadata with no text or audience beyond the author", async () => {
     await parkActivityQueue();
     const message = (dedupeKey: string, targets: Array<{ userId: string; relation: string }>): ConversationEffect => ({
       ...activity,
@@ -296,6 +299,9 @@ describe("a hosted parent's write", () => {
       expect(sql.exec(`SELECT dedupe_key, body, digestible, audience_kind, audience_user_id, audience_workstream_id
                          FROM workspace_activity_events WHERE dedupe_key LIKE 'breakout-%'
                         ORDER BY dedupe_key`).toArray()).toEqual([{
+        dedupe_key: "breakout-chatter", body: "", digestible: 0,
+        audience_kind: "user", audience_user_id: USER_ID, audience_workstream_id: null,
+      }, {
         dedupe_key: "breakout-mention", body: "", digestible: 0,
         audience_kind: "user", audience_user_id: USER_ID, audience_workstream_id: null,
       }, {

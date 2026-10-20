@@ -40,6 +40,8 @@ self.addEventListener("push", (event) => {
   event.waitUntil(self.registration.showNotification(message.title, {
     body: typeof message.body === "string" ? message.body : "",
     tag: typeof message.tag === "string" ? message.tag : undefined,
+    // Reply tags are reused after the server's batching/cooldown checks.
+    renotify: message.rally?.kind === "new_message" && typeof message.tag === "string" && message.tag.length > 0,
     data: { url: localUrl(message.rally && message.rally.url), workspacePath: workspacePath(message.rally) },
   }));
 });

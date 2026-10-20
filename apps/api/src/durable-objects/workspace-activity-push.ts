@@ -21,6 +21,12 @@ export const CONVERSATION_ALERT_COOLDOWN_MS = 120_000;
 /** Decision receipts are separate from actual delivery and from a queued reply batch. */
 export const WORKSPACE_REPLY_ALERT_MIGRATION: readonly string[] = [
   `ALTER TABLE workspace_activity_pushes ADD COLUMN delivery_enqueued INTEGER NOT NULL DEFAULT 0 CHECK (delivery_enqueued IN (0, 1))`,
+  `CREATE INDEX workspace_activity_pushes_recent_idx ON workspace_activity_pushes (user_id, pushed_at)`,
+  `CREATE TABLE workspace_activity_alert_claims (
+    user_id TEXT NOT NULL, conversation_key TEXT NOT NULL, channel TEXT NOT NULL,
+    claim_id TEXT NOT NULL, expires_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, conversation_key, channel)
+  ) STRICT`,
   `CREATE TABLE workspace_activity_alerts (
     user_id TEXT NOT NULL,
     conversation_key TEXT NOT NULL,
@@ -40,6 +46,8 @@ export const ActivityAlertRecordSchema = z.strictObject({
   workspaceId: IdSchema, userId: IdSchema, threadId: IdSchema,
   substreamId: IdSchema.nullable(), itemId: z.string(), channel: NotificationChannelSchema,
 });
+export const ActivityAlertClaimSchema = ActivityAlertRecordSchema.extend({ claimId: IdSchema });
+export type ActivityAlertClaim = z.infer<typeof ActivityAlertClaimSchema>;
 export type ActivityAlertRecord = z.infer<typeof ActivityAlertRecordSchema>;
 
 const PUSHED_KINDS: ReadonlySet<ActivityItemKind> = new Set(ACTIVITY_PUSH_KINDS);
@@ -236,8 +244,7 @@ export class WorkspaceActivityPushes {
       // A reply remains eligible while this thread is open but scrolled away.
       // The consumer rechecks the visible-message waterline after batching.
       && (item.kind === "new_message" || !onScreen.has(item.threadId))
-      && !(item.kind === "new_message" && page.items.some((other) => other.kind === "mentioned"
-        && `message:${other.id}` === item.id))
+      && !(item.kind === "new_message" && replyCoveredByIntent(page.items, item))
       && !(item.kind === "new_message" && this.replyBatchQueued(viewer.userId, item))
       && !(STARTS.has(item.kind) && added.has(itemConversation(item)))
     ));
@@ -272,6 +279,31 @@ export class WorkspaceActivityPushes {
       userId, itemConversation(item), channel,
     ).toArray()[0];
     return !last || last.item_id === itemId || last.alerted_at <= Date.now() - CONVERSATION_ALERT_COOLDOWN_MS;
+  }
+
+  /** Atomic provider handoff lease; expiration recovers a consumer lost mid-send. */
+  claimAlert(input: ActivityAlertClaim, now: number): "claimed" | "busy" | "cooldown" {
+    const key = conversationKey(input.threadId, input.substreamId);
+    const last = this.storage.sql.exec<{ item_id: string; alerted_at: number }>(
+      `SELECT item_id, alerted_at FROM workspace_activity_alerts WHERE user_id = ? AND conversation_key = ? AND channel = ?`,
+      input.userId, key, input.channel,
+    ).toArray()[0];
+    if (last && last.item_id !== input.itemId && last.alerted_at > now - CONVERSATION_ALERT_COOLDOWN_MS) return "cooldown";
+    const claimed = this.storage.sql.exec(
+      `INSERT INTO workspace_activity_alert_claims (user_id, conversation_key, channel, claim_id, expires_at)
+       VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, conversation_key, channel) DO UPDATE
+       SET claim_id = excluded.claim_id, expires_at = excluded.expires_at
+       WHERE expires_at <= ? RETURNING claim_id`,
+      input.userId, key, input.channel, input.claimId, now + CONVERSATION_ALERT_COOLDOWN_MS, now,
+    ).toArray();
+    return claimed.length === 1 ? "claimed" : "busy";
+  }
+
+  releaseAlert(input: ActivityAlertClaim): void {
+    this.storage.sql.exec(
+      `DELETE FROM workspace_activity_alert_claims WHERE user_id = ? AND conversation_key = ? AND channel = ? AND claim_id = ?`,
+      input.userId, conversationKey(input.threadId, input.substreamId), input.channel, input.claimId,
+    );
   }
 
   recordAlert(input: ActivityAlertRecord, now: number): void {
@@ -315,8 +347,7 @@ export class WorkspaceActivityPushes {
       const latest = page.items.find((candidate) => candidate.kind === "new_message" && candidate.unread
         && candidate.threadId === source.subject_id
         && (candidate.breakout?.substreamId ?? "0") === source.substream_id) ?? null;
-      if (latest && page.items.some((candidate) => candidate.kind === "mentioned"
-        && `message:${candidate.id}` === latest.id)) return null;
+      if (latest && replyCoveredByIntent(page.items, latest)) return null;
       return latest;
     }
     const page = this.feed.page(viewer, null, null, []);
@@ -334,4 +365,11 @@ export class WorkspaceActivityPushes {
 /** The conversations a page says the person was added to. */
 function addedConversations(items: readonly ActivityItem[]): Set<string> {
   return new Set(items.filter((item) => item.kind === "added").map(itemConversation));
+}
+
+/** One explicit invitation or mention already asks for attention to this message. */
+function replyCoveredByIntent(items: readonly ActivityItem[], reply: ActivityItem): boolean {
+  return items.some((item) => item.kind === "mentioned" && `message:${item.id}` === reply.id
+    || item.kind === "added" && item.occurredAt === reply.occurredAt
+      && itemConversation(item) === itemConversation(reply));
 }

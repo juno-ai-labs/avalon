@@ -142,6 +142,19 @@ without treating an unfinished handoff as a final decision.
 Suppressed events still update Activity. Explicit mentions retain their own
 immediate delivery path and a mention's message does not also schedule a reply alert. These intervals are product policy, named `REPLY_BATCH_SECONDS` and
 `CONVERSATION_ALERT_COOLDOWN_MS`.
+Provider handoff is claimed atomically per recipient, conversation, and channel
+before sending. A competing consumer retries while the claim is busy; a sent
+alert then suppresses another delivery through the normal cooldown. The claim
+is released in `finally` even when the provider fails, and expires after the
+same two-minute interval if the consumer disappears. Claim ids fence delayed
+cleanup from a later claim. A failed Queue enqueue is persisted as a push-only
+directory follow-up, so retrying it does not repeat completed publications.
+
+An invitation stamped at the opening message's time covers that reply alert too,
+so an invitee receives one request for attention. Later replies remain eligible.
+Recent batch checks seek `(user_id, pushed_at)` rather than scanning all past
+notification decisions.
+
 The cooldown intentionally suppresses the trailing alert rather than deferring
 it; its unread Activity remains available.
 
@@ -214,7 +227,13 @@ conversation rather than its id, whose `completed_at` later traffic can move.
 It is worded as the sidebar words it: "Maya started Q3 plan", "Maya started a
 breakout on Q3 plan" with the breakout as the body, "Rally finished Q3 plan".
 Receipts and the collapse id key on `activity:<row id>`. An app built before
-these `rally.kind` values opens no conversation on a tap.
+these `rally.kind` values opens no conversation on a tap. Reply APNs payloads
+therefore use the existing `mention` routing discriminator, which shipped native
+clients accept; their displayed wording, preferences, receipts, and collapse key
+still identify a reply. Web Push retains `new_message`, since its service worker
+opens the URL without rejecting unknown kinds. Its service worker requests
+`renotify` for tagged reply replacements, so the next alert that passes the
+server cooldown can make a new banner or sound while replacing the old row.
 
 Known gaps: a thread made Organization-wide after it started shows its start to
 people who could not see it before, but is not pushed to them. A finish that
@@ -411,6 +430,9 @@ signed-Mac APNs/universal-link acceptance is claimed.
 reply and completion alerts share a two-minute cooldown after actual provider
 acceptance, per channel. Reply collapse ids group a conversation, while mentions
 and additions retain per-intent alerts and receipts retain the original delivery.
+Provider sends are claimed atomically; failed handoffs remain durable and failed
+providers release their claim without consuming the cooldown. Native reply
+payloads preserve routing compatibility with already-shipped clients.
 
 **Why:** Human replies were missed unless they mentioned the reader, while
 routine conversation activity crowded the sidebar. Repeated ordinary reply

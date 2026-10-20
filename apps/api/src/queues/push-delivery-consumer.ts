@@ -172,13 +172,26 @@ async function deliverActivityElsewhere(
     logInfo(env, "activity_delivery_skipped", { activity_item_id: message.activityItemId, channel: message.channel, reason: "recipient_inactive" });
     return true;
   }
-  const outcome = await sendElsewhere(message.channel);
-  if (outcome === "sent" && (content.kind === "new_message" || content.kind === "run_finished")) {
-    await workspace.recordActivityAlert({ workspaceId: asWorkspaceId(message.workspaceId), userId: asUserId(message.recipientUserId),
-      threadId: content.workstreamId, substreamId: content.substreamId, itemId: message.activityItemId, channel: message.channel });
+  const claim = content.kind === "new_message" || content.kind === "run_finished" ? {
+    workspaceId: asWorkspaceId(message.workspaceId), userId: asUserId(message.recipientUserId),
+    threadId: content.workstreamId, substreamId: content.substreamId, itemId: message.activityItemId,
+    channel: message.channel, claimId: crypto.randomUUID(),
+  } : null;
+  if (claim) {
+    const decision = await workspace.claimActivityAlert(claim);
+    if (decision !== "claimed") return decision !== "busy";
   }
-  logInfo(env, "activity_delivery_terminal", { activity_item_id: message.activityItemId, channel: message.channel, outcome });
-  return true;
+  try {
+    const outcome = await sendElsewhere(message.channel);
+    if (outcome === "sent" && (content.kind === "new_message" || content.kind === "run_finished")) {
+      await workspace.recordActivityAlert({ workspaceId: asWorkspaceId(message.workspaceId), userId: asUserId(message.recipientUserId),
+        threadId: content.workstreamId, substreamId: content.substreamId, itemId: message.activityItemId, channel: message.channel });
+    }
+    logInfo(env, "activity_delivery_terminal", { activity_item_id: message.activityItemId, channel: message.channel, outcome });
+    return true;
+  } finally {
+    if (claim) await workspace.releaseActivityAlert(claim);
+  }
 
   // Exhaustive over the channel: a connector surface added to the contract
   // without a sender here fails to compile rather than going out as another.
@@ -271,40 +284,52 @@ export async function deliverPush(
   const db = workspaceRegionalDatabase(env);
   const devices = await livePushDevices(env, row.recipientUserId);
   if (!devices.length) logInfo(env, "push_delivery_skipped", { intent_id: row.intentId, reason: "no_live_devices" });
-  let complete = true;
-  for (const device of devices) {
-    const receipt = await db.prepare(`SELECT 1 FROM push_delivery_receipts WHERE workspace_id = ? AND intent_id = ? AND device_id = ?`)
-      .bind(row.workspaceId, row.intentId, device.id).first();
-    if (receipt) continue;
-    // A refused credential fails every device on that transport alike.
-    if (faults.has(device.transport)) { complete = false; continue; }
-    const result = await send(env, device, payload, collapseId);
-    const at = new Date().toISOString();
-    if (result.outcome === "sent") {
-      if ("activityItemId" in message && (content.kind === "new_message" || content.kind === "run_finished")) {
-        await workspace.recordActivityAlert({ workspaceId: id, userId: asUserId(message.recipientUserId),
-          threadId: content.workstreamId, substreamId: content.substreamId, itemId: message.activityItemId, channel: "push" });
-      }
-      await db.batch([
-        db.prepare(`INSERT OR IGNORE INTO push_delivery_receipts VALUES (?, ?, ?, ?)`).bind(row.workspaceId, row.intentId, device.id, at),
-        db.prepare(`UPDATE user_push_devices SET last_delivery_at = ?, last_failure_code = NULL WHERE id = ?`).bind(at, device.id),
-      ]);
-    } else if (result.outcome === "bad_token" || (result.outcome === "unregistered" && (device.transport === "webpush"
-      // A browser subscription the push service has dropped never comes back; APNs dates its answer.
-      || ("timestamp" in result && result.timestamp !== undefined && result.timestamp >= Date.parse(device.last_seen_at))))) {
-      await db.prepare(`UPDATE user_push_devices SET disabled_at = ?, disabled_reason = ? WHERE id = ? AND token = ? AND last_seen_at = ?`)
-        .bind(at, result.outcome, device.id, device.token, device.last_seen_at).run();
-    } else if (["transient", "provider_auth_failed", "provider_token_throttled"].includes(result.outcome)) complete = false;
-    if (result.outcome === "provider_auth_failed" || result.outcome === "provider_token_throttled") {
-      faults.set(device.transport, result.reason ?? result.outcome);
-    }
-    if (result.outcome !== "sent" && result.outcome !== "skipped") {
-      await db.prepare(`UPDATE user_push_devices SET last_failure_code = ? WHERE id = ? AND token = ?`)
-        .bind(result.reason ?? result.outcome, device.id, device.token).run();
-    }
-    logInfo(env, "push_delivery_terminal", { intent_id: row.intentId, device_id: device.id, ...result });
+  const claim = devices.length > 0 && "activityItemId" in message && (content.kind === "new_message" || content.kind === "run_finished") ? {
+    workspaceId: id, userId: asUserId(message.recipientUserId), threadId: content.workstreamId,
+    substreamId: content.substreamId, itemId: message.activityItemId, channel: "push" as const, claimId: crypto.randomUUID(),
+  } : null;
+  if (claim) {
+    const decision = await workspace.claimActivityAlert(claim);
+    if (decision !== "claimed") return decision !== "busy";
   }
-  return complete;
+  try {
+    let complete = true;
+    for (const device of devices) {
+      const receipt = await db.prepare(`SELECT 1 FROM push_delivery_receipts WHERE workspace_id = ? AND intent_id = ? AND device_id = ?`)
+        .bind(row.workspaceId, row.intentId, device.id).first();
+      if (receipt) continue;
+      // A refused credential fails every device on that transport alike.
+      if (faults.has(device.transport)) { complete = false; continue; }
+      const result = await send(env, device, payload, collapseId);
+      const at = new Date().toISOString();
+      if (result.outcome === "sent") {
+        if ("activityItemId" in message && (content.kind === "new_message" || content.kind === "run_finished")) {
+          await workspace.recordActivityAlert({ workspaceId: id, userId: asUserId(message.recipientUserId),
+            threadId: content.workstreamId, substreamId: content.substreamId, itemId: message.activityItemId, channel: "push" });
+        }
+        await db.batch([
+          db.prepare(`INSERT OR IGNORE INTO push_delivery_receipts VALUES (?, ?, ?, ?)`).bind(row.workspaceId, row.intentId, device.id, at),
+          db.prepare(`UPDATE user_push_devices SET last_delivery_at = ?, last_failure_code = NULL WHERE id = ?`).bind(at, device.id),
+        ]);
+      } else if (result.outcome === "bad_token" || (result.outcome === "unregistered" && (device.transport === "webpush"
+        // A browser subscription the push service has dropped never comes back; APNs dates its answer.
+        || ("timestamp" in result && result.timestamp !== undefined && result.timestamp >= Date.parse(device.last_seen_at))))) {
+        await db.prepare(`UPDATE user_push_devices SET disabled_at = ?, disabled_reason = ? WHERE id = ? AND token = ? AND last_seen_at = ?`)
+          .bind(at, result.outcome, device.id, device.token, device.last_seen_at).run();
+      } else if (["transient", "provider_auth_failed", "provider_token_throttled"].includes(result.outcome)) complete = false;
+      if (result.outcome === "provider_auth_failed" || result.outcome === "provider_token_throttled") {
+        faults.set(device.transport, result.reason ?? result.outcome);
+      }
+      if (result.outcome !== "sent" && result.outcome !== "skipped") {
+        await db.prepare(`UPDATE user_push_devices SET last_failure_code = ? WHERE id = ? AND token = ?`)
+          .bind(result.reason ?? result.outcome, device.id, device.token).run();
+      }
+      logInfo(env, "push_delivery_terminal", { intent_id: row.intentId, device_id: device.id, ...result });
+    }
+    return complete;
+  } finally {
+    if (claim) await workspace.releaseActivityAlert(claim);
+  }
 }
 /**
  * Once a transport's credential is refused, the rest of the batch skips that

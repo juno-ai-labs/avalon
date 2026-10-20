@@ -13,7 +13,10 @@ export function renderPushPayload(input: {
   const encode = (length: number) => JSON.stringify({
     aps: { alert: { title: title.slice(0, titleLength).join("") + (titleLength < title.length ? "…" : ""), body: characters.slice(0, length).join("") + (length < characters.length ? "…" : "") },
       badge: input.badge, "thread-id": input.threadKey, sound: "default" },
-    rally: input.data,
+    // Shipped native clients reject unknown kinds before opening the URL.
+    // This routing discriminator uses the existing message kind; wording,
+    // preferences, receipts, and collapse identity still use new_message.
+    rally: input.data.kind === "new_message" ? { ...input.data, kind: "mention" } : input.data,
   });
   let length = Math.min(characters.length, PUSH_BODY_PREVIEW_CHARACTERS);
   while (length > 0 && new TextEncoder().encode(encode(length)).byteLength > APNS_PAYLOAD_BYTES) length--;
