@@ -33,6 +33,7 @@ export function useSiteArtifacts(api: RallyApi | null) {
         setBounds: bridge.setArtifactPreviewBounds,
         snapshot: bridge.snapshotArtifactPreview,
         pick: bridge.pickArtifactPreview,
+        comments: bridge.showArtifactPreviewComments,
         stopPicking: bridge.stopPickingArtifactPreview,
         close: bridge.closeArtifactPreview,
         popOut: (request: Parameters<typeof bridge.popOutArtifact>[0]) => bridge.popOutArtifact({ ...request, ...(annotationDraft?.scopeKey ? { annotationScope: annotationDraft.scopeKey } : {}) }),

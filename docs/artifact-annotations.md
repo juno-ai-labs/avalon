@@ -27,18 +27,27 @@ Comment mode appears in the panel header immediately before Expand. These two
 controls stay visible when other header actions fold. Hover outlines the block
 that clicking will pin. Option or Up grows to a containing list or section;
 Down shrinks. Click is immediate, double-click replaces its block pin with a
-word, and dragging selects a range. Escape exits the mode while preserving pins.
+word, and dragging selects a range. Escape exits the mode while preserving
+confirmed pins and discarding the unfinished selection.
 The button and cursor use Tabler's `pointer-collaboration` icon. While enabled,
 the button has the update action's blue fill and light icon. Standalone controls
 use dark label text for contrast on that fill.
 
-A pin opens a floating comment field. Website cards, chips and saved excerpts
-show the selected visible text (or “Selected area” for a selection without text);
-the trimmed HTML remains model context and is never used as their display quote. Enter keeps it and returns focus to the
-preview. Composer chips reveal, edit or remove pins. Sending accepts an empty
+A selection opens a floating comment field with a top-right × to remove it.
+The field shows only the authored comment; selected words appear in the composer
+chip after confirmation. Enter or Send keeps a nonempty comment and adds the pin
+to the composer. Confirmed comments stay visible beside their selected elements,
+including after leaving Comment mode or starting another pin. They follow scroll
+and resize; clicking a comment reopens its editor, and × removes it. Empty and
+whitespace-only comments stay in the editor, and typing alone never adds a pin
+to the message. Dismissing an unfinished comment or starting another selection
+discards that pending pin. Accepting a message also clears unfinished selections,
+so no abandoned highlight remains without a removal control. Website chips and saved excerpts
+show selected visible words (or “Selected area”); trimmed HTML remains model
+context. Composer chips reveal, edit or remove pins. Sending accepts an empty
 message when a pin has a comment. Draft images use the ordinary upload path,
 and their IDs accompany both the annotation and `attachmentIds`. The send
-captures the current pins and clears those IDs only after acceptance.
+captures confirmed pins and clears those IDs only after acceptance.
 
 Markdown uses parser offsets so emphasis, list markers and entities are quoted
 from original bytes. Plain text uses paragraph spans. PDF and Office use their
@@ -82,6 +91,10 @@ not. The file's own scripts remain blocked. Parent messages are accepted only fr
 frame while picking, through the shared pin schema.
 
 Desktop live views install the same picker in an isolated JavaScript world.
+Confirmed comment cards render in that world, with closed shadow roots and
+text-only content. The owner-window IPC synchronizes typed pins and returns only
+trusted edit/remove clicks; it fences results against the current native view.
+Opaque HTML previews use the same card renderer with source-checked messages.
 The main process captures the selected viewport rectangle; page scripts cannot
 supply screenshot bytes. The controller fences results against the current
 view. The site cannot access the picker world's callback or queue even if it creates
@@ -154,6 +167,15 @@ ordinary uploaded fixtures. Prompt evaluations live under
 on the configured medium fallback model, separately from end-to-end tool edits.
 
 ## Changelog
+
+### 2026-10-19 — Confirm comments before adding composer pins
+
+Selections remain local to the preview until a nonempty comment is confirmed
+with Enter or Send. Typing no longer adds a pin to the outgoing message. Confirmed
+comments remain anchored to their elements as the preview scrolls or resizes, so confirming one or selecting another does not hide earlier comments.
+The shared preview comment field omits the selected quote and uses a top-right ×;
+composer chips retain the quote and comment. This keeps selecting an element
+from silently attaching unfinished instructions to a message.
 
 ### 2026-10-19 — Send pointed resource content as user-message annotations
 
