@@ -1,6 +1,6 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import clsx from 'clsx';
-import { useId, type ReactNode } from 'react';
+import { useId, type CSSProperties, type ReactNode } from 'react';
 
 import { ShapeOutline, type IdentityMark } from './identity-tile';
 import { Tip } from './primitives';
@@ -144,11 +144,12 @@ export function MarkBridge({ className, items, trailing }: {
   const stops = bridgeStops(tints);
   const height = 2 * RADIUS;
   return <span className={clsx('mark-bridge', trailing && count > 0 && 'has-trailing', className)} style={{
+    '--mark-bridge-cap': `${RADIUS}px`,
     height,
     minWidth: trailing ? glassWidth : width,
     width: trailing ? undefined : width,
     columnGap: trailing && count > 0 ? SPAN - 2 * RADIUS : undefined,
-  }}>
+  } as CSSProperties}>
     {trailing && count > 0 ? <span aria-hidden="true" className="mark-bridge-spacer" style={{ width }} /> : null}
     {count > 0 ? <svg
       aria-hidden="true"
