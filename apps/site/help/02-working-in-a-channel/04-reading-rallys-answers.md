@@ -56,11 +56,9 @@ A long report is easier to skim when you can fold away the parts you have read.
 Every heading in Rally's answer (below the top-level title) has a small chevron
 beside it.
 
-- Click the chevron (**Collapse section**) or the heading itself to fold that
-  section down to a faded three-line peek. Click the chevron or the faded peek
-  to open it again.
-- The double chevron beside the answer's header folds every section at once
-  (**Collapse all sections**) and opens them all again (**Expand all sections**).
+Click the chevron (**Collapse section**) or the heading itself to fold that
+section down to a faded three-line peek. Click the chevron or the faded peek
+to open it again.
 
 Sections always start open. A smaller heading belongs to the section above it,
 so it folds along with it rather than on its own. Folding only changes what you

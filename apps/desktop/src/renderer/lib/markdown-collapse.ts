@@ -261,9 +261,3 @@ export function splitCollapsibleMarkdown(source: string): MarkdownCollapsePart[]
   else flushPreamble(lines.length);
   return parts;
 }
-
-export function collapsibleSectionIds(source: string): string[] {
-  return splitCollapsibleMarkdown(source)
-    .filter((part): part is Extract<MarkdownCollapsePart, { type: 'section' }> => part.type === 'section')
-    .map((part) => part.id);
-}

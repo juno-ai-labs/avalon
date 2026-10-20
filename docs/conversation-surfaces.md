@@ -561,8 +561,8 @@ stays current as now moves and names the exact local time on hover;
 
 The assistant turn is the leading-edge case: the author name (`Rally`, or
 `Automation` on an automation turn), an optional context label, the time, an
-optional work summary, and the collapse-all control when the turn has
-collapsible headings. It starts on
+optional work summary. Section controls live beside each heading in the body.
+The byline starts on
 the same vertical as the response body and the action row beneath it: the turn
 has no avatar, so nothing sits left of the name and nothing reserves space for
 one.

@@ -19,7 +19,6 @@ import { RelativeTime } from './relative-time';
 export function MessageByline({
   align,
   author,
-  children,
   contextLabel,
   importedBy,
   createdAt,
@@ -29,8 +28,6 @@ export function MessageByline({
   /** The edge of the feed the turn is aligned to. The name sits on it. */
   align: 'start' | 'end';
   author: string;
-  /** Controls that follow the line whichever way it reads. */
-  children?: ReactNode;
   /** Why the turn reads the way it does, beside the name it is attributed to. */
   contextLabel?: string | undefined;
   importedBy?: string | undefined;
@@ -60,7 +57,6 @@ export function MessageByline({
   return (
     <header>
       {align === 'end' ? [...parts].reverse() : parts}
-      {children}
     </header>
   );
 }
