@@ -99,6 +99,7 @@ stays two crumbs wide.
 
 `TitlePillLeadingContext` lets a host supply controls before the breadcrumb.
 Electron supplies its history bridge; other hosts leave the slot empty.
+`TitlePillLeading` renders the slot in both loaded and opening headers.
 A `MarkBridgeItem` may be `disabled`, which disables its action button while
 retaining its accessible name.
 

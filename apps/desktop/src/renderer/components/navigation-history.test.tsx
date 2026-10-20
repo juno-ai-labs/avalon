@@ -51,6 +51,20 @@ describe('navigation history', () => {
     await path('/replacement');
   });
 
+  it('preserves forward visits when replacing an earlier entry', async () => {
+    start();
+    click('Open artifact');
+    click('Open other');
+    click('Back');
+    await path('/artifact');
+    click('Replace');
+    expect(screen.getByRole('button', { name: 'Forward' })).toBeEnabled();
+    click('Forward');
+    await path('/other');
+    click('Back');
+    await path('/replacement');
+  });
+
   it('leaves the browser header without history controls', () => {
     start(false);
     expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();

@@ -1,3 +1,4 @@
+import { AppRouteNavigation } from './lib/app-navigation';
 import { ArtifactWindow } from './screens/artifact-window';
 import { AppErrorBoundary } from "@rally/ui/components/app-error-boundary";
 import { createQueryClient } from "./lib/query-client";
@@ -280,6 +281,7 @@ export function WorkspaceApp(): React.JSX.Element {
           tree mounted when the profile arrives so prepared sockets survive. */}
       {/* Commit route changes atomically so a new hash never labels an old feed. */}
       {mainSurface ? <HashRouter useTransitions={false}>
+        <AppRouteNavigation />
         <WorkstreamSocketResumeProvider scope={scope}>
           <WorkspaceOnboardingJourney workspace={workspace.error ? null : workspace.data ?? null}>
             <WorkspaceWorkstreamSockets api={workspace.error ? null : api}>
