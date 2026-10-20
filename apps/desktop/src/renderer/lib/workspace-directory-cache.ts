@@ -1,12 +1,36 @@
-import { ChannelRailSchema, PersonalOrderSchema, PinnedOrderSchema, SpaceDirectorySchema, WorkstreamPrivateChildSchema, type ChannelRail, type PersonalOrder, type PinnedOrder, type SpaceDirectory } from '@rally/contracts';
+import { ArtifactPinListSchema, ChannelStatsListSchema, SpaceConversationSchema, PinListSchema, ChannelRailSchema, PersonalOrderSchema, PinnedOrderSchema, SpaceDirectorySchema, WorkstreamPrivateChildSchema, type ChannelRail, type PersonalOrder, type PinnedOrder, type SpaceDirectory } from '@rally/contracts';
 import { heldChannelRails, isChannelRailQueryKey, seedChannelRails } from './channel-rails';
 import { heldChannelBreakouts, isWorkstreamChildrenQueryKey, seedChannelBreakouts, type ChannelBreakoutLists } from './channel-viewer-state';
-import { notifyManager, type QueryClient } from '@tanstack/react-query';
+import { z } from 'zod';
+import { notifyManager, type InfiniteData, type QueryClient } from '@tanstack/react-query';
 import { defineLocalCacheSlice, localCacheEpoch } from './local-cache';
 import { mirrorQueriesToLocalCache, queryKeyIsOneOf, type QueryMirror } from './local-cache-mirror';
-import { SIDEBAR_LIST_QUERY_KEYS, SPACES_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, PERSONAL_ORDER_QUERY_KEY, PINNED_ORDER_QUERY_KEY } from './sidebar-list-store';
-import type { AutomationSummary, WorkstreamSummary } from './types';
+import { ARTIFACT_PINS_QUERY_KEY, CHANNEL_STATS_QUERY_KEY, MY_THREADS_QUERY_KEY, PINS_QUERY_KEY, SIDEBAR_LIST_QUERY_KEYS, SPACES_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, PERSONAL_ORDER_QUERY_KEY, PINNED_ORDER_QUERY_KEY } from './sidebar-list-store';
+import type { AutomationSummary, SpaceConversationSummary, WorkstreamSummary } from './types';
 import { setCachedWorkstreams, WORKSTREAM_PAGE_SIZE, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+
+// These lists are restored together: painting rows without their pins makes
+// the live snapshot look like a user moving every pin into place.
+const CachedThreadSchema = z.custom<SpaceConversationSummary>((value: unknown) => {
+  if (!isWorkstreamSummaryLike(value)) return false;
+  const row = value as WorkstreamSummary & { kind?: unknown; breakoutOf?: unknown };
+  if (row.kind === 'channel') return row.breakoutOf === null;
+  if (row.kind !== 'breakout') return false;
+  const parent = SpaceConversationSchema.shape.breakoutOf.safeParse(row.breakoutOf);
+  return parent.success && parent.data !== null && parent.data.substreamId === row.id;
+});
+const CachedThreadsPageSchema = z.strictObject({
+  items: z.array(CachedThreadSchema),
+  pinned: z.array(CachedThreadSchema),
+  nextCursor: z.string().min(1).nullable(),
+});
+const NavigationCacheSchema = z.strictObject({
+  pins: PinListSchema.optional().catch(undefined),
+  artifactPins: ArtifactPinListSchema.optional().catch(undefined),
+  channelStats: ChannelStatsListSchema.optional().catch(undefined),
+  threads: CachedThreadsPageSchema.optional().catch(undefined),
+});
+type CachedNavigation = z.infer<typeof NavigationCacheSchema>;
 
 /**
  * What the sidebar and the Space dashboard paint from before the workspace
@@ -22,6 +46,7 @@ import { setCachedWorkstreams, WORKSTREAM_PAGE_SIZE, WORKSTREAMS_QUERY_KEY } fro
  * for it to go stale.
  */
 export interface CachedWorkspaceDirectory {
+  navigation?: CachedNavigation;
   workstreams: WorkstreamSummary[];
   automations: AutomationSummary[];
   spaces: SpaceDirectory | null;
@@ -169,7 +194,10 @@ function parseCachedDirectory(value: unknown): CachedWorkspaceDirectory | null {
   if (!workstreams || !automations || spaces === undefined || inactiveSpaces === undefined) return null;
   if (ordering === undefined || breakouts === undefined || rails === undefined) return null;
   const pinnedOrder = parsePinnedOrder(candidate['pinnedOrder']);
-  return { workstreams, automations, spaces, inactiveSpaces, ordering, pinnedOrder, breakouts, rails };
+  const navigation = NavigationCacheSchema.safeParse(candidate['navigation']);
+  return { workstreams, automations, spaces, inactiveSpaces, ordering, pinnedOrder, breakouts, rails,
+    navigation: navigation.success ? navigation.data : {},
+  };
 }
 
 /**
@@ -213,11 +241,27 @@ export async function hydrateWorkspaceDirectory(
   // A wipe that began while the row was in flight is taking it off the disk;
   // a row on its way out is not a seed.
   if (localCacheEpoch() !== epoch) return false;
-  // The directory is seeded as a unit or not at all. The first live payload
-  // writes every list at once, so one of them being present means all of them
-  // are newer than this row.
-  if (queryClient.getQueryData(WORKSTREAMS_QUERY_KEY) !== undefined) return false;
+  // The socket replaces the directory as a unit, but does not supply the
+  // REST-owned thread page. Seed missing navigation even if the socket won.
+  const seedDirectory = queryClient.getQueryData(WORKSTREAMS_QUERY_KEY) === undefined;
   notifyManager.batch(() => {
+    const navigation = cached.navigation;
+    for (const [key, value] of [
+      [PINS_QUERY_KEY, navigation?.pins],
+      [ARTIFACT_PINS_QUERY_KEY, navigation?.artifactPins],
+      [CHANNEL_STATS_QUERY_KEY, navigation?.channelStats],
+      [MY_THREADS_QUERY_KEY, navigation?.threads ? { pages: [navigation.threads], pageParams: [null] } : undefined],
+    ] as const) {
+      if (value !== undefined && queryClient.getQueryData(key) === undefined) {
+        queryClient.setQueryData(key, value);
+        // Stats can paint immediately, but a Channel must refresh the seed
+        // before fixing its opening unread position (readers use Infinity).
+        if (key === CHANNEL_STATS_QUERY_KEY) {
+          void queryClient.invalidateQueries({ queryKey: key, refetchType: 'none' });
+        }
+      }
+    }
+    if (!seedDirectory) return;
     setCachedWorkstreams(queryClient, cached.workstreams);
     if (queryClient.getQueryData(SIDEBAR_LIST_QUERY_KEYS.automations) === undefined) {
       queryClient.setQueryData(SIDEBAR_LIST_QUERY_KEYS.automations, cached.automations);
@@ -237,10 +281,14 @@ export async function hydrateWorkspaceDirectory(
     seedChannelBreakouts(queryClient, cached.breakouts);
     seedChannelRails(queryClient, cached.rails);
   });
-  return true;
+  return seedDirectory;
 }
 
 const directoryKey = queryKeyIsOneOf([
+  PINS_QUERY_KEY,
+  ARTIFACT_PINS_QUERY_KEY,
+  CHANNEL_STATS_QUERY_KEY,
+  MY_THREADS_QUERY_KEY,
   WORKSTREAMS_QUERY_KEY,
   SIDEBAR_LIST_QUERY_KEYS.automations,
   SPACES_QUERY_KEY,
@@ -273,6 +321,12 @@ export function mirrorWorkspaceDirectory(
       // the next launch it would be a Channel nothing ever created.
       const kept = workstreams.filter((row) => !row.pending).slice(0, WORKSTREAM_PAGE_SIZE);
       return {
+        navigation: {
+          pins: queryClient.getQueryData(PINS_QUERY_KEY),
+          artifactPins: queryClient.getQueryData(ARTIFACT_PINS_QUERY_KEY),
+          channelStats: queryClient.getQueryData(CHANNEL_STATS_QUERY_KEY),
+          threads: queryClient.getQueryData<InfiniteData<NonNullable<CachedNavigation['threads']>>>(MY_THREADS_QUERY_KEY)?.pages[0],
+        },
         workstreams: kept,
         breakouts: heldChannelBreakouts(queryClient, kept.map((row) => row.id)),
         rails: heldChannelRails(queryClient, kept.map((row) => row.id)),
