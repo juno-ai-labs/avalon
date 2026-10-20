@@ -220,6 +220,35 @@ describe('standalone conversation subscriptions', () => {
 });
 
 describe('WorkstreamSocketPool', () => {
+  it('probes and bypasses backoff when returning to an admitted retained feed', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const api = socketApi();
+    const firstId = '00000000-0000-7000-8000-00000000064a';
+    const secondId = '00000000-0000-7000-8000-00000000064b';
+    const content = (id: string): React.JSX.Element => (
+      <WorkstreamSocketPool activeWorkstreamId={id} api={api} backgroundWorkstreamIds={[]}>
+        <ActiveConnection api={api} enabled workstreamId={id} />
+      </WorkstreamSocketPool>
+    );
+    const view = render(content(firstId), { wrapper: createWrapper() });
+    await act(async () => { await Promise.resolve(); });
+    const first = FakeWebSocket.instances[0]!;
+    act(() => first.keepHealthy());
+    view.rerender(content(secondId));
+    await act(async () => { await Promise.resolve(); });
+    first.send.mockClear();
+    view.rerender(content(firstId));
+    await act(async () => { await Promise.resolve(); });
+    expect(first.send).toHaveBeenCalledWith('ping');
+    view.rerender(content(secondId));
+    act(() => first.close(1006));
+    const before = api.getSocketTicket.mock.calls.length;
+    view.rerender(content(firstId));
+    await act(async () => { await Promise.resolve(); });
+    expect(api.getSocketTicket.mock.calls.length).toBe(before + 1);
+  });
+
   it('opens and retains only the presence-free Main feed after a one-second hover', async () => {
     vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
     vi.stubGlobal('WebSocket', FakeWebSocket);

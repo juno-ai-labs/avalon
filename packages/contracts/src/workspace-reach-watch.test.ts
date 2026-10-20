@@ -122,6 +122,22 @@ describe("watchWorkspaceReach", () => {
     expect(diagnostics).toContainEqual({code: "timeout", phase: "ticket"});
   });
 
+  it.each(["socket", "heartbeat", "send"] as const)("reports %s transport failures before retrying", async (phase) => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const { sockets, diagnostics, opened } = harness();
+    const socket = await opened();
+    socket.message(subscribeAnswer);
+    if (phase === "socket") socket.emit("error");
+    else {
+      vi.spyOn(socket, "send").mockImplementation(() => { throw new Error("transport unavailable"); });
+      if (phase === "heartbeat") await vi.advanceTimersByTimeAsync(WORKSPACE_SOCKET_HEARTBEAT_MS);
+      else socket.emit("open");
+    }
+    expect(diagnostics).toContainEqual({ code: "transport_error", phase });
+    await vi.advanceTimersByTimeAsync(750);
+    expect(sockets).toHaveLength(2);
+  });
+
   it("subscribes, and reports the first subscribe answer and a reach change, but not a broadcast", async () => {
     const { onStale, opened } = harness();
     const socket = await opened();

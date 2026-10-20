@@ -1494,6 +1494,7 @@ export function WorkspaceSocketProvider({
       else void connect();
     };
     const offline = (): void => {
+      const hadAttempt = socket !== null || connecting;
       if (pendingHandshakeDiagnostic) {
         reportHandshake(pendingHandshakeDiagnostic.id, 'offline_blocked');
         pendingHandshakeDiagnostic = null;
@@ -1502,7 +1503,7 @@ export function WorkspaceSocketProvider({
       clearSocketTimers();
       cancelTicketAttempt();
       const retired = socket;
-      socketTelemetry.disconnected({ attempts: attempt, retrying: false, cause: 'offline' });
+      if (hadAttempt) socketTelemetry.disconnected({ attempts: attempt, retrying: false, cause: 'offline' });
       setState('unavailable');
       setPresenceUserIdsByWorkstream({});
       rejectPendingDirectoryRequests(new ApiError(
@@ -1532,12 +1533,13 @@ export function WorkspaceSocketProvider({
         return;
       }
       suspended = true;
+      const hadTicket = connecting;
       clearReconnect();
       cancelTicketAttempt();
       setState('reconnecting');
       const sleeping = socket;
       if (!sleeping) {
-        socketTelemetry.disconnected({ attempts: attempt, retrying: true, cause: 'suspended' });
+        if (hadTicket) socketTelemetry.disconnected({ attempts: attempt, retrying: true, cause: 'suspended' });
         return;
       }
       // Settled here rather than by its `close` event, which may arrive after
