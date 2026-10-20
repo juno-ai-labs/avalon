@@ -186,14 +186,10 @@ export async function markConnectorNeedsReconnect(
   reason: string,
 ): Promise<void> {
   await database.prepare(
-    // `= 'healthy'`, not `!= 'disabled'`. This write carries a diagnosis, and a
-    // row that is already marked holds the first and most specific one. The
-    // door now runs for marked connections, so without this every later attempt
-    // would re-stamp them — which is exactly how a `missing_scopes:
-    // reactions:read` verdict was replaced by a bare `unauthorized` hours after
-    // the fact.
+    // A provider refusal supersedes an operational error, but preserves an
+    // existing reconnect diagnosis and a person's disabled state.
     `UPDATE connector_connections SET status = 'needs_reconnect', error_json = ?, updated_at = ?
-     WHERE id = ? AND workspace_id = ? AND status = 'healthy'`,
+     WHERE id = ? AND workspace_id = ? AND status IN ('healthy', 'error')`,
   ).bind(
     JSON.stringify({
       code: "connector_reauthorization_required",

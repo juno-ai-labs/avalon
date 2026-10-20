@@ -197,3 +197,10 @@ export function connectorConnectionCardInputFromToolEvent(event: {
   }
   return null;
 }
+
+/** Authorization availability is separate from the last background operation's health. */
+export function connectorAuthorizationStatus(status: string): "healthy" | "reconnect_required" | "disabled" {
+  if (status === "needs_reconnect") return "reconnect_required";
+  if (status === "disabled") return "disabled";
+  return "healthy";
+}

@@ -2,10 +2,25 @@
 
 Connectors are typed adapters behind a registry. A manifest declares OAuth needs, supported personal/workspace scopes, activity and resource types, tools, polling, webhooks, and watches. The adapter owns provider protocol details; Rally owns tenancy, execution principals, persistence, retries, schedules, and audit.
 
-The desktop shows **Reconnect required** only for `needs_reconnect`. Generic
+The model state tool and desktop share `connectorAuthorizationStatus`: only
+`needs_reconnect` means **Reconnect required**. Generic
 `error` states, such as a failed background poll, display as healthy because
 they do not establish that authorization needs renewing. `disabled` remains
-distinct. The stored polling diagnosis is retained for investigation.
+distinct. A committed successful poll clears only `connector_poll_failed` and
+`connector_poll_timeout` errors; other diagnoses are preserved. Poll failure
+cannot replace `needs_reconnect` or `disabled`. Provider refusals can replace
+generic errors, preserving the first authorization diagnosis.
+
+This availability rule covers every generic error, including
+`custom_mcp_unreachable` and Linear, Notion, or Slack route-registration failures.
+Connected describes authorization availability, not provider reachability or
+inbound delivery health: route registration can fail while outbound tools remain
+usable, and an unreachable custom MCP endpoint still reports its execution error.
+These diagnostics remain stored; only a provider authorization refusal establishes
+a reconnect verdict. GitHub installation suspension also records
+`needs_reconnect`; its unsuspend webhook restores healthy authorization. Every
+diagnosis-carrying refusal path promotes both healthy and operational-error rows,
+while preserving disabled connections and existing authorization diagnoses.
 
 OAuth deliberately crosses one authority boundary. Regional D1 owns the
 single-use encrypted `oauth_states` row because the callback must be validated
@@ -267,7 +282,7 @@ next creator tool checks again.
 
 The claim is scoped to adapter entry points. A few host paths need only a fresh token rather than a connection to hand an adapter — `slack-agent-service.ts`, `slack-unfurl-refresh.ts`, and `slack-notification-service.ts` each call `ensureFreshConnectorCredentials` directly to read a bot token — and the brand correctly does not apply to them. They get freshness, but not the mid-call recovery below, because they are not making a call an adapter would recover.
 
-Rotation is available to every connection a person has not disabled. The coordinator's lease claim, its credential reload, and the write that stores a rotated credential all admit any row except `disabled`, so a connection this database believes is broken is refreshed and rotated exactly like one it believes is fine, and the provider gets to say whether the belief was still true. A refresh the provider honours also clears the belief: the same write sets the row back to `healthy` and drops its `error_json`, because a provider that just accepted the refresh token has answered the question the status was guessing at. See the section below for why.
+Rotation is available to every connection a person has not disabled. The coordinator's lease claim, its credential reload, and the write that stores a rotated credential all admit any row except `disabled`, so a connection this database believes is broken is refreshed and rotated exactly like one it believes is fine, and the provider gets to say whether the belief was still true. A successful token refresh preserves status: it proves token liveness, not that every required scope is present. Reauthorization and explicit connection tests can heal authorization diagnoses; successful polls heal only polling diagnoses.
 
 Freshness at the door is necessary but not sufficient, because a credential can be revoked or expire while a call is already in flight. `withProviderReauthorization` in `provider-utils.ts` is the shared recovery: a provider that refuses the credential gets one refresh and one repeat of the call, and a second refusal is raised as the real one. Adapters must route their authenticated provider calls through it rather than carrying a private copy, and must not report a first rejection as a revoked grant.
 
@@ -291,8 +306,8 @@ That applies to the whole inbound surface, not merely to tool calls: provider we
 Three consequences follow, and each is load-bearing:
 
 - **Marking is still allowed; refusing to try is not.** A provider that genuinely refuses still marks the row, and the desktop still asks for a reconnect. What changed is that the mark no longer prevents the next attempt from reaching the provider.
-- **A mark records the first, most specific diagnosis.** The writes that set `needs_reconnect` deliberately still filter on `status = 'healthy'`, so a row that is already marked keeps the verdict that explains why. Re-marking on every later attempt is what replaced a precise scope failure with a bare `unauthorized`.
-- **Success heals.** Any path that gets a real answer from the provider clears the stale belief rather than leaving it for a member to resolve by hand.
+- **A mark records the first, most specific diagnosis.** The writes that set `needs_reconnect` accept `healthy` and `error` but exclude `disabled` and existing `needs_reconnect`, so a row that is already marked keeps the verdict that explains why. Re-marking on every later attempt is what replaced a precise scope failure with a bare `unauthorized`.
+- **Success heals.** Success clears the diagnosis it actually disproves: a successful poll clears polling errors; a full connection test or reauthorization clears authorization errors. Token rotation alone does not prove missing scopes have been granted.
 
 Recovery is part of the contract too. A durable job that failed on authorization may be classified non-retryable — that is correct while a grant is dead — but something has to lift the ceiling once the connection is reauthorized, or the outage becomes permanent for every request that arrived during it. `redriveReauthorizedIngress` is the Slack example: a job whose connection has been written since the job last failed is re-queued, which is self-limiting because a job that fails again stamps itself newer than the connection.
 
@@ -1553,6 +1568,16 @@ clients containing the fallback; it cannot retrofit already-installed clients.
 Release a desktop build supporting a connector before enabling it on the Worker,
 as with the wire-name sequencing constraint documented on
 `isConnectorConnectionCardWireName`, so an available update can resolve the card.
+
+### 2026-10-19: Polling failure is not a reconnect verdict
+
+**What changed:** Model and UI use one authorization-status mapping. Historical card success bridges loading only; live revocation or disable wins over the latch. Generic errors remain usable. Cursor-fenced poll success recovers only polling errors; poll failure preserves disabled connections and authorization diagnoses. Provider refusals across resource hydration, notifications, agent calls, and webhook access probes can promote an operational error to a reconnect verdict; GitHub suspension records authorization unavailability directly.
+
+**Why:** Gmail successfully fetched six activities forty-two seconds before the state tool demanded a reconnect. A retained polling error was mapped to reconnect by the model tool and Connected by the UI, repeatedly blocking usable accounts across connectors.
+
+**Rejected:** Clearing every error after refresh or polling would erase missing-scope diagnoses that those operations cannot disprove. A Google-only fix would leave the shared failure in every other adapter.
+
+**Consequences:** Background health and authorization availability are distinct. No migration or manual reconnect is needed for stale polling errors; the state tool permits use immediately and the next successful committed poll clears its own diagnosis.
 
 ### 2026-10-19: Empty attendee changes are omitted
 

@@ -9,6 +9,7 @@ import {
   ConnectorConnectionStateInputSchema,
   ConnectorConnectionStateResultSchema,
   bestConnectorConnectionState,
+  connectorAuthorizationStatus,
   connectorConnectionCardSummary,
   connectorConnectionStateSummary,
   connectorConnectionCardInputFromToolEvent,
@@ -126,5 +127,14 @@ describe("connector connection card contract", () => {
       connectorId: "granola",
       scope: "workspace",
     }).success).toBe(false);
+  });
+});
+
+describe("shared connector authorization status", () => {
+  it.each([
+    ["healthy", "healthy"], ["error", "healthy"],
+    ["needs_reconnect", "reconnect_required"], ["disabled", "disabled"],
+  ])("maps stored %s to %s for model and UI", (stored, expected) => {
+    expect(connectorAuthorizationStatus(stored)).toBe(expected);
   });
 });

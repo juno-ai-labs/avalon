@@ -295,7 +295,7 @@ describe("Avalon connector connection tools", () => {
       "UPDATE connector_connections SET status = 'error' WHERE model_plugin_id = 'plugin_google'",
     ).run();
     await expect(stateTool!.execute({ connectorId: "google-drive-workspace", scope: "personal" }, context()))
-      .resolves.toMatchObject({ output: { state: "reconnect_required" } });
+      .resolves.toMatchObject({ output: { state: "connected" } });
 
     objectDatabase.prepare(
       `INSERT INTO connector_connections
