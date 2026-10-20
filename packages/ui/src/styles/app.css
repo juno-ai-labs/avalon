@@ -9151,8 +9151,13 @@ button.merged-into-label:hover { color: var(--av-sys-color-text-default); }
 .annotation-surface { position: relative; min-width: 0; width: 100%; }
 .annotation-toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; position:sticky; top:0; z-index:2; padding:8px 0; background:var(--av-sys-color-surface-default); }
 .annotation-toolbar button { border:1px solid var(--av-sys-color-border-default); border-radius:7px; padding:5px 10px; background:transparent; color:inherit; font-size:12px; cursor:pointer; }
-.annotation-toolbar button[aria-pressed=true] { color:var(--av-sys-color-accent-strong); border-color:var(--av-sys-color-accent-base); background:color-mix(in srgb, var(--av-sys-color-accent-base) 7%, transparent); }
-.annotation-toolbar small { font-size:11px; color:var(--av-sys-color-text-muted); }
+.icon-button.annotation-mode-button[aria-pressed='true'],
+.icon-button.annotation-mode-button[aria-pressed='true']:hover:not(:disabled),
+.annotation-toolbar button[aria-pressed='true'] {
+  background: var(--av-sys-color-project-blue);
+  border-color: var(--av-sys-color-project-blue);
+  color: var(--av-sys-color-palette-ink-light);
+}
 .annotation-body { position:relative; }
 .annotation-body iframe { width:100%; min-height:500px; border:0; }
 .annotation-body pre { white-space:pre-wrap; overflow-wrap:anywhere; }
@@ -9189,7 +9194,6 @@ button.merged-into-label:hover { color: var(--av-sys-color-text-default); }
 .annotation-sheet button:disabled { cursor:default; opacity:1; }
 .annotation-sheet-tabs { display:flex; gap:12px; padding:8px 0; }
 .annotation-sheet-tabs [aria-pressed=true] { color:var(--av-sys-color-accent-strong); box-shadow:0 1px var(--av-sys-color-accent-base); }
-.annotation-site-hint { font-size:11px; color:var(--av-sys-color-text-muted); padding:6px 12px; }
 .annotation-site-comment { position:fixed; z-index:10000; width:292px; border-radius:12px; box-shadow:var(--av-sys-elevation-shadow-md); padding:12px; border-top:1px solid var(--av-sys-color-border-default); background:var(--av-sys-color-surface-elevated); }
 .annotation-site-comment q { display:block; font-size:12px; max-height:40px; overflow:hidden; }
 .annotation-site-comment textarea { width:100%; min-height:50px; font:inherit; background:transparent; color:inherit; border:0; padding:8px 0; outline:none; resize:vertical; }

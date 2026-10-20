@@ -9,6 +9,7 @@ export interface IconGroupAction {
   key: string;
   label: string;
   icon: ReactNode;
+  className?: string;
   onSelect: () => void;
   disabled?: boolean;
   disabledReason?: string;
@@ -54,7 +55,7 @@ export function IconGroup({ actions = [], buttonClassName, children, className, 
       <span className="icon-group-actions">
         {foldedActions.map((action) => <IconButton
           aria-pressed={action.pressed}
-          className={clsx(buttonClassName, action.pressed !== undefined && 'icon-button-toggle')}
+          className={clsx(buttonClassName, action.className, action.pressed !== undefined && 'icon-button-toggle')}
           disabled={action.disabled}
           disabledReason={action.disabledReason}
           key={action.key}
@@ -101,7 +102,7 @@ export function IconGroup({ actions = [], buttonClassName, children, className, 
     </>}
     {visibleActions.map((action) => <IconButton
       aria-pressed={action.pressed}
-      className={clsx(buttonClassName, action.pressed !== undefined && 'icon-button-toggle')}
+      className={clsx(buttonClassName, action.className, action.pressed !== undefined && 'icon-button-toggle')}
       disabled={action.disabled}
       disabledReason={action.disabledReason}
       key={action.key}
