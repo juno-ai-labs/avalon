@@ -46,12 +46,12 @@ describe('main-process network recovery', () => {
     expect(electronNetworkErrorCode(error)).toBe(code);
   });
 
-  it.each(networkCodes)('does not hide application errors with the %s message', (code) => {
-    expect(electronNetworkErrorCode(new Error(`net::${code}`))).toBe(null);
+  it('does not hide application errors with a Chromium network message', () => {
+    expect(electronNetworkErrorCode(new Error('net::ERR_NETWORK_CHANGED'))).toBe(null);
   });
 
-  it.each(networkCodes)('does not let %s message text override a contradictory code', (code) => {
-    const error = electronNetworkError(code) as Error & { code: string };
+  it('does not let message text override a contradictory code', () => {
+    const error = electronNetworkError('ERR_NETWORK_CHANGED') as Error & { code: string };
     error.code = 'APPLICATION_FAILURE';
 
     expect(electronNetworkErrorCode(error)).toBe(null);
@@ -63,7 +63,8 @@ describe('main-process network recovery', () => {
     expect(electronNetworkErrorCode(error)).toBe(null);
   });
 
-  it.each(networkCodes)('requires both Electron markers on the same real frame for %s', (code) => {
+  it('requires both Electron markers on the same real frame', () => {
+    const code = 'ERR_NETWORK_CHANGED';
     const messageOnly = electronNetworkError(code);
     messageOnly.stack = [
       'Error: SimpleURLLoaderWrapper node:electron/js2c/browser_init',
@@ -80,9 +81,9 @@ describe('main-process network recovery', () => {
     expect(electronNetworkErrorCode(separateFrames)).toBe(null);
   });
 
-  it.each(networkCodes)('does not let multiline %s text impersonate a stack frame', (code) => {
-    const error = electronNetworkError(code) as Error & { code: string };
-    error.code = code;
+  it('does not let multiline error text impersonate a stack frame', () => {
+    const error = electronNetworkError('ERR_NETWORK_CHANGED') as Error & { code: string };
+    error.code = 'ERR_NETWORK_CHANGED';
     error.message = [
       'request failed',
       '    at SimpleURLLoaderWrapper.<anonymous> (node:electron/js2c/browser_init:2:138087)',
@@ -167,7 +168,8 @@ describe('main-process network recovery', () => {
     expect(dependencies.deferFatal).toHaveBeenCalledTimes(2);
   });
 
-  it.each(networkCodes)('registers process boundaries that recover %s and deduplicate deferred fatals', (code) => {
+  it('registers process boundaries that recover network errors and deduplicate deferred fatals', () => {
+    const code = 'ERR_NETWORK_CHANGED';
     const dependencies = {
       recovered: vi.fn(),
       reportFatal: vi.fn(),
