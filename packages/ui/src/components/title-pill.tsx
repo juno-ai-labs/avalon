@@ -438,9 +438,7 @@ export function TitlePillHeader({ actions, ancestors = [], className, current, t
       </span>)}
     </div>
     <div className="title-pill-current window-no-drag" ref={currentRef}>
-      {bridged
-        ? <MarkBridge className="title-pill-bridge" items={phone ? foldCrumbs(bridge) : bridge} trailing={<TitlePill level={current} />} />
-        : <TitlePill level={current} />}
+      <MarkBridge items={bridged ? (phone ? foldCrumbs(bridge) : bridge) : []} trailing={<TitlePill level={current} />} />
     </div>
     <div className="title-pill-trailing" ref={trailingRef}>{trailing || shownActions?.length
       ? <IconGroup actions={shownActions} buttonClassName="title-pill-action" className="window-no-drag" folded={crowded} tooltipSide={tooltipSide}>{trailing}</IconGroup>
