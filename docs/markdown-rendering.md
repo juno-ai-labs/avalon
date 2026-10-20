@@ -18,7 +18,7 @@ one of them silently missed the others; the changelog records what that cost.
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MarkdownBody` — the only place `react-markdown` is mounted — and its component overrides: `MarkdownCode`, `MarkdownCodeBlock`, `MarkdownTable`, heading collapse, and the `a`, `img`, `li` and `section` renderers that hand a node to the citation matrix. Also the remark rewrites over the parsed tree: `remarkHtmlBreaks`, the opt-in human-message `remarkSoftBreaks`, and the streaming-only `remarkPendingCitations` that stands a skeleton where a footnote reference has no definition yet. |
 | `apps/desktop/src/renderer/components/markdown-mermaid.tsx` | The asynchronous Mermaid SVG render, strict untrusted-input configuration, active-token configuration, and source fallback. Mermaid's module-wide configuration and render calls are serialized here so two diagrams cannot race one another's theme. |
 | `apps/desktop/src/renderer/components/markdown-mermaid-theme.ts` | Maps Mermaid's rendering roles onto the active computed Rally design tokens. It owns no palette and does not branch on an appearance id. |
-| `apps/desktop/src/renderer/lib/markdown-collapse.ts` | Which h2–h6 start a collapsible section, and which nested headings stay in the body. Used by the renderer to assign section ids. |
+| `apps/desktop/src/renderer/lib/markdown-collapse.ts` | Which h2–h6 start a collapsible section, and which nested headings stay in the body. |
 | `apps/desktop/src/renderer/components/markdown-collapse.tsx` | The accordion chrome: chevron, 3-line preview, and the React context that holds which sections a reader has closed while a later heading streams in. |
 | `apps/desktop/src/renderer/components/markdown-citations.tsx` | The citation matrix — every scheme in every position — and the chip, embed card, footnote pill and identity card it renders. |
 | `apps/api/src/routes/favicons.ts`, `apps/api/src/services/favicon-service.ts` | The authenticated binary favicon endpoint and its public-host validation, parallel domain-chain resolution, image sniffing, and 30-day platform KV entries. |
@@ -947,10 +947,23 @@ restoration are owned by [artifact annotations](artifact-annotations.md).
 
 ### 2026-10-20 — Remove the message-level collapse button
 
-The agent-message byline no longer offers expand/collapse-all, as requested to
-simplify the top-level message chrome. Sections retain their individual controls
-and open by default. Collapse state now lives in each Markdown body rather than
-being shared with a header control.
+**What changed:** Removed the agent-message expand/collapse-all button and its
+shared header controller. Each Markdown body owns its section state.
+
+**Why:** The extra control beside the timestamp added message-header chrome
+where readers need to identify the speaker and time. Individual heading
+controls already let readers fold the sections they choose.
+
+**Considered and rejected:** Keeping the bulk implementation behind a hidden
+button would retain an unused API and shared-id coordination for a control
+that has been removed.
+
+**Consequences:** Individual sections remain open by default. Keep the body’s
+controller mounted before the first heading arrives so streaming does not
+close an open text menu. A future bulk control would need to explicitly share
+state with the body again.
+
+Shipped in [#1347](https://github.com/juno-ai-labs/avalon/pull/1347).
 
 ### 2026-10-19 — Preserve source spans for artifact selection
 
