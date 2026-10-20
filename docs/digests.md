@@ -228,9 +228,6 @@ rows one subject at a time, unread is no longer a run at the top of the feed,
 so the Unread chip can show a short page with more behind it; **Show more**
 reads the next. A server filter like `only=mentions` is the fix if that bites.
 
-Read activity rows render at 30% opacity to de-emphasize them. Unread rows
-and pending access requests retain full opacity.
-
 **A breakout's mentions** reach the log in one narrow shape
 (`breakout-activity.ts`). A breakout is private to the people in it, and a
 `workstream`-audience event reaches every participant of the parent thread
@@ -247,6 +244,10 @@ and the breakout listing check above decides whether the person named sees it.
 Nothing here changes what a digest reads.
 
 **An item is done two ways**, and neither is a row per item.
+
+Read rows are visually de-emphasized, with full opacity restored on hover,
+keyboard focus, or an increased-contrast preference. Unread rows and pending
+access requests retain full opacity.
 
 - **Mark all read** moves one time per person (`workspace_activity_seen`,
   migration 97) through `PUT /navigation/activity/seen`; every item at or
