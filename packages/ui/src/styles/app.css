@@ -4760,25 +4760,26 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .composer-send { align-items: center; background: var(--av-cmp-composer-send-background); border-radius: var(--av-cmp-composer-send-radius); color: var(--av-cmp-composer-send-foreground); display: flex; height: 28px; justify-content: center; width: 28px; }
 .composer-error-slot { padding-top: 7px; }
 .composer-error-slot .inline-error { background: var(--av-sys-color-danger-wash); border: 1px solid var(--av-sys-color-danger-edge); border-radius: var(--av-sys-size-radius-sm); margin: 0; padding: 6px 8px; }
-.mention-popover { background: var(--av-sys-color-surface-default); border: .5px solid var(--av-cmp-composer-border-color); border-radius: 12px; bottom: calc(100% - 8px); box-shadow: var(--av-sys-elevation-shadow-md); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; left: 40px; max-height: 280px; overflow: auto; padding: 6px; position: absolute; width: min(360px, calc(100% - 40px)); z-index: 20; }
-.mention-popover > button { align-items: center; background: transparent; border-radius: 6px; color: var(--av-sys-color-text-default); display: flex; font-size: 13px; font-weight: 400; gap: 6px; height: 28px; line-height: 18px; min-height: 28px; padding: 6px 8px; text-align: left; width: 100%; }
+.mention-popover { background: var(--av-sys-color-surface-default); border: .5px solid var(--av-cmp-sidebar-border); border-radius: 12px; bottom: calc(100% - 8px); box-shadow: var(--av-sys-elevation-shadow-md); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; left: 40px; max-height: 280px; overflow: auto; padding: 6px; position: absolute; width: min(360px, calc(100% - 40px)); z-index: 20; }
+.mention-popover-heading { color: var(--av-sys-color-text-muted); font-size: 11px; font-weight: 500; line-height: 16px; padding: 6px 8px 2px; }
+.mention-popover [role='group'] + [role='group'] { margin-top: 4px; padding-top: 2px; }
+.mention-popover button { align-items: center; background: transparent; border-radius: 6px; color: var(--av-sys-color-text-default); display: flex; font-size: 13px; font-weight: 400; gap: 6px; height: 28px; line-height: 18px; min-height: 28px; padding: 6px 8px; text-align: left; width: 100%; }
 /* One marked row, and `is-selected` is the one: the pointer moves the selection
    rather than painting a second highlight beside the keyboard's, so a `:hover`
    rule here would mark a row Enter is not going to take. */
-.mention-popover > button:focus-visible,
-.mention-popover > button.is-selected,
-.mention-popover > button:hover { background: var(--av-cmp-row-background-selected); }
+.mention-popover button:focus-visible,
+.mention-popover button.is-selected,
+.mention-popover button:hover { background: var(--av-cmp-row-background-selected); }
 .mention-icon { align-items: center; display: flex; flex: 0 0 16px; height: 16px; justify-content: center; width: 16px; }
 .mention-icon :is(.avatar-small, .provider-icon) { height: 16px; width: 16px; }
 .mention-popover-copy { align-items: baseline; display: flex; flex: 1; gap: 8px; min-width: 0; }
 .mention-popover strong { font-size: 13px; font-weight: 400; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mention-popover small { color: var(--av-sys-color-text-muted); font-size: 13px; font-weight: 420; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mention-popover-kind { color: var(--av-sys-color-text-muted); flex: 0 0 auto; font-size: 13px; font-weight: 420; line-height: 18px; margin-left: auto; }
-[data-theme='dark'] .mention-popover { background: var(--av-sys-color-surface-default); border-color: var(--av-cmp-composer-border-color); }
-[data-theme='dark'] .mention-popover > button:is(.is-selected, :hover) { background: var(--av-cmp-row-background-selected); }
-[data-theme='dark'] .mention-popover :is(small, .mention-popover-kind) { color: var(--av-sys-color-text-muted); }
+[data-theme='dark'] .mention-popover { background: var(--av-sys-color-surface-default); border-color: var(--av-cmp-sidebar-border); }
+[data-theme='dark'] .mention-popover button:is(.is-selected, :hover) { background: var(--av-cmp-row-background-selected); }
+[data-theme='dark'] .mention-popover small { color: var(--av-sys-color-text-muted); }
 /* An invitee's address is greyed until they join, here and wherever people are listed. */
-.mention-popover > button.is-invited strong,
+.mention-popover button.is-invited strong,
 .mention-confirm-person.is-invited strong,
 .member-action-row.is-invited strong,
 .title-menu-person.is-invited .title-menu-person-name,

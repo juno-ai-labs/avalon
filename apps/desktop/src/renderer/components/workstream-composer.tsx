@@ -53,7 +53,7 @@ function invitedArgument(emails: string[]): [] | [string[]] {
   return emails.length > 0 ? [emails] : [];
 }
 
-/** The right-hand word on a mention row: what kind of someone this is. */
+/** Include the account type in the accessible option name. */
 function mentionKindLabel(candidate: MentionCandidate): string {
   if (candidate.kind === 'rally') return 'AI';
   if (candidate.kind === 'invitee') return 'Invited';
@@ -93,12 +93,6 @@ interface WorkstreamComposerProps {
   autoFocus?: boolean;
   api?: RealtimeDictationApi;
   workstream: ComposerConversation;
-  /**
-   * Whether the mention list tags people outside `workstream.participants` as
-   * not participating. Off for a thread a Channel is about to start: its only
-   * participant is the person writing, so the tag would land on everyone else.
-   */
-  markNonParticipants?: boolean;
   annotationsEnabled?: boolean;
   /** The key the unsent draft is cached under; see `lib/draft-keys.ts`. */
   draftKey: string;
@@ -192,7 +186,6 @@ export function WorkstreamComposer({
   autoFocus = false,
   api,
   workstream,
-  markNonParticipants = true,
   draftKey,
   substreamId = '0',
   members,
@@ -254,7 +247,7 @@ export function WorkstreamComposer({
     .map((member) => ({
       id: member.id,
       label: member.name,
-      description: !markNonParticipants || participantIds.has(member.id) ? member.email : `${member.email} · not participating`,
+      description: member.email,
       kind: 'person' as const,
       member,
     })),
@@ -263,16 +256,28 @@ export function WorkstreamComposer({
     label: invitee.email,
     description: '',
     kind: 'invitee' as const,
-  }))], [invitees, markNonParticipants, members, participantIds]);
+  }))], [invitees, members]);
 
   const mentionLabels = useMemo(() => candidates.map((candidate) => candidate.label), [candidates]);
-  const visibleCandidates = mentionQuery === null
-    ? []
-    : candidates.filter((candidate) => {
-        const query = mentionQuery.toLowerCase();
-        return candidate.label.toLowerCase().includes(query)
-          || candidate.member?.email.toLowerCase().includes(query);
-      }).slice(0, 8);
+  const mentionGroups = [
+    { label: null, candidates: candidates.filter((candidate) => candidate.kind === 'rally') },
+    { label: 'Participants', candidates: candidates.filter((candidate) =>
+      candidate.member ? participantIds.has(candidate.id) : candidate.kind === 'invitee' && sharedInviteeEmails.includes(candidate.label)) },
+    { label: 'Org members', candidates: candidates.filter((candidate) =>
+      candidate.member ? !participantIds.has(candidate.id) && candidate.member.accessClass !== 'guest'
+        : candidate.kind === 'invitee' && !sharedInviteeEmails.includes(candidate.label)) },
+    { label: 'Guests', candidates: candidates.filter((candidate) =>
+      candidate.member?.accessClass === 'guest' && !participantIds.has(candidate.id)) },
+  ].map((group) => ({
+    ...group,
+    candidates: mentionQuery === null ? [] : group.candidates.filter((candidate) => {
+      const query = mentionQuery.toLowerCase();
+      return candidate.label.toLowerCase().includes(query)
+        || candidate.member?.email.toLowerCase().includes(query);
+    }),
+  })).filter((group) => group.candidates.length > 0);
+  // A single option sequence keeps keyboard navigation independent of headings.
+  const visibleCandidates = mentionGroups.flatMap((group) => group.candidates);
   const mentionNavigation = useMentionNavigation(
     visibleCandidates.map((candidate) => candidate.id),
     (index) => {
@@ -505,35 +510,42 @@ export function WorkstreamComposer({
       )}
       {visibleCandidates.length > 0 && (
         <div className="mention-popover" id="workstream-mention-listbox" role="listbox" aria-label="Mentions">
-          {visibleCandidates.map((candidate, index) => (
-            <button
-              aria-label={[candidate.label, candidate.description, mentionKindLabel(candidate)].filter(Boolean).join(' — ')}
-              aria-selected={index === mentionNavigation.activeIndex}
-              className={clsx(index === mentionNavigation.activeIndex && 'is-selected', candidate.kind === 'invitee' && 'is-invited')}
-              id={mentionOptionId(candidate.id)}
-              key={candidate.id}
-              onClick={() => insertMention(candidate)}
-              /* Move rather than enter: the list scrolls under a still pointer
-                 when the arrows walk past its edge, and that must not steal the
-                 highlight back. */
-              onMouseMove={() => mentionNavigation.setActiveIndex(index)}
-              ref={index === mentionNavigation.activeIndex ? mentionNavigation.activeOptionRef : undefined}
-              role="option"
-              type="button"
-            >
-              <span aria-hidden="true" className="mention-icon">
-                {candidate.member
-                  ? <Avatar member={candidate.member} size="small" />
-                  : candidate.kind === 'invitee'
-                  ? <Avatar member={inviteeAsMember(candidate.label)} size="small" />
-                  : <RallyAvatar size="small" />}
-              </span>
-              <span className="mention-popover-copy">
-                <strong>{candidate.label}</strong>
-                {candidate.kind !== 'rally' && candidate.description && <small>{candidate.description}</small>}
-              </span>
-              <span className="mention-popover-kind">{mentionKindLabel(candidate)}</span>
-            </button>
+          {mentionGroups.map((group) => (
+            <div key={group.label ?? 'rally'} role="group" aria-label={group.label ?? 'Rally'}>
+              {group.label && <div className="mention-popover-heading" aria-hidden="true">{group.label}</div>}
+              {group.candidates.map((candidate) => {
+                const index = visibleCandidates.indexOf(candidate);
+                return (
+                  <button
+                    aria-label={[candidate.label, candidate.description, mentionKindLabel(candidate)].filter(Boolean).join(' — ')}
+                    aria-selected={index === mentionNavigation.activeIndex}
+                    className={clsx(index === mentionNavigation.activeIndex && 'is-selected', candidate.kind === 'invitee' && 'is-invited')}
+                    id={mentionOptionId(candidate.id)}
+                    key={candidate.id}
+                    onClick={() => insertMention(candidate)}
+                    /* Move rather than enter: the list scrolls under a still pointer
+                       when the arrows walk past its edge, and that must not steal the
+                       highlight back. */
+                    onMouseMove={() => mentionNavigation.setActiveIndex(index)}
+                    ref={index === mentionNavigation.activeIndex ? mentionNavigation.activeOptionRef : undefined}
+                    role="option"
+                    type="button"
+                  >
+                    <span aria-hidden="true" className="mention-icon">
+                      {candidate.member
+                        ? <Avatar member={candidate.member} size="small" />
+                        : candidate.kind === 'invitee'
+                        ? <Avatar member={inviteeAsMember(candidate.label)} size="small" />
+                        : <RallyAvatar size="small" />}
+                    </span>
+                    <span className="mention-popover-copy">
+                      <strong>{candidate.label}</strong>
+                      {candidate.kind !== 'rally' && candidate.description && <small>{candidate.description}</small>}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           ))}
         </div>
       )}
