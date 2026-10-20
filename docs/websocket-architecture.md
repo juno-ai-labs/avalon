@@ -532,41 +532,28 @@ requests a single-flight canonical snapshot, and probes liveness without
 replacing an older pong deadline. A visible feed without pending commands still
 probes liveness or bypasses reconnect backoff; background-only feeds do nothing.
 
-Every feed attempt, including a reconnect over cached messages, uses the existing
-whole-open deadline. A warm attempt probes immediately on open. Empty replay
-has no completion frame, so if no canonical snapshot has arrived, the first
-pong asks for one through the existing single-flight `request_snapshot` path.
-A pong is transport liveness only: neither it nor cached state can finish the
-attempt. The deadline remains armed through complete snapshot assembly. Expiry detaches the old transport before
-closing it and retries without waiting for a close event. Warm failures keep
-retrying through the existing 10/20/40-second ladder (remaining at 40 seconds); the cold-open three-attempt policy is unchanged. **Reconnect now** in
-the history status restarts only that feed through the same owner, retaining
-cached messages and unresolved commands with their original operation IDs.
-A conversation asked to resynchronize also retires its live transport immediately:
-its opening deadline has already finished, so waiting for close there could
-strand it forever.
+Every attempt is bounded by the existing opening policy. A warm feed accepts
+ordered application replay over its canonical cache; pongs alone cannot finish
+opening. Empty replay has no completion marker, so a pong-responsive connection
+with no application state by its deadline gets one `request_snapshot` fallback
+and one more opening budget. This preserves cheap replay without racing its
+first event against a platform auto-pong. Snapshot assembly must finish,
+including pending-input chunks, before confirming the ticket as live.
 
-Both renderer owners retire transport ownership before closing on timeout,
-offline, or suspend. Resume obtains a new ticket; an aborted ticket that ignores
-cancellation is fenced by its attempt generation, including its `finally`.
-Feed recovery listens to the same desktop power bridge as Organization recovery.
-Browser freeze/resume and persisted pagehide/pageshow supply equivalent lifecycle
-edges, with duplicate suspend/restore events coalesced. An `online` signal probes
-an existing open connection too, covering a changed path without a prior offline
-signal. Foregrounding or activating a retained feed probes immediately while
-preserving the first unanswered pong deadline.
+Ownership is retired before close on timeout, resync, offline, and suspend;
+late events and obsolete ticket completions cannot affect replacements. Resume
+redials, browser restoration supplies equivalent lifecycle signals, and activating
+a retained conversation probes it independently of its sticky admission state.
+A previously synchronized feed keeps retrying even if replacement context chunks
+are incomplete. Cold opens retain the three-attempt policy. **Reconnect now**
+keeps pending command IDs; explicit retry after terminal failure or revoked
+access restarts the owner to re-check admission. Automatic access retry stays off.
 
-The Organization's existing 15-second handshake policy also bounds the wait
-from transport open to an applied initial sidebar. Pongs never clear that timer;
-expiry reports `sync_timeout` and replaces the transport. Backoff resets only
-once that sidebar applies. Network return can restart an exhausted cold feed
-opening; revocation remains terminal.
-
-The shared main-process workspace watcher (menu bar and Sideline) also bounds
-its ticket, handshake, and initial subscribe answer using the existing workspace
-opening policy. Each timeout retires ownership, reports its phase, and redials;
-late ticket results and delayed close events cannot displace the new connection.
-Its heartbeat timeout does not wait for a close event either.
+Organization and shared main-process watchers use the existing 15-second opening
+policy for their handshake and initial subscription state; shared watchers also
+bound ticket acquisition. Pongs never clear the sync deadline. Backoff resets
+only after application state arrives, and every transport failure reports its
+cause before retirement. Offline/suspend telemetry requires an active attempt.
 
 ### Desktop network recovery
 
@@ -936,29 +923,22 @@ explicit product states rather than speculative guesses.
 
 ### 2026-10-19 — Recover transport and application state across network and power changes
 
-**What changed:** The existing opening deadline now covers every feed attempt.
-Warm opens request canonical state if replay provides none; foreground reading
-and network return probe the visible feed, and history exposes **Reconnect now**.
-Both renderer owners detach before closing and fence obsolete ticket completions.
-Feeds now follow sleep/wake and browser restoration, and Organization connections
-must apply their initial sidebar within the existing opening time budget.
+**What changed:** Bounded every feed attempt, fenced stale ticket completions,
+and retired failed transports without waiting for close. Added read-only
+foreground/activation recovery, power/browser restoration, initial subscription
+watchdogs, and **Reconnect now**. Warm feeds accept cheap replay, with a delayed
+snapshot fallback for an otherwise silent subscription.
 
-**Why:** Once cached content existed, a stuck replacement handshake had no
-application deadline, and focus recovery only ran for pending mutations. A
-reader could remain on “Waiting to reconnect…” indefinitely. Further lifecycle
-review found no feed sleep listener, recovery waiting for delayed close events,
-and an Organization ticket from before sleep able to interfere after wake.
-Platform auto-pongs could hide a stuck application subscription.
+**Why:** Cached content disabled the opening deadline, focus recovery required a
+pending mutation, and several paths depended on a close event that might never
+arrive. Auto-pongs could hide a missing application subscription. These gaps
+left readers on “Waiting to reconnect…” indefinitely.
 
-**Considered and rejected:** Reloading the application discards more state than
-repairing one connection; a second REST history path duplicates socket authority.
-No new timeout number is introduced: recovery reuses the existing opening policy.
-
-**Consequences:** Preserve cached content, pending command IDs, access-revocation
-termination, and the cold-open retry policy. Pongs cannot substitute for an
-applied snapshot or sidebar. The on-demand snapshot is a socket fallback, not a
-second REST authority, and new timeout numbers were not introduced.
-
+**Considered and rejected:** App reload discards unrelated state; parallel REST
+history duplicates socket authority; snapshot-on-first-pong defeats cheap replay.
+Recovery reuses the existing timing policy. Preserve pending command IDs, keep
+warm recovery alive through partial chunks, require application state for live
+confirmation, and keep automatic access-revocation recovery terminal.
 
 ### 2026-10-19 — A new version reaches a Channel's readers
 

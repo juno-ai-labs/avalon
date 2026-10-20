@@ -1317,8 +1317,8 @@ const menuBarSocketFactory = createNodeRealtimeSocketFactory(
 function logMenuBarSocketDiagnostic(diagnostic: ReachWatchDiagnostic): void {
   if (diagnostic.code === 'ticket_failed' || diagnostic.code === 'open_failed') {
     logWarn('rally', `menu bar workspace socket ${diagnostic.code}`, diagnostic.error);
-  } else if (diagnostic.code === 'timeout') {
-    logWarn('rally', `menu bar workspace socket ${diagnostic.phase}_timeout`);
+  } else if (diagnostic.code === 'timeout' || diagnostic.code === 'transport_error') {
+    logWarn('rally', `menu bar workspace socket ${diagnostic.phase}_${diagnostic.code}`);
   } else {
     logWarn('rally', `menu bar workspace socket ${diagnostic.code}: ${diagnostic.closeCode}`);
   }
