@@ -939,17 +939,21 @@ describe("artifact pins", () => {
     await threadWithArtifacts();
     await pinArtifact(ARTIFACT, OPEN_THREAD);
     await republish(ARTIFACT, { kind: "agent" });
+    expect((await artifactRows(MEMBER)).map((item) => item.id)).toEqual([`artifact:${ARTIFACT}:2`]);
+    // Start with an existing notification with the same topic and audience.
+    // The unpin must publish a new event even when its payload is unchanged.
+    await workspace().markActivitySeen({ workspaceId: WORKSPACE_ID, userId: MEMBER, seenThrough: 0 });
     const latest = () => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{
-      topics_json: string; audience_json: string | null;
-    }>("SELECT topics_json, audience_json FROM workspace_sync_events ORDER BY waterline DESC LIMIT 1").toArray());
+      waterline: number; topics_json: string; audience_json: string | null;
+    }>("SELECT waterline, topics_json, audience_json FROM workspace_sync_events ORDER BY waterline DESC LIMIT 1").one());
     const before = await latest();
 
     await workspace().changeArtifactPin({ workspaceId: WORKSPACE_ID, userId: MEMBER, itemId: ARTIFACT, threadId: null, pinned: false });
 
     expect(await artifactRows(MEMBER)).toEqual([]);
     const after = await latest();
-    expect(after).not.toEqual(before);
-    expect(after).toEqual([{ topics_json: JSON.stringify(["activity"]), audience_json: JSON.stringify([MEMBER]) }]);
+    expect(after.waterline).toBeGreaterThan(before.waterline);
+    expect(after).toMatchObject({ topics_json: JSON.stringify(["activity"]), audience_json: JSON.stringify([MEMBER]) });
   });
 
   it("given two pinned artifacts, when the member moves the second up, then they list in the new order", async () => {
