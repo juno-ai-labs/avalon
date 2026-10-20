@@ -52,6 +52,29 @@ describe('where a conversation merges', () => {
     })).toEqual({ kind: 'channel', channels: [{ id: GTM, name: 'GTM', scope: 'workspace' }], threadPrivate: true });
   });
 
+  it('offers Merge to Laurel AI from the server when a private Thread has no cached placements', () => {
+    const target = mergeTargetFor({
+      parentKind: 'workstream', substreamId: '0', guest: false,
+      thread: { title: 'U.S. B2B AI funding', scope: 'personal', spaceIds: [] },
+      placements: [], order: [GTM], spaces: [space(GTM, 'Laurel AI', 'organization')],
+    });
+    expect(target).toEqual({ kind: 'channel', channels: [
+      { id: GTM, name: 'Laurel AI', scope: 'workspace' },
+    ], threadPrivate: true });
+    expect(mergeLabel(target!)).toBe('Merge to Laurel AI');
+  });
+
+  it('drops stale cached targets when the server lists different eligible Channels or none', () => {
+    const input: MergeInput = {
+      parentKind: 'workstream', substreamId: '0', guest: false, thread,
+      placements: [GTM], spaces: [space(GTM, 'GTM', 'organization'), space(BOARD, 'Board', 'participant')],
+    };
+    expect(mergeTargetFor({ ...input, order: [BOARD] })).toEqual({
+      kind: 'channel', channels: [{ id: BOARD, name: 'Board', scope: 'workspace' }], threadPrivate: false,
+    });
+    expect(mergeTargetFor({ ...input, order: [] })).toBeNull();
+  });
+
   it('offers nothing when every Channel is read-only to the reader, and a Breakout its Thread', () => {
     expect(mergeTargetFor({
       parentKind: 'workstream', substreamId: '0', guest: false, thread,
