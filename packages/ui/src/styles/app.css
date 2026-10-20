@@ -8699,11 +8699,13 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   min-width: 0;
   position: relative;
 }
-/* Attach the crumbs behind the existing command pill. Its own fill, ring,
-   shadow and interactive states remain the TitlePill's, without overrides. */
+/* The attached pill keeps its fill, shadow and two hover targets. Its
+   standalone outline would cut across the glass neck, so omit that ring. */
 .mark-bridge.has-trailing { align-items: center; display: inline-flex; }
 .mark-bridge-spacer { flex: none; }
 .mark-bridge-trailing { display: flex; flex: 0 1 auto; min-width: 36px; position: relative; }
+.mark-bridge.has-trailing > .mark-bridge-trailing > .title-pill { box-shadow: var(--av-cmp-composer-shadow); }
+.mark-bridge.has-trailing > .mark-bridge-trailing > .title-pill:is([data-state='open'], .is-split:has(> [data-state='open'])) { box-shadow: none; }
 .mark-bridge-glass {
   filter: drop-shadow(0 1px 2px rgb(0 0 0 / .08)) drop-shadow(0 4px 10px rgb(0 0 0 / .06));
   left: -1px;
