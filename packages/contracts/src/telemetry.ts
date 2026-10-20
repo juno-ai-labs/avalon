@@ -256,6 +256,7 @@ export const TELEMETRY_REALTIME_SOCKET_CAUSES = [
   "offline",
   "access_revoked",
   "open_timeout",
+  "sync_timeout",
   "suspended",
 ] as const;
 export type TelemetryRealtimeSocketCause = typeof TELEMETRY_REALTIME_SOCKET_CAUSES[number];
@@ -516,7 +517,7 @@ export const TELEMETRY_EVENTS = {
       attemptId: uuidV7Id,
       phase: z.enum([
         "ticket_requested", "ticket_received", "transport_open", "subscribe_sent",
-        "sync_received", "sync_applied", "sync_rejected", "offline_blocked", "open_timeout",
+        "sync_received", "sync_applied", "sync_rejected", "offline_blocked", "open_timeout", "sync_timeout",
       ]),
       // See docs/telemetry.md, the workspace socket handshake.
       sinceTicketRequested: journeyDurationBucket.optional(),
