@@ -1,0 +1,302 @@
+{
+  "date": "2026-10-20",
+  "source": "Agent-authored synthetic English examples, labeled and split before candidate comparison; not production or independent human adjudication.",
+  "selectionRule": "Minimize missed prompts first, then unwanted runs, then exact-label errors. Keep confidence and timeout fixed.",
+  "selectedVariant": "boundary",
+  "requestedModel": "jev-latest",
+  "confidenceRule": "> 0.5",
+  "timeoutMs": 1000,
+  "transport": "Node 24 NODE_USE_ENV_PROXY=1; initial proxy-less transport failures excluded from semantic comparison.",
+  "combinedCorpusSha256": "7d2c959ad8b7e851bc7fa49278fa7d8906fe5277671463b29acd87c546329cf2",
+  "groups": [
+    {
+      "variant": "baseline",
+      "split": "development",
+      "casesPerRun": 44,
+      "repeats": 3,
+      "correctByRun": [
+        40,
+        40,
+        41
+      ],
+      "missedPromptsByRun": [
+        0,
+        0,
+        0
+      ],
+      "unwantedRunsByRun": [
+        4,
+        4,
+        3
+      ],
+      "unavailableByRun": [
+        3,
+        0,
+        0
+      ],
+      "lowConfidenceByRun": [
+        3,
+        3,
+        2
+      ],
+      "latencyMs": {
+        "p50": 142,
+        "p95": 212
+      },
+      "failureKinds": {
+        "typesafe_request_timed_out": 3
+      },
+      "confusion": {
+        "prompt_to_process -> prompt_to_process": 57,
+        "human_to_human -> human_to_human": 33,
+        "human_to_human -> prompt_to_process": 6,
+        "conversation_description -> conversation_description": 31,
+        "conversation_description -> prompt_to_process": 5
+      },
+      "resolvedModels": [
+        "jev-1.13.0"
+      ],
+      "corpusSha256": "c46b9f202453e564bc43123e599ed68481f0e5ae0246733ecd93469030384ac6",
+      "questionsSha256": "06ba8d0fef3055366338260332922c99c9f394088a66cce2f21b2343aac92c97"
+    },
+    {
+      "variant": "compact",
+      "split": "development",
+      "casesPerRun": 44,
+      "repeats": 3,
+      "correctByRun": [
+        39,
+        39,
+        39
+      ],
+      "missedPromptsByRun": [
+        0,
+        0,
+        0
+      ],
+      "unwantedRunsByRun": [
+        4,
+        4,
+        4
+      ],
+      "unavailableByRun": [
+        0,
+        0,
+        0
+      ],
+      "lowConfidenceByRun": [
+        4,
+        4,
+        4
+      ],
+      "latencyMs": {
+        "p50": 135,
+        "p95": 195
+      },
+      "failureKinds": {},
+      "confusion": {
+        "prompt_to_process -> prompt_to_process": 57,
+        "human_to_human -> human_to_human": 33,
+        "human_to_human -> conversation_description": 3,
+        "human_to_human -> prompt_to_process": 3,
+        "conversation_description -> prompt_to_process": 9,
+        "conversation_description -> conversation_description": 27
+      },
+      "resolvedModels": [
+        "jev-1.13.0"
+      ],
+      "corpusSha256": "c46b9f202453e564bc43123e599ed68481f0e5ae0246733ecd93469030384ac6",
+      "questionsSha256": "a747898584cfe7659e621ca1c3841a1658bcf132d764b3c932471590c4193a8c"
+    },
+    {
+      "variant": "boundary",
+      "split": "development",
+      "casesPerRun": 44,
+      "repeats": 3,
+      "correctByRun": [
+        44,
+        44,
+        44
+      ],
+      "missedPromptsByRun": [
+        0,
+        0,
+        0
+      ],
+      "unwantedRunsByRun": [
+        0,
+        0,
+        0
+      ],
+      "unavailableByRun": [
+        0,
+        0,
+        0
+      ],
+      "lowConfidenceByRun": [
+        1,
+        1,
+        1
+      ],
+      "latencyMs": {
+        "p50": 137,
+        "p95": 169
+      },
+      "failureKinds": {},
+      "confusion": {
+        "prompt_to_process -> prompt_to_process": 57,
+        "human_to_human -> human_to_human": 39,
+        "conversation_description -> conversation_description": 36
+      },
+      "resolvedModels": [
+        "jev-1.13.0"
+      ],
+      "corpusSha256": "c46b9f202453e564bc43123e599ed68481f0e5ae0246733ecd93469030384ac6",
+      "questionsSha256": "180f3701741aa6b13420b3b9eaa3f72d600776c8f9a8290f1abfa356c5261d0b"
+    },
+    {
+      "variant": "baseline",
+      "split": "holdout",
+      "casesPerRun": 44,
+      "repeats": 3,
+      "correctByRun": [
+        41,
+        41,
+        41
+      ],
+      "missedPromptsByRun": [
+        0,
+        0,
+        0
+      ],
+      "unwantedRunsByRun": [
+        2,
+        2,
+        2
+      ],
+      "unavailableByRun": [
+        0,
+        0,
+        0
+      ],
+      "lowConfidenceByRun": [
+        0,
+        1,
+        0
+      ],
+      "latencyMs": {
+        "p50": 138,
+        "p95": 214
+      },
+      "failureKinds": {},
+      "confusion": {
+        "prompt_to_process -> prompt_to_process": 57,
+        "human_to_human -> human_to_human": 36,
+        "human_to_human -> prompt_to_process": 3,
+        "conversation_description -> conversation_description": 30,
+        "conversation_description -> prompt_to_process": 3,
+        "conversation_description -> human_to_human": 3
+      },
+      "resolvedModels": [
+        "jev-1.13.0"
+      ],
+      "corpusSha256": "8f1066d51485556209fc745f3a9180ef2111bab13b7a000b75ec4cab562c5883",
+      "questionsSha256": "06ba8d0fef3055366338260332922c99c9f394088a66cce2f21b2343aac92c97"
+    },
+    {
+      "variant": "boundary",
+      "split": "holdout",
+      "casesPerRun": 44,
+      "repeats": 3,
+      "correctByRun": [
+        43,
+        43,
+        43
+      ],
+      "missedPromptsByRun": [
+        0,
+        0,
+        0
+      ],
+      "unwantedRunsByRun": [
+        0,
+        0,
+        0
+      ],
+      "unavailableByRun": [
+        0,
+        0,
+        0
+      ],
+      "lowConfidenceByRun": [
+        0,
+        0,
+        0
+      ],
+      "latencyMs": {
+        "p50": 139,
+        "p95": 205
+      },
+      "failureKinds": {},
+      "confusion": {
+        "prompt_to_process -> prompt_to_process": 57,
+        "human_to_human -> human_to_human": 39,
+        "conversation_description -> conversation_description": 33,
+        "conversation_description -> human_to_human": 3
+      },
+      "resolvedModels": [
+        "jev-1.13.0"
+      ],
+      "corpusSha256": "8f1066d51485556209fc745f3a9180ef2111bab13b7a000b75ec4cab562c5883",
+      "questionsSha256": "180f3701741aa6b13420b3b9eaa3f72d600776c8f9a8290f1abfa356c5261d0b"
+    }
+  ],
+  "limitation": "Holdout has one repeat-stable conversation-description vs human-to-human confusion; both correctly suppress a response. Small synthetic corpus does not establish production accuracy.",
+  "productionVerification": {
+    "corpusSha256": "8f1066d51485556209fc745f3a9180ef2111bab13b7a000b75ec4cab562c5883",
+    "summary": {
+      "development": {
+        "count": 0,
+        "correct": 0,
+        "missedPrompts": 0,
+        "unwantedRuns": 0,
+        "unavailable": 0
+      },
+      "holdout": {
+        "count": 44,
+        "correct": 43,
+        "missedPrompts": 0,
+        "unwantedRuns": 0,
+        "unavailable": 0
+      }
+    },
+    "questionMatchesSelectedCandidate": true
+  },
+  "candidateCliVerification": {
+    "candidate": "baseline",
+    "cases": 12,
+    "concurrentLocalQualityGates": true,
+    "questionSubstitutionVerified": true,
+    "diagnosticRequestVerified": true,
+    "summary": {
+      "development": {
+        "count": 3,
+        "correct": 3,
+        "missedPrompts": 0,
+        "unwantedRuns": 0,
+        "unavailable": 1
+      },
+      "holdout": {
+        "count": 9,
+        "correct": 7,
+        "missedPrompts": 0,
+        "unwantedRuns": 2,
+        "unavailable": 5
+      }
+    },
+    "failureKinds": {
+      "typesafe_request_timed_out": 6
+    },
+    "note": "These later smoke results are separate from the sequential semantic comparison and retain the observed timeouts; no retry was substituted."
+  }
+}

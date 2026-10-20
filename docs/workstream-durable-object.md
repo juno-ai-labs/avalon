@@ -563,7 +563,14 @@ New work-stream creation is deliberately not a client-side create-then-send
 sequence. The desktop's idempotent `POST /workstreams` includes the opening
 message. The regional creation coordinator reserves the D1 route/receipt and
 email address, then reserves the Channel in `WorkspaceDO` and initializes main `SubstreamAgent("0")` with
-metadata, audience, attachments, the opening message, and first run. Only later
+metadata, audience, attachments, and the opening message. The opening JEV
+classifier creates the first run only for a prompt to process; a human-to-human
+message or conversation name/description commits idle with no run. A retry
+returns that committed silent opening without classifying again. Breakouts apply
+the same decision to their first local message through `createMessage`; ordinary
+messages thereafter keep their existing admission policy.
+[`agent-harness.md`](agent-harness.md) owns the classifier and fallback contract.
+Only later
 messages use the already-open SubstreamAgent socket, so a broken second client
 request cannot leave an accidental empty work stream.
 
