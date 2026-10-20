@@ -1166,7 +1166,7 @@ export function mergeTargetFor(input: {
   thread: Pick<WorkstreamDetail, 'title' | 'scope' | 'spaceIds'> | null | undefined;
   /** The thread's placements from the directory, which wins over the detail's when present. */
   placements?: readonly string[] | undefined;
-  /** The server's order, earliest placement first; its first is the default. Absent until read. */
+  /** The server's eligible Channels, earliest placement first. Absent until read. */
   order?: readonly string[] | undefined;
   spaces: readonly Pick<SpaceSummary, 'id' | 'name' | 'scope' | 'reach'>[];
 }): MergeTarget | null {
@@ -1176,17 +1176,15 @@ export function mergeTargetFor(input: {
   const byId = new Map(input.spaces.map((space) => [space.id as string, space]));
   // A Channel reached only through a thread in it is read-only to this
   // person, and the server refuses a merge there.
-  const channels = (input.placements ?? input.thread.spaceIds).flatMap((spaceId) => {
+  // Once read, the merge endpoint owns eligibility as well as order. The
+  // conversation snapshot carries no placements, and the directory can be
+  // missing or stale even while the Thread itself is open.
+  const channels = (input.order ?? input.placements ?? input.thread.spaceIds).flatMap((spaceId) => {
     const space = byId.get(spaceId);
     return space && space.reach !== 'through_channel'
       ? [{ id: space.id as string, name: space.name, scope: space.scope }]
       : [];
   });
-  if (input.order) {
-    // A Channel the server has not listed yet keeps its place after the ones it has.
-    const rank = (id: string): number => { const at = input.order!.indexOf(id); return at < 0 ? input.order!.length : at; };
-    channels.sort((a, b) => rank(a.id) - rank(b.id));
-  }
   return channels.length > 0 ? { kind: 'channel', channels, threadPrivate: input.thread.scope !== 'workspace' } : null;
 }
 

@@ -238,13 +238,15 @@ so a send whose response was lost is retried as a replay; new words or a new
 target are a new merge. A merge that finishes after its card was cancelled
 and another opened leaves the newer one and its draft alone. A Channel the
 reader reaches only `through_channel` is not offered. The thread's Channels
-come from its directory row, which keeps placements current, not from the
-conversation detail, which a socket install leaves without them. Their order
-is the server's: `GET /conversations/:parentId/merge-channels` lists the
+come from its directory row until the merge-target read lands, not from the
+conversation detail, which a socket install leaves without them. Then both
+eligibility and order are the server's: `GET /conversations/:parentId/merge-channels` lists the
 Channels this person can merge into, earliest placement first, read in the
 background (`useMergeChannelOrder`). The Merge label, the title menu and the
 picker therefore lead with the Channel the server would choose, as the PRD
-sets the default. Until that read lands, the directory's order stands in. The
+sets the default. A missing or stale directory placement cannot hide a target
+the server returned, and an empty server list removes cached targets. Until
+that read lands, the directory's placements stand in. The
 card has no attach control: a merge embeds artifacts by link. A title-menu
 request opens the card once; returning to the pane does not reopen it. A
 Channel merge card's artifact opens in the Channel's own panel.
@@ -373,6 +375,20 @@ choice, made in review: a source that always says where its work went is worth
 more than keeping a private Channel's name hidden.
 
 ## Changelog
+
+### 2026-10-19 — Server merge targets determine eligibility as well as order
+
+**What changed:** Both the message action and title menu use the merge endpoint's
+eligible Channel IDs once loaded, falling back to directory placements only
+while that read is pending.
+
+**Why:** The private U.S. B2B AI funding Thread in Laurel AI showed no Merge
+action despite its active Channel placement. Using the server response only to
+sort cached placements left an empty cache with nothing to sort. Requiring a
+directory refresh adds latency and leaves the same dependency in place; the
+existing merge read already owns the eligible targets. An empty response must
+also remove stale cached targets. Channel labels and scope still come from the
+reader's Channel directory, and the server rechecks admission when merging.
 
 ### 2026-10-19 — A private thread merges into its Channel, and a merge shares its artifacts with its parent
 
