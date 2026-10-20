@@ -4,7 +4,7 @@ import React from 'react';
 import { TitlePill } from '@rally/ui/components/title-pill';
 import { describe, expect, it, vi } from 'vitest';
 
-import { AnnotationDraftProvider } from './artifact-annotations';
+import { AnnotationDraftProvider, useAnnotationDraft } from './artifact-annotations';
 import { DetailActionMenu, DetailHeaderActionsHost, type DetailHeaderAction } from './detail-header-actions';
 import { IconGroup } from '@rally/ui/components/icon-group';
 import {
@@ -90,13 +90,15 @@ function storedDataToggle(): HTMLElement {
   return screen.getByRole('menuitem', { name: 'Stored data' });
 }
 
+function SitePins(): React.JSX.Element { const draft=useAnnotationDraft();return <output data-testid="site-pins">{JSON.stringify(draft?.selections.map((pin)=>pin.annotation))}</output>; }
+
 function Harness({ props }: { props: SiteResourceDetailProps }): React.JSX.Element {
   const [actions, setActions] = React.useState<readonly DetailHeaderAction[]>([]);
   return (
     <Tooltip.Provider>
       <div data-testid="host-header"><IconGroup actions={actions.filter((action) => action.menu === undefined)} /><TitlePill level={{key: props.resourceId, title: props.title, icon: null, label: 'Artifact data menu', menu: <DetailActionMenu actions={actions} />}} /></div>
       <DetailHeaderActionsHost onActions={setActions}>
-        <SiteResourceDetail {...props} />
+        <SiteResourceDetail {...props} /><SitePins />
       </DetailHeaderActionsHost>
     </Tooltip.Provider>
   );
@@ -109,6 +111,21 @@ describe('showing a live artifact in the rail', () => {
     expect(button).toHaveAttribute('aria-disabled','true');
     fireEvent.click(button);
     expect(button).toHaveAttribute('aria-pressed','false');
+  });
+  it('discards an unfinished native-site comment through the capture-phase Escape handler', async () => {
+    const pick=vi.fn<NonNullable<SiteResourceDetailProps['surface']['pick']>>()
+      .mockResolvedValueOnce({css:'p',html:'<p>RSVP</p>',visibleText:'RSVP',pagePath:'/',replace:false,box:{x:0,y:0,w:1,h:1}})
+      .mockImplementation(()=>new Promise(()=>{}));
+    setup({surface:surface({pick})});
+    const button=await screen.findByRole('button',{name:'Comment mode'});
+    await waitFor(()=>expect(button).not.toBeDisabled());
+    fireEvent.click(button);
+    const editor=await screen.findByRole('textbox',{name:'Comment on site selection'});
+    fireEvent.change(editor,{target:{value:'Unfinished native comment'}});
+    expect(screen.getByTestId('site-pins')).toHaveTextContent('Unfinished native comment');
+    fireEvent.keyDown(editor,{key:'Escape'});
+    expect(screen.getByTestId('site-pins')).toHaveTextContent('[]');
+    expect(screen.queryByRole('dialog',{name:'Comment on site selection'})).toBeNull();
   });
   it.each(['dialog', 'alertdialog', 'menu', 'tooltip'])('keeps the native preview below a %s and restores it when it closes', async (role) => {
     const geometry = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(

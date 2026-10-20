@@ -27,7 +27,8 @@ Comment mode appears in the panel header immediately before Expand. These two
 controls stay visible when other header actions fold. Hover outlines the block
 that clicking will pin. Option or Up grows to a containing list or section;
 Down shrinks. Click is immediate, double-click replaces its block pin with a
-word, and dragging selects a range. Escape exits the mode while preserving pins.
+word, and dragging selects a range. Escape exits the mode while preserving
+confirmed pins and discarding the unfinished selection.
 The button and cursor use Tabler's `pointer-collaboration` icon. While enabled,
 the button has the update action's blue fill and light icon. Standalone controls
 use dark label text for contrast on that fill.
@@ -38,8 +39,10 @@ chip after confirmation. Enter or Send keeps a nonempty comment and adds the pin
 to the composer. Confirmed comments stay visible beside their selected elements,
 including after leaving Comment mode or starting another pin. They follow scroll
 and resize; clicking a comment reopens its editor, and × removes it. Empty and
-whitespace-only comments stay in the preview, and
-typing alone never adds a pin to the message. Website chips and saved excerpts
+whitespace-only comments stay in the editor, and typing alone never adds a pin
+to the message. Dismissing an unfinished comment or starting another selection
+discards that pending pin. Accepting a message also clears unfinished selections,
+so no abandoned highlight remains without a removal control. Website chips and saved excerpts
 show selected visible words (or “Selected area”); trimmed HTML remains model
 context. Composer chips reveal, edit or remove pins. Sending accepts an empty
 message when a pin has a comment. Draft images use the ordinary upload path,
