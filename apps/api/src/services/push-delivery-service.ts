@@ -9,12 +9,12 @@ export async function pushEnabled(env: Env, subject: { userId: string; workspace
   return resolvePushNotificationsEnabled(env, subject);
 }
 /** Enqueued only when a live device's own transport can send from this deployment. */
-export async function enqueuePushDelivery(env: Env, message: PushDeliveryMessage): Promise<boolean> {
+export async function enqueuePushDelivery(env: Env, message: PushDeliveryMessage, delaySeconds = 0): Promise<boolean> {
   if (!env.PUSH_DELIVERY_QUEUE || (!pushAvailable(env) && !webPushAvailable(env))
     || !await pushEnabled(env, { userId: message.recipientUserId, workspaceId: message.workspaceId })) return false;
   const devices = await livePushDevices(env, message.recipientUserId);
   if (!devices.some((device) => device.transport === "webpush" ? webPushAvailable(env) : pushAvailable(env))) return false;
-  await env.PUSH_DELIVERY_QUEUE.send(message);
+  await env.PUSH_DELIVERY_QUEUE.send(message, { delaySeconds });
   return true;
 }
 
@@ -26,8 +26,9 @@ export async function enqueuePushDelivery(env: Env, message: PushDeliveryMessage
 export async function enqueueActivityDelivery(
   env: Env,
   message: PushDeliveryMessage & { activityItemId: string; channel: NonNullable<Extract<PushDeliveryMessage, { activityItemId: string }>["channel"]> },
+  delaySeconds = 0,
 ): Promise<boolean> {
   if (!env.PUSH_DELIVERY_QUEUE) return false;
-  await env.PUSH_DELIVERY_QUEUE.send(message);
+  await env.PUSH_DELIVERY_QUEUE.send(message, { delaySeconds });
   return true;
 }

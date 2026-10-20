@@ -209,6 +209,7 @@ export function splitByAge(
  */
 const SECTION_HEADINGS = {
   mentioned: "Mentions",
+  new_message: "New messages",
   added: "Added to a thread",
   thread_started: "New threads",
   breakout_started: "New breakouts",
@@ -259,6 +260,7 @@ export async function renderUnreadDigest(
         : `[${escapeMarkdown(item.threadTitle.trim() || UNNAMED_THREAD)}](${url})`;
       const breakout = item.breakout ? `[${escapeMarkdown(item.breakout.title.trim() || UNNAMED_BREAKOUT)}](${url})` : null;
       switch (item.kind) {
+        case "new_message": return `- ${actor} replied in ${breakout ?? thread}`;
         case "mentioned": return `- ${actor} mentioned you in ${breakout ?? thread}`;
         case "added": return `- ${actor} added you to ${breakout ?? thread}`;
         case "thread_started": return `- ${actor} started ${thread}`;

@@ -100,12 +100,13 @@ async function activityContent(env: Env, workspace: WorkspaceStub, message: Push
   const breakout = item.breakout ? item.breakout.title.trim() || UNNAMED_BREAKOUT : null;
   const words = item.kind === "thread_started" ? { title: `${actor} started ${thread}`, body: "" }
     : item.kind === "breakout_started" ? { title: `${actor} started a breakout on ${thread}`, body: breakout ?? "" }
+    : item.kind === "new_message" ? { title: `${actor} replied in ${breakout ?? thread}`, body: rewriteMessageAsPlainText(item.preview ?? "") }
     : item.kind === "merged" ? mergedWords(actor, thread, breakout, item.mergedInto?.name)
     : item.kind === "artifact_updated" ? { title: `${actor || "Someone"} updated ${item.artifact?.title.trim() || "an artifact"}`, body: `in ${thread}` }
     : { title: `${actor} finished ${breakout ?? thread}`, body: breakout ? `in ${thread}` : "" };
   return {
     outcome: "ready",
-    deliveryKey: `activity:${item.id}`,
+    deliveryKey: `activity:${item.kind === "new_message" ? message.activityItemId : item.id}`,
     kind: item.kind as PushNotificationData["kind"],
     ...words,
     workstreamId: item.threadId,
@@ -256,7 +257,7 @@ export async function deliverPush(
   }));
   const url = await contentUrl(env, message.workspaceId, content);
   const data = { v: 1 as const, kind: content.kind, region: env.AVALON_REGION, workspaceId: message.workspaceId, url };
-  const collapseId = await pushCollapseId(message.workspaceId, content.deliveryKey);
+  const collapseId = await pushCollapseId(message.workspaceId, `conversation:${content.workstreamId}:${content.substreamId ?? "0"}`);
   const { title, body } = content;
   const payload: PushPayloads = {
     apns: renderPushPayload({ title, body, threadKey: content.workstreamId, badge: attention.readerAttentionCount, data }),

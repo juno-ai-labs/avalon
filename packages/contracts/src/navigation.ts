@@ -168,6 +168,7 @@ export type ChannelStatsList = z.infer<typeof ChannelStatsListSchema>;
 export const ActivityItemKindSchema = z.enum([
   "added",
   "mentioned",
+  "new_message",
   "thread_started",
   "breakout_started",
   "run_finished",
@@ -186,6 +187,9 @@ export const ActivityItemSchema = z.strictObject({
   occurredAt: z.string().datetime({ offset: true }),
   actorUserId: IdSchema.nullable(),
   actorLabel: z.string().max(300),
+  /** Plain message text, present only for human reply activity. */
+  preview: z.string().optional(),
+  unreadMessageCount: z.number().int().nonnegative().optional(),
   threadId: WorkstreamIdSchema,
   threadTitle: z.string(),
   breakout: z.strictObject({ substreamId: IdSchema, title: z.string() }).nullable(),
@@ -254,3 +258,45 @@ export const ActivityEventsRequestSchema = z.strictObject({
   events: z.array(ActivityEventSchema).min(1),
 });
 export type ActivityEventsRequest = z.infer<typeof ActivityEventsRequestSchema>;
+
+/** One conversation in Activity, regardless of how many events it produced. */
+export interface ActivityGroup extends ActivityItem {
+  groupKey: string;
+  unreadMessages: number;
+  unreadMention: boolean;
+  rallyFinished: boolean;
+}
+
+/**
+ * Flatten across pages, before filtering unread. Keep destinations separate:
+ * a private breakout, a pinned artifact, and a merge into a Channel each opens
+ * somewhere different. Human replies lead over routine AI completion activity.
+ */
+export function groupActivityItems(items: readonly ActivityItem[]): ActivityGroup[] {
+  const buckets = new Map<string, ActivityItem[]>();
+  for (const item of items) {
+    const key = item.artifact ? `artifact:${item.artifact.resourceId}`
+      : item.mergedInto ? `channel:${item.mergedInto.channelId}`
+        : `conversation:${item.threadId}:${item.kind === "merged" ? "0" : item.breakout?.substreamId ?? "0"}`;
+    const bucket = buckets.get(key) ?? [];
+    // Refetched infinite pages can overlap. A mention and reply may also
+    // refer to the same event: keep both kinds, but count the reply once.
+    if (!bucket.some((held) => held.id === item.id && held.kind === item.kind)) bucket.push(item);
+    buckets.set(key, bucket);
+  }
+  return [...buckets].map(([groupKey, bucket]): ActivityGroup => {
+    bucket.sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt));
+    const latest = bucket[0]!;
+    const human = bucket.find((item) => item.kind === "new_message");
+    const representative = human ?? bucket.find((item) => item.unread && item.kind === "mentioned") ?? latest;
+    return {
+      ...representative,
+      groupKey,
+      occurredAt: latest.occurredAt,
+      unread: bucket.some((item) => item.unread),
+      unreadMessages: human?.unreadMessageCount ?? bucket.filter((item) => item.kind === "new_message" && item.unread).length,
+      unreadMention: bucket.some((item) => item.kind === "mentioned" && item.unread),
+      rallyFinished: bucket.some((item) => item.kind === "run_finished" && item.unread),
+    };
+  }).sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt));
+}

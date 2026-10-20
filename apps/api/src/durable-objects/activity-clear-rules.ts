@@ -76,7 +76,7 @@ export interface ActivityWaterline {
 /**
  * What clears each kind of row.
  *
- * - **mentioned**: reading the conversation through the mentioning message.
+ * - **new_message** and **mentioned**: reading the conversation through the mentioning message.
  *   An event from before messages carried their ordinal binds no `message`,
  *   and falls back to an open.
  * - **added**: opening the conversation after being added. An open from
@@ -96,6 +96,7 @@ export interface ActivityWaterline {
  *   pin's unread state reads the same waterline.
  */
 export const ACTIVITY_CLEAR_RULES: Readonly<Record<ActivityItemKind, ActivityClearRule>> = {
+  new_message: { read: "conversation", through: ["message", "opened"] },
   mentioned: { read: "conversation", through: ["message", "opened"] },
   added: { read: "conversation", through: "opened", since: "occurred" },
   breakout_started: { read: "conversation", through: "opened" },
