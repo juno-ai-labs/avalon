@@ -59,11 +59,11 @@ Some things to know about drafts:
 ## Mentioning people and Rally
 
 Type <kbd>@</kbd> at the start of a line or after a space, and a list pops up.
-**Rally** sits at the top, marked **Bot**. Below it are the active members of your
-Organization, each marked **Person**, with their email address.
+**Rally** sits at the top. Below it, people are grouped under **Participants**,
+**Org members**, and **Guests**, with their email addresses. Guests already in
+the conversation appear under **Participants**.
 
-1. Keep typing to narrow the list by name or email. It shows up to eight
-   matches at a time.
+1. Keep typing to narrow the list by name or email. Scroll to see more matches.
 2. Use the arrow keys to move through it (it wraps round from the bottom to the
    top) and press <kbd>Return</kbd>, or click a name.
 3. The name goes into your message as a highlighted **@Name**.
@@ -78,8 +78,8 @@ explains how.
 
 Things that catch people out:
 
-- Someone in the list marked **not participating** is in your Organization but
-  not in this Thread yet. If you mention them in a private Thread, Rally asks
+- People under **Org members** or **Guests** are not in this Thread yet.
+  If you mention them in a private Thread, Rally asks
   whether to add them first. [People in the room](05-people-in-the-room.md) has
   the details.
 - Only people and Rally can be mentioned here. Your connected tools and your

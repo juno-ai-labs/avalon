@@ -139,6 +139,16 @@ a double-stacked control.
 
 ## Contract
 
+The shared composer mention picker keeps Rally first, then groups people into
+**Participants**, **Org members**, and **Guests**. Participation takes precedence
+over guest access; pending Organization invitees appear under Org members until
+shared into the conversation, when they appear under Participants. Empty groups
+are omitted after search. The popup scrolls through every match so a large member
+group cannot hide guests, and keyboard navigation skips headings. Account types
+remain in accessible option names. Grouping is memoized, with each group carrying
+its starting option index so rendering does not search the flattened list for
+every row.
+
 A host that hides a conversation must provide `ConversationVisibilityContext`.
 The conversation remains mounted, but hidden panes do not claim window-level
 file pastes or acknowledge reads. `useVisibleReadAcknowledgement` cancels queued
@@ -767,6 +777,18 @@ consume unrelated pins. [Artifact annotations](artifact-annotations.md) owns the
 selection and message protocol.
 
 ## Changelog
+
+### 2026-10-20 — Group mention candidates by conversation membership
+
+**What changed:** The shared picker groups people into Participants, Org members,
+and Guests after Rally, with participation taking precedence over guest access.
+Search omits empty groups and arrow keys traverse options across headings.
+Rows no longer repeat “not participating” beside each email address or show
+right-side account-type labels.
+
+**Why:** The flat member-order list mixed people already in the conversation
+with people who need adding. Labeled groups make that distinction visible;
+removing the eight-result cutoff keeps later groups reachable by scrolling.
 
 ### 2026-10-19 — One hover row for every message, Channels included
 
