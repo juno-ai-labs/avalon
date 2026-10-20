@@ -2540,6 +2540,12 @@ describe("a member's message travels the whole pipeline", () => {
     const opened = await initializeWorkstream(stub, "first message");
     await externallySettledRun(stub, opened.body.harnessRunId as string);
     await waitForLoopRelease(stub);
+    await runInDurableObject(stub, (_instance, state) => {
+      // The Queue is not consumed here; arrange delivered previews before
+      // asserting that admission owns the next wake-up.
+      state.storage.sql.exec("UPDATE conversation_view_changes SET pending = 0, in_flight_revision = NULL, in_flight_until = NULL");
+    });
+    await runDurableObjectAlarm(stub);
     // The oracle below is that the *admission* is what arms the alarm, so this
     // proves the object has no wake-up of its own left to take credit for it.
     await expect.poll(
@@ -2655,6 +2661,11 @@ describe("a member's message travels the whole pipeline", () => {
     const opened = await initializeWorkstream(stub, "first message");
     await externallySettledRun(stub, opened.body.harnessRunId as string);
     await waitForLoopRelease(stub);
+    await runInDurableObject(stub, (_instance, state) => {
+      // Initial preview delivery is settled before testing activation's alarm.
+      state.storage.sql.exec("UPDATE conversation_view_changes SET pending = 0, in_flight_revision = NULL, in_flight_until = NULL");
+    });
+    await runDurableObjectAlarm(stub);
     await expect.poll(
       () => runInDurableObject(stub, (_instance, state) => state.storage.getAlarm()),
       { timeout: LOOP_RELEASE_TIMEOUT_MS, interval: 50, message: "the object never quiesced" },

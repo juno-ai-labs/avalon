@@ -1,3 +1,5 @@
+import { WorkspaceConversationView, WORKSPACE_CONVERSATION_VIEW_MIGRATION } from "./workspace-conversation-view";
+import { ConversationViewProjectionSchema } from "./conversation-view-projection";
 import { CONNECTOR_EVENT_PEOPLE_MIGRATION, writeConnectorEventPeople, readConnectorEventPeople, copyConnectorEventPeople } from "./connector-event-people";
 import { CANVA_POLL_SECONDS } from "@rally/connectors";
 import { SCOPE_GRANT_DIRECTORY_SCHEMA, applyScopeGrantDirectory, scopeGrantCandidates, ScopeGrantCandidatesRequestSchema } from "./scope-grant-directory";
@@ -1237,6 +1239,7 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "workstream_notification_intents",
   "workspace_socket_unheard", // The first-frame watch's ledger.
   "channel_color_sync", "channel_color_sync_state", // Its triggers, the alarm lane and the channel-colour RPCs.
+  "conversation_view_headers", "conversation_view_turns",
   "thread_backfill", // The alarm lane and the thread-backfill RPCs.
   "import_reservation_reclaim", // Armed by the import reservation, read by its alarm lane.
   // Recorded by `memoryDigest`, marked by triggers and retractions, and read by
@@ -4734,6 +4737,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
             AND json_extract(metadata_json, '$.mergedFrom.breakoutId') IS NOT NULL
       )`,
   ],
+}, {
+  version: 124,
+  description: "cache visible conversation turns and backfill every existing conversation",
+  statements: WORKSPACE_CONVERSATION_VIEW_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -7160,6 +7167,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
       this.logWorkspaceSocketHandshake(attachment, "subscribe_authorized", parsed.data.diagnosticAttemptId);
       await this.subscribe(socket, attachment, parsed.data.afterWaterline, parsed.data.diagnosticAttemptId);
+      return;
+    }
+    if (parsed.data.type === "conversation_view") {
+      const request = parsed.data;
+      const auth = await this.sessionAuth(attachment);
+      if (!auth || !readAttachment(socket)?.subscribed) return;
+      const admission = await this.conversationToolAdmission(attachment.workspaceId, request, attachment.userId);
+      // Check the current relationship, including private-child and guest grants.
+      // Directory visibility alone never admits a breakout.
+      const { requestId, parentId, substreamId } = request;
+      const answer = admission.authorized
+        ? new WorkspaceConversationView(this.state.storage).opening({ requestId, parentId, substreamId })
+        : { type: "workspace_conversation_view", requestId, parentId, substreamId, view: null };
+      socket.send(JSON.stringify(answer));
       return;
     }
     if (parsed.data.type === "set_presence") {
@@ -11577,6 +11598,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * the row) when there is nothing to do. Server-to-server, like the
    * channel-colour RPCs above.
    */
+  async applyConversationView(input: unknown): Promise<void> {
+    await this.initialized;
+    const value = parseRpcInput(ConversationViewProjectionSchema, input, "conversation_view_projection");
+    this.assertWorkspace(value.workspaceId);
+    if (value.region !== this.env.AVALON_REGION) throw new Error("conversation_view_region_mismatch");
+    new WorkspaceConversationView(this.state.storage).apply(value);
+  }
+
   async threadBackfillWork(input: ThreadBackfillMessage): Promise<ThreadBackfillWork> {
     await this.initialized;
     const request = parseRpcInput(ThreadBackfillMessageSchema, input, "thread_backfill_work");
@@ -18654,7 +18683,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.logWorkspaceSocketHandshake(attachment, "flags_resolved", diagnosticAttemptId);
     for (const event of events) {
       socket.send(JSON.stringify(WorkspaceSocketSyncEventSchema.parse({
-        ...event, featureFlags, viewerPreferences, ...(accessRequests ? { accessRequests } : {}),
+        ...event, conversationViews: true, featureFlags, viewerPreferences, ...(accessRequests ? { accessRequests } : {}),
       })));
     }
     this.logWorkspaceSocketHandshake(attachment, "sync_sent", diagnosticAttemptId);

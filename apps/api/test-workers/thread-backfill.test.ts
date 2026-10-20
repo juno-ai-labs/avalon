@@ -25,6 +25,7 @@ import { consumeActivityQueue } from "../src/queues/activity-consumer";
 import { nextThreadBackfillAt, publishThreadBackfill } from "../src/durable-objects/thread-backfill";
 import { hostedParentStub } from "./helpers/hosted-parent";
 import { boot, seedWorkstreamRoot } from "./helpers/substream-fixture";
+import { publishConversationViews } from "../src/durable-objects/conversation-view-projection";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000e800");
 const OWNER = asUserId("00000000-0000-7000-8000-00000000e801");
@@ -145,6 +146,49 @@ beforeEach(async () => {
 });
 
 describe("a one-off job over every thread", () => {
+  it("keeps a preview backfill claimed until WorkspaceDO receives the source projection", async () => {
+    await project(1);
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO parent_children(parent_id, substream_id, kind, created_at)
+        VALUES (?, '0', 'main', 1) ON CONFLICT DO NOTHING`, THREAD);
+      state.storage.sql.exec(`INSERT INTO thread_backfill(job, workstream_id, attempts, not_before, in_flight)
+        VALUES ('conversation_view', ?, 1, ?, 1) ON CONFLICT DO NOTHING`, THREAD, Date.now() + 60_000);
+    });
+    const main = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, THREAD));
+    await boot(main);
+    await runInDurableObject(main, (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: THREAD });
+    });
+    const consume = async (bodies: unknown[]) => {
+      const batch = createMessageBatch("avalon-global-activity", bodies.map((body) => ({
+        id: crypto.randomUUID(), timestamp: new Date(), attempts: 1, body,
+      })));
+      await consumeActivityQueue(batch, env);
+      return getQueueResult(batch, createExecutionContext());
+    };
+    const backfill = { ...message(), job: "conversation_view" };
+    expect((await consume([backfill])).retryMessages).toEqual([]);
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      "SELECT in_flight FROM thread_backfill WHERE job = 'conversation_view' AND workstream_id = ?", THREAD,
+    ).toArray())).toEqual([{ in_flight: 1 }]);
+    const identity = { type: "conversation_view_v1" as const, region: "global" as const,
+      workspaceId: WORKSPACE_ID, parentId: THREAD, substreamId: asSubstreamId("0") };
+    const claims = await runInDurableObject(main, async (_instance, state) => {
+      await publishConversationViews(state.storage.sql, env.ACTIVITY_QUEUE, identity);
+      return state.storage.sql.exec<{ turn_id: string; in_flight_revision: number }>(
+        "SELECT turn_id, in_flight_revision FROM conversation_view_changes WHERE in_flight_revision IS NOT NULL",
+      ).toArray();
+    });
+    await consume(claims.map((row) => ({ ...identity, turnId: row.turn_id, dispatchRevision: row.in_flight_revision })));
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      "SELECT parent_id FROM conversation_view_headers WHERE parent_id = ?", THREAD,
+    ).toArray())).toEqual([{ parent_id: THREAD }]);
+    await consume([backfill]);
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      "SELECT 1 FROM thread_backfill WHERE job = 'conversation_view' AND workstream_id = ?", THREAD,
+    ).toArray())).toEqual([]);
+  });
+
   it("answers Main and each open Breakout, and settles only when told", async () => {
     await project(1);
     await project(1, BREAKOUT);
@@ -206,9 +250,15 @@ describe("a one-off job over every thread", () => {
     const claims = (workstreamId: string) => runInDurableObject(workspace(), (_instance, state) => state.storage.sql
       .exec<{ attempts: number }>("SELECT attempts FROM thread_backfill WHERE workstream_id = ?", workstreamId)
       .toArray()[0]?.attempts ?? null);
-    await runInDurableObject(workspace(), (_instance, state) => { state.storage.sql.exec("DELETE FROM thread_backfill"); });
-    await list(first!);
-    await list(second!);
+    await runInDurableObject(workspace(), async (_instance, state) => {
+      state.storage.sql.exec("DELETE FROM thread_backfill");
+      // Arrange one batch atomically. Separate RPCs let the object's already
+      // armed alarm claim the first row before the second one exists.
+      state.storage.sql.exec(`INSERT INTO thread_backfill(job, workstream_id, attempts, not_before)
+        VALUES ('description_summary', ?, 0, 0), ('description_summary', ?, 0, 0)`, first!, second!);
+      // This test advances the publication lane explicitly below.
+      await state.storage.deleteAlarm();
+    });
 
     await publish();
     expect([await claims(first!), await claims(second!)]).toEqual([1, 1]);

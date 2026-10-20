@@ -7,6 +7,8 @@ import { mirrorQueriesToLocalCache, queryKeyIsOneOf, type QueryMirror } from './
 import type { WorkstreamFeedSource } from './telemetry';
 import { openingTranscriptSnapshot } from './transcript';
 import type { WorkstreamDetail } from './types';
+import type { WorkspaceConversationViewEvent } from '@rally/contracts/conversation-view';
+import { normalizeHarnessStatus } from './api';
 
 /**
  * One conversation's last canonical state, kept so its screen paints before
@@ -152,6 +154,33 @@ export async function hydrateConversation(
 /** Whether the caches under these keys hold a hydrated seed rather than what the socket said. */
 export function conversationSeededFromLocalCache(queryClient: QueryClient, keys: ConversationCacheKeys): boolean {
   return queryClient.getQueryData(keys.feedSource) === LOCAL_CACHE_FEED_SOURCE;
+}
+
+/** Workspace display data has exactly the same read-only status as a disk seed. */
+export function seedWorkspaceConversation(
+  queryClient: QueryClient,
+  event: WorkspaceConversationViewEvent,
+  keys: ConversationCacheKeys,
+): boolean {
+  if (!event.view) return false;
+  // Resident live data, optimistic launches, and a richer disk seed all win.
+  if (queryClient.getQueryData(keys.detail) !== undefined || queryClient.getQueryData(keys.transcript) !== undefined) return false;
+  const { header, transcript } = event.view;
+  const detail: WorkstreamDetail = {
+    ...header, harnessStatus: normalizeHarnessStatus(header.harnessStatus),
+    id: event.parentId, lastActivityAt: header.updatedAt,
+    latestAttentionSequenceNumber: 0, readThroughSequenceNumber: 0,
+    manualUnreadFromSequenceNumber: null, manualUnreadGeneration: 0, hasUnread: false,
+    firstUnreadSequenceNumber: null, participantUserIds: [], participantExtraCount: 0,
+    nextPendingWakeup: null, pinPosition: null, spaceIds: [],
+    participants: [], viewers: [], resources: [], connections: [], backgroundTasks: [],
+  };
+  notifyManager.batch(() => {
+    queryClient.setQueryData(keys.feedSource, LOCAL_CACHE_FEED_SOURCE);
+    queryClient.setQueryData(keys.detail, detail);
+    queryClient.setQueryData(keys.transcript, transcript);
+  });
+  return true;
 }
 
 /**

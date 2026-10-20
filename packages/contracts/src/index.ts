@@ -4,6 +4,7 @@ export * from './artifact-annotations';
 import { ExternalPeopleSchema } from "./external-people";
 export { ExternalPeopleSchema, ExternalPersonSchema, MAX_EXTERNAL_PEOPLE, deduplicateExternalPeople } from "./external-people";
 import { z } from "zod";
+import { ConversationViewRequestSchema } from "./conversation-view";
 import { AttachmentKindSchema, ResourceSlugSchema, parseStoredSuggestedAttachmentToolCall } from "./attachment-contracts";
 import { AutomationLifecycleStateSchema,
   AutomationRunReferenceV1Schema,
@@ -2614,6 +2615,7 @@ export const WorkspaceWorkstreamCursorSchema = z.string()
 export const CHANNEL_RAILS_NAMED_LIMIT = 250;
 
 export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
+  ConversationViewRequestSchema,
   z.strictObject({
     type: z.literal("subscribe"),
     afterWaterline: z.number().int().nonnegative(),
@@ -2890,6 +2892,8 @@ export const WorkspaceSidebarSchema = z.strictObject({
  */
 export const WorkspaceSocketSyncEventSchema = z.strictObject({
   type: z.literal("workspace_sync"),
+  /** Advertised on subscribe so newer clients do not send this command to an older server. */
+  conversationViews: z.literal(true).optional(),
   eventId: WorkstreamStateEventIdSchema,
   waterline: z.number().int().nonnegative(),
   occurredAt: TimestampSchema,
