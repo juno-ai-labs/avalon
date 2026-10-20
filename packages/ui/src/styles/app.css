@@ -9263,3 +9263,7 @@ button.merged-into-label:hover { color: var(--av-sys-color-text-default); }
 
 .title-menu-view:has(.site-data) { width:min(640px, var(--title-menu-room)); }
 .title-pill-menu .site-data-toolbar .segmented { min-width:0; overflow-x:auto; }
+
+.annotation-comment-kept { padding:12px 34px 12px 12px; }
+.annotation-comment-kept::before { content:""; position:absolute; top:12px; right:100%; width:12px; border-top:1px solid var(--av-sys-color-accent-base); }
+.annotation-comment .annotation-comment-text { display:block; padding:0; width:100%; text-align:left; white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; }

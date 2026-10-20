@@ -44,7 +44,7 @@ describe('annotation source picker',()=>{
     fireEvent.keyDown(screen.getByRole('textbox',{name:'Comment on selection'}),{key:'Enter'});
     expect(screen.queryByRole('textbox',{name:'Comment on selection'})).toBeNull();
     expect(screen.getByRole('button',{name:'Remove pin 1'})).toBeVisible();
-    expect(screen.getByText('Make this monthly')).toBeVisible();
+    expect(screen.getByLabelText('Pinned comment')).toHaveTextContent('Make this monthly');
     fireEvent.click(screen.getByRole('button',{name:'Remove pin 1'}));
     expect(screen.getByTestId('pins')).toHaveTextContent('[]');
   });
@@ -63,6 +63,23 @@ describe('annotation source picker',()=>{
     expect(screen.getByLabelText('Annotation pins')).toHaveTextContent('Selected words');
     expect(screen.getByLabelText('Annotation pins')).toHaveTextContent('Shorten this');
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+  it('keeps comments beside each selection after confirmation and leaving comment mode',()=>{
+    render(<AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={1} name="Notes.txt" mimeType="text/plain" text={'First paragraph.\n\nSecond paragraph.'} /><Observe /></AnnotationDraftProvider>);
+    fireEvent.click(screen.getByRole('button',{name:'Comment mode'}));
+    for (const [text,comment] of [['First paragraph.','Shorten the first'],['Second paragraph.','Expand the second']]) {
+      const paragraph=screen.getByText(text!);
+      fireEvent.mouseMove(paragraph);fireEvent.click(paragraph);
+      fireEvent.change(screen.getByRole('textbox',{name:'Comment on selection'}),{target:{value:comment}});
+      fireEvent.keyDown(screen.getByRole('textbox',{name:'Comment on selection'}),{key:'Enter'});
+    }
+    fireEvent.click(screen.getByRole('button',{name:'Comment mode'}));
+    expect(screen.getAllByLabelText('Pinned comment')).toHaveLength(2);
+    expect(screen.getAllByLabelText('Pinned comment')[0]).toHaveTextContent('Shorten the first');
+    expect(screen.getAllByLabelText('Pinned comment')[1]).toHaveTextContent('Expand the second');
+    fireEvent.click(screen.getAllByRole('button',{name:'Remove comment'})[0]!);
+    expect(screen.getAllByLabelText('Pinned comment')).toHaveLength(1);
+    expect(screen.getByLabelText('Pinned comment')).toHaveTextContent('Expand the second');
   });
   it('grows a list item to its list and then its section without consuming scroll input',()=>{
     render(<AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={1} name="Pricing.md" mimeType="text/markdown" text={'# Plans\n\n- One\n- Two\n\n## FAQ\n\nLater.'} /><Observe /></AnnotationDraftProvider>);

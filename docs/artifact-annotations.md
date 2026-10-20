@@ -35,7 +35,10 @@ use dark label text for contrast on that fill.
 A selection opens a floating comment field with a top-right × to remove it.
 The field shows only the authored comment; selected words appear in the composer
 chip after confirmation. Enter or Send keeps a nonempty comment and adds the pin
-to the composer. Empty and whitespace-only comments stay in the preview, and
+to the composer. Confirmed comments stay visible beside their selected elements,
+including after leaving Comment mode or starting another pin. They follow scroll
+and resize; clicking a comment reopens its editor, and × removes it. Empty and
+whitespace-only comments stay in the preview, and
 typing alone never adds a pin to the message. Website chips and saved excerpts
 show selected visible words (or “Selected area”); trimmed HTML remains model
 context. Composer chips reveal, edit or remove pins. Sending accepts an empty
@@ -85,6 +88,10 @@ not. The file's own scripts remain blocked. Parent messages are accepted only fr
 frame while picking, through the shared pin schema.
 
 Desktop live views install the same picker in an isolated JavaScript world.
+Confirmed comment cards render in that world, with closed shadow roots and
+text-only content. The owner-window IPC synchronizes typed pins and returns only
+trusted edit/remove clicks; it fences results against the current native view.
+Opaque HTML previews use the same card renderer with source-checked messages.
 The main process captures the selected viewport rectangle; page scripts cannot
 supply screenshot bytes. The controller fences results against the current
 view. The site cannot access the picker world's callback or queue even if it creates
@@ -161,8 +168,9 @@ on the configured medium fallback model, separately from end-to-end tool edits.
 ### 2026-10-19 — Confirm comments before adding composer pins
 
 Selections remain local to the preview until a nonempty comment is confirmed
-with Enter or Send. Typing no longer adds a pin to the outgoing message. The
-shared preview comment field omits the selected quote and uses a top-right ×;
+with Enter or Send. Typing no longer adds a pin to the outgoing message. Confirmed
+comments remain anchored to their elements as the preview scrolls or resizes, so confirming one or selecting another does not hide earlier comments.
+The shared preview comment field omits the selected quote and uses a top-right ×;
 composer chips retain the quote and comment. This keeps selecting an element
 from silently attaching unfinished instructions to a message.
 
