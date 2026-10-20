@@ -5,13 +5,14 @@ import { IdSchema } from "./identifiers";
  * A conversation suggestion: one quiet line under a message in a Thread or a
  * Breakout, offered by the turn-disposition classifier once a run settles,
  * saying the result might be worth carrying up to the parent (`merge_up`) or
- * that a side question might deserve its own Breakout (`start_breakout`).
+ * that a side question might deserve its own Breakout (`start_breakout`), or
+ * that the whole purpose is complete (`mark_resolved`).
  * It is conversation state keyed to the judged turn, not a transcript row:
  * one per turn, resolved in place, and never part of the model's history.
  * `docs/conversation-suggestions.md` owns the slot;
  * `docs/PRDs/2026-10-17_merge-and-breakout-suggestions/` is the design.
  */
-export const CONVERSATION_SUGGESTION_KINDS = ["merge_up", "start_breakout"] as const;
+export const CONVERSATION_SUGGESTION_KINDS = ["merge_up", "start_breakout", "mark_resolved"] as const;
 export const ConversationSuggestionKindSchema = z.enum(CONVERSATION_SUGGESTION_KINDS);
 export type ConversationSuggestionKind = z.infer<typeof ConversationSuggestionKindSchema>;
 
@@ -67,9 +68,12 @@ export const ConversationSuggestionSchema = z.object({
 });
 export type ConversationSuggestion = z.infer<typeof ConversationSuggestionSchema>;
 
-export const ConversationSuggestionDismissResultSchema = z.object({
+export const ConversationSuggestionActionResultSchema = z.object({
   suggestionId: IdSchema,
   status: ConversationSuggestionStatusSchema,
   replayed: z.boolean(),
 });
-export type ConversationSuggestionDismissResult = z.infer<typeof ConversationSuggestionDismissResultSchema>;
+export type ConversationSuggestionActionResult = z.infer<typeof ConversationSuggestionActionResultSchema>;
+
+export const ConversationSuggestionDismissResultSchema = ConversationSuggestionActionResultSchema;
+export type ConversationSuggestionDismissResult = ConversationSuggestionActionResult;

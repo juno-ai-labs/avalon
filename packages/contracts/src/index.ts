@@ -3439,7 +3439,9 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
     /**
      * The open suggestions on the newest turns, for a build that draws them.
      * Optional, and stripped by `safeParseSocketEvent` on a build that does
-     * not know the key, so no contract gate is needed for the snapshot.
+     * not know the key. Builds that already know the key still reject unknown
+     * kind enum values: the server filters resolution suggestions below
+     * RESOLUTION_SUGGESTIONS_CLIENT_CONTRACT.
      */
     suggestions: z.array(ConversationSuggestionSchema).optional(),
   }).strict(),

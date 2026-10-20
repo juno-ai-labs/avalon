@@ -1286,6 +1286,8 @@ export interface ConversationSurfaceProps {
   substreamId: string;
   /** Parent-owned sidebar data; never substitute the selected child's roster or inventory. */
   workstreamContext?: WorkstreamDetail;
+  /** Shared directory state, including resolution from title menus or merges. */
+  resolved?: boolean;
   sidebarScope?: "workstream" | "conversation";
   /** Opens the launch pane at a turn; a suggestion passes the drafted opening prompt to seed it with. */
   onStartSubstream?: (throughTurnId: string, initialDraft?: string) => void;
@@ -1381,6 +1383,7 @@ function ConversationSurfaceContent({
   parentId: id,
   substreamId,
   workstreamContext,
+  resolved = false,
   sidebarScope = "workstream",
   renderHeader,
   renderOpeningSidebar,
@@ -3274,12 +3277,29 @@ function ConversationSurfaceContent({
     suggestion.status === 'open'
     && !dismissedSuggestionIds.has(suggestion.suggestionId)
     && suggestionTurnIsVisible(suggestion.judgedTurnId, readableTurnIds)
-    && (suggestion.kind === 'merge_up' ? merge !== null && startMerge !== undefined : canStartBreakout));
+    && (suggestion.kind === 'mark_resolved' ? !resolved && parentKind === 'workstream' && Boolean(api)
+      : suggestion.kind === 'merge_up' ? merge !== null && startMerge !== undefined : canStartBreakout));
   const afterTurn = new Map<string, React.ReactNode>();
   for (const suggestion of visibleSuggestions) {
     if (mergeCard?.anchorTurnId === suggestion.judgedTurnId) continue;
     const pending = suggestion.draft.status === 'pending';
-    if (suggestion.kind === 'merge_up') {
+    if (suggestion.kind === 'mark_resolved') {
+      afterTurn.set(suggestion.judgedTurnId, <SuggestionChip
+        action={{ label: 'Mark resolved', disabled: Boolean(detail.archivedAt || workstreamContext?.archivedAt), onAct: () => {
+          setDismissedSuggestionIds((current) => new Set([...current, suggestion.suggestionId]));
+          void api?.resolveSuggestion(id, substreamId, suggestion.suggestionId).catch(() => {
+            setDismissedSuggestionIds((current) => new Set([...current].filter((other) => other !== suggestion.suggestionId)));
+          });
+        } }}
+        excerpt={null}
+        kind="mark_resolved"
+        label="Suggestion: mark resolved"
+        onDismiss={() => dismissSuggestion(suggestion)}
+        pending={false}
+        sentence="This conversation's work looks complete."
+        title="Mark resolved"
+      />);
+    } else if (suggestion.kind === 'merge_up') {
       const words = suggestion.draft.text ?? textOfTurn(suggestion.judgedTurnId);
       afterTurn.set(suggestion.judgedTurnId, <SuggestionChip
         action={{ label: 'Merge', onAct: () => startMerge?.(words, suggestion.judgedTurnId) }}
