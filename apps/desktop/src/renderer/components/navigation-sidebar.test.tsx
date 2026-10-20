@@ -533,7 +533,7 @@ describe('the navigation sidebar', () => {
     api.getActivity.mockResolvedValue({ nextCursor: null, items: [row('one', true), row('two', true), row('three', false)] });
     renderSidebar(() => undefined);
 
-    expect(await screen.findByRole('img', { name: '2 unread' })).toHaveTextContent('2');
+    expect(await screen.findByRole('img', { name: '1 unread' })).toHaveTextContent('1');
 
     fireEvent.click(screen.getByRole('button', { name: /Activity$/u }));
     fireEvent.click(await screen.findByRole('button', { name: 'Mark all read' }));
@@ -610,6 +610,27 @@ describe('the navigation sidebar', () => {
     const tile = row.querySelector<HTMLElement>('.identity-tile > .identity-tile-shape');
     expect(tile?.style.color).toBe('var(--av-sys-color-project-ink-purple)');
     expect(tile?.querySelector('svg')).toHaveClass('lucide-rocket');
+  });
+
+  it('folds replies, mentions and Rally completions into one row with the human preview', async () => {
+    useUiStore.getState().setSidebarSection('activity');
+    const now = Date.now();
+    const base = { actorUserId: 'maya', actorLabel: 'Maya K', threadId: 'plan', threadTitle: 'Cold email',
+      breakout: null, channelIds: ['outbound'], unread: true };
+    api.getActivity.mockResolvedValue({ nextCursor: null, items: [
+      { ...base, id: 'finish', kind: 'run_finished', occurredAt: new Date(now).toISOString(), actorUserId: null, actorLabel: 'Rally' },
+      { ...base, id: 'message:reply', kind: 'new_message', occurredAt: new Date(now - 1000).toISOString(), preview: 'Need advil?', unreadMessageCount: 3 },
+      { ...base, id: 'mention', kind: 'mentioned', occurredAt: new Date(now - 2000).toISOString() },
+    ] });
+    renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
+    const today = within(await screen.findByRole('region', { name: 'Today' }));
+    expect(today.getAllByRole('link')).toHaveLength(1);
+    expect(today.getByRole('link')).toHaveTextContent('Maya K replied in Cold email');
+    expect(today.getByRole('link')).toHaveTextContent('Need advil?');
+    expect(today.getByRole('link')).toHaveTextContent('3 new messages · @mention');
+    expect(today.getByRole('link')).toHaveTextContent('Rally also finished');
+    expect(today.getByRole('img', { name: 'Unread' })).toBeInTheDocument();
+    expect(api.markActivitySeen).not.toHaveBeenCalled();
   });
 
   it('names who started a thread from the member directory when the row carries only their id', async () => {
@@ -744,7 +765,7 @@ describe('the navigation sidebar', () => {
     const earlier = new Date(now.getTime() - 60_000);
     const item = (id: string, overrides: Record<string, unknown>) => ({
       id, kind: 'added', occurredAt: now.toISOString(), actorUserId: 'maya', actorLabel: 'Maya K',
-      threadId: 'plan', threadTitle: id, breakout: null, channelIds: ['outbound'], unread: false, ...overrides,
+      threadId: id, threadTitle: id, breakout: null, channelIds: ['outbound'], unread: false, ...overrides,
     });
     const seed = (client: QueryClient): void => {
       client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] });

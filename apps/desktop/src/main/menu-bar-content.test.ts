@@ -48,7 +48,7 @@ const breakout = WorkstreamPrivateChildSchema.parse({
 });
 
 describe('menu bar content', () => {
-  it('lists the Activity tab\'s unread rows in its order, and none it has marked read', () => {
+  it('flattens a conversation into one unread row and preserves its mention', () => {
     const content = menuBarContent(quietDirectory, activity([
       activityItem('finished', { occurredAt: '2026-10-06T12:00:00.000Z' }),
       activityItem('mentioned', { kind: 'mentioned', actorUserId: THREAD, actorLabel: 'Katherine Baird', threadTitle: 'Merge mockups' }),
@@ -56,7 +56,6 @@ describe('menu bar content', () => {
     ]));
 
     expect(content.attention).toEqual([
-      { key: 'finished', workstreamId: THREAD, substreamId: null, title: 'GTM review', detail: 'Rally finished' },
       { key: 'mentioned', workstreamId: THREAD, substreamId: null, title: 'Merge mockups', detail: 'Katherine Baird mentioned you' },
     ]);
     expect(content.attentionComplete).toBe(true);

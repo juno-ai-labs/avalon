@@ -1,4 +1,5 @@
 import type { SqlStorageValue } from "@cloudflare/workers-types";
+import { rewriteMessageAsPlainText } from "@rally/contracts/citations";
 import type { ActivityEvent, ActivityFilter, ActivityItem, ActivityItemKind, ActivitySubject } from "@rally/contracts";
 
 import {
@@ -97,6 +98,8 @@ interface ActivityKey extends Record<string, SqlStorageValue> {
   substream_id: string | null;
   /** The message's attention ordinal, on a message event that recorded one. */
   attention_ordinal: number | null;
+  preview?: string;
+  unread_message_count?: number;
   /** On a breakout's `merged` row: the breakout, frozen at merge time. */
   merged_breakout_id?: string | null;
   merged_breakout_title?: string | null;
@@ -216,8 +219,10 @@ export class WorkspaceActivityFeed {
     if (!this.ready()) return { items: [], nextCursor: null };
     const limit = SPACE_CHANNEL_PAGE_SIZE + 1;
     const binds = [viewer.userId, after?.occurredAt ?? null, after?.id ?? "", limit] as const;
-    const arm = (sql: string) => this.storage.sql.exec<ActivityKey>(
-      `SELECT * FROM (${sql}) WHERE ${AFTER} ORDER BY occurred_at DESC, id DESC LIMIT ?4`,
+    const arm = (sql: string, latestPerConversation = false) => this.storage.sql.exec<ActivityKey>(
+      `SELECT * FROM (${latestPerConversation
+        ? `SELECT *, ROW_NUMBER() OVER (PARTITION BY thread_id, COALESCE(substream_id, '0'), kind ORDER BY occurred_at DESC, id DESC) AS conversation_rank FROM (${sql})`
+        : sql}) WHERE ${latestPerConversation ? 'conversation_rank = 1 AND ' : ''}${AFTER} ORDER BY occurred_at DESC, id DESC LIMIT ?4`,
       ...binds,
     ).toArray();
     const breakouts = this.spaces.breakoutsReady();
@@ -254,6 +259,36 @@ export class WorkspaceActivityFeed {
                                      AND breakout.archived_at IS NULL
                                      AND ${breakoutListed}))`
                    : `COALESCE(json_extract(event.metadata_json, '$.substreamId'), '0') = '0'`}`),
+      ...(mentionsOnly ? [] : arm(`SELECT 'message:' || event.event_id AS id, 'new_message' AS kind,
+                     event.occurred_at, event.actor_user_id, event.actor_label,
+                     event.subject_id AS thread_id,
+                     json_extract(event.metadata_json, '$.substreamId') AS substream_id,
+                     json_extract(event.metadata_json, '$.attentionOrdinal') AS attention_ordinal,
+                     event.body AS preview,
+                     SUM(CASE WHEN event.occurred_at > COALESCE((SELECT seen_through FROM workspace_activity_seen WHERE user_id = ?1), 0)
+                       AND COALESCE(json_extract(event.metadata_json, '$.attentionOrdinal'), 0) > COALESCE((
+                         SELECT read_through FROM workspace_activity_reads
+                          WHERE user_id = ?1 AND subject_key = CASE
+                            WHEN COALESCE(json_extract(event.metadata_json, '$.substreamId'), '0') = '0'
+                              THEN 'thread:' || event.subject_id
+                            ELSE 'breakout:' || event.subject_id || ':' || json_extract(event.metadata_json, '$.substreamId') END
+                       ), -1) THEN 1 ELSE 0 END)
+                       OVER (PARTITION BY event.subject_id, COALESCE(json_extract(event.metadata_json, '$.substreamId'), '0')) AS unread_message_count
+                FROM workspace_activity_events event
+                JOIN channels directory ON directory.workstream_id = event.subject_id
+                ${CHANNEL_VIEWER}
+               WHERE event.event_type = 'workstream_message_created'
+                 AND event.subject_type = 'workstream'
+                 AND event.actor_type = 'user' AND event.actor_user_id <> ?1
+                 AND json_extract(event.metadata_json, '$.mergedFrom.breakoutId') IS NULL
+                 AND directory.archived_at IS NULL AND ${threadListed}
+                 AND (CASE WHEN COALESCE(json_extract(event.metadata_json, '$.substreamId'), '0') = '0'
+                       THEN viewer.is_participant = 1
+                       ELSE ${breakouts ? `EXISTS (SELECT 1 FROM breakouts breakout ${BREAKOUT_VIEWER}
+                         WHERE breakout.workstream_id = event.subject_id
+                           AND breakout.substream_id = json_extract(event.metadata_json, '$.substreamId')
+                           AND breakout.archived_at IS NULL
+                           AND breakout_viewer.is_participant = 1 AND ${breakoutListed})` : '0'} END)`, true)),
       // A start is read from the thread's and the breakout's own directory
       // rows, as a finish is: the conversation's opening-message event does
       // not reliably reach this object (a breakout's is never forwarded), and
@@ -464,6 +499,7 @@ export class WorkspaceActivityFeed {
         occurredAt: new Date(key.occurred_at).toISOString(),
         actorUserId: key.actor_user_id,
         actorLabel: key.actor_label,
+        ...(key.kind === "new_message" ? { preview: rewriteMessageAsPlainText(key.preview ?? ""), unreadMessageCount: Number(key.unread_message_count ?? 0) } : {}),
         threadId: key.thread_id as ActivityItem["threadId"],
         threadTitle: threadTitle ?? "",
         breakout: breakout ? { substreamId: key.substream_id as string, title: breakout.title }

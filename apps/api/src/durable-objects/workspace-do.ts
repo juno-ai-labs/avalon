@@ -5382,7 +5382,7 @@ const DirectoryFollowUpSchema = z.strictObject({
   activityPushSubjects: z.array(z.strictObject({
     threadId: z.string(),
     substreamId: z.string().nullable(),
-    kind: z.enum(["start", "finish", "joined", "merge", "artifact"]),
+    kind: z.enum(["start", "finish", "joined", "merge", "artifact", "message"]),
     userId: z.string().optional(),
     itemId: z.string().optional(),
   })).default([]),
@@ -5946,6 +5946,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         followUp.activityPushSubjects.push({
           threadId: envelope.parentId, substreamId: null, kind: "merge", itemId: `merged:${effect.eventId}`,
         });
+      }
+      if (effect.kind === "activity_event" && !applied.replayed
+        && effect.eventType === "workstream_message_created" && effect.actorType === "user"
+        && mergedBreakoutId(effect.metadata) === null) {
+        const child = effect.metadata.substreamId;
+        followUp.activityPushSubjects.push({ threadId: envelope.parentId,
+          substreamId: typeof child === "string" && child !== "0" ? child : null,
+          kind: "message", itemId: `message:${effect.eventId}` });
       }
       if (isPersonNotificationEffect(effect)) {
         if (applied.notificationIntentId) outbox.push(envelope);
@@ -13389,8 +13397,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           // row late.
           for (const channel of channels(item.kind as PushNotificationData["kind"])) {
             const address = { region: this.env.AVALON_REGION, workspaceId, recipientUserId: recipient.userId, activityItemId: item.id };
-            if (channel === "push") await enqueuePushDelivery(this.env, address);
-            else await enqueueActivityDelivery(this.env, { ...address, channel });
+            if (channel === "push") await enqueuePushDelivery(this.env, address, item.kind === "new_message" ? 15 : 0);
+            else await enqueueActivityDelivery(this.env, { ...address, channel }, item.kind === "new_message" ? 15 : 0);
           }
           pushes.record(recipient.userId, item.id, Date.now());
         }

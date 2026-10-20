@@ -43,8 +43,9 @@ added. Successful enqueue with a live device is not proof of an Apple alert.
 
 Success receipts key on workspace, intent and device. A partial retry skips only
 those devices already reached for that intent. Sending precedes recording, so an
-uncertain send can alert twice. Collapse identifiers are hashes of workspace and
-intent, because existing intent IDs are not UUIDs. No exactly-once claim is made.
+uncertain send can alert twice. Collapse identifiers are hashes of workspace and conversation (thread plus
+breakout), so later notifications replace the same conversation. Delivery receipts
+remain keyed by intent, independently of presentation grouping. No exactly-once claim is made.
 
 Receipts currently live until their device is deleted. After the existing intent
 retention expires they are inert: no later intent reuses the key. This accepts
@@ -118,6 +119,27 @@ Main-window creation waits for renderer protocol and IPC installation, including
 when a native notification response arrives during asynchronous app startup.
 
 ## Activity rows
+
+**Human replies** (`new_message`) use the existing message activity log and
+current participant viewer rows, without requiring another mention. Their
+notification setting is **New messages** (`newMessages`), defaulting to push.
+The existing directory follow-up durably triggers delivery after a message event
+commits. AI messages, the author, and nonparticipants are excluded.
+
+Reply delivery waits **15 seconds** on the existing Queue. Reading the reply in
+that interval cancels delivery; otherwise the consumer reads the conversation's
+latest human reply and uses the original queued event for its delivery receipt.
+Ordinary reply and completion alerts share a **two-minute** per-conversation
+cooldown, stored through `workspace_activity_pushes`; suppressed events still
+update Activity. Explicit mentions retain their own immediate delivery path and
+a mention's message does not also schedule a reply alert. These intervals are
+product policy, not execution timeouts.
+
+Having a thread selected does not suppress a human reply: only the existing
+visible-message read waterline clears it. That waterline advances after the
+250 ms read debounce while the app is focused and visible, through messages in
+the viewport. A thread scrolled away from new replies therefore remains unread.
+
 
 Everything the Activity tab lists can be a push, an email or a Slack message.
 `added` and `mentioned` go through their notification intents above, whose
@@ -371,6 +393,24 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-10-20 — Reply batches and conversation notification collapse
+
+**What changed:** Unmentioned human replies notify current participants through
+`newMessages`. A 15-second Queue delay coalesces a burst onto its latest reply;
+reply and completion alerts share a two-minute cooldown. System notification
+collapse ids group a conversation, while receipts retain the original delivery.
+
+**Why:** Human replies were missed unless they mentioned the reader, while
+successive completions and mentions occupied separate notification slots.
+
+**Considered and rejected:** Treating a foreground thread as proof every message
+was read would suppress replies while the reader was scrolled elsewhere. A new
+scheduler is unnecessary because the existing delivery Queue supports delays.
+
+**Consequences:** Cooldowns never clear unread state. Mentions remain immediate
+and independently controlled. Queue retries check the read/access state again.
+
 
 ### 2026-10-19 — A Channel merge reaches the Channel's readers
 
