@@ -1,3 +1,4 @@
+import { CONVERSATION_VIEW_SOURCE_MIGRATION } from "./conversation-view-projection";
 import { SUBSTREAM_PERSONAL_SYSTEM_PROMPT_MIGRATION } from "./personal-system-prompt";
 import { CONVERSATION_LINK_SEARCH_SCHEMA } from './conversation-link-search';
 import { TOOL_PAGE_SCHEMA, TOOL_PAGE_CONSUMER_INDEX } from './tool-page-storage';
@@ -25,7 +26,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 77;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 78;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3547,6 +3548,11 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
         refreshed_at INTEGER NOT NULL
       ) STRICT`,
     ],
+  },
+  {
+    version: 78,
+    description: "compact visible conversation projection and historical turn backfill",
+    statements: CONVERSATION_VIEW_SOURCE_MIGRATION,
   },
 ];
 
