@@ -108,14 +108,14 @@ describe('showing a live artifact in the rail', () => {
     fireEvent.click(button);
     expect(button).toHaveAttribute('aria-pressed','false');
   });
-  it('keeps the native preview below nested dialogs and restores it when they close', async () => {
+  it.each(['dialog', 'alertdialog', 'menu', 'tooltip'])('keeps the native preview below a %s and restores it when it closes', async (role) => {
     const geometry = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
       DOMRect.fromRect({ x: 20, y: 40, width: 500, height: 320 }),
     );
     const { props } = setup();
     await waitFor(() => expect(props.surface.setBounds).toHaveBeenCalledWith({ x: 20, y: 40, width: 500, height: 320 }));
     const overlay = document.createElement('div');
-    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('role', role);
     document.body.append(overlay);
     await waitFor(() => expect(props.surface.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 0, height: 0 }));
     overlay.remove();
