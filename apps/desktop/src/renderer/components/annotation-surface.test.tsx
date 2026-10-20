@@ -5,7 +5,7 @@ import { AnnotationDraftProvider, AnnotationChips, MessageAnnotations, useAnnota
 import { sourceSelectionPoint,annotationDomRange } from '../lib/annotation-source';
 import { AnnotationSurface } from './annotation-surface';
 const resourceId='00000000-0000-7000-8000-0000000000a1';
-function Observe():React.JSX.Element {const draft=useAnnotationDraft();return <><AnnotationChips /><output data-testid="pins">{JSON.stringify(draft?.selections.map(p=>p.annotation))}</output></>;}
+function Observe():React.JSX.Element {const draft=useAnnotationDraft();return <><AnnotationChips /><button onClick={()=>draft?.clear(draft.pins.map((pin)=>pin.id))}>Accept message</button><output data-testid="pins">{JSON.stringify(draft?.selections.map(p=>p.annotation))}</output></>;}
 afterEach(cleanup);
 describe('annotation source picker',()=>{
   it('shows website words instead of markup in saved annotations',()=>{
@@ -81,12 +81,47 @@ describe('annotation source picker',()=>{
     expect(screen.getAllByLabelText('Pinned comment')).toHaveLength(1);
     expect(screen.getByLabelText('Pinned comment')).toHaveTextContent('Expand the second');
   });
+  it('discards an unfinished selection on Escape and preserves a confirmed comment when its editor closes',()=>{
+    render(<AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={1} name="Note.txt" mimeType="text/plain" text="Selected words" /><Observe /></AnnotationDraftProvider>);
+    fireEvent.click(screen.getByRole('button',{name:'Comment mode'}));
+    const paragraph=screen.getByText('Selected words');
+    fireEvent.mouseMove(paragraph);fireEvent.click(paragraph);
+    fireEvent.change(screen.getByRole('textbox',{name:'Comment on selection'}),{target:{value:'Unfinished'}});
+    fireEvent.keyDown(screen.getByRole('textbox',{name:'Comment on selection'}),{key:'Escape'});
+    expect(screen.getByTestId('pins')).toHaveTextContent('[]');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(screen.getByRole('button',{name:'Comment mode'}));
+    fireEvent.mouseMove(paragraph);fireEvent.click(paragraph);
+    fireEvent.change(screen.getByRole('textbox',{name:'Comment on selection'}),{target:{value:'Keep this'}});
+    fireEvent.keyDown(screen.getByRole('textbox',{name:'Comment on selection'}),{key:'Enter'});
+    fireEvent.click(screen.getByRole('button',{name:'Keep this'}));
+    fireEvent.keyDown(screen.getByRole('textbox',{name:'Comment on selection'}),{key:'Escape'});
+    expect(screen.getByLabelText('Pinned comment')).toHaveTextContent('Keep this');
+    expect(screen.getByLabelText('Annotation pins')).toHaveTextContent('Keep this');
+  });
+  it('replaces an abandoned selection and clears unfinished highlights when a message is accepted',()=>{
+    render(<AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={1} name="Notes.txt" mimeType="text/plain" text={'First paragraph.\n\nSecond paragraph.'} /><Observe /></AnnotationDraftProvider>);
+    fireEvent.click(screen.getByRole('button',{name:'Comment mode'}));
+    const first=screen.getByText('First paragraph.');
+    fireEvent.mouseMove(first);fireEvent.click(first);
+    fireEvent.change(screen.getByRole('textbox',{name:'Comment on selection'}),{target:{value:'Abandoned'}});
+    const second=screen.getByText('Second paragraph.');
+    fireEvent.mouseMove(second);fireEvent.click(second);
+    const selections=JSON.parse(screen.getByTestId('pins').textContent??'[]');
+    expect(selections).toHaveLength(1);
+    expect(selections[0].content.exact).toBe('Second paragraph.');
+    expect(screen.getByRole('textbox',{name:'Comment on selection'})).toHaveValue('');
+    fireEvent.click(screen.getByRole('button',{name:'Accept message'}));
+    expect(screen.getByTestId('pins')).toHaveTextContent('[]');
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
   it('grows a list item to its list and then its section without consuming scroll input',()=>{
     render(<AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={1} name="Pricing.md" mimeType="text/markdown" text={'# Plans\n\n- One\n- Two\n\n## FAQ\n\nLater.'} /><Observe /></AnnotationDraftProvider>);
     fireEvent.click(screen.getByRole('button',{name:'Comment mode'}));
     const item=screen.getByText('One').closest('li')!;
     fireEvent.mouseMove(item);fireEvent.keyDown(item,{key:'ArrowUp'});fireEvent.click(item,{detail:1});
     expect(JSON.parse(screen.getByTestId('pins').textContent??'[]')[0].content.exact).toBe('- One\n- Two');
+    fireEvent.change(screen.getByRole('textbox',{name:'Comment on selection'}),{target:{value:'Update this list'}});
     fireEvent.keyDown(screen.getByRole('textbox',{name:'Comment on selection'}),{key:'Enter'});
     fireEvent.keyDown(item,{key:'ArrowUp'});fireEvent.click(item,{detail:1});
     expect(JSON.parse(screen.getByTestId('pins').textContent??'[]')[1].content.exact).toBe('# Plans\n\n- One\n- Two\n\n## FAQ\n\nLater.');

@@ -158,7 +158,7 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
     const key=(event:KeyboardEvent):void=>{
       if(isComposingKeyEvent(event))return;
       if(event.target instanceof HTMLElement && event.target.closest('textarea,input,[role=menu],[role=dialog]'))return;
-      if(event.key==='Escape'){event.preventDefault();event.stopPropagation();setPicking(false);return;}
+      if(event.key==='Escape'){event.preventDefault();event.stopPropagation();if(editing)draft?.discard(editing);setEditing(null);setPicking(false);return;}
       if(hover&&['Alt','ArrowUp','ArrowDown'].includes(event.key)){event.preventDefault();event.stopPropagation();grow(event.key!=='ArrowDown');}
     };
     window.addEventListener('keydown',key,true);return()=>window.removeEventListener('keydown',key,true);
@@ -169,7 +169,7 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
       if (event.source !== frame.current?.contentWindow) return;
       if (event.data?.type === 'rally-annotation-restored' && saved) { setMissing(event.data.resolved !== true); return; }
       if (!picking || event.data?.type !== 'rally-artifact-pin') return;
-      if (event.data.pin === null) { setPicking(false); return; }
+      if (event.data.pin === null) { if(editing)draft?.discard(editing);setEditing(null);setPicking(false); return; }
       const parsedPin = ArtifactPickerPinSchema.safeParse(event.data.pin);
       if (!parsedPin.success) return;
       const pin = parsedPin.data;
@@ -269,8 +269,8 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
           : text !== undefined ? kind === 'spreadsheet' ? <AnnotationSheet text={text} pins={draft?.selections.filter((p)=>p.annotation.target.resourceId===resourceId&&p.annotation.target.version===version).map((p)=>p.annotation)??[]} picking={picking} onPin={commit} saved={saved} /> : kind === 'text' && !html ? <PlainAnnotationText text={text} /> : <MarkdownBody verbatim sourcePositions={picking||Boolean(saved)||Boolean(draft?.selections.some((p)=>p.annotation.target.resourceId===resourceId))}>{text}</MarkdownBody> : <p>{name}</p>}
       {picking && hover && !html && <div className="annotation-hover" style={{ left: (hoverBox?.x ?? 0) - (bodyBox?.x ?? 0), top: (hoverBox?.y ?? 0) - (bodyBox?.y ?? 0), width: hoverBox?.width, height: hoverBox?.height }} />}
     </div>
-    {!html && draft?.pins.filter((pin) => pin.id !== editing && pin.annotation.comment.trim() && pin.annotation.target.resourceId === resourceId && pin.annotation.target.version === version).map((pin) => <AnchoredAnnotationComment key={pin.id} pin={pin} resolveAnchor={() => resolveCommentAnchor(pin.annotation)} onEdit={() => {const box=resolveCommentAnchor(pin.annotation);if(box)setAnchor({x:box.right,y:box.top-12});setEditing(pin.id);}} onRemove={() => draft.remove(pin.id)} />)}
-    {current && <AnnotationComment pin={current} style={{ left: Math.min(anchor.x, window.innerWidth - 320), top: Math.min(anchor.y + 12, window.innerHeight - 190) }} onClose={() => {setEditing(null); root.current?.focus();}} onEscape={() => setPicking(false)} />}
+    {!html && draft?.pins.filter((pin) => pin.id !== editing && pin.annotation.comment.trim() && pin.annotation.target.resourceId === resourceId && pin.annotation.target.version === version).map((pin) => <AnchoredAnnotationComment key={pin.id} pin={pin} resolveAnchor={() => resolveCommentAnchor(pin.annotation)} onEdit={() => {if(editing)draft.discard(editing);const box=resolveCommentAnchor(pin.annotation);if(box)setAnchor({x:box.right,y:box.top-12});setEditing(pin.id);}} onRemove={() => draft.remove(pin.id)} />)}
+    {current && <AnnotationComment pin={current} style={{ left: Math.min(anchor.x, window.innerWidth - 320), top: Math.min(anchor.y + 12, window.innerHeight - 190) }} onClose={() => {draft?.discard(current.id);setEditing(null); root.current?.focus();}} onEscape={() => setPicking(false)} />}
     {busy && <p role="status">Uploading annotation image…</p>}{error && <p role="alert">{error}</p>}
     {missing && saved && <aside className="annotation-saved-quote"><p>The original page cannot be shown again.</p><q>{annotationQuote(saved,name)}</q>{savedImage && <img alt="Saved selection" src={savedImage} />}{saved.comment && <p>{saved.comment}</p>}</aside>}
   </div>;
