@@ -262,12 +262,12 @@ export function SiteResourceDetail({
     };
   }, []);
 
-  // The owning lightbox is allowed; menus and dialogs above it must win over
-  // Electron's native view, which otherwise paints above the DOM.
+  // The owning lightbox is allowed; menus, dialogs and tooltips must win
+  // over Electron's native view, which otherwise paints above the DOM.
   const occluded = React.useCallback((): boolean => {
     const pane = paneRef.current;
     if (!pane) return false;
-    return [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="menu"]')]
+    return [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="menu"], [role="tooltip"]')]
       .some((overlay) => !overlay.contains(pane) && overlay.getAttribute('data-state') !== 'closed');
   }, []);
 
