@@ -18,6 +18,11 @@ someone asks for more. That is why nothing here is read through a renderer:
 the main process holds its own workspace socket, the Channel rows behind it,
 and the first page of Activity.
 
+The shared workspace watcher retires stalled tickets, handshakes, initial
+subscribe answers, and unanswered heartbeats without waiting for a socket close
+event. Its recovery policy and phase diagnostics are owned by
+[`websocket-architecture.md`](websocket-architecture.md#reconnect-and-teardown).
+
 ## Where the code lives
 
 | Path | Responsibility |

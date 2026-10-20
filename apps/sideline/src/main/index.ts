@@ -234,7 +234,8 @@ function logReachDiagnostic(diagnostic: ReachWatchDiagnostic): void {
     ? diagnostic.error instanceof HttpResponseError
       ? `${diagnostic.code} (${diagnostic.error.status})`
       : `${diagnostic.code} (${diagnostic.error instanceof Error ? diagnostic.error.name : "unknown"})`
-    : `${diagnostic.code} (close ${diagnostic.closeCode})`;
+    : diagnostic.code === "timeout" ? `${diagnostic.phase}_timeout`
+      : `${diagnostic.code} (close ${diagnostic.closeCode})`;
   console.warn(`[sideline] membership updates paused: ${reason}`);
 }
 
@@ -249,7 +250,8 @@ function restartReachWatch(): void {
   const generation = ++reachWatchGeneration;
   if (!session || VISUAL_STATE) return;
   stopReachWatch = watchWorkspaceReach({
-    ticket: async () => SocketTicketSchema.parse(await authenticated("/workspace/socket", {
+    ticket: async (signal) => SocketTicketSchema.parse(await authenticated("/workspace/socket", {
+      signal,
       headers: { [RALLY_HEADERS.CLIENT_CONTRACT]: String(CLIENT_CONTRACT_VERSION) },
     })),
     open: (url, ticket) => new WebSocket(url, socketTicketProtocols(ticket), { origin: SIDELINE_SOCKET_ORIGIN }),

@@ -1,3 +1,4 @@
+import { snapshotFrame } from './workstream-socket.test-fixtures';
 import { ConversationAdmissionProvider } from './conversation-admission';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -39,6 +40,25 @@ class FakeWebSocket extends EventTarget {
     this.dispatchEvent(Object.assign(new Event('close'), { code }));
   });
   readyState = FakeWebSocket.CONNECTING;
+
+  keepHealthy(): void {
+    if (this.readyState === FakeWebSocket.CLOSED) return;
+    const id = String(this.url).split('/workstreams/')[1]!.split('/')[0]!;
+    const snapshot = (): void => {
+      this.dispatchEvent(new MessageEvent('message', {data: JSON.stringify(snapshotFrame({
+        sequence: 1, workstream: {id},
+      }))}));
+    };
+    this.send.mockImplementation((frame: string) => {
+      if (frame === 'ping') queueMicrotask(() => this.dispatchEvent(new MessageEvent('message', {data: 'pong'})));
+      else if (frame.includes('request_snapshot')) queueMicrotask(snapshot);
+    });
+    if (this.readyState === FakeWebSocket.CONNECTING) {
+      this.readyState = FakeWebSocket.OPEN;
+      this.dispatchEvent(new Event('open'));
+      snapshot();
+    }
+  }
 
   constructor(
     readonly url: string | URL,
@@ -214,16 +234,18 @@ describe('WorkstreamSocketPool', () => {
     const target = view.getByRole('button', { name: 'Warm channel' });
 
     fireEvent.pointerEnter(target);
-    act(() => vi.advanceTimersByTime(999));
+    await act(async () => vi.advanceTimersByTimeAsync(999));
     fireEvent.pointerLeave(target);
-    act(() => vi.advanceTimersByTime(1));
+    await act(async () => vi.advanceTimersByTimeAsync(1));
     await flushPromises();
+    act(() => FakeWebSocket.instances.forEach(socket => socket.keepHealthy()));
     expect(api.getSocketTicket).not.toHaveBeenCalled();
     expect(api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
 
     fireEvent.pointerEnter(target);
-    act(() => vi.advanceTimersByTime(1_000));
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
     await flushPromises();
+    act(() => FakeWebSocket.instances.forEach(socket => socket.keepHealthy()));
     expect(api.getSocketTicket).toHaveBeenCalledTimes(1);
     expect(api.getSocketTicket).toHaveBeenCalledWith(
       workstreamId,
@@ -243,9 +265,9 @@ describe('WorkstreamSocketPool', () => {
     ]);
 
     fireEvent.pointerLeave(target);
-    act(() => vi.advanceTimersByTime(RECENT_WORKSTREAM_SOCKET_RETENTION_MS - 1));
+    await act(async () => vi.advanceTimersByTimeAsync(RECENT_WORKSTREAM_SOCKET_RETENTION_MS - 1));
     expect(warmedSockets.every((socket) => socket.close.mock.calls.length === 0)).toBe(true);
-    act(() => vi.advanceTimersByTime(1));
+    await act(async () => vi.advanceTimersByTimeAsync(1));
     expect(warmedSockets.every((socket) => socket.close.mock.calls.length === 1)).toBe(true);
   });
 
@@ -263,7 +285,7 @@ describe('WorkstreamSocketPool', () => {
     const feed = pair.find((socket) => String(socket.url).endsWith('/feed'))!;
     act(() => { feed.readyState = FakeWebSocket.OPEN; feed.dispatchEvent(new Event('open')); });
     await flushPromises();
-    expect(feed.send.mock.calls.map(([frame]) => JSON.parse(String(frame)))).toEqual([
+    expect(feed.send.mock.calls.filter(([frame]) => String(frame).startsWith('{')).map(([frame]) => JSON.parse(String(frame)))).toEqual([
       { type: 'subscribe', afterSequence: 0, publishPresence: false },
     ]);
     view.rerender(
@@ -274,7 +296,7 @@ describe('WorkstreamSocketPool', () => {
     await flushPromises();
     expect(FakeWebSocket.instances).toEqual(pair);
     expect(pair.every((socket) => socket.close.mock.calls.length === 0)).toBe(true);
-    expect(feed.send.mock.calls.map(([frame]) => JSON.parse(String(frame)))).toEqual([
+    expect(feed.send.mock.calls.filter(([frame]) => String(frame).startsWith('{')).map(([frame]) => JSON.parse(String(frame)))).toEqual([
       { type: 'subscribe', afterSequence: 0, publishPresence: false },
       { type: 'mark_opened' },
     ]);
@@ -306,14 +328,14 @@ describe('WorkstreamSocketPool', () => {
     );
     act(() => { feed.readyState = FakeWebSocket.OPEN; feed.dispatchEvent(new Event('open')); });
     await flushPromises();
-    expect(feed.send.mock.calls.map(([frame]) => JSON.parse(String(frame)))).toEqual([
+    expect(feed.send.mock.calls.filter(([frame]) => String(frame).startsWith('{')).map(([frame]) => JSON.parse(String(frame)))).toEqual([
       { type: 'subscribe', afterSequence: 0, publishPresence: false },
     ]);
     view.rerender(<Content allowed />);
     await flushPromises();
     expect(FakeWebSocket.instances).toEqual(pair);
     expect(pair.every((socket) => socket.close.mock.calls.length === 0)).toBe(true);
-    expect(feed.send.mock.calls.map(([frame]) => JSON.parse(String(frame)))).toEqual([
+    expect(feed.send.mock.calls.filter(([frame]) => String(frame).startsWith('{')).map(([frame]) => JSON.parse(String(frame)))).toEqual([
       { type: 'subscribe', afterSequence: 0, publishPresence: false },
       { type: 'mark_opened' },
     ]);
@@ -383,7 +405,7 @@ describe('WorkstreamSocketPool', () => {
     ]);
     expect(FakeWebSocket.instances).toEqual(warmedSockets);
     expect(warmedSockets.every((socket) => socket.close.mock.calls.length === 0)).toBe(true);
-    expect(warmedFeed.send.mock.calls.map(([frame]) => JSON.parse(String(frame)))).toEqual([
+    expect(warmedFeed.send.mock.calls.filter(([frame]) => String(frame).startsWith('{')).map(([frame]) => JSON.parse(String(frame)))).toEqual([
       { type: 'subscribe', afterSequence: 0, publishPresence: false },
       { type: 'mark_opened' },
     ]);
@@ -600,6 +622,7 @@ describe('WorkstreamSocketPool', () => {
       { wrapper: createWrapper([firstWorkstreamId, secondWorkstreamId]) },
     );
     await flushPromises();
+    act(() => FakeWebSocket.instances.forEach(socket => socket.keepHealthy()));
 
     view.rerender(
       <WorkstreamSocketPool activeWorkstreamId={secondWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
@@ -607,7 +630,8 @@ describe('WorkstreamSocketPool', () => {
       </WorkstreamSocketPool>,
     );
     await flushPromises();
-    act(() => vi.advanceTimersByTime(RECENT_WORKSTREAM_SOCKET_RETENTION_MS));
+    act(() => FakeWebSocket.instances.forEach(socket => socket.keepHealthy()));
+    await act(async () => vi.advanceTimersByTimeAsync(RECENT_WORKSTREAM_SOCKET_RETENTION_MS));
 
     expect(api.getSocketTicket).toHaveBeenCalledTimes(2);
     expect(api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
@@ -630,6 +654,7 @@ describe('WorkstreamSocketPool', () => {
       { wrapper: createWrapper([firstWorkstreamId, secondWorkstreamId]) },
     );
     await flushPromises();
+    act(() => FakeWebSocket.instances.forEach(socket => socket.keepHealthy()));
     const firstPair = FakeWebSocket.instances.filter((socket) => String(socket.url).includes(firstWorkstreamId));
     expect(firstPair.map((socket) => String(socket.url))).toEqual([
       `wss://api.rally.test/workstreams/${firstWorkstreamId}/feed`,
@@ -641,17 +666,19 @@ describe('WorkstreamSocketPool', () => {
       </WorkstreamSocketPool>,
     );
     await flushPromises();
+    act(() => FakeWebSocket.instances.forEach(socket => socket.keepHealthy()));
     expect(api.getSocketTicket).toHaveBeenCalledTimes(2);
     expect(api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
     expect(firstPair.every((socket) => socket.close.mock.calls.length === 0)).toBe(true);
 
-    act(() => vi.advanceTimersByTime(RECENT_WORKSTREAM_SOCKET_RETENTION_MS - 1));
+    await act(async () => vi.advanceTimersByTimeAsync(RECENT_WORKSTREAM_SOCKET_RETENTION_MS - 1));
     view.rerender(
       <WorkstreamSocketPool activeWorkstreamId={firstWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
         <ActiveConnection api={api} enabled workstreamId={firstWorkstreamId} />
       </WorkstreamSocketPool>,
     );
     await flushPromises();
+    act(() => FakeWebSocket.instances.forEach(socket => socket.keepHealthy()));
 
     expect(api.getSocketTicket).toHaveBeenCalledTimes(2);
     expect(api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
@@ -664,7 +691,7 @@ describe('WorkstreamSocketPool', () => {
         <ActiveConnection api={api} enabled workstreamId={secondWorkstreamId} />
       </WorkstreamSocketPool>,
     );
-    act(() => vi.advanceTimersByTime(RECENT_WORKSTREAM_SOCKET_RETENTION_MS));
+    await act(async () => vi.advanceTimersByTimeAsync(RECENT_WORKSTREAM_SOCKET_RETENTION_MS));
     expect(firstPair.every((socket) => socket.close.mock.calls.length === 1)).toBe(true);
   });
 
@@ -681,6 +708,7 @@ describe('WorkstreamSocketPool', () => {
       { wrapper: createWrapper([firstWorkstreamId, secondWorkstreamId]) },
     );
     await flushPromises();
+    act(() => FakeWebSocket.instances.forEach(socket => socket.keepHealthy()));
     const firstPair = FakeWebSocket.instances.filter((socket) => String(socket.url).includes(firstWorkstreamId));
 
     view.rerender(
@@ -693,7 +721,8 @@ describe('WorkstreamSocketPool', () => {
       </WorkstreamSocketPool>,
     );
     await flushPromises();
-    act(() => vi.advanceTimersByTime(RECENT_WORKSTREAM_SOCKET_RETENTION_MS));
+    act(() => FakeWebSocket.instances.forEach(socket => socket.keepHealthy()));
+    await act(async () => vi.advanceTimersByTimeAsync(RECENT_WORKSTREAM_SOCKET_RETENTION_MS));
     expect(firstPair.every((socket) => socket.close.mock.calls.length === 0)).toBe(true);
 
     view.rerender(
@@ -718,6 +747,7 @@ describe('WorkstreamSocketPool', () => {
       { wrapper: createWrapper([firstWorkstreamId, secondWorkstreamId]) },
     );
     await flushPromises();
+    act(() => FakeWebSocket.instances.forEach(socket => socket.keepHealthy()));
     const firstPair = FakeWebSocket.instances.filter((socket) => String(socket.url).includes(firstWorkstreamId));
     view.rerender(
       <WorkstreamSocketPool activeWorkstreamId={secondWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
@@ -725,13 +755,14 @@ describe('WorkstreamSocketPool', () => {
       </WorkstreamSocketPool>,
     );
     await flushPromises();
+    act(() => FakeWebSocket.instances.forEach(socket => socket.keepHealthy()));
 
     const now = vi.spyOn(Date, 'now').mockReturnValue(startedAt - 60_000);
-    act(() => vi.advanceTimersByTime(RECENT_WORKSTREAM_SOCKET_RETENTION_MS));
+    await act(async () => vi.advanceTimersByTimeAsync(RECENT_WORKSTREAM_SOCKET_RETENTION_MS));
     expect(firstPair.every((socket) => socket.close.mock.calls.length === 0)).toBe(true);
 
     now.mockReturnValue(startedAt + RECENT_WORKSTREAM_SOCKET_RETENTION_MS);
-    act(() => vi.advanceTimersByTime(RECENT_WORKSTREAM_SOCKET_RETENTION_MS + 60_000));
+    await act(async () => vi.advanceTimersByTimeAsync(RECENT_WORKSTREAM_SOCKET_RETENTION_MS + 60_000));
     expect(firstPair.every((socket) => socket.close.mock.calls.length === 1)).toBe(true);
   });
 });
