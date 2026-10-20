@@ -49,6 +49,9 @@ export const TURN_DISPOSITION_EARLIER_OUTPUT_WINDOW = 200;
 export const SUGGESTION_MAXIMUM_PER_CONVERSATION_DAY = Number.POSITIVE_INFINITY;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** Shared by live merge alarms and the backfill's candidate query. */
+export const MERGE_JUDGEMENT_KEY_PREFIX = "merge:";
+
 /** What counts as a message for the newest-three rule: what people and Rally said, not tool cards or system rows. */
 const READABLE_TURN = `substream_id = '0'
   AND message_type IN ('text', 'automation_activation')
@@ -260,14 +263,14 @@ export class ConversationSuggestionStorage {
   newestSettledTurn(): { runId: string; turnId: string } | null {
     const row = this.sql.exec<{ run_id: string; turn_id: string } & Record<string, SqlStorageValue>>(
       `SELECT CASE WHEN json_extract(turn.structured_content_json, '$.type') = 'conversation_merge'
-                   THEN 'merge:' || turn.id ELSE run.run_id END AS run_id, turn.id AS turn_id
+                   THEN ? || turn.id ELSE run.run_id END AS run_id, turn.id AS turn_id
          FROM (SELECT id, sequence_number, author_type, structured_content_json FROM canonical_conversation_turn_details
                 WHERE ${READABLE_TURN} ORDER BY sequence_number DESC LIMIT ?) turn
          LEFT JOIN runs run ON run.final_turn_id = turn.id AND run.status = 'completed'
         WHERE (turn.author_type = 'agent' AND run.run_id IS NOT NULL)
            OR json_extract(turn.structured_content_json, '$.type') = 'conversation_merge'
         ORDER BY turn.sequence_number DESC LIMIT 1`,
-      SUGGESTION_VISIBLE_WITHIN_NEWEST_TURNS,
+      MERGE_JUDGEMENT_KEY_PREFIX, SUGGESTION_VISIBLE_WITHIN_NEWEST_TURNS,
     ).toArray()[0];
     return row ? { runId: row.run_id, turnId: row.turn_id } : null;
   }
@@ -403,8 +406,9 @@ export async function observeTurnDisposition(input: TurnDispositionObservationIn
   // start no run; their stable merge:<turnId> key uses the same judgement slot.
   if (!input.completed || !input.finalTurnId) return { outcome: "skipped", gate: "run_not_completed" };
   const judged = input.storage.turn(input.finalTurnId);
-  const mergedResult = judged?.structured_content_json != null
-    && ConversationMergeV1Schema.safeParse(JSON.parse(judged.structured_content_json)).success;
+  const merge = judged?.structured_content_json != null
+    ? ConversationMergeV1Schema.safeParse(JSON.parse(judged.structured_content_json)) : null;
+  const mergedResult = merge?.success === true;
   if (!judged || judged.message_type !== "text" || (judged.author_type !== "agent" && !mergedResult) || !(judged.content ?? "").trim()) {
     return { outcome: "skipped", gate: "final_turn_not_text" };
   }
@@ -427,8 +431,8 @@ export async function observeTurnDisposition(input: TurnDispositionObservationIn
   const now = input.now();
   const conversationKind = input.substreamId === "0" ? "thread" : "breakout";
   // Gate 4: at least one kind this conversation can offer. A Breakout offers
-  // only merge_up; a Thread always offers start_breakout, so the parent read
-  // decides only whether merge_up is also on the table.
+  // only merge_up, as does an incoming merged result. Other Thread outputs
+  // also offer start_breakout, even when there is no eligible Channel.
   const parent = await input.readParent();
   const mergeOfferable = parent !== null;
   if ((conversationKind === "breakout" || mergedResult) && !mergeOfferable) return { outcome: "skipped", gate: "nothing_offerable" };
@@ -440,6 +444,7 @@ export async function observeTurnDisposition(input: TurnDispositionObservationIn
     storage: input.storage, judged, parent, conversationKind,
     identity: input.identity,
     carriedUpBefore: markers.before,
+    ...(merge?.success ? { mergedFrom: merge.data.mergedFrom } : {}),
   });
   const decision = input.env.TYPESAFE_API_KEY
     ? await judgeTurnDisposition({
@@ -537,6 +542,7 @@ export function buildTurnDispositionState(input: {
   conversationKind: "thread" | "breakout";
   identity: { title: string; description: string };
   carriedUpBefore: number;
+  mergedFrom?: { title: string };
 }): TurnDispositionState {
   const earlier = input.storage.readableBefore(input.judged.sequence_number, TURN_DISPOSITION_EARLIER_OUTPUT_WINDOW);
   const messagesBefore = input.storage.readableCountBefore(input.judged.sequence_number);
@@ -576,6 +582,7 @@ export function buildTurnDispositionState(input: {
     })),
     judged_message: {
       author: input.judged.author_type === "agent" ? "rally" : "person",
+      ...(input.mergedFrom ? { merged_from: { kind: "breakout" as const, title: input.mergedFrom.title } } : {}),
       text: judgedText,
       outputs: judgedEmbeds.map((embed) => ({ title: embed.title, first_time_here: !seen.has(embed.id) })),
     },
