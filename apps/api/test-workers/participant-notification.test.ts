@@ -24,6 +24,7 @@ import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+  asSubstreamId,
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
@@ -164,9 +165,9 @@ beforeEach(async () => {
   // never a slow query.
 }, 30_000);
 
-function agentStub(workstreamId = WORKSTREAM_ID): DurableObjectStub<SubstreamAgent> {
+function agentStub(workstreamId = WORKSTREAM_ID, substreamId = "0"): DurableObjectStub<SubstreamAgent> {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-    conversationObjectName("global", WORKSPACE_ID, workstreamId),
+    conversationObjectName("global", WORKSPACE_ID, workstreamId, asSubstreamId(substreamId)),
   ));
 }
 
@@ -272,18 +273,20 @@ async function openWorkstream(
 async function provisionWorkstream(
   stub: DurableObjectStub<SubstreamAgent>,
   workstreamId = WORKSTREAM_ID,
-  options: { title?: string; scope?: "personal" | "workspace" } = {},
+  options: { title?: string; scope?: "personal" | "workspace"; substreamId?: string } = {},
 ): Promise<void> {
   await parkEffectQueue(stub);
   expect((await stub.bootstrapRuntime({
     workspaceId: WORKSPACE_ID,
     parentKind: "workstream",
     parentId: workstreamId,
+    substreamId: asSubstreamId(options.substreamId ?? "0"),
     generation: 1,
   })).status).toBe(200);
   expect((await stub.executeIdentityOperation({
     workspaceId: WORKSPACE_ID,
     workstreamId,
+    substreamId: asSubstreamId(options.substreamId ?? "0"),
     operation: "provision",
     args: [{
       title: options.title ?? "Quarterly planning",
@@ -1435,5 +1438,26 @@ describe("who a create is allowed to tell", () => {
     // The delivery templates read this to pick copy that does not quote a
     // placeholder title as if it were the work stream's name.
     expect(notification[0]!.titleIsProvisional).toBe(true);
+  });
+});
+
+
+describe("posting subscribes the author to a conversation", () => {
+  it.each(["0", "00000000-0000-7000-8000-0000000006fe"])("seats an unmentioned author posting in conversation %s", async (substreamId) => {
+    const workstreamId = asWorkstreamId("00000000-0000-7000-8000-0000000006fd");
+    const stub = agentStub(workstreamId, substreamId);
+    await provisionWorkstream(stub, workstreamId, { scope: "workspace", substreamId });
+    const sent = await product(stub, {
+      operation: "create_message", auth: INVITEE_AUTH,
+      input: { text: "I will follow up", clientMessageId: "join-by-post", mentions: [],
+        confirmedParticipantUserIds: [], attachmentIds: [], seed: { packVersion: "test", actionId: "join-by-post", assistant: null } },
+    });
+    expect(sent.status).toBe(200);
+    await waitForCanonicalTurn(stub, (sent.body.turn as { turnId: string }).turnId);
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ status: string; participation_reason: string }>(
+        `SELECT status, participation_reason FROM participants WHERE user_id = ?`, INVITEE_ID,
+      ).one()).toEqual({ status: "active", participation_reason: "message" });
+    });
   });
 });

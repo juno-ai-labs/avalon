@@ -1,4 +1,4 @@
-import type { ActivityItem } from '@rally/contracts';
+import { groupActivityItems, type ActivityGroup, type ActivityItem } from '@rally/contracts';
 import { compareRecentChannels } from '../common/recency-groups';
 import type { ActivityFeedSnapshot } from './activity-feed-watch';
 import type { ChannelDirectorySnapshot } from './channel-directory-watch';
@@ -19,6 +19,7 @@ const UNNAMED_WORKSTREAM_LABEL = 'Untitled thread';
 function activityDetail(item: ActivityItem): string {
   const actor = item.actorLabel.trim();
   switch (item.kind) {
+    case 'new_message': return `${actor || 'Someone'} replied`;
     case 'mentioned': return actor ? `${actor} mentioned you` : 'Mentioned you';
     case 'added': return actor ? `${actor} added you` : 'Added you';
     case 'thread_started': return actor ? `${actor} started it` : 'New thread';
@@ -34,8 +35,8 @@ function activityDetail(item: ActivityItem): string {
 }
 
 /** One unread Activity row as a menu row, opening where the tab's row opens. */
-function attentionRow(item: ActivityItem): MenuBarAttentionRow {
-  const detail = activityDetail(item);
+function attentionRow(item: ActivityGroup): MenuBarAttentionRow {
+  const detail = `${activityDetail(item)}${item.unreadMention && item.kind !== 'mentioned' ? ' · @mention' : ''}`;
   // An artifact's row leads with the artifact, and names its thread below.
   const title = item.kind === 'artifact_updated' ? item.artifact?.title ?? item.threadTitle
     : item.kind === 'merged' ? (item.mergedInto?.threadPrivate ? item.mergedInto.name : item.threadTitle)
@@ -76,7 +77,7 @@ export function menuBarContent(directory: ChannelDirectorySnapshot, activity: Ac
     accessRequests: directory.accessRequests.map((request) => ({
       id: request.id, requesterName: request.requesterName, title: request.title,
     })),
-    attention: activity.items.filter((item) => item.unread).map(attentionRow),
+    attention: groupActivityItems(activity.items).filter((item) => item.unread).map(attentionRow),
     attentionComplete: activity.complete,
     recentsComplete: directory.complete,
     recents: named

@@ -5,6 +5,8 @@ import { ApiError } from "../src/lib/api-error";
 import {
   clientOpensGuestWorkspaces,
   clientReadsIndividualSpaces,
+  clientReadsNewMessages,
+  clientReadsResolutionSuggestions,
   requireCurrentClientContract,
   type ClientRequestHeaders,
 } from "../src/lib/client-contract";
@@ -96,5 +98,17 @@ describe("who is shown a Space scoped individual", () => {
     expect(clientReadsIndividualSpaces(request({ origin: "app://rallywithai", "x-rally-client-contract": "4" }))).toBe(false);
     expect(clientReadsIndividualSpaces(request({ origin: "app://rallywithai" }))).toBe(false);
     expect(clientReadsIndividualSpaces(request({ origin: "app://rallywithai", "x-rally-client-contract": "5junk" }))).toBe(false);
+  });
+});
+
+
+describe("human reply compatibility after resolution suggestions", () => {
+  it("withholds reply rows from resolution-only builds while admitting both in the new build", () => {
+    const resolutionBuild = request({ origin: "app://rallywithai", "x-rally-client-contract": "10" });
+    expect(clientReadsResolutionSuggestions(resolutionBuild)).toBe(true);
+    expect(clientReadsNewMessages(resolutionBuild)).toBe(false);
+    const replyBuild = request({ origin: "app://rallywithai", "x-rally-client-contract": "11" });
+    expect(clientReadsResolutionSuggestions(replyBuild)).toBe(true);
+    expect(clientReadsNewMessages(replyBuild)).toBe(true);
   });
 });

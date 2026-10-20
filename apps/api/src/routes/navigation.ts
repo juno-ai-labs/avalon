@@ -17,7 +17,7 @@ import {
 import { Hono } from "hono";
 import { z } from "zod";
 
-import { clientReadsArtifactUpdates, clientReadsChannelMerges, clientReadsPrivateChannelMerges } from "../lib/client-contract";
+import { clientReadsNewMessages, clientReadsArtifactUpdates, clientReadsChannelMerges, clientReadsPrivateChannelMerges } from "../lib/client-contract";
 import type { HonoAppEnv } from "../env";
 import { getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { zValidator } from "../middleware/validation";
@@ -103,12 +103,14 @@ navigationRoutes.get("/activity", zValidator("query", activityQuery), async (c) 
   // strictly: it is served the page without those rows, whose cursor still
   // continues correctly.
   const header = (name: string) => c.req.header(name);
+  const newMessages = clientReadsNewMessages(header);
   const merges = clientReadsChannelMerges(header);
   const artifactUpdates = clientReadsArtifactUpdates(header);
   const privateMerges = clientReadsPrivateChannelMerges(header);
-  return c.json(ActivityPageSchema.parse(merges && artifactUpdates && privateMerges ? page : {
+  return c.json(ActivityPageSchema.parse(newMessages && merges && artifactUpdates && privateMerges ? page : {
     ...page,
     items: page.items.filter((item) => (merges || item.kind !== "merged")
+      && (newMessages || item.kind !== "new_message")
       && (artifactUpdates || item.kind !== "artifact_updated")
       && (privateMerges || !item.mergedInto?.threadPrivate)),
   }));
