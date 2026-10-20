@@ -20,7 +20,7 @@ export function breakoutMessageActivity(
   effect: ConversationEffect,
   substreamId: string,
 ): ActivityEventEffect | null {
-  if (effect.kind !== "activity_event" || effect.actorUserId === null) return null;
+  if (effect.kind !== "activity_event" || effect.eventType !== "workstream_message_created" || effect.actorUserId === null) return null;
   const mentions = effect.targets.filter((target) => target.relation === "mentioned");
   if (mentions.length === 0 && effect.actorType !== "user") return null;
   // The breakout id is stamped here, by the parent that knows it, rather than

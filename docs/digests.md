@@ -706,6 +706,7 @@ device registration, provider delivery and retry receipts.
 produce reply activity without requiring an @mention. Latest replies are selected
 before pagination, with counts from the message waterline. The sidebar and menu
 fold events by conversation, retaining unread mentions and a human preview.
+Digest rendering counts a message with both mention and reply rows once, under Mentions.
 
 **Why:** An ongoing human exchange could disappear behind Rally completion
 rows: neither ordinary replies nor conversation grouping existed in Activity.

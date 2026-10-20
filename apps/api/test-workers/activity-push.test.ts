@@ -38,6 +38,7 @@ import { splitSqlStatements } from "../src/lib/sql-statements";
 import { deliverPush } from "../src/queues/push-delivery-consumer";
 import { registerPushDevice } from "../src/services/push-device-service";
 import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
+import { WorkspaceActivityPushes } from "../src/durable-objects/workspace-activity-push";
 import { WorkspaceActivityFeed } from "../src/durable-objects/workspace-activity-feed";
 import type { WorkspaceSpaceStorage } from "../src/durable-objects/workspace-space-storage";
 import type { ApnsOutcome } from "../src/services/push/apns-transport";
@@ -550,6 +551,39 @@ describe("human reply activity", () => {
     expect((await pushed()).filter((row) => row.item_id.startsWith("message:"))).toEqual([]);
   });
 
+  it("does not send an opening reply already covered by an invitation, but sends later replies", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner), viewer(member)]);
+    const opening = reply(first, 1, "Opening message");
+    if (opening.kind !== "activity_event") throw new Error("expected activity event");
+    const added: ConversationEffect = { ...opening, eventId: "00000000-0000-7000-8000-0000000a0f03",
+      eventType: "workstream_participant_added", sourceKind: "workstream_participant", dedupeKey: "added:opening",
+      targets: [{ userId: member, relation: "added" }] };
+    await publish(asSubstreamId("0"), [added, opening]);
+    expect((await pushed()).filter((row) => row.item_id.startsWith("message:"))).toEqual([]);
+    const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: "sent" }));
+    await deliverPush(pushEnv(), { region: "global", workspaceId, recipientUserId: member, activityItemId: `message:${first}` }, send);
+    expect(send).not.toHaveBeenCalled();
+    await publish(asSubstreamId("0"), [reply(second, 2, "A later reply")]);
+    await deliverPush(pushEnv(), { region: "global", workspaceId, recipientUserId: member, activityItemId: `message:${second}` }, send);
+    expect(send).toHaveBeenCalledTimes(1);
+    const calls = (send as { mock: { calls: unknown[][] } }).mock.calls;
+    const payload = JSON.parse((calls[0]![2] as PushPayloads).apns) as { rally: { kind: string; url: string }; aps: { alert: { title: string } } };
+    expect(payload.rally.kind).toBe("mention");
+    expect(payload.rally.url).toContain(thread);
+    expect(payload.aps.alert.title).toBe("Maya replied in Q3 plan");
+  });
+
+  it("does not forward empty breakout participant-add rows into the shared log", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner)]);
+    await publish(breakout, [common("Private"), viewer(owner), viewer(member)]);
+    const event = reply(first, 1, "Invitation");
+    if (event.kind !== "activity_event") throw new Error("expected activity event");
+    await publish(breakout, [{ ...event, eventType: "workstream_participant_added", targets: [{ userId: member, relation: "added" }] }]);
+    const rows = await runInDurableObject(organization(), (_instance, state) =>
+      state.storage.sql.exec(`SELECT event_id FROM workspace_activity_events WHERE event_id = ?`, first).toArray());
+    expect(rows).toEqual([]);
+  });
+
   it("seeks only participating conversation history, independent of unrelated organization traffic", async () => {
     await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner)]);
     await publish(asSubstreamId("0"), [reply(first, 6, "Relevant")]);
@@ -594,6 +628,35 @@ describe("human reply activity", () => {
     });
   });
 
+  it("bounds reply-batch lookups independently of old decision receipts", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner), viewer(member)]);
+    await publish(asSubstreamId("0"), [reply(first, 1, "Relevant")]);
+    const item = (await activity())[0]!;
+    await runInDurableObject(organization(), (instance, state) => {
+      const cursors: Array<{ rowsRead: number }> = [];
+      const sql = new Proxy(state.storage.sql, { get(target, key) {
+        if (key !== "exec") return Reflect.get(target, key, target);
+        return (...args: unknown[]) => {
+          const cursor = Reflect.apply(target.exec, target, args);
+          if (String(args[0]).includes("SELECT 1 AS found FROM workspace_activity_pushes")) cursors.push(cursor);
+          return cursor;
+        };
+      } });
+      const storage = new Proxy(state.storage, { get(target, key) { return key === "sql" ? sql : Reflect.get(target, key, target); } });
+      const internals = instance as unknown as { spaceStorage(): WorkspaceSpaceStorage };
+      const pushes = new WorkspaceActivityPushes(storage, new WorkspaceActivityFeed(storage, internals.spaceStorage()));
+      const subjects = [{ threadId: thread, substreamId: null, kind: "message" as const }];
+      pushes.pending({ userId: member, accessClass: "member" }, subjects, new Set());
+      const before = cursors.at(-1)!.rowsRead;
+      for (let i = 0; i < 500; i++) state.storage.sql.exec(
+        `INSERT INTO workspace_activity_pushes (user_id, item_id, pushed_at, delivery_enqueued) VALUES (?, ?, 1, 1)`, member, `message:old:${i}`);
+      pushes.pending({ userId: member, accessClass: "member" }, subjects, new Set());
+      expect(cursors).toHaveLength(2);
+      expect(cursors.at(-1)!.rowsRead).toBeLessThanOrEqual(before + 1);
+      expect(item.preview).toBe("Relevant");
+    });
+  });
+
   it("preserves literal Markdown from a plain preview in alerts", async () => {
     await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner), viewer(member)]);
     await publish(asSubstreamId("0"), [reply(first, 1, "`**literal**`")]);
@@ -602,6 +665,7 @@ describe("human reply activity", () => {
     await deliverPush(pushEnv(), { region: "global", workspaceId, recipientUserId: member, activityItemId: `message:${first}` }, send);
     const calls = (send as { mock: { calls: unknown[][] } }).mock.calls;
     expect(JSON.parse((calls[0]![2] as PushPayloads).apns).aps.alert.body).toBe("**literal**");
+    expect(JSON.parse((calls[0]![2] as PushPayloads).apns).rally.kind).toBe("mention");
   });
 
   it("reserves a reply batch before awaiting Queue backpressure", async () => {
@@ -672,6 +736,68 @@ describe("human reply activity", () => {
       expect(state.storage.sql.exec<{ delivery_enqueued: number }>(`SELECT delivery_enqueued FROM workspace_activity_pushes WHERE item_id = ?`, `message:${first}`).one())
         .toEqual({ delivery_enqueued: 1 });
     });
+  });
+
+  it("keeps a failed Queue handoff in the durable follow-up until its retry succeeds", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner), viewer(member)]);
+    await organization().saveMemberPreferences({ workspaceId, userId: member, preferences: { notify: { newMessages: ["email"] } } });
+    const input = { substreamId: asSubstreamId("0"), envelopes: [envelope(thread, asSubstreamId("0"), reply(first, 1, "Retry me"))] };
+    await runInDurableObject(organization(), async (instance, state) => {
+      const target = instance as unknown as { receiveChildEffects(input: unknown): Promise<unknown>; runDirectoryFollowUps(ids: number[]): Promise<void> };
+      const prototype = Object.getPrototypeOf(env.PUSH_DELIVERY_QUEUE) as { send(body: unknown, options?: QueueSendOptions): Promise<void> };
+      const original = prototype.send;
+      const unavailable = vi.spyOn(prototype, "send").mockImplementation(async function (this: typeof prototype, body, options) {
+        if (typeof body === "object" && body !== null && "activityItemId" in body) throw new Error("queue_unavailable");
+        return original.call(this, body, options);
+      });
+      try { await target.receiveChildEffects(input); } finally { unavailable.mockRestore(); }
+      const pending = state.storage.sql.exec<{ id: number }>(`SELECT id FROM workspace_directory_followups
+        WHERE state = 'pending' AND json_array_length(json_extract(followup_json, '$.activityPushSubjects')) > 0`).toArray();
+      expect(pending.length).toBeGreaterThan(0);
+      expect(state.storage.sql.exec(`SELECT item_id FROM workspace_activity_pushes WHERE item_id = ?`, `message:${first}`).toArray()).toEqual([]);
+      await target.runDirectoryFollowUps(pending.map((row) => row.id));
+      expect(state.storage.sql.exec(`SELECT delivery_enqueued FROM workspace_activity_pushes WHERE item_id = ?`, `message:${first}`).one())
+        .toEqual({ delivery_enqueued: 1 });
+      expect(state.storage.sql.exec(`SELECT id FROM workspace_directory_followups WHERE id IN (SELECT value FROM json_each(?))`, JSON.stringify(pending.map((row) => row.id))).toArray()).toEqual([]);
+    });
+  });
+
+  it.each(["sent", "transient"] as const)("serializes concurrent consumers and releases a %s provider handoff", async (outcome) => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner), viewer(member)]);
+    await publish(asSubstreamId("0"), [reply(first, 1, "First")]);
+    let release!: () => void;
+    let entered!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: "sent" }));
+    send.mockImplementationOnce(async () => { entered(); await held; return { outcome }; });
+    const delivery = deliverPush(pushEnv(), { region: "global", workspaceId, recipientUserId: member, activityItemId: `message:${first}` }, send);
+    await started;
+    const next = { region: "global" as const, workspaceId, recipientUserId: member, activityItemId: `message:${second}` };
+    try {
+      await publish(asSubstreamId("0"), [reply(second, 2, "Second")]);
+      expect(await deliverPush(pushEnv(), next, send)).toBe(false);
+      expect(send).toHaveBeenCalledTimes(1);
+    } finally { release(); }
+    expect(await delivery).toBe(outcome === "sent");
+    expect(await deliverPush(pushEnv(), next, send)).toBe(true);
+    expect(send).toHaveBeenCalledTimes(outcome === "sent" ? 1 : 2);
+  });
+
+  it("recovers expired delivery claims and fences a stale consumer's release", async () => {
+    const claim = { workspaceId, userId: member, threadId: thread, substreamId: null, itemId: `message:${first}`,
+      channel: "push" as const, claimId: crypto.randomUUID() };
+    const newer = { ...claim, claimId: crypto.randomUUID() };
+    const third = { ...claim, claimId: crypto.randomUUID() };
+    expect(await organization().claimActivityAlert(claim)).toBe("claimed");
+    expect(await organization().claimActivityAlert(newer)).toBe("busy");
+    await runInDurableObject(organization(), (_instance, state) => state.storage.sql.exec(`UPDATE workspace_activity_alert_claims SET expires_at = 0`).toArray());
+    expect(await organization().claimActivityAlert(newer)).toBe("claimed");
+    await organization().releaseActivityAlert(claim);
+    expect(await organization().claimActivityAlert(third)).toBe("busy");
+    await organization().releaseActivityAlert(newer);
+    expect(await organization().claimActivityAlert(third)).toBe("claimed");
+    await organization().releaseActivityAlert(third);
   });
 
   it("honors the initial participation read cursor before the first Activity read", async () => {

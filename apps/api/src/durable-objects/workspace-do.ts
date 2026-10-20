@@ -867,7 +867,7 @@ import {
 } from "./thread-backfill";
 import { unreadState } from "./unread-state";
 import { artifactActivityId, WorkspaceActivityFeed, WORKSPACE_ACTIVITY_READS_MIGRATION } from "./workspace-activity-feed";
-import { activityEnqueueKey, ActivityAlertRecordSchema, type ActivityAlertRecord, REPLY_BATCH_SECONDS, WORKSPACE_REPLY_ALERT_MIGRATION, ACTIVITY_PUSH_KINDS, WorkspaceActivityPushes, WORKSPACE_ACTIVITY_PUSH_MIGRATION, type ActivityPushSubject } from "./workspace-activity-push";
+import { activityEnqueueKey, ActivityAlertRecordSchema, ActivityAlertClaimSchema, type ActivityAlertClaim, type ActivityAlertRecord, REPLY_BATCH_SECONDS, WORKSPACE_REPLY_ALERT_MIGRATION, ACTIVITY_PUSH_KINDS, WorkspaceActivityPushes, WORKSPACE_ACTIVITY_PUSH_MIGRATION, type ActivityPushSubject } from "./workspace-activity-push";
 import {
   PersonalSystemPromptReadRequestSchema,
   PersonalSystemPromptWriteRequestSchema,
@@ -10333,6 +10333,22 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       .recordAlert(request, Date.now());
   }
 
+  async claimActivityAlert(input: ActivityAlertClaim): Promise<"claimed" | "busy" | "cooldown"> {
+    await this.initialized;
+    const request = parseRpcInput(ActivityAlertClaimSchema, input, "claim_activity_alert");
+    this.assertWorkspace(request.workspaceId);
+    return new WorkspaceActivityPushes(this.state.storage, new WorkspaceActivityFeed(this.state.storage, this.spaceStorage()))
+      .claimAlert(request, Date.now());
+  }
+
+  async releaseActivityAlert(input: ActivityAlertClaim): Promise<void> {
+    await this.initialized;
+    const request = parseRpcInput(ActivityAlertClaimSchema, input, "release_activity_alert");
+    this.assertWorkspace(request.workspaceId);
+    new WorkspaceActivityPushes(this.state.storage, new WorkspaceActivityFeed(this.state.storage, this.spaceStorage()))
+      .releaseAlert(request);
+  }
+
   /** Mark the Activity tab read through a time, for this person's other windows too. */
   async markActivitySeen(input: WorkspaceActivitySeenRequest): Promise<void> {
     await this.initialized;
@@ -13652,11 +13668,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     for (const [workstreamId, lost] of followUp.channelLosses) rows.lost(workstreamId, lost);
     if (followUp.refreshProductAlarm) await this.refreshProductAlarm();
-    // Best effort, as the Channel rows are: the row is in Activity whatever
-    // happens here, and a failed push must not re-run the batch's other work.
+    // Keep failed handoffs durable without repeating completed publications.
     try {
       await this.pushActivity(followUp.workspaceId, followUp.activityPushSubjects);
     } catch (error) {
+      if (WorkspaceDO.directoryFollowUpEmpty({ ...followUp, activityPushSubjects: [] })) throw error;
+      const retry = WorkspaceDO.emptyDirectoryFollowUp(followUp.workspaceId);
+      retry.activityPushSubjects = followUp.activityPushSubjects;
+      this.recordDirectoryFollowUp(retry);
       logWarn(this.env, "activity_push_failed", {
         workspace_id: followUp.workspaceId,
         code: diagnosticErrorCode(error, "activity_push_failed"),
