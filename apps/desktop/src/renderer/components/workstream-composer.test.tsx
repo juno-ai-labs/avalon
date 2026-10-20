@@ -1,5 +1,5 @@
 import { act, createRef } from 'react';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MentionIdentity } from '../lib/api';
@@ -602,9 +602,46 @@ describe('WorkstreamComposer mention confirmation', () => {
     // exactly this reason.
     const options = await screen.findAllByRole('option');
     expect(options.map(mentionOptionCopy)).toEqual([
-      { badge: 'AI', description: null, label: 'Rally' },
-      { badge: 'Member', description: 'adam@example.com', label: 'Adam' },
+      { badge: null, description: null, label: 'Rally' },
+      { badge: null, description: 'adam@example.com', label: 'Adam' },
     ]);
+  });
+
+  it('groups participants before other org members and guests, and navigates across headings', async () => {
+    renderComposer(undefined, false, undefined, { ...workstream, participants: [creator, { ...cara, accessClass: 'guest' }] },
+      [{ ...bob, accessClass: 'guest' }, creator, { ...cara, accessClass: 'guest' },
+        { ...bob, id: 'member-bob', name: 'Bob Member' }]);
+    const composer = screen.getByLabelText('Message the thread');
+    fireEvent.change(composer, { target: { value: '@' } });
+
+    const list = await screen.findByRole('listbox', { name: 'Mentions' });
+    expect(within(list).getAllByRole('group').map((group) => group.getAttribute('aria-label')))
+      .toEqual(['Rally', 'Participants', 'Org members', 'Guests']);
+    expect(within(screen.getByRole('group', { name: 'Participants' })).getAllByRole('option').map(mentionOptionCopy))
+      .toEqual([
+        { badge: null, description: 'adam@example.com', label: 'Adam' },
+        { badge: null, description: 'cara@example.com', label: 'Cara Chen' },
+      ]);
+    expect(within(screen.getByRole('group', { name: 'Org members' })).getAllByRole('option').map(mentionOptionCopy))
+      .toEqual([{ badge: null, description: 'bob@example.com', label: 'Bob Member' }]);
+    expect(within(screen.getByRole('group', { name: 'Guests' })).getAllByRole('option').map(mentionOptionCopy))
+      .toEqual([{ badge: null, description: 'bob@example.com', label: 'Bob Builder' }]);
+
+    fireEvent.change(composer, { target: { value: '@Bob' } });
+    expect(within(list).getAllByRole('group').map((group) => group.getAttribute('aria-label')))
+      .toEqual(['Org members', 'Guests']);
+    fireEvent.keyDown(composer, { key: 'ArrowDown' });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    expect(composer).toHaveValue('@Bob Builder ');
+    expect(list).not.toBeInTheDocument();
+  });
+
+  it('keeps guests reachable after a large org member group', async () => {
+    const members = Array.from({ length: 9 }, (_, index) => ({ ...bob, id: `member-${index}`, name: `Member ${index}` }));
+    renderComposer(undefined, false, undefined, workstream, [...members, { ...cara, accessClass: 'guest' }]);
+    fireEvent.change(screen.getByLabelText('Message the thread'), { target: { value: '@' } });
+    expect(await screen.findByRole('group', { name: 'Guests' })).toBeInTheDocument();
+    expect(screen.getAllByRole('option')).toHaveLength(11);
   });
 
   it('offers Rally and people, leaving connections out of the list and highlight', async () => {
@@ -626,15 +663,15 @@ describe('WorkstreamComposer mention confirmation', () => {
 
     const options = await screen.findAllByRole('option');
     expect(options.map(mentionOptionCopy)).toEqual([
-      { badge: 'AI', description: null, label: 'Rally' },
-      { badge: 'Member', description: 'adam@example.com', label: 'Adam' },
-      { badge: 'Member', description: 'bob@example.com · not participating', label: 'Bob Builder' },
-      { badge: 'Member', description: 'cara@example.com · not participating', label: 'Cara Chen' },
+      { badge: null, description: null, label: 'Rally' },
+      { badge: null, description: 'adam@example.com', label: 'Adam' },
+      { badge: null, description: 'bob@example.com', label: 'Bob Builder' },
+      { badge: null, description: 'cara@example.com', label: 'Cara Chen' },
     ]);
     expect(options[0]).toHaveAccessibleName('Rally — Ask Rally to join this part of the conversation — AI');
     expect(options[1]).toHaveAccessibleName('Adam — adam@example.com — Member');
-    expect(options[2]).toHaveAccessibleName('Bob Builder — bob@example.com · not participating — Member');
-    expect(options[3]).toHaveAccessibleName('Cara Chen — cara@example.com · not participating — Member');
+    expect(options[2]).toHaveAccessibleName('Bob Builder — bob@example.com — Member');
+    expect(options[3]).toHaveAccessibleName('Cara Chen — cara@example.com — Member');
     expect(screen.queryByText('Organization connection')).not.toBeInTheDocument();
 
     // The draft's highlight names what the composer can mention, so a
@@ -642,41 +679,6 @@ describe('WorkstreamComposer mention confirmation', () => {
     fireEvent.change(composer, { target: { value: 'ask @Slack and @Adam' } });
 
     expect([...document.querySelectorAll('.composer-mention')].map((mark) => mark.textContent)).toEqual(['@Adam']);
-  });
-
-  it('lists people without the participation tag when the host turns it off', async () => {
-    vi.stubGlobal('ResizeObserver', class {
-      observe(): void {}
-      unobserve(): void {}
-      disconnect(): void {}
-    });
-    render(
-      <Tooltip.Provider>
-        <WorkstreamComposer
-          draftKey="test-draft"
-          attachments={[]}
-          fileInputRef={createRef<HTMLInputElement>()}
-          markNonParticipants={false}
-          members={[creator, bob]}
-          onOpenAttachment={() => undefined}
-          onRemoveAttachment={() => undefined}
-          onRetryAttachment={() => undefined}
-          onSend={vi.fn(async () => undefined)}
-          onStop={async () => undefined}
-          sending={false}
-          uploading={false}
-          workstream={workstream}
-        />
-      </Tooltip.Provider>,
-    );
-
-    fireEvent.change(screen.getByLabelText('Message the thread'), { target: { value: '@' } });
-
-    expect((await screen.findAllByRole('option')).map(mentionOptionCopy)).toEqual([
-      { badge: 'AI', description: null, label: 'Rally' },
-      { badge: 'Member', description: 'adam@example.com', label: 'Adam' },
-      { badge: 'Member', description: 'bob@example.com', label: 'Bob Builder' },
-    ]);
   });
 
   it('walks the mention list with the arrow keys and inserts the highlighted candidate on Enter', async () => {
@@ -915,7 +917,7 @@ describe('WorkstreamComposer model control', () => {
 describe('WorkstreamComposer invitees', () => {
   const dana: WorkspaceInvitee = { email: 'dana@example.com', invitedAt: '2026-07-31T20:00:00.000Z' };
 
-  it('labels each person Member, Guest or Invited, with an invitee named by address', async () => {
+  it('shows names and emails without right-side type labels, with an invitee named by address', async () => {
     renderComposer(undefined, false, undefined, workstream, [creator, { ...bob, accessClass: 'guest' }], undefined, [dana]);
     const composer = screen.getByLabelText('Message the thread');
 
@@ -923,12 +925,12 @@ describe('WorkstreamComposer invitees', () => {
 
     const options = await screen.findAllByRole('option');
     expect(options.map(mentionOptionCopy)).toEqual([
-      { badge: 'AI', description: null, label: 'Rally' },
-      { badge: 'Member', description: 'adam@example.com', label: 'Adam' },
-      { badge: 'Guest', description: 'bob@example.com · not participating', label: 'Bob Builder' },
-      { badge: 'Invited', description: null, label: 'dana@example.com' },
+      { badge: null, description: null, label: 'Rally' },
+      { badge: null, description: 'adam@example.com', label: 'Adam' },
+      { badge: null, description: null, label: 'dana@example.com' },
+      { badge: null, description: 'bob@example.com', label: 'Bob Builder' },
     ]);
-    expect(options[3]).toHaveClass('is-invited');
+    expect(options[2]).toHaveClass('is-invited');
   });
 
   it('writes the address and hands the host the invitees the message names', async () => {
