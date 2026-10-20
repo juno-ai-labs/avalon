@@ -144,11 +144,10 @@ The shared composer mention picker keeps Rally first, then groups people into
 over guest access; pending Organization invitees appear under Org members until
 shared into the conversation, when they appear under Participants. Empty groups
 are omitted after search. The popup scrolls through every match so a large member
-group cannot hide guests, and keyboard navigation skips headings. Rows show names
-and email addresses without a right-side account-type label; the group heading
-communicates participation. Account types remain in accessible option names. The
-popup border uses the sidebar’s subtle line color; spacing and headings separate
-groups without dividers.
+group cannot hide guests, and keyboard navigation skips headings. Account types
+remain in accessible option names. Grouping is memoized, with each group carrying
+its starting option index so rendering does not search the flattened list for
+every row.
 
 A host that hides a conversation must provide `ConversationVisibilityContext`.
 The conversation remains mounted, but hidden panes do not claim window-level

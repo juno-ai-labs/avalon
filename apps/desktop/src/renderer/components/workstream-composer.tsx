@@ -259,25 +259,32 @@ export function WorkstreamComposer({
   }))], [invitees, members]);
 
   const mentionLabels = useMemo(() => candidates.map((candidate) => candidate.label), [candidates]);
-  const mentionGroups = [
-    { label: null, candidates: candidates.filter((candidate) => candidate.kind === 'rally') },
-    { label: 'Participants', candidates: candidates.filter((candidate) =>
-      candidate.member ? participantIds.has(candidate.id) : candidate.kind === 'invitee' && sharedInviteeEmails.includes(candidate.label)) },
-    { label: 'Org members', candidates: candidates.filter((candidate) =>
-      candidate.member ? !participantIds.has(candidate.id) && candidate.member.accessClass !== 'guest'
-        : candidate.kind === 'invitee' && !sharedInviteeEmails.includes(candidate.label)) },
-    { label: 'Guests', candidates: candidates.filter((candidate) =>
-      candidate.member?.accessClass === 'guest' && !participantIds.has(candidate.id)) },
-  ].map((group) => ({
-    ...group,
-    candidates: mentionQuery === null ? [] : group.candidates.filter((candidate) => {
-      const query = mentionQuery.toLowerCase();
-      return candidate.label.toLowerCase().includes(query)
-        || candidate.member?.email.toLowerCase().includes(query);
-    }),
-  })).filter((group) => group.candidates.length > 0);
+  const mentionGroups = useMemo(() => {
+    if (mentionQuery === null) return [];
+    const query = mentionQuery.toLowerCase();
+    const matches = candidates.filter((candidate) => candidate.label.toLowerCase().includes(query)
+      || candidate.member?.email.toLowerCase().includes(query));
+    const sharedInvitees = new Set(sharedInviteeEmails);
+    const groups = [
+      { label: null, candidates: matches.filter((candidate) => candidate.kind === 'rally') },
+      { label: 'Participants', candidates: matches.filter((candidate) =>
+        candidate.member ? participantIds.has(candidate.id) : candidate.kind === 'invitee' && sharedInvitees.has(candidate.label)) },
+      { label: 'Org members', candidates: matches.filter((candidate) =>
+        candidate.member ? !participantIds.has(candidate.id) && candidate.member.accessClass !== 'guest'
+          : candidate.kind === 'invitee' && !sharedInvitees.has(candidate.label)) },
+      { label: 'Guests', candidates: matches.filter((candidate) =>
+        candidate.member?.accessClass === 'guest' && !participantIds.has(candidate.id)) },
+    ].filter((group) => group.candidates.length > 0);
+    // Carry each group's starting index so rendering a row never scans the list.
+    let startIndex = 0;
+    return groups.map((group) => {
+      const indexedGroup = { ...group, startIndex };
+      startIndex += group.candidates.length;
+      return indexedGroup;
+    });
+  }, [candidates, mentionQuery, participantIds, sharedInviteeEmails]);
   // A single option sequence keeps keyboard navigation independent of headings.
-  const visibleCandidates = mentionGroups.flatMap((group) => group.candidates);
+  const visibleCandidates = useMemo(() => mentionGroups.flatMap((group) => group.candidates), [mentionGroups]);
   const mentionNavigation = useMentionNavigation(
     visibleCandidates.map((candidate) => candidate.id),
     (index) => {
@@ -513,8 +520,8 @@ export function WorkstreamComposer({
           {mentionGroups.map((group) => (
             <div key={group.label ?? 'rally'} role="group" aria-label={group.label ?? 'Rally'}>
               {group.label && <div className="mention-popover-heading" aria-hidden="true">{group.label}</div>}
-              {group.candidates.map((candidate) => {
-                const index = visibleCandidates.indexOf(candidate);
+              {group.candidates.map((candidate, localIndex) => {
+                const index = group.startIndex + localIndex;
                 return (
                   <button
                     aria-label={[candidate.label, candidate.description, mentionKindLabel(candidate)].filter(Boolean).join(' — ')}
