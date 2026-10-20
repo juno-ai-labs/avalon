@@ -20,6 +20,7 @@ export interface MarkBridgeItem {
    * `onSelect`: a bridge too long for its room folds its leading marks here.
    */
   menu?: readonly MarkBridgeItem[] | undefined;
+  disabled?: boolean | undefined;
 }
 
 /*
@@ -225,7 +226,7 @@ export function MarkBridge({ className, items, labelLast = false }: {
           <button aria-label={accessibleName} className={markClass} style={style} type="button">{content}</button>
         </DropdownMenu.Trigger>
         : item.onSelect
-          ? <button aria-label={accessibleName} className={markClass} onClick={item.onSelect} style={style} type="button">{content}</button>
+          ? <button aria-label={accessibleName} className={markClass} disabled={item.disabled} onClick={item.onSelect} style={style} type="button">{content}</button>
           : <span aria-label={accessibleName} className={markClass} role="img" style={style}>{content}</span>;
       // Not hoverable: the next mark sits 6px away, and the pointer's path
       // into an open tip would keep it up over the mark being aimed at.

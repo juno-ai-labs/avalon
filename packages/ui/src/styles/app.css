@@ -7897,7 +7897,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
    to its mark, its title ending in an ellipsis. A Channel's name is short and
    says where you are, so the thread beside it gives way first. */
 .title-pill-ancestor { display: flex; min-width: 0; }
-.title-pill-ancestor:first-child:not(:last-child) { flex-shrink: 0; max-width: 45%; }
+.title-pill-ancestor:nth-child(1 of .title-pill-ancestor):not(:last-child) { flex-shrink: 0; max-width: 45%; }
 .title-pill.is-ancestor,
 .title-pill.is-ancestor .title-pill-select { min-width: 0; }
 .title-pill-current { justify-self: center; min-width: 0; }
@@ -7960,6 +7960,8 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
      take above, so a named bridge ellipsizes rather than squeezing the pill. */
   .title-pill-header { grid-template-columns: fit-content(45%) minmax(0, 1fr) auto; }
   .title-pill-current { display: flex; justify-content: center; justify-self: stretch; }
+  /* The grid has already reserved the actions' room; shifting again crosses the pane edge. */
+  .title-pill-header.is-crowded .title-pill-current { transform: none; }
   .title-pill.is-ancestor .title-pill-menu-trigger { display: none; }
   .title-pill.is-ancestor .title-pill-title,
   .title-pill.is-ancestor .title-pill-chevron,
@@ -9220,3 +9222,12 @@ button.merged-into-label:hover { color: var(--av-sys-color-text-default); }
 .attachment-lightbox-content.is-html .annotation-body { flex:1; min-height:0; }
 .attachment-lightbox-content.is-html .annotation-body iframe { min-height:0; }
 .annotation-surface.attachment-lightbox-text .annotation-sheet { white-space:normal; }
+
+/* History belongs to the leftmost visible header, before its breadcrumb. */
+.title-pill-leading { display: flex; flex: none; margin-right: 6px; }
+.navigation-history .mark-bridge-outline { display: none; }
+.navigation-history .mark-bridge-icon { height: 18px; width: 18px; }
+.navigation-history button:disabled { cursor: default; opacity: .35; }
+.navigation-history button:disabled:hover { background: transparent; }
+.split-conversation-pane.is-breakout:not(.is-alone) .title-pill-leading,
+.workspace-shell:not(.rail-expanded):not(.rail-fills-pane) .panel-title-header .title-pill-leading { display: none; }

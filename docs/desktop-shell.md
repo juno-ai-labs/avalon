@@ -39,6 +39,23 @@ a thread or a breakout opens, or who owns the right panel.
 
 ## How it works
 
+### Electron navigation history
+
+The leftmost visible pane header carries Back and Forward before its breadcrumb,
+as one neutral two-mark liquid glass bridge with Tabler chevrons. The desktop
+shell's `NavigationHistoryProvider` supplies the shared header's leading slot;
+the browser host leaves it empty. Buttons traverse HashRouter's existing entries,
+including query parameters and location state. Session actions and desktop deep
+links use `navigateAppRoute`, bridged to the main window's router by
+`AppRouteNavigation`, so each visit has the same index as an in-app link. Before
+the router mounts, the helper sets the initial hash for the router to index.
+Opening and launch skeletons carry the same leading slot as loaded headers.
+PUSH drops the forward branch,
+REPLACE keeps it, and POP moves the cursor. Unavailable directions are disabled.
+The cursor belongs to the shell, so changing the pane that draws the controls
+does not reset it. A new shell starts at the current entry with no forward visits
+recorded; history is not persisted separately.
+
 ### The sidebar
 
 One `ResizableSidebar` on the left, at the width in `useUiStore.sidebarWidth`
@@ -273,6 +290,11 @@ Code that navigates and wants the sheet open afterwards sets
 and route change reads it and opens the sheet once.
 
 ### Title pills
+
+A narrow conversation pane fits its pill between the leading and trailing
+controls and truncates the title. As on a phone, that layout disables the
+crowding shift: shifting a pill already sized by the grid can move it across
+the pane boundary.
 
 Every pane's header is a `TitlePillHeader`: its own pill centred, the pane's
 controls at the right, and ancestors stacked at the left. The header row is
@@ -520,6 +542,14 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-19 — Electron history controls before the breadcrumb
+
+The product asked for direct history navigation beside the breadcrumb. Reusing
+the router instead of a separate resource stack preserves queries and expansion
+state. Session actions and deep links must use that router too: direct hash
+writes create unindexed visits and break traversal. The browser keeps its own
+controls.
 
 ### 2026-10-19 — Open Channels at the server read waterline
 
