@@ -274,13 +274,14 @@ conversationRoutes.post("/:parentId/substreams/:substreamId/participants/remove"
       param.parentId, param.substreamId, c.req.valid("json"), false,
     )));
   });
-/** Rename the child's conversation, or archive its parent-owned directory entry. */
+/** Rename the conversation, or change its parent-owned lifecycle state. */
 conversationRoutes.patch("/:parentId/substreams/:substreamId", zValidator("param", substreamSocketParam),
   zValidator("json", z.strictObject({
     title: UpdateWorkstreamRequestSchema.shape.title,
     archived: z.boolean().optional(),
-  }).refine((body) => (body.title !== undefined) !== (body.archived !== undefined),
-    "Change either the title or archive state in one request")), async (c) => {
+    resolved: z.literal(true).optional(),
+  }).refine((body) => [body.title, body.archived, body.resolved].filter((value) => value !== undefined).length === 1,
+    "Change one of title, archive state or resolution in one request")), async (c) => {
     const param = c.req.valid("param");
     const body = c.req.valid("json");
     if (param.substreamId === "0" && body.archived !== undefined) {
@@ -288,6 +289,9 @@ conversationRoutes.patch("/:parentId/substreams/:substreamId", zValidator("param
     }
     if (body.archived !== undefined) {
       await new SubstreamCreationService(c.env, getWorkspaceAuth(c)).archive(param.parentId, param.substreamId, body.archived);
+    }
+    if (body.resolved) {
+      await new SubstreamCreationService(c.env, getWorkspaceAuth(c)).resolve(param.parentId, param.substreamId);
     }
     if (body.title !== undefined) {
       const client = await new ConversationService(c.env, getWorkspaceAuth(c)).client(param.parentId, false, param.substreamId);

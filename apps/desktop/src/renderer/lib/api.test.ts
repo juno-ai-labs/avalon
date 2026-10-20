@@ -1737,6 +1737,18 @@ describe('browser cookie collaboration transport', () => {
     expect(fetchMock.mock.calls[1]?.[1]?.body).toBe(JSON.stringify({ title: 'Shared main' }));
   });
 
+  it('resolves either a Thread or Breakout through its parent-owned registry mutation', async () => {
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi(cookie.apiBaseUrl, cookie);
+    await api.resolveConversation(workstreamId, '0');
+    await api.resolveConversation(workstreamId, 'breakout-1');
+    expect(fetchMock.mock.calls.map(([url, init]) => ({ url, method: init?.method, body: init?.body }))).toEqual([
+      { url: `${cookie.apiBaseUrl}/conversations/${workstreamId}/substreams/0`, method: 'PATCH', body: '{"resolved":true}' },
+      { url: `${cookie.apiBaseUrl}/conversations/${workstreamId}/substreams/breakout-1`, method: 'PATCH', body: '{"resolved":true}' },
+    ]);
+  });
+
   it('does not attempt native credential renewal for a rejected cookie', async () => {
     const fetchMock = vi.fn().mockResolvedValue(json({ error: { code: 'invalid_session' } }, { status: 401 }));
     vi.stubGlobal('fetch', fetchMock);
