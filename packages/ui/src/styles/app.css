@@ -7960,6 +7960,8 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
      take above, so a named bridge ellipsizes rather than squeezing the pill. */
   .title-pill-header { grid-template-columns: fit-content(45%) minmax(0, 1fr) auto; }
   .title-pill-current { display: flex; justify-content: center; justify-self: stretch; }
+  /* The grid has already reserved the actions' room; shifting again crosses the pane edge. */
+  .title-pill-header.is-crowded .title-pill-current { transform: none; }
   .title-pill.is-ancestor .title-pill-menu-trigger { display: none; }
   .title-pill.is-ancestor .title-pill-title,
   .title-pill.is-ancestor .title-pill-chevron,
