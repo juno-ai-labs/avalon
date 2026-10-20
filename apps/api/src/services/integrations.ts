@@ -1,3 +1,4 @@
+import { connectorAuthorizationStatus } from "@rally/contracts";
 import { readCanvaReference } from "./canva-resource-access";
 
 import type { OutboundExternalBinding } from "../durable-objects/external-binding-outbox";
@@ -7797,10 +7798,11 @@ async function readConnectorConnectionState(
       catalog.capabilityPrefixes.some((prefix) => capability.startsWith(prefix)));
   });
   const connections = scopes.map((scope) => {
-    const rows = matching.filter((row) => row.scope === scope);
-    const state = rows.some((row) => row.status === "healthy")
+    const statuses = matching.filter((row) => row.scope === scope)
+      .map((row) => connectorAuthorizationStatus(row.status));
+    const state = statuses.includes("healthy")
       ? "connected" as const
-      : rows.some((row) => row.status === "needs_reconnect" || row.status === "error")
+      : statuses.includes("reconnect_required")
         ? "reconnect_required" as const
         : "not_connected" as const;
     return { scope, state };
@@ -8584,6 +8586,20 @@ async function persistPolledActivity(
   return [...new Set(canonical.results.map((row) => row.id))];
 }
 
+/** Background failure must not overwrite a user's disable or an authorization verdict. */
+export async function recordConnectorPollFailure(
+  database: D1Database,
+  input: Pick<ConnectorPollWorkflowInput, "workspaceId" | "connectionId">,
+  error: { code: string; message: string },
+  now: string,
+): Promise<void> {
+  await database.prepare(
+    `UPDATE connector_connections SET status = 'error', error_json = ?, updated_at = ?
+     WHERE id = ? AND workspace_id = ? AND (status = 'healthy' OR
+       (status = 'error' AND json_extract(error_json, '$.code') IN ('connector_poll_failed', 'connector_poll_timeout')))`,
+  ).bind(JSON.stringify(error), now, input.connectionId, input.workspaceId).run();
+}
+
 export type ConnectorCursorCommit = "committed" | "already_committed" | "superseded";
 
 export async function commitConnectorCursor(
@@ -8596,18 +8612,17 @@ export async function commitConnectorCursor(
     ? JSON.stringify({ code: "connector_activity_streams_degraded", streams: result.streamErrors })
     : null;
   const updated = await database.prepare(
-    // `error_json` moves only for a row this poll's success actually speaks to.
-    // Gated on `status = 'healthy'` this could never touch a marked row; once
-    // the poll runs for any non-disabled connection it can, and writing
-    // `error_json = NULL` onto a `needs_reconnect` row leaves it marked with no
-    // reason at all — worse than either endpoint, and the same destruction of a
-    // specific diagnosis this work exists to stop. A poll succeeding is not
-    // evidence the authorization is whole (it may not have needed the missing
-    // scope), so the status is left for the paths that do know.
+    // A committed poll recovers its own failure, never a missing-scope or
+    // revoked-grant diagnosis. The cursor fence also guards this recovery.
     `UPDATE connector_connections
         SET cursor_json = ?1,
             last_sync_at = ?2,
-            error_json = CASE WHEN status = 'healthy' THEN ?6 ELSE error_json END,
+            error_json = CASE WHEN status = 'healthy' OR
+              (status = 'error' AND json_extract(error_json, '$.code') IN ('connector_poll_failed', 'connector_poll_timeout'))
+              THEN ?6 ELSE error_json END,
+            status = CASE WHEN status = 'error' AND
+              json_extract(error_json, '$.code') IN ('connector_poll_failed', 'connector_poll_timeout')
+              THEN 'healthy' ELSE status END,
             updated_at = ?2
       WHERE id = ?3
         AND workspace_id = ?4
