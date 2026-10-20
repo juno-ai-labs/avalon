@@ -691,6 +691,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const channelAppearance = rowAppearance ?? parent.data?.appearance ?? sharedParent?.appearance;
   const breakoutMarks = useMemo<BreakoutMark[] | undefined>(() => railChildren?.map((child) => ({
     substreamId: child.substreamId,
+    resolved: 'resolved' in child ? child.resolved : undefined,
     title: child.title,
     appearance: child.appearance,
     originTurnId: child.originTurnId ?? null,

@@ -53,6 +53,7 @@ export function workstreamSummaryState(workstream: WorkstreamSummary): {
       createdAt: workstream.createdAt,
       updatedAt: workstream.updatedAt,
       archivedAt: workstream.archivedAt,
+      ...(workstream.resolved ? { resolved: true } : {}),
       preview: workstream.preview,
       scope: workstream.scope,
       systemKind: workstream.systemKind,
@@ -169,6 +170,13 @@ function carriesFirstParticipation(
   return held !== undefined && held.isParticipant === undefined;
 }
 
+/** Resolution is Workspace-owned and sticky, independent of child projection versions. */
+function carriesResolution(queryClient: QueryClient, input: VersionedWorkstreamState, staleGeneration: boolean): boolean {
+  return input.visible && !staleGeneration && input.common.resolved === true
+    && queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)
+      ?.find((item) => item.id === input.workstreamId)?.resolved !== true;
+}
+
 /**
  * The one receiver for both WorkspaceDO and WorkstreamDO state sockets.
  *
@@ -213,7 +221,8 @@ export function applyVersionedWorkstreamState(
   if (!commonApplied && !viewerApplied && !canFillEmptyPile
     && !carriesNewPlacements(queryClient, input, staleGeneration === true)
     && !carriesNewBreakoutAttentionCount(queryClient, input, staleGeneration === true)
-    && !carriesFirstParticipation(queryClient, input, staleGeneration === true)) {
+    && !carriesFirstParticipation(queryClient, input, staleGeneration === true)
+    && !carriesResolution(queryClient, input, staleGeneration === true)) {
     return { commonApplied, viewerApplied, visible: current?.visible ?? input.visible };
   }
 
@@ -309,6 +318,9 @@ export function applyVersionedWorkstreamState(
     // Described, not created: it stays pending until its create answers. See
     // `keepPendingWorkstreams`.
     if (commonApplied && patched.pending) patched.pendingListed = true;
+    // A merge does not change the child's execution projection. Once resolved,
+    // an older page or a subsequent run must not reopen the conversation.
+    if (input.common.resolved === true) patched.resolved = true;
     // The other half of `carriesNewPlacements`: the row is here, so take the
     // placements off it even though the rest of the common half is not this
     // payload's to write.

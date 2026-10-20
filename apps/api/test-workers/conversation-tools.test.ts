@@ -44,7 +44,7 @@ import {
 } from "../src/services/workstream-runtime-database";
 import { deliverChildEffects, deliverEffectsToWorkspace } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { withHostedParent } from "./helpers/hosted-parent";
+import { listVisiblePrivateChildren, withHostedParent } from "./helpers/hosted-parent";
 import { applySidekick, sidekickWorkspace } from "./helpers/sidekick";
 import { post, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
@@ -695,6 +695,16 @@ describe("a Breakout's merge into its Thread", () => {
       links: [], pending: 0, runs: 0,
     });
     await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID));
+    const children = await listVisiblePrivateChildren(workspace(), { workspaceId: WORKSPACE_ID, parentId: ROOM_ID, userId: AUTHOR_ID });
+    expect(children.children.find((child) => child.substreamId === breakout)).toMatchObject({ resolved: true });
+    await workspace().setPrivateChildArchived({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
+      substreamId: breakout, actorUserId: AUTHOR_ID, archived: true });
+    expect((await listVisiblePrivateChildren(workspace(), { workspaceId: WORKSPACE_ID, parentId: ROOM_ID, userId: AUTHOR_ID }))
+      .children.some((child) => child.substreamId === breakout)).toBe(false);
+    await workspace().setPrivateChildArchived({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
+      substreamId: breakout, actorUserId: AUTHOR_ID, archived: false });
+    expect((await listVisiblePrivateChildren(workspace(), { workspaceId: WORKSPACE_ID, parentId: ROOM_ID, userId: AUTHOR_ID }))
+      .children.find((child) => child.substreamId === breakout)).toMatchObject({ resolved: true });
     // The merge message's activity event carries the source, so the Thread's
     // other people see a merged row; its author does not.
     const merged = async (userId: string) => {

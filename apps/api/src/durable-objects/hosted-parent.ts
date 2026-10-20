@@ -242,10 +242,10 @@ export function visiblePrivateChildren(
   const result = new Map<string, ListVisiblePrivateChildrenResult["children"]>();
   if (parentIds.length === 0) return result;
   const rows = sql.exec<{
-    parent_id: string; substream_id: string; title: string; effect_json: string | null; user_effect_json: string | null;
+    resolved: number; parent_id: string; substream_id: string; title: string; effect_json: string | null; user_effect_json: string | null;
     created_by_user_id: string; created_at: number; updated_at: number; origin_turn_id: string | null;
   }>(
-    `SELECT child.parent_id, child.substream_id, child.title, directory.effect_json,
+    `SELECT child.parent_id, child.substream_id, child.title, child.resolved, directory.effect_json,
             viewer.effect_json AS user_effect_json,
             child.created_by_user_id, child.created_at, child.updated_at,
             json_extract(preparation.request_json, '$.sourceThroughTurnId') AS origin_turn_id
@@ -270,6 +270,7 @@ export function visiblePrivateChildren(
     list.push({
       substreamId: asSubstreamId(child.substream_id),
       title: child.title,
+      ...(child.resolved === 1 ? { resolved: true } : {}),
       ...(child.effect_json
         ? (() => {
           const common = WorkstreamDirectoryCommonEffectSchema.parse(JSON.parse(child.effect_json));
@@ -799,6 +800,19 @@ export class HostedParent {
           );
         }
       } else if (forwards) {
+        if (substreamId === "0" && envelope.effect.kind === "activity_event"
+          && envelope.effect.eventType === "workstream_message_created") {
+          const mergedFrom = envelope.effect.metadata?.mergedFrom;
+          if (mergedFrom && typeof mergedFrom === "object" && "breakoutId" in mergedFrom
+            && typeof mergedFrom.breakoutId === "string") {
+            const resolved = this.sql.exec(
+              `UPDATE parent_children SET resolved = 1
+                WHERE parent_id = ? AND substream_id = ? AND resolved = 0 RETURNING substream_id`,
+              this.parentId, mergedFrom.breakoutId,
+            ).toArray();
+            if (resolved.length > 0) this.advancePrivateChildrenVersionsFor(mergedFrom.breakoutId, now);
+          }
+        }
         this.enqueueImmutable(substreamId, envelope, now);
       }
       this.recordChildReceipt(substreamId, envelope, now);

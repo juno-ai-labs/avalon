@@ -392,6 +392,7 @@ function mapConnection(connection: WireConnection): WorkstreamConnection {
 
 export function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSummary {
   return {
+    ...(workstream.resolved === undefined ? {} : { resolved: workstream.resolved }),
     id: workstream.id,
     title: workstream.title,
     titleStatus: workstream.titleStatus,
