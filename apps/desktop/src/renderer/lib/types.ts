@@ -130,6 +130,7 @@ export interface AutomationSummary {
 export type WorkstreamAutomationSummary = Omit<AutomationSummary, 'scope' | 'owningWorkstreamId' | 'owningThread'>;
 
 export interface WorkstreamSummary {
+  resolved?: boolean;
   appearance?: WorkstreamAppearance;
   id: string;
   /** Workspace-owned visit; undefined means legacy metadata, null means unvisited. */

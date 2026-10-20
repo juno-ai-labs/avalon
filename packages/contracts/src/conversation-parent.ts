@@ -222,6 +222,7 @@ export const ListVisiblePrivateChildrenRequestSchema = z.strictObject({
 });
 export const ListVisiblePrivateChildrenResultSchema = z.strictObject({
   children: z.array(z.strictObject({
+    resolved: z.boolean().optional(),
     substreamId: SubstreamIdSchema,
     title: z.string().min(1).max(500),
     appearance: WorkstreamAppearanceSchema.optional(),

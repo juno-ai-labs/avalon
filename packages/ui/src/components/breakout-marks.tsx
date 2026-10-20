@@ -10,6 +10,7 @@ import { statusLabel } from '../lib/format';
  * under the message it started from and to say whether it has news.
  */
 export interface BreakoutMark {
+  resolved?: boolean | undefined;
   substreamId: string;
   title: string;
   appearance?: WorkstreamAppearance | undefined;

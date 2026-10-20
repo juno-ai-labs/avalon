@@ -1,10 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { isUnknownSocketEvent, safeParseSocketEvent } from "./socket-events";
-import { CHANNEL_RAILS_NAMED_LIMIT, ClientSocketEventSchema, ClientSocketEventTypeSchema, WorkspaceSocketClientEventSchema, WorkspaceSocketClientEventTypeSchema } from "./index";
+import { WorkstreamPrivateChildSchema, CHANNEL_RAILS_NAMED_LIMIT, ClientSocketEventSchema, ClientSocketEventTypeSchema, WorkspaceSocketClientEventSchema, WorkspaceSocketClientEventTypeSchema } from "./index";
 
 describe("socket event compatibility", () => {
   const schema = z.strictObject({ type: z.literal("known"), rows: z.array(z.strictObject({ count: z.number() })) });
+  it("accepts resolved private children with an older strict schema by stripping the new flag", () => {
+    const child = { substreamId: "00000000-0000-4000-8000-000000000001", title: "Done",
+      createdByUserId: "00000000-0000-4000-8000-000000000002",
+      createdAt: "2026-10-20T00:00:00.000Z", updatedAt: "2026-10-20T00:00:00.000Z" };
+    const legacy = z.strictObject({ privateChildren: z.array(WorkstreamPrivateChildSchema.omit({ resolved: true })) });
+    expect(safeParseSocketEvent(legacy, { privateChildren: [{ ...child, resolved: true }] }))
+      .toEqual({ success: true, data: { privateChildren: [child] } });
+  });
+
   it("discards additive fields at every object depth without mutating the frame", () => {
     const frame = { type: "known", future: true, rows: [{ count: 2, extra: "new" }] };
     expect(safeParseSocketEvent(schema, frame)).toEqual({ success: true, data: { type: "known", rows: [{ count: 2 }] } });

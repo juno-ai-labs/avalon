@@ -392,6 +392,7 @@ function mapConnection(connection: WireConnection): WorkstreamConnection {
 
 export function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSummary {
   return {
+    ...(workstream.resolved === undefined ? {} : { resolved: workstream.resolved }),
     id: workstream.id,
     title: workstream.title,
     titleStatus: workstream.titleStatus,
@@ -1276,7 +1277,7 @@ export class RallyApi {
   }
 
   async getSharedNavigationDirectory(signal?: AbortSignal) {
-    return this.request('/sharing/navigation?attention=1&shell=1', { schema: SharedNavigationDirectorySchema, signal });
+    return this.request('/sharing/navigation?attention=1&shell=1&resolution=1', { schema: SharedNavigationDirectorySchema, signal });
   }
 
   /**
