@@ -175,7 +175,8 @@ async function unreadActivity(env: Env, workspaceId: string, userId: string): Pr
   }));
   // Thrown, not read as "nothing unread": an empty settle would hide why.
   if (!result.ok) throw new Error(`digest_activity_unreadable:${result.code}`);
-  return result.page.items.filter((item) => item.unread);
+  const mentions = new Set(result.page.items.filter((item) => item.kind === "mentioned").map((item) => `message:${item.id}`));
+  return result.page.items.filter((item) => item.unread && !(item.kind === "new_message" && mentions.has(item.id)));
 }
 
 /**
