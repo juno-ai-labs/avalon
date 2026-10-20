@@ -8871,19 +8871,13 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .conversation-card-body { align-items: flex-end; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .conversation-card-title { align-items: center; color: var(--av-sys-color-text-default); display: flex; font-size: 15.5px; font-weight: 650; gap: 6px; max-width: 100%; }
 .conversation-card-title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.conversation-card.is-resolved {
-  --resolved-card-ink: var(--av-ref-color-neutral-7);
-  --resolved-card-avatar-fill: var(--av-ref-color-neutral-5);
-}
-.conversation-card.is-resolved:is(:hover, :focus-visible) {
-  --resolved-card-ink: var(--av-sys-color-text-subtle);
-  --resolved-card-avatar-fill: var(--av-ref-color-neutral-3);
-}
-.conversation-card.is-resolved :is(.conversation-card-title, .conversation-card-summary, .conversation-card-meta, .avatar-fallback) { color: var(--resolved-card-ink); }
-.conversation-card.is-resolved .avatar:not(.avatar-rally) { background: var(--resolved-card-avatar-fill); }
-.conversation-card.is-resolved:is(:hover, :focus-visible) .avatar-rally { background: var(--resolved-card-avatar-fill); }
-.conversation-card.is-resolved .personal-avatar svg:has(text) { fill: var(--resolved-card-avatar-fill); }
-.conversation-card.is-resolved .personal-avatar text { fill: var(--resolved-card-ink); }
+.conversation-card.is-resolved :is(.conversation-card-title, .conversation-card-summary, .conversation-card-meta, .avatar-fallback) { color: var(--av-ref-color-neutral-7); }
+.conversation-card.is-resolved .personal-avatar svg:has(text) { fill: var(--av-ref-color-neutral-5); }
+.conversation-card.is-resolved .personal-avatar text { fill: var(--av-ref-color-neutral-7); }
+.conversation-card.is-resolved:is(:hover, :focus-visible) :is(.conversation-card-title, .conversation-card-summary, .conversation-card-meta, .avatar-fallback, .conversation-card-resolved) { color: var(--av-sys-color-text-subtle); }
+.conversation-card.is-resolved:is(:hover, :focus-visible) .avatar { background: var(--av-ref-color-neutral-3); }
+.conversation-card.is-resolved:is(:hover, :focus-visible) .personal-avatar svg:has(text) { fill: var(--av-ref-color-neutral-3); }
+.conversation-card.is-resolved:is(:hover, :focus-visible) .personal-avatar text { fill: var(--av-sys-color-text-subtle); }
 .conversation-card.is-resolved .conversation-card-title { font-size: 14px; font-weight: 400; }
 .conversation-card.is-resolved .conversation-card-summary { -webkit-line-clamp: 1; font-size: 12.5px; }
 .conversation-card.is-resolved .conversation-card-meta { font-size: 11px; }
@@ -8893,7 +8887,7 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .conversation-card-resolved {
   background: var(--av-ref-color-neutral-3);
   border-radius: var(--av-sys-size-radius-pill);
-  color: var(--resolved-card-ink);
+  color: var(--av-ref-color-neutral-7);
   flex: none;
   font-size: 10px;
   font-weight: 400;
