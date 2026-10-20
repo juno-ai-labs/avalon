@@ -284,6 +284,7 @@ const bridge: RallyDesktopBridge = {
   stopPickingArtifactPreview: () => ipcRenderer.invoke('artifact:stop-picking-preview') as Promise<void>,
   snapshotArtifactPreview: () => ipcRenderer.invoke('artifact:snapshot-preview') as Promise<string | null>,
   closeArtifactPreview: () => ipcRenderer.invoke('artifact:close-preview') as Promise<void>,
+  artifactWindowAction: (action) => ipcRenderer.invoke('artifact:window-action', action) as Promise<unknown>,
   readArtifactWindow: () => ipcRenderer.invoke('artifact:read-window') as ReturnType<NonNullable<RallyDesktopBridge['readArtifactWindow']>>,
   registerAnnotationComposer: (scope, active) => ipcRenderer.invoke('artifact:register-composer', scope, active) as Promise<void>,
   returnArtifactAnnotations: (pins) => ipcRenderer.invoke('artifact:return-annotations', pins) as Promise<boolean>,

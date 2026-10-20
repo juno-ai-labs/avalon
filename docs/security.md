@@ -112,6 +112,14 @@ same as desktop.
   string with no scripting, no session, and no network of its own. That balance
   holds only while the window stays this small: give it any further UI and its
   privileges should be narrowed to the channels it actually uses first.
+- Detached artifact renderers remain outside the trusted-window sender set.
+  `artifact:window-action` admits only a registered detached renderer and maps a
+  strict operation union to the resource in main's window record. Rename,
+  Archive, pinning and navigation-link coordinates derive their thread from
+  that record's Main annotation scope; the server still authorizes each route.
+  Read/content/version/site-data operations cannot name another resource or an
+  arbitrary API path. Credentials stay in main, which checks session ownership
+  again after asynchronous work and uses fresh site access for external opens.
 - App-window navigation and popup creation are denied by default; Rally's own
   OAuth opens in the system browser. The embedded browser's isolated web
   contents handle website links and redirects within their own session, with
@@ -1115,6 +1123,24 @@ Canonical target read/version checks precede message admission. See
 [artifact annotations](artifact-annotations.md) for the protocol and failure modes.
 
 ## Changelog
+
+### 2026-10-19 — Confine detached artifact menu operations to their window
+
+**What changed:** Detached windows can read and act on their own resource through
+`artifact:window-action`; they remain outside the shared trusted sender set.
+Main derives the resource and Main-thread context from its window record,
+validates a strict action union, keeps credentials private, and checks the
+session again after asynchronous work. Schema failures retain safe field codes.
+
+**Why:** Sharing the panel menu with a pop-out requires rename, archive, pins,
+versions, and fresh website navigation. Granting the detached renderer the full
+session bridge or arbitrary API transport would make those narrow actions a
+capability to operate on unrelated resources.
+
+**Consequences:** Keep the operation list explicit and retain route-level server
+authorization. A new menu action needs a confined operation rather than adding
+the window to `assertTrustedIpcSender`.
+
 
 ### 2026-10-19 — Isolate annotation picking from resource scripts
 
