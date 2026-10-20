@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const api = vi.hoisted(() => ({
   recordActivityEvents: vi.fn(async () => undefined),
   renameSubstream: vi.fn(),
+  resolveConversation: vi.fn(),
   setSubstreamArchived: vi.fn(),
   renameWorkstream: vi.fn(),
   archiveWorkstream: vi.fn(),
@@ -185,6 +186,7 @@ function renderScreen(seed?: (queryClient: QueryClient) => void, substreamId?: s
           <NavigationProbe />
           <Routes>
             <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
+            <Route element={<div>Parent channel</div>} path="/channels/:channelId" />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>
@@ -1013,6 +1015,44 @@ describe('socket-first channel open', () => {
     act(() => patchCachedWorkstreamAppearance(client, workstreamId, { icon: 'heart', color: 'blue' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Change Recovered channel icon' })
       .querySelector('.lucide-heart')).not.toBeNull());
+  });
+
+  it.each(['0', '00000000-0000-7000-8000-000000000660'])('resolves %s before returning to its parent', async (childId) => {
+    const channelId = '00000000-0000-7000-8000-000000000663';
+    const parent = recoveryBoot({ spaceIds: [channelId] });
+    const child = recoveryBoot({ title: 'Private child' });
+    let finish!: () => void;
+    api.resolveConversation.mockReturnValue(new Promise<void>((resolve) => { finish = resolve; }));
+    renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], parent);
+      cache.setQueryData(['ordered-transcript', workstreamId], parent.transcript);
+      cache.setQueryData(['substream-workstream', workstreamId, childId], child);
+      cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
+    }, childId);
+    const label = childId === '0' ? 'Thread menu: Recovered channel' : 'Breakout menu: Private child';
+    await titleMenu(label, childId === '0' ? 'Resolve Thread' : 'Resolve Breakout');
+    expect(api.resolveConversation).toHaveBeenCalledWith(workstreamId, childId);
+    expect(locationInTest.pathname).toBe(`/workstreams/${workstreamId}`);
+    expect(locationInTest.search).toBe(`?substream=${childId}`);
+    await act(async () => { finish(); });
+    await waitFor(() => {
+      expect(locationInTest.pathname).toBe(childId === '0' ? `/channels/${channelId}` : `/workstreams/${workstreamId}`);
+      expect(locationInTest.search).toBe('');
+    });
+    expect(api.archiveWorkstream).not.toHaveBeenCalled();
+    expect(api.setSubstreamArchived).not.toHaveBeenCalled();
+  });
+
+  it('stays in the conversation when resolution fails', async () => {
+    const parent = recoveryBoot({ spaceIds: ['00000000-0000-7000-8000-000000000663'] });
+    api.resolveConversation.mockRejectedValue(new Error('offline'));
+    renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], parent);
+      cache.setQueryData(['ordered-transcript', workstreamId], parent.transcript);
+    });
+    await titleMenu('Thread menu: Recovered channel', 'Resolve Thread');
+    expect(await screen.findByText('The thread couldn’t be resolved. Try again.')).toBeInTheDocument();
+    expect(locationInTest.pathname).toBe(`/workstreams/${workstreamId}`);
   });
 
   it('manages the selected breakout roster without changing parent participants', async () => {
