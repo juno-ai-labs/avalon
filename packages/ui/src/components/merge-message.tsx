@@ -89,11 +89,12 @@ export function MergedIntoDivider({ byRally = false, id, mergedBy, onOpen, targe
 }): React.JSX.Element {
   const content = <>
     <IconCornerUpLeft aria-hidden="true" size={13} stroke={1.9} />
-    <span>{byRally ? 'Rally merged this into' : mergedBy ? `${mergedBy} merged this into` : 'Merged into'}</span>
-    <span className="merged-into-target">{target}</span>
-    {byRally && mergedBy && <span>for {mergedBy}</span>}
-    <span aria-hidden="true">·</span>
-    {time}
+    <span className="merged-into-text">
+      {byRally ? 'Rally merged this into' : mergedBy ? `${mergedBy} merged this into` : 'Merged into'}{' '}
+      <span className="merged-into-target">{target}</span>
+      {byRally && mergedBy && <> for {mergedBy}</>}{' '}
+      <span className="merged-into-time"><span aria-hidden="true">·</span>{' '}{time}</span>
+    </span>
   </>;
   return (
     // No separator role: a separator's children are presentational, which
