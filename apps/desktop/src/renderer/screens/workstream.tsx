@@ -73,7 +73,7 @@ import { channelRoute, revealChannelMessageState, useChannelPane, usePaneExpansi
 import { expandToggle } from '../components/pane-expand-toggle';
 import { usePinAction, usePinnedIds } from '../lib/pins';
 import { spaceFailureSentence } from '../lib/space-failure-copy';
-import { normalizeHarnessStatus } from '../lib/api';
+import { ApiError, normalizeHarnessStatus } from '../lib/api';
 
 type RailAttentionProjection = {
   harnessStatus?: HarnessStatus;
@@ -401,8 +401,10 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       return next;
     }, { replace: true });
   }, [firstListedSubstreamId, selectedSubstreamId, setSearchParams]);
-  const routeRef = useRef({ id, selectedSubstreamId, visit: 0 });
-  routeRef.current = { id, selectedSubstreamId, visit: routeRef.current.visit + Number(routeRef.current.id !== id || routeRef.current.selectedSubstreamId !== selectedSubstreamId) };
+  const routeRef = useRef({ id, selectedSubstreamId, routeKey: location.key, visit: 0 });
+  routeRef.current = { id, selectedSubstreamId, routeKey: location.key,
+    visit: routeRef.current.visit + Number(routeRef.current.routeKey !== location.key) };
+  useEffect(() => () => { routeRef.current.visit += 1; }, []);
   const reportParentAction = (workstream: WorkstreamSummary, action: 'rename' | 'archive' | 'make_public' | 'make_private'): void => {
     reportTelemetryProductIntent({
       kind: 'workstream_action_completed', workstreamId: workstream.id, action,
@@ -528,9 +530,9 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     // Only when the work stream itself changed. Selecting another conversation
     // inside it is how the launch surface is left, and that already clears it.
     if (creationRef.current && creationRef.current.parentId !== id) resetCreation();
-    // Selecting another conversation inside the same work stream still closes
-    // a row's dialogs, which is why this watches the substream as well.
-  }, [id, selectedSubstreamId]);
+    // A new navigation, including the same Thread under another Channel,
+    // owns new dialogs and pending state even if the conversation id is unchanged.
+  }, [id, selectedSubstreamId, location.key]);
   /**
    * Create the substream the launch surface is holding, and send its first
    * message.
@@ -831,27 +833,37 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     try {
       await api.resolveConversation(parentId, target.substreamId);
       if (routeRef.current.id !== parentId || routeRef.current.visit !== visit) return;
-      if (target.substreamId !== '0') openThreadAlone();
+      if (target.substreamId !== '0') { if (mainVisible) openThreadAlone(); }
       else {
         const channelId = channelPane?.channelId ?? linkSpaceId;
         if (channelId) void navigate(channelRoute(channelId));
       }
-    } catch {
+    } catch (error) {
       if (routeRef.current.id === parentId && routeRef.current.visit === visit) {
         const noun = target.substreamId === '0' ? 'thread' : 'breakout';
-        setSubstreamMenuFailure({ title: `The ${noun} couldn’t be resolved`, copy: `The ${noun} couldn’t be resolved. Try again.` });
+        const copy = error instanceof ApiError && error.code === 'substream_archived'
+          ? 'Restore this conversation before resolving it.'
+          : error instanceof ApiError && error.status === 403 ? 'You no longer have access to resolve this conversation.'
+            : error instanceof ApiError && error.status === 404 ? 'This conversation is no longer available.'
+              : `The ${noun} couldn’t be resolved. Try again.`;
+        setSubstreamMenuFailure({ title: `The ${noun} couldn’t be resolved`, copy });
       }
     } finally {
       if (routeRef.current.id === parentId && routeRef.current.visit === visit) setSubstreamPending(false);
     }
   };
+  const threadResolved = row?.resolved ?? directoryEntry?.conversations.find((item) => item.substreamId === '0')?.resolved;
+  const threadArchived = Boolean(parent.data?.archivedAt || row?.archivedAt || directoryEntry?.archived);
+  const breakoutResolved = railChildren?.find((child) => child.substreamId === openBreakoutId)?.resolved;
+  const breakoutArchived = Boolean(openChild.data?.archivedAt
+    || directoryEntry?.conversations.find((item) => item.substreamId === openBreakoutId)?.archived);
   const mainActions = (conversationScoped ? mainVisible : parent.data) ? {
     merge: threadMerge ? {
       label: mergeLabel(threadMerge),
       target: threadMerge.kind === 'channel' && threadMerge.channels.length > 1 ? `${threadMerge.channels.length} Channels` : 'Channel',
       onSelect: () => setMergeRequest({ substreamId: '0', nonce: Date.now() }),
     } : undefined,
-    onResolve: !guest && !(row?.resolved ?? directoryEntry?.conversations.find((item) => item.substreamId === '0')?.resolved) && !conversationScoped ? (target: ConversationRowTarget) => { void resolve(target); } : undefined,
+    onResolve: !threadResolved && !threadArchived && !conversationScoped ? (target: ConversationRowTarget) => { void resolve(target); } : undefined,
     resolveDisabled: substreamPending,
     isPublic: parent.data?.scope === 'workspace',
     onSetPublic: !channelWritable || parent.data?.systemKind ? undefined : setPublic,
@@ -861,7 +873,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     onArchive: !channelWritable ? undefined : (target: ConversationRowTarget) => { ++menuOperation.current; setArchiveTarget({ ...target, parentId: id }); setSubstreamMenuFailure(null); },
   } : undefined;
   const substreamActions = {
-    onResolve: !guest && !railChildren?.find((child) => child.substreamId === openBreakoutId)?.resolved
+    onResolve: !breakoutResolved && !breakoutArchived && !threadArchived
       ? (target: ConversationRowTarget) => { void resolve(target); } : undefined,
     resolveDisabled: substreamPending,
     // The Breakout's pane merges only when it has its Thread to merge into,

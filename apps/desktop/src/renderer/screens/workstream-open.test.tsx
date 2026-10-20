@@ -172,7 +172,7 @@ const liveVersion = {
 
 function NavigationProbe(): null { navigateInTest = useNavigate(); locationInTest = useLocation(); return null; }
 
-function renderScreen(seed?: (queryClient: QueryClient) => void, substreamId?: string, restored = false): QueryClient {
+function renderScreen(seed?: (queryClient: QueryClient) => void, substreamId?: string, restored = false, initialPath = `/workstreams/${workstreamId}`): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
@@ -180,13 +180,15 @@ function renderScreen(seed?: (queryClient: QueryClient) => void, substreamId?: s
   render(
     <Tooltip.Provider>
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={[{ pathname: `/workstreams/${workstreamId}`,
+        <MemoryRouter initialEntries={[{ pathname: initialPath,
           search: substreamId ? `?substream=${substreamId}` : '',
           state: restored ? { restoredBreakout: substreamId } : null }]}>
           <NavigationProbe />
           <Routes>
             <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
             <Route element={<div>Parent channel</div>} path="/channels/:channelId" />
+            <Route element={<WorkstreamScreen />} path="/channels/:channelId/threads/:id" />
+            <Route element={<div>Settings</div>} path="/settings" />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>
@@ -1041,6 +1043,89 @@ describe('socket-first channel open', () => {
     });
     expect(api.archiveWorkstream).not.toHaveBeenCalled();
     expect(api.setSubstreamArchived).not.toHaveBeenCalled();
+  });
+
+  it.each(['unmount', 'channel change'])('ignores a late resolution after %s', async (change) => {
+    const channelA = '00000000-0000-7000-8000-000000000663';
+    const channelB = '00000000-0000-7000-8000-000000000664';
+    const parent = recoveryBoot({ spaceIds: [channelA, channelB] });
+    let finish!: () => void;
+    api.resolveConversation.mockReturnValue(new Promise<void>((resolve) => { finish = resolve; }));
+    renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], parent);
+      cache.setQueryData(['ordered-transcript', workstreamId], parent.transcript);
+    }, undefined, false, `/channels/${channelA}/threads/${workstreamId}`);
+    await titleMenu('Thread menu: Recovered channel', 'Resolve Thread');
+    const destination = change === 'unmount' ? '/settings' : `/channels/${channelB}/threads/${workstreamId}`;
+    await act(async () => { await navigateInTest(destination); });
+    await act(async () => { finish(); });
+    expect(locationInTest.pathname).toBe(destination);
+    if (change === 'channel change') {
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Thread menu: Recovered channel' }), { button: 0, ctrlKey: false });
+      expect(await screen.findByRole('menuitem', { name: 'Resolve Thread' })).not.toHaveAttribute('aria-disabled', 'true');
+    }
+  });
+
+  it.each(['member', 'guest'])('keeps a child-only %s on the resolved non-first Breakout', async (accessClass) => {
+    const childId = '00000000-0000-7000-8000-000000000660';
+    const firstId = '00000000-0000-7000-8000-000000000659';
+    session.current = { user: { id: 'viewer', name: 'Viewer' }, workspace: { id: 'workspace', accessClass } };
+    const child = recoveryBoot({ title: 'Private child' });
+    api.resolveConversation.mockResolvedValue(undefined);
+    renderScreen((cache) => {
+      cache.setQueryData(['shared-navigation', undefined], { spaces: [], workstreams: [{ parentId: workstreamId,
+        title: 'Parent', scope: 'personal', conversations: [firstId, childId].map((substreamId) => ({
+          substreamId, title: 'Private child', scope: 'personal', archived: false,
+        })),
+      }] });
+      cache.setQueryData(['substream-workstream', workstreamId, childId], child);
+      cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
+    }, childId);
+    await titleMenu('Breakout menu: Private child', 'Resolve Breakout');
+    await waitFor(() => expect(api.resolveConversation).toHaveBeenCalledWith(workstreamId, childId));
+    expect(locationInTest.search).toBe(`?substream=${childId}`);
+  });
+
+  it('offers Resolve Thread to an admitted guest', async () => {
+    session.current = { user: { id: 'viewer', name: 'Viewer' }, workspace: { id: 'workspace', accessClass: 'guest' } };
+    const parent = recoveryBoot();
+    api.resolveConversation.mockResolvedValue(undefined);
+    renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], parent);
+      cache.setQueryData(['ordered-transcript', workstreamId], parent.transcript);
+    });
+    await titleMenu('Thread menu: Recovered channel', 'Resolve Thread');
+    await waitFor(() => expect(api.resolveConversation).toHaveBeenCalledWith(workstreamId, '0'));
+  });
+
+  it.each(['0', '00000000-0000-7000-8000-000000000660'])('hides Resolve for archived conversation %s', async (childId) => {
+    const parent = recoveryBoot(childId === '0' ? { archivedAt: '2026-10-20T00:00:00Z' } : {});
+    const child = recoveryBoot({ title: 'Private child', archivedAt: '2026-10-20T00:00:00Z' });
+    renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], parent);
+      cache.setQueryData(['ordered-transcript', workstreamId], parent.transcript);
+      cache.setQueryData(['substream-workstream', workstreamId, childId], child);
+      cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
+    }, childId);
+    fireEvent.pointerDown(await screen.findByRole('button', { name: childId === '0' ? 'Thread menu: Recovered channel' : 'Breakout menu: Private child' }), { button: 0, ctrlKey: false });
+    await screen.findByRole('menuitem', { name: /^People/u });
+    expect(screen.queryByRole('menuitem', { name: /^Resolve /u })).toBeNull();
+  });
+
+  it.each([
+    [409, 'substream_archived', 'Restore this conversation before resolving it.'],
+    [403, 'conversation_participant_required', 'You no longer have access to resolve this conversation.'],
+    [404, 'substream_not_found', 'This conversation is no longer available.'],
+  ] as const)('explains resolution refusal %s', async (status, code, message) => {
+    const parent = recoveryBoot();
+    api.resolveConversation.mockRejectedValue(new ApiError('server refusal', status, code));
+    renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], parent);
+      cache.setQueryData(['ordered-transcript', workstreamId], parent.transcript);
+    });
+    await titleMenu('Thread menu: Recovered channel', 'Resolve Thread');
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    expect(locationInTest.pathname).toBe(`/workstreams/${workstreamId}`);
   });
 
   it('stays in the conversation when resolution fails', async () => {

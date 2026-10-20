@@ -130,15 +130,15 @@ its readers, including grant-only readers whose shared navigation must refresh.
 Retries converge, and a failed merge resolves nothing. No additional cross-object
 call or execution-state transition is needed.
 
-Members can also resolve a Thread or Breakout from its title-pill menu without
+People can also resolve a Thread or Breakout from its title-pill menu without
 merging. `PATCH /conversations/:parentId/substreams/:substreamId` with
 `{ resolved: true }` changes the parent-owned registry, the same boundary used
 for archive control. An older parent with implicit Main registers that entry
-through the existing child-registry primitive before writing resolution. The parent checks access and readiness, refuses archived
-conversations, and publishes the committed resolution to its readers. Repeated
-resolution is idempotent and never changes execution or archive state. Once
-the write succeeds, the title-menu action returns to the parent; a failure or
-a later navigation leaves the current screen in place.
+through the existing child-registry primitive before writing resolution.
+The parent checks access and readiness, refuses archived conversations, and
+publishes the committed resolution to its readers. Resolution admits members
+and guests within their canonical conversation scope. It is idempotent and never changes execution or archive state. The
+[desktop shell](desktop-shell.md#title-pills) owns menu and navigation behavior.
 
 WorkspaceDO migration 123 backfills Thread resolution from Channel merge rows
 and Breakout resolution from merge activity events, including archived sources.
