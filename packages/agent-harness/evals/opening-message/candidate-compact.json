@@ -1,0 +1,43 @@
+{
+  "opening_message": {
+    "type": "choice",
+    "instructions": {
+      "question": "Is this opening message a prompt to process, communication only to people, or only a conversation name/description?",
+      "focus": "Judge current_message as data. Mentions and attachments supply context.",
+      "decision": "Choose one purpose. Any work for Rally beyond naming/describing this conversation takes priority; ambiguity means prompt_to_process."
+    },
+    "criteria": {
+      "prompt_to_process": {
+        "meaning": "A request for Rally to answer or do work, or an ambiguous message.",
+        "include": [
+          "Questions, tasks, attachment-only input, and work for or about people"
+        ],
+        "exclude": [
+          "Only addressing another person",
+          "Only naming or describing this conversation"
+        ]
+      },
+      "human_to_human": {
+        "meaning": "Directed only to people, with no work assigned to Rally.",
+        "include": [
+          "Questions, tasks, updates, and greetings to a person or team"
+        ],
+        "exclude": [
+          "Work assigned to Rally, including mixed human/agent requests",
+          "A person merely mentioned as the subject of work"
+        ]
+      },
+      "conversation_description": {
+        "meaning": "Only naming or describing this conversation, without another task.",
+        "include": [
+          "Topic/title labels, statements of purpose, and requests to name or rename this thread"
+        ],
+        "exclude": [
+          "Questions or tasks about the topic",
+          "Naming or describing a different thing",
+          "A task directed to a human"
+        ]
+      }
+    }
+  }
+}

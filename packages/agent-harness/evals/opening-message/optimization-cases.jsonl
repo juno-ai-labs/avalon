@@ -1,0 +1,88 @@
+{"id": "development-001", "split": "development", "message": "Draft a launch checklist.", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "development-002", "split": "development", "message": "How should we price the new plan?", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "development-003", "split": "development", "message": "Help me", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "development-004", "split": "development", "message": "Review the attached proposal.", "expected": "prompt_to_process", "attachmentCount": 1}
+{"id": "development-005", "split": "development", "message": "Send Alex a summary of the launch plan.", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "development-006", "split": "development", "message": "Write a description of our analytics product.", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "development-007", "split": "development", "message": "Launch planning. Please draft milestones.", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "development-008", "split": "development", "message": "Alex, check the deck; Rally, summarize the risks.", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "development-009", "split": "development", "message": "Can you make this clearer?", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "development-010", "split": "development", "message": "Find the incident report in Slack.", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "development-011", "split": "development", "message": "Tell me what \u201cLaunch planning\u201d means.", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "development-012", "split": "development", "message": "Please generate a title and three alternative descriptions for our product brochure.", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "development-013", "split": "development", "message": "I need help preparing for a conversation with Alex.", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "development-014", "split": "development", "message": "Investigate why checkout fails.", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "development-015", "split": "development", "message": "What should we name this project?", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "development-016", "split": "development", "message": "Translate \u201cWeekly planning\u201d into French.", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "development-017", "split": "development", "message": "Alex, can you review the deck?", "expected": "human_to_human", "attachmentCount": 0}
+{"id": "development-018", "split": "development", "message": "Sam, I will send you the draft tomorrow.", "expected": "human_to_human", "attachmentCount": 0}
+{"id": "development-019", "split": "development", "message": "Team, please add your availability below.", "expected": "human_to_human", "attachmentCount": 0}
+{"id": "development-020", "split": "development", "message": "Hey Maya, are you free at three?", "expected": "human_to_human", "attachmentCount": 0}
+{"id": "development-021", "split": "development", "message": "Alex and Sam, use this thread to coordinate your handoff.", "expected": "human_to_human", "attachmentCount": 0}
+{"id": "development-022", "split": "development", "message": "Thanks for the review, Priya!", "expected": "human_to_human", "attachmentCount": 0}
+{"id": "development-023", "split": "development", "message": "Ben, please name this conversation after the customer.", "expected": "human_to_human", "attachmentCount": 0}
+{"id": "development-024", "split": "development", "message": "Everyone, the deploy is finished.", "expected": "human_to_human", "attachmentCount": 0}
+{"id": "development-025", "split": "development", "message": "@Alex please review the attached budget.", "expected": "human_to_human", "attachmentCount": 1}
+{"id": "development-026", "split": "development", "message": "Maya, can you ask Rally to summarize this later?", "expected": "human_to_human", "attachmentCount": 0}
+{"id": "development-027", "split": "development", "message": "Alex, I disagree with your proposed timeline.", "expected": "human_to_human", "attachmentCount": 0}
+{"id": "development-028", "split": "development", "message": "Team, what do you think of the revised launch date?", "expected": "human_to_human", "attachmentCount": 0}
+{"id": "development-029", "split": "development", "message": "Launch planning", "expected": "conversation_description", "attachmentCount": 0}
+{"id": "development-030", "split": "development", "message": "Weekly engineering sync", "expected": "conversation_description", "attachmentCount": 0}
+{"id": "development-031", "split": "development", "message": "This thread is for discussing the mobile redesign.", "expected": "conversation_description", "attachmentCount": 0}
+{"id": "development-032", "split": "development", "message": "Call this thread Q4 planning.", "expected": "conversation_description", "attachmentCount": 0}
+{"id": "development-033", "split": "development", "message": "Name this breakout API reliability.", "expected": "conversation_description", "attachmentCount": 0}
+{"id": "development-034", "split": "development", "message": "This is where we will coordinate the migration.", "expected": "conversation_description", "attachmentCount": 0}
+{"id": "development-035", "split": "development", "message": "Description: Planning next quarter\u2019s launch.", "expected": "conversation_description", "attachmentCount": 0}
+{"id": "development-036", "split": "development", "message": "Customer onboarding \u2014 notes and discussion", "expected": "conversation_description", "attachmentCount": 0}
+{"id": "development-037", "split": "development", "message": "A place for Alex and me to coordinate the offsite.", "expected": "conversation_description", "attachmentCount": 0}
+{"id": "development-038", "split": "development", "message": "Title: Why checkout fails", "expected": "conversation_description", "attachmentCount": 0}
+{"id": "development-039", "split": "development", "message": "Discussing our pricing strategy", "expected": "conversation_description", "attachmentCount": 0}
+{"id": "development-040", "split": "development", "message": "Use this conversation for release notes.", "expected": "conversation_description", "attachmentCount": 0}
+{"id": "dev-file-only", "split": "development", "message": "", "attachmentCount": 1, "expected": "prompt_to_process"}
+{"id": "dev-mention-subject", "split": "development", "message": "Draft a briefing for Alex.", "humanMentions": ["Alex"], "expected": "prompt_to_process"}
+{"id": "dev-mention-directed", "split": "development", "message": "Alex, please send the slides.", "humanMentions": ["Alex"], "expected": "human_to_human"}
+{"id": "dev-gibberish", "split": "development", "message": "asdkj?", "expected": "prompt_to_process"}
+{"id": "holdout-041", "split": "holdout", "message": "Build a spreadsheet of open support cases.", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "holdout-042", "split": "holdout", "message": "Summarize the attached file for Jordan.", "expected": "prompt_to_process", "attachmentCount": 1}
+{"id": "holdout-043", "split": "holdout", "message": "How can we reduce response times?", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "holdout-044", "split": "holdout", "message": "Write a message to Taylor asking for an update.", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "holdout-045", "split": "holdout", "message": "Please describe how our payment pipeline works.", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "holdout-046", "split": "holdout", "message": "Budget review: compare actuals against forecast.", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "holdout-047", "split": "holdout", "message": "Rally, draft the agenda, and Jordan, bring your notes.", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "holdout-048", "split": "holdout", "message": "Fix this", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "holdout-049", "split": "holdout", "message": "Give this conversation a name and then analyze the outage.", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "holdout-050", "split": "holdout", "message": "Suggest a good name for our startup.", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "holdout-051", "split": "holdout", "message": "Explain the phrase \u201cHuman resources\u201d.", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "holdout-052", "split": "holdout", "message": "Make a diagram of the conversation routing system.", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "holdout-053", "split": "holdout", "message": "I want a plan for migrating our database.", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "holdout-054", "split": "holdout", "message": "Which of these designs is better?", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "holdout-055", "split": "holdout", "message": "@Jordan is the owner. Find their most recent status update.", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "holdout-056", "split": "holdout", "message": "Turn these notes into a project brief.", "expected": "prompt_to_process", "attachmentCount": 0}
+{"id": "holdout-057", "split": "holdout", "message": "Jordan, could you share the latest forecast?", "expected": "human_to_human", "attachmentCount": 0}
+{"id": "holdout-058", "split": "holdout", "message": "Hi Taylor, thanks for joining.", "expected": "human_to_human", "attachmentCount": 0}
+{"id": "holdout-059", "split": "holdout", "message": "Folks, I moved our meeting to Thursday.", "expected": "human_to_human", "attachmentCount": 0}
+{"id": "holdout-060", "split": "holdout", "message": "Chris, please take ownership of this ticket.", "expected": "human_to_human", "attachmentCount": 0}
+{"id": "holdout-061", "split": "holdout", "message": "You and I should align on the budget, Morgan.", "expected": "human_to_human", "attachmentCount": 0}
+{"id": "holdout-062", "split": "holdout", "message": "Nina, the file you requested is attached.", "expected": "human_to_human", "attachmentCount": 1}
+{"id": "holdout-063", "split": "holdout", "message": "Jordan, what do you think we should call this thread?", "expected": "human_to_human", "attachmentCount": 0}
+{"id": "holdout-064", "split": "holdout", "message": "Design team, leave your feedback here.", "expected": "human_to_human", "attachmentCount": 0}
+{"id": "holdout-065", "split": "holdout", "message": "Chris, Rally already checked the figures; can you approve them?", "expected": "human_to_human", "attachmentCount": 0}
+{"id": "holdout-066", "split": "holdout", "message": "Taylor, let me know when you are done.", "expected": "human_to_human", "attachmentCount": 0}
+{"id": "holdout-067", "split": "holdout", "message": "Morgan, can you ask the assistant to write this?", "expected": "human_to_human", "attachmentCount": 0}
+{"id": "holdout-068", "split": "holdout", "message": "Hello team, welcome to our planning session.", "expected": "human_to_human", "attachmentCount": 0}
+{"id": "holdout-069", "split": "holdout", "message": "Support escalation process", "expected": "conversation_description", "attachmentCount": 0}
+{"id": "holdout-070", "split": "holdout", "message": "Database migration coordination", "expected": "conversation_description", "attachmentCount": 0}
+{"id": "holdout-071", "split": "holdout", "message": "This breakout tracks our hiring discussions.", "expected": "conversation_description", "attachmentCount": 0}
+{"id": "holdout-072", "split": "holdout", "message": "Please call this conversation Incident follow-up.", "expected": "conversation_description", "attachmentCount": 0}
+{"id": "holdout-073", "split": "holdout", "message": "Rename this thread to Website accessibility.", "expected": "conversation_description", "attachmentCount": 0}
+{"id": "holdout-074", "split": "holdout", "message": "Description: A shared place to discuss vendor selection.", "expected": "conversation_description", "attachmentCount": 0}
+{"id": "holdout-075", "split": "holdout", "message": "This chat will be about the September offsite.", "expected": "conversation_description", "attachmentCount": 0}
+{"id": "holdout-076", "split": "holdout", "message": "Quarterly budget review \u2014 Finance and Operations", "expected": "conversation_description", "attachmentCount": 0}
+{"id": "holdout-077", "split": "holdout", "message": "Jordan and Taylor\u2019s handoff discussion", "expected": "conversation_description", "attachmentCount": 0}
+{"id": "holdout-078", "split": "holdout", "message": "Thread title: Can we ship on Friday?", "expected": "conversation_description", "attachmentCount": 0}
+{"id": "holdout-079", "split": "holdout", "message": "Our space to collect ideas for the homepage.", "expected": "conversation_description", "attachmentCount": 0}
+{"id": "holdout-080", "split": "holdout", "message": "This conversation is for security incident retrospectives.", "expected": "conversation_description", "attachmentCount": 0}
+{"id": "holdout-file-only", "split": "holdout", "message": "", "attachmentCount": 2, "expected": "prompt_to_process"}
+{"id": "holdout-mention-subject", "split": "holdout", "message": "Summarize Priya\u2019s notes.", "humanMentions": ["Priya"], "expected": "prompt_to_process"}
+{"id": "holdout-mention-directed", "split": "holdout", "message": "Priya, please share your notes.", "humanMentions": ["Priya"], "expected": "human_to_human"}
+{"id": "holdout-fragment", "split": "holdout", "message": "could you", "expected": "prompt_to_process"}
