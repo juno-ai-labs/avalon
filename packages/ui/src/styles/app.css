@@ -9220,3 +9220,12 @@ button.merged-into-label:hover { color: var(--av-sys-color-text-default); }
 .attachment-lightbox-content.is-html .annotation-body { flex:1; min-height:0; }
 .attachment-lightbox-content.is-html .annotation-body iframe { min-height:0; }
 .annotation-surface.attachment-lightbox-text .annotation-sheet { white-space:normal; }
+
+/* History belongs to the leftmost visible header, before its breadcrumb. */
+.title-pill-leading { display: flex; flex: none; margin-right: 6px; }
+.navigation-history .mark-bridge-outline { display: none; }
+.navigation-history .mark-bridge-icon { height: 18px; width: 18px; }
+.navigation-history button:disabled { cursor: default; opacity: .35; }
+.navigation-history button:disabled:hover { background: transparent; }
+.split-conversation-pane.is-breakout:not(.is-alone) .title-pill-leading,
+.workspace-shell:not(.rail-expanded):not(.rail-fills-pane) .panel-title-header .title-pill-leading { display: none; }
