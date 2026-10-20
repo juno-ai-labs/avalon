@@ -291,6 +291,11 @@ and route change reads it and opens the sheet once.
 
 ### Title pills
 
+A narrow conversation pane fits its pill between the leading and trailing
+controls and truncates the title. As on a phone, that layout disables the
+crowding shift: shifting a pill already sized by the grid can move it across
+the pane boundary.
+
 Every pane's header is a `TitlePillHeader`: its own pill centred, the pane's
 controls at the right, and ancestors stacked at the left. The header row is
 64px in every pane, the Channel included, so pills sit level side by side.
