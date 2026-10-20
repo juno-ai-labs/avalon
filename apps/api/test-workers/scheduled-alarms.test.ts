@@ -1128,6 +1128,7 @@ describe("an agent's own wake-ups", () => {
     await runInDurableObject(agent, (_instance, state) => {
       // Arrange a delivered initial projection so the next alarm belongs to these timers.
       state.storage.sql.exec('DELETE FROM authorization_projection_outbox');
+      state.storage.sql.exec('UPDATE conversation_view_changes SET pending = 0');
       for (const [index, id] of ["wake-one", "wake-two"].entries()) {
         state.storage.sql.exec(
           `INSERT INTO workstream_wakeups
@@ -1246,6 +1247,7 @@ describe("an agent's own wake-ups", () => {
     }
     await runInDurableObject(breakout, (_instance, state) => {
       state.storage.sql.exec("DELETE FROM authorization_projection_outbox");
+      state.storage.sql.exec("UPDATE conversation_view_changes SET pending = 0");
       // A principal of another workspace: the fire claims the row and then
       // declines to run it, so the test stops short of a model.
       state.storage.sql.exec(
