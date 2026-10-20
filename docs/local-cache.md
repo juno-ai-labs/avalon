@@ -137,9 +137,9 @@ ordering payload whose Organization entry arranges the Space pills. They go in d
 not through the versioned receivers, because a seed has no waterline and must
 not move a ledger; the ledgers stay at their empty state, which is what lets
 the socket's first subscribe answer apply over the seed whatever version it
-carries. The directory is seeded as a unit or not at all: the first live
-payload writes every list at once, so one of them being present means all of
-them are newer than the row.
+carries. The socket-owned directory is seeded as a unit or not at all. Navigation
+queries are seeded individually only when absent: the socket can win the race
+with disk without supplying the REST-owned My Threads page.
 
 The current navigation lists are restored in that same batch: pins, pinned
 artifacts, Channel stats and the first page of My Threads (including all pinned
@@ -147,7 +147,11 @@ thread and breakout rows). Restoring just the directory would first draw every
 Channel unpinned, then animate the pins into place when the socket answers.
 The mirror watches these queries too, so pinning without a directory change
 updates the next launch. Only the first thread page is kept, with its cursor;
-REST still refreshes it. Existing in-memory answers always win over disk.
+My Threads refreshes through REST and Channel stats through the socket connect
+payload. Thread rows are validated as mapped client summaries, preserving
+fields such as preview, rather than as server wire objects. Each navigation
+list is parsed independently so an unreadable list does not discard the others.
+Existing in-memory answers always win over disk.
 Older rows without navigation remain readable and wait for the live lists.
 
 With the lists present, the sidebar draws rows instead of skeletons, the
@@ -606,9 +610,9 @@ pins into place after the rest of the sidebar appeared.
 before drawing the sidebar. Neither repairs the incomplete startup seed.
 
 **Consequences:** Navigation restores in the directory's batch, without moving
-socket waterlines or replacing a REST answer that arrived first. Older cache
-rows still load; they acquire navigation after the next live session.
-
+socket waterlines or replacing an answer that arrived first. A live directory
+does not block restoration of the missing REST thread page. Older cache rows
+still load; they acquire navigation after the next live session.
 
 ### 2026-10-03 — A guest's rows live apart from a member's
 
