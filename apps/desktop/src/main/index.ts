@@ -1,3 +1,4 @@
+import { artifactWindowActionRequest, artifactWindowSessionMatches } from './artifact-window-actions';
 import { ARTIFACT_PICKER_SOURCE, ArtifactPickerPinSchema, AnnotationSchema } from "@rally/contracts";
 import { startCanvaConnection } from './canva-loopback';
 import { clampWindowBounds, readMainWindowState, writeMainWindowState } from './main-window-state';
@@ -8,7 +9,8 @@ import { BrowserImportContextSchema, BrowserImportedBreakoutIdSchema, BrowserImp
 import { describeZodIssues, zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { watchWorkspaceSocket, type ReachWatchDiagnostic } from '@rally/contracts/workspace-reach-watch';
-import { spaceDeepLink } from '@rally/contracts/workstream-links';
+import { ArtifactPinListSchema } from '@rally/contracts';
+import { spaceDeepLink, workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import { z, type ZodType } from 'zod';
 import {
   ActivateWorkspaceRequestSchema,
@@ -909,7 +911,7 @@ function flagSessionIdentity(userId: string, apiBaseUrl: string): string {
 }
 
 function broadcastSessionChanged(value: WireSession | null): void {
-  closeArtifactWindowsOutsideSession(value?.workspace?.id ?? null, value?.user.id ?? null);
+  closeArtifactWindowsOutsideSession(value?.workspace?.id ?? null, value?.user.id ?? null, value?.workspace?.region ?? null);
   closeEmbeddedBrowsersOutsideUser(value?.user.id ?? null);
   // The import window offers one Organization's Spaces; another Organization's
   // session would place an import in a Space it does not have.
@@ -1942,11 +1944,11 @@ async function removeStoredCredentialUnlocked(rejected: StoredAuth): Promise<voi
   );
   if (rejected.binding.workspaceId !== null) {
     for (const [window, artifact] of poppedOutArtifacts) {
-      if (artifact.workspaceId === rejected.binding.workspaceId && artifact.userId === rejected.binding.userId
+      if (artifactWindowSessionMatches(artifact, rejected.binding)
         && !window.isDestroyed()) window.destroy();
     }
     savedArtifactWindows = artifactWindowStates().filter((item) =>
-      item.workspaceId !== rejected.binding.workspaceId || item.userId !== rejected.binding.userId);
+      !artifactWindowSessionMatches(item, rejected.binding));
     saveArtifactWindowStates();
   }
   inMemoryAuthSet = nextAuth;
@@ -3336,6 +3338,7 @@ function observeAcceptedDeepLinkOpen(): void {
  */
 const artifactPreviews = new Map<BrowserWindow, ArtifactPreviewController>();
 const poppedOutArtifacts = new Map<BrowserWindow, {
+  region: string;
   workspaceId: string;
   userId: string;
   resourceId: string;
@@ -3362,10 +3365,10 @@ function closeAndForgetArtifactWindows(): void {
   savedArtifactWindows = [];
   saveArtifactWindowStates();
 }
-function closeArtifactWindowsOutsideSession(workspaceId: string | null, userId: string | null): void {
+function closeArtifactWindowsOutsideSession(workspaceId: string | null, userId: string | null, region: string | null): void {
   let closed = false;
   for (const [window, artifact] of poppedOutArtifacts) {
-    if (artifact.workspaceId === workspaceId && artifact.userId === userId) continue;
+    if (artifactWindowSessionMatches(artifact, { workspaceId, userId, region })) continue;
     preservedArtifactWindows.add(window);
     if (!window.isDestroyed()) window.destroy();
     closed = true;
@@ -3579,11 +3582,12 @@ function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
  * bytes; a renderer page draws the shared preview and returns pins to its owning composer.
  */
 function openArtifactWindow(request: DesktopArtifactWindowRequest, owner?: WebContents): boolean {
+  const region = inMemorySession?.workspace?.region;
   const workspaceId = inMemorySession?.workspace?.id;
   const userId = inMemorySession?.user.id;
-  if (!workspaceId || !userId) return false;
+  if (!workspaceId || !userId || !region) return false;
   const previous = request.restoreId ? artifactWindowStates().find((item) =>
-    item.id === request.restoreId && item.workspaceId === workspaceId && item.userId === userId
+    item.id === request.restoreId && artifactWindowSessionMatches(item, { workspaceId, userId, region })
       && item.resourceId === request.resourceId) : undefined;
   if (request.restoreId && !previous) return false;
   if (previous && [...poppedOutArtifacts.values()].some((item) => item.stateId === previous.id)) return true;
@@ -3622,10 +3626,11 @@ function openArtifactWindow(request: DesktopArtifactWindowRequest, owner?: WebCo
     const index = states.findIndex((item) => item.id === stateId);
     const latest = index < 0 ? undefined : states[index];
     const state: ArtifactWindowState = {
-      id: stateId, workspaceId, userId, kind: latest?.kind ?? request.kind,
+      id: stateId, workspaceId, userId, region, kind: latest?.kind ?? request.kind,
       resourceId: request.resourceId, version: poppedOutArtifacts.get(window)?.version ?? request.version,
       title: window.getTitle(),
       ...(request.annotationScope?{annotationScope:request.annotationScope}:{}),
+      editable: request.editable === true,
       ...((latest?.kind ?? request.kind) === 'generated'
         ? { mimeType: latest?.mimeType ?? (request.kind === 'generated' ? request.sourceMimeType ?? request.mimeType : undefined) }
         : {}),
@@ -3633,7 +3638,7 @@ function openArtifactWindow(request: DesktopArtifactWindowRequest, owner?: WebCo
     };
     if (index < 0) states.push(state); else states[index] = state;
   };
-  poppedOutArtifacts.set(window, { workspaceId, userId, resourceId: request.resourceId, version: request.version, stateId, request, owner });
+  poppedOutArtifacts.set(window, { region, workspaceId, userId, resourceId: request.resourceId, version: request.version, stateId, request, owner });
   record();
   saveArtifactWindowStates();
   window.on('move', record);
@@ -3669,7 +3674,7 @@ function poppedOutArtifactVersions(): Record<string, number> {
   const versions: Record<string, number> = {};
   for (const [window, artifact] of poppedOutArtifacts) {
     if (window.isDestroyed() || artifact.workspaceId !== inMemorySession?.workspace?.id
-      || artifact.userId !== inMemorySession?.user.id) continue;
+      || artifact.userId !== inMemorySession?.user.id || artifact.region !== inMemorySession?.workspace?.region) continue;
     const current = versions[artifact.resourceId];
     // Several windows may show one resource. Reporting the oldest makes the
     // renderer refresh the group until every surviving window has caught up.
@@ -3684,7 +3689,7 @@ async function updatePoppedOutArtifact(request: DesktopArtifactWindowRequest): P
   const windows = [...poppedOutArtifacts.entries()]
     .filter(([window, artifact]) => !window.isDestroyed()
       && artifact.workspaceId === inMemorySession?.workspace?.id
-      && artifact.userId === inMemorySession?.user.id
+      && artifact.userId === inMemorySession?.user.id && artifact.region === inMemorySession?.workspace?.region
       && artifact.resourceId === request.resourceId
       && artifact.version < request.version);
   if (windows.length === 0) {
@@ -3692,7 +3697,7 @@ async function updatePoppedOutArtifact(request: DesktopArtifactWindowRequest): P
   }
   const [target, previous] = windows[0]!;
   // The owning renderer supplies a fresh site code for each updated window.
-  poppedOutArtifacts.set(target, { ...previous, version: request.version, request: { ...request, ...(previous.request.annotationScope ? { annotationScope: previous.request.annotationScope } : {}), ...(request.kind==='generated' && !request.sourceMimeType && previous.request.kind==='generated' ? {sourceMimeType:previous.request.sourceMimeType}: {}) } });
+  poppedOutArtifacts.set(target, { ...previous, version: request.version, request: { ...request, editable: previous.request.editable === true, ...(previous.request.annotationScope ? { annotationScope: previous.request.annotationScope } : {}), ...(request.kind==='generated' && !request.sourceMimeType && previous.request.kind==='generated' ? {sourceMimeType:previous.request.sourceMimeType}: {}) } });
   target.setTitle(request.title);
   target.webContents.send('artifact:window-updated');
   const saved = artifactWindowStates().find((item) => item.id === previous.stateId);
@@ -3740,7 +3745,11 @@ function parseArtifactWindowRequest(raw: unknown): DesktopArtifactWindowRequest 
   if (value.kind === 'site' && typeof value.resourceId === 'string' && version !== null
     && typeof value.artifactId === 'string' && typeof value.url === 'string') return {
     kind: 'site',
+    ...(typeof value.canonicalUrl === 'string' && isArtifactUrl(value.canonicalUrl, artifactServingDomain()) ? { canonicalUrl: value.canonicalUrl } : {}),
+    ...(value.mode === 'static' || value.mode === 'active' ? { mode: value.mode } : {}),
+    ...(typeof value.stateful === 'boolean' ? { stateful: value.stateful } : {}),
     ...(typeof value.annotationScope === 'string' ? { annotationScope: value.annotationScope } : {}),
+    editable: value.editable === true,
     ...(typeof value.restoreId === 'string' ? { restoreId: value.restoreId } : {}),
     resourceId: value.resourceId,
     version,
@@ -3755,6 +3764,7 @@ function parseArtifactWindowRequest(raw: unknown): DesktopArtifactWindowRequest 
   return {
     kind: 'generated',
     ...(typeof value.annotationScope === 'string' ? { annotationScope: value.annotationScope } : {}),
+    editable: value.editable === true,
     ...(typeof value.sourceMimeType === 'string' ? { sourceMimeType: value.sourceMimeType } : {}),
     ...(typeof value.restoreId === 'string' ? { restoreId: value.restoreId } : {}),
     resourceId: value.resourceId,
@@ -4323,6 +4333,69 @@ function registerIpc(): void {
     // starts warning about the leak.
     artifactPreviews.get(window)?.destroy();
   });
+  ipcMain.handle('artifact:window-action', async (event, raw: unknown) => {
+    try {
+      assertArtifactRenderer(event);
+      const window = BrowserWindow.fromWebContents(event.sender)!;
+      const record = poppedOutArtifacts.get(window)!;
+      const command = artifactWindowActionRequest(record.request, raw);
+      const session = inMemorySession;
+      const assertSession = (): void => {
+        assertArtifactRenderer(event);
+        if (!session || !artifactWindowSessionMatches(record, { userId: inMemorySession?.user.id ?? null, workspaceId: inMemorySession?.workspace?.id ?? null, region: inMemorySession?.workspace?.region ?? null })) throw new Error('The Rally session changed');
+      };
+      const send = async () => {
+        const auth = await loadStoredAuth();
+        assertSession();
+        if (!auth || !artifactWindowSessionMatches(record, auth.binding)) throw new Error('The Rally session changed');
+        return net.fetch(`${apiBaseForAuth(auth)}${command.path}`, {
+          method: command.method,
+          headers: { Authorization: `Bearer ${auth.accessToken}`, [RALLY_HEADERS.CLIENT_CONTRACT]: String(CLIENT_CONTRACT_VERSION),
+            ...(command.body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+          ...(command.body === undefined ? {} : { body: JSON.stringify(command.body) }),
+        });
+      };
+      let response = await send();
+      if (response.status === 401) {
+        await response.body?.cancel();
+        assertSession();
+        await coalescedRefreshSession();
+        response = await send();
+      }
+      if (!response.ok) throw await responseError(response);
+      if (command.binary) {
+        const content = new Uint8Array(await response.arrayBuffer());
+        assertSession();
+        return { content, mimeType: response.headers.get('content-type') ?? 'application/octet-stream' };
+      }
+      const result = response.status === 204 ? null : await readJsonBody(response);
+      assertSession();
+      const action = command.action;
+      if (action.type === 'rename') {
+        window.setTitle(action.title);
+        const current = poppedOutArtifacts.get(window)!;
+        current.request = { ...current.request, title: action.title };
+        const saved = artifactWindowStates().find((item) => item.id === record.stateId);
+        if (saved) saved.title = action.title;
+        saveArtifactWindowStates();
+      }
+      if (action.type === 'pin-state') return ArtifactPinListSchema.parse(result).some((pin) => pin.id === record.resourceId);
+      if (action.type === 'link') {
+        const { spaceIds } = z.object({ spaceIds: z.array(IdSchema) }).parse(result);
+        const workspace = session?.workspace;
+        if (!workspace || !spaceIds[0]) throw new Error('This artifact has no linkable Channel');
+        return workstreamCanonicalUrl(runtimeConfig().webBaseUrl, {
+          region: workspace.region, workspaceId: workspace.id, spaceId: spaceIds[0],
+          workstreamId: record.request.annotationScope!.split(':')[0]!, artifactId: record.resourceId,
+        });
+      }
+      return result;
+    } catch (error) {
+      const diagnostic = zodDiagnosticCode(error, 'artifact_window_response');
+      if (diagnostic) throw new Error(diagnostic, { cause: error });
+      throw error;
+    }
+  });
   ipcMain.handle('artifact:read-window', (event) => {
     assertArtifactRenderer(event);
     const window = BrowserWindow.fromWebContents(event.sender)!;
@@ -4377,9 +4450,8 @@ function registerIpc(): void {
     const userId = inMemorySession?.user.id;
     if (!workspaceId || !userId) return [];
     const open = new Set([...poppedOutArtifacts.values()].map((item) => item.stateId));
-    return artifactWindowStates().filter((item) => item.workspaceId === workspaceId
-      && item.userId === userId && !open.has(item.id)).map(({ id, kind, resourceId, version, title, mimeType, annotationScope }) =>
-      ({ id, kind, resourceId, version, title, ...(mimeType ? { mimeType } : {}), ...(annotationScope?{annotationScope}: {}) }));
+    return artifactWindowStates().filter((item) => artifactWindowSessionMatches(item, { workspaceId, userId, region: inMemorySession?.workspace?.region ?? null }) && !open.has(item.id)).map(({ id, kind, resourceId, version, title, mimeType, annotationScope, editable }) =>
+      ({ id, kind, resourceId, version, title, editable: editable === true, ...(mimeType ? { mimeType } : {}), ...(annotationScope?{annotationScope}: {}) }));
   });
   ipcMain.handle('artifact:forget-window', async (event, raw: unknown) => {
     assertTrustedIpcSender(event);
@@ -4388,7 +4460,7 @@ function registerIpc(): void {
     const userId = inMemorySession?.user.id;
     if (!workspaceId || !userId) return;
     savedArtifactWindows = artifactWindowStates().filter((item) =>
-      item.id !== raw || item.workspaceId !== workspaceId || item.userId !== userId);
+      item.id !== raw || !artifactWindowSessionMatches(item, { workspaceId, userId, region: inMemorySession?.workspace?.region ?? null }));
     saveArtifactWindowStates();
   });
   ipcMain.handle('artifact:popped-out-versions', async (event) => {

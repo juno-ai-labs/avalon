@@ -838,7 +838,7 @@ describe('resource detail content preview', () => {
     );
 
     fireEvent.pointerDown(screen.getByRole('button', { name: `Artifact menu: ${note.title}` }), { button: 0, ctrlKey: false });
-    expect(await screen.findByRole('menuitem', { name: 'New window' })).toBeVisible();
+    expect(await screen.findByRole('menuitem', { name: 'Open in a new window' })).toBeVisible();
     fireEvent.click(screen.getByRole('menuitem', { name: /Versions/ }));
     fireEvent.click(await screen.findByRole('menuitem', { name: /V1/ }));
     expect(onOpenResourceVersion).toHaveBeenCalledWith(note, version);
@@ -912,12 +912,12 @@ describe('resource detail content preview', () => {
     };
 
     openMenu();
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+    fireEvent.click(await screen.findByRole('menuitemcheckbox', { name: 'Pinned in my sidebar' }));
     expect(onPin).toHaveBeenCalledWith(true);
-
-    openMenu();
+    // Pin is a switch and keeps the main menu open. Copy from that same menu.
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy link' }));
-    expect(copy).toHaveBeenCalledOnce();
+    await waitFor(() => expect(copy).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
 
     openMenu();
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
@@ -940,7 +940,7 @@ describe('resource detail content preview', () => {
       </Tooltip.Provider>,
     );
     fireEvent.pointerDown(screen.getByRole('button', { name: `Artifact menu: ${note.title}` }), { button: 0, ctrlKey: false });
-    expect(await screen.findByRole('menuitem', { name: 'Unpin' })).toBeVisible();
+    expect(await screen.findByRole('menuitemcheckbox', { name: 'Pinned in my sidebar' })).toBeChecked();
     expect(screen.queryByRole('menuitem', { name: 'Copy link' })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: 'Rename' })).toBeNull();
   });
@@ -1006,6 +1006,7 @@ describe('resource detail content preview', () => {
     await screen.findByRole('complementary', { name: `Resource: ${note.title}` });
 
     fireEvent.pointerDown(screen.getByRole('button', { name: `Artifact menu: ${note.title}` }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'More' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Continue' }));
 
@@ -1022,7 +1023,7 @@ describe('resource detail content preview', () => {
     fireEvent.click(button);
 
     await waitFor(() => expect(popOutArtifact).toHaveBeenCalledWith({
-      kind: 'generated',
+      kind: 'generated', editable: false,
       resourceId: note.id,
       version: note.currentVersion,
       content: expect.any(Uint8Array),
@@ -1067,6 +1068,71 @@ describe('resource detail content preview', () => {
     };
   }
 
+  it.each([false, true])('keeps public sharing in tiles and secondary actions above Versions (detached: %s)', async (detached) => {
+    const artifacts = siteArtifacts();
+    const internalCopy = vi.fn(async () => undefined);
+    const pin = vi.fn();
+    render(<Tooltip.Provider><InspectorRail
+      panel={{ resourceId: site.id, onClose: vi.fn(), detached }}
+      siteArtifacts={artifacts} resource={site}
+      resourceLink={() => internalCopy}
+      resourcePin={() => ({ on: true, onChange: pin })}
+      onRenameResource={vi.fn(async () => undefined)} onDetachResource={vi.fn()}
+    /></Tooltip.Provider>);
+    await waitFor(() => expect(artifacts.surface.present).toHaveBeenCalled());
+    for (const label of ['Copy public link', 'Open in browser', 'Open in a new window']) {
+      expect(screen.queryByRole('button', { name: label })).toBeNull();
+    }
+    const open = (): void => { fireEvent.pointerDown(screen.getByRole('button', { name: `Artifact menu: ${site.title}` }), { button: 0, ctrlKey: false }); };
+    open();
+    expect(await screen.findByRole('menuitem', { name: 'More' })).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: 'Archive' })).toBeNull();
+    expect(screen.getByRole('menuitem', { name: 'Open in browser' })).toHaveClass('title-menu-tile');
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+      'Rename', 'Copy public link', 'Open in browser', 'More',
+      ...(detached ? [] : ['Open in a new window']), 'Versions',
+    ]);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy public link' }));
+    await waitFor(() => expect(artifacts.surface.copyText).toHaveBeenCalledWith('https://3f2504e0-4f89-41d3-9a0c-0305e82c3301-g.rallyusercontent.test'));
+    expect(internalCopy).not.toHaveBeenCalled();
+    expect(await screen.findByText('Copied.')).toBeVisible();
+    open();
+    expect(screen.getByRole('menuitemcheckbox', { name: 'Pinned in my sidebar' })).toBeChecked();
+    expect(screen.queryByRole('menuitem', { name: 'Archive' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Open in a new window' }) !== null).toBe(!detached);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Open in browser' }));
+    await waitFor(() => expect(artifacts.surface.openExternal).toHaveBeenCalled());
+    open();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'More' }));
+    expect(await screen.findByRole('menuitem', { name: 'Archive' })).toBeVisible();
+  });
+
+  it.each([false, true])('opens Stored data as its own pop-out level while retaining the preview (detached: %s)', async (detached) => {
+    const artifacts = siteArtifacts();
+    const openArtifact = artifacts.openArtifact;
+    artifacts.openArtifact = vi.fn(async () => ({ ...await openArtifact(), stateful: true }));
+    render(<Tooltip.Provider><InspectorRail
+      panel={{ resourceId: site.id, onClose: vi.fn(), detached }}
+      siteArtifacts={artifacts} resource={site}
+    /></Tooltip.Provider>);
+    await waitFor(() => expect(artifacts.surface.present).toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: 'Stored data' })).toBeNull();
+    const openMenu = (): void => {
+      fireEvent.pointerDown(screen.getByRole('button', { name: `Artifact menu: ${site.title}` }), { button: 0, ctrlKey: false });
+    };
+    openMenu();
+    const data = await screen.findByRole('menuitem', { name: 'Stored data' });
+    expect(data.querySelector('.title-menu-level-chevron')).not.toBeNull();
+    expect(artifacts.describeData).not.toHaveBeenCalled();
+    fireEvent.click(data);
+    expect(await screen.findByText('No data yet')).toBeVisible();
+    expect(artifacts.describeData).toHaveBeenCalledWith(site.id);
+    expect(screen.getByTestId('site-preview-pane')).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    expect(await screen.findByRole('menuitem', { name: 'Stored data' })).toBeVisible();
+    expect(screen.queryByText('No data yet')).toBeNull();
+  });
+
   it('shows a live artifact as a page to open rather than a record to describe', async () => {
     const artifacts = siteArtifacts();
     render(
@@ -1098,7 +1164,7 @@ describe('resource detail content preview', () => {
         </Tooltip.Provider>,
       );
       await waitFor(() => expect(artifacts.surface.present).toHaveBeenCalled());
-      for (const name of ['More actions', 'Open in a new window', 'Close panel']) {
+      for (const name of ['Close panel']) {
         fireEvent.focus(screen.getByRole('button', { name }));
         expect(await screen.findByRole('tooltip')).toHaveAttribute('data-side', 'left');
         fireEvent.blur(screen.getByRole('button', { name }));
@@ -1261,7 +1327,7 @@ describe('resource detail content preview', () => {
       .mockResolvedValueOnce(new Blob(['## Extracted\n\nRevenue grew 40%.']));
     openDetail({ ...note, mimeType: 'application/pdf', title: 'Contract.pdf' }, loadResourceContent);
 
-    expect(screen.getByRole('status')).toHaveTextContent('Loading preview');
+    expect(screen.getByText('Loading preview…')).toBeVisible();
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Extracted' })).toBeInTheDocument());
     expect(loadResourceContent).toHaveBeenCalledTimes(3);
     expect(screen.queryByText(/preview is not available/iu)).not.toBeInTheDocument();

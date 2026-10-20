@@ -370,16 +370,30 @@ from; reduced motion turns both off.
   reads the facts only once the level opens, through `useMemoryFacts` with
   `lazy`, and every later open reads again; the row's count is empty until
   then. A fact's source is a menu item, so opening it closes the menu.
-- **Artifact menu** (`ResourcePanelMenu`, the right panel's pill): header names
-  the item, then Download for available file content, Rename, Copy link and
-  Pin/Unpin, then New window, Open source and Refresh where they apply, Versions,
-  and **Archive** last. Rename, Copy link and Pin appear only for an artifact
-  in the thread's Main, the ones a pin or an `/a/` link can name; Copy link
-  also needs a Space for the link to name, so a guest's Channel outside every
-  Space has none. Rename asks for the title in a dialog and saves it through
-  `PATCH /conversations/:parentId/resources/:resourceId`.
-  Download reads original bytes, separately from the inspector's readable
-  derivative, and is available for files whose format has no preview too.
+- **Artifact menu** (`InspectorRail`, shared by the side panel, expanded panel,
+  and detached artifact windows): the root offers Download for available files,
+  Rename and Copy link as tiles, plus More when archiving is available.
+  Secondary action rows sit above Versions.
+  Live sites also offer Open in browser as a top-row tile; their copy tile is
+  **Copy public link**, copying its stable public URL rather than its Rally
+  navigation address. Both copy actions report success or failure after the
+  menu closes. The main menu rows hold **Pinned in my sidebar**,
+  **Open in a new window**, Open source for other resources, and Refresh where
+  supported, followed by Versions. **Archive** lives inside More. A detached window
+  omits Open in a new window. Historical file previews identify their revision,
+  download those original bytes, and offer **Return to current**. Detached live-site
+  history is listed without opening manifest bytes as a document. Stateful sites expose **Stored data** as a
+  navigation row above Versions. It opens the table picker, stored rows, and CSV
+  export inside the pop-out menu; the preview stays mounted behind it.
+  Comment mode, Expand/Collapse, and Close remain in the header. Shared title-menu action,
+  navigation, and switch rows align their icons and labels consistently; compact
+  resource and breakout lists retain their own sizing.
+  Rename, navigation links, and pinning need an artifact in the thread's Main;
+  navigation links also need a Channel placement. Detached windows use their
+  saved Main thread eligibility and conversation context for these actions and retain their annotation
+  draft when opening menus. Rename uses
+  `PATCH /conversations/:parentId/resources/:resourceId`. Download reads original
+  bytes separately from readable previews, including files without a preview.
 
 ### Breakouts
 
@@ -466,8 +480,9 @@ as soon as the row folded and the header would flip back.
 
 A detail's own actions (a live site's Stored data, New window, Copy link and
 Open in browser) reach the header through `useDetailHeaderActions`, as data.
-The rail adds them to the group's `actions` ahead of Expand, so they share its
-look and fold with it.
+The rail places opening and copy actions in the menu's main tiles or rows,
+including Stored data for a stateful site. Viewing controls such as Comment
+mode stay in the header beside Expand and Close.
 `TitlePillHeader` and `TitlePillClose` take a `tooltipSide` for every label in
 the header. The rail sets it to `left` over a live site, whose composited page
 would cover a label hanging down; upward does not fit at the window's top.
@@ -552,6 +567,28 @@ the router instead of a separate resource stack preserves queries and expansion
 state. Session actions and deep links must use that router too: direct hash
 writes create unindexed visits and break traversal. The browser keeps its own
 controls.
+
+### 2026-10-19 — One artifact menu across panels and detached windows
+
+**What changed:** Artifacts show pinning and Open in a new window as rows
+in the main title menu, above Versions, and Archive inside More. Live sites offer Open in browser
+as a main tile and Stored data as a pop-out level above Versions. Public-link copying moves into
+its root tile, replacing the internal-link tile; the header keeps viewing
+controls. The shared action, navigation, and switch row styles use one icon
+column and vertical rhythm across title menus. Detached windows reuse `InspectorRail` for the header, versions,
+rename and archive dialogs, with a resource-confined main-process action bridge.
+
+**Why:** Website actions crowded the header and offered two differently scoped
+links, while detached windows had a separate header with only Comment mode.
+Keeping separate menus would make every future action drift between surfaces.
+The shared host accepts the detached window's existing media/annotation body,
+so unifying the menu does not replace its players or annotation transfer.
+
+**Consequences:** Detached windows cannot request arbitrary API paths or target
+another resource. Opening a website externally mints fresh access; copying its
+public URL never copies a single-use access code. File links retain their Rally
+navigation semantics. Detached windows omit the redundant New window action.
+
 
 ### 2026-10-19 — Open Channels at the server read waterline
 
