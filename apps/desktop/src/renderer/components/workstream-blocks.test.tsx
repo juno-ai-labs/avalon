@@ -1794,7 +1794,9 @@ describe('MessageBlock speech action', () => {
         }} />
       </SpeechPlaybackProvider>,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse all sections' }));
+    for (const button of screen.getAllByRole('button', { name: 'Collapse section' })) {
+      fireEvent.click(button);
+    }
     expect(document.querySelectorAll('.markdown-collapse.is-collapsed')).toHaveLength(2);
 
     fireEvent.click(screen.getByRole('button', { name: 'Speak response' }));
@@ -2610,7 +2612,7 @@ describe('MarkdownBody heading collapse', () => {
 });
 
 describe('MessageBlock heading collapse control', () => {
-  it('places a collapse-all control to the right of Worked for and toggles every section', () => {
+  it('keeps the byline free of bulk controls while sections toggle independently', () => {
     const message: Message = {
       ...baseMessage,
       id: 'agent-one',
@@ -2621,35 +2623,14 @@ describe('MessageBlock heading collapse control', () => {
     };
     const { container } = render(<MessageBlock {...actions} collapseHeadings message={message} />);
     expect(screen.getByText('Worked for 1m 23s')).toBeInTheDocument();
-    const header = container.querySelector('.message-block > header')!;
-    const summary = header.querySelector('.message-work-summary');
-    const toggle = screen.getByRole('button', { name: 'Collapse all sections' });
-    expect(summary?.nextElementSibling).toBe(toggle);
+    expect(screen.queryByRole('button', { name: 'Collapse all sections' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Expand all sections' })).not.toBeInTheDocument();
     expect(container.querySelectorAll('.markdown-collapse.is-expanded')).toHaveLength(2);
-    fireEvent.click(toggle);
-    expect(container.querySelectorAll('.markdown-collapse.is-collapsed')).toHaveLength(2);
-    expect(screen.getByRole('button', { name: 'Expand all sections' })).toBeInTheDocument();
-  });
-
-  it('keeps offering Collapse all while only some sections are closed', () => {
-    const message: Message = {
-      ...baseMessage,
-      id: 'agent-mixed',
-      authorType: 'agent',
-      author: undefined,
-      text: '## Alpha\n\nFirst.\n\n## Beta\n\nSecond.\n',
-      workSummary: { durationMs: 83_000 },
-    };
-    const { container } = render(<MessageBlock {...actions} collapseHeadings message={message} />);
     fireEvent.click(screen.getAllByRole('button', { name: 'Collapse section' })[0]!);
     expect(container.querySelectorAll('.markdown-collapse.is-collapsed')).toHaveLength(1);
-
-    // A reader who has closed one section is folding, so folding the rest is
-    // the action to offer — not the round trip through Expand all.
-    const toggle = screen.getByRole('button', { name: 'Collapse all sections' });
-    fireEvent.click(toggle);
-    expect(container.querySelectorAll('.markdown-collapse.is-collapsed')).toHaveLength(2);
-    expect(screen.getByRole('button', { name: 'Expand all sections' })).toBeInTheDocument();
+    expect(container.querySelectorAll('.markdown-collapse.is-expanded')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Expand section' }));
+    expect(container.querySelectorAll('.markdown-collapse.is-expanded')).toHaveLength(2);
   });
 
   it('hides the collapse-all control when the turn has no collapsible headings', () => {

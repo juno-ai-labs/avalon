@@ -18,8 +18,8 @@ one of them silently missed the others; the changelog records what that cost.
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MarkdownBody` — the only place `react-markdown` is mounted — and its component overrides: `MarkdownCode`, `MarkdownCodeBlock`, `MarkdownTable`, heading collapse, and the `a`, `img`, `li` and `section` renderers that hand a node to the citation matrix. Also the remark rewrites over the parsed tree: `remarkHtmlBreaks`, the opt-in human-message `remarkSoftBreaks`, and the streaming-only `remarkPendingCitations` that stands a skeleton where a footnote reference has no definition yet. |
 | `apps/desktop/src/renderer/components/markdown-mermaid.tsx` | The asynchronous Mermaid SVG render, strict untrusted-input configuration, active-token configuration, and source fallback. Mermaid's module-wide configuration and render calls are serialized here so two diagrams cannot race one another's theme. |
 | `apps/desktop/src/renderer/components/markdown-mermaid-theme.ts` | Maps Mermaid's rendering roles onto the active computed Rally design tokens. It owns no palette and does not branch on an appearance id. |
-| `apps/desktop/src/renderer/lib/markdown-collapse.ts` | Which h2–h6 start a collapsible section, and which nested headings stay in the body. Shared by the renderer and the **Worked for** collapse-all control so they cannot disagree about the ids. |
-| `apps/desktop/src/renderer/components/markdown-collapse.tsx` | The accordion chrome: chevron, 3-line preview, expand/collapse-all, and the React context that holds which sections a reader has closed while a later heading streams in. |
+| `apps/desktop/src/renderer/lib/markdown-collapse.ts` | Which h2–h6 start a collapsible section, and which nested headings stay in the body. Used by the renderer to assign section ids. |
+| `apps/desktop/src/renderer/components/markdown-collapse.tsx` | The accordion chrome: chevron, 3-line preview, and the React context that holds which sections a reader has closed while a later heading streams in. |
 | `apps/desktop/src/renderer/components/markdown-citations.tsx` | The citation matrix — every scheme in every position — and the chip, embed card, footnote pill and identity card it renders. |
 | `apps/api/src/routes/favicons.ts`, `apps/api/src/services/favicon-service.ts` | The authenticated binary favicon endpoint and its public-host validation, parallel domain-chain resolution, image sniffing, and 30-day platform KV entries. |
 | `apps/desktop/src/renderer/lib/favicon-api.tsx` | Narrows the broad app-session context to the stable API capability link icons need, so unrelated session updates do not re-render every Markdown body. Detached exports receive no capability. |
@@ -196,13 +196,9 @@ than reading this collapsed DOM. Its server-side plain-text reduction and PCM
 stream are owned by [`message-speech.md`](message-speech.md); collapse is only a
 view state and must never decide which words are audible.
 
-The collapse-all control lives in the agent-message header, immediately to
-the right of **Worked for**. It expands or collapses every section in that
-turn, and it offers **Collapse all** until every section is already closed:
-a turn with some sections closed is a reader who has been folding, and the
-action to hand them is folding the rest. New sections that stream in are open
-regardless of that control's last action, because a heading that has only just
-arrived is not one the reader has chosen to close.
+Each section has its own collapse control; the agent-message byline has no
+bulk expand/collapse button. New sections that stream in are open because a
+heading that has only just arrived is not one the reader has chosen to close.
 
 Streaming keeps the existing settled-segment memo: complete sections
 render as memoised chunks, and only the last section's body goes through
@@ -767,8 +763,7 @@ The glyph is then chosen by substrings of that one name, with a published site
 matched whole ahead of the chain — under both `generated_site` and `site` — and
 drawn as a Tabler `app-window`. Heading collapse is off unless a host explicitly
 sets `collapseHeadings`; the main work-stream feed is the intended opt-in host.
-Its collapse-all control is a sibling in the agent-message header and shares
-section ids with the body through `MarkdownCollapseController`.
+`MarkdownCollapseController` holds section state within each Markdown body.
 
 **It does not own where a citation goes.** The host supplies resolution and
 click routing as `CitationContext` (`lib/use-citations.ts` builds the
@@ -949,6 +944,13 @@ renderer keeps its existing parsing and code behavior. Source/range mapping and
 restoration are owned by [artifact annotations](artifact-annotations.md).
 
 ## Changelog
+
+### 2026-10-20 — Remove the message-level collapse button
+
+The agent-message byline no longer offers expand/collapse-all, as requested to
+simplify the top-level message chrome. Sections retain their individual controls
+and open by default. Collapse state now lives in each Markdown body rather than
+being shared with a header control.
 
 ### 2026-10-19 — Preserve source spans for artifact selection
 
