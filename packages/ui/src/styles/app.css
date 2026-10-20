@@ -8881,7 +8881,7 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .conversation-card.is-resolved :is(.conversation-card-title, .conversation-card-summary, .conversation-card-meta, .avatar-fallback) { color: var(--av-ref-color-neutral-7); }
 .conversation-card.is-resolved .personal-avatar svg:has(text) { fill: var(--av-ref-color-neutral-5); }
 .conversation-card.is-resolved .personal-avatar text { fill: var(--av-ref-color-neutral-7); }
-.conversation-card.is-resolved:is(:hover, :focus-visible) :is(.conversation-card-title, .conversation-card-summary, .conversation-card-meta, .avatar-fallback, .conversation-card-resolved) { color: var(--av-sys-color-text-subtle); }
+.conversation-card.is-resolved:is(:hover, :focus-visible) :is(.conversation-card-title, .conversation-card-summary, .conversation-card-meta, .avatar-fallback) { color: var(--av-sys-color-text-subtle); }
 .conversation-card.is-resolved:is(:hover, :focus-visible) .avatar { background: var(--av-ref-color-neutral-3); }
 .conversation-card.is-resolved:is(:hover, :focus-visible) .personal-avatar svg:has(text) { fill: var(--av-ref-color-neutral-3); }
 .conversation-card.is-resolved:is(:hover, :focus-visible) .personal-avatar text { fill: var(--av-sys-color-text-subtle); }
@@ -8891,7 +8891,7 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .conversation-card.is-resolved .conversation-card-caret { opacity: 0.4; }
 .conversation-card.is-resolved .conversation-card-mark { filter: grayscale(1); opacity: 0.3; }
 .conversation-card.is-resolved:is(:hover, :focus-visible) :is(.conversation-card-caret, .conversation-card-mark) { opacity: 0.55; }
-.conversation-card-resolved {
+.conversation-card-pill {
   background: var(--av-ref-color-neutral-3);
   border-radius: var(--av-sys-size-radius-pill);
   color: var(--av-ref-color-neutral-7);
@@ -8901,7 +8901,8 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   line-height: 1.4;
   padding: 2px 9px;
 }
-.conversation-card.is-resolved:is(:hover, .is-open) .conversation-card-resolved { background: var(--av-sys-color-state-hover); }
+.conversation-card:is(:hover, .is-open) .conversation-card-pill { background: var(--av-sys-color-state-hover); }
+.conversation-card:is(:hover, :focus-visible) .conversation-card-pill { color: var(--av-sys-color-text-subtle); }
 .conversation-card-caret { color: var(--av-sys-color-text-subtle); flex: none; }
 .conversation-card-news { color: var(--av-sys-color-workstream-news); flex: none; font-size: 12.5px; font-weight: 600; }
 .conversation-card-summary {
