@@ -91,7 +91,6 @@ import { AgentWorkTiming } from './agent-work-timing';
 import { MessageByline } from './message-byline';
 import { MessageTextMenu } from './message-text-menu';
 import {
-  MarkdownCollapseAllButton,
   MarkdownCollapseController,
   MarkdownCollapseH2,
   MarkdownCollapseH3,
@@ -99,7 +98,6 @@ import {
   MarkdownCollapseH5,
   MarkdownCollapseH6,
   MarkdownCollapseSection,
-  useMarkdownCollapse,
 } from './markdown-collapse';
 import { MarkdownMermaid } from './markdown-mermaid';
 import {
@@ -1464,11 +1462,6 @@ export function MarkdownBody({
     const parts = splitCollapsibleMarkdown(markdown);
     return parts.some((part) => part.type === 'section') ? parts : null;
   }, [collapseHeadings, glance, markdown, still]);
-  const collapseSectionIds = useMemo(
-    () => collapseParts?.flatMap((part) => (part.type === 'section' ? [part.id] : [])) ?? [],
-    [collapseParts],
-  );
-  const hostedCollapse = useMarkdownCollapse();
   // Each section is its own react-markdown mount. A [^1] in ## Claims cannot
   // see a [^1]: under ## Sources unless the definition rides along with the
   // fragment. Identity of `fragment` is preserved when nothing is missing, so
@@ -1637,18 +1630,9 @@ export function MarkdownBody({
       ) : bodyInner}
     </CitationsProvider>
   );
-  if (!collapseParts) return body;
-  // The agent turn wraps this body in a controller so collapse-all in the
-  // header shares ids. A nested MarkdownBody (the embed glance) must not reuse
-  // that controller: its heading set is a different document.
-  if (
-    hostedCollapse
-    && hostedCollapse.sectionIds.join('\0') === collapseSectionIds.join('\0')
-  ) {
-    return body;
-  }
+  if (!collapseHeadings || glance || still) return body;
   return (
-    <MarkdownCollapseController sectionIds={collapseSectionIds}>
+    <MarkdownCollapseController>
       {body}
     </MarkdownCollapseController>
   );
@@ -3112,9 +3096,7 @@ export function MessageBlock({
         createdAt={message.createdAt}
         dot={human}
         workSummary={message.workSummary ? workSummaryLabel(message.workSummary) : undefined}
-      >
-        {!human && collapseHeadings && <MarkdownCollapseAllButton />}
-      </MessageByline>
+      />
       {human ? (
         <div className="human-message-content">
           <HumanMessageBody
@@ -3164,13 +3146,5 @@ export function MessageBlock({
       )}
     </article>
   );
-  if (human || !collapseHeadings) return article;
-  // Same repair the body applies, so the header's collapse-all and the
-  // body's section wrappers agree on `section-${index}` ids. Mentions are
-  // inline links and cannot change the heading count.
-  return (
-    <MarkdownCollapseController markdown={normalizeModelMarkdown(message.text ?? '')}>
-      {article}
-    </MarkdownCollapseController>
-  );
+  return article;
 }
