@@ -1,3 +1,4 @@
+import { createElectronFetch } from '@rally/electron-network';
 import { artifactWindowActionRequest, artifactWindowSessionMatches } from './artifact-window-actions';
 import { ARTIFACT_COMMENTS_SOURCE, AnnotationCommentPinsSchema, AnnotationCommentActionSchema, ARTIFACT_PICKER_SOURCE, ArtifactPickerPinSchema, AnnotationSchema } from "@rally/contracts";
 import { startCanvaConnection } from './canva-loopback';
@@ -842,7 +843,9 @@ function windowBackgroundColor(): string {
   return themeWindowBackground[resolveTheme(windowThemeChoice, nativeTheme.shouldUseDarkColors)];
 }
 
-const telemetryFetch: typeof globalThis.fetch = (input, init) => net.fetch(
+const electronFetch = createElectronFetch(net);
+
+const telemetryFetch: typeof globalThis.fetch = (input, init) => electronFetch(
   input instanceof URL ? input.toString() : input,
   init,
 );
@@ -1224,7 +1227,7 @@ async function requestProductAnalyticsPreference(): Promise<{
 }> {
   const auth = await loadStoredAuth();
   if (!auth) throw new Error('Sign in before changing Product analytics');
-  const response = await net.fetch(`${apiBaseForAuth(auth)}/telemetry/preference`, {
+  const response = await electronFetch(`${apiBaseForAuth(auth)}/telemetry/preference`, {
     headers: { Accept: 'application/json', Authorization: `Bearer ${auth.accessToken}` },
     signal: AbortSignal.timeout(PRODUCT_ANALYTICS_PREFERENCE_REQUEST_TIMEOUT_MS),
   });
@@ -1238,7 +1241,7 @@ async function syncProductAnalyticsPreference(
 ): Promise<{ enabled: boolean; version: number }> {
   const auth = await loadStoredAuth();
   if (!auth) throw new Error('Sign in before changing Product analytics');
-  const apply = (version: number) => net.fetch(`${apiBaseForAuth(auth)}/telemetry/preference`, {
+  const apply = (version: number) => electronFetch(`${apiBaseForAuth(auth)}/telemetry/preference`, {
     method: 'PATCH',
     headers: {
       Accept: 'application/json',
@@ -1509,7 +1512,7 @@ const desktopPush = new DesktopPushNotifications({
     return (auth?.workspaces ?? []).filter((credential) => !storedCredentialIsSupport(profiles, credential));
   },
   request: async (credential, path, init = {}) => {
-    const ask = (auth: StoredAuth) => net.fetch(`${apiBaseForAuth(auth)}${path}`, {
+    const ask = (auth: StoredAuth) => electronFetch(`${apiBaseForAuth(auth)}${path}`, {
       ...init, headers: { ...init.headers, Authorization: `Bearer ${auth.accessToken}` },
     });
     let response = await ask(credential);
@@ -1598,7 +1601,7 @@ async function readDeveloperSettingsFlag(): Promise<boolean> {
   const stored = await loadStoredAuth();
   if (!stored) return false;
   const apiBaseUrl = apiBaseForAuth(stored);
-  const ask = async (accessToken: string): Promise<Response> => net.fetch(`${apiBaseUrl}/feature-flags`, {
+  const ask = async (accessToken: string): Promise<Response> => electronFetch(`${apiBaseUrl}/feature-flags`, {
     headers: { Accept: 'application/json', Authorization: `Bearer ${accessToken}` },
     // A poll must always settle. A connection that hangs — a captive portal
     // answering the handshake and nothing else is the usual way — would
@@ -1649,7 +1652,7 @@ async function rallyApiRequest(
   const stored = await loadStoredAuth();
   if (!stored) throw new Error('No Rally session is available');
   const apiBaseUrl = apiBaseForAuth(stored);
-  const ask = async (accessToken: string): Promise<Response> => net.fetch(`${apiBaseUrl}${path}`, {
+  const ask = async (accessToken: string): Promise<Response> => electronFetch(`${apiBaseUrl}${path}`, {
     method: init?.method ?? 'GET',
     headers: {
       Accept: 'application/json',
@@ -2231,7 +2234,7 @@ async function requestSession(
   body: unknown,
   accessToken?: string,
 ): Promise<WireSession> {
-  const response = await net.fetch(`${apiBaseUrl}${path}`, {
+  const response = await electronFetch(`${apiBaseUrl}${path}`, {
     method: 'POST',
     headers: {
       Accept: 'application/json',
@@ -2489,7 +2492,7 @@ function workspaceSummary(workspace: {
 
 /** Ask Global for the account's complete membership and invitations. */
 async function discoverWorkspaces(): Promise<WorkspaceDiscovery> {
-  const { identity, response } = await onboardingIdentityRequest((credential) => net.fetch(
+  const { identity, response } = await onboardingIdentityRequest((credential) => electronFetch(
     `${configuredApiBase('global')}/onboarding`,
     {
       method: 'GET',
@@ -2675,7 +2678,7 @@ async function getWorkspaceAttention(input: unknown): Promise<WorkspaceAttention
   const authSet = await loadStoredAuthSet();
   const auth = authSet ? storedWorkspaceCredential(authSet, workspaceId.data, region.data) : null;
   if (!auth) throw new Error('No credential is stored for this organization');
-  const ask = (credential: StoredAuth) => net.fetch(`${apiBaseForAuth(credential)}/workspace/attention`, {
+  const ask = (credential: StoredAuth) => electronFetch(`${apiBaseForAuth(credential)}/workspace/attention`, {
     headers: { Accept: 'application/json', Authorization: `Bearer ${credential.accessToken}` },
   });
   let response = await ask(auth);
@@ -2706,7 +2709,7 @@ async function leaveWorkspace(input: unknown): Promise<WorkspaceDeparture> {
       ? activeStoredWorkspaceCredential(authSet, workspaceId.data, region.data)
       : null;
     if (!credential) throw new Error('No credential is stored for this organization');
-    const ask = (stored: StoredAuth) => net.fetch(
+    const ask = (stored: StoredAuth) => electronFetch(
       `${apiBaseForAuth(stored)}/workspaces/${encodeURIComponent(workspaceId.data)}/membership`
         + `?expectedOutcome=${parsedDeparture.data.expectedOutcome}`,
       {
@@ -2740,7 +2743,7 @@ async function requestOnboardingSession(
   if (loggingOut || expectedLifecycleEpoch !== sessionLifecycleEpoch) {
     throw new Error('Rally was signed out while organization setup was running');
   }
-  const requested = await onboardingIdentityRequest((credential) => net.fetch(
+  const requested = await onboardingIdentityRequest((credential) => electronFetch(
     `${configuredApiBase('global')}${path}`,
     {
       method: 'POST',
@@ -2804,7 +2807,7 @@ async function requestOnboardingSession(
  * `impersonator`.
  */
 async function supportIdentityGet<T>(path: string, schema: ZodType<T>): Promise<T> {
-  const { response } = await onboardingIdentityRequest((credential) => net.fetch(
+  const { response } = await onboardingIdentityRequest((credential) => electronFetch(
     `${configuredApiBase('global')}${path}`,
     { method: 'GET', headers: { Accept: 'application/json', Authorization: `Bearer ${credential.accessToken}` } },
   ));
@@ -2836,7 +2839,7 @@ async function startSupportSession(input: unknown): Promise<DesktopSession> {
   const expectedLifecycleEpoch = sessionLifecycleEpoch;
   const selectionIntent = ++workspaceSelectionIntent;
   const identity = await requireOnboardingIdentitySession();
-  const { response } = await onboardingIdentityRequest((credential) => net.fetch(
+  const { response } = await onboardingIdentityRequest((credential) => electronFetch(
     `${configuredApiBase('global')}/auth/support/session`,
     {
       method: 'POST',
@@ -3063,7 +3066,7 @@ async function acceptInvitation(input: unknown): Promise<DesktopSession> {
 
 async function declineInvitation(input: unknown): Promise<void> {
   const parsed = parseInvitationAction(input);
-  const { response } = await onboardingIdentityRequest((identity) => net.fetch(
+  const { response } = await onboardingIdentityRequest((identity) => electronFetch(
     `${configuredApiBase('global')}/onboarding/invitations/${encodeURIComponent(parsed.invitationId)}/decline`,
     {
       method: 'POST',
@@ -3182,7 +3185,7 @@ async function revokeStoredCredentials(stored: StoredAuthSet): Promise<unknown[]
   for (const credential of credentials) {
     try {
       const apiBaseUrl = apiBaseForAuth(credential);
-      const response = await net.fetch(`${apiBaseUrl}/auth/logout`, {
+      const response = await electronFetch(`${apiBaseUrl}/auth/logout`, {
         method: 'POST',
         headers: {
           Accept: 'application/json',
@@ -4118,7 +4121,7 @@ function registerIpc(): void {
   });
   ipcMain.handle('onboarding:get-account', async (event) => {
     assertTrustedIpcSender(event);
-    const { response } = await onboardingIdentityRequest((credential) => net.fetch(
+    const { response } = await onboardingIdentityRequest((credential) => electronFetch(
       `${configuredApiBase('global')}/onboarding/account`,
       { headers: { Authorization: `Bearer ${credential.accessToken}` } },
     ));
@@ -4127,7 +4130,7 @@ function registerIpc(): void {
   });
   ipcMain.handle('onboarding:get-organization-suggestion', async (event) => {
     assertTrustedIpcSender(event);
-    const { response } = await onboardingIdentityRequest((credential) => net.fetch(
+    const { response } = await onboardingIdentityRequest((credential) => electronFetch(
       `${configuredApiBase('global')}/onboarding/organization-suggestion`,
       { headers: { Authorization: `Bearer ${credential.accessToken}` } },
     ));
@@ -4137,7 +4140,7 @@ function registerIpc(): void {
   ipcMain.handle('onboarding:update-account', async (event, raw: unknown) => {
     assertTrustedIpcSender(event);
     const input = UpdateAccountOnboardingSchema.parse(raw);
-    const { response } = await onboardingIdentityRequest((credential) => net.fetch(
+    const { response } = await onboardingIdentityRequest((credential) => electronFetch(
       `${configuredApiBase('global')}/onboarding/account`,
       { method: 'PATCH', headers: { Authorization: `Bearer ${credential.accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(input) },
     ));
@@ -4265,7 +4268,7 @@ function registerIpc(): void {
         };
         const send = async () => {
           const current = await pinnedAuth();
-          return net.fetch(`${apiBaseForAuth(current)}${path}`, {
+          return electronFetch(`${apiBaseForAuth(current)}${path}`, {
             method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${current.accessToken}`,
               ...(operationId ? { [RALLY_HEADERS.OPERATION_ID]: operationId } : {}) },
             body: JSON.stringify(body), signal: AbortSignal.timeout(MENU_BAR_REQUEST_TIMEOUT_MS),
@@ -4363,7 +4366,7 @@ function registerIpc(): void {
         const auth = await loadStoredAuth();
         assertSession();
         if (!auth || !artifactWindowSessionMatches(record, auth.binding)) throw new Error('The Rally session changed');
-        return net.fetch(`${apiBaseForAuth(auth)}${command.path}`, {
+        return electronFetch(`${apiBaseForAuth(auth)}${command.path}`, {
           method: command.method,
           headers: { Authorization: `Bearer ${auth.accessToken}`, [RALLY_HEADERS.CLIENT_CONTRACT]: String(CLIENT_CONTRACT_VERSION),
             ...(command.body === undefined ? {} : { 'Content-Type': 'application/json' }) },
@@ -4603,7 +4606,7 @@ async function installRendererProtocol(): Promise<void> {
       if (assetPath !== rendererRoot && !assetPath.startsWith(`${rendererRoot}${sep}`)) {
         return new Response('Not found', { status: 404 });
       }
-      return net.fetch(pathToFileURL(assetPath).toString());
+      return electronFetch(pathToFileURL(assetPath).toString());
     } catch {
       return new Response('Not found', { status: 404 });
     }
@@ -4617,7 +4620,7 @@ async function installRendererProtocol(): Promise<void> {
  */
 const themeFontCache = new ThemeFontCache({
   directory: join(app.getPath('userData'), 'theme-fonts'),
-  fetch: (url) => net.fetch(url),
+  fetch: (url) => electronFetch(url),
 });
 
 function installMessageExportProtocol(): void {
@@ -5763,7 +5766,7 @@ installMainProcessNetworkRecovery(process, {
     // Preserve the payload-free fleet signal this rejection emitted before
     // it became recoverable; a packaged app's local warning is not observable.
     void telemetryReporter?.processHealth('main', 'rejection', 'unknown').catch(() => undefined);
-    logWarn('rally', 'recovered a transient main-process network reset', { code, error });
+    logWarn('rally', 'recovered a transient main-process network interruption', { code, error });
   },
   reportFatal: reportMainProcessFatal,
   // Throw only after Node has delivered every rejection already pending in
