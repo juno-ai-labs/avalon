@@ -108,18 +108,68 @@ describe('showing a live artifact in the rail', () => {
     fireEvent.click(button);
     expect(button).toHaveAttribute('aria-pressed','false');
   });
-  it('keeps the native preview below nested dialogs and restores it when they close', async () => {
+  it.each(['dialog', 'alertdialog', 'menu', 'tooltip'])('keeps the native preview below a %s and restores it when it closes', async (role) => {
     const geometry = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
       DOMRect.fromRect({ x: 20, y: 40, width: 500, height: 320 }),
     );
     const { props } = setup();
     await waitFor(() => expect(props.surface.setBounds).toHaveBeenCalledWith({ x: 20, y: 40, width: 500, height: 320 }));
     const overlay = document.createElement('div');
-    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('role', role);
     document.body.append(overlay);
     await waitFor(() => expect(props.surface.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 0, height: 0 }));
     overlay.remove();
     await waitFor(() => expect(props.surface.setBounds).toHaveBeenLastCalledWith({ x: 20, y: 40, width: 500, height: 320 }));
+    geometry.mockRestore();
+  });
+
+  it('leaves the live preview running for a tooltip outside its pane', async () => {
+    const geometry = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
+      DOMRect.fromRect({ x: 200, y: 100, width: 500, height: 320 }),
+    );
+    const { props } = setup();
+    const bounds = { x: 200, y: 100, width: 500, height: 320 };
+    await waitFor(() => expect(props.surface.setBounds).toHaveBeenCalledWith(bounds));
+    const tooltip = document.createElement('div');
+    tooltip.setAttribute('role', 'tooltip');
+    tooltip.getBoundingClientRect = () => DOMRect.fromRect({ x: 0, y: 0, width: 150, height: 50 });
+    await act(async () => { document.body.append(tooltip); });
+    expect(props.surface.snapshot).not.toHaveBeenCalled();
+    expect(props.surface.setBounds).toHaveBeenLastCalledWith(bounds);
+    tooltip.remove();
+    geometry.mockRestore();
+  });
+
+  it('rechecks a tooltip after Radix positions it and measures its visible wrapper', async () => {
+    const geometry = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
+      DOMRect.fromRect({ x: 200, y: 100, width: 500, height: 320 }),
+    );
+    const { props } = setup();
+    const bounds = { x: 200, y: 100, width: 500, height: 320 };
+    await waitFor(() => expect(props.surface.setBounds).toHaveBeenCalledWith(bounds));
+    // Radix can put role=tooltip on a hidden accessible label inside the
+    // visible content. Only the popper wrapper describes what covers the site.
+    const wrapper = document.createElement('div');
+    wrapper.setAttribute('data-radix-popper-content-wrapper', '');
+    wrapper.style.transform = 'translate(0px, -200px)';
+    wrapper.getBoundingClientRect = () => DOMRect.fromRect({
+      x: 150, y: wrapper.style.transform === 'translate(0px, -200px)' ? -200 : 80, width: 100, height: 60,
+    });
+    const content = document.createElement('div');
+    content.setAttribute('data-state', 'instant-open');
+    const tooltip = document.createElement('span');
+    tooltip.setAttribute('role', 'tooltip');
+    tooltip.getBoundingClientRect = () => DOMRect.fromRect({ x: 150, y: 80, width: 1, height: 1 });
+    content.append(tooltip);
+    wrapper.append(content);
+    await act(async () => { document.body.append(wrapper); });
+    expect(props.surface.snapshot).not.toHaveBeenCalled();
+    wrapper.style.transform = 'translate(150px, 80px)';
+    await waitFor(() => expect(props.surface.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 0, height: 0 }));
+    // A closing tooltip may remain mounted for its exit animation.
+    content.setAttribute('data-state', 'closed');
+    await waitFor(() => expect(props.surface.setBounds).toHaveBeenLastCalledWith(bounds));
+    wrapper.remove();
     geometry.mockRestore();
   });
 
