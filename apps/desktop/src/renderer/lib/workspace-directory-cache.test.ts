@@ -1,4 +1,4 @@
-import { ChannelRailSchema, WorkstreamPrivateChildSchema } from '@rally/contracts';
+import { MyThreadsPageSchema, PinListSchema, ArtifactPinListSchema, ChannelRailSchema, WorkstreamPrivateChildSchema } from '@rally/contracts';
 import { applyChannelRails, channelRailQueryKey, isRailStale, noteRailWaterline } from './channel-rails';
 import { QueryClient } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -76,6 +76,58 @@ describe('organization directory cache', () => {
     expect(queryClient.getQueryData(['notes'])).toBeUndefined();
     expect(queryClient.getQueryData(['spaces'])).toEqual({ waterline: 3, items: [] });
     expect(queryClient.getQueryData(['spaces-inactive'])).toEqual({ waterline: 3, items: [] });
+  });
+
+  it('restores pins and their rows together, including pin-only changes and the first thread page', async () => {
+    const before = new QueryClient();
+    const mirror = mirrorWorkspaceDirectory(before, scope, { live: () => true });
+    setCachedWorkstreams(before, [summary()]);
+    await mirror.flush();
+    const pins = PinListSchema.parse([{ kind: 'thread', id: summary().id, parentId: null }]);
+    const artifacts = ArtifactPinListSchema.parse([{
+      id: '00000000-0000-7000-8000-000000000003', threadId: summary().id,
+      title: 'Launch plan', resourceType: 'generated_file', mimeType: 'text/markdown',
+      updatedAt: '2026-10-19T19:00:00.000Z', currentVersion: 1, unread: false,
+      thread: { title: 'Remembered row', appearance: null, spaceIds: [] },
+    }]);
+    const thread = {
+      ...summary(), kind: 'channel', workspaceId: '00000000-0000-7000-8000-000000000001',
+      objective: '', createdByUserId: null, createdAt: '2026-10-19T19:00:00.000Z',
+      updatedAt: '2026-10-19T19:00:00.000Z', archivedAt: null,
+    };
+    const threads = MyThreadsPageSchema.parse({
+      items: [thread], pinned: [thread], nextCursor: 'page-2',
+    });
+    before.setQueryData(['pins'], pins);
+    before.setQueryData(['artifact-pins'], artifacts);
+    before.setQueryData(['channel-stats'], []);
+    before.setQueryData(['my-threads'], {
+      pages: [threads, { items: [], pinned: [], nextCursor: null }], pageParams: [null, 'page-2'],
+    });
+    await mirror.flush();
+    mirror.stop();
+
+    const after = new QueryClient();
+    await expect(hydrateWorkspaceDirectory(after, scope, () => true)).resolves.toBe(true);
+    expect(after.getQueryData(['pins'])).toEqual([{ kind: 'thread', id: summary().id, parentId: null }]);
+    expect(after.getQueryData<Array<{ title: string }>>(['artifact-pins'])?.map((pin) => pin.title)).toEqual(['Launch plan']);
+    expect(after.getQueryData(['channel-stats'])).toEqual([]);
+    const restored = after.getQueryData<{ pages: Array<{ items: Array<{ title: string }>; pinned: Array<{ title: string }>; nextCursor: string }>; pageParams: unknown[] }>(['my-threads']);
+    expect(restored?.pages).toHaveLength(1);
+    expect(restored?.pages[0]?.pinned.map((row) => row.title)).toEqual(['Remembered row']);
+    expect(restored?.pages[0]?.items.map((row) => row.title)).toEqual(['Remembered row']);
+    expect(restored?.pages[0]?.nextCursor).toBe('page-2');
+    expect(restored?.pageParams).toEqual([null]);
+
+    // A REST answer can beat disk hydration even before the socket arrives.
+    const raced = new QueryClient();
+    raced.setQueryData(['pins'], []);
+    raced.setQueryData(['artifact-pins'], []);
+    raced.setQueryData(['my-threads'], { pages: [{ items: [], pinned: [], nextCursor: null }], pageParams: [null] });
+    await hydrateWorkspaceDirectory(raced, scope, () => true);
+    expect(raced.getQueryData(['pins'])).toEqual([]);
+    expect(raced.getQueryData(['artifact-pins'])).toEqual([]);
+    expect(raced.getQueryData(['my-threads'])).toEqual({ pages: [{ items: [], pinned: [], nextCursor: null }], pageParams: [null] });
   });
 
   it('does not write over a directory the socket already delivered', async () => {
