@@ -74,6 +74,13 @@ function toolNamed(tools: ReturnType<typeof createAutomationsPlugin>["tools"], n
 }
 
 describe("the automations plugin", () => {
+  it("tells the authoring agent to read the attached transcript before searching or blocking", () => {
+    const plugin = createAutomationsPlugin(host());
+    expect(plugin.systemMessage).toContain("load reading-google-meeting-notes");
+    expect(plugin.systemMessage).toContain("before any Drive search or blocked conclusion");
+    expect(plugin.systemMessage).toContain("read an attached Doc");
+  });
+
   it("attaches and detaches workspace Sidekicks through the host", async () => {
     const state = host();
     const setAttached = vi.fn(async () => ({ items: [] }));

@@ -1,3 +1,4 @@
+import { CONNECTOR_EVENT_PEOPLE_MIGRATION, writeConnectorEventPeople, readConnectorEventPeople, copyConnectorEventPeople } from "./connector-event-people";
 import { CANVA_POLL_SECONDS } from "@rally/connectors";
 import { SCOPE_GRANT_DIRECTORY_SCHEMA, applyScopeGrantDirectory, scopeGrantCandidates, ScopeGrantCandidatesRequestSchema } from "./scope-grant-directory";
 import {
@@ -240,7 +241,7 @@ import { SIDEBAR_LIST_LIMIT } from "../services/sidebar-reads";
 import { enqueueActivityDelivery, enqueuePushDelivery } from "../services/push-delivery-service";
 import type { PushNotificationData } from "@rally/contracts/push-notifications";
 import { activeMembersForActivity } from "../services/push-device-service";
-import { workspaceConnectorEventContentFingerprint } from "../services/workspace-connector-event-ingress";
+import { googleConnectorReplayCompatibility, workspaceConnectorEventContentFingerprint, workspaceConnectorEventPayloadHash } from "../services/workspace-connector-event-ingress";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import {
   recordWorkspaceScheduleFailure,
@@ -4712,6 +4713,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       WHERE telemetry_operation_id IS NOT NULL`,
     ...workspaceIdentityFencesFor("connector_oauth_attempts"),
   ],
+}, {
+  version: 122,
+  description: "preserve up to 10,000 connector people as ordered rows rather than one bounded JSON cell",
+  statements: CONNECTOR_EVENT_PEOPLE_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -4892,6 +4897,7 @@ function workflowAlreadyExists(error: unknown): boolean {
 }
 
 function connectorEventFromRow(
+  sql: SqlStorage,
   row: WorkspaceConnectorEventRow,
   workspaceId: string,
   region: Env["AVALON_REGION"],
@@ -4924,7 +4930,7 @@ function connectorEventFromRow(
       dedupeKey: row.dedupe_key,
       rawContentHash: row.raw_content_hash,
       metadata: JSON.parse(row.metadata_json) as unknown,
-      externalPeople: JSON.parse(row.external_people_json) as unknown,
+      externalPeople: readConnectorEventPeople(sql, row.event_id),
     },
   });
 }
@@ -11834,6 +11840,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       entityKeys: activity.entityKeys,
     });
     const resolvedPeople = (activity.externalPeople ?? []).flatMap((person) => {
+      // SQL equality with NULL cannot match an identity; Gmail addresses have
+      // no provider user ID, so avoid a query per address on large messages.
+      if (!person.providerUserId || !person.providerTenantId) return [];
       const row = this.state.storage.sql.exec<{ user_id: string }>(
         `SELECT user_id FROM external_user_identities
           WHERE workspace_id = ? AND provider = ?
@@ -11867,11 +11876,62 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const contentFingerprint = activity.providerResourceId
       ? await workspaceConnectorEventContentFingerprint(request.event)
       : null;
+    // Hashing awaits outside the transaction. Recheck the exact snapshot hash
+    // before using a compatibility result, because another ingest can interleave.
+    const replayCandidates = activity.provider === "google" ? this.state.storage.sql.exec<WorkspaceConnectorEventRow>(
+      `SELECT * FROM workspace_connector_events WHERE event_id = (
+         SELECT connector_event_id FROM workspace_connector_event_ingress_receipts WHERE ingress_event_id = ?)
+       OR (connection_id = ? AND (provider_event_id = ? AND event_type = ? OR dedupe_key = ?))`,
+      request.ingressEventId, activity.connectionId, activity.providerEventId, activity.eventType, activity.dedupeKey,
+    ).toArray() : [];
+    const compatibleReplays = new Map<string, { hash: string; enrichment: { event: WorkspaceConnectorEvent; hash: string; fingerprint: string } | null }>();
+    for (const candidate of replayCandidates) {
+      if (candidate.payload_hash === request.payloadHash) continue;
+      const compatibility = await googleConnectorReplayCompatibility(
+        connectorEventFromRow(this.state.storage.sql, candidate, request.workspaceId, this.env.AVALON_REGION), request.event,
+      );
+      if (compatibility.compatible) {
+        const event = compatibility.enrichedEvent;
+        const enrichment = event ? {
+          event,
+          hash: await workspaceConnectorEventPayloadHash(event),
+          fingerprint: await workspaceConnectorEventContentFingerprint(event),
+        } : null;
+        compatibleReplays.set(candidate.event_id, { hash: candidate.payload_hash, enrichment });
+      }
+    }
+    const compatible = (eventId: string, hash: string) => {
+      const snapshot = compatibleReplays.get(eventId);
+      if (snapshot && snapshot.hash !== hash) throw new Error("connector_event_replay_raced");
+      return Boolean(snapshot);
+    };
+    const enrichReplay = (eventId: string) => {
+      const snapshot = compatibleReplays.get(eventId);
+      const enrichment = snapshot?.enrichment;
+      if (!enrichment) return;
+      const row = this.state.storage.sql.exec<{ payload_hash: string; metadata_json: string }>(
+        "SELECT payload_hash, metadata_json FROM workspace_connector_events WHERE event_id = ?", eventId).one();
+      if (row.payload_hash !== snapshot.hash) throw new Error("connector_event_replay_raced");
+      this.state.storage.sql.exec("DELETE FROM workspace_connector_event_people WHERE event_id = ?", eventId);
+      writeConnectorEventPeople(this.state.storage.sql, eventId, enrichment.event.activity.externalPeople ?? []);
+      // Keep host-derived evaluator identities while enriching provider context.
+      const previousMetadata = JSON.parse(row.metadata_json);
+      for (const key of ["resourceIds", "participantPersonIds", "authorPersonIds"] as const) {
+        const combined = [...(previousMetadata[key] ?? []), ...(evaluatorMetadata[key] ?? [])];
+        if (combined.length > 0) previousMetadata[key] = [...new Set(combined)];
+      }
+      previousMetadata.actorPersonId ??= evaluatorMetadata.actorPersonId;
+      this.state.storage.sql.exec("UPDATE workspace_connector_events SET payload_hash = ?, metadata_json = ?, external_people_json = '[]' WHERE event_id = ?",
+        enrichment.hash, JSON.stringify({ ...previousMetadata, ...enrichment.event.activity.metadata }), eventId);
+      this.state.storage.sql.exec(
+        "UPDATE workspace_connector_event_latest_content SET content_fingerprint = ? WHERE event_id = ?", enrichment.fingerprint, eventId);
+    };
     let unchangedContent = false;
     const result = WorkspaceConnectorEventIngestResultSchema.parse(
       this.state.storage.transactionSync(() => {
         const receipt = this.state.storage.sql.exec<{
           payload_hash: string;
+          canonical_payload_hash: string;
           connector_event_id: string;
           processing_status: WorkspaceConnectorEventRow["processing_status"];
           processing_attempt: number;
@@ -11879,7 +11939,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           dedupe_key: string;
           restored_event_id: string | null;
         }>(
-          `SELECT receipt.payload_hash, receipt.connector_event_id, event.processing_status,
+          `SELECT receipt.payload_hash, event.payload_hash AS canonical_payload_hash, receipt.connector_event_id, event.processing_status,
                   event.processing_attempt, event.provider_event_id, event.dedupe_key,
                   restored.event_id AS restored_event_id
              FROM workspace_connector_event_ingress_receipts receipt
@@ -11891,9 +11951,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           request.ingressEventId,
         ).toArray()[0];
         if (receipt) {
-          if (receipt.payload_hash !== request.payloadHash) {
+          if (receipt.payload_hash !== request.payloadHash && receipt.canonical_payload_hash !== request.payloadHash
+            && !compatible(receipt.connector_event_id, receipt.canonical_payload_hash)) {
             throw new Error("connector_event_ingress_idempotency_conflict");
           }
+          enrichReplay(receipt.connector_event_id);
           // Only a content match receipts a delivery against an event with
           // neither its provider identity nor its dedupe key, so a redelivered
           // repeat is still answered as one.
@@ -11926,9 +11988,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           throw new Error("connector_event_identity_collision");
         }
         const canonical = byProvider ?? byDedupe;
-        if (canonical && canonical.payload_hash !== request.payloadHash) {
+        if (canonical && canonical.payload_hash !== request.payloadHash
+          && !compatible(canonical.event_id, canonical.payload_hash)) {
           throw new Error("connector_event_identity_reused_with_different_content");
         }
+        if (canonical) enrichReplay(canonical.event_id);
 
         const now = Date.now();
         const occurredAt = Date.parse(activity.occurredAt);
@@ -12031,10 +12095,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             activity.dedupeKey,
             activity.rawContentHash,
             JSON.stringify(evaluatorMetadata),
-            JSON.stringify(activity.externalPeople ?? []),
+            '[]',
             now,
             now,
           );
+          writeConnectorEventPeople(this.state.storage.sql, activity.id, activity.externalPeople ?? []);
           eventId = activity.id;
           processingStatus = "pending";
           if (contentFingerprint && inOrder) {
@@ -12099,6 +12164,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
               activity.eventType,
               activity.providerResourceId,
             );
+            copyConnectorEventPeople(this.state.storage.sql, latest.event_id, dropped.eventId);
             restoredEventId = dropped.eventId;
           }
         }
@@ -12156,7 +12222,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       `SELECT * FROM workspace_connector_events WHERE event_id = ?`,
       request.eventId,
     ).toArray()[0];
-    return row ? connectorEventFromRow(row, request.workspaceId, this.env.AVALON_REGION) : null;
+    return row ? connectorEventFromRow(this.state.storage.sql, row, request.workspaceId, this.env.AVALON_REGION) : null;
+  }
+
+  /** Delivery projection: avoid returning the entire roster when only context is needed. */
+  async connectorEventContext(input: unknown) {
+    await this.initialized;
+    const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema, eventId: IdSchema }), input, "connector_event_context");
+    this.assertWorkspace(request.workspaceId);
+    const row = this.state.storage.sql.exec<{ text_snippet: string | null; metadata_json: string }>(
+      "SELECT text_snippet, metadata_json FROM workspace_connector_events WHERE event_id = ?", request.eventId,
+    ).toArray()[0];
+    if (!row) throw new Error("connector_event_not_found");
+    const { occurrenceKey, ...metadata } = z.record(z.string(), z.unknown()).parse(JSON.parse(row.metadata_json));
+    void occurrenceKey; // The delivery carries the host-owned occurrence field separately.
+    return { textSnippet: row.text_snippet ?? "", metadata };
   }
 
   async claimConnectorEvent(
@@ -12249,7 +12329,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         );
         return {
           outcome: "claimed" as const,
-          event: connectorEventFromRow(row, request.workspaceId, this.env.AVALON_REGION),
+          event: connectorEventFromRow(this.state.storage.sql, row, request.workspaceId, this.env.AVALON_REGION),
           processingLeaseId,
           processingLeaseExpiresAt,
         };
@@ -12653,7 +12733,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         eventId,
       ).toArray()[0];
       return row
-        ? [connectorEventFromRow(row, request.workspaceId, this.env.AVALON_REGION)]
+        ? [connectorEventFromRow(this.state.storage.sql, row, request.workspaceId, this.env.AVALON_REGION)]
         : [];
     });
     return WorkspaceOpportunityOriginEventsResultSchema.parse(events);

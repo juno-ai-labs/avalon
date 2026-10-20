@@ -1815,6 +1815,34 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 
 ## Changelog
 
+### 2026-10-19 — Connector event people occupy ordered rows
+
+**What changed:** WorkspaceDO migration 122 creates
+`workspace_connector_event_people` with per-event positions constrained to
+0–9,999. It is schema-only: legacy JSON rosters remain readable until replacement
+or normal retention, avoiding a constructor-time rewrite of retained events. Ingestion, restoration,
+claims and reads write or reconstruct the complete ordered list. Deleting an
+event cascades to its people. A context projection hydrates oversized matched
+Queue deliveries from this same event. Known legacy Google normalization shapes
+can enrich roster and attachment context atomically while preserving the event's
+processing status; other identity conflicts remain errors.
+
+**Why:** The requested 10,000-person limit exceeds both the old JSON cell guard
+and SQLite's 2 MB row limit when references carry their source evidence.
+
+**Considered and rejected:** Enlarging one JSON column still fails at the
+platform row ceiling. A separate row per person keeps event ownership, ordering
+and atomicity inside the same object and needs no second authority. A full-table
+startup backfill risks the constructor's platform deadline; compatibility reads
+let normal retention retire the old representation without a backfill scheduler.
+
+**Consequences:** Never write a new roster into the historical JSON cell. Person
+rows commit with the event, and late-event restoration must copy them alongside
+the event identity. An enriched Google replay updates the canonical hash and
+latest-content fingerprint together, with a hash fence after async comparison;
+it does not schedule processed work again. Applied migrations remain untouched.
+
+
 ### 2026-10-18 — The conversation object keeps one suggestion per judged turn
 
 **What changed:** Migration v75 adds `conversation_suggestions` and

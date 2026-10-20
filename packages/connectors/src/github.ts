@@ -1,5 +1,5 @@
 import { RegionSchema } from "@rally/contracts/regions";
-import type { NormalizedActivity, ToolDefinition } from "@rally/contracts";
+import { deduplicateExternalPeople, type NormalizedActivity, type ToolDefinition } from "@rally/contracts";
 import { z } from "zod";
 import { deferredZodSchema, memoizedValue } from "@rally/contracts/deferred-zod-schema";
 import {
@@ -2952,7 +2952,6 @@ function githubWebhookPeople(
     { value: recordValue(payload, "comment")?.user, role: "author" },
   ];
   const people: NonNullable<NormalizedActivity["externalPeople"]> = [];
-  const seen = new Set<string>();
   for (const candidate of candidates) {
     const values = Array.isArray(candidate.value) ? candidate.value : [candidate.value];
     for (const value of values) {
@@ -2964,9 +2963,6 @@ function githubWebhookPeople(
       const email = stringValue(value, "email") ?? null;
       const displayName = stringValue(value, "name") ?? null;
       if (!providerUserId && !handle && !email && !displayName) continue;
-      const key = `${candidate.role}:${providerUserId ?? ""}:${handle ?? ""}:${email ?? ""}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
       people.push({
         provider: "github",
         providerTenantId,
@@ -2979,7 +2975,7 @@ function githubWebhookPeople(
       });
     }
   }
-  return people.slice(0, 100);
+  return deduplicateExternalPeople(people);
 }
 
 interface WebhookRepositoryIdentity {
