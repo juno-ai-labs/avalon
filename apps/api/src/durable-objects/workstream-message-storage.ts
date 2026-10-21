@@ -125,16 +125,23 @@ function first<T>(cursor: SqlStorageCursor<T extends Record<string, SqlStorageVa
   return cursor.toArray()[0];
 }
 
+/** Identifies the source marker for both unread tracking and suggestion resolution. */
+export function mergedIntoMarker(structuredContentJson: string | null | undefined): { mergedByUserId: string | null } | null {
+  if (!structuredContentJson) return null;
+  try {
+    const content: unknown = JSON.parse(structuredContentJson);
+    if (content === null || typeof content !== "object"
+      || !("type" in content) || content.type !== "conversation_merged_into") return null;
+    return { mergedByUserId: "mergedByUserId" in content && typeof content.mergedByUserId === "string" ? content.mergedByUserId : null };
+  } catch {
+    return null;
+  }
+}
+
 /** A source's merge notice records where its result went, without new unread content. */
 function isMergeNotice(input: ConversationTurnInput): boolean {
-  if (input.authorType !== "system" || input.messageType !== "system" || !input.structuredContentJson) return false;
-  try {
-    const content: unknown = JSON.parse(input.structuredContentJson);
-    return content !== null && typeof content === "object"
-      && "type" in content && content.type === "conversation_merged_into";
-  } catch {
-    return false;
-  }
+  return input.authorType === "system" && input.messageType === "system"
+    && mergedIntoMarker(input.structuredContentJson) !== null;
 }
 
 /**
