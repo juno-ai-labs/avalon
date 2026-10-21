@@ -162,6 +162,15 @@ describe("the Google presentation, which is rebuilt rather than passed through",
 
 
 describe("Google tool receipt attribution", () => {
+  it.each([["drive.read", "brand-google-drive"], ["gmail.read", "brand-google"]])("keeps a renamed single-bundle account for %s", (capability, icon) => {
+    expect(__integrationTesting.toolInvocationOwningPlugin({ connection_id: "google-account",
+      owner_model_plugin_id: "plugin_google", owner_connector_type: "google", owner_display_name: "Hiring account",
+      owner_granted_scopes_json: JSON.stringify([capability]),
+      execution_plan_json: JSON.stringify({ pluginId: "connection:google-account", capability }),
+    })).toEqual({ pluginId: "plugin_google", canonicalId: "connection:google-account", connectorType: "google",
+      displayName: "Hiring account", icon });
+  });
+
   it.each([
     ["mail_calendar", "gmail.read", "Google Mail + Calendar", "brand-google"],
     ["drive", "drive.read", "Google Drive + Docs + Sheets", "brand-google-drive"],

@@ -75,7 +75,7 @@ describe("the agents plugin", () => {
     sidekicks: async () => ({ sidekicks: [{ sidekickId, name: "Monitor", description: "", scope: "workstream" as const,
       ownedByThisWorkstream: true, canEdit: true, status: "draft" as const, nextRunAt: null, lastRunAt: null, agentId: `automation/${sidekickId}/0` as never }] }),
     send: async (input) => ({ messageId: sidekickId, next: "agentId" in input ? input.agentId : "" }),
-    createSidekick: unused, start: unused, list: unused, stop: unused,
+    findSidekick: unused, createSidekick: unused, start: unused, list: unused, stop: unused,
   } satisfies AgentCommunicationTools;
   const plugin = createAgentCommunicationPlugin(service, "");
   const tool = (name: string) => plugin.tools.find((candidate) => candidate.definition.name === name)!;
@@ -92,7 +92,7 @@ describe("the agents plugin", () => {
 
   it("keeps the rule that a thread changes only Sidekicks it may edit", () => {
     // The incident behind this line: a thread rewrote another thread's draft.
-    expect(plugin.systemMessage).toContain("Change a personal or organization Sidekick only when the person names it and asks you to.");
+    expect(plugin.systemMessage).toContain("Use find_sidekick only when the person explicitly names an existing Sidekick to edit; never silently replace a named target.");
     expect(tool("sidekicks_list").definition.description).toContain("List only editable Sidekicks owned by this thread for setup");
   });
 });

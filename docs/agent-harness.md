@@ -735,6 +735,15 @@ not from the seeded context, so it is never seeded. Owned by
 
 ### Durable receipts and terminal state
 
+Google plugin splits retain compatibility with verified earlier receipt
+identities. The host reconstructs the complete prior tool surface under the
+original canonical ID, for the same connection and currently granted operations.
+The normal operation, capability, mode, retry-policy and input-hash fences still
+apply. Pre-pagination surfaces are accepted only for unchanged operations.
+Identity aliases alone never authorize replay. This also supplies prior request
+plans to idempotency lookup, so a retry does not repeat an external effect merely
+because its plugin was split.
+
 Authored pageable tools use [receipt-owned page IDs](tool-pagination.md). Their
 first-call schema has no cursor; `_next` accepts only a page ID. Private executor
 continuations are removed before output reaches Bind or the result receipt.
@@ -1639,6 +1648,20 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 ## Changelog
 
+### 2026-10-21 — Google plugin splits preserve verified receipt identities
+
+**What changed:** Google views carry compatible prior single-family and combined
+surfaces, including their canonical IDs, into receipt replay and idempotency lookup.
+
+**Why:** Splitting an already-used credential changes the plugin ID and whole
+surface hash without changing a completed operation. Treating that receipt as a
+new tool could interrupt recovery or repeat an effect. Accepting ID aliases alone
+was rejected because a changed schema or policy must still refuse replay.
+
+**Consequences:** Compatibility is proved against reconstructed tool surfaces
+and the existing connection, operation and policy fences; future changes must
+preserve those checks and the captured pre-split receipt regression.
+
 ### 2026-10-21 — Verify uncertain completion once before ending a turn
 
 **What changed:** Ordinary persistent loops use the evaluated baseline JEV
@@ -1698,6 +1721,7 @@ review fixes changed composition and clarified sender identity, with corrected
 synthetic regressions evaluated again.
 
 PR: [#1376](https://github.com/juno-ai-labs/avalon/pull/1376).
+
 
 ### 2026-10-20 — Resume verified settled history after a loop relocation
 
