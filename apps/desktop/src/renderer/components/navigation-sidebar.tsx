@@ -35,6 +35,7 @@ import { Link, matchPath, useLocation, useNavigate } from 'react-router-dom';
 import type { AttentionItem } from '../lib/attention-items';
 import { useAppSession } from '../lib/app-session';
 import { useShellCapabilities } from '../lib/collaboration-session';
+import { reconcileThreadNavigationRows } from '../lib/channel-viewer-state';
 import { consumeDeepLinkWorkstreamNavigation, useDeepLinkWorkstreamNavigation } from '../lib/deep-link-navigation';
 import { desktopBridge } from '../lib/platform';
 import { formatDateTime, formatSidebarActivityTime, formatTime, readerMarkerStatus } from '../lib/format';
@@ -456,9 +457,17 @@ function useChannelsWithNews(enabled: boolean): { all: number; pinned: number } 
 /** This person's threads and breakouts (`GET /navigation/threads`): the Threads tab and the Pinned count share it. */
 function useMyThreads() {
   const { api } = useAppSession();
+  const queryClient = useQueryClient();
   return useInfiniteQuery({
     queryKey: MY_THREADS_QUERY_KEY,
-    queryFn: ({ pageParam, signal }) => api!.getMyThreads(pageParam, signal),
+    queryFn: async ({ pageParam, signal }) => {
+      const page = await api!.getMyThreads(pageParam, signal);
+      return {
+        ...page,
+        items: reconcileThreadNavigationRows(queryClient, page.items),
+        pinned: page.pinned ? reconcileThreadNavigationRows(queryClient, page.pinned) : [],
+      };
+    },
     initialPageParam: null as string | null,
     getNextPageParam: (page) => page.nextCursor,
     enabled: Boolean(api),
@@ -650,15 +659,18 @@ function usePinDrop(pinnedIds: ReadonlySet<string>, orderOf: (kind: PinKind) => 
         if (!drop || drop.landed || !api) return;
         event.preventDefault();
         const index = drop.index ?? orderOf(drop.kind).length;
+        const nextId = orderOf(drop.kind).filter((id) => id !== drop.id)[index];
         setState({ ...drop, index, landed: true });
         let issued = 0;
         const pinned = api.setPinned(drop.kind, drop.id, true, drop.parentId).then((list) => {
           if (drop.kind === 'thread' && drop.thread) reportThreadPin(drop.thread, true);
           const order = list.filter((item) => item.kind === drop.kind).map((item) => item.id);
+          const others = order.filter((id) => id !== drop.id);
+          const target = nextId === undefined ? others.length : others.indexOf(nextId);
           // A newer pin write owns the order now.
-          return !order.includes(drop.id) || order.indexOf(drop.id) === index || issued !== latestPinWrite()
+          return !order.includes(drop.id) || target < 0 || order.indexOf(drop.id) === target || issued !== latestPinWrite()
             ? list
-            : api.reorderPins(drop.kind, moveWithin(order, drop.id, index));
+            : api.reorderPins(drop.kind, moveWithin(order, drop.id, target));
         });
         // A failure is reported by the write; the row goes back to its list.
         write(pinned);
@@ -1022,7 +1034,7 @@ function ThreadsSection({ motion, scroll }: { motion?: () => void; scroll: RefOb
   ]), [list.data, liveById, rows]);
   const visiblePins = pins.filter((item) => {
     const row = byId.get(item.id);
-    return !row || !threadIsArchived(row, liveById);
+    return row ? !threadIsArchived(row, liveById) : !list.isSuccess;
   });
   const threadPins = visiblePins.filter((item) => item.kind === 'thread').map((item) => item.id);
   const breakoutPins = visiblePins.filter((item) => item.kind === 'breakout').map((item) => item.id);
@@ -1124,6 +1136,7 @@ function ThreadsSection({ motion, scroll }: { motion?: () => void; scroll: RefOb
   const pinnedRows = (kind: PinKind, drag: ReturnType<typeof usePinnedDrag>, offset: number): ReactNode[] => withPinDrop(kind, drag.order, drop)
     .map((id) => {
       const row = byId.get(id);
+      // A drag can retain its order or placeholder while the row is archived.
       if (!row || threadIsArchived(row, liveById)) return null;
       if (id === drop?.id) return renderRow(row, undefined, undefined, !drop.landed);
       const index = drag.order.indexOf(id);
