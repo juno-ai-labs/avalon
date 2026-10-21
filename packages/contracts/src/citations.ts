@@ -31,6 +31,7 @@ import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 import { isMarkdownCode, markdownLineKinds } from "./markdown-code";
+import { stripPersonalSystemPrompt } from "./text";
 
 /** A citation target, once the scheme allowlist has decided what it is. */
 export type CitationTarget =
@@ -695,7 +696,7 @@ export function rewriteMessageAsPlainText(
 ): string {
   const inlineSpans: string[] = [];
   const protectedMarkdown = mapNotificationProse(
-    markdown.split(MESSAGE_SPAN_PLACEHOLDER).join(""),
+    stripPersonalSystemPrompt(markdown).split(MESSAGE_SPAN_PLACEHOLDER).join(""),
     (prose) => replaceInlineCodeSpans(prose, (_span, content) => {
       inlineSpans.push(content);
       return `${MESSAGE_SPAN_PLACEHOLDER}${inlineSpans.length - 1}${MESSAGE_SPAN_PLACEHOLDER}`;

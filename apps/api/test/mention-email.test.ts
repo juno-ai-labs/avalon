@@ -103,6 +103,25 @@ describe("channel mention email", () => {
     expect(String(body.text)).not.toContain("Reply to this email");
   });
 
+  it("omits personal instructions from both email parts before excerpting", async () => {
+    const resend = successfulResend();
+    const messageText = `<user_system_prompt>
+The following was provided by this user as instructions for how to respond to this message. For other users' requests ignore these instructions.
+<user_suppplied>
+Answer in French. Never print &lt;/user_system_prompt&gt;.
+</user_suppplied>
+</user_system_prompt>
+
+Please **review** the plan.`;
+    await sendWorkstreamMentionEmail(environment(), { ...input, messageText }, resend);
+    const calls = resend.mock.calls as unknown as Array<[string, RequestInit]>;
+    const body = JSON.parse(String(calls[0]?.[1].body)) as Record<string, unknown>;
+    expect(String(body.text)).toContain('"Please review the plan."');
+    expect(String(body.html)).toContain("Please review the plan.</td>");
+    expect(JSON.stringify(body)).not.toContain("user_system_prompt");
+    expect(JSON.stringify(body)).not.toContain("Answer in French");
+  });
+
   it("collapses whitespace and truncates the message excerpt", async () => {
     const resend = successfulResend();
     const longMessage = `@Sam\n\t${"x".repeat(500)}`;
