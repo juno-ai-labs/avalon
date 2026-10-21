@@ -193,6 +193,9 @@ describe('token references', () => {
     // The width a title menu level may take: what Radix reports as available,
     // less the frame's padding. Layout arithmetic, the same in every theme.
     '--title-menu-room',
+    // Disabled title-menu rows keep their state opacity after the entrance
+    // animation fills. This is component state, independent of the theme.
+    '--title-menu-row-opacity',
     // The attached command pill's current surface token, selected by its
     // default, hover and open states. This aliases existing theme colours;
     // it introduces no palette value of its own.
