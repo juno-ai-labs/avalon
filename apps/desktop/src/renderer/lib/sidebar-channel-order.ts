@@ -29,18 +29,14 @@ export function workstreamHasActivityForViewer(workstream: WorkstreamSummary): b
 }
 
 /**
- * The comparator for the unpinned rows under each sort. `heldId` is the open
- * Channel that was bold when the reader opened it; only Needs you reads it.
+ * The comparator for the unpinned rows under each sort. Selection does not
+ * change attention rank; the list holds the open row's displayed position.
  */
-export function compareChannels(sort: SidebarChannelSort, heldId: string | null = null): WorkstreamComparator {
+export function compareChannels(sort: SidebarChannelSort): WorkstreamComparator {
   if (sort === 'alphabetical') return compareAlphabeticalTitle;
   if (sort === 'recent') return compareRecentChannels;
-  // Every bold row first, then the rest, each half in Recent order. Opening a
-  // bold row reads it, and without the hold it would drop out from under the
-  // pointer while the reader is still in it; it stays until they move on.
-  const needsYou = (workstream: WorkstreamSummary): number => Number(
-    workstream.id === heldId || workstreamHasActivityForViewer(workstream),
-  );
+  // Every bold row first, then the rest, each half in Recent order.
+  const needsYou = (workstream: WorkstreamSummary): number => Number(workstreamHasActivityForViewer(workstream));
   return (left, right) => needsYou(right) - needsYou(left) || compareRecentChannels(left, right);
 }
 
