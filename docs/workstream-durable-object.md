@@ -970,6 +970,9 @@ the canonical or pending receipt; it does not classify or reserve attachments a
 second time. Different content or authors under the same client message ID are
 still an idempotency conflict. Cancellation recovery can resume an unclaimed
 preparation from its original envelope, and settlement releases its waiters.
+Promotion removes the mailbox row, so an absent row also checks accepted
+canonical/pending authority before reporting a failure. Both replay paths share
+one receipt lookup; an inconsistent terminal row fails visibly without recursion.
 
 Every public message-admission response contains only the accepted `turn`
 identity and a truthful `deliveryState` of `canonical` or `pending`. A replay
@@ -1568,7 +1571,9 @@ preparation, repeats it under the same or a new operation ID, and verifies two
 successful private receipts for one accepted turn and one durable admission.
 An altered payload is refused with an idempotency conflict while the original
 remains held. The wait hook stages the interleave; real socket frames and
-workerd SQLite rows are the outcome assertions.
+workerd SQLite rows are the outcome assertions. A separate interleave lets the
+original activate and promote before the replay's reservation resumes, proving
+that deletion of its mailbox row still returns the same canonical turn.
 
 `test-workers/message-to-output-pipeline.test.ts` checks that a public Channel
 reader becomes a participant while their accepted message remains queued behind
@@ -1911,7 +1916,8 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 
 **What changed:** Human-message preparation uses the final admission receipt's
 logical request identity and joins a live preparation before replaying its
-accepted result.
+accepted result. Replays also consult canonical authority when promotion removes
+their mailbox row before the reservation continuation resumes.
 
 **Why:** A same-socket resend arrived during classification with a different
 receive timestamp. Raw envelope equality rejected it before the original send
@@ -1923,7 +1929,11 @@ would duplicate the mailbox's existing waiter and cancellation-recovery lifecycl
 
 **Consequences:** The first durable recovery envelope remains authoritative;
 changed content and authors still conflict, transport metadata cannot change
-request identity, and retries must re-read accepted state after settlement.
+request identity, and retries must re-read accepted state after settlement or
+mailbox removal. Replay validation belongs to the admission caller; waiting does
+not repeat authorization, and a missing receipt fails without recursive admission.
+
+PR: [#1382](https://github.com/juno-ai-labs/avalon/pull/1382).
 
 ### 2026-10-21 — Classify replies against settled preceding admissions
 

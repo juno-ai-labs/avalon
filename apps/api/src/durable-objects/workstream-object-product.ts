@@ -42,6 +42,7 @@ import {
   SpaceColorKeySchema,
   WorkspaceIdSchema,
   WorkstreamIdSchema,
+  UserIdSchema,
   WORKSTREAM_NAMING_GRACE_MS,
   asHarnessRunId,
   asSubstreamId,
@@ -294,7 +295,7 @@ export type InitializeWorkstreamObjectRequest = z.input<typeof InitializeWorkstr
 export type WorkstreamObjectCreateMessageInput = z.infer<typeof WorkstreamObjectCreateMessageInputSchema>;
 
 const HumanMessagePreparationEnvelopeSchema = z.object({
-  auth: z.object({ userId: z.string().uuid() }),
+  auth: z.object({ userId: UserIdSchema }),
   input: WorkstreamObjectCreateMessageInputSchema,
 });
 
@@ -846,6 +847,7 @@ export class WorkstreamObjectProductService {
     clientMessageId: string;
     preparationKind: PendingInputPreparationKind;
     envelope: unknown;
+    validateReplay?: (originalEnvelopeJson: string) => void;
     now: number;
   }): Promise<PendingInputPreparationRow> {
     const loop = this.ensureExternalMessageLoop(input.root, input.now);
@@ -864,20 +866,15 @@ export class WorkstreamObjectProductService {
     );
     let envelopeJson = JSON.stringify(input.envelope);
     // Read after the alarm await: another attempt can reserve while it yields.
-    // Retain the first recovery envelope, but compare logical message identity,
-    // not per-attempt telemetry or the session used to reconnect.
-    const existing = this.loops.inputPreparationByClientMessageId(input.clientMessageId);
-    if (input.preparationKind === "human_message"
-      && existing?.preparation_kind === "human_message" && existing.state === "preparing") {
-      const originalEnvelopeJson = existing.envelope_json ?? "null";
-      const original = HumanMessagePreparationEnvelopeSchema.parse(JSON.parse(originalEnvelopeJson));
-      const replay = HumanMessagePreparationEnvelopeSchema.parse(input.envelope);
-      if (messageAdmissionRequestHash(original.auth.userId, original.input)
-        !== messageAdmissionRequestHash(replay.auth.userId, replay.input)) {
-        throw new ApiError(409, "substream_message_idempotency_conflict",
-          "This client message id was already used for another message");
+    // Each caller decides logical request identity; storage retains the first
+    // recovery envelope once that caller has validated a matching replay.
+    if (input.validateReplay) {
+      const existing = this.loops.inputPreparationByClientMessageId(input.clientMessageId);
+      if (existing?.preparation_kind === input.preparationKind && existing.state === "preparing") {
+        const originalEnvelopeJson = existing.envelope_json ?? "null";
+        input.validateReplay(originalEnvelopeJson);
+        envelopeJson = originalEnvelopeJson;
       }
-      envelopeJson = originalEnvelopeJson;
     }
     return this.loops.reserveInputPreparation({
       inputId: input.inputId,
@@ -4842,31 +4839,36 @@ export class WorkstreamObjectProductService {
       ? this.authorize(auth)
       : Promise.resolve(this.locallyAuthorizedRoot(auth));
     const localRoot = this.locallyAuthorizedRoot(auth);
-    this.messageAdmissionReceipt(
-      this.storage.sql,
-      input.clientMessageId,
-      requestHash,
-    );
-    const existing = first(this.storage.sql.exec<{
-      id: string; created_at: number;
-    } & Record<string, SqlStorageValue>>(
-      `SELECT id, created_at FROM canonical_conversation_turn_details WHERE client_message_id = ?`,
-      input.clientMessageId,
-    ));
-    if (existing) {
-      await authorizedRoot();
-      return this.canonicalMessageReplay(existing, input.clientMessageId);
-    }
-    const existingPending = this.loops.inputByClientMessageId(input.clientMessageId);
-    if (existingPending) {
-      const root = await authorizedRoot();
-      const loop = this.loops.loop();
-      if (!loop || loop.loop_id !== existingPending.loop_id
-        || loop.loop_id !== this.conversationLoopId(root)) {
-        throw new Error("substream_loop_identity_mismatch");
+    const replayAcceptedMessage = async (): Promise<WorkstreamObjectCreateMessageResult | null> => {
+      this.messageAdmissionReceipt(
+        this.storage.sql,
+        input.clientMessageId,
+        requestHash,
+      );
+      const existing = first(this.storage.sql.exec<{
+        id: string; created_at: number;
+      } & Record<string, SqlStorageValue>>(
+        `SELECT id, created_at FROM canonical_conversation_turn_details WHERE client_message_id = ?`,
+        input.clientMessageId,
+      ));
+      if (existing) {
+        await authorizedRoot();
+        return this.canonicalMessageReplay(existing, input.clientMessageId);
       }
-      return this.pendingMessageResult(existingPending, false);
-    }
+      const existingPending = this.loops.inputByClientMessageId(input.clientMessageId);
+      if (existingPending) {
+        const root = await authorizedRoot();
+        const loop = this.loops.loop();
+        if (!loop || loop.loop_id !== existingPending.loop_id
+          || loop.loop_id !== this.conversationLoopId(root)) {
+          throw new Error("substream_loop_identity_mismatch");
+        }
+        return this.pendingMessageResult(existingPending, false);
+      }
+      return null;
+    };
+    const replay = await replayAcceptedMessage();
+    if (replay) return replay;
     const reservationNow = Date.now();
     const reservation = await this.reserveInputPreparation({
       root: localRoot,
@@ -4874,19 +4876,29 @@ export class WorkstreamObjectProductService {
       clientMessageId: input.clientMessageId,
       preparationKind: "human_message",
       envelope: { auth, input },
+      validateReplay: (originalEnvelopeJson) => {
+        const original = HumanMessagePreparationEnvelopeSchema.parse(JSON.parse(originalEnvelopeJson));
+        if (messageAdmissionRequestHash(original.auth.userId, original.input) !== requestHash) {
+          throw new ApiError(409, "substream_message_idempotency_conflict",
+            "This client message id was already used for another message");
+        }
+      },
       now: reservationNow,
     });
     // Reservation yields: its owner may already have settled by this continuation.
     const preparation = this.loops.inputPreparation(reservation.input_id);
-    if (!preparation) throw new Error("pending_input_preparation_not_found");
-    if (preparation.state === "ready" || preparation.state === "discarded"
+    if (!preparation || preparation.state === "ready" || preparation.state === "discarded"
       || this.inputPreparationClaimIsLive(preparation.input_id, Date.now())) {
-      // Only the live owner prepares/classifies this input. Settlement (including
-      // cancellation recovery) releases the existing waiters; replay then reads
-      // the canonical/pending receipt and never repeats the admission effects.
-      await authorizedRoot();
-      await this.waitForInputPreparation(preparation.input_id);
-      return this.createMessageWithAuthority(auth, input, reauthorizeWorkspaceMembership);
+      // Promotion removes the mailbox. Both a missing row and a settled live
+      // owner must replay accepted authority before reporting a genuine failure.
+      if (preparation) await this.waitForInputPreparation(preparation.input_id);
+      const replay = await replayAcceptedMessage();
+      if (replay) return replay;
+      const state = this.loops.inputPreparation(reservation.input_id)?.state;
+      if (state === "failed") {
+        throw new ApiError(409, "pending_input_preparation_failed", "This message could not be prepared");
+      }
+      throw new Error(`pending_input_preparation_${state ?? "not_found"}`);
     }
     const sent: { value?: Omit<MessageSentObservation, "messageId"> } = {};
     const result = await this.runInputPreparation<WorkstreamObjectCreateMessageResult>(preparation, async () => {
