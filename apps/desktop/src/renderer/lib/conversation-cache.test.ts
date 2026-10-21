@@ -148,6 +148,141 @@ describe('conversation cache', () => {
     client.clear();
   });
 
+  it('does not let a header-only preview prevent disk hydration', () => {
+    const client = new QueryClient();
+    const keys = keysFor('0');
+    const empty = transcript();
+    empty.ranges = [];
+    const event = WorkspaceConversationViewEventSchema.parse({
+      type: 'workspace_conversation_view', parentId, substreamId: '0',
+      requestId: '00000000-0000-7000-8000-000000000012',
+      view: { header: { title: 'Only a header', titleStatus: 'settled', scope: 'workspace', harnessStatus: 'completed',
+        createdAt: '2026-10-20T00:00:00.000Z', updatedAt: '2026-10-21T00:00:00.000Z' }, transcript: empty },
+    });
+    expect(seedWorkspaceConversation(client, event, keys)).toBe(false);
+    expect(client.getQueryData(keys.detail)).toBeUndefined();
+    expect(client.getQueryData(keys.transcript)).toBeUndefined();
+    client.clear();
+  });
+
+  it.each(['0', childId])('refreshes a disk seed only with newer visible turns (%s)', (substreamId) => {
+    const client = new QueryClient();
+    const keys = keysFor(substreamId);
+    client.setQueryData(keys.feedSource, 'local_cache');
+    client.setQueryData(keys.detail, detail());
+    client.setQueryData(keys.transcript, transcript());
+    client.setQueryData(keys.initialContext, { remembered: true });
+    const held = client.getQueryData(keys.transcript);
+    const preview = transcript();
+    preview.ranges = [preview.ranges[1]!];
+    const event = WorkspaceConversationViewEventSchema.parse({
+      type: 'workspace_conversation_view', parentId, substreamId,
+      requestId: '00000000-0000-7000-8000-000000000012',
+      view: { header: { title: 'Fresh preview', titleStatus: 'settled', scope: 'workspace', harnessStatus: 'completed',
+        createdAt: '2026-10-20T00:00:00.000Z', updatedAt: '2026-10-21T00:00:00.000Z' }, transcript: preview },
+    });
+    // Equal compact content cannot throw away the disk's richer ranges.
+    expect(seedWorkspaceConversation(client, event, keys)).toBe(false);
+    expect(client.getQueryData(keys.transcript)).toBe(held);
+    event.view!.transcript.ranges[0]!.turns[0] = { ...turn(3, 'Edited on another device'), revision: 2 };
+    expect(seedWorkspaceConversation(client, event, keys)).toBe(true);
+    expect(client.getQueryData<WorkstreamTranscriptSnapshot>(keys.transcript)?.ranges.flatMap((range) => range.turns).find((item) => item.turnId === 'turn-3')?.blocks[0])
+      .toMatchObject({ text: 'Edited on another device' });
+    expect(client.getQueryData<WorkstreamTranscriptSnapshot>(keys.transcript)?.ranges.flatMap((range) => range.turns).map((item) => item.turnId))
+      .toEqual(['turn-1', 'turn-2', 'turn-3']);
+    expect(client.getQueryData<WorkstreamDetail>(keys.detail)?.latestAttentionSequenceNumber).toBe(3);
+    expect(client.getQueryData(keys.initialContext)).toEqual({ remembered: true });
+    expect(client.getQueryData(keys.feedSource)).toBe('local_cache');
+    // Even a later tail must not put the edited turn's previous revision back.
+    event.view!.transcript.snapshotThrough = 4;
+    event.view!.transcript.ranges[0]!.turns = [turn(3, 'Old edit'), turn(4, 'New tail')];
+    expect(seedWorkspaceConversation(client, event, keys)).toBe(false);
+    event.view!.transcript.snapshotThrough = 2;
+    event.view!.transcript.ranges[0]!.turns = [turn(2, 'Old tail')];
+    expect(seedWorkspaceConversation(client, event, keys)).toBe(false);
+    client.clear();
+  });
+
+  it('refreshes visible revisions across hidden interior and tail turns without losing rich state', () => {
+    const client = new QueryClient();
+    const keys = keysFor('0');
+    const disk = transcript();
+    const rich = { ...turn(1, 'Unchanged answer'), activityId: 'assistant-1', blocks: [
+      ...turn(1, 'Unchanged answer').blocks,
+      { type: 'thinking' as const, blockId: 'thinking-1', blockIndex: 1, providerEvidence: 'reasoning_summary' as const, summary: null, activityId: 'thinking-work' },
+    ] };
+    const hidden = (sequence: number) => ({ ...turn(sequence, ''), blocks: [
+      { type: 'thinking' as const, blockId: `hidden-${sequence}`, blockIndex: 0, providerEvidence: 'reasoning_summary' as const, summary: null, activityId: `hidden-work-${sequence}` },
+    ] });
+    disk.snapshotThrough = 5;
+    disk.ranges = [{ ...disk.ranges[1]!, covered: { startInclusive: 1, endExclusive: 6 },
+      requested: { startInclusive: 1, endExclusive: 6 }, turns: [rich, hidden(2), turn(3, 'Stale answer'), hidden(5)] }];
+    const activity = { activityId: 'thinking-work', parentActivityId: 'assistant-1', scope: 'thinking' as const,
+      subjectId: 'turn-1', callIndex: null, label: 'Thinking', state: 'active' as const, intervals: [], revision: 1 };
+    disk.activities = [activity];
+    disk.activeActivities = [activity];
+    disk.pluginRuns = [{ pluginRunId: 'plugin-1', turnId: 'turn-1', pluginId: 'terminal', displayName: 'Terminal',
+      state: 'completed', durationMs: 123, elapsedMsAtSnapshot: null, timingAccuracy: 'observed', toolCallIds: ['tool-1'] }];
+    disk.ranges[0]!.activities = disk.activities;
+    disk.ranges[0]!.pluginRuns = disk.pluginRuns;
+    const preview = transcript();
+    preview.ranges = [{ ...preview.ranges[1]!, covered: { startInclusive: 1, endExclusive: 4 },
+      requested: { startInclusive: 1, endExclusive: 4 }, turns: [turn(1, 'Unchanged answer'), { ...turn(3, 'Fresh answer'), revision: 2 }] }];
+    const event = WorkspaceConversationViewEventSchema.parse({
+      type: 'workspace_conversation_view', parentId, substreamId: '0',
+      requestId: '00000000-0000-7000-8000-000000000012',
+      view: { header: { title: 'Fresh', titleStatus: 'settled', scope: 'workspace', harnessStatus: 'completed',
+        createdAt: '2026-10-20T00:00:00.000Z', updatedAt: '2026-10-21T00:00:00.000Z' }, transcript: preview },
+    });
+    client.setQueryData(keys.feedSource, 'local_cache');
+    client.setQueryData(keys.detail, detail());
+    client.setQueryData(keys.transcript, disk);
+    expect(seedWorkspaceConversation(client, event, keys)).toBe(true);
+    const result = client.getQueryData<WorkstreamTranscriptSnapshot>(keys.transcript)!;
+    expect(result.ranges.flatMap((range) => range.turns).map((item) => [item.turnId, item.blocks[0]?.type === 'text' ? item.blocks[0].text : item.blocks[0]?.type]))
+      .toEqual([['turn-5', 'thinking'], ['turn-1', 'Unchanged answer'], ['turn-2', 'thinking'], ['turn-3', 'Fresh answer']]);
+    expect(result.ranges.flatMap((range) => range.turns).find((item) => item.turnId === 'turn-1')?.blocks)
+      .toEqual([expect.objectContaining({ text: 'Unchanged answer' }), expect.objectContaining({ type: 'thinking', activityId: 'thinking-work' })]);
+    expect(result.pluginRuns).toEqual([expect.objectContaining({ toolCallIds: ['tool-1'], durationMs: 123 })]);
+    expect(result.ranges.flatMap((range) => range.pluginRuns)).toEqual([expect.objectContaining({ toolCallIds: ['tool-1'] })]);
+    expect(result.activeActivities).toEqual([expect.objectContaining({ activityId: 'thinking-work', state: 'active' })]);
+    // A missing projectable answer is still a real incomplete delivery.
+    event.view!.transcript.ranges[0]!.turns = [{ ...turn(3, 'Even fresher'), revision: 3 }];
+    expect(seedWorkspaceConversation(client, event, keys)).toBe(false);
+    client.clear();
+  });
+
+  it('retains an active-only turn and its rendering state outside the preview window', () => {
+    const client = new QueryClient();
+    const keys = keysFor('0');
+    const disk = transcript();
+    disk.ranges = [disk.ranges[1]!];
+    disk.activeTurns = [{ ...turn(1, 'Still running'), activityId: 'active-assistant' }];
+    disk.activities = [{ activityId: 'active-assistant', parentActivityId: null, scope: 'assistant_turn',
+      subjectId: 'turn-1', callIndex: null, label: 'Rally', state: 'active', intervals: [], revision: 1 }];
+    disk.activeActivities = disk.activities;
+    disk.pluginRuns = [{ pluginRunId: 'active-plugin', turnId: 'turn-1', pluginId: 'terminal', displayName: 'Terminal',
+      state: 'active', durationMs: null, elapsedMsAtSnapshot: 123, timingAccuracy: 'observed', toolCallIds: ['active-call'] }];
+    const preview = transcript();
+    preview.ranges = [preview.ranges[1]!];
+    preview.ranges[0]!.turns[0] = { ...turn(3, 'Fresh answer'), revision: 2 };
+    const event = WorkspaceConversationViewEventSchema.parse({
+      type: 'workspace_conversation_view', parentId, substreamId: '0',
+      requestId: '00000000-0000-7000-8000-000000000012',
+      view: { header: { title: 'Fresh', titleStatus: 'settled', scope: 'workspace', harnessStatus: 'completed',
+        createdAt: '2026-10-20T00:00:00.000Z', updatedAt: '2026-10-21T00:00:00.000Z' }, transcript: preview },
+    });
+    client.setQueryData(keys.feedSource, 'local_cache');
+    client.setQueryData(keys.detail, detail());
+    client.setQueryData(keys.transcript, disk);
+    expect(seedWorkspaceConversation(client, event, keys)).toBe(true);
+    const result = client.getQueryData<WorkstreamTranscriptSnapshot>(keys.transcript)!;
+    expect(result.activeTurns).toEqual([expect.objectContaining({ turnId: 'turn-1', blocks: [expect.objectContaining({ text: 'Still running' })] })]);
+    expect(result.activeActivities).toEqual([expect.objectContaining({ activityId: 'active-assistant', state: 'active' })]);
+    expect(result.pluginRuns).toEqual([expect.objectContaining({ pluginRunId: 'active-plugin', toolCallIds: ['active-call'] })]);
+    client.clear();
+  });
+
   it('seeds empty caches from the row and marks them as a seed', async () => {
     await conversationSlice.write(scope, conversationCacheKey(parentId, '0'), {
       detail: detail(), transcript: transcript(), initialContext: null, cachedAt: '2026-09-01T12:00:00.000Z',

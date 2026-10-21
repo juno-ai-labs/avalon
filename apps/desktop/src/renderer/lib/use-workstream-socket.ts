@@ -96,6 +96,7 @@ import {
   mirrorConversation,
   type ConversationCacheKeys,
 } from './conversation-cache';
+import { workspaceSocketReconnectDelay } from '@rally/contracts/workspace-reach-watch';
 import { useLocalCacheScope } from './local-cache-scope';
 import { desktopBridge } from './platform';
 import {
@@ -1596,6 +1597,7 @@ export function useWorkstreamSocket(
       }
 
       if (event.type === 'snapshot') {
+        stopConversationView();
         pendingInputSnapshot = event.pendingInputChunkCount === 0 ? null : {
           snapshotId: event.transcript.snapshotId,
           sequence: event.sequence,
@@ -2040,6 +2042,7 @@ export function useWorkstreamSocket(
      */
     const handleAccessRevoked = (): void => {
       accessRevoked = true;
+      stopConversationView();
       resumeState.lastSequence = 0;
       streamCursors.clear();
       setActiveCompaction(null);
@@ -2158,6 +2161,7 @@ export function useWorkstreamSocket(
           });
           if (!retrying) {
             openingTerminal = true;
+            stopConversationView();
             rejectPendingSubstreamCommands(new ApiError(
               'The live connection timed out before the breakout command completed.',
               408,
@@ -2506,36 +2510,48 @@ export function useWorkstreamSocket(
     const stopApplicationForeground = desktopBridge().onApplicationForegroundChanged(
       handleApplicationForegroundChange,
     );
-    // The disk paints first and the socket corrects it. Hydration lands only
-    // in caches that are still empty, so a live snapshot that beats the read
-    // is never overwritten; the mirror writes only what a live snapshot
-    // installed, so a seed never persists itself. Both are no-ops outside a
-    // workspace scope, which is what keeps every standalone embedding and
-    // test on the path that existed before the cache.
+    // Start disk and workspace acquisition together, but compare a preview
+    // only after the disk read settles so a fast response cannot hide richer
+    // saved state. Live and optimistic data still win over either seed.
     const localCacheMirror = localCacheScope === null
       ? null
       : mirrorConversation(queryClient, localCacheScope, parentId, substreamId, localCacheKeys);
-    let stopConversationView: (() => void) | undefined;
+    let cancelViewRequest: (() => void) | undefined;
+    let viewRetryTimer: number | undefined;
+    let viewAttempts = 0;
+    let viewStopped = false;
+    const stopConversationView = () => {
+      viewStopped = true;
+      if (viewRetryTimer !== undefined) window.clearTimeout(viewRetryTimer);
+      cancelViewRequest?.();
+    };
     const requestMissingView = (): void => {
-      if (closedByEffect || accessRevoked
-        || queryClient.getQueryData(localCacheKeys.detail) !== undefined
-        || queryClient.getQueryData(localCacheKeys.transcript) !== undefined) return;
-      stopConversationView = requestConversationView?.(parentId, substreamId, (event) => {
-        if (!closedByEffect && !accessRevoked) seedWorkspaceConversation(queryClient, event, localCacheKeys);
+      if (viewStopped || closedByEffect || accessRevoked || openingTerminal || !requestConversationView
+        || ((queryClient.getQueryData(localCacheKeys.detail) !== undefined
+          || queryClient.getQueryData(localCacheKeys.transcript) !== undefined) && !seededFromLocalCache())) return;
+      cancelViewRequest = requestConversationView(parentId, substreamId, (event) => {
+        if (viewStopped || closedByEffect || accessRevoked) return;
+        void diskRead.then(() => {
+          if (!viewStopped && !closedByEffect && !accessRevoked) seedWorkspaceConversation(queryClient, event, localCacheKeys);
+        });
+        // A populated answer is complete even when the device has a newer copy.
+        if (event.view?.transcript.ranges.some((range) => range.turns.length > 0)) return;
+        // Backfill can still be delivering when the first read misses or holds
+        // only a header. Reuse the Organization connection's retry policy; the
+        // live snapshot, terminal failure, or unmount cancels this opening work.
+        viewRetryTimer = window.setTimeout(requestMissingView, workspaceSocketReconnectDelay(viewAttempts++));
       });
     };
-    if (localCacheScope !== null) {
-      void hydrateConversation(
-        queryClient,
-        localCacheScope,
-        parentId,
-        substreamId,
-        localCacheKeys,
-        // A hydration still in flight when the reader is shut out must not
-        // repaint what the eviction just removed.
-        () => !closedByEffect && !accessRevoked,
-      ).then(requestMissingView);
-    } else requestMissingView();
+    const diskRead = localCacheScope === null ? Promise.resolve() : hydrateConversation(
+      queryClient,
+      localCacheScope,
+      parentId,
+      substreamId,
+      localCacheKeys,
+      // A read overtaken by eviction must not repaint inaccessible content.
+      () => !closedByEffect && !accessRevoked,
+    );
+    requestMissingView();
     void connect();
     // The cursors survive this effect — they live in the resume state — so a
     // remount can inherit a reveal already in progress. Without this the held
@@ -2550,7 +2566,7 @@ export function useWorkstreamSocket(
     )) scheduleReveal();
     return () => {
       closedByEffect = true;
-      stopConversationView?.();
+      stopConversationView();
       reconnectRef.current = null;
       localCacheMirror?.stop();
       releaseData();
