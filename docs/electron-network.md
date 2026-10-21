@@ -118,6 +118,8 @@ error again duplicates the failure Electron already sends to the request.
 and signing behavior. Review the patch and run the native fixture on upgrades;
 this containment does not establish which background request failed on a device.
 
+Pull request: [#1362](https://github.com/juno-ai-labs/avalon/pull/1362).
+
 ### 2026-10-20 — Own Electron upload failures at the request boundary
 
 **What changed:** Both Electron applications route HTTP requests through a shared
