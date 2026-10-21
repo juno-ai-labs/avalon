@@ -34,3 +34,10 @@ export function truncateUtf16Safe(value: string, maxLength: number): string {
   const end = code >= 0xd800 && code <= 0xdbff ? maxLength - 1 : maxLength;
   return value.slice(0, end);
 }
+
+/** The participant's words as shown in the feed, without their private instruction prefix. */
+export function visibleParticipantText(text: string, actor: string): string {
+  return actor === "human" || actor === "external"
+    ? stripPersonalSystemPrompt(text)
+    : text;
+}

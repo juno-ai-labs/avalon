@@ -219,6 +219,16 @@ quoted values into SQL. Bindings may be strings, finite numbers, or `null`.
 | Tool | Required identity | Effect |
 | --- | --- | --- |
 | `list_workspaces` | None | Lists workspace identity records across configured deployments. |
+| `create_org` | `operationId`, `creatorUserId`, `region`, `name`, `userIds` | Creates an Organization with the creator as owner and the existing regional users as members, directly, without invitations. |
+| `create_channel` | `operationId`, `creatorUserId`, `orgId`, `name`, `participantUserIds` | Creates an Organization-wide Channel (stored Space) and seats the creator and participants under ordinary app permissions. |
+| `create_thread` | `operationId`, `creatorUserId`, `orgId`, `channelId`, `prompt` | Starts a Thread in that Channel as the selected user under ordinary app permissions, including the opening prompt and normal agent run. Private-Channel rules apply. |
+| `send_message` | `operationId`, `userId`, `orgId`, `threadId`, `text`; optional `breakoutId` and composer fields | Uses normal message admission, retries, addressing and execution as that user. |
+| `read_channel` | `userId`, `orgId`, `channelId`; optional `cursor` | Returns the visible Channel feed as plain text, including Thread cards. |
+| `read_thread` | `userId`, `orgId`, `threadId`; optional `afterSequence`, `throughSequence`, `limit` | Returns committed participant prose as plain text. |
+| `read_breakout` | The Thread-read inputs plus `breakoutId` | Reads the exact child under its own access checks. |
+| `list_channels` | `userId`, `orgId` | Lists the active Channels visible to this person in app order; each item `id` is a `channelId`. |
+| `list_threads` | `userId`, `orgId`, `channelId`; optional `cursor` | Lists all visible, unarchived Threads, including settled/read ones. Each `id` is a `threadId`; follow `nextCursor`. |
+| `list_breakouts` | `userId`, `orgId`, `channelId`; optional `cursor` | Lists all visible, unarchived Breakouts across the Channel's Threads. Use `id` as `breakoutId` and `breakoutOf.workstreamId` as `threadId`. |
 | `list_orgs` | Optional `orderBy`, `direction`, `limit`, `page` | Lists every Organization across regions, newest first unless ordered otherwise, abandoned ones included, with plan, creation time, active member count, and last seen. |
 | `search_orgs` | Optional `query`, `plan`, `abandoned`, `createdAfter`, `createdBefore`, plus the ordering and paging inputs | Same rows as `list_orgs`, narrowed by every filter given; abandoned Organizations are left out unless `abandoned` is `include` or `only`. |
 | `list_users` | Optional `orderBy`, `direction`, `limit`, `page` | Lists every user across regions, newest first unless ordered otherwise, each with every Organization they belong to: role, guest or member, status, and last seen. |
@@ -226,7 +236,7 @@ quoted values into SQL. Bindings may be strings, finite numbers, or `null`.
 | `list_workstreams` | `workspaceId` | Reads the authoritative WorkspaceDO work-stream directory. |
 | `list_substreams` | `workstreamId` | Lists main substream `0` and child substreams from the Channel's hosted parent in WorkspaceDO. |
 | `list_sidekicks` | `workspaceId` | Reads the authoritative WorkspaceDO Sidekick directory, in every lifecycle including deleted. |
-| `list_spaces` | `workspaceId` | Lists the Organization's Spaces, archived ones included. Answers an empty list until a product path creates a Space. |
+| `list_spaces` | `workspaceId` | Lists the Organization's Channels (stored Spaces), archived ones included. Use a returned `spaceId` as `channelId` for `create_thread`. |
 | `list_artifacts` | `workspaceId` | Reads the authoritative WorkspaceDO live web artifact registry. |
 | `run_workspace_sql` | `workspaceId`, `sql`, optional `bindings` | Runs arbitrary SQLite in WorkspaceDO, including a Channel's or Space's parent state in the `parent_*` tables. |
 | `run_substream_sql` | `workspaceId`, `workstreamId`, `substreamId`, `sql`, optional `bindings` | Runs arbitrary SQLite in SubstreamAgent. |
@@ -238,6 +248,15 @@ quoted values into SQL. Bindings may be strings, finite numbers, or `null`.
 | `update_model_flag` | `role`, `routing` | Replaces an agent role's default route plan through Ace after checking each model id on OpenRouter. |
 | `query_data_lake` | `lakehouse`, `sql` | Runs read-only Basin SQL against `llm_inference`, `analytics_events`, or `usage_events`. |
 | `query_worker_observability` | `view`, `from`, optional `to`, `filters`, `needle`, `calculations`, `groupBys`, `limit`, `offset` | Queries Workers Logs and Traces for every Worker on the account, as the dashboard's Query Builder does. |
+
+For each creation, generate a fresh UUID `operationId`; the created entity uses
+it as its ID. Reuse that UUID and the original arguments after a timeout or
+lost response to finish the same creation. Use `search_users` for existing
+regional user IDs. `create_org` makes the creator an owner of the new org;
+Channel and Thread creation preserve the named creator's current member or guest
+relationship and enforce the app's permissions, including guest refusals.
+Message sends also reuse an operation ID after an uncertain result.
+See [creation behavior and retries](engineering-mcp.md#product-creation).
 
 SQL results include `columns`, JSON-safe `rows`, `rowsRead`, and `rowsWritten`.
 BLOB values are returned as `{ "type": "blob", "base64": "..." }`.

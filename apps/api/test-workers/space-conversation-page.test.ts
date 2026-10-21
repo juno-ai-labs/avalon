@@ -384,9 +384,9 @@ async function place(spaceId: SpaceId, workstreamId: WorkstreamId): Promise<void
   await placeMembership(workspace(), { workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, workstreamId });
 }
 
-async function page(spaceId: SpaceId, userId: UserId, cursor: string | null = null) {
+async function page(spaceId: SpaceId, userId: UserId, cursor: string | null = null, options: { kind?: "channel" | "breakout"; needsViewerOnly?: boolean } = {}) {
   const result = await workspace().listSpaceChannels({
-    workspaceId: WORKSPACE_ID, userId, spaceId, cursor,
+    workspaceId: WORKSPACE_ID, userId, spaceId, cursor, ...options,
   });
   if (!result.ok) throw new Error(`listSpaceChannels refused: ${result.code}`);
   return result.page;
@@ -510,6 +510,26 @@ beforeEach(async () => {
 });
 
 describe("space dashboard conversation page", () => {
+  it("lists settled conversations by kind without widening member or guest visibility", async () => {
+    const spaceId = await reserve("Complete directory");
+    await openChannelObject(CHANNEL_A);
+    await publishChannel(CHANNEL_A, [channelCommonEffect("Settled thread", { state: "idle" }), viewerEffect(OWNER)]);
+    await place(spaceId, CHANNEL_A);
+    await publishBreakout(CHANNEL_A, BREAKOUT_ONE, [
+      breakoutCommonEffect("Owner's settled breakout", { state: "idle" }), viewerEffect(OWNER) as ConversationEffect,
+    ]);
+    await publishBreakout(CHANNEL_A, BREAKOUT_TWO, [
+      breakoutCommonEffect("Shared settled breakout", { state: "idle" }),
+      viewerEffect(MEMBER) as ConversationEffect, viewerEffect(GUEST) as ConversationEffect,
+    ]);
+    expect((await page(spaceId, OWNER)).items).toEqual([]);
+    expect((await page(spaceId, OWNER, null, { kind: "channel", needsViewerOnly: false })).items.map((item) => item.title)).toEqual(["Settled thread"]);
+    expect((await page(spaceId, OWNER, null, { kind: "breakout", needsViewerOnly: false })).items.map((item) => item.title)).toEqual(["Owner's settled breakout"]);
+    expect((await page(spaceId, MEMBER, null, { kind: "breakout", needsViewerOnly: false })).items.map((item) => item.title)).toEqual(["Shared settled breakout"]);
+    expect((await page(spaceId, GUEST, null, { kind: "channel", needsViewerOnly: false })).items).toEqual([]);
+    expect((await page(spaceId, GUEST, null, { kind: "breakout", needsViewerOnly: false })).items.map((item) => item.title)).toEqual(["Shared settled breakout"]);
+  });
+
   it("given a breakout projection, when its Channel forwards it, then it lands in the breakout tables", async () => {
     await openChannelObject(CHANNEL_A);
 
@@ -1093,6 +1113,16 @@ describe("space dashboard conversation page", () => {
       ))
       .map((conversation) => conversation.title);
     expect(seen).toEqual(expected);
+    for (const kind of ["channel", "breakout"] as const) {
+      const titles: string[] = [];
+      let kindCursor: string | null = null;
+      do {
+        const chunk = await page(spaceId, OWNER, kindCursor, { kind, needsViewerOnly: false });
+        titles.push(...chunk.items.map((item) => item.title));
+        kindCursor = chunk.nextCursor;
+      } while (kindCursor !== null);
+      expect(titles.sort()).toEqual(seeded.filter((item) => item.kind === kind).map((item) => item.title).sort());
+    }
     expect(expected.slice(SPACE_CHANNEL_PAGE_SIZE - 1, SPACE_CHANNEL_PAGE_SIZE + 1))
       .toEqual(["Breakout 901", `Channel ${String(tieAt).padStart(3, "0")}`]);
   });
