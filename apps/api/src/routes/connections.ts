@@ -56,6 +56,7 @@ const googleStart = z.object({
   scope: ScopeSchema,
   capabilities: z.array(z.enum([
     "gmail.read",
+    "gmail.modify",
     "gmail.draft",
     "gmail.send",
     "calendar.read",

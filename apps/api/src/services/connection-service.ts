@@ -2,7 +2,7 @@ import { runtimeDeferral } from "../lib/defer";
 import type { Region } from "@rally/contracts/regions";
 import { ashbyIngressUrl } from "../lib/ashby-ingress";
 import { registerAshbyRoute } from "./ashby-routing-service";
-import { ConnectorInstallationProviders, ConnectorInstallationSchema, type ConnectorInstallation, type ConnectorInstallationProviderSchema } from "@rally/contracts";
+import { GOOGLE_MAIL_CALENDAR_CAPABILITIES, ConnectorInstallationProviders, ConnectorInstallationSchema, type ConnectorInstallation, type ConnectorInstallationProviderSchema } from "@rally/contracts";
 import { TELEMETRY_CONNECTOR_TYPES, type TelemetryConnectorType } from "@rally/contracts/telemetry";
 import { AshbyEventSelectionSchema, slackInstallationId } from "@rally/connectors";
 import { enqueueConnectorInstallation, runConnectorInstallation } from "./connector-installation-service";
@@ -128,6 +128,7 @@ type CreateWebhookInput = z.infer<typeof CreateWebhookConnectionRequestSchema>;
 
 const capabilityScopes: Record<string, readonly string[]> = {
   "gmail.read": GoogleCapabilityScopes.gmailRead,
+  "gmail.modify": GoogleCapabilityScopes.gmailModify,
   "gmail.draft": GoogleCapabilityScopes.gmailDraft,
   "gmail.send": GoogleCapabilityScopes.gmailSend,
   "calendar.read": GoogleCapabilityScopes.calendarRead,
@@ -2171,9 +2172,16 @@ export class ConnectionService {
   async reconnect(id: string, desktopHandoffVersion: ConnectorHandoff): Promise<ConnectorOAuthStart> {
     const connection = await this.loadAuthorized(id);
     if (connection.connector_type === "google") {
+      const capabilities = parseJson<string[]>(connection.granted_scopes_json, []);
+      // An explicit reauthorization refreshes the complete Mail + Calendar
+      // preset. Narrow custom grants keep their authority. Nothing is granted
+      // until the normal OAuth callback commits the newly authorized state.
+      const refreshMailPreset = GOOGLE_MAIL_CALENDAR_CAPABILITIES
+        .filter((capability) => capability !== "gmail.modify")
+        .every((capability) => capabilities.includes(capability));
       return this.beginGoogle({
         scope: connection.scope,
-        capabilities: parseJson(connection.granted_scopes_json, []),
+        capabilities: refreshMailPreset ? [...new Set([...capabilities, "gmail.modify"])] : capabilities,
         connectionId: id,
         desktopHandoffVersion,
       });

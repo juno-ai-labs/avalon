@@ -5759,17 +5759,17 @@ function googleMailWorkedExamples(wirePrefix: string, granted: ReadonlySet<strin
   for (const [capability, tool] of [["gmail.draft", "create_draft"], ["gmail.send", "send"]] as const) {
     if (!granted.has(capability)) continue;
     examples.push(
-      `Start a new conversation — \`${wirePrefix}_gmail_${tool} {"message": {"kind": "new", "to": ["dana@example.com"], "subject": "Renewal", "body": "Hello Dana."}}\` is the whole call.`,
+      `Start a new conversation — \`${wirePrefix}_gmail_${tool} {"to": ["dana@example.com"], "subject": "Renewal", "body": "Hello Dana."}\` is the whole call.`,
     );
     if (granted.has("gmail.read")) {
       examples.push(
-        `Reply to an existing message — if a search hit's \`id\` were "18f0a2c4d5e6f702", the call would be \`${wirePrefix}_gmail_${tool} {"message": {"kind": "reply", "messageId": "18f0a2c4d5e6f702", "to": ["dana@example.com"], "body": "Thank you, Dana."}}\`. Replace the example id and address with values from your actual tool results. Rally fetches the subject and threading headers; you choose the recipients explicitly.`,
+        `Reply using the matching email — \`${wirePrefix}_gmail_${tool === "create_draft" ? "create_reply_draft" : "reply"} {"query": "from:dana@example.com subject:renewal after:2026/10/20 before:2026/10/22", "body": "Thank you, Dana."}\`. Replace the example query with the person's actual sender, subject and dates. Rally finds the message and resolves reply recipients, subject and threading internally; no IDs need to be copied.`,
       );
     }
   }
   if (granted.has("calendar.write") && granted.has("calendar.read")) {
     examples.push(
-      `Add someone to an event by naming only the change — \`${wirePrefix}_calendar_update_event {"eventId": "…", "addAttendeeEmails": ["new@example.com"]}\`, which keeps everyone already invited. Reach for \`replaceAllAttendeeEmails\` only to set the whole guest list, since anyone left out of it is removed and emailed about it.`,
+      `Add someone to an event by naming only the change — \`${wirePrefix}_calendar_update_event {"date": "2026-10-21", "title": "Design review", "startTime": "09:00", "addAttendeeEmails": ["new@example.com"]}\`, which keeps everyone already invited. Reach for \`replaceAllAttendeeEmails\` only to set the whole guest list, since anyone left out of it is removed and emailed about it.`,
     );
   }
   return examples.length ? `Worked examples:\n${examples.map((example) => `- ${example}`).join("\n")}` : "";
@@ -5930,22 +5930,25 @@ function connectorPluginPresentation(
       ...(granted.has("gmail.draft") ? ["Gmail drafts can attach PDF resources: pass attachmentResourceIds at the root beside message, using IDs from list_resources. The host resolves original bytes under the run's current access; never provide file bytes or storage keys."] : []),
       "For newest, latest, recent, unread, sender, subject, or inbox questions, use the Gmail search tool first, then read the selected thread or message when its details are needed; do not substitute public web search for authorized mailbox search.",
       "Search with Gmail's operators, such as from:, to:, subject:, newer_than:, and has:attachment, rather than bare keywords; a search result already carries each hit's sender, recipients, subject, date, and RFC Message-ID, so read a message only when you need its body.",
+      ...(granted.has("gmail.modify")
+        ? ["Manage inbox state with the distinct archive, mark_read, mark_unread, star, label, trash and restore_from_trash tools. Use an exact known threadId or a unique Gmail query. Custom labels accept exact names or known IDs. These tools never permanently delete mail."]
+        : []),
       ...(granted.has("gmail.read")
         ? ["Resolve an unknown recipient address with the Gmail contact-finding tool before addressing a draft or a message, and read the connected account's own address with the Gmail profile tool rather than inferring it from a signature or a header."]
         : []),
       ...(granted.has("gmail.draft") || granted.has("gmail.send")
         ? [
-          "To start a new email, pass message with kind=new, to, subject, and body. Choose to and cc explicitly, since Rally does not add recipients automatically.",
+          "Use gmail.send or gmail.create_draft for a new email, with to, subject and body. Use gmail.reply or gmail.create_reply_draft for replies; these are distinct tools with no kind selector.",
           ...(granted.has("gmail.read")
-            ? ["To reply, pass message with kind=reply, messageId copied from a search hit's id, to, and body. Rally resolves the reply's subject and threading headers from that message. Replying requires this connection's gmail.read capability."]
+            ? ["Reply tools take body and either an exact known messageId or a Gmail query. Rally finds the original email and resolves its recipient, subject and threading internally. Supply to only to override the reply recipient. Replying requires this connection's gmail.read capability. Use trusted IDs when already known; otherwise narrow a Gmail query until it identifies one message."]
             : []),
-          "A draft or message body is delivered as plain text exactly as written, so write it as plain text: ordinary sentences, blank lines between paragraphs, and \"-\" for a list. Markdown syntax such as #, **, or a [label](url) link reaches the recipient as those characters rather than as formatting.",
+          "Use htmlBody for HTML formatting, bcc for blind copies, attachments for files, and includeSignature to append the account signature (requires gmail.read). body is the plain-text alternative, so write it as plain text: ordinary sentences, blank lines between paragraphs, and \"-\" for a list. Markdown syntax such as #, **, or a [label](url) link reaches the recipient as those characters rather than as formatting.",
         ]
         : []),
     ]
     : [];
   const calendarGuidance = granted.has("calendar.write")
-    ? ["State an attendee change rather than the resulting list: addAttendeeEmails and removeAttendeeEmails are applied to the guest list the event already has, while replaceAllAttendeeEmails sets it outright and removes anyone omitted. Either way everyone remaining on the event is emailed about the change."]
+    ? ["Use calendar.cancel_event or respond_to_event for one dated occurrence; use cancel_recurring_series or respond_to_recurring_series for an entire recurring series. Use an exact known eventId or select a meeting by date, exact title and local startTime; Rally resolves the series parent internally. Create timed, all-day, and recurring events with their distinct creation tools. Selectors require a unique match before any mutation.", "State an attendee change rather than the resulting list: addAttendeeEmails and removeAttendeeEmails are applied to the guest list the event already has, while replaceAllAttendeeEmails sets it outright and removes anyone omitted. Either way everyone remaining on the event is emailed about the change."]
     : [];
   const filesGuidance = hasFiles
     ? [
