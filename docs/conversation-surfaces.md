@@ -692,29 +692,47 @@ recording passed through in series, and `captureGraphMs`, `socketTicketMs` and
 critical path. It prints through `logDebug` and is not reported to telemetry;
 [`performance-tracing.md`](performance-tracing.md#the-desktop-half) has why.
 
-Each attempt retains worklet frames in memory until the provider acknowledges
-its session configuration. It then combines adjacent frames into messages that fit the shared 256,000-character
-proxy limit, sending a batch every 100 ms until caught up. A batch holds roughly
-four seconds of PCM, allowing about 40 times real-time transport while remaining
-below the proxy's existing 30-message-per-second admission limit. Live frames and
-commits follow the backlog in order. Samples and
-sample rate stay unchanged. Azure's [audio-buffer API](https://learn.microsoft.com/en-us/azure/foundry-classic/openai/realtime-audio-reference-ga#input_audio_bufferappend)
+`lib/realtime-audio-sender.ts` owns one ordered PCM queue for startup, live
+capture, and the worklet's final partial frame. Nothing leaves it before the
+provider acknowledges its session configuration. Its first batch after an idle
+interval leaves immediately; subsequent batches are at least 100 ms apart,
+combining queued samples into messages within the shared 256,000-character frame
+bound. A full batch holds roughly four seconds of PCM, so delayed audio catches
+up at about 40 times real time without resampling or dropping samples. The
+cadence batches transport work independently of the audio sample rate, using a
+monotonic clock so system-clock adjustments cannot postpone queued audio.
+Azure's [audio-buffer API](https://learn.microsoft.com/en-us/azure/foundry-classic/openai/realtime-audio-reference-ga#input_audio_bufferappend)
 accepts buffered bytes; Rally disables server VAD and commits explicitly.
-Faster transport therefore preserves the audio signal, though equivalent model
-accuracy is an inference from that contract, not a measured provider guarantee.
+Faster transport preserves the audio signal, though equivalent model accuracy
+is an inference from that contract, not a measured provider guarantee.
 
-Stop during local capture drains the final partial frame and waits for connection
-readiness before committing, so even a recording shorter than startup survives.
-Stop before capture starts cancels setup. Failure or unmount clears the attempt's
-buffer and stops its inputs; late setup results cannot revive an older attempt.
-The existing 10-second connection budget starts with local capture and covers
-the pending ticket, provider acknowledgement, and backlog drain. Expiry aborts
-the ticket request, clears the buffer, stops inputs, and rejects pending Stop or
-commit calls. Permission prompts do not consume that network budget. Startup
-batches wait when outbound socket pressure is high; the same deadline bounds
-that wait. Live capture retains its existing socket backpressure failure.
-The frame-size and rate limits live in `@rally/contracts/realtime-transcription`,
-shared with the proxy. Audio is not persisted to disk.
+The existing 4 MiB transport buffer budget includes both queued audio's eventual
+serialized size and the WebSocket's buffered bytes. A batch waits when the socket
+has no room; capture fails with the existing network-backpressure error only
+when accepting another chunk would exceed that byte budget. This bounds retained
+payloads rather than inferring excessive audio from delivery timing. Attempt
+cleanup cancels its timer, clears queued PCM, and rejects pending drains.
+
+Stop during capture flushes the final partial frame, waits for connection
+readiness, and drains the sender before committing. Segment commits also drain
+accepted audio before their commit, preserving the same order during an ongoing
+recording. Stop before capture starts cancels setup. Failure or unmount stops the
+inputs; late setup results cannot revive an older attempt. The existing
+10-second connection budget starts with local capture and covers the pending
+ticket, provider acknowledgement, and startup drain. Permission prompts do not
+consume that budget. The existing 60-second finalization budget covers the final
+audio drain and provider completion together, so a socket that stays open without
+draining cannot leave Stop pending forever. A drain timeout names the unsent
+audio; a timeout after commit names the missing transcript. The frame-size bound
+and transport cadence live in `@rally/contracts/realtime-transcription`. Audio is
+not persisted to disk.
+
+A failed recording leaves its recovered text in the draft and shows its error
+until the person starts another recording, edits the field, or explicitly sends
+the draft. Editing and sending acknowledge the failed attempt through the hook's
+`clearError`, returning it to idle without starting capture or changing the
+draft. A failure alone never sends the partial transcript, and message-delivery
+errors remain owned by the host.
 
 While dictation is running the composer's text belongs to it: the field is
 read-only and the mention and device controls are disabled. Send is not on that
@@ -777,6 +795,31 @@ consume unrelated pins. [Artifact annotations](artifact-annotations.md) owns the
 selection and message protocol.
 
 ## Changelog
+
+### 2026-10-21 — Deliver dictation independently of arrival timing
+
+**What changed:** The proxy no longer disconnects on the 31st message in a
+one-second window. One sender batches startup, live, and final PCM in order,
+within the existing frame-size bound, using monotonic time for the existing
+100 ms transport cadence. The existing 4 MiB byte budget now accounts for queued
+payloads as well as WebSocket bytes;
+Stop and segment commits drain accepted audio before committing, within the
+existing finalization deadline. Editing or explicitly sending acknowledges a
+failed recording's notice without losing its recovered text.
+
+**Why:** A valid recording could be rejected merely because delayed renderer
+callbacks or network delivery caught up in a burst. The number 30 had no recorded
+resource derivation or provider requirement. Raising it would preserve the same
+failure at another arbitrary threshold. Arrival timing is not audio validity;
+frame validation, authenticated admission and byte accounting protect their
+actual resources. Keeping a separate live send path was rejected because it
+bypassed batching and made commit ordering depend on when a chunk arrived.
+
+**Consequences:** Never use this transport cadence as a server admission rule.
+Queued PCM must keep its samples and order under steady or delayed delivery, and
+no commit may overtake accepted audio. A failed recording must never submit its
+partial transcript automatically; the recovered draft remains available and
+message-delivery errors stay owned by the host.
 
 ### 2026-10-20 — Group mention candidates by conversation membership
 

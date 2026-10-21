@@ -184,11 +184,12 @@ without a second Google sign-in.
 - Azure OpenAI realtime dictation also keeps its endpoint and API key in the
   regional Worker. The desktop receives a one-minute, single-use Rally socket
   ticket, presented through the handshake's `Sec-WebSocket-Protocol` header rather
-  than the query string; Cloudflare consumes its JTI, reserves a bounded regional
-  session, opens the authenticated Azure WebSocket, and admits only rate- and
-  size-limited audio-buffer events from the client. Connections are capped at five
-  minutes and raw microphone audio and transcripts are not persisted by this
-  bridge.
+  than the query string; Cloudflare consumes its JTI, reserves a workspace-owned
+  session, opens the authenticated Azure WebSocket, and admits only size-bounded
+  audio-buffer events from the client. Valid audio remains valid under delayed
+  or burst delivery. Raw microphone audio and transcripts are not
+  persisted by the bridge. The ordered sender and its byte budget are documented
+  in [conversation surfaces](conversation-surfaces.md#dictation-capture-and-connection-startup).
 - Every API operation resolves a session, workspace, role, execution principal,
   connection scope, and requested capability server-side.
 
@@ -660,9 +661,10 @@ it.
   retains every state outbox row until its destination has it; WorkspaceDO
   compares authority generation and the affected common/viewer waterline.
   UUIDv7 order alone never decides freshness.
-- **Dictation sessions are capped at five minutes**, with a one-minute single-use
-  ticket, a bounded regional session count, and rate- and size-limited audio
-  events. Raw microphone audio and transcripts are not persisted by that bridge.
+- **Dictation admission is authenticated and bounded by concurrent sessions**,
+  with a one-minute single-use ticket and size-bounded audio-buffer events.
+  Arrival timing does not determine whether audio is valid. Raw microphone audio
+  and transcripts are not persisted by that bridge.
 - **A run stops rather than repeating an ambiguous external write.** Context,
   token, iteration, and streaming-watchdog limits terminate root runs;
   inline children and the other
