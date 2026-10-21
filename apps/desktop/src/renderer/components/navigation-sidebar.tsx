@@ -1018,7 +1018,22 @@ function ThreadsSection({ motion, scroll }: { motion?: () => void; scroll: RefOb
   const pinDrop = usePinDrop(pinned, (kind) => (kind === 'breakout' ? breakoutPins : threadPins));
   const { drop } = pinDrop;
   const unpinned = rows.filter((row) => !pinned.has(row.id) && !(drop?.landed && drop.id === row.id))
-    .sort(compareChannels(sort, openThreadId));
+    .sort(compareChannels(sort));
+  // Opening reads a thread. Keep its last displayed slot while it is open,
+  // rather than promoting every selection to the attention group. All other
+  // rows still sort live, and an explicit sort change starts a fresh order.
+  const previousOrder = useRef<{ sort: SidebarChannelSort; ids: string[] } | null>(null);
+  if (sort === 'needs_you' && previousOrder.current?.sort === sort && openThreadId !== null) {
+    const heldIndex = previousOrder.current.ids.indexOf(openThreadId);
+    const currentIndex = unpinned.findIndex((row) => row.id === openThreadId);
+    if (heldIndex >= 0 && currentIndex >= 0 && heldIndex !== currentIndex) {
+      const [held] = unpinned.splice(currentIndex, 1);
+      unpinned.splice(heldIndex, 0, held!);
+    }
+  }
+  useLayoutEffect(() => {
+    previousOrder.current = { sort, ids: unpinned.map((row) => row.id) };
+  });
   const pinKind = (row: SpaceConversationSummary): PinKind => (row.kind === 'breakout' ? 'breakout' : 'thread');
   const revealPin = usePinReveal(scroll, (id) => `thread:${id}`, pinned);
   // A thread opened from a desktop link is scrolled to, loading further pages
