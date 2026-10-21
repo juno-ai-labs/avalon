@@ -4047,9 +4047,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       `SELECT archived_at FROM workstream WHERE id = 1`,
     ).toArray()[0];
     if (authority && authority.archived_at !== null) return null;
-    const backgroundStopped = this.state.storage.sql.exec<{ stopped_at: number | null }>(
-      "SELECT stopped_at FROM background_agent WHERE id = 1",
-    ).toArray()[0]?.stopped_at != null;
+    const background = this.state.storage.sql.exec<{ stopped_at: number | null; root_substream_id: string | null }>(
+      "SELECT stopped_at, root_substream_id FROM background_agent WHERE id = 1",
+    ).toArray()[0];
+    const backgroundStopped = background?.stopped_at != null;
     let loop = this.ensurePersistentLoop();
     // Messages that start no run land first, whatever else holds the loop:
     // they were waiting only on what was sent ahead of them, not on Rally.
@@ -4117,13 +4118,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // loop idle, and the refused input is landed rather than left at the
       // head of the queue holding everything behind it.
       let continuation: Extract<SidekickRunContinuation, { outcome: "continue" }> | null = null;
+      let delegation: WorkstreamWorkflowInput["automationDelegation"];
       const externalSubstreamId = this.externalSubstreamId();
-      if (identity.parentKind === "automation" && externalSubstreamId !== "0") {
+      // Workers have no run row of their own. A run-rooted worker asks about
+      // its root's authority, while authoring-rooted workers have no run gate.
+      const authorityRunId = background ? background.root_substream_id ?? "0" : externalSubstreamId;
+      if (identity.parentKind === "automation" && authorityRunId !== "0") {
         const decided = await continueSidekickRun(this.env, {
           region: this.env.AVALON_REGION,
           workspaceId: identity.workspaceId,
           automationId: identity.parentId,
-          runId: externalSubstreamId,
+          runId: authorityRunId,
         });
         // The answer took an RPC, and the loop may have moved meanwhile: a
         // second input admitted behind this one bumps its revision. Acting on
@@ -4136,10 +4141,20 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           return this.claimPersistentLoopExecution();
         }
         if (decided.outcome === "refused") {
-          await this.refuseSidekickRunInput(loop, pending, decided.code);
+          await this.refuseSidekickRunInput(loop, pending, decided.code, authorityRunId);
           return this.claimPersistentLoopExecution();
         }
-        continuation = decided;
+        if (background) {
+          const inherited = ExecutionPrincipalSchema.parse(authorization.executionPrincipal);
+          if (inherited.type !== "user" || decided.executionPrincipal.type !== "user"
+            || inherited.userId !== decided.executionPrincipal.userId) {
+            await this.refuseSidekickRunInput(loop, pending, "run_principal_changed", authorityRunId);
+            return this.claimPersistentLoopExecution();
+          }
+          delegation = { runId: authorityRunId, stopGeneration: decided.stopGeneration };
+        } else {
+          continuation = decided;
+        }
       }
       // Read after any continuation call, so the Bind fences the activation
       // carries are the ones current when it commits.
@@ -4169,7 +4184,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
             }
           : {}),
         ...(authorization.agentExchange ? { agentExchange: authorization.agentExchange } : {}),
-        backgroundAgent: this.isBackgroundAgent(),
+        ...(delegation ? { automationDelegation: delegation } : {}),
+        backgroundAgent: Boolean(background),
         ...(authorization.telemetryOperationId
           ? {
               telemetryOperationId: authorization.telemetryOperationId,
@@ -4284,6 +4300,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     loop: SubstreamLoopRow,
     pending: PendingLoopInputRow,
     code: SidekickRunContinuationRefusalCode,
+    authorityRunId: string,
   ): Promise<void> {
     const now = Date.now();
     const prepared = await this.messages.prepareMessage({
@@ -4315,7 +4332,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     logInfo(this.env, "sidekick_run_continuation_refused", {
       workspace_id: identity?.workspaceId ?? null,
       automation_id: identity?.parentId ?? null,
-      run_id: this.externalSubstreamId(),
+      run_id: authorityRunId,
       input_id: pending.input_id,
       code,
     });
