@@ -171,12 +171,12 @@ describe("custom MCP connections", () => {
     });
     database.prepare("UPDATE connector_connections SET connector_type = 'google', granted_scopes_json = ? WHERE id = ?")
       .run(JSON.stringify(["gmail.read"]), connection.id);
-    // Five authored `gmail.read` tools, and the `gmail.search_next` activation
-    // generates beside the paginated `gmail.search`.
-    expect(await service.getToolCount(connection.id, new AbortController().signal)).toEqual({ count: 6 });
+    // Eight authored `gmail.read` tools plus search and draft-list continuation
+    // tools generated on activation.
+    expect(await service.getToolCount(connection.id, new AbortController().signal)).toEqual({ count: 10 });
     database.prepare("UPDATE connector_connections SET granted_scopes_json = ? WHERE id = ?")
       .run(JSON.stringify(["gmail.send"]), connection.id);
-    expect(await service.getToolCount(connection.id, new AbortController().signal)).toEqual({ count: 1 });
+    expect(await service.getToolCount(connection.id, new AbortController().signal)).toEqual({ count: 2 });
   });
 
   it("refuses a tool count when connection prefixes make remote tool names collide", async () => {

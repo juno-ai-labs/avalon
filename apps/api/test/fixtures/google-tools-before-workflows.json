@@ -1,0 +1,1523 @@
+[
+  {
+    "name": "gmail.read_profile",
+    "description": "Read the authorized Gmail account's own identity: the address it sends from, which is also what `me` matches in a search operator, along with its total message and thread counts. Use this instead of assuming which account is connected, and instead of inferring the account holder's own address from correspondence — a signature, a From header, or a name in a thread is somebody's claim about the account, not the account.",
+    "capability": "gmail.read",
+    "mode": "read",
+    "idempotency": "safe",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    }
+  },
+  {
+    "name": "gmail.search",
+    "pagination": {
+      "cursorParameter": "pageToken"
+    },
+    "description": "Search the authorized user's Gmail messages. Each hit returns its sender, recipients, subject, date, labels, snippet, and RFC Message-ID, so a search result is usually enough to answer who wrote what and when without opening the message.",
+    "capability": "gmail.read",
+    "mode": "read",
+    "idempotency": "safe",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Gmail search query. Supports Gmail's operators, for example from:dana@example.com, to:, cc:, subject:, newer_than:30d, older_than:1y, has:attachment, in:anywhere, is:unread, and OR / parentheses / \"quoted phrases\". Prefer an operator query over bare keywords, which match message bodies and return far too much."
+        },
+        "maxResults": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 25,
+          "description": "Maximum messages to return in one page. Defaults to 10."
+        },
+        "pageToken": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Send `null` for the first page. To continue an earlier search, pass back the exact `nextPageToken` string a previous call to this tool returned, with that call's other arguments unchanged. It is an opaque cursor — a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token; when you have no token from a previous call, the value is `null`. A result whose `nextPageToken` is `null` is the last page: stop there rather than calling again."
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "gmail.find_contacts",
+    "description": "Find a person's email address by searching the authorized user's prior Gmail correspondence for their name or partial address. Returns ranked candidate addresses with the evidence each was drawn from — how many messages it appeared in, when it was last seen, and the message it came from. Use this before addressing a draft to someone whose address is not already known; never guess an address from a display name or a company's domain. The authorized mailbox's own address is excluded.",
+    "capability": "gmail.read",
+    "mode": "read",
+    "idempotency": "safe",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "The person's name, partial name, or partial address, for example \"Dana\" or \"dana@\"."
+        },
+        "maxResults": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 25,
+          "description": "Maximum candidate addresses to return. Defaults to 10."
+        }
+      },
+      "required": [
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "gmail.read_thread",
+    "description": "Read every message in one Gmail thread, with bounded body text and attachment metadata. Takes the `threadId` of a search hit, not its `id` — the two are both bare hex and are not interchangeable.",
+    "capability": "gmail.read",
+    "mode": "read",
+    "idempotency": "safe",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "threadId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The thread's id, copied from a search hit's `threadId` field, for example `18f0a2c4d5e6f701`. A search hit's `id` is the message's own id and names a different thread or none at all."
+        }
+      },
+      "required": [
+        "threadId"
+      ]
+    }
+  },
+  {
+    "name": "gmail.read_message",
+    "description": "Read one Gmail message's body, headers, and attachment metadata. Takes the `id` of a search hit, not its `threadId`. Search results already carry sender, recipients, subject, date, and snippet, so call this only when the body itself is needed.",
+    "capability": "gmail.read",
+    "mode": "read",
+    "idempotency": "safe",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The message's id, copied from a search hit's `id` field, for example `18f0a2c4d5e6f702`. A search hit's `threadId` is the thread's id, not this."
+        }
+      },
+      "required": [
+        "messageId"
+      ]
+    }
+  },
+  {
+    "name": "gmail.create_draft",
+    "description": "Create a Gmail draft for the authorized user and return its id and a link to open it. Drafts are not sent. Set message.kind to new and provide a subject, or to reply and provide an existing messageId; Rally resolves the reply's subject and threading. Create a draft when a person is expected to review the message first.",
+    "capability": "gmail.draft",
+    "mode": "write",
+    "idempotency": "record_before_execute",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "message": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "new",
+                  "description": "Start a new email conversation."
+                },
+                "to": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "email",
+                    "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                  },
+                  "description": "Primary recipients, as full email addresses copied from a tool result or supplied by the person. For a reply, explicitly choose who receives it; recipients are not added automatically."
+                },
+                "cc": {
+                  "description": "Copied recipients, as full email addresses. Omit or send null for none. They see each other and the primary recipients.",
+                  "anyOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "format": "email",
+                        "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      }
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "body": {
+                  "type": "string",
+                  "maxLength": 500000,
+                  "description": "The message body, delivered as plain text exactly as written. Write plain text, not Markdown."
+                },
+                "subject": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 998,
+                  "description": "The subject line for the new conversation, as plain text on one line."
+                }
+              },
+              "required": [
+                "kind",
+                "to",
+                "body",
+                "subject"
+              ],
+              "additionalProperties": false,
+              "description": "Allowed keys only: kind, to, cc, subject, body. Omit messageId and every threading field.",
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "new",
+                      "description": "Start a new email conversation."
+                    },
+                    "to": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "format": "email",
+                        "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      },
+                      "description": "Primary recipients, as full email addresses copied from a tool result or supplied by the person. For a reply, explicitly choose who receives it; recipients are not added automatically."
+                    },
+                    "body": {
+                      "type": "string",
+                      "maxLength": 500000,
+                      "description": "The message body, delivered as plain text exactly as written. Write plain text, not Markdown."
+                    },
+                    "subject": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 998,
+                      "description": "The subject line for the new conversation, as plain text on one line."
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "to",
+                    "body",
+                    "subject"
+                  ],
+                  "additionalProperties": false,
+                  "maxProperties": 4
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "new",
+                      "description": "Start a new email conversation."
+                    },
+                    "to": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "format": "email",
+                        "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      },
+                      "description": "Primary recipients, as full email addresses copied from a tool result or supplied by the person. For a reply, explicitly choose who receives it; recipients are not added automatically."
+                    },
+                    "cc": {
+                      "description": "Copied recipients, as full email addresses. Omit or send null for none. They see each other and the primary recipients.",
+                      "anyOf": [
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "format": "email",
+                            "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "body": {
+                      "type": "string",
+                      "maxLength": 500000,
+                      "description": "The message body, delivered as plain text exactly as written. Write plain text, not Markdown."
+                    },
+                    "subject": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 998,
+                      "description": "The subject line for the new conversation, as plain text on one line."
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "to",
+                    "body",
+                    "subject",
+                    "cc"
+                  ],
+                  "additionalProperties": false,
+                  "maxProperties": 5
+                }
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "reply",
+                  "description": "Reply to an existing Gmail message. Requires this connection's gmail.read capability as well as its send or draft capability."
+                },
+                "to": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "email",
+                    "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                  },
+                  "description": "Primary recipients, as full email addresses copied from a tool result or supplied by the person. For a reply, explicitly choose who receives it; recipients are not added automatically."
+                },
+                "cc": {
+                  "description": "Copied recipients, as full email addresses. Omit or send null for none. They see each other and the primary recipients.",
+                  "anyOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "format": "email",
+                        "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      }
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "body": {
+                  "type": "string",
+                  "maxLength": 500000,
+                  "description": "The message body, delivered as plain text exactly as written. Write plain text, not Markdown."
+                },
+                "messageId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "The existing message's id, copied from a Gmail search hit's id or a read message's id, not its threadId or RFC Message-ID. Rally reads that message to set the subject and threading headers. Never invent an id."
+                }
+              },
+              "required": [
+                "kind",
+                "to",
+                "body",
+                "messageId"
+              ],
+              "additionalProperties": false,
+              "description": "Allowed keys only: kind, to, cc, messageId, body. Omit subject and every threading field.",
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "reply",
+                      "description": "Reply to an existing Gmail message. Requires this connection's gmail.read capability as well as its send or draft capability."
+                    },
+                    "to": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "format": "email",
+                        "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      },
+                      "description": "Primary recipients, as full email addresses copied from a tool result or supplied by the person. For a reply, explicitly choose who receives it; recipients are not added automatically."
+                    },
+                    "body": {
+                      "type": "string",
+                      "maxLength": 500000,
+                      "description": "The message body, delivered as plain text exactly as written. Write plain text, not Markdown."
+                    },
+                    "messageId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "The existing message's id, copied from a Gmail search hit's id or a read message's id, not its threadId or RFC Message-ID. Rally reads that message to set the subject and threading headers. Never invent an id."
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "to",
+                    "body",
+                    "messageId"
+                  ],
+                  "additionalProperties": false,
+                  "maxProperties": 4
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "reply",
+                      "description": "Reply to an existing Gmail message. Requires this connection's gmail.read capability as well as its send or draft capability."
+                    },
+                    "to": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "format": "email",
+                        "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      },
+                      "description": "Primary recipients, as full email addresses copied from a tool result or supplied by the person. For a reply, explicitly choose who receives it; recipients are not added automatically."
+                    },
+                    "cc": {
+                      "description": "Copied recipients, as full email addresses. Omit or send null for none. They see each other and the primary recipients.",
+                      "anyOf": [
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "format": "email",
+                            "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "body": {
+                      "type": "string",
+                      "maxLength": 500000,
+                      "description": "The message body, delivered as plain text exactly as written. Write plain text, not Markdown."
+                    },
+                    "messageId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "The existing message's id, copied from a Gmail search hit's id or a read message's id, not its threadId or RFC Message-ID. Rally reads that message to set the subject and threading headers. Never invent an id."
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "to",
+                    "body",
+                    "messageId",
+                    "cc"
+                  ],
+                  "additionalProperties": false,
+                  "maxProperties": 5
+                }
+              ]
+            }
+          ],
+          "description": "Choose kind new with a subject, or kind reply with an existing messageId. Supply the recipients and body in either case. Reply threading is resolved by Rally. Do not supply threadId, inReplyTo, or references, including empty or placeholder values. Supply only the keys listed for the chosen kind."
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "additionalProperties": false,
+      "maxProperties": 1
+    }
+  },
+  {
+    "name": "gmail.send",
+    "description": "Send an email immediately as the authorized user; it leaves the mailbox and cannot be recalled. Set message.kind to new and provide a subject, or to reply and provide an existing messageId; Rally resolves the reply's subject and threading. Create a draft instead when a person is expected to review the message first.",
+    "capability": "gmail.send",
+    "mode": "write",
+    "idempotency": "record_before_execute",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "message": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "new",
+                  "description": "Start a new email conversation."
+                },
+                "to": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "email",
+                    "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                  },
+                  "description": "Primary recipients, as full email addresses copied from a tool result or supplied by the person. For a reply, explicitly choose who receives it; recipients are not added automatically."
+                },
+                "cc": {
+                  "description": "Copied recipients, as full email addresses. Omit or send null for none. They see each other and the primary recipients.",
+                  "anyOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "format": "email",
+                        "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      }
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "body": {
+                  "type": "string",
+                  "maxLength": 500000,
+                  "description": "The message body, delivered as plain text exactly as written. Write plain text, not Markdown."
+                },
+                "subject": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 998,
+                  "description": "The subject line for the new conversation, as plain text on one line."
+                }
+              },
+              "required": [
+                "kind",
+                "to",
+                "body",
+                "subject"
+              ],
+              "additionalProperties": false,
+              "description": "Allowed keys only: kind, to, cc, subject, body. Omit messageId and every threading field.",
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "new",
+                      "description": "Start a new email conversation."
+                    },
+                    "to": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "format": "email",
+                        "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      },
+                      "description": "Primary recipients, as full email addresses copied from a tool result or supplied by the person. For a reply, explicitly choose who receives it; recipients are not added automatically."
+                    },
+                    "body": {
+                      "type": "string",
+                      "maxLength": 500000,
+                      "description": "The message body, delivered as plain text exactly as written. Write plain text, not Markdown."
+                    },
+                    "subject": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 998,
+                      "description": "The subject line for the new conversation, as plain text on one line."
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "to",
+                    "body",
+                    "subject"
+                  ],
+                  "additionalProperties": false,
+                  "maxProperties": 4
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "new",
+                      "description": "Start a new email conversation."
+                    },
+                    "to": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "format": "email",
+                        "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      },
+                      "description": "Primary recipients, as full email addresses copied from a tool result or supplied by the person. For a reply, explicitly choose who receives it; recipients are not added automatically."
+                    },
+                    "cc": {
+                      "description": "Copied recipients, as full email addresses. Omit or send null for none. They see each other and the primary recipients.",
+                      "anyOf": [
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "format": "email",
+                            "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "body": {
+                      "type": "string",
+                      "maxLength": 500000,
+                      "description": "The message body, delivered as plain text exactly as written. Write plain text, not Markdown."
+                    },
+                    "subject": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 998,
+                      "description": "The subject line for the new conversation, as plain text on one line."
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "to",
+                    "body",
+                    "subject",
+                    "cc"
+                  ],
+                  "additionalProperties": false,
+                  "maxProperties": 5
+                }
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "reply",
+                  "description": "Reply to an existing Gmail message. Requires this connection's gmail.read capability as well as its send or draft capability."
+                },
+                "to": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "email",
+                    "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                  },
+                  "description": "Primary recipients, as full email addresses copied from a tool result or supplied by the person. For a reply, explicitly choose who receives it; recipients are not added automatically."
+                },
+                "cc": {
+                  "description": "Copied recipients, as full email addresses. Omit or send null for none. They see each other and the primary recipients.",
+                  "anyOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "format": "email",
+                        "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      }
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "body": {
+                  "type": "string",
+                  "maxLength": 500000,
+                  "description": "The message body, delivered as plain text exactly as written. Write plain text, not Markdown."
+                },
+                "messageId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "The existing message's id, copied from a Gmail search hit's id or a read message's id, not its threadId or RFC Message-ID. Rally reads that message to set the subject and threading headers. Never invent an id."
+                }
+              },
+              "required": [
+                "kind",
+                "to",
+                "body",
+                "messageId"
+              ],
+              "additionalProperties": false,
+              "description": "Allowed keys only: kind, to, cc, messageId, body. Omit subject and every threading field.",
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "reply",
+                      "description": "Reply to an existing Gmail message. Requires this connection's gmail.read capability as well as its send or draft capability."
+                    },
+                    "to": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "format": "email",
+                        "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      },
+                      "description": "Primary recipients, as full email addresses copied from a tool result or supplied by the person. For a reply, explicitly choose who receives it; recipients are not added automatically."
+                    },
+                    "body": {
+                      "type": "string",
+                      "maxLength": 500000,
+                      "description": "The message body, delivered as plain text exactly as written. Write plain text, not Markdown."
+                    },
+                    "messageId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "The existing message's id, copied from a Gmail search hit's id or a read message's id, not its threadId or RFC Message-ID. Rally reads that message to set the subject and threading headers. Never invent an id."
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "to",
+                    "body",
+                    "messageId"
+                  ],
+                  "additionalProperties": false,
+                  "maxProperties": 4
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "reply",
+                      "description": "Reply to an existing Gmail message. Requires this connection's gmail.read capability as well as its send or draft capability."
+                    },
+                    "to": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "format": "email",
+                        "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      },
+                      "description": "Primary recipients, as full email addresses copied from a tool result or supplied by the person. For a reply, explicitly choose who receives it; recipients are not added automatically."
+                    },
+                    "cc": {
+                      "description": "Copied recipients, as full email addresses. Omit or send null for none. They see each other and the primary recipients.",
+                      "anyOf": [
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "format": "email",
+                            "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "body": {
+                      "type": "string",
+                      "maxLength": 500000,
+                      "description": "The message body, delivered as plain text exactly as written. Write plain text, not Markdown."
+                    },
+                    "messageId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "The existing message's id, copied from a Gmail search hit's id or a read message's id, not its threadId or RFC Message-ID. Rally reads that message to set the subject and threading headers. Never invent an id."
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "to",
+                    "body",
+                    "messageId",
+                    "cc"
+                  ],
+                  "additionalProperties": false,
+                  "maxProperties": 5
+                }
+              ]
+            }
+          ],
+          "description": "Choose kind new with a subject, or kind reply with an existing messageId. Supply the recipients and body in either case. Reply threading is resolved by Rally. Do not supply threadId, inReplyTo, or references, including empty or placeholder values. Supply only the keys listed for the chosen kind."
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "additionalProperties": false,
+      "maxProperties": 1
+    }
+  },
+  {
+    "name": "calendar.list_calendars",
+    "pagination": {
+      "cursorParameter": "pageToken"
+    },
+    "description": "List the calendars this account can see, each with the id and name the other calendar tools accept. Call this to discover a calendar id, or pass a calendar's name directly to those tools and they will resolve it.",
+    "capability": "calendar.read",
+    "mode": "read",
+    "idempotency": "safe",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxResults": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 250,
+          "description": "Maximum calendars to return in one page. Defaults to 100."
+        },
+        "pageToken": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Send `null` for the first page. To continue an earlier search, pass back the exact `nextPageToken` string a previous call to this tool returned, with that call's other arguments unchanged. It is an opaque cursor — a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token; when you have no token from a previous call, the value is `null`. A result whose `nextPageToken` is `null` is the last page: stop there rather than calling again."
+        }
+      }
+    }
+  },
+  {
+    "name": "calendar.list_events",
+    "pagination": {
+      "cursorParameter": "pageToken"
+    },
+    "description": "List events in a time range, expanding recurring events into their individual occurrences and ordering them by start time. `timeMin` and `timeMax` are required and must be RFC 3339 timestamps that include an offset, for example 2026-08-11T00:00:00-07:00.",
+    "capability": "calendar.read",
+    "mode": "read",
+    "idempotency": "safe",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "calendarId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Calendar ID, \"primary\", or a calendar's name, which is resolved against this account's calendars. Defaults to the connection's configured calendar."
+        },
+        "timeMin": {
+          "type": "string",
+          "minLength": 1,
+          "format": "date-time",
+          "description": "Start of the window, as an RFC 3339 timestamp that includes an offset, for example 2026-08-11T00:00:00-07:00. An event overlapping the window is included. A bare date such as 2026-08-11, or a timestamp with no offset, is refused; call the current-time tool rather than guessing the offset."
+        },
+        "timeMax": {
+          "type": "string",
+          "minLength": 1,
+          "format": "date-time",
+          "description": "End of the window, as an RFC 3339 timestamp that includes an offset, for example 2026-08-12T00:00:00-07:00. It is exclusive, so a whole day is that day's midnight through the next day's midnight."
+        },
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Plain text matched against an event's title, description, location, and attendees. Omit it to get every event in the window. It is not a query language, so operators written into it are matched literally and return nothing rather than filtering."
+        },
+        "maxResults": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Maximum occurrences to return in one page. Defaults to 25."
+        },
+        "pageToken": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Send `null` for the first page. To continue an earlier search, pass back the exact `nextPageToken` string a previous call to this tool returned, with that call's other arguments unchanged. It is an opaque cursor — a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token; when you have no token from a previous call, the value is `null`. A result whose `nextPageToken` is `null` is the last page: stop there rather than calling again."
+        }
+      },
+      "required": [
+        "timeMin",
+        "timeMax"
+      ]
+    }
+  },
+  {
+    "name": "calendar.read_event",
+    "description": "Read one event, including its current attendee list. Read the event before changing its guests so a relative change is applied to who is actually on it.",
+    "capability": "calendar.read",
+    "mode": "read",
+    "idempotency": "safe",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "calendarId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Calendar ID, \"primary\", or a calendar's name, which is resolved against this account's calendars. Defaults to the connection's configured calendar."
+        },
+        "eventId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The event's own id, as calendar.list_events returns it in each occurrence's `id`. It is not the calendar's id and not the title."
+        }
+      },
+      "required": [
+        "eventId"
+      ]
+    }
+  },
+  {
+    "name": "calendar.create_event",
+    "description": "Create a calendar event. Listing anyone in `attendeeEmails` sends them a real invitation email, so treat this as an outward-facing write and source every address from a tool result rather than composing one. Start and end are RFC 3339 timestamps that include an offset.",
+    "capability": "calendar.write",
+    "mode": "write",
+    "idempotency": "record_before_execute",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "calendarId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Calendar ID, \"primary\", or a calendar's name, which is resolved against this account's calendars. Defaults to the connection's configured calendar."
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "description": "The event's title, as it appears in the calendar grid, for example \"Design review\"."
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 20000,
+          "description": "The event's notes body, as plain text. Agendas, links, and context belong here rather than in the title."
+        },
+        "location": {
+          "type": "string",
+          "maxLength": 2000,
+          "description": "Where it happens, as free text: a room name, a street address, or a meeting URL. It is a label, so this does not book a room or create a video call."
+        },
+        "start": {
+          "type": "string",
+          "minLength": 1,
+          "format": "date-time",
+          "description": "When it starts, as an RFC 3339 timestamp that includes an offset, for example 2026-08-11T09:00:00-07:00. Call the current-time tool rather than guessing the offset."
+        },
+        "end": {
+          "type": "string",
+          "minLength": 1,
+          "format": "date-time",
+          "description": "When it ends, as an RFC 3339 timestamp that includes an offset, for example 2026-08-11T10:00:00-07:00. It must be after the start."
+        },
+        "timeZone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "The IANA zone the event is anchored in, for example America/Los_Angeles. Defaults to the calendar's own zone. It decides what the event reads as after a daylight-saving change; it does not shift the offsets already written into start and end."
+        },
+        "attendeeEmails": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "email"
+          },
+          "maxItems": 50,
+          "description": "Guests to invite, as full email addresses, for example [\"dana@example.com\"]. Each one is emailed a real invitation, so take every address from a tool result rather than composing it. Defaults to none, which creates the event with no guests."
+        }
+      },
+      "required": [
+        "summary",
+        "start",
+        "end"
+      ]
+    }
+  },
+  {
+    "name": "calendar.update_event",
+    "description": "Update selected fields on an existing event. To change who is invited, say what changes — `addAttendeeEmails` and `removeAttendeeEmails` are applied to the event's current guest list — and use `replaceAllAttendeeEmails` only to set the entire list, dropping anyone left out. Any attendee change emails everyone who remains on the event.",
+    "capability": "calendar.write",
+    "mode": "write",
+    "idempotency": "record_before_execute",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "calendarId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Calendar ID, \"primary\", or a calendar's name, which is resolved against this account's calendars. Defaults to the connection's configured calendar."
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "description": "The event's title, as it appears in the calendar grid, for example \"Design review\"."
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 20000,
+          "description": "The event's notes body, as plain text. Agendas, links, and context belong here rather than in the title."
+        },
+        "location": {
+          "type": "string",
+          "maxLength": 2000,
+          "description": "Where it happens, as free text: a room name, a street address, or a meeting URL. It is a label, so this does not book a room or create a video call."
+        },
+        "start": {
+          "type": "string",
+          "minLength": 1,
+          "format": "date-time",
+          "description": "When it starts, as an RFC 3339 timestamp that includes an offset, for example 2026-08-11T09:00:00-07:00. Call the current-time tool rather than guessing the offset."
+        },
+        "end": {
+          "type": "string",
+          "minLength": 1,
+          "format": "date-time",
+          "description": "When it ends, as an RFC 3339 timestamp that includes an offset, for example 2026-08-11T10:00:00-07:00. It must be after the start."
+        },
+        "timeZone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Re-anchor the event to this IANA zone, for example America/Los_Angeles. It cannot be sent on its own: a zone change is refused unless `start` and `end` are sent with it, so send all three. Omitting it leaves the event in the zone it already has."
+        },
+        "eventId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The event's own id, not a calendar id."
+        },
+        "addAttendeeEmails": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "email"
+          },
+          "maxItems": 50,
+          "description": "Addresses to add to the event's current guest list. Everyone already invited stays."
+        },
+        "removeAttendeeEmails": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "email"
+          },
+          "maxItems": 50,
+          "description": "Addresses to remove from the event's current guest list."
+        },
+        "replaceAllAttendeeEmails": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "email"
+          },
+          "maxItems": 50,
+          "description": "The event's complete guest list after the update. Anyone omitted is removed. Cannot be combined with addAttendeeEmails or removeAttendeeEmails."
+        }
+      },
+      "required": [
+        "eventId"
+      ]
+    }
+  },
+  {
+    "name": "drive.search",
+    "pagination": {
+      "cursorParameter": "pageToken"
+    },
+    "description": "Search accessible Google Drive files by name and by content. `query` is matched as plain text against both the file name and the indexed contents of Docs, Sheets, Slides, and PDFs — it is not a Drive query expression, so operators written into it are matched literally. Narrow with `fileType` and `modifiedAfter` rather than by describing the filter in `query`, and use `orderBy: \"modified\"` for the most recent rather than the most relevant.",
+    "capability": "drive.read",
+    "mode": "read",
+    "idempotency": "safe",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Plain text matched against file names and file contents. Omit it to browse by fileType, modifiedAfter, and orderBy alone — for example the most recently modified spreadsheet."
+        },
+        "fileType": {
+          "type": "string",
+          "enum": [
+            "document",
+            "spreadsheet",
+            "presentation",
+            "form",
+            "drawing",
+            "folder",
+            "pdf"
+          ],
+          "description": "Restrict results to one kind of file."
+        },
+        "modifiedAfter": {
+          "type": "string",
+          "minLength": 1,
+          "format": "date-time",
+          "description": "Only files modified after this RFC 3339 timestamp, for example 2026-08-01T00:00:00Z."
+        },
+        "orderBy": {
+          "type": "string",
+          "enum": [
+            "relevance",
+            "modified"
+          ],
+          "description": "Result order. Defaults to relevance."
+        },
+        "maxResults": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Maximum files to return in one page. Defaults to 25."
+        },
+        "pageToken": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Send `null` for the first page. To continue an earlier search, pass back the exact `nextPageToken` string a previous call to this tool returned, with that call's other arguments unchanged. It is an opaque cursor — a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token; when you have no token from a previous call, the value is `null`. A result whose `nextPageToken` is `null` is the last page: stop there rather than calling again."
+        }
+      }
+    }
+  },
+  {
+    "name": "drive.get_metadata",
+    "description": "Read bounded metadata for one accessible Google Drive file.",
+    "capability": "drive.read",
+    "mode": "read",
+    "idempotency": "safe",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fileId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The Drive file id, as drive.search returns it, for example `1A2b3C4d5E6f7G8h9I0j`. It is the long segment in a Drive URL after /d/, not the file's name and not the whole URL."
+        }
+      },
+      "required": [
+        "fileId"
+      ]
+    }
+  },
+  {
+    "name": "drive.download",
+    "description": "Read bounded text from a Drive file; binary content is never returned to the model.",
+    "capability": "drive.read",
+    "mode": "read",
+    "idempotency": "safe",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fileId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The Drive file id, as drive.search returns it, for example `1A2b3C4d5E6f7G8h9I0j`. Use drive.export instead for a Google Doc, Sheet, or Slides file, which has no downloadable body of its own."
+        }
+      },
+      "required": [
+        "fileId"
+      ]
+    }
+  },
+  {
+    "name": "drive.export",
+    "description": "Export a Google Workspace document to plain text or PDF.",
+    "capability": "drive.read",
+    "mode": "read",
+    "idempotency": "safe",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fileId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The Drive file id of a Google Doc, Sheet, or Slides file, as drive.search returns it, for example `1A2b3C4d5E6f7G8h9I0j`. An uploaded PDF or image is not a Workspace document; read one with drive.download."
+        },
+        "mimeType": {
+          "type": "string",
+          "enum": [
+            "text/plain",
+            "application/pdf"
+          ],
+          "description": "What to convert the document to. Use `text/plain`, which returns the document's text. `application/pdf` returns metadata only and no content — binary PDF data is never put in front of the model — so choose it only to confirm a PDF export is possible, never to read the document."
+        }
+      },
+      "required": [
+        "fileId",
+        "mimeType"
+      ]
+    }
+  },
+  {
+    "name": "docs.read_document",
+    "description": "Read the structure and bounded text of a Google Doc.",
+    "capability": "docs.read",
+    "mode": "read",
+    "idempotency": "safe",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "documentId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The Google Doc's id, as drive.search or docs.create_document returns it, for example `1A2b3C4d5E6f7G8h9I0j`. It is the segment in the document URL between /d/ and /edit, not the title and not the whole URL."
+        }
+      },
+      "required": [
+        "documentId"
+      ]
+    }
+  },
+  {
+    "name": "docs.create_document",
+    "description": "Create a Google Doc that subsequent Rally tools can edit, optionally with initial plain-text content.",
+    "capability": "docs.write",
+    "mode": "write",
+    "idempotency": "record_before_execute",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "description": "The document's name in Drive, for example \"Q3 launch plan\". Drive allows duplicate names, so a title already in use creates a second document rather than opening the first."
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 100000,
+          "description": "Initial body content, inserted as plain text. Defaults to an empty document. Markdown is stored as its literal characters, so `# Heading` appears as those characters rather than as a heading."
+        }
+      },
+      "required": [
+        "title"
+      ]
+    }
+  },
+  {
+    "name": "docs.append_text",
+    "description": "Append plain text to a Google Doc writable under Rally's per-file Google Drive grant.",
+    "capability": "docs.write",
+    "mode": "write",
+    "idempotency": "record_before_execute",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "documentId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The Google Doc's id, for example `1A2b3C4d5E6f7G8h9I0j`. Rally can only write to a document it created or that was shared with it individually."
+        },
+        "tabId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "description": "Append into one named tab of a multi-tab document, as the `tabId` docs.read_document reports for that tab. Omit it for a document with a single tab, which is the usual case."
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100000,
+          "description": "Plain text added at the end of the document, exactly as written. Start it with a newline to begin a new paragraph rather than continuing the last one."
+        }
+      },
+      "required": [
+        "documentId",
+        "text"
+      ]
+    }
+  },
+  {
+    "name": "docs.replace_text",
+    "description": "Replace every exact occurrence of text in a Google Doc writable under Rally's per-file Google Drive grant.",
+    "capability": "docs.write",
+    "mode": "write",
+    "idempotency": "record_before_execute",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "documentId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The Google Doc's id, for example `1A2b3C4d5E6f7G8h9I0j`. Rally can only write to a document it created or that was shared with it individually."
+        },
+        "find": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 10000,
+          "description": "The exact literal text to look for, for example \"Q2 launch\". It is not a pattern: wildcards and regular-expression syntax are matched as those characters. Text nothing matches changes nothing and is reported as zero replacements rather than as an error, so read the document first."
+        },
+        "replace": {
+          "type": "string",
+          "maxLength": 100000,
+          "description": "What every occurrence becomes. An empty string deletes the matched text."
+        },
+        "matchCase": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require the same capitalization as `find`. Defaults to true; set it false to match \"launch\" and \"Launch\" alike."
+        }
+      },
+      "required": [
+        "documentId",
+        "find",
+        "replace"
+      ]
+    }
+  },
+  {
+    "name": "sheets.read_spreadsheet",
+    "description": "Read bounded spreadsheet and sheet metadata from Google Sheets.",
+    "capability": "sheets.read",
+    "mode": "read",
+    "idempotency": "safe",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "spreadsheetId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The spreadsheet's id, as drive.search or sheets.create_spreadsheet returns it, for example `1A2b3C4d5E6f7G8h9I0j`. Call this first to learn the exact sheet names the other Sheets tools need in a range."
+        }
+      },
+      "required": [
+        "spreadsheetId"
+      ]
+    }
+  },
+  {
+    "name": "sheets.read_values",
+    "description": "Read bounded cell values from an A1 range in Google Sheets. Values default to what the sheet displays, so numbers arrive as locale-formatted strings such as \"1,234.50\" or \"45%\" and dates as text. Pass valueRenderOption UNFORMATTED_VALUE to get numbers and serial dates you can compute with.",
+    "capability": "sheets.read",
+    "mode": "read",
+    "idempotency": "safe",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "spreadsheetId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The spreadsheet's id, for example `1A2b3C4d5E6f7G8h9I0j`."
+        },
+        "range": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "description": "An A1 range, for example `Sheet1!A1:D50`, or a whole sheet by name, for example `Sheet1`. Take the sheet name from sheets.read_spreadsheet and match it exactly; a range naming a sheet that does not exist is refused, while a correctly named range covering empty cells returns no values, which is a real answer rather than a failure."
+        },
+        "majorDimension": {
+          "type": "string",
+          "enum": [
+            "ROWS",
+            "COLUMNS"
+          ],
+          "description": "Whether the returned array holds one entry per row or one per column. Defaults to ROWS."
+        },
+        "valueRenderOption": {
+          "type": "string",
+          "enum": [
+            "FORMATTED_VALUE",
+            "UNFORMATTED_VALUE"
+          ],
+          "description": "FORMATTED_VALUE returns what the sheet displays; UNFORMATTED_VALUE returns computable numbers and serial dates. Defaults to FORMATTED_VALUE."
+        }
+      },
+      "required": [
+        "spreadsheetId",
+        "range"
+      ]
+    }
+  },
+  {
+    "name": "sheets.create_spreadsheet",
+    "description": "Create a Google spreadsheet that subsequent Rally tools can edit, with optional named sheets.",
+    "capability": "sheets.write",
+    "mode": "write",
+    "idempotency": "record_before_execute",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "description": "The spreadsheet's name in Drive, for example \"Q3 pipeline\". Drive allows duplicate names, so a title already in use creates a second spreadsheet rather than opening the first."
+        },
+        "sheetTitles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "maxItems": 25,
+          "description": "Names for the tabs to create, in order, for example [\"Summary\", \"Raw data\"]. Defaults to one tab named Sheet1. These are the names every later range has to use."
+        }
+      },
+      "required": [
+        "title"
+      ]
+    }
+  },
+  {
+    "name": "sheets.update_values",
+    "description": "Replace cell values in a Google Sheet writable under Rally's per-file Google Drive grant.",
+    "capability": "sheets.write",
+    "mode": "write",
+    "idempotency": "record_before_execute",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "spreadsheetId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The spreadsheet's id, for example `1A2b3C4d5E6f7G8h9I0j`. Rally can only write to a spreadsheet it created or that was shared with it individually."
+        },
+        "range": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "description": "The A1 range to overwrite, for example `Sheet1!A1:D50`. Writing starts at its top-left cell and covers as many cells as `values` supplies; a range larger than the data leaves the surplus cells untouched rather than clearing them."
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            },
+            "maxItems": 1000
+          },
+          "maxItems": 1000,
+          "description": "The cells, as an array of rows in reading order, for example [[\"Name\", \"Owner\"], [\"Launch\", \"Dana\"]]. Every row is one inner array even when there is a single column. Every cell in the range you send is written: `null` clears it exactly as an empty string does, so there is no per-cell way to say \"leave this one alone\" — to change part of a row, send a range covering only the cells that change. At most 10,000 cells in one call."
+        },
+        "valueInputOption": {
+          "type": "string",
+          "enum": [
+            "RAW",
+            "USER_ENTERED"
+          ],
+          "description": "How Sheets reads the strings you send. USER_ENTERED, the default, parses them the way typing would, so `=SUM(A1:A9)` becomes a formula and `10/6` becomes a date. RAW stores every string as literal text."
+        }
+      },
+      "required": [
+        "spreadsheetId",
+        "range",
+        "values"
+      ]
+    }
+  },
+  {
+    "name": "sheets.append_values",
+    "description": "Append rows to a Google Sheet writable under Rally's per-file Google Drive grant.",
+    "capability": "sheets.write",
+    "mode": "write",
+    "idempotency": "record_before_execute",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "spreadsheetId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The spreadsheet's id, for example `1A2b3C4d5E6f7G8h9I0j`. Rally can only write to a spreadsheet it created or that was shared with it individually."
+        },
+        "range": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "description": "An A1 range naming the existing table to add rows beneath, for example `Sheet1!A1:D1` or a whole sheet by name, for example `Sheet1`. Sheets finds the last populated row in that block and writes below it, so the range is a pointer at the table rather than the cells that change."
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            },
+            "maxItems": 1000
+          },
+          "maxItems": 1000,
+          "description": "The cells, as an array of rows in reading order, for example [[\"Name\", \"Owner\"], [\"Launch\", \"Dana\"]]. Every row is one inner array even when there is a single column. Every cell in the range you send is written: `null` clears it exactly as an empty string does, so there is no per-cell way to say \"leave this one alone\" — to change part of a row, send a range covering only the cells that change. At most 10,000 cells in one call."
+        },
+        "valueInputOption": {
+          "type": "string",
+          "enum": [
+            "RAW",
+            "USER_ENTERED"
+          ],
+          "description": "How Sheets reads the strings you send. USER_ENTERED, the default, parses them the way typing would, so `=SUM(A1:A9)` becomes a formula and `10/6` becomes a date. RAW stores every string as literal text."
+        },
+        "insertDataOption": {
+          "type": "string",
+          "enum": [
+            "INSERT_ROWS",
+            "OVERWRITE"
+          ],
+          "description": "INSERT_ROWS, the default, inserts new rows and pushes existing content down. OVERWRITE writes into the rows already below the table, replacing anything there."
+        }
+      },
+      "required": [
+        "spreadsheetId",
+        "range",
+        "values"
+      ]
+    }
+  }
+]

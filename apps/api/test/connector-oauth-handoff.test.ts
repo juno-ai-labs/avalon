@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app";
 import type { AuthContext, Env } from "../src/env";
-import { decryptString, encryptString, sealString } from "../src/lib/crypto";
+import { decryptString, encryptString, openString, sealString } from "../src/lib/crypto";
 import { desktopHandoffUrl } from "../src/lib/desktop-handoff";
 import { __connectionServiceTesting, ConnectionService } from "../src/services/connection-service";
 import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
@@ -444,6 +444,27 @@ describe("connector OAuth handoff", () => {
       .rejects.toMatchObject({ code: "authentication_required" });
     expect(regional.prepare("SELECT consumed_at FROM oauth_states WHERE id = ?").get("canva-state"))
       .toEqual({ consumed_at: null });
+  });
+
+  it.each([
+    { grants: ["gmail.read", "gmail.draft", "gmail.send", "calendar.read", "calendar.write"], expected: ["gmail.read", "gmail.draft", "gmail.send", "calendar.read", "calendar.write", "gmail.modify"] },
+    { grants: ["gmail.read"], expected: ["gmail.read"] },
+    { grants: ["gmail.read", "gmail.draft", "gmail.send"], expected: ["gmail.read", "gmail.draft", "gmail.send"] },
+    { grants: ["drive.read", "docs.write"], expected: ["drive.read", "docs.write"] },
+  ])("refreshes the Google mail preset only on explicit reauthorization, preserving narrower grants: $grants", async ({ grants, expected }) => {
+    const { auth, env, regional, object } = fixture();
+    const connectionId = "00000000-0000-4000-8000-000000000221";
+    await insertGoogleConnection(object, env, connectionId);
+    object.prepare("UPDATE connector_connections SET granted_scopes_json = ? WHERE id = ?").run(JSON.stringify(grants), connectionId);
+    const started = await new ConnectionService(env, auth).reconnect(connectionId, "browser");
+    const row = regional.prepare("SELECT code_verifier_encrypted FROM oauth_states").get() as { code_verifier_encrypted: string };
+    const state = JSON.parse(await openString(row.code_verifier_encrypted, env.OAUTH_STATE_ENCRYPTION_KEY));
+    expect(state).toMatchObject({ connectionId, capabilities: expected });
+    expect(new URL(started.url).hostname).toBe("accounts.google.com");
+    // Starting consent is not a grant: existing tools retain the frozen list
+    // until the ordinary authorized callback persists the replacement.
+    expect(object.prepare("SELECT granted_scopes_json FROM connector_connections WHERE id = ?").get(connectionId))
+      .toEqual({ granted_scopes_json: JSON.stringify(grants) });
   });
 
   it("persists a versioned addressed return for a capable desktop start", async () => {
