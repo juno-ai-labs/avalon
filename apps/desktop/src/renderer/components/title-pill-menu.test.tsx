@@ -7,12 +7,13 @@ import { TitlePill } from '@rally/ui/components/title-pill';
 
 const member = { id: 'user-1', name: 'Adam', email: 'adam@example.test', timezone: 'UTC' };
 
-function renderChannelPill(overrides: Partial<React.ComponentProps<typeof ChannelMenu>> = {}): void {
-  render(<Tooltip.Provider><TitlePill level={{
+function channelPill(overrides: Partial<React.ComponentProps<typeof ChannelMenu>> = {}): React.JSX.Element {
+  return <Tooltip.Provider><TitlePill level={{
     key: 'channel:c1',
     icon: null,
     title: 'Launch',
     label: 'Thread menu: Launch',
+    onMenuOpen: overrides.people?.onOpen,
     menu: <ChannelMenu
       breakouts={[{ substreamId: 'b1', title: 'Pricing' }]}
       onOpenBreakout={vi.fn()}
@@ -22,7 +23,11 @@ function renderChannelPill(overrides: Partial<React.ComponentProps<typeof Channe
       workstream={{ id: 'c1', title: 'Launch', scope: 'personal', participants: [member], resources: [] }}
       {...overrides}
     />,
-  }} /></Tooltip.Provider>);
+  }} /></Tooltip.Provider>;
+}
+
+function renderChannelPill(overrides: Partial<React.ComponentProps<typeof ChannelMenu>> = {}): ReturnType<typeof render> {
+  return render(channelPill(overrides));
 }
 
 function openMenu(): void {
@@ -200,7 +205,7 @@ describe('a title pill menu with levels', () => {
     expect(onAdd).toHaveBeenCalledWith(newcomer);
   });
 
-  it('lists people who asked to join above Suggested, answered in place and not offered again', async () => {
+  it('lists people who asked to join above Suggested, answered in place and not suggested again', async () => {
     const onDecide = vi.fn();
     const asker = { id: 'user-3', name: 'Samantha Lee', email: 'sam@example.test', timezone: 'UTC' };
     const other = { id: 'user-2', name: 'Jordan', email: 'jordan@example.test', timezone: 'UTC' };
@@ -275,6 +280,30 @@ describe('a title pill menu with levels', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
     expect(screen.getAllByRole('button', { name: /^Add /u }).map((button) => button.getAttribute('aria-label')))
       .toEqual(['Add Zoe', 'Add Ari', 'Add Beta', 'Add Zed', 'Add Alex']);
+  });
+
+  it('warms ranking at the root and applies late results only on the next People opening', async () => {
+    const alice = { id: 'alice', name: 'Alice', email: 'alice@example.test', timezone: 'UTC' };
+    const zoe = { id: 'zoe', name: 'Zoe', email: 'zoe@example.test', timezone: 'UTC' };
+    const onAdd = vi.fn(async () => undefined);
+    const onOpen = vi.fn();
+    const people = { candidates: [zoe, alice], onAdd, onOpen, adding: false };
+    const { rerender } = renderChannelPill({ people });
+    openMenu();
+    await waitFor(() => expect(onOpen).toHaveBeenCalledOnce());
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+    expect(screen.getAllByRole('button', { name: /^Add /u }).map((button) => button.getAttribute('aria-label')))
+      .toEqual(['Add Alice', 'Add Zoe']);
+    rerender(channelPill({ people: { ...people, ranking: { channel: ['zoe'], organization: ['zoe'] } } }));
+    expect(screen.getAllByRole('button', { name: /^Add /u }).map((button) => button.getAttribute('aria-label')))
+      .toEqual(['Add Alice', 'Add Zoe']);
+    fireEvent.click(screen.getByRole('button', { name: 'Add Alice' }));
+    expect(onAdd).toHaveBeenCalledWith(alice);
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Add Alice' }), { key: 'Escape' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+    expect(screen.getAllByRole('button', { name: /^Add /u }).map((button) => button.getAttribute('aria-label')))
+      .toEqual(['Add Zoe', 'Add Alice']);
+    expect(onOpen).toHaveBeenCalledOnce();
   });
 
   it('invites new addresses as guests on Enter, adds people already in the organization, and stays open', async () => {

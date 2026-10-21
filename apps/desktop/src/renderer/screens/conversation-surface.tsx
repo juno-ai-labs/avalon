@@ -1985,7 +1985,7 @@ function ConversationSurfaceContent({
     staleTime: 60_000,
   });
   const visibleMembers = guest ? routedDetail?.participants ?? NO_MEMBERS : members.data ?? NO_MEMBERS;
-  const peopleRanking = usePeopleRanking(api, workspaceId, session?.user.id, linkSpaceId, !guest && parentKind === 'workstream');
+  const peopleRanking = usePeopleRanking(api, workspaceId, session?.user.id, channelPane?.channelId ?? null, !guest && parentKind === 'workstream');
   const visibleConnections = guest ? routedDetail?.connections : connections.data;
   // People invited to the Organization who have not joined: offered where a
   // member can share this Channel with them, and named in its chips.

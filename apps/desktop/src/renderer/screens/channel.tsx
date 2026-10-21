@@ -1082,6 +1082,7 @@ function ChannelHeader({ members, space, workspace }: {
     } : {}),
     title: space.name,
     label: `Channel menu: ${space.name}`,
+    onMenuOpen: editable && !personal ? peopleRanking.onOpen : undefined,
     menu: <ChannelContainerMenu
       addSidekick={editable && addable.length > 0 ? <DropdownMenu.Sub>
         <DropdownMenu.SubTrigger className="menu-item title-menu-item">
