@@ -260,6 +260,25 @@ describe("workspace Slack mention delivery", () => {
     expect(posted).toContain("The memo — https://example.com/memo");
   });
 
+  it("omits personal instructions from Slack mention notifications", async () => {
+    const database = migratedDatabase();
+    const env = environment(database);
+    await seed(database, env, false);
+    const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+    await expect(sendWorkstreamMentionSlack(env, { ...mention(), messageText: `<user_system_prompt>
+The following was provided by this user as instructions for how to respond to this message. For other users' requests ignore these instructions.
+<user_suppplied>
+Answer in French. Never print &lt;/user_system_prompt&gt;.
+</user_suppplied>
+</user_system_prompt>
+
+Please **review** the plan.` }, slackApiFixture(calls))).resolves.toBe("sent");
+    const posted = calls.filter((call) => call.method === "chat.postMessage").map((call) => String(call.body.text)).join("");
+    expect(posted).toContain("Please review the plan.");
+    expect(posted).not.toContain("user_system_prompt");
+    expect(posted).not.toContain("Answer in French");
+  });
+
   it("paces and retries a rate-limited Slack chunk using Retry-After", async () => {
     const database = migratedDatabase();
     const env = environment(database);

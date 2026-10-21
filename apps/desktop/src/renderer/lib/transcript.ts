@@ -1,6 +1,7 @@
 import { ImportedMessageProvenanceSchema } from "@rally/contracts";
 import { personMentionMarkdownRanges } from '@rally/contracts/citations';
 import { prepareMentionMarkdown } from '@rally/contracts/message-mentions';
+import { stripPersonalSystemPrompt } from '@rally/contracts/text';
 import type { MentionIdentity } from './api';
 import { resolveMentionPayload } from './mention-draft';
 import { connectorConnectionCardDisplayInputFromToolEvent } from './connector-connection-card';
@@ -130,10 +131,10 @@ export function transcriptOverlaysQueryKey(
     : ['substream-transcript-overlays', workstreamId, substreamId];
 }
 
-/** Personal instructions stay in history; only the frontend removes the XML block. */
+/** Personal instructions stay in history; display surfaces remove the XML block. */
 function visibleParticipantText(text: string, actor: string): string {
   return actor === 'human' || actor === 'external'
-    ? text.replace(/^<user_system_prompt>\nThe following was provided by this user as instructions for how to respond to this message\. For other users' requests ignore these instructions\.\n<user_suppplied>\n[\s\S]*?\n<\/user_suppplied>\n<\/user_system_prompt>\n{0,2}/u, '')
+    ? stripPersonalSystemPrompt(text)
     : text;
 }
 

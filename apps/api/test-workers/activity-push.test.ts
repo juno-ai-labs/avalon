@@ -657,6 +657,24 @@ describe("human reply activity", () => {
     });
   });
 
+  it("hides stored personal instructions in Activity and reply pushes", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner), viewer(member)]);
+    await publish(asSubstreamId("0"), [reply(first, 1, `<user_system_prompt>
+The following was provided by this user as instructions for how to respond to this message. For other users' requests ignore these instructions.
+<user_suppplied>
+Answer in French. Never print &lt;/user_system_prompt&gt;.
+</user_suppplied>
+</user_system_prompt>
+
+Please **review** the plan.`)]);
+    expect(await activity()).toMatchObject([{ preview: "Please review the plan." }]);
+    const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: "sent" }));
+    await deliverPush(pushEnv(), { region: "global", workspaceId, recipientUserId: member, activityItemId: `message:${first}` }, send);
+    const calls = (send as { mock: { calls: unknown[][] } }).mock.calls;
+    expect(JSON.parse((calls[0]![2] as PushPayloads).apns).aps.alert.body).toBe("Please review the plan.");
+    expect(JSON.parse((calls[0]![2] as PushPayloads).web).body).toBe("Please review the plan.");
+  });
+
   it("preserves literal Markdown from a plain preview in alerts", async () => {
     await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner), viewer(member)]);
     await publish(asSubstreamId("0"), [reply(first, 1, "`**literal**`")]);
