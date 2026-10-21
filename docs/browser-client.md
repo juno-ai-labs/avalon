@@ -17,7 +17,7 @@ artifact serving remain release checks; see the guest-sharing completion audit.
 | `apps/browser/src/entry.tsx` | Email/OTP and explicit magic-link redemption, Google sign-in, session restore and workspace list. |
 | `apps/browser/src/transport.ts` | Same-origin entry requests and runtime response validation. |
 | `apps/browser/src/shell.tsx` | The signed-in application's one lazy boundary: the desktop shell over the cookie session, for members and guests, and the browser's `AppSessionValue`. |
-| `apps/browser/public/sw.js` | The root service worker that shows Web Push notifications and opens their links on this origin. |
+| `apps/browser/public/sw.js` | The root service worker that shows Web Push notifications, sets the installed app's icon badge, and opens their links on this origin. |
 | `apps/browser/public/manifest.webmanifest`, `icon-*.png`, `apple-touch-icon.png` | The install manifest and icons that let the host be added to an iOS Home Screen or installed as an app window. |
 | `apps/desktop/src/renderer/lib/home-screen.ts` | On iPhone and iPad, whether the host runs as a Home Screen app or in a Safari tab. |
 | `apps/browser/src/session.ts`, `packages/contracts/src/client-session.ts` | Credential-free collaboration session metadata and its cookie adapter. |
