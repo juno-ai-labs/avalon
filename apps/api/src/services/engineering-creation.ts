@@ -40,9 +40,7 @@ export async function createEngineeringChannel(env: Env, input: CreateEngineerin
   const participantUserIds = [...new Set([input.creatorUserId, ...input.participantUserIds])];
   const spaces = new SpaceService(env, auth);
   const channelId = asSpaceId(input.operationId);
-  await spaces.create({ name: input.name, scope: "workspace", colorKey: "blue" }, channelId, defer);
-  const channel = await spaces.updateAudience(channelId, { scope: "workspace", participantUserIds });
-  if (!channel) throw new ApiError(409, "created_channel_unavailable", "The created Channel is unavailable");
+  const channel = await spaces.create({ name: input.name, scope: "workspace", colorKey: "blue", participantUserIds }, channelId, defer);
   return { region: env.AVALON_REGION, orgId: input.orgId, channelId, channel };
 }
 

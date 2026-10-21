@@ -38,12 +38,14 @@ afterEach(async () => {
 // This path deliberately starts a real run; only the external provider is doubled.
 useHeldEffectQueue();
 useSelectedModel();
-useOpenRouterDouble((call) => {
+let iconGate: Promise<void> | undefined;
+const provider = useOpenRouterDouble(async (call) => {
+  if (!call.stream && iconGate) await iconGate;
   const format = JSON.stringify(call.body.response_format ?? {});
   return { say: call.stream ? "Start with the release checklist."
     : format.includes("message_addressing") ? JSON.stringify({ classification: "agent_action", confidence: 1, rationaleCode: "imperative" })
     : format.includes("substream_context_summary") ? JSON.stringify({ summary: "The release checklist is the starting point." })
-    : JSON.stringify({ title: "Release plan", icon: "circle-dot", ...(format.includes('"summary"') ? { summary: "Plan the release." } : {}) }) };
+    : JSON.stringify({ title: "Release plan", icon: "rocket", ...(format.includes('"summary"') ? { summary: "Plan the release." } : {}) }) };
 });
 
 function creationEnv(): Env {
@@ -81,6 +83,7 @@ async function settledThread(threadId: WorkstreamId, creatorUserId = CREATOR, ro
 }
 
 beforeEach(async () => {
+  iconGate = undefined;
   await reset();
   await seedInspectableWorkspace(env.DB, { workspaceId: ORIGINAL_ORG, userId: CREATOR, sessionId: "engineering-test", at: "2026-10-21T00:00:00.000Z" });
   await env.DB.batch([
@@ -141,6 +144,26 @@ describe("engineering product creation", () => {
       name: "Awaiting audience", participantUserIds: [THREAD_OPERATION] })).rejects.toThrow("space_access_denied");
     const after = await bridge.listSpaces({ workspaceId: ORG });
     expect(after.found && after.value.items.some((space) => space.name === "Awaiting audience")).toBe(true);
+  });
+
+  it("writes the chosen Channel icon after seating its initial participants", async () => {
+    const context = executionContext();
+    const namingEnv = new Proxy(creationEnv(), { get: (target, property, receiver) => property === "OPENROUTER_CLASSIFIER_MODEL"
+      ? "double/naming" : Reflect.get(target, property, receiver) });
+    const bridge = new EngineeringInspectionBridge(context, namingEnv);
+    await createOrg(bridge);
+    let release = () => {};
+    iconGate = new Promise<void>((resolve) => { release = resolve; });
+    try {
+      const created = await createChannel(bridge);
+      expect(created.channel.participants.map((person) => person.userId).sort()).toEqual([CREATOR, MEMBER]);
+    } finally {
+      release();
+    }
+    await waitOnExecutionContext(context);
+    expect(provider.calls.some((call) => JSON.stringify(call.body.response_format).includes("workstream_name"))).toBe(true);
+    const visible = await bridge.listUserChannels({ orgId: ORG, userId: MEMBER });
+    expect(visible.items.find((space) => space.id === CHANNEL)?.iconKey).toBe("rocket");
   });
 
   it("starts the prompt once in the specified Channel and keeps private Channel threads private", async () => {
