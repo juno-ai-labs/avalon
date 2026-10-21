@@ -197,6 +197,39 @@ describe("realtime transcription proxy", () => {
     expect(database.activeSessions()).toBe(0);
   });
 
+  it("keeps an admitted session open through a catch-up burst and forwards its commit", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const admissions = new TranscriptionAdmissions();
+    const upstream = new FakeSocket();
+    const { pairs } = installSocketRuntime(upstream);
+    const deferred: Promise<void>[] = [];
+    const environment = env(admissions);
+    const ticket = await issueTranscriptionSocketTicket(environment, auth);
+    await new RealtimeTranscriptionService(environment, (promise) => { deferred.push(promise); })
+      .upgrade(ticket, request());
+    const server = pairs[0]!.server;
+    try {
+      for (let index = 0; index < 40; index += 1) {
+        server.emit("message", { data: JSON.stringify({
+          type: "input_audio_buffer.append", audio: Buffer.from([index, 0]).toString("base64"),
+        }) });
+      }
+      server.emit("message", { data: JSON.stringify({ type: "input_audio_buffer.commit" }) });
+      expect(upstream.sent.slice(1).map((raw) => JSON.parse(raw))).toEqual([
+        ...Array.from({ length: 40 }, (_, index) => ({
+          type: "input_audio_buffer.append", audio: Buffer.from([index, 0]).toString("base64"),
+        })),
+        { type: "input_audio_buffer.commit" },
+      ]);
+      expect(server.closes).toEqual([]);
+      expect(upstream.closes).toEqual([]);
+      expect(admissions.activeSessions()).toBe(1);
+    } finally {
+      server.emit("close", { code: 1000, reason: "Test complete" });
+      await Promise.all(deferred);
+    }
+  });
+
   it("renews the session lease on a timer while the socket is open, with no frames on it", async () => {
     vi.useFakeTimers();
     const database = new TranscriptionAdmissions();

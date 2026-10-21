@@ -155,6 +155,28 @@ function stringMessage(data: string | ArrayBuffer | Blob): string | null {
   return typeof data === "string" ? data : null;
 }
 
+/** Wire the ordered audio-buffer transport after admission and socket acceptance. */
+export function forwardTranscriptionAudio(server: WebSocket, upstream: WebSocket): void {
+  server.addEventListener("message", (event) => {
+    const parsed = parseTranscriptionClientEvent(stringMessage(event.data));
+    if (!parsed) {
+      try {
+        if (isUnknownSocketEvent(JSON.parse(stringMessage(event.data) ?? ""), transcriptionClientEventTypes)) return;
+      } catch { /* Malformed JSON keeps the existing error response. */ }
+      sendJson(server, {
+        type: "error",
+        error: { code: "invalid_event", message: "Only realtime audio-buffer events are accepted." },
+      });
+      return;
+    }
+    sendJson(upstream, parsed);
+  });
+  upstream.addEventListener("message", (event) => {
+    if (server.readyState !== WebSocket.OPEN || typeof event.data !== "string") return;
+    try { server.send(event.data); } catch { /* The desktop closed before the provider frame arrived. */ }
+  });
+}
+
 /** The WorkspaceDO that owns this workspace's dictation admission state. */
 function transcriptionWorkspace(env: Env, workspaceId: string) {
   return durableObjectStubForWorkspace(
@@ -349,24 +371,7 @@ export class RealtimeTranscriptionService {
         try { this.defer(renewal); } catch { void renewal; }
       }, SESSION_LEASE_REFRESH_MS);
 
-      server.addEventListener("message", (event) => {
-        const parsed = parseTranscriptionClientEvent(stringMessage(event.data));
-        if (!parsed) {
-          try {
-            if (isUnknownSocketEvent(JSON.parse(stringMessage(event.data) ?? ""), transcriptionClientEventTypes)) return;
-          } catch { /* Malformed JSON keeps the existing error response. */ }
-          sendJson(server, {
-            type: "error",
-            error: { code: "invalid_event", message: "Only realtime audio-buffer events are accepted." },
-          });
-          return;
-        }
-        sendJson(upstream, parsed);
-      });
-      upstream.addEventListener("message", (event) => {
-        if (server.readyState !== WebSocket.OPEN || typeof event.data !== "string") return;
-        try { server.send(event.data); } catch { /* The desktop closed before the provider frame arrived. */ }
-      });
+      forwardTranscriptionAudio(server, upstream);
       server.addEventListener("close", (event) => {
         closeSocket(upstream, event.code || 1000, event.reason || "Client closed");
         deferRelease();

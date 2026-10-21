@@ -55,6 +55,17 @@ describe('realtime audio sending', () => {
     sender.stop();
   });
 
+  it('keeps sending on schedule when the system clock moves backward', async () => {
+    const { sender, messages } = transport();
+    sender.start();
+    sender.append(new Uint8Array([1, 2]).buffer);
+    vi.setSystemTime(Date.now() - 60_000);
+    sender.append(new Uint8Array([3, 4]).buffer);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(audioBytes(messages)).toEqual([1, 2, 3, 4]);
+    sender.stop();
+  });
+
   it('retains queued audio through socket congestion and sends it once space returns', async () => {
     const { sender, messages, errors, congest } = transport();
     sender.append(new Uint8Array([1, 2, 3, 4]).buffer);

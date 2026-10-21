@@ -342,7 +342,7 @@ the old migration `0040_realtime_transcription_admission.sql` D1 tables are
 fenced. The one-minute ticket is single-use, and the Worker admits at most two
 concurrent sessions per user and twenty per workspace. Each live socket renews
 its two-minute lease every minute. The proxy validates frame size and audio-buffer
-event shape without a message-count rate or recording-duration limit. Neither
+event shape for every audio-buffer message. Neither
 audio nor transcripts are stored by admission.
 
 Alert on `realtime_transcription_session_release_failed`. The Worker retries the
@@ -1436,7 +1436,7 @@ Google connector ingestion currently polls Gmail history, Calendar sync/completi
 
 - Dictation uses a separate, non-durable WebSocket bridge because each session has one desktop client and one Azure upstream; it does not need room coordination or persistence. Keep the 60-second Rally ticket, exact Origin check, 256,000-character client-frame bound, and audio-buffer event allowlist. The Worker must set the Azure `api-key` handshake header and must never forward client `session.update` events.
 
-- The renderer starts its mono PCM16 24 kHz `AudioWorklet` before the transcription service connects, buffers in memory, and batches all captured audio within the shared `@rally/contracts/realtime-transcription` frame limits. Batches leave at 100 ms intervals, carrying up to about four seconds of unchanged audio each; Stop drains the final partial frame and queued audio before explicitly committing. The existing 10-second connection deadline now starts with capture and covers the ticket, handshake, and backlog drain; expiry cancels the request and releases capture. The existing 60-second finalization deadline covers the final audio drain and transcript completion together. There is no server message-count rate limit. See [dictation startup](conversation-surfaces.md#dictation-capture-and-connection-startup). Permission denial, device removal, provider errors, and component unmounts must stop every media track and close both sides of the session.
+- The renderer starts its mono PCM16 24 kHz `AudioWorklet` before the transcription service connects, buffers in memory, and batches all captured audio within the shared `@rally/contracts/realtime-transcription` frame limits. Batches leave at 100 ms intervals, carrying up to about four seconds of unchanged audio each; Stop drains the final partial frame and queued audio before explicitly committing. The existing 10-second connection deadline now starts with capture and covers the ticket, handshake, and backlog drain; expiry cancels the request and releases capture. The existing 60-second finalization deadline covers the final audio drain and transcript completion together. See [dictation startup](conversation-surfaces.md#dictation-capture-and-connection-startup). Permission denial, device removal, provider errors, and component unmounts must stop every media track and close both sides of the session.
 
 Cloudflare can terminate long-lived connections during network deployments, so recovery—not socket immortality—is the contract. Verify that a forced disconnect reconnects with a cursor, replays only newer events when available, and refreshes REST state when the room replies `resync_required` without dropping the active checkpoint that frame carries.
 
