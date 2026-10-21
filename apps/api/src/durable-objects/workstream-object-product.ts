@@ -1,3 +1,4 @@
+import { renderPersonalSystemPrompt } from "@rally/agent-harness";
 import { AnnotatedMessageContentSchema, annotationCommentText } from "@rally/contracts";
 import { AnnotationsSchema, validateAnnotationAttachments } from "@rally/contracts";
 import { ResourceService } from "../services/resource-service";
@@ -70,7 +71,7 @@ import {
   type ContentAudience,
   type WorkstreamReaderAudience,
 } from "../lib/audience-containment";
-import { logWarn } from "../observability/logger";
+import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { mentionedPersonNames, prepareMentionMarkdown, type MentionPerson } from "@rally/contracts/message-mentions";
 import { uuidV7 } from "../lib/uuid-v7";
 import { connectionFromRow } from "../mappers/connection";
@@ -134,6 +135,7 @@ import {
   type ExternalMessageAdmissionResult,
 } from "./workstream-external-message-protocol";
 import { startReadCursorAtLatest } from "./member-attention";
+import { PERSONAL_SYSTEM_PROMPT_REASONS, PersonalSystemPromptRecordSchema } from "./personal-system-prompt";
 
 type SqlRow = Record<string, SqlStorageValue>;
 interface AttachmentResourceRow {
@@ -525,6 +527,40 @@ export class WorkstreamObjectProductService {
     private readonly externalSubstreamId: () => SubstreamId = () => asSubstreamId("0"),
     private readonly defer: WorkDeferral = runtimeDeferral,
   ) {}
+
+  /** Store instructions as part of the user's ordinary message text. */
+  private withPersonalSystemPrompt(text: string, userId: string | undefined, reason: string): string {
+    const identity = this.objectStore.identity();
+    if (!identity || !userId || !PERSONAL_SYSTEM_PROMPT_REASONS.has(reason)
+      || identity.parentKind === "automation") return text;
+    if (this.storage.sql.exec("SELECT 1 FROM background_agent WHERE id = 1").toArray().length > 0) return text;
+    const copy = this.storage.sql.exec<{ text: string }>(
+      "SELECT text FROM personal_system_prompt_copies WHERE user_id = ?", userId,
+    ).toArray()[0];
+    this.defer(this.refreshPersonalSystemPromptCopy(identity.workspaceId, userId).catch((error: unknown) => {
+      logWarn(this.env, "personal_system_prompt_refresh_failed", {
+        workspace_id: identity.workspaceId,
+        substream_id: this.externalSubstreamId(),
+        reason: diagnosticErrorCode(error, "personal_system_prompt_refresh_failed"),
+      });
+    }));
+    const prefix = renderPersonalSystemPrompt(copy?.text ?? "");
+    return prefix ? [prefix, text].filter(Boolean).join("\n\n") : text;
+  }
+
+  private async refreshPersonalSystemPromptCopy(workspaceId: string, userId: string): Promise<void> {
+    const workspace = await this.workspaceDirectory(workspaceId);
+    const source = PersonalSystemPromptRecordSchema.parse(
+      await workspace.personalSystemPrompt({ workspaceId: asWorkspaceId(workspaceId), userId }));
+    // A late, older refresh must not replace a newer copy.
+    this.storage.sql.exec(
+      `INSERT INTO personal_system_prompt_copies (user_id, text, source_revision, copied_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT (user_id) DO UPDATE SET text = excluded.text, source_revision = excluded.source_revision,
+         copied_at = excluded.copied_at
+       WHERE excluded.source_revision > personal_system_prompt_copies.source_revision`,
+      userId, source.personalSystemPrompt, source.revision, Date.now(),
+    );
+  }
 
   private conversationLoopId(root: RootRow): string {
     return substreamLoopId(
@@ -1553,6 +1589,8 @@ export class WorkstreamObjectProductService {
     // started work already authorize a run, even when their text looks like a title.
     const classifyOpening = input.reason === "opening_message" && !input.slackOrigin
       && !input.createdFromOpportunityId && !input.seed;
+    const initialConversation: PreparedConversation = history ?? { messages: [{ role: "user", text: prepared.text,
+      structuredContent: input.openingStructuredContent, attachmentIds: input.attachmentIds }] };
     const [startsRun, [routing], materialization] = await Promise.all([
       history ? false : !classifyOpening || openingMessageStartsRun(this.env, {
         workspaceId: input.workspaceId,
@@ -1574,10 +1612,13 @@ export class WorkstreamObjectProductService {
             workspaceId: input.workspaceId, workstreamId: input.workstreamId,
           }).then((route) => route.model)]),
       this.prepareConversationMaterialization({
-        conversation: history ?? { messages: [{ role: "user", text: prepared.text,
-          structuredContent: input.openingStructuredContent, attachmentIds: input.attachmentIds }] },
+        conversation: history ?? { messages: [{ ...initialConversation.messages[0]!,
+          text: this.withPersonalSystemPrompt(prepared.text, input.creatorUserId, input.reason) }] },
         operationId: input.clientMessageId, firstTurnId: messageId, clientMessageId: input.clientMessageId,
-        ...(input.initialization.kind === "history" && input.initialization.identityHash ? { identityHash: input.initialization.identityHash } : {}),
+        // Receipt identity follows the request; a cache refresh may change the
+        // proposed prefix on retry, but the receipt replays its frozen content.
+        identityHash: input.initialization.kind === "history" && input.initialization.identityHash
+          ? input.initialization.identityHash : workstreamImportHash(initialConversation),
         userId: input.creatorUserId, snapshot: authorSnapshot, now,
         workspaceId: input.workspaceId, workstreamId: input.workstreamId,
       }),
@@ -4164,6 +4205,8 @@ export class WorkstreamObjectProductService {
   private async prepareExternalMessage(
     input: AdmitExternalMessageInput | AnswerExternalElicitationInput,
   ) {
+    const text = this.withPersonalSystemPrompt(input.text,
+      input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : undefined, input.origin);
     const participant = await this.transcript.prepareParticipantMessage({
       turnId: input.messageId,
       actor: "external",
@@ -4171,7 +4214,7 @@ export class WorkstreamObjectProductService {
       authorSnapshot: null,
       clientMessageId: input.clientMessageId,
       messageType: input.messageType,
-      text: input.text,
+      text,
       structuredContentJson: input.structuredContentJson,
       externalActorJson: JSON.stringify(input.actor),
       producedByRunId: null,
@@ -4183,7 +4226,7 @@ export class WorkstreamObjectProductService {
       author: { type: "external", actor: input.actor },
       externalFraming: this.transcript.externalInputFraming(),
       messageType: input.messageType,
-      text: input.text,
+      text,
       structuredContent: input.structuredContentJson === null
         ? null : JSON.parse(input.structuredContentJson),
       mentions: [],
@@ -4913,6 +4956,8 @@ export class WorkstreamObjectProductService {
       && this.loops.hasInputAhead(preparation.input_sequence);
     const now = preparation.created_at;
     const messageId = preparation.input_id;
+    const messageText = this.withPersonalSystemPrompt(prepared.text, auth.userId,
+      input.forcedHarnessOrigin ?? (input.seed ? "demo_seed" : "human_message"));
     const transcriptMessage = await this.transcript.prepareParticipantMessage({
       turnId: messageId,
       actor: "human",
@@ -4923,7 +4968,7 @@ export class WorkstreamObjectProductService {
       },
       clientMessageId: input.clientMessageId,
       messageType: "text",
-      text: prepared.text,
+      text: messageText,
       structuredContentJson: structuredContent ? JSON.stringify(structuredContent) : null,
       externalActorJson: null,
       producedByRunId: null,
@@ -4965,7 +5010,7 @@ export class WorkstreamObjectProductService {
           displayName: people.get(auth.userId)?.name ?? null,
         },
         messageType: "text",
-        text: prepared.text,
+        text: messageText,
         structuredContent,
         mentions: prepared.mentions.map((mention) => ({
           type: mention.type,
@@ -5572,6 +5617,7 @@ export class WorkstreamObjectProductService {
       answeredAt: iso(now),
     };
     const structuredResponse = JSON.stringify({ kind: "elicitation_response", elicitation: persisted });
+    const messageText = this.withPersonalSystemPrompt("", auth.userId, "elicitation_answer");
     const transcriptMessage = await this.transcript.prepareParticipantMessage({
       turnId: responsePartId,
       actor: "human",
@@ -5582,7 +5628,7 @@ export class WorkstreamObjectProductService {
       },
       clientMessageId,
       messageType: "elicitation",
-      text: "",
+      text: messageText,
       structuredContentJson: structuredResponse,
       externalActorJson: null,
       producedByRunId: null,
@@ -5596,7 +5642,7 @@ export class WorkstreamObjectProductService {
         displayName: author?.name ?? null,
       },
       messageType: "elicitation",
-      text: "",
+      text: messageText,
       structuredContent: JSON.parse(structuredResponse),
       mentions: [],
       attachments: [],
