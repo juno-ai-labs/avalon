@@ -4406,6 +4406,160 @@ describe("a member's message travels the whole pipeline", () => {
     });
   });
 
+  it.each([false, true])("waits for an in-flight socket send instead of rejecting its replay (new operation: %s)", async (newOperation) => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await settledRun(stub, opened.body.harnessRunId as string);
+    const { socket } = await openSubscribedSocket(stub, crypto.randomUUID());
+    const collected = collectSocketFrames(socket);
+    const held = await runInDurableObject(stub, (instance, state) => {
+      holdLoopExecuting(state, { loopId: substreamLoopId(WORKSTREAM_ID) });
+      const service = (instance as unknown as { product: WorkstreamObjectProductService }).product;
+      const gate = holdFirstWorkspaceRead(service as unknown as { env: Env });
+      // Observe the real wait solely to stage the interleave: keep the original
+      // read held until its replay has joined it (or emitted an erroneous frame).
+      const target = service as unknown as { waitForInputPreparation: (inputId: string) => Promise<void> };
+      const wait = target.waitForInputPreparation.bind(target);
+      const waiting = { entered: false };
+      target.waitForInputPreparation = (inputId) => {
+        waiting.entered = true;
+        return wait(inputId);
+      };
+      return { gate, waiting };
+    });
+    const command = {
+      type: "create_message",
+      operationId: crypto.randomUUID(),
+      payload: {
+        text: "one message while preparation is held",
+        clientMessageId: "pipeline-inflight-replay",
+        mentions: [], confirmedParticipantUserIds: [], attachmentIds: [], runMode: "queue",
+      },
+    };
+    const outcomes = () => collected.frames.filter((frame) =>
+      frame.command === "create_message" && frame.clientMessageId === command.payload.clientMessageId);
+    try {
+      socket.send(JSON.stringify(command));
+      await expect.poll(() => runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec(
+          "SELECT state FROM pending_loop_input_mailbox WHERE client_message_id = ?",
+          command.payload.clientMessageId,
+        ).toArray()[0]?.state), { timeout: 5_000 }).toBe("preparing");
+
+      // Conflicting content is a real error even before the first admission
+      // commits its final receipt; refusing it must leave the original intact.
+      const conflictOperation = crypto.randomUUID();
+      socket.send(JSON.stringify({ ...command, operationId: conflictOperation,
+        payload: { ...command.payload, text: "different content under the same id" } }));
+      await waitForSocketEvidence(collected.frames, (frame) => frame.operationId === conflictOperation);
+      expect(outcomes()).toMatchObject([{
+        type: "client_command_failed", operationId: conflictOperation,
+        error: { status: 409, code: "substream_message_idempotency_conflict" },
+      }]);
+
+      const replayOperation = newOperation ? crypto.randomUUID() : command.operationId;
+      socket.send(JSON.stringify({ ...command, operationId: replayOperation }));
+      await expect.poll(() => held.waiting.entered || outcomes().length > 1,
+        { timeout: 5_000 }).toBe(true);
+      expect(outcomes()).toHaveLength(1);
+      held.gate.open = true;
+      await expect.poll(() => outcomes().length, { timeout: 5_000 }).toBe(3);
+      const accepted = outcomes().filter((frame) => frame.operationId !== conflictOperation);
+      expect(accepted).toMatchObject([
+        { type: "client_command_succeeded", deliveryState: "pending" },
+        { type: "client_command_succeeded", deliveryState: "pending" },
+      ]);
+      expect(accepted[0]!.turn).toEqual(accepted[1]!.turn);
+      expect(accepted.map((frame) => frame.operationId).sort())
+        .toEqual([command.operationId, replayOperation].sort());
+      await runInDurableObject(stub, (_instance, state) => {
+        expect(state.storage.sql.exec(
+          "SELECT COUNT(*) AS count FROM pending_loop_inputs WHERE client_message_id = ?",
+          command.payload.clientMessageId,
+        ).one().count).toBe(1);
+        expect(state.storage.sql.exec(
+          "SELECT COUNT(*) AS count FROM pending_loop_input_mailbox WHERE client_message_id = ?",
+          command.payload.clientMessageId,
+        ).one().count).toBe(1);
+        expect(state.storage.sql.exec(
+          "SELECT COUNT(*) AS count FROM durable_inbox_receipts WHERE channel = 'substream_message_admission' AND message_id = ?",
+          command.payload.clientMessageId,
+        ).one().count).toBe(1);
+      });
+    } finally {
+      held.gate.open = true;
+      collected.stop();
+      socket.close(1000, "done");
+    }
+  });
+
+  it("replays the canonical receipt when promotion removes the mailbox before reservation resumes", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await settledRun(stub, opened.body.harnessRunId as string);
+    const { socket } = await openSubscribedSocket(stub, crypto.randomUUID());
+    const collected = collectSocketFrames(socket);
+    const clientMessageId = "pipeline-promoted-replay";
+    const held = await runInDurableObject(stub, (instance) => {
+      const service = (instance as unknown as { product: WorkstreamObjectProductService }).product;
+      const original = holdFirstWorkspaceRead(service as unknown as { env: Env });
+      const replay = { entered: false, open: false };
+      const target = service as unknown as {
+        reserveInputPreparation: (...args: unknown[]) => Promise<unknown>;
+      };
+      const reserve = target.reserveInputPreparation.bind(target);
+      let reservations = 0;
+      target.reserveInputPreparation = async (...args) => {
+        const reservation = await reserve(...args);
+        reservations += 1;
+        if (reservations === 2) {
+          // Hold only the replay's continuation after its real reservation has
+          // reused the preparing row. The original and its real activation can
+          // now finish and remove that row before this continuation resumes.
+          replay.entered = true;
+          while (!replay.open) await scheduler.wait(10);
+        }
+        return reservation;
+      };
+      return { original, replay };
+    });
+    const command = {
+      type: "create_message", operationId: crypto.randomUUID(),
+      payload: { text: "one canonical turn across the replay interleave", clientMessageId,
+        mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] },
+    };
+    const outcomes = () => collected.frames.filter((frame) => frame.clientMessageId === clientMessageId
+      && ["client_command_succeeded", "client_command_failed"].includes(frame.type));
+    try {
+      socket.send(JSON.stringify(command));
+      await expect.poll(() => runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec("SELECT state FROM pending_loop_input_mailbox WHERE client_message_id = ?",
+          clientMessageId).toArray()[0]?.state), { timeout: 5_000 }).toBe("preparing");
+      socket.send(JSON.stringify(command));
+      await expect.poll(() => held.replay.entered, { timeout: 5_000 }).toBe(true);
+      held.original.open = true;
+      await expect.poll(() => outcomes().length, { timeout: 5_000 }).toBe(1);
+      await expect.poll(() => runInDurableObject(stub, (_instance, state) => ({
+        canonical: state.storage.sql.exec("SELECT COUNT(*) AS count FROM participant_transcript_turns WHERE client_message_id = ?",
+          clientMessageId).one().count,
+        mailbox: state.storage.sql.exec("SELECT COUNT(*) AS count FROM pending_loop_input_mailbox WHERE client_message_id = ?",
+          clientMessageId).one().count,
+      })), { timeout: 5_000 }).toEqual({ canonical: 1, mailbox: 0 });
+      held.replay.open = true;
+      await expect.poll(() => outcomes().length, { timeout: 5_000 }).toBe(2);
+      expect(outcomes()).toMatchObject([
+        { type: "client_command_succeeded" },
+        { type: "client_command_succeeded", deliveryState: "canonical" },
+      ]);
+      expect(outcomes()[0]!.turn).toEqual(outcomes()[1]!.turn);
+    } finally {
+      held.original.open = true;
+      held.replay.open = true;
+      collected.stop();
+      socket.close(1000, "done");
+    }
+  });
+
   it("admits an idempotent message on the authenticated room socket across hibernation", async () => {
     const stub = agentStub();
     const opened = await initializeWorkstream(stub, "first message");
