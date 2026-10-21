@@ -290,4 +290,90 @@ describe("addressing classifier logging", () => {
       expect.objectContaining({ event_type: "attempt", provider: "typesafe", success: true }),
     ]));
   });
+  it.each([true, false])("uses continuation for ready or inactive follow-ups (%s)", async (resume) => {
+    const { env, objects, defer, settleDeferred } = fixture();
+    const requests: Record<string, unknown>[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as { questions: Record<string, unknown> };
+      requests.push(body);
+      const isContinuation = "continuation" in body.questions;
+      return Response.json({
+        model: "jev-1.13.0",
+        answers: isContinuation
+          ? { continuation: { type: "choice", choice: resume ? "resume_requested_work" : "followup_without_rally_action", confidence: 0.9 }, assignment: { type: "choice", choice: "assigned_to_rally", confidence: 0.9 }, contributors: { type: "choice", choice: "contributors_present", confidence: 0.9 } }
+          : { addressing: { type: "choice", choice: resume ? "people_only" : "rally_should_act", confidence: 0.95 } },
+      });
+    }));
+    const logged = vi.spyOn(console, "info").mockImplementation(() => {});
+    const result = await classifyWorkstreamMessage(env, {
+      ...input,
+      authorName: "Ren",
+      message: "My review found a missing backup.",
+      recentMessages: [{ authorType: "human", authorName: "Jo", message: "Rally, once Ren sends their review, summarize the risks." }],
+      defer,
+    });
+    expect(result).toMatchObject(resume
+      ? { classification: "agent_action", confidence: 0.9, rationaleCode: "deferred_request" }
+      : { classification: "human_only", confidence: 0.9, rationaleCode: "human_coordination" });
+    expect(requests).toHaveLength(2);
+    expect(requests.find((request) => "continuation" in (request.questions as Record<string, unknown>))).toMatchObject({ state: { new_message: { authorName: "Ren" } } });
+    const outcomes = logged.mock.calls.map(([entry]) => entry as Record<string, unknown>);
+    expect(outcomes).toEqual(expect.arrayContaining([expect.objectContaining({
+      event: "addressing_classifier_outcome",
+      outcome: resume ? "continuation_accepted" : "continuation_inactive",
+      continuation_stage: "primary",
+      continuation_decision: resume ? "resume_requested_work" : "followup_without_rally_action",
+    })]));
+    await settleDeferred();
+    expect(records(objects).filter((record) => record.schema_name === "message_continuation")).toHaveLength(2);
+  });
+
+  it("leaves an already admitted uncertain active-task message on its existing path", async () => {
+    const { env, defer, settleDeferred } = fixture();
+    const fetcher = vi.fn(async (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as { questions: Record<string, unknown> };
+      return Response.json({ model: "jev-1.13.0", answers: "continuation" in body.questions ? {
+        continuation: { type: "choice", choice: "followup_without_rally_action", confidence: 0.9 },
+        assignment: { type: "choice", choice: "not_assigned_to_rally", confidence: 0.9 }, contributors: { type: "choice", choice: "contributors_present", confidence: 0.9 },
+      } : { addressing: { type: "choice", choice: "no_clear_request", confidence: 0.9 },
+    } }); });
+    vi.stubGlobal("fetch", fetcher);
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    await expect(classifyWorkstreamMessage(env, {
+      ...input, activeTask: true,
+      recentMessages: [{ authorType: "human", authorName: "Jo", message: "Rally, review the risks." }],
+      defer,
+    })).resolves.toMatchObject({ classification: "uncertain" });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    await settleDeferred();
+  });
+
+  it("uses ordinary addressing if continuation providers are unavailable", async () => {
+    const { env, defer, settleDeferred } = fixture();
+    vi.stubGlobal("fetch", vi.fn(async (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as { questions?: Record<string, unknown> };
+      return body.questions && "addressing" in body.questions
+        ? Response.json({ model: "jev-1.13.0", answers: {
+          addressing: { type: "choice", choice: "rally_should_act", confidence: 0.9 },
+        } })
+        : new Response("unavailable", { status: 503 });
+    }));
+    const logged = vi.spyOn(console, "info").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(classifyWorkstreamMessage(env, {
+      ...input,
+      recentMessages: [{ authorType: "human", authorName: "Jo", message: "The draft is ready." }],
+      defer,
+    })).resolves.toMatchObject({ classification: "agent_action", confidence: 0.9 });
+    const entries = logged.mock.calls.map(([entry]) => entry as Record<string, unknown>);
+    expect(entries).toEqual(expect.arrayContaining([expect.objectContaining({
+      event: "addressing_classifier_outcome",
+      fallback_attempted: true,
+      continuation_stage: "floor",
+      continuation_primary_status: "failure",
+      continuation_decision: "use_addressing",
+    })]));
+    await settleDeferred();
+  });
+
 });

@@ -73,6 +73,7 @@ import { reasoningEffortFor } from "./model-inference-defaults";
 
 export * from "./prompts";
 export * from "./completion-verification";
+export { classifyMessageAdmission, classifyMessageContinuation, classifyMessageContinuationWithTypeSafe } from "./message-continuation";
 export { hasAvalonToolProse, toolActivityName, type ToolActivityStatus } from "./tool-activity";
 export { isAzureBoundModel } from "./bind-runtime";
 export {
