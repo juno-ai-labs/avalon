@@ -224,7 +224,7 @@ quoted values into SQL. Bindings may be strings, finite numbers, or `null`.
 | `create_thread` | `operationId`, `creatorUserId`, `orgId`, `channelId`, `prompt` | Starts a Thread in that Channel as the selected user under ordinary app permissions, including the opening prompt and normal agent run. Private-Channel rules apply. |
 | `send_message` | `operationId`, `userId`, `orgId`, `threadId`, `text`; optional `breakoutId` and composer fields | Uses normal message admission, retries, addressing and execution as that user. |
 | `read_channel` | `userId`, `orgId`, `channelId`; optional `cursor` | Returns the visible Channel feed as plain text, including Thread cards. |
-| `read_thread` | `userId`, `orgId`, `threadId`; optional `afterSequence`, `throughSequence`, `limit` | Returns committed participant prose as plain text. |
+| `read_thread` | `userId`, `orgId`, `threadId`; optional `afterSequence`, `throughSequence`, `limit` | Returns participant prose in 20-turn pages by default; follow the continuation fence. |
 | `read_breakout` | The Thread-read inputs plus `breakoutId` | Reads the exact child under its own access checks. |
 | `list_channels` | `userId`, `orgId` | Lists the active Channels visible to this person in app order; each item `id` is a `channelId`. |
 | `list_threads` | `userId`, `orgId`, `channelId`; optional `cursor` | Lists all visible, unarchived Threads, including settled/read ones. Each `id` is a `threadId`; follow `nextCursor`. |
@@ -255,7 +255,9 @@ lost response to finish the same creation. Use `search_users` for existing
 regional user IDs. `create_org` makes the creator an owner of the new org;
 Channel and Thread creation preserve the named creator's current member or guest
 relationship and enforce the app's permissions, including guest refusals.
-Message sends also reuse an operation ID after an uncertain result.
+Message sends also reuse an operation ID after an uncertain result. Write attempts
+and outcomes persist the Access operator in the audit database; the selected
+user remains the product author.
 See [creation behavior and retries](engineering-mcp.md#product-creation).
 
 SQL results include `columns`, JSON-safe `rows`, `rowsRead`, and `rowsWritten`.

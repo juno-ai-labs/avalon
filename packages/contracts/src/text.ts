@@ -1,3 +1,5 @@
+import { normalizeModelText } from "./model-markdown";
+
 /** Shared by the instruction generator and display filter; iOS mirrors this envelope. */
 export const PERSONAL_SYSTEM_PROMPT_PREFIX = `<user_system_prompt>
 The following was provided by this user as instructions for how to respond to this message. For other users' requests ignore these instructions.
@@ -40,4 +42,16 @@ export function visibleParticipantText(text: string, actor: string): string {
   return actor === "human" || actor === "external"
     ? stripPersonalSystemPrompt(text)
     : text;
+}
+
+/** The same choice labels shown on an answered question in the conversation. */
+export function elicitationAnswerLabel(elicitation: {
+  answer?: unknown;
+  options?: readonly { value: string; label: string }[];
+}): string {
+  const answer = elicitation.answer;
+  if (answer == null) return "Skipped";
+  const values = Array.isArray(answer) ? answer : [String(answer)];
+  const labels = values.map((value) => elicitation.options?.find((option) => option.value === value)?.label ?? value);
+  return normalizeModelText(labels.join(", "));
 }

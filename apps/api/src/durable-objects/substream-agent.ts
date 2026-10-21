@@ -15,7 +15,8 @@ import { AGENT_HANDOFF_TOOL_NAMES, AgentCommunicationService } from "../services
 import { RegionSchema } from "@rally/contracts/regions";
 import { agentIdForAddress, AgentExchangeSchema } from "@rally/contracts";
 import { conversationParentStub } from "../services/conversation-parent-client";
-import { ReadTranscriptRequestSchema, ReadTranscriptResultSchema } from "@rally/contracts";
+import { ReadTranscriptRequestSchema, ReadTranscriptResultSchema, DEFAULT_TRANSCRIPT_READ_TURNS } from "@rally/contracts";
+import { conversationAsText } from "../services/conversation-text";
 import { safeParseSocketEvent, isUnknownSocketEvent, ClientSocketEventTypeSchema } from "@rally/contracts";
 import { SidekickSkillSnapshotSchema } from "@rally/contracts";
 import { SlackOriginContextSchema } from "@rally/contracts";
@@ -3563,10 +3564,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         const currentThrough = this.transcript.transcriptThrough();
         const through = Math.min(request.input.throughSequence ?? currentThrough, currentThrough);
         const start = Math.min(request.input.afterSequence, through) + 1;
-        const end = request.input.limit === undefined ? through + 1 : Math.min(through + 1, start + request.input.limit);
+        const end = Math.min(through + 1, start + (request.input.limit ?? DEFAULT_TRANSCRIPT_READ_TURNS));
         const snapshot = { snapshotId: "product-range", snapshotThrough: through, snapshotAtUtc: new Date().toISOString() };
         const range = this.transcript.range(snapshot, { startInclusive: start, endExclusive: end }, "requested", false);
-        return jsonResponse(ReadTranscriptResultSchema.parse({ title: root.title, range,
+        return jsonResponse(ReadTranscriptResultSchema.parse({ title: root.title, text: conversationAsText(range.turns),
           throughSequence: through, nextAfterSequence: end <= through ? end - 1 : null }));
       }
       if (request.operation === "read_resource_authorization_recovery") {

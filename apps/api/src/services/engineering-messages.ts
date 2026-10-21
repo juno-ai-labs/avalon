@@ -10,7 +10,6 @@ import type { Env } from "../env";
 import { engineeringUserAuth } from "./engineering-creation";
 import { ConversationService } from "./conversation-service";
 import { SpaceService } from "./space-service";
-import { conversationAsText } from "./engineering-conversation-text";
 
 export async function listEngineeringUserChannels(env: Env, input: ListEngineeringUserChannelsInput) {
   const auth = await engineeringUserAuth(env, input.orgId, input.userId);
@@ -42,7 +41,7 @@ export async function readEngineeringConversation(env: Env, input: ReadEngineeri
   const kind = input.breakoutId && input.breakoutId !== "0" ? "Breakout" : "Thread";
   const continuation = page.nextAfterSequence === null ? "" :
     `\n\nMore history: call again with afterSequence=${page.nextAfterSequence} and throughSequence=${page.throughSequence}.`;
-  return { text: `${kind}: ${page.title}\n\n${conversationAsText(page.range.turns) || "No messages."}${continuation}` };
+  return { text: `${kind}: ${page.title}\n\n${page.text || "No messages."}${continuation}` };
 }
 
 export async function readEngineeringChannel(env: Env, input: ReadEngineeringChannelInput): Promise<EngineeringTextResult> {

@@ -168,7 +168,7 @@ describe("Rally engineering MCP tools", () => {
     try {
       const response = await rpc(testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }), "tools/call", { name: "send_message", arguments: request });
       expect(response.result).not.toHaveProperty("isError", true);
-      expect(enterprise.sendMessage).toHaveBeenCalledExactlyOnceWith({ ...request, mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] });
+      expect(enterprise.sendMessage).toHaveBeenCalledExactlyOnceWith({ ...request, mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] }, principal);
       expect(global.sendMessage).not.toHaveBeenCalled();
       expect(JSON.stringify(audit.mock.calls)).not.toContain(request.text);
     } finally {
@@ -184,7 +184,7 @@ describe("Rally engineering MCP tools", () => {
     vi.mocked(enterprise.createOrg).mockResolvedValue({ region: "enterprise", orgId: asWorkspaceId(request.operationId), userIds: [request.creatorUserId] });
     const response = await rpc(testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }), "tools/call", { name: "create_org", arguments: request });
     expect(response.result).not.toHaveProperty("isError", true);
-    expect(enterprise.createOrg).toHaveBeenCalledExactlyOnceWith(request);
+    expect(enterprise.createOrg).toHaveBeenCalledExactlyOnceWith(request, principal);
     expect(global.createOrg).not.toHaveBeenCalled();
   });
 
@@ -221,7 +221,7 @@ describe("Rally engineering MCP tools", () => {
     try {
       const response = await rpc(testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }), "tools/call", { name: "create_thread", arguments: request });
       expect(response.result).toMatchObject({ isError: true });
-      expect(enterprise.createThread).toHaveBeenCalledExactlyOnceWith(request);
+      expect(enterprise.createThread).toHaveBeenCalledExactlyOnceWith(request, principal);
       expect(global.createThread).not.toHaveBeenCalled();
       expect(JSON.stringify(audit.mock.calls)).not.toContain("Confidential release plan");
       expect(audit).toHaveBeenCalledWith(expect.stringContaining('"error_code":"engineering_operation_failed:user_not_active_organization_user"'));

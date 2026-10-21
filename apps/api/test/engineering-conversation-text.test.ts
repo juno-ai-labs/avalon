@@ -1,7 +1,7 @@
 import "../../../tests/isolated-region";
 import { describe, expect, it } from "vitest";
 import { TranscriptTurnSchema } from "@rally/contracts";
-import { conversationAsText } from "../src/services/engineering-conversation-text";
+import { conversationAsText } from "../src/services/conversation-text";
 
 const at = "2026-10-21T00:00:00.000Z";
 function turn(blocks: unknown[], changes = {}) {
@@ -48,7 +48,10 @@ describe("engineering conversation prose", () => {
   });
 
   it("renders elicitation questions and options without structured internals", () => {
-    const elicitation = { id: "00000000-0000-7000-8000-00000000ee01", workstreamId: "00000000-0000-7000-8000-00000000ee02", harnessRunId: "00000000-0000-7000-8000-00000000ee03", prompt: "When should we ship?", responseType: "radio", options: [{ value: "today", label: "Today", description: null }], minimumSelections: 1, maximumSelections: 1, targetUserId: null, status: "answered", answer: "Today", answeredByUserId: null, createdAt: at, answeredAt: at };
+    const elicitation = { id: "00000000-0000-7000-8000-00000000ee01", workstreamId: "00000000-0000-7000-8000-00000000ee02", harnessRunId: "00000000-0000-7000-8000-00000000ee03", prompt: "When should we ship?", responseType: "radio", options: [{ value: "release_slot_2", label: "Today", description: null }], minimumSelections: 1, maximumSelections: 1, targetUserId: null, status: "answered", answer: "release_slot_2", answeredByUserId: null, createdAt: at, answeredAt: at };
     expect(conversationAsText([turn([text("", { messageType: "elicitation", structuredContent: { elicitation } })])])).toBe("Maya · 2026-10-21T00:00:00.000Z\nWhen should we ship?\n- Today\nAnswer: Today");
+    expect(conversationAsText([turn([text("", { messageType: "elicitation", structuredContent: {
+      elicitation: { ...elicitation, responseType: "multi_select", maximumSelections: null, answer: ["release_slot_2", "After the demo"] },
+    } })])])).toContain("Answer: Today, After the demo");
   });
 });
