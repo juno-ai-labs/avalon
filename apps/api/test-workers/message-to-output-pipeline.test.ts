@@ -62,6 +62,7 @@ import type { AuthContext, Env } from "../src/env";
 import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import {
   capturedProviderRequests,
+  capturedCompletionRequests,
   installProviderCapture,
   installScriptedProvider,
   openProviderGate,
@@ -2144,6 +2145,103 @@ describe("a member's message travels the whole pipeline", () => {
       expect(String(users.at(-1)?.content)).toContain("please summarize what we agreed");
       expect(String(users.at(-1)?.content)).not.toContain("<user_system_prompt>");
     } finally {
+      await restoreProviderFetch(stub);
+    }
+  });
+
+  it.each([
+    { name: "uncertain promise", answer: { choice: "answer_or_result" as const, confidence: 0.70 }, verify: true },
+    { name: "unavailable judge", answer: "unavailable" as const, verify: true },
+    { name: "confident result", answer: { choice: "answer_or_result" as const, confidence: 0.95 }, verify: false },
+  ])("completion verification handles $name in the production loop", async ({ answer, verify }) => {
+    const stub = agentStub();
+    const logged = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const reprompts = () => logged.mock.calls.map(([entry]) => entry as Record<string, unknown>)
+      .filter((entry) => entry.event === "agent_completion_reprompted");
+    try {
+      await installScriptedProvider(stub, [
+        [{ choices: [{ delta: { content: verify ? "I'm drafting the article now." : "Here is the article." }, finish_reason: "stop" }] }],
+        ...(verify ? [[{ choices: [{ delta: { content: "Here is the completed article." }, finish_reason: "stop" }] }]] : []),
+      ], { primaryModel: PERSONAL_PROMPT_MODEL, fallbackModels: [], completionAnswers: [answer] });
+      await runInDurableObject(stub, (instance) => {
+        const target = instance as unknown as { env: Env };
+        target.env = new Proxy(target.env, { get: (current, key, receiver) => key === "LOG_LEVEL" ? "info" : Reflect.get(current, key, receiver) });
+      });
+      const opened = await initializeWorkstream(stub, "Write an article about launch planning.", PERSONAL_PROMPT_MODEL);
+      expect(opened.status).toBe(200);
+      const run = await externallySettledRun(stub, opened.body.harnessRunId as string);
+      expect(run.status).toBe("completed");
+      expect(reprompts()).toHaveLength(verify ? 1 : 0);
+      if (verify) expect(reprompts()[0]).toMatchObject({ harnessRunId: run.run_id,
+        reason: answer === "unavailable" ? "judge_failure" : "low_confidence",
+        choice: answer === "unavailable" ? null : "answer_or_result", stopConfidenceThreshold: 0.7 });
+      const requests = (await capturedProviderRequests(stub)).filter((request) => request.url.endsWith("/responses"));
+      expect(requests).toHaveLength(verify ? 2 : 1);
+      const judgments = await capturedCompletionRequests(stub);
+      expect(judgments).toHaveLength(1);
+      expect(judgments[0]!.body).toMatchObject({ model: "jev-1.14.0", state: {
+        triggering_request: { text: "Write an article about launch planning." }, context_status: "resolved",
+      } });
+      const saved = await runInDurableObject(stub, (_instance, state) => ({
+        markers: state.storage.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM transcript_facts
+          WHERE source_kind = 'completion_verification' AND source_id = ?`, run.run_id).one().n,
+        final: new WorkstreamMessageStorage(state.storage).message({ messageId: run.final_turn_id! })?.text_content,
+      }));
+      expect(saved).toEqual({ markers: verify ? 1 : 0,
+        final: verify ? "Here is the completed article." : "Here is the article." });
+    } finally {
+      logged.mockRestore();
+      await restoreProviderFetch(stub);
+    }
+  });
+
+  it.each(["terminal compaction", "nudge materialization"] as const)("completion verification honors Stop during %s", async (boundary) => {
+    const stub = agentStub();
+    const logged = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const reprompts = () => logged.mock.calls.map(([entry]) => entry as Record<string, unknown>)
+      .filter((entry) => entry.event === "agent_completion_reprompted");
+    try {
+      await installScriptedProvider(stub, [
+        [{ choices: [{ delta: { content: "I'm drafting the article now." }, finish_reason: "stop" }],
+          ...(boundary === "terminal compaction" ? { usage: { prompt_tokens: 900_000, completion_tokens: 10 } } : {}) }],
+        [{ choices: [{ delta: { content: "The user requested an article; it is not delivered yet." }, finish_reason: "stop" }] }],
+      ], { primaryModel: PERSONAL_PROMPT_MODEL, fallbackModels: [],
+        completionAnswers: [{ choice: "announces_unfinished_work", confidence: 0.99 }] });
+      await runInDurableObject(stub, (instance) => {
+        const target = instance as unknown as {
+          product: WorkstreamObjectProductService;
+          transcript: Record<string, (...args: unknown[]) => Promise<unknown>>;
+        };
+        const method = boundary === "terminal compaction" ? "commitBindCompaction" : "materializeProjectionFacts";
+        const original = target.transcript[method]!;
+        target.transcript[method] = async function (...args) {
+          const result = await original.apply(this, args);
+          const transition = args[0] as { kind?: string; provenance?: { sourceKind?: string } };
+          if (boundary === "terminal compaction" || (transition.kind === "protocol_user_appended"
+            && transition.provenance?.sourceKind === "completion_verification")) {
+            target.transcript[method] = original;
+            await target.product.stop(AUTH, "00000000-0000-7000-8000-0000000005d0");
+          }
+          return result;
+        };
+      });
+      await runInDurableObject(stub, (instance) => {
+        const target = instance as unknown as { env: Env };
+        target.env = new Proxy(target.env, { get: (current, key, receiver) => key === "LOG_LEVEL" ? "info" : Reflect.get(current, key, receiver) });
+      });
+      const opened = await initializeWorkstream(stub, "Write an article about launch planning.", PERSONAL_PROMPT_MODEL);
+      const run = await externallySettledRun(stub, opened.body.harnessRunId as string);
+      expect(run.status).toBe("cancelled");
+      expect(reprompts()).toHaveLength(0);
+      expect(await capturedCompletionRequests(stub)).toHaveLength(boundary === "terminal compaction" ? 0 : 1);
+      expect((await capturedProviderRequests(stub)).filter((request) => request.url.endsWith("/responses")))
+        .toHaveLength(boundary === "terminal compaction" ? 2 : 1);
+      expect(await runInDurableObject(stub, (_instance, state) => state.storage.sql.exec<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM transcript_facts WHERE source_kind = 'completion_verification' AND source_id = ?`,
+        run.run_id,
+      ).one().n)).toBe(0);
+    } finally {
+      logged.mockRestore();
       await restoreProviderFetch(stub);
     }
   });

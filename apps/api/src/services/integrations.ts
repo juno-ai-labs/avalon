@@ -1,3 +1,4 @@
+import { emitCompletionRepromptTelemetry, type CompletionRepromptObservation } from "../telemetry/completion-verification";
 import { connectorAuthorizationStatus } from "@rally/contracts";
 import { readConnectorResourceAttachment } from "./connector-resource-attachments";
 import { readCanvaReference } from "./canva-resource-access";
@@ -5,6 +6,8 @@ import { readCanvaReference } from "./canva-resource-access";
 import type { OutboundExternalBinding } from "../durable-objects/external-binding-outbox";
 import { runtimeDeferral } from "../lib/defer";
 import { Preparation, ToolSurfacePreparations } from "./harness-preparation";
+import { completionVerificationNudge } from "./completion-verification";
+import type { CompletionVerificationSnapshot } from "../durable-objects/completion-verification-storage";
 import { AGENT_MESSAGE_CONTENT_KIND, ImportedMessageProvenanceSchema } from "@rally/contracts";
 import { agentCoordinationRoleGuidance } from './agent-communication-prompts';
 import { conversationParentStub, hostedParentStub } from "./conversation-parent-client";
@@ -48,6 +51,7 @@ import {
   rememberAutomationPeopleSearchResult,
   rememberAutomationResourceSearchResult,
   runHarness,
+  judgeCompletionStop,
   type AddressingContextMessage,
   type BindLoopProjectionState,
   type BindLoopTransition,
@@ -2496,6 +2500,7 @@ export async function runWorkstreamHarness(
     runtimeResourceAttacher?: WorkstreamRuntimeResourceAttacher;
     /** Object-local authority for the one persistent loop of this substream. */
     persistentLoop?: {
+      completionVerificationSnapshot(): CompletionVerificationSnapshot;
       contextWindowTokensByModel(): Promise<Readonly<Record<string, number>>>;
       /** This conversation's memory digest copy for a principal (`digestPrincipalKey`); null for none. */
       memoryDigest?(principal: string): MemoryDigestFact[] | null;
@@ -2843,8 +2848,15 @@ export async function runWorkstreamHarness(
     new Set(harnessTools.plugins.map((plugin) => plugin.canonicalId)),
   ));
   priorHintsPreparation.get();
+  let pendingCompletionReprompt: CompletionRepromptObservation | null = null;
   const stopController = new AbortController();
   const harnessSignal = combineAbortSignals(stopController.signal, liveness.signal);
+  const abortIfPersistentLoopStopped = () => {
+    if (runtime?.persistentLoop?.completionVerificationSnapshot().lifecycle === "cancelled") {
+      stopController.abort("stopped_by_user");
+      harnessSignal.throwIfAborted();
+    }
+  };
   const activeCredentialPluginIds = new Set<string>();
   // Inline child harnesses would create a second Bind loop inside this
   // substream's one persistent state machine. Keep the tool off the production
@@ -3352,10 +3364,10 @@ export async function runWorkstreamHarness(
         activationInputs,
         onActivationBoundary: (activation) =>
           runtime.persistentLoop!.commitActivationInputs(activation),
-        onAssistantTurnReserved: (turn) => runtime.persistentLoop!.reserveAssistantTurn({
-          ...turn,
-          streamId,
-        }),
+        onAssistantTurnReserved: (turn) => {
+          abortIfPersistentLoopStopped();
+          return runtime.persistentLoop!.reserveAssistantTurn({ ...turn, streamId });
+        },
         onStepSettled: (step) => runtime.persistentLoop!.settleStep(step),
         residentContext: {
           render: () => runtime.persistentLoop!.renderResidentContext(),
@@ -3379,9 +3391,19 @@ export async function runWorkstreamHarness(
           run_id: input.harnessRunId,
         });
       },
-      onBindLoopTransition: (transition) => {
+      onBindLoopTransition: async (transition) => {
         if (!runtime?.persistentLoop) throw new Error("substream_persistent_loop_required");
-        return runtime.persistentLoop.commitBindTransition(transition);
+        try {
+          await runtime.persistentLoop.commitBindTransition(transition);
+          if (transition.kind === "protocol_user_appended"
+            && transition.provenance.sourceKind === "completion_verification" && pendingCompletionReprompt) {
+            emitCompletionRepromptTelemetry(env, input, pendingCompletionReprompt);
+            pendingCompletionReprompt = null;
+          }
+        } catch (error) {
+          abortIfPersistentLoopStopped();
+          throw error;
+        }
       },
       onBindProviderBoundary: (boundary) => orderedTranscript.recordProviderBoundary(boundary),
       onBindCompaction: async (commit) => {
@@ -3529,14 +3551,81 @@ export async function runWorkstreamHarness(
       });
     },
     acceptEmptyCompletion: false,
-    onTurnWouldEnd: () => {
+    onTurnWouldEnd: async ({ assistantContent, messages }) => {
       // A tool-less boundary has already crossed Bind's acceptance boundary;
       // asking the model to restate it would create a second answer and spend
       // another turn without adding verified evidence.
       if (attachmentGrounding.consumeTerminalBoundaryApplied()) return null;
       const attachmentNudge = attachmentGrounding.nudge();
       if (attachmentNudge) return attachmentNudge;
-      return null;
+      const persistentLoop = runtime?.persistentLoop;
+      // Fixed-purpose profiles and seeded demos have their own output contract.
+      // A nonpersistent host cannot enforce a durable one-use recovery marker.
+      if (!persistentLoop || profile || input.seed) return null;
+      abortIfPersistentLoopStopped();
+      const sidekickDefinition = input.automationRun && !input.triggerMessageId
+        ? await runDefinitionPreparation.get() : null;
+      return completionVerificationNudge({
+        runId: input.harnessRunId, assistantContent, messages, signal: harnessSignal,
+        snapshot: () => {
+          const snapshot = persistentLoop.completionVerificationSnapshot();
+          const activation = activationInputs.find(({ message }) =>
+            message.provenance.sourceKind === "scheduled_wakeup" || message.provenance.sourceKind === "connector_activity");
+          if (!snapshot.trigger && activation && typeof activation.message.content === "string") {
+            snapshot.trigger = { id: activation.message.provenance.sourceId,
+              text: activation.message.content, origin: activation.message.provenance.sourceKind };
+          }
+          // A Sidekick's initial activation can have no chat message: its task
+          // lives in the same versioned definition used to build the model prompt.
+          // Do not substitute it for a referenced message that is missing.
+          if (!snapshot.trigger && sidekickDefinition && input.automationRun) {
+            snapshot.trigger = { id: sidekickDefinition.runId, origin: "sidekick_definition",
+              text: JSON.stringify({ instructions: sidekickDefinition.definition.instructions,
+                expectedOutputs: sidekickDefinition.definition.expectedOutputs,
+                defaultBehavior: sidekickDefinition.definition.defaultBehavior,
+                definitionRevision: sidekickDefinition.definitionRevision,
+                trigger: input.automationRun.trigger }) };
+          }
+          return snapshot;
+        },
+        pendingDelegation: async () => {
+          try {
+            const { agents } = await new AgentCommunicationService(env, input).list();
+            return agents.some((agent) => agent.status === "executing" || agent.pendingWork);
+          } catch (error) {
+            harnessSignal.throwIfAborted();
+            // Unknown teammate lifecycle may conceal existing delegated
+            // work. Its reply uses normal message delivery.
+            logStructuredEvent(env, "warn", "completion_verification_delegation_unresolved", {
+              request_id: input.harnessRunId, workspace_id: input.workspaceId,
+              reason: diagnosticErrorCode(error, "completion_verification_delegation_unavailable"),
+            });
+            return true;
+          }
+        },
+        judge: async (state) => {
+          const traceId = crypto.randomUUID();
+          const decision = await judgeCompletionStop({
+            apiKey: env.TYPESAFE_API_KEY, state, signal: harnessSignal,
+            onDiagnostic: createClassifierDiagnosticSink(env, {
+              role: "completion_verification", workspaceId: input.workspaceId,
+              workstreamId: input.parentId, traceId, defer: runtimeDeferral,
+            }).record,
+            traceContext: { source: "completion_verification", feature: "completion-verification",
+              workspaceId: input.workspaceId, workstreamId: input.parentId,
+              requestId: traceId, harnessRunId: input.harnessRunId,
+              region: env.AVALON_REGION, environment: env.APP_ENV },
+          });
+          pendingCompletionReprompt = { decision, contextStatus: state.context_status };
+          logStructuredEvent(env, "info", "completion_verification_decision", {
+            request_id: input.harnessRunId, workspace_id: input.workspaceId,
+            reprompt: decision.reprompt, choice: decision.answer?.choice ?? null,
+            confidence: decision.answer?.confidence ?? null, model: decision.model,
+            failure_kind: decision.failureKind,
+          });
+          return decision;
+        },
+      });
     },
     beforeToolCall: async ({ pluginId, toolName }) => {
         const policy = toolPolicyForCall(pluginId, toolName, harnessTools);

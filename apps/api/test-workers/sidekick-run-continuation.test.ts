@@ -389,6 +389,13 @@ describe("Sidekick run continuation", () => {
     // Each run is a new conversation; the digest was copied into it when it
     // was provisioned, before the run's first and only activation here.
     expect(provider.calls).toHaveLength(1);
+    expect(provider.completionCalls).toHaveLength(1);
+    expect(provider.completionCalls[0]).toMatchObject({ state: {
+      context_status: "resolved",
+      triggering_request: { origin: "sidekick_definition",
+        text: expect.stringContaining("Revision one: ask each founder for their update.") },
+      candidate_final: "Done.",
+    } });
     const system = provider.calls[0]!.messages.filter((message) => message.role === "system").map((message) => text(message.content)).join("\n");
     expect(system).toContain(`Working knowledge of the Sidekick "Update collector":\n- Founders send their updates on Mondays. [fact-sidekick-cadence]`);
   });
