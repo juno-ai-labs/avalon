@@ -30,7 +30,7 @@ describe('AcknowledgedErrorDialog', () => {
   it('acknowledges dismissal with Escape', () => {
     const onAcknowledge = renderDialog();
 
-    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    fireEvent.keyDown(screen.getByRole('alertdialog'), { key: 'Escape' });
 
     expect(onAcknowledge).toHaveBeenCalledOnce();
   });

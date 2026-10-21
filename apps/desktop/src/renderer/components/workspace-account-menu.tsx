@@ -1,3 +1,4 @@
+import { ErrorNotice } from './primitives';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { IconDeviceDesktopDown, IconHexagons, IconLogout, IconSettings } from '@tabler/icons-react';
@@ -326,9 +327,7 @@ export function WorkspaceAccountMenu({
                         <span aria-hidden="true" className="workspace-mark">{workspace.name.slice(0, 1).toLocaleUpperCase()}</span>
                         <span className="workspace-menu-copy">
                           <span>{workspace.name}</span>
-                          {error
-                            ? <small className="workspace-menu-error">{error}</small>
-                            : signingIn && <small className="workspace-menu-note">{FINISH_SIGN_IN_IN_BROWSER}</small>}
+                          {signingIn && <small className="workspace-menu-note">{FINISH_SIGN_IN_IN_BROWSER}</small>}
                         </span>
                         {multipleRegions && <small className="workspace-region-tag">{regionLabel(workspace.region)}</small>}
                         {switching && (
@@ -416,6 +415,11 @@ export function WorkspaceAccountMenu({
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
+      {workspaces.map((workspace) => {
+        const key = desktopWorkspaceIdentityKey(workspace.region, workspace.id);
+        const error = workspaceErrors[key];
+        return error ? <ErrorNotice key={key}>{error}</ErrorNotice> : null;
+      })}
 
       <Modal
         description={invitation ? `${invitation.invitedByName} invited you as ${invitation.role}.` : undefined}
@@ -478,7 +482,7 @@ export function WorkspaceAccountMenu({
         open={invitation !== null}
         title={invitation ? `Join ${invitation.workspaceName}` : 'Join organization'}
       >
-        {actionError && <p className="inline-error">{actionError}</p>}
+        {actionError && <ErrorNotice>{actionError}</ErrorNotice>}
       </Modal>
 
       <Modal
@@ -522,7 +526,7 @@ export function WorkspaceAccountMenu({
         </label>
 
         {creationSigningIn && !actionError && <p className="inline-note">{FINISH_SIGN_IN_IN_BROWSER}</p>}
-        {actionError && <p className="inline-error">{actionError}</p>}
+        {actionError && <ErrorNotice>{actionError}</ErrorNotice>}
       </Modal>
     </>
   );

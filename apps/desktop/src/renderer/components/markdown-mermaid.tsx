@@ -1,3 +1,4 @@
+import { ErrorNotice } from './primitives';
 import mermaid from 'mermaid';
 import { useEffect, useId, useState } from 'react';
 import { useTheme } from '../lib/theme';
@@ -293,7 +294,7 @@ export function MarkdownMermaid({ code, fallback }: {
   return (
     <>
       {current?.status === 'failed' ? (
-        <p className="markdown-mermaid-error" role="status">Couldn’t render diagram; showing source.</p>
+        <ErrorNotice automatic={false} detailsLabel="Diagram details">Couldn’t render diagram; showing source.</ErrorNotice>
       ) : null}
       {fallback}
     </>

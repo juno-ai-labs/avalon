@@ -70,6 +70,7 @@ describe('ConversationAccessRequest', () => {
     show(api);
     fireEvent.click(await screen.findByRole('button', { name: 'Request access' }));
     expect(await screen.findByText('Nobody can approve this request. Ask someone in it to add you.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(screen.getByRole('button', { name: 'Request access' })).toBeTruthy();
   });
 });

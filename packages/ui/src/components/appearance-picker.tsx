@@ -1,3 +1,4 @@
+import { ErrorNotice } from './primitives';
 import { markColors, projectColorCells } from '../lib/project-palette';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { GENERATED_WORKSTREAM_ICON_KEYS, type WorkstreamAppearance, type WorkstreamAppearancePatch } from '@rally/contracts';
@@ -104,7 +105,7 @@ function AppearanceChoices({ selected, change, error, colors = true }: Pick<Retu
         </DropdownMenu.RadioItem>;
       }} />
     </DropdownMenu.RadioGroup>
-    {error && <p role="alert" className="appearance-picker-error">{error}</p>}
+    {error && <ErrorNotice>{error}</ErrorNotice>}
   </>;
 }
 

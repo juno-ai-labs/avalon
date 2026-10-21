@@ -468,6 +468,7 @@ describe('WorkstreamComposer live dictation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
 
     await waitFor(() => expect(screen.getByText('The dictation connection closed before transcription completed.')).toBeVisible());
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(onSend).not.toHaveBeenCalled();
     expect(screen.getByRole('textbox', { name: 'Message the thread' })).toHaveValue('Draft the');
   });
@@ -729,7 +730,8 @@ describe('WorkstreamComposer live dictation', () => {
       dictationHarness.setState?.('error');
       dictationHarness.setError?.('Dictation audio arrived too quickly.');
     });
-    expect(screen.getByRole('alert')).toHaveTextContent('Dictation audio arrived too quickly.');
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Dictation audio arrived too quickly.');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(input).toHaveValue('Keep the recovered transcript');
     expect(onSend).not.toHaveBeenCalled();
 
@@ -741,6 +743,6 @@ describe('WorkstreamComposer live dictation', () => {
       await waitFor(() => expect(onSend).toHaveBeenCalledOnce());
       expect(onSend).toHaveBeenCalledWith('Keep the recovered transcript', [], undefined, undefined);
     }
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
   });
 });

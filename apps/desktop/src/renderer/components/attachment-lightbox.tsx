@@ -1,3 +1,4 @@
+import { ErrorNotice } from './primitives';
 import { useAnnotationDraft } from './artifact-annotations';
 import { AnnotationSurface } from './annotation-surface';
 import { ImageViewport, type ImageSizing, type ImageZoom, type ImageZoomState } from './image-viewport';
@@ -190,11 +191,11 @@ export function AttachmentViewBody({ view, imageSizing, imageZoom }: { view: Att
   const { active, mode, src, text, error, downloadError, loading } = view;
   if (!active || !mode) return null;
   if (active.resourceId && !loading && (!error || classifyAttachmentKind({fileName:active.name,mimeType:active.mimeType}) === 'other' || active.annotation) && mode !== 'audio' && mode !== 'video') {
-    return <>{downloadError && <div role="alert">{downloadError}</div>}<AnnotationSurface className={mode==='markdown'?'attachment-lightbox-document':mode==='text'?'attachment-lightbox-text':undefined} resourceId={active.resourceId} version={active.annotation?.target.version ?? view.version ?? 0} name={active.name} mimeType={active.mimeType} sizeBytes={active.sizeBytes} imageSizing={imageSizing} imageZoom={imageZoom} text={text} src={src} saved={active.annotation} loadSavedImage={active.loadAnnotationImage} preparePicking={view.prepareAnnotations} /></>;
+    return <>{downloadError && <ErrorNotice>{downloadError}</ErrorNotice>}<AnnotationSurface className={mode==='markdown'?'attachment-lightbox-document':mode==='text'?'attachment-lightbox-text':undefined} resourceId={active.resourceId} version={active.annotation?.target.version ?? view.version ?? 0} name={active.name} mimeType={active.mimeType} sizeBytes={active.sizeBytes} imageSizing={imageSizing} imageZoom={imageZoom} text={text} src={src} saved={active.annotation} loadSavedImage={active.loadAnnotationImage} preparePicking={view.prepareAnnotations} /></>;
   }
   return <>
     {loading && <div className="attachment-lightbox-status" role="status"><LoaderCircle aria-hidden="true" className="spin" size={20} /> Preparing preview…</div>}
-    {(error || downloadError) && <div className="attachment-lightbox-status is-error" role="alert">{error ?? downloadError}</div>}
+    {(error || downloadError) && <ErrorNotice>{error ?? downloadError}</ErrorNotice>}
     {mode === 'image' && src && <ImageViewport key={src} name={active.name} src={src} sizing={imageSizing} zoomState={imageZoom} />}
     {mode === 'video' && src && <video aria-label={`Video: ${active.name}`} controls src={src} />}
     {mode === 'audio' && src && <audio aria-label={`Audio: ${active.name}`} controls src={src} />}

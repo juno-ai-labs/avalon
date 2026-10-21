@@ -1,3 +1,4 @@
+import { ErrorNoticeProvider } from '@rally/ui/components/error-notice';
 import "../../../../../tests/isolated-region";
 import { createRef } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -587,6 +588,7 @@ describe('WorkstreamErrorState', () => {
     );
 
     expect(screen.getByText('Thread could not be opened')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(onRetry).toHaveBeenCalledOnce();
 
@@ -619,6 +621,18 @@ describe('JumpToLatestButton', () => {
 });
 
 describe('RunFailureNotice', () => {
+  it('keeps historical failures inspectable without interrupting on mount', () => {
+    render(<RunFailureNotice automatic={false} code="provider_timeout" message="The provider timed out."
+      requestId="historic-run" onRetry={vi.fn()} retrying={false} />, { wrapper: ErrorNoticeProvider });
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Run details' }));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('historic-run');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Run details' }));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('The provider timed out.');
+  });
+
   it('shows a typed member-safe error, the request id beside its copy control, and retry', async () => {
     copyText.mockReset();
     copyText.mockResolvedValue(undefined);
@@ -633,14 +647,16 @@ describe('RunFailureNotice', () => {
           retrying={false}
         />
       </Tooltip.Provider>,
+      { wrapper: ErrorNoticeProvider },
     );
 
-    expect(screen.getByRole('alert')).toHaveTextContent('The run exceeded the model context window.');
-    expect(screen.getByRole('alert')).toHaveTextContent('context_limit_exceeded');
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('The run exceeded the model context window.');
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('context_limit_exceeded');
     // The id is on screen, so the icon beside it is about something.
-    expect(screen.getByRole('alert')).toHaveTextContent('run-request-123');
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('run-request-123');
     fireEvent.click(screen.getByRole('button', { name: 'Copy request ID' }));
     await waitFor(() => expect(copyText).toHaveBeenCalledWith('run-request-123'));
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(onRetry).toHaveBeenCalledOnce();
   });
@@ -655,6 +671,7 @@ describe('RunFailureNotice', () => {
       />,
     );
 
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(screen.getByRole('button', { name: 'Retry' })).toBeDisabled();
   });
 });
@@ -687,9 +704,11 @@ describe('RemoveParticipantDialog', () => {
       </Tooltip.Provider>,
     );
 
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('You are the last participant.');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(screen.getByRole('heading', { name: 'Leave the thread?' })).toBeTruthy();
     expect(screen.getByText('You will be taken off this thread. You keep access only if it’s public.')).toBeTruthy();
-    expect(screen.getByText('You are the last participant.')).toBeTruthy();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 
   it('is closed while nobody is chosen', () => {
@@ -748,6 +767,7 @@ describe('AddParticipantDialog', () => {
     );
 
     expect(screen.getByText('That participant couldn’t be added.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     // The list stays usable: the refusal is about one attempt, not the dialog.
     expect(screen.getByRole('button', { name: /Adam/u })).toBeTruthy();
   });

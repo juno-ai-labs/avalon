@@ -3,7 +3,7 @@ import { IconCancel, IconCheck } from '@tabler/icons-react';
 import { useRef } from 'react';
 
 import { useAccessRequestList, useDecideAccessRequest, type AccessRequestDecisionApi } from '../lib/access-requests';
-import { Button, InlineError, Modal } from './primitives';
+import { Button, ErrorNotice, Modal } from './primitives';
 import { WorkstreamGlyph } from './workstream-glyph';
 
 /**
@@ -62,7 +62,7 @@ export function AccessRequestDialog({ api, workspaceId, requestId, onClose }: {
           <span className="access-request-dialog-title">{request.title}</span>
         </div>
       )}
-      {decide.isError && <InlineError>That didn’t go through. Try again.</InlineError>}
+      {decide.isError && <ErrorNotice occurrence={decide.error}>That didn’t go through. Try again.</ErrorNotice>}
     </Modal>
   );
 }

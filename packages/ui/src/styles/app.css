@@ -834,13 +834,7 @@ pre {
 .loading-orb,
 .agent-work-timing-orb { flex: 0 0 auto; }
 
-.inline-error {
-  color: var(--av-sys-color-danger-soft);
-  font-size: 12px;
-  margin: 8px 0 0;
-}
-/* The same slot as `.inline-error`, for a step that is still in progress
-   somewhere else — a sign-in finishing in the browser — rather than a fault. */
+/* A step still in progress elsewhere, such as sign-in in the browser. */
 .inline-note {
   color: var(--av-sys-color-text-muted);
   font-size: 12px;
@@ -898,6 +892,11 @@ pre {
   width: 480px;
   z-index: 101;
 }
+
+/* Failures from a preview must interrupt above its lightbox and menus too. */
+.dialog-overlay[data-error-notice-overlay] { z-index: 1006; }
+.dialog-content[role="alertdialog"] { z-index: 1007; }
+body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 
 @keyframes fade-in { from { opacity: 0; } }
 @keyframes dialog-in { from { opacity: 0; transform: translate(-50%, calc(-50% + 7px)) scale(0.985); } }
@@ -1788,7 +1787,6 @@ pre {
 .workspace-menu-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .workspace-menu-copy > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-menu-copy small { color: var(--av-sys-color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.workspace-menu-error { color: var(--av-sys-color-danger-base) !important; }
 /* Rally access rows (docs/impersonation.md): another Organization's people. */
 .support-workspace-mark { color: var(--av-sys-color-text-muted); flex-shrink: 0; }
 .support-people-menu { max-height: var(--radix-dropdown-menu-content-available-height); min-width: 240px; overflow-y: auto; }
@@ -1970,8 +1968,8 @@ pre {
 .service-setup-card h1,
 .fatal-error-card h1 { font-size: 27px; letter-spacing: -0.035em; line-height: 1.15; margin: 7px 0 9px; }
 .onboarding-copy > p:not(.eyebrow),
-.signin-card > p:not(.inline-error),
-.service-setup-card > p:not(.inline-error) { color: var(--av-sys-color-text-muted); margin: 0; }
+.signin-card > p,
+.service-setup-card > p { color: var(--av-sys-color-text-muted); margin: 0; }
 .eyebrow { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); font-weight: 400; letter-spacing: normal; margin: 0; }
 
 .onboarding-field { display: grid; gap: 7px; margin-top: 28px; }
@@ -1986,7 +1984,7 @@ pre {
 .signin-card { text-align: center; width: min(420px, 100%); padding: 24px 0; }
 .signin-mark { height: 56px; margin-bottom: 26px; width: 56px; }
 .signin-card h1 { font-size: 34px; font-weight: 600; letter-spacing: -.04em; margin: 0 0 14px; }
-.signin-card > p:not(.inline-error) { font-size: 15px; line-height: 1.6; }
+.signin-card > p { font-size: 15px; line-height: 1.6; }
 .signin-card > p.signin-account-copy { margin-top: 38px; font-size: 13px; }
 .signin-button { margin-top: 14px; width: 100%; min-height: 48px; border-radius: 26px; font-size: 14px; gap: 10px; }
 .signin-button .connector-mark { width: 18px; height: 18px; color: inherit; }
@@ -2071,7 +2069,8 @@ pre {
 .fatal-error-card h1 { font-size: 22px; font-weight: 560; letter-spacing: -.025em; line-height: 1.3; margin: 0 0 10px; }
 .fatal-error-card > svg { background: var(--av-sys-color-danger-wash); border-radius: 14px; box-sizing: content-box; display: block; margin-bottom: 18px; padding: 11px; }
 .fatal-error-card p { font-size: 14px; line-height: 1.5; margin: 0 0 20px; overflow-wrap: anywhere; }
-.fatal-error-card > .button { border-radius: 999px; min-height: 36px; padding: 8px 14px; }
+.fatal-error-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.fatal-error-actions .button { border-radius: 999px; min-height: 36px; padding: 8px 14px; }
 .service-setup-card > p:not(.eyebrow) { font-size: 14px; line-height: 1.5; }
 .service-setup-card dl { background: var(--av-sys-color-surface-raised-hover); border: .5px solid var(--av-ref-color-line-3); border-radius: 12px; margin: 20px 0 12px; overflow: hidden; padding: 0; }
 .service-setup-card dl div { align-items: baseline; gap: 12px; grid-template-columns: 88px minmax(0, 1fr); padding: 12px 14px; }
@@ -2318,7 +2317,6 @@ pre {
    like the other rows' values. */
 .usage-quota-value { display: flex; flex-direction: column; gap: 6px; text-align: right; width: 200px; }
 .usage-quota-value small { color: var(--av-sys-color-text-muted); font-size: 12px; }
-.usage-plan-error { color: var(--av-sys-color-danger-soft); }
 .usage-overage-value { align-items: center; display: inline-flex; font-size: 13px; gap: 8px; }
 .usage-overage-value s { color: var(--av-sys-color-text-muted); }
 .usage-not-billed:focus-visible { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 1px; }
@@ -2396,7 +2394,6 @@ pre {
 .inline-editable-text[aria-busy="true"] { cursor: progress; }
 .inline-editable-text[aria-busy="true"]:hover { background: none; box-shadow: none; }
 .inline-editable-field { align-items: flex-end; display: flex; flex-direction: column; gap: 4px; width: min(240px, 100%); }
-.inline-editable-reason { color: var(--av-sys-color-danger-soft); font-size: 12px; }
 /* The box itself is the Settings text field, shared with `.invite-form input` below. */
 .inline-editable-input { font-size: 13px; min-width: 0; }
 .workspace-settings-screen .settings-profile-card small,
@@ -2868,7 +2865,6 @@ pre {
   animation: settings-app-icon-jump 520ms cubic-bezier(.2, .75, .24, 1);
 }
 .settings-app-icon-status { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); margin: 9px 2px 0; }
-.settings-app-icon-status.is-error { color: var(--av-sys-color-danger-base); }
 .settings-app-icon-reset {
   background: transparent;
   color: var(--av-sys-color-accent-base);
@@ -3348,7 +3344,6 @@ pre {
 }
 .transcript-history-control .button { max-width: 100%; white-space: normal; }
 .transcript-history-control svg { flex-shrink: 0; }
-.transcript-history-control + .inline-error { margin-bottom: var(--space-4); }
 .virtual-message-row { display: flow-root; }
 .message-arrival-layer { display: flow-root; transform-origin: center bottom; }
 /* The spacing scale, derived from the theme's one unit. Every margin, padding
@@ -3768,7 +3763,6 @@ pre {
   .connector-connection-card-header:has(.connector-connection-card-controls) { flex-wrap: wrap; }
   .connector-connection-card-controls { align-items: center; flex: 1 1 100%; flex-direction: row; flex-wrap: wrap; justify-content: flex-end; }
 }
-.connector-connection-card > .inline-error { margin: 0 0 0 52px; }
 
 /* Citations. A chip is a mention chip's sibling in shape and its opposite in
    behaviour: a mention names an identity and never navigates, a citation names
@@ -3990,7 +3984,6 @@ pre {
    viewBox width is the scrollable frame; the SVG must fill that frame instead
    of shrinking a wide diagram back to the message width. */
 .markdown-mermaid-svg svg { display: block; height: auto; max-width: none !important; width: 100% !important; }
-.markdown-mermaid-error { color: var(--av-sys-color-danger-soft); font-size: 11px; margin: 0; padding: var(--space-2) var(--space-4) 0; }
 .markdown-body blockquote { border-left: 2px solid var(--markdown-quote-bar); color: var(--markdown-ink-quiet); margin: var(--space-6) 0; padding: 1px 0 1px var(--space-4); }
 .markdown-body blockquote > :last-child { margin-bottom: 0; }
 .markdown-body hr { background: var(--markdown-rule); border: 0; height: 1px; margin: var(--space-6) 0; }
@@ -4214,18 +4207,7 @@ pre {
    the row wrapper, and inside the drawer this gap is the whole of it. */
 .work-accordion-rows { display: grid; gap: var(--space-1); }
 
-.run-failure-notice {
-  align-items: flex-start;
-  background: color-mix(in srgb, var(--av-sys-color-danger-base) 10%, var(--av-sys-color-surface-subtle));
-  border: 1px solid color-mix(in srgb, var(--av-sys-color-danger-base) 42%, var(--av-sys-color-border-default));
-  border-radius: var(--av-sys-size-radius-lg);
-  display: grid;
-  gap: var(--space-3);
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  margin: var(--av-sys-space-block-gap) 0 0;
-  padding: var(--space-3);
-}
-.run-failure-icon { color: var(--av-sys-color-danger-base); display: grid; padding-top: 1px; place-items: center; }
+.run-recovery { display: flex; flex-wrap: wrap; gap: var(--space-2); justify-content: flex-end; padding: var(--space-3); }
 .run-failure-copy { min-width: 0; }
 .run-failure-copy strong { color: var(--av-sys-color-text-default); display: block; font-size: 12px; margin-bottom: 3px; }
 .run-failure-copy p { color: var(--av-sys-color-text-subtle); font-size: 11px; line-height: 1.45; margin: 0 0 var(--space-1); }
@@ -4234,20 +4216,11 @@ pre {
 .run-failure-actions .button { white-space: nowrap; }
 /* The dock's settled stop, sized to the orb slot it replaces. */
 .run-stopped-mark { display: grid; flex: 0 0 auto; height: 20px; place-items: center; width: 20px; }
-.run-failure-notice {
-  border-width: .5px;
-  border-radius: 16px;
-  gap: var(--space-3);
-  grid-template-columns: 32px minmax(0, 1fr);
-  padding: var(--space-4);
-}
-.run-failure-notice { background: var(--av-sys-color-danger-wash); border-color: var(--av-sys-color-danger-edge); }
-.run-failure-icon { background: var(--av-sys-color-surface-raised-hover); border-radius: 10px; height: 32px; padding: 0; width: 32px; }
 .run-failure-copy strong { font-size: 14px; font-weight: 560; margin-bottom: var(--space-1); }
 .run-failure-copy p { font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 .run-failure-copy code { display: block; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
 .run-failure-request { align-items: center; color: var(--av-sys-color-text-muted); font-size: 12px; margin-top: var(--space-1); }
-.run-failure-actions { flex-wrap: wrap; gap: var(--space-2); grid-column: 2; }
+.run-failure-actions { flex-wrap: wrap; gap: var(--space-2); }
 .run-failure-actions .button { border-radius: 999px; min-height: 36px; padding: var(--space-2) var(--space-3); white-space: normal; }
 /* The control rests above the composer, never in it. Both edges of the dock are
    candidates for anchoring it and only one is stable: the dock's height is the
@@ -4378,7 +4351,6 @@ pre {
 .elicitation-text-response { background: var(--av-sys-color-surface-raised-hover); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-md); color: var(--av-ref-color-neutral-14); display: block; margin-top: var(--space-3); min-height: 86px; outline: 0; padding: var(--space-3); resize: vertical; width: 100%; }
 .elicitation-text-response:focus { border-color: var(--av-ref-color-line-6); }
 .elicitation-actions { align-items: center; display: flex; gap: var(--space-2); justify-content: flex-end; margin-top: var(--space-2); }
-.elicitation-actions .inline-error { flex: 1; margin: 0; }
 .elicitation-actions .button { border: 0; font-size: 12px; min-height: 33px; }
 .elicitation-skip { background: var(--av-sys-color-surface-elevated-hover); color: var(--av-ref-color-neutral-12); }
 .elicitation-submit { background: var(--av-sys-color-brand-base); color: var(--av-sys-color-brand-on); font-weight: 590; }
@@ -4492,7 +4464,6 @@ pre {
 .attachment-inline-audio { display: block; max-width: 100%; width: 280px; }
 .attachment-inline-audio audio { display: block; height: 36px; max-width: 100%; width: 100%; }
 .attachment-inline-audio > button { align-items: center; background: transparent; color: var(--av-sys-color-text-muted); display: flex; font-size: 12px; gap: var(--space-2); padding: var(--space-1) var(--space-2); }
-.attachment-inline-audio [role="alert"] { color: var(--av-sys-color-danger-base); display: block; font-size: 12px; }
 
 /* The lightbox covers the window without hiding it: a half-strength wash with
    the backdrop blurred behind it. The two are one decision — `scrim.solid`,
@@ -4739,8 +4710,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   .composer-stop-slot { transition: none; }
 }
 .composer-send { align-items: center; background: var(--av-cmp-composer-send-background); border-radius: var(--av-cmp-composer-send-radius); color: var(--av-cmp-composer-send-foreground); display: flex; height: 28px; justify-content: center; width: 28px; }
-.composer-error-slot { padding-top: 7px; }
-.composer-error-slot .inline-error { background: var(--av-sys-color-danger-wash); border: 1px solid var(--av-sys-color-danger-edge); border-radius: var(--av-sys-size-radius-sm); margin: 0; padding: 6px 8px; }
 .mention-popover { background: var(--av-sys-color-surface-default); border: .5px solid var(--av-cmp-sidebar-border); border-radius: 12px; bottom: calc(100% - 8px); box-shadow: var(--av-sys-elevation-shadow-md); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; left: 40px; max-height: 280px; overflow: auto; padding: 6px; position: absolute; width: min(360px, calc(100% - 40px)); z-index: 20; }
 .mention-popover-heading { color: var(--av-sys-color-text-muted); font-size: 11px; font-weight: 500; line-height: 16px; padding: 6px 8px 2px; }
 .mention-popover [role='group'] + [role='group'] { margin-top: 4px; padding-top: 2px; }
@@ -4856,8 +4825,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .rail-title h2 { color: var(--av-sys-color-text-subtle); font-size: 12px; margin: 0 0 0 2px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rail-header-actions { flex-shrink: 0; }
 .rail-scroll { min-height: 0; min-width: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
-.rail-inline-error { padding: 9px 11px 0; }
-.rail-inline-error .inline-error { margin: 0; }
 .rail-sections { padding: 3px 11px 20px; }
 .rail-section { border-bottom: 1px solid var(--av-ref-color-line-2); padding: 13px 0 15px; }
 .rail-section:last-child { border-bottom: 0; }
@@ -5087,7 +5054,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .suggested-prompt-row small { color: var(--av-ref-color-neutral-8); font-size: 9.5px; white-space: nowrap; }
 .suggested-prompt-dismiss { align-items: center; background: transparent; border-radius: var(--av-sys-size-radius-sm); color: var(--av-ref-color-neutral-8); display: flex; height: 25px; justify-content: center; margin-left: 2px; width: 25px; }
 .suggested-prompt-dismiss:hover { background-image: var(--hover-layer); color: var(--av-sys-color-text-default); }
-.suggested-prompt-error { color: var(--av-sys-color-danger-base); font-size: 10px; margin: 4px 8px 0; text-align: left; }
 /* Part of the identity line, so it takes the line's size. The 9px it used to
    carry was fitted against an 8.5px timestamp that no longer exists, and a
    third size in a three-part line is what made the row read as assembled rather
@@ -5106,7 +5072,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    out as bare inline content over the transcript behind them. */
 .automation-error-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 7px; justify-content: center; margin-top: 7px; }
 .automation-error-actions .button { white-space: nowrap; }
-.automation-error-actions .inline-error { flex: 1 1 100%; text-align: center; }
 .automation-socket-state { display: flex; justify-content: flex-end; margin: 0 6px 5px; }
 /* The wrap is `position: fixed` over this column, so the clearance
    below the last message has to be the wrap's own height rather
@@ -5162,8 +5127,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .automation-overview-title h1 { font-size: 13px; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .automation-overview-actions { gap: 4px; }
 .automation-overview-actions .button { font-size: 11px; }
-.overview-error { left: 50%; position: absolute; top: 60px; transform: translateX(-50%); z-index: 3; }
-.overview-error .inline-error { background: var(--av-sys-color-danger-wash); border-radius: var(--av-sys-size-radius-sm); padding: 6px 9px; }
 .automation-overview-scroll { min-height: 0; overflow: auto; scrollbar-gutter: stable; }
 .automation-overview-layout { display: grid; gap: 42px; grid-template-columns: 250px minmax(0, 1fr); margin: 0 auto; max-width: 1120px; padding: 48px 35px 100px; }
 .automation-facts { display: flex; flex-direction: column; gap: 25px; }
@@ -5306,9 +5269,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .connection-test-outcome strong { font-size: var(--av-cmp-control-font-size); font-weight: 600; }
 .connection-test-outcome p { color: var(--av-sys-color-text-default); margin: 0; }
 .connection-test-outcome.is-passed { background: var(--av-sys-color-success-wash); border-color: var(--av-sys-color-success-edge); color: var(--av-sys-color-success-base); }
-.connection-test-outcome.is-failed { background: var(--av-sys-color-danger-wash); border-color: var(--av-sys-color-danger-edge); color: var(--av-sys-color-danger-base); }
-/* The request failed, not the connection: warning, so it cannot be read as a verdict. */
-.connection-test-outcome.is-unavailable { background: var(--av-sys-color-warning-wash); border-color: var(--av-sys-color-warning-edge); color: var(--av-sys-color-warning-base); }
 .form-field > small { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); line-height: 20px; }
 .form-field > select { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-sys-color-border-default); border-radius: var(--av-cmp-control-radius); color: var(--av-sys-color-text-default); min-height: 36px; min-width: 0; padding: 6px 10px; width: 100%; }
 .form-field > span,
@@ -5398,7 +5358,6 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .space-name-button:focus-visible { border-radius: 3px; outline: 2px solid var(--av-sys-color-border-highlight); outline-offset: 2px; }
 .space-name-input { background: var(--av-sys-color-surface-default); border: 1px solid var(--av-sys-color-border-highlight); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-default); font-size: 26px; font-weight: 700; line-height: 1.2; max-width: 100%; min-width: 180px; padding: 2px 6px; width: auto; }
 .space-dashboard-title { min-width: 0; }
-.space-dashboard-title > .inline-error { margin-top: 6px; }
 .space-dashboard-header p,
 .space-dashboard-muted { color: var(--av-sys-color-text-muted); font-size: 13px; margin: 5px 0 0; }
 .space-dashboard-blocked-channels { color: var(--av-sys-color-text-muted); font-size: 13px; list-style: disc; margin: 8px 0 0; padding-left: 18px; }
@@ -5870,7 +5829,6 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .appearance-picker-swatch { align-items: center; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--av-sys-color-project-edge); display: inline-flex; height: 20px; justify-content: center; width: 20px; }
 .appearance-picker-swatch::after { background: var(--swatch-ink); border-radius: 50%; content: ''; height: 8px; width: 8px; }
 .appearance-picker-divider { height: 1px; flex-shrink: 0; background: var(--av-sys-color-border-default); margin: 12px 0; }
-.appearance-picker-error { color: var(--av-sys-color-danger-base); font-size: var(--av-cmp-control-font-size); margin: 10px 0 0; }
 
 /* The icon catalog both pickers render: section tabs over one scrolling grid,
    a heading per section, as Slack lays out emoji. */
@@ -6207,7 +6165,6 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .embedded-browser-page { min-height: 0; min-width: 0; position: relative; }
 .embedded-browser-start { align-items: center; color: var(--av-sys-color-text-muted); display: flex; flex-direction: column; gap: 10px; justify-content: center; min-height: 100%; text-align: center; }
 .embedded-browser-start p { margin: 0; }
-.embedded-browser-error { background: var(--av-sys-color-surface-raised); color: var(--av-sys-color-text-default); left: 12px; padding: 12px; position: absolute; right: 12px; top: 88px; z-index: 1; }
 
 /* The import window: the browser's own toolbar is the title bar, with Import
    and Close at its trailing edge. The native page fills `.browser-import-page`;
@@ -8167,8 +8124,6 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 }
 .title-menu-add:hover:not(:disabled) { background: var(--av-sys-color-surface-sunken); }
 .title-menu-add:disabled { cursor: progress; opacity: .6; }
-.title-menu-error { color: var(--av-sys-color-danger-base); font-size: 12.5px; margin: 0 8px 6px; }
-.title-menu-load-failed { align-items: center; color: var(--av-sys-color-danger-base); display: flex; font-size: 12.5px; gap: 12px; justify-content: space-between; margin: 0 8px 6px; }
 
 .title-menu-switch {
   background: var(--av-ref-color-line-4);
@@ -8856,7 +8811,6 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 }
 .channel-feed-pane { display: flex; flex-direction: column; min-height: 0; }
 .channel-feed-pane > .channel-feed { flex: 1; }
-.channel-feed-pane > .inline-error { margin: 8px 32px; }
 .channel-feed { display: flex; flex-direction: column; padding: 20px 0 24px; }
 .channel-feed-list { display: flex; flex-direction: column; gap: 28px; list-style: none; margin: auto auto 0; max-width: 760px; padding: 0 32px; width: 100%; }
 .channel-feed-more { display: flex; justify-content: center; padding: 8px 0; }
@@ -9118,7 +9072,6 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .merge-response-card-embed-title { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .merge-response-card-embed button { background: transparent; border: 0; border-radius: 50%; color: var(--av-sys-color-text-muted); cursor: pointer; display: inline-grid; flex: none; height: 20px; padding: 0; place-items: center; width: 20px; }
 .merge-response-card-embed button:hover { color: var(--av-sys-color-text-default); }
-.merge-response-card-error { color: var(--av-sys-color-danger-base); font-size: 12.5px; margin: 0; }
 .merge-response-card-audience { align-items: center; color: var(--av-sys-color-text-subtle); display: flex; font-size: 12px; gap: 7px; margin: 0; min-width: 0; }
 .merge-response-card-audience > svg { flex: none; }
 .merge-response-card-foot { align-items: center; border-top: 1px solid color-mix(in srgb, var(--av-sys-color-border-strong) 60%, transparent); display: flex; flex-wrap: wrap; gap: 8px 12px; margin-top: 2px; padding-top: 10px; }

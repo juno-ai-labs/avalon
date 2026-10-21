@@ -465,8 +465,9 @@ describe('InspectorRail details', () => {
 
     // Offline, a 500, and "this document never changed" are four different
     // truths; silence tells the reader the last one.
-    expect(screen.getByRole('menu', { name: 'Versions' })).toBeVisible();
-    expect(screen.getByText('Resource history couldn’t be loaded.')).toBeVisible();
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'History details' }));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Resource history couldn’t be loaded.');
   });
 
   it('says versions are loading rather than that there are none', () => {
@@ -678,6 +679,7 @@ describe('InspectorRail details', () => {
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Continue' }));
 
     expect(await screen.findByText('The resource couldn’t be archived.')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(screen.queryByText('The channel refused the unlink.')).not.toBeInTheDocument();
     expect(screen.getByRole('dialog', { name: 'Archive this resource?' })).toBeVisible();
     expect(useUiStore.getState().inspector).toEqual({ type: 'resource', id: 'resource-1' });
@@ -961,7 +963,7 @@ describe('resource detail content preview', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Rename artifact' });
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Title' }), { target: { value: 'Q4 plan' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Rename' }));
-    expect(await within(dialog).findByText('The artifact couldn’t be renamed.')).toBeVisible();
+    expect(await screen.findByText('The artifact couldn’t be renamed.')).toBeVisible();
   });
 
   it('draws the Expand it is given for any artifact, a live site included', () => {

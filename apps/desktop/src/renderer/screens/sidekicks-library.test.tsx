@@ -27,6 +27,7 @@ describe('SidekicksLibraryScreen', () => {
     render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter><SidekicksLibraryScreen /></MemoryRouter></QueryClientProvider>);
     expect(screen.getByRole('status', { name: 'Sidekick count' })).toBeEmptyDOMElement();
     await screen.findByText('Unavailable');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(screen.getByRole('status', { name: 'Sidekick count' })).toBeEmptyDOMElement();
   });
 

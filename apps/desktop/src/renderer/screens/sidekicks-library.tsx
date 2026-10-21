@@ -13,7 +13,7 @@ import { useAppSession } from '../lib/app-session';
 import { useShellCapabilities } from '../lib/collaboration-session';
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import { useCloseWindowSurface } from '../lib/window-surface';
-import { EmptyState, InlineError, OpeningState } from '../components/primitives';
+import { EmptyState, ErrorNotice, OpeningState } from '../components/primitives';
 
 export function SidekicksLibraryScreen(): React.JSX.Element {
   const { api } = useAppSession();
@@ -35,7 +35,7 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
     </div>
     <section aria-labelledby="sidekick-results-title">
     <div className="sidekick-results-heading"><h2 id="sidekick-results-title">{search ? 'Search results' : 'Your Sidekicks'}</h2><span role="status" aria-label="Sidekick count">{query.isSuccess ? `${items.length} Sidekicks` : ''}</span></div>
-    {query.isLoading ? <OpeningState label="Loading Sidekicks…" /> : query.error ? <InlineError>{query.error.message}</InlineError> : items.length === 0 ? <EmptyState title={query.data?.length ? "No matching Sidekicks" : "No Sidekicks yet"} description={query.data?.length ? "Try a different search or ownership filter." : "Describe what you would like to delegate to create one."} /> :
+    {query.isLoading ? <OpeningState label="Loading Sidekicks…" /> : query.error ? <ErrorNotice occurrence={query.error}>{query.error.message}</ErrorNotice> : items.length === 0 ? <EmptyState title={query.data?.length ? "No matching Sidekicks" : "No Sidekicks yet"} description={query.data?.length ? "Try a different search or ownership filter." : "Describe what you would like to delegate to create one."} /> :
       // The row's link is its title, stretched over the whole card in CSS, so
       // the owning Thread's button can sit in the row without nesting a button
       // inside a link.

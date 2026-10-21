@@ -47,6 +47,7 @@ import { WorkstreamSocketResumeProvider } from './lib/workstream-socket-resume';
 import { AutomationScreen } from './screens/automation';
 import { DeepLinkErrorScreen } from './screens/deep-link-error';
 import { AccountOnboardingGate, WorkspaceOnboardingJourney } from './screens/guided-onboarding';
+import { ErrorNotice } from './components/primitives';
 import { BootScreen, InvitationOnboarding, RegionOnboarding, SignInScreen } from './screens/onboarding';
 import { ChannelScreen } from './screens/channel';
 import { channelRoute, homeChannelId, openThreadResourceState, threadRoute } from './lib/navigation-routes';
@@ -85,8 +86,8 @@ function ServiceSetupState({
       <section className="service-setup-card window-no-drag">
         <span className="setup-icon"><Cable size={22} /></span>
         <p className="eyebrow">{isNetwork ? 'Service unavailable' : 'Setup required'}</p>
-        <h1>{isNetwork ? 'Rally cannot reach this region' : 'The regional service is not ready'}</h1>
-        <p>{error.message}</p>
+        <h1>Regional connection</h1>
+        <ErrorNotice detailsLabel="Connection details" occurrence={error} title={isNetwork ? 'Rally cannot reach this region' : 'The regional service is not ready'}>{error.message}</ErrorNotice>
         <dl>
           <div><dt>Region</dt><dd>{displayRegion}</dd></div>
           <div><dt>API endpoint</dt><dd className="mono">{targetApiBaseUrl ?? api?.baseUrl}</dd></div>

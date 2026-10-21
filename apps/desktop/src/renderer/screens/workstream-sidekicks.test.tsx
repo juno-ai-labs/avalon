@@ -239,6 +239,7 @@ describe('a channel\u2019s own Sidekicks when the viewer may not list them', () 
     await act(async () => { rejectRemoval(new Error(diagnostic)); });
 
     expect(await screen.findByText('That Sidekick couldn’t be removed.')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
     expect(api.removeAttachedSidekick).toHaveBeenCalledTimes(1);
   });
@@ -254,6 +255,7 @@ describe('a channel\u2019s own Sidekicks when the viewer may not list them', () 
     fireEvent.contextMenu(await screen.findByLabelText('Editorial guidance'));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove from this breakout' }));
     expect(await screen.findByText('That Sidekick couldn’t be removed.')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(screen.queryByText('Removal failed in the breakout.')).not.toBeInTheDocument();
     expect(api.removeAttachedSidekick).toHaveBeenCalledTimes(1);
     expect(api.removeAttachedSidekick).toHaveBeenCalledWith(workstreamId, 'attached-1', childId);
@@ -399,7 +401,7 @@ describe('a channel\u2019s own Sidekicks when the viewer may not list them', () 
     expect(await screen.findByLabelText('Editorial guidance')).toBeVisible();
     // The refusal is about the viewer, so it never reaches the rail as text.
     expect(screen.queryByText(/cannot list/u)).toBeNull();
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 
   it('offers a refresh row for a failed room read without writing warning copy into the sidebar', async () => {

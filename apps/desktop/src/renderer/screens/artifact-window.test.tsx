@@ -139,7 +139,7 @@ it('names a rejected content field when opening a historical revision fails', as
     const revision = await screen.findByRole('menuitem', { name: /V1/ });
     commands.mockImplementation(async () => ({ content: null, mimeType: 'text/plain' }));
     fireEvent.click(revision);
-    expect(await screen.findByRole('alert')).toHaveTextContent('artifact_window_response_invalid:content:invalid_type');
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('artifact_window_response_invalid:content:invalid_type');
     expect(screen.getByText('Current bytes')).toBeVisible();
   } finally { vi.unstubAllGlobals(); }
 });
@@ -152,7 +152,7 @@ it('retains safe diagnostics from main when a pin update fails', async () => {
     const pin = await screen.findByRole('menuitemcheckbox', { name: 'Pinned in my sidebar' });
     commands.mockRejectedValue(new Error("Error invoking remote method 'artifact:window-action': Error: artifact_window_response_invalid:pinned:invalid_type"));
     fireEvent.click(pin);
-    expect(await screen.findByRole('alert')).toHaveTextContent('artifact_window_response_invalid:pinned:invalid_type');
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('artifact_window_response_invalid:pinned:invalid_type');
     expect(pin).not.toBeChecked();
   } finally { vi.unstubAllGlobals(); }
 });

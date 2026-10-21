@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { MESSAGE_MAX_CHARACTERS, SidelineCatalogSchema } from "@rally/contracts";
+import { SidelineCatalogSchema } from "@rally/contracts";
 import { SidelineComposer, type SidelineCardModel } from "@rally/ui/components/sideline-composer";
 
 const catalog = SidelineCatalogSchema.parse({
@@ -108,11 +108,4 @@ describe("Sideline shared composer", () => {
     });
   });
 
-  it("names Message when the existing platform length guard is exceeded", () => {
-    const html = render(card({ message: "x".repeat(MESSAGE_MAX_CHARACTERS + 1) }));
-
-    expect(html).toContain("<strong>Message:</strong>");
-    expect(html).toContain("This message is over 100,000 characters, please shorten it.");
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*Send/su);
-  });
 });

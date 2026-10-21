@@ -1,3 +1,4 @@
+import { ErrorNotice } from './primitives';
 import { startPerfTrace, type PerfTrace } from '../lib/perf-trace';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useInfiniteQuery } from '@tanstack/react-query';
@@ -385,13 +386,13 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
             {places.length > 0 && !placeTab && results.length === 0 && (response.isFetching || settledQuery !== normalized
               ? <div className="rally-search-pending" role="status">Searching…</div>
               : response.isError && !continuationFailed
-              ? <div className="rally-search-pending" role="status">Search could not be completed. Please try again.</div>
+              ? null
               : null)}
             {canContinue && <div ref={sentinel} className="rally-search-sentinel" aria-hidden="true" />}
           </div>
           {canContinue && (continuationFailed || response.isFetchingNextPage) && <div className="rally-search-footer" role="status">
             {continuationFailed
-              ? <><div>More results could not be loaded. Please try again.</div>
+              ? <><ErrorNotice occurrence={response.error}>More results could not be loaded. Please try again.</ErrorNotice>
                 <Button type="button" onClick={loadMore} onMouseDown={(event) => event.preventDefault()}>Retry loading more results</Button></>
               : <div>Loading more…</div>}
           </div>}
@@ -400,8 +401,12 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
           {!searchable ? 'What are you looking for?'
             : placeTab ? 'No results'
             : (response.isFetching || settledQuery !== normalized || canContinue) ? 'Searching…'
-            : response.isError ? 'Search could not be completed. Please try again.' : 'No results'}
+            : response.isError ? null : 'No results'}
         </div>}
+        {!placeTab && searchable && response.isError && !continuationFailed && <>
+          <ErrorNotice occurrence={response.error}>Search could not be completed. Please try again.</ErrorNotice>
+          <Button onClick={() => void response.refetch()}>Retry search</Button>
+        </>}
       </Dialog.Content>
     </Dialog.Portal>
   </Dialog.Root>;

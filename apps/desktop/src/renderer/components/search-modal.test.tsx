@@ -149,6 +149,7 @@ describe('organization search modal', () => {
     setup(async () => { throw new ApiError('Unavailable', 503); }, PLACES);
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'pric' } });
     expect(await screen.findByText('Search could not be completed. Please try again.')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(screen.getAllByRole('option')).toHaveLength(2);
   });
 
@@ -268,6 +269,7 @@ describe('organization search modal', () => {
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'danil' } });
     await screen.findByRole('option');
     await reachEndOfList();
+    fireEvent.click(await screen.findByRole('button', { name: 'OK' }));
     const retry = await screen.findByRole('button', { name: 'Retry loading more results' });
     expect(screen.getByRole('listbox')).not.toContainElement(retry);
     // Outside the listbox but inside the fixed body: that is what makes the

@@ -62,6 +62,12 @@ renaming `error` to `caught` or `failure` cannot bypass the rule. Sidebar/rail
 filenames join that scope automatically; presentation modules with another name
 must be added to the registry and its scope test.
 
+## Errors require acknowledgement
+
+`rally/no-inline-errors` enforces acknowledged error popups across desktop,
+browser and shared UI; see [shared UI](shared-ui.md#error-popups) for the
+presentation, history and retry contract.
+
 ## Construct Zod object modes directly
 
 In production source reachable from the API Worker, construct an object's
