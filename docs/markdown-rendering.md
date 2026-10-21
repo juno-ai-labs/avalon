@@ -810,6 +810,10 @@ Rally's outbound email has one shared converter,
 than an email client will honour. Every email surface renders through that one,
 rather than growing a second.
 
+The outbound message reducer also removes the leading generated personal
+instruction envelope before it reduces Markdown; the shared filter and its
+presentation boundary belong to [personal system prompts](personal-system-prompt.md).
+
 The exported message card is the one place outside this stylesheet that styles
 this DOM, and it is not an exception to the invariant above — it is a different
 document. A saved picture or PDF is rendered in a hidden window that loads
