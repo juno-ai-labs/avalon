@@ -69,6 +69,30 @@ it("projects visible text and plugin timing without tool calls and queues edits 
   expect(deleted!.revision).toBeGreaterThan(projection!.revision);
 });
 
+it.each([
+  ['preparing', 0], ['quarantined', 1], ['authoritative', 0],
+] as const)("does not publish or block backfill for a %s source at generation %s", async (mode, generation) => {
+  const stub = source();
+  await runInDurableObject(stub, async (_instance, state) => {
+    seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: parentId });
+    await seedParticipantMessage(state, { id: 'awaiting-import', sequence: 1, text: 'Waiting for authority' });
+    state.storage.sql.exec('UPDATE workstream SET authority_mode = ?, authority_generation = ? WHERE id = 1', mode, generation);
+    expect(nextConversationViewAt(state.storage.sql)).toBeNull();
+    await publishConversationViews(state.storage.sql, env.ACTIVITY_QUEUE, job);
+    expect(state.storage.sql.exec('SELECT turn_id FROM conversation_view_changes WHERE in_flight_revision IS NOT NULL').toArray()).toEqual([]);
+  });
+  expect(await stub.backfillConversationView({ ...job, turnId: '' })).toBe('missing');
+  expect(await stub.conversationViewProjection({ ...job, turnId: '' })).toBeNull();
+  // Activation can still deliver the same durable work; nothing was discarded.
+  await runInDurableObject(stub, (_instance, state) => {
+    state.storage.sql.exec("UPDATE workstream SET authority_mode = 'authoritative', authority_generation = 1 WHERE id = 1");
+    expect(nextConversationViewAt(state.storage.sql)).toBe(0);
+  });
+  expect(await stub.backfillConversationView({ ...job, turnId: '' })).toBe('queued');
+  expect((await stub.conversationViewProjection({ ...job, turnId: 'awaiting-import' }))?.content?.turn.blocks[0])
+    .toMatchObject({ text: 'Waiting for authority' });
+});
+
 it("keeps deletion and generation fences and serves only compact opening rows", async () => {
   const stub = env.MIGRATION_PROBE_DO!.getByName("conversation-view-destination");
   await stub.ping();

@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { defineLocalCacheSlice, localCacheEpoch } from './local-cache';
 import { mirrorQueriesToLocalCache, queryKeyIsOneOf, type QueryMirror } from './local-cache-mirror';
 import type { WorkstreamFeedSource } from './telemetry';
-import { openingTranscriptSnapshot } from './transcript';
+import { mergeCanonicalTranscriptSnapshot, openingTranscriptSnapshot } from './transcript';
 import type { WorkstreamDetail } from './types';
 import type { WorkspaceConversationViewEvent } from '@rally/contracts/conversation-view';
 import { normalizeHarnessStatus } from './api';
@@ -162,23 +162,47 @@ export function seedWorkspaceConversation(
   event: WorkspaceConversationViewEvent,
   keys: ConversationCacheKeys,
 ): boolean {
-  if (!event.view) return false;
-  // Resident live data, optimistic launches, and a richer disk seed all win.
-  if (queryClient.getQueryData(keys.detail) !== undefined || queryClient.getQueryData(keys.transcript) !== undefined) return false;
+  // A header-only delivery must not win the race against a useful disk row.
+  if (!event.view || !event.view.transcript.ranges.some((range) => range.turns.length > 0)) return false;
+  const residentDetail = queryClient.getQueryData<WorkstreamDetail>(keys.detail);
+  const residentTranscript = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(keys.transcript);
+  // A preview can refresh a disk seed, but never a live or optimistic feed.
+  if ((residentDetail !== undefined || residentTranscript !== undefined)
+    && !conversationSeededFromLocalCache(queryClient, keys)) return false;
   const { header, transcript } = event.view;
+  if (residentTranscript) {
+    // Queue delivery is eventual. Do not trade a richer/newer local copy for
+    // an older workspace page, or let one fresh turn roll another turn back.
+    if (transcript.snapshotThrough < residentTranscript.snapshotThrough) return false;
+    const held = new Map([...residentTranscript.ranges.flatMap((range) => range.turns), ...residentTranscript.activeTurns]
+      .map((turn) => [turn.turnId, turn]));
+    const incoming = transcript.ranges.flatMap((range) => range.turns);
+    const incomingIds = new Set(incoming.map((turn) => turn.turnId));
+    if ([...held.values()].some((turn) => !incomingIds.has(turn.turnId)
+      && transcript.ranges.some((range) => turn.transcriptSequence >= range.covered.startInclusive
+        && turn.transcriptSequence < range.covered.endExclusive))) return false;
+    if (incoming.some((turn) => turn.revision < (held.get(turn.turnId)?.revision ?? 0))) return false;
+    if (transcript.snapshotThrough === residentTranscript.snapshotThrough
+      && !incoming.some((turn) => turn.revision > (held.get(turn.turnId)?.revision ?? 0))) return false;
+  }
   const detail: WorkstreamDetail = {
+    ...(residentDetail ?? {
+      id: event.parentId, lastActivityAt: header.updatedAt,
+      latestAttentionSequenceNumber: 0, readThroughSequenceNumber: 0,
+      manualUnreadFromSequenceNumber: null, manualUnreadGeneration: 0, hasUnread: false,
+      firstUnreadSequenceNumber: null, participantUserIds: [], participantExtraCount: 0,
+      nextPendingWakeup: null, pinPosition: null, spaceIds: [],
+      participants: [], viewers: [], resources: [], connections: [], backgroundTasks: [],
+    }),
     ...header, harnessStatus: normalizeHarnessStatus(header.harnessStatus),
-    id: event.parentId, lastActivityAt: header.updatedAt,
-    latestAttentionSequenceNumber: 0, readThroughSequenceNumber: 0,
-    manualUnreadFromSequenceNumber: null, manualUnreadGeneration: 0, hasUnread: false,
-    firstUnreadSequenceNumber: null, participantUserIds: [], participantExtraCount: 0,
-    nextPendingWakeup: null, pinPosition: null, spaceIds: [],
-    participants: [], viewers: [], resources: [], connections: [], backgroundTasks: [],
   };
   notifyManager.batch(() => {
     queryClient.setQueryData(keys.feedSource, LOCAL_CACHE_FEED_SOURCE);
     queryClient.setQueryData(keys.detail, detail);
-    queryClient.setQueryData(keys.transcript, transcript);
+    // Reuse range retention only for display seeds. Neither snapshot's fences
+    // are authoritative here, and the first live snapshot still replaces all.
+    queryClient.setQueryData(keys.transcript, residentTranscript
+      ? mergeCanonicalTranscriptSnapshot(residentTranscript, transcript) : transcript);
   });
   return true;
 }
