@@ -436,7 +436,7 @@ describe("agent model flags", () => {
   });
 
   it("admits only the model ids a creator may choose from", () => {
-    expect(agentModelOverride("openai/gpt-5.6-luna")).toBe("openai/gpt-5.6-luna");
+    expect(agentModelOverride("openai/gpt-6-luna")).toBe("openai/gpt-6-luna");
     expect(agentModelOverride(null)).toBeNull();
     expect(agentModelOverride("")).toBeNull();
     // Not on the list: a model that has been retired from it, or anything a
