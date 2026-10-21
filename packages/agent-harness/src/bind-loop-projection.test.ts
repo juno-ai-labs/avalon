@@ -145,6 +145,11 @@ describe("Bind loop projection", () => {
         toolName: "search",
       }],
     });
+    expect(pendingBindToolBatch({ ...state, loopId: "relocated-loop" })).toMatchObject({
+      loopId: "relocated-loop",
+      turnId: "run-1:turn:1",
+      calls: [{ providerToolCallId: "call-a", receiptToolCallId: "run-1:turn:1:tool:0" }],
+    });
     state = applyBindLoopTransition(state, {
       kind: "tool_result_accepted",
       loopId: "run-1",

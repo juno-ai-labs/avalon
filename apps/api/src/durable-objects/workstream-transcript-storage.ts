@@ -2881,6 +2881,58 @@ export class WorkstreamTranscriptStorage {
     return projection;
   }
 
+  /**
+   * A relocated loop may keep immutable historical turn IDs. Admit only a
+   * settled local reservation, against the exact current head. This is read-only:
+   * the next ordinary assistant reservation replaces the historical pointer.
+   */
+  validateHistoricalAssistantReservation(projection: BindLoopProjectionState): boolean {
+    const current = this.readBindProjection(projection.loopId);
+    const reservation = current?.lastAssistantReservation;
+    const supplied = projection.lastAssistantReservation;
+    if (!current || !reservation || !supplied
+      || current.generation !== projection.generation
+      || current.stateRevision !== projection.stateRevision
+      || current.lastModelTurnIndex !== projection.lastModelTurnIndex
+      || reservation.turnId !== supplied.turnId
+      || reservation.modelTurnIndex !== supplied.modelTurnIndex
+      || reservation.transcriptSequence !== supplied.transcriptSequence
+      || reservation.status !== supplied.status
+      || !["accepted", "failed", "stopped"].includes(reservation.status)
+      || reservation.modelTurnIndex !== current.lastModelTurnIndex
+      || reservation.transcriptSequence === null
+      || reservation.turnId === `${current.loopId}:turn:${current.lastModelTurnIndex}`
+      || pendingBindToolBatch(current) !== null) return false;
+
+    return this.sql.exec<{ turn_id: string } & Record<string, SqlStorageValue>>(
+      `SELECT r.turn_id
+         FROM assistant_turn_reservations r
+         JOIN substream_loops l ON l.loop_id = r.loop_id
+         JOIN participant_transcript_turns t ON t.turn_id = r.materialized_turn_id
+        WHERE r.turn_id = ? AND r.loop_id = ?
+          AND r.assistant_turn_sequence = ? AND r.transcript_sequence = ?
+          AND r.state = 'materialized' AND r.outcome = ?
+          AND t.turn_id = r.turn_id AND t.transcript_sequence = r.transcript_sequence
+          AND t.actor = ?
+          AND l.bind_state_revision = ? AND l.next_assistant_turn_sequence = ?
+          AND NOT EXISTS (
+            SELECT 1 FROM assistant_turn_reservations WHERE state IN ('reserved', 'streaming')
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM assistant_turn_reservations
+             WHERE loop_id = l.loop_id AND assistant_turn_sequence = l.next_assistant_turn_sequence
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM participant_transcript_turns
+             WHERE turn_id = l.loop_id || ':turn:' || (r.assistant_turn_sequence + 1)
+          )`,
+      reservation.turnId, current.loopId, current.lastModelTurnIndex,
+      reservation.transcriptSequence, reservation.status === "accepted" ? "accepted" : "error",
+      reservation.status === "accepted" ? "assistant" : "system",
+      current.stateRevision, current.lastModelTurnIndex + 1,
+    ).toArray().length === 1;
+  }
+
   private openingRanges(
     snapshotId: string,
     snapshotThrough: number,

@@ -312,16 +312,16 @@ describe("work-stream transcript on workerd SQLite", () => {
    * provider-keyed `publish_resource` still `executing`, a `request_elicitation`
    * whose answer is owed to a person, and an assistant turn holding both.
    *
-   * Extracted because two tests need it from a clean object — what the repair
-   * does with a claim, and what it does without one — and `reset()` gives each
-   * `it` its own.
+   * Shared by claim, relocation, and failure-cleanup tests; `reset()` gives
+   * each test a clean object.
    */
   async function seedInterruptedWriteBatch(stub: DurableObjectStub, options: {
     receiptRunId: string;
+    loopId?: string;
     attemptId: string;
     attemptOwner: string;
   }): Promise<{ toolCallId: string }> {
-    const { receiptRunId, attemptId, attemptOwner } = options;
+    const { receiptRunId, attemptId, attemptOwner, loopId = LOOP_ID } = options;
     const now = Date.now();
     const workflowInput = WorkstreamWorkflowInputSchema.parse({
       region: "global",
@@ -329,21 +329,21 @@ describe("work-stream transcript on workerd SQLite", () => {
       parentKind: "workstream",
       parentId: WORKSTREAM_ID,
       substreamId: "0",
-      loopId: LOOP_ID,
+      loopId,
       harnessRunId: receiptRunId,
       triggerMessageId: null,
       activityId: null,
       executionPrincipal: { type: "user", userId: USER_ID },
       reason: "user_message",
     });
-    const toolCallId = `${LOOP_ID}:turn:1:tool:0`;
+    const toolCallId = `${loopId}:turn:1:tool:0`;
 
     await runInDurableObject(stub, async (_instance, state) => {
       seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
       const transcript = new WorkstreamTranscriptStorage(state.storage);
       await transcript.commitBindTransition({
         kind: "state_initialized",
-        loopId: LOOP_ID,
+        loopId,
         generation: 1,
         stateRevision: 1,
         systemProjection: {
@@ -379,10 +379,10 @@ describe("work-stream transcript on workerd SQLite", () => {
         receiptRunId,
       );
       const loop = new SubstreamLoopStorage(state.storage);
-      loop.ensureLoop({ loopId: LOOP_ID, bindStateRevision: 1, now });
+      loop.ensureLoop({ loopId, bindStateRevision: 1, now });
       loop.activateExecutionReceipt({
         runId: receiptRunId,
-        loopId: LOOP_ID,
+        loopId,
         executionEpoch: 1,
         leaseOwner: "workerd-test-owner",
         leaseExpiresAt: now + 60_000,
@@ -404,17 +404,17 @@ describe("work-stream transcript on workerd SQLite", () => {
         leaseOwner: "workerd-test-owner",
         expectedLoopRevision: loop.loop()!.revision,
         receiptRunId,
-        turnId: `${LOOP_ID}:turn:1`,
+        turnId: `${loopId}:turn:1`,
         modelTurnIndex: 1,
         streamId: "workerd-write-stream",
         now,
       });
       await transcript.commitBindTransition({
         kind: "assistant_reserved",
-        loopId: LOOP_ID,
+        loopId,
         generation: 1,
         stateRevision: 2,
-        turnId: `${LOOP_ID}:turn:1`,
+        turnId: `${loopId}:turn:1`,
         modelTurnIndex: 1,
         transcriptSequence: reservation.reservation!.transcript_sequence,
       }, now, {
@@ -425,10 +425,10 @@ describe("work-stream transcript on workerd SQLite", () => {
       });
       await transcript.commitBindTransition({
         kind: "assistant_accepted",
-        loopId: LOOP_ID,
+        loopId,
         generation: 1,
         stateRevision: 3,
-        turnId: `${LOOP_ID}:turn:1`,
+        turnId: `${loopId}:turn:1`,
         modelTurnIndex: 1,
         transcriptSequence: reservation.reservation!.transcript_sequence,
         message: {
@@ -459,7 +459,7 @@ describe("work-stream transcript on workerd SQLite", () => {
          VALUES ('elicitation-1', ?, 'Which one?', 'single_select', '[]', 1, 'pending', ?, ?)`,
         receiptRunId,
         now,
-        `${LOOP_ID}:turn:1:tool:1`,
+        `${loopId}:turn:1:tool:1`,
       );
       // The shape the incident left behind: a provider-keyed write admitted
       // and still `executing` when the isolate went away. Written directly
@@ -477,12 +477,96 @@ describe("work-stream transcript on workerd SQLite", () => {
                  ?, ?, 0)`,
         receiptRunId,
         toolCallId,
-        `${LOOP_ID}:turn:1:tool:0`,
+        `${loopId}:turn:1:tool:0`,
         now,
       );
     });
     return { toolCallId };
   }
+
+  it.each([
+    { receiptStatus: "executing", recovery: "ambiguous", success: false },
+    { receiptStatus: "completed", recovery: "completed", success: true },
+    { receiptStatus: "missing", recovery: "not_run", success: false },
+  ])("recovers a relocated $receiptStatus receipt and releases the loop without answering its elicitation", async ({ receiptStatus, recovery, success }) => {
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    const receiptRunId = "00000000-0000-7000-8000-000000000708";
+    const attemptId = "relocated-attempt";
+    const attemptOwner = "relocated-owner";
+    const historicalLoopId = substreamLoopId(asWorkstreamId("00000000-0000-7000-8000-000000000709"));
+    const relocatedLoopId = LOOP_ID;
+    const { toolCallId } = await seedInterruptedWriteBatch(stub, { receiptRunId, attemptId, attemptOwner, loopId: historicalLoopId });
+    await runInDurableObject(stub, (_instance, state) => {
+      // Copy the operator's relational remap, leaving immutable turns, receipts,
+      // and the elicitation at their original IDs.
+      state.storage.transactionSync(() => {
+        state.storage.sql.exec(`PRAGMA defer_foreign_keys = ON`);
+        for (const table of ["substream_loops", "bind_loop_heads", "bind_loop_state_messages",
+          "bind_provider_boundaries", "bind_activation_inputs", "assistant_turn_reservations"]) {
+          state.storage.sql.exec(`UPDATE ${table} SET loop_id = ? WHERE loop_id = ?`, relocatedLoopId, historicalLoopId);
+        }
+        state.storage.sql.exec(
+          `UPDATE runs SET substream_loop_id = ?, execution_context_json = json_set(execution_context_json, '$.loopId', ?)
+            WHERE run_id = ?`, relocatedLoopId, relocatedLoopId, receiptRunId,
+        );
+      });
+      if (receiptStatus === "completed") {
+        state.storage.sql.exec(`UPDATE tool_effects SET status = 'completed', output_summary = 'Already published', settled_at = ?`, Date.now());
+      } else if (receiptStatus === "missing") {
+        state.storage.sql.exec(`DELETE FROM tool_effects`);
+      }
+    });
+    await evictDurableObject(stub);
+    await runInDurableObject(stub, async (instance, state) => {
+      const resident = instance as unknown as {
+        activeLoopExecution: { runId: string; leaseOwner: string; executionEpoch: number } | null;
+        claimPersistentLoopExecution(): Promise<{
+          input: WorkstreamWorkflowInput;
+          execution: { runId: string; leaseOwner: string; executionEpoch: number };
+        } | null>;
+        recoverInterruptedToolBatch(executionEnv: Env, input: WorkstreamWorkflowInput,
+          fence: { attemptId: string; owner: string }): Promise<string | null>;
+        product: { recordWorkflowFailed(runId: string, error: { code: string; message: string },
+          execution: { loopId: string; executionId: string; executionEpoch: number; leaseOwner: string }): Promise<void> };
+      };
+      const claim = await resident.claimPersistentLoopExecution();
+      if (!claim) throw new Error("replacement_loop_claim_missing");
+      expect(claim.input.loopId).toBe(relocatedLoopId);
+      resident.activeLoopExecution = claim.execution;
+      state.storage.sql.exec(
+        `UPDATE runs SET legacy_attempt_id = ?, lease_owner = ?, lease_expires_at = ? WHERE run_id = ?`,
+        attemptId, attemptOwner, Date.now() + 600_000, receiptRunId,
+      );
+      await expect(resident.recoverInterruptedToolBatch(
+        createTestEnv({ PAYLOADS: env.PAYLOADS }), claim.input, { attemptId, owner: attemptOwner },
+      )).resolves.toBe("waiting_for_input");
+      const transcript = new WorkstreamTranscriptStorage(state.storage);
+      const messages = bindLoopNonSystemMessages(transcript.readBindProjection(relocatedLoopId)!);
+      const results = messages.filter((message) => message.role === "tool");
+      expect(results).toHaveLength(1);
+      expect(results[0]).toMatchObject({ tool_call_id: "provider-call" });
+      const result = JSON.parse(z.object({ content: z.string() }).parse(results[0]).content);
+      expect(result.success).toBe(success);
+      if (success) expect(result.data).toMatchObject({ summary: "Already published" });
+      else expect(result.data.recovery).toBe(recovery);
+      expect(transcript.participantTurn(`${historicalLoopId}:turn:1`)!.blocks).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: "tool", toolCallId, status: success ? "completed" : recovery === "ambiguous" ? "ambiguous" : "failed" }),
+      ]));
+      expect(state.storage.sql.exec<{ status: string }>(`SELECT status FROM elicitation_requests WHERE elicitation_id = 'elicitation-1'`).one())
+        .toEqual({ status: "pending" });
+      expect(transcript.unsettledToolBatchBlockingRelease(relocatedLoopId)).toBeNull();
+      await resident.product.recordWorkflowFailed(receiptRunId,
+        { code: "agent_loop_failed", message: "Interrupted execution" }, {
+          loopId: relocatedLoopId, executionId: receiptRunId,
+          executionEpoch: claim.execution.executionEpoch, leaseOwner: claim.execution.leaseOwner,
+        });
+      expect(new SubstreamLoopStorage(state.storage).loop()).toMatchObject({ status: "idle" });
+      expect(state.storage.sql.exec<{ status: string }>(`SELECT status FROM runs WHERE run_id = ?`, receiptRunId).one())
+        .toEqual({ status: "failed" });
+    });
+  });
 
   it("names the interrupted write it could not confirm, and repairs the batch anyway", async () => {
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
