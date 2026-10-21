@@ -394,7 +394,7 @@ type TestableSubstreamAgent = {
   publishAgentRuntimeEvent(event: Record<string, unknown>): Promise<void>;
   deliverCommittedRealtimeEvent(event: Record<string, unknown>): Promise<void>;
   drainSemanticRealtimeOutbox(): Promise<void>;
-  semanticRealtimeEvent(input: Record<string, unknown>): Record<string, unknown>;
+  semanticRealtimeEvent(input: Record<string, unknown>): Promise<Record<string, unknown>>;
   nextLoopWorkAt(): number | null;
   agentDrain: { resume(operation: () => Promise<void>, settled: () => void): Promise<void> };
   runtimeRecovery: Promise<void> | null;
@@ -6474,7 +6474,7 @@ describe("Durable Objects in the Workers runtime", () => {
         Date.parse("2026-08-26T20:00:00.001Z"),
       );
 
-      const event = (instance as unknown as TestableSubstreamAgent).semanticRealtimeEvent({
+      const event = await (instance as unknown as TestableSubstreamAgent).semanticRealtimeEvent({
         messageId: "semantic-realtime:1",
         sequence: 1,
         occurredAtUtc: "2026-08-26T20:00:00.001Z",

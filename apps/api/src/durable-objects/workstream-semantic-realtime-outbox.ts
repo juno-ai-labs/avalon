@@ -9,6 +9,7 @@ import { z } from "zod";
  * recovery authority.
  */
 export const SemanticRealtimeReferenceSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("participant_changed"), userId: z.string().min(1) }),
   z.strictObject({ kind: z.literal("transcript_turn"), turnId: z.string().min(1) }),
   z.strictObject({ kind: z.literal("elicitation_cancelled"), elicitationId: z.string().min(1) }),
   z.strictObject({
@@ -43,6 +44,7 @@ interface SemanticRealtimeOutboxRow extends Record<string, SqlStorageValue> {
   message_id: string;
   source_version: number;
   payload_json: string;
+  not_before: number;
 }
 
 function first<T extends Record<string, SqlStorageValue>>(
@@ -119,16 +121,19 @@ export function dueSemanticRealtimeReferences(
   now = Date.now(),
   limit = 100,
 ): SequencedSemanticRealtimeReference[] {
-  return sql.exec<SemanticRealtimeOutboxRow>(
-    `SELECT message_id, source_version, payload_json
+  const rows = sql.exec<SemanticRealtimeOutboxRow>(
+    `SELECT message_id, source_version, payload_json, not_before
        FROM durable_outbox
-      WHERE channel = ? AND state IN ('pending', 'inflight') AND not_before <= ?
+      WHERE channel = ? AND state IN ('pending', 'inflight')
       ORDER BY source_version, message_id
       LIMIT ?`,
     SEMANTIC_REALTIME_CHANNEL,
-    now,
     Math.max(1, Math.min(limit, 100)),
-  ).toArray().map((row) => {
+  ).toArray();
+  // A deferred predecessor still owns the room's next sequence. Filtering it
+  // out in SQL would let a later due frame overtake it on the next drain.
+  const blocked = rows.findIndex((row) => row.not_before > now);
+  return rows.slice(0, blocked < 0 ? undefined : blocked).map((row) => {
     const payload = z.strictObject({
       occurredAtUtc: z.string().datetime({ offset: true }),
       reference: SemanticRealtimeReferenceSchema,
@@ -181,8 +186,9 @@ export function deferSemanticRealtimeReference(
 
 export function nextSemanticRealtimeDueAt(sql: SqlStorage): number | null {
   return first(sql.exec<{ due_at: number | null } & Record<string, SqlStorageValue>>(
-    `SELECT MIN(not_before) AS due_at FROM durable_outbox
-      WHERE channel = ? AND state IN ('pending', 'inflight')`,
+    `SELECT not_before AS due_at FROM durable_outbox
+      WHERE channel = ? AND state IN ('pending', 'inflight')
+      ORDER BY source_version, message_id LIMIT 1`,
     SEMANTIC_REALTIME_CHANNEL,
   ))?.due_at ?? null;
 }
