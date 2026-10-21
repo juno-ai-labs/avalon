@@ -36,7 +36,9 @@ import { useCachedWorkstreamAppearance, useCachedWorkstreamSummary } from '../li
 import { useMergeChannels } from '../lib/use-merge-channels';
 import { launchedSubstreamDetail, optimisticOpeningTranscript } from '../lib/launched-conversation';
 import { orderedTranscriptQueryKey } from '../lib/use-workstream-socket';
-import { holdCachedWorkstreamArchive, patchCachedWorkstream, workstreamDetailQueryKey } from '../lib/workstreams-cache';
+import { patchCachedWorkstream, workstreamDetailQueryKey } from '../lib/workstreams-cache';
+import { archiveThread, resolutionFailure, resolveConversation } from '../lib/thread-lifecycle';
+import { ArchiveConversationModal } from '../components/archive-conversation-modal';
 import { SidekickPicker } from '../components/sidekick-picker';
 import { openMemorySource, useMemoryFacts, type MemoryFacts } from '../components/memory-review';
 import { workstreamSidekickRows } from '../components/sidekick-section';
@@ -73,7 +75,7 @@ import { channelRoute, revealChannelMessageState, useChannelPane, usePaneExpansi
 import { expandToggle } from '../components/pane-expand-toggle';
 import { usePinAction, usePinnedIds } from '../lib/pins';
 import { spaceFailureSentence } from '../lib/space-failure-copy';
-import { ApiError, normalizeHarnessStatus } from '../lib/api';
+import { normalizeHarnessStatus } from '../lib/api';
 
 type RailAttentionProjection = {
   harnessStatus?: HarnessStatus;
@@ -475,15 +477,14 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     setSubstreamPending(true);
     setSubstreamMenuFailure(null);
     try {
-      if (target.substreamId === '0') {
-        const updated = await api.archiveWorkstream(target.parentId);
-        reportParentAction(updated, 'archive');
-        holdCachedWorkstreamArchive(queryClient, updated);
-      } else await api.setSubstreamArchived(target.parentId, target.substreamId, true);
+      const archiveApplied = target.substreamId === '0'
+        ? await archiveThread(api, queryClient, target.parentId, pinnedThreads.has(target.parentId))
+        : (await api.setSubstreamArchived(target.parentId, target.substreamId, true), true);
       if (routeRef.current.id !== target.parentId || routeRef.current.visit !== visit) return;
       setArchiveTarget(null);
-      if (target.substreamId === '0') openFirstWorkstream([target.parentId]);
-      else if (routeRef.current.selectedSubstreamId === target.substreamId) selectSubstream('0');
+      if (target.substreamId === '0') {
+        if (archiveApplied) openFirstWorkstream([target.parentId]);
+      } else if (routeRef.current.selectedSubstreamId === target.substreamId) selectSubstream('0');
     } catch {
       if (routeRef.current.id !== target.parentId || routeRef.current.visit !== visit) return;
       setSubstreamMenuFailure(target.substreamId === '0' ? 'archive_workstream' : 'archive_substream');
@@ -831,7 +832,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     setSubstreamPending(true);
     setSubstreamMenuFailure(null);
     try {
-      await api.resolveConversation(parentId, target.substreamId);
+      await resolveConversation(api, queryClient, parentId, target.substreamId);
       if (routeRef.current.id !== parentId || routeRef.current.visit !== visit) return;
       if (target.substreamId !== '0') { if (mainVisible) openThreadAlone(); }
       else {
@@ -841,11 +842,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     } catch (error) {
       if (routeRef.current.id === parentId && routeRef.current.visit === visit) {
         const noun = target.substreamId === '0' ? 'thread' : 'breakout';
-        const copy = error instanceof ApiError && error.code === 'substream_archived'
-          ? 'Restore this conversation before resolving it.'
-          : error instanceof ApiError && error.status === 403 ? 'You no longer have access to resolve this conversation.'
-            : error instanceof ApiError && error.status === 404 ? 'This conversation is no longer available.'
-              : `The ${noun} couldn’t be resolved. Try again.`;
+        const copy = resolutionFailure(error, noun);
         setSubstreamMenuFailure({ title: `The ${noun} couldn’t be resolved`, copy });
       }
     } finally {
@@ -1131,21 +1128,13 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         </label>
       </form>
     </Modal>
-    <Modal
-      footer={<>
-        <Button disabled={substreamPending} onClick={() => { setArchiveTarget(null); setSubstreamMenuFailure(null); }}>Cancel</Button>
-        <Button className="button-danger" disabled={substreamPending} onClick={() => void submitSubstreamArchive()}>Archive</Button>
-      </>}
-      onOpenChange={(open) => { if (!open && !substreamPending) { setArchiveTarget(null); setSubstreamMenuFailure(null); } }}
-      open={Boolean(archiveTarget)}
-      title={archiveTarget?.substreamId === '0' ? 'Archive thread' : 'Archive breakout'}
-    >
-      <p className="modal-copy">
-        <strong>{archiveTarget?.title}</strong> leaves the sidebar for everyone in it, and stops
-        accepting messages.
-      </p>
-      {substreamMenuFailure && <InlineError>{failureCopyOf(substreamMenuFailure).copy}</InlineError>}
-    </Modal>
+    <ArchiveConversationModal
+      target={archiveTarget ? { title: archiveTarget.title, noun: archiveTarget.substreamId === '0' ? 'thread' : 'breakout' } : null}
+      pending={substreamPending}
+      error={substreamMenuFailure ? failureCopyOf(substreamMenuFailure).copy : null}
+      onClose={() => { setArchiveTarget(null); setSubstreamMenuFailure(null); }}
+      onConfirm={() => void submitSubstreamArchive()}
+    />
     <Modal
       footer={<Button onClick={() => setSubstreamMenuFailure(null)}>Close</Button>}
       onOpenChange={(open) => { if (!open) setSubstreamMenuFailure(null); }}
