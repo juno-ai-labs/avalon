@@ -1731,7 +1731,9 @@ reopens a finished run (see
 order, including tool and safe status turns.
 `participant_transcript_turns.attention_ordinal` is the independent people-visible main-substream
 waterline used by unread tracking. Product messages expose the latter as the
-nullable `attentionSequenceNumber`; tool/transient rows carry `null`. Desktop
+nullable `attentionSequenceNumber`; tool/transient rows and source merge notices
+(`conversation_merged_into`) carry `null`; see
+[source merge notices](conversation-merge.md#the-sources-merge-divider). Desktop
 read receipts and unread anchors must never substitute transcript sequence for
 that field, including while an older Worker omits the optional wire property.
 
