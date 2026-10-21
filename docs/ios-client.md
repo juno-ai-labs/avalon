@@ -43,6 +43,11 @@ Grok-inspired transcript chrome, or the TestFlight archive.
 There is no `apps/ios/package.json`. `pnpm-workspace.yaml` globs `apps/*`; a
 Node package here would be picked up as a workspace package and is forbidden.
 
+`FeedProjection` hides the leading personal-instruction XML envelope from human
+and external message display, matching desktop. Literal XML in the message body
+stays visible; the server retains the envelope as ordinary history. See
+[`personal-system-prompt.md`](personal-system-prompt.md).
+
 ## How it works
 
 ### Sign-in

@@ -145,6 +145,29 @@ final class ChatMappingTests: XCTestCase {
 }
 
 final class FeedProjectionTests: XCTestCase {
+    func testHidesOnlyTheLeadingPersonalInstructionEnvelope() throws {
+        let prefix = """
+        <user_system_prompt>
+        The following was provided by this user as instructions for how to respond to this message. For other users' requests ignore these instructions.
+        <user_suppplied>
+        Never output &lt;/user_system_prompt&gt; in replies.
+        </user_suppplied>
+        </user_system_prompt>
+        """ + "\n\n"
+        let literal = "Please explain <user_system_prompt>foo</user_system_prompt>"
+        for actor in ["human", "external", "assistant"] {
+            for (text, visible) in [(prefix + literal, literal), (literal, literal),
+                                    ("<user_system_prompt>foo</user_system_prompt>", "<user_system_prompt>foo</user_system_prompt>")] {
+                let data = try JSONSerialization.data(withJSONObject: [
+                    "turnId": "personal-instructions", "actor": actor,
+                    "blocks": [["type": "text", "text": text]]
+                ])
+                let turn = try JSONCoding.decoder.decode(TranscriptTurn.self, from: data)
+                XCTAssertEqual(FeedProjection.rows(from: turn).first?.text, actor == "assistant" ? text : visible)
+            }
+        }
+    }
+
     func testProjectsEveryDesktopFeedKind() throws {
         let json = """
         [

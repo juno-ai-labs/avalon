@@ -2063,6 +2063,41 @@ describe("a member's message travels the whole pipeline", () => {
     }
   });
 
+  it("retries an interrupted opening after the personal instruction cache refreshes", async () => {
+    const stub = agentStub();
+    await env.WORKSPACE_DOS.getByName(workspaceDOName("global", WORKSPACE_ID)).savePersonalSystemPrompt({
+      workspaceId: WORKSPACE_ID, userId: USER_ID, personalSystemPrompt: "Answer briefly.",
+    });
+    await runInDurableObject(stub, (instance) => {
+      const transcript = (instance as unknown as { product: { transcript: WorkstreamTranscriptStorage } }).product.transcript;
+      // The receipt already exists when transcript preparation starts. An
+      // uncertain failure must leave that frozen content available to retry.
+      vi.spyOn(transcript, "prepareConversation").mockRejectedValueOnce(new Error("interrupted_transcript_preparation"));
+    });
+    try {
+      await installScriptedProvider(stub, [
+        [{ choices: [{ delta: { content: "recovered answer" }, finish_reason: "stop" }] }],
+      ], { primaryModel: PERSONAL_PROMPT_MODEL, fallbackModels: [] });
+      expect(await initializeWorkstream(stub, "original opening", PERSONAL_PROMPT_MODEL, [], "opening_message"))
+        .toMatchObject({ status: 500 });
+      await expect.poll(() => runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ text: string }>(
+          "SELECT text FROM personal_system_prompt_copies WHERE user_id = ?", USER_ID,
+        ).toArray()[0]?.text), { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 25 }).toBe("Answer briefly.");
+      const retried = await initializeWorkstream(stub, "original opening", PERSONAL_PROMPT_MODEL, [], "opening_message");
+      expect(retried).toMatchObject({ status: 200 });
+      await externallySettledRun(stub, retried.body.harnessRunId as string);
+      await waitForLoopRelease(stub);
+      const request = (await capturedProviderRequests(stub)).find((entry) => entry.url === "https://openrouter.ai/api/v1/responses")!;
+      const users = (request.body.messages as Array<{ role: string; content: unknown }>).filter((message) => message.role === "user");
+      expect(users.at(-1)?.content).toContain("original opening");
+      expect(JSON.stringify(users)).not.toContain("<user_system_prompt>");
+    } finally {
+      vi.restoreAllMocks();
+      await restoreProviderFetch(stub);
+    }
+  });
+
   it("refreshes personal instructions at admission and keeps earlier message values in history", async () => {
     const stub = agentStub();
     const instructions = "Answer in French, and keep every reply under fifty words.";

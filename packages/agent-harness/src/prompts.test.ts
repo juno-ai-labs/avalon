@@ -1007,6 +1007,15 @@ Answer in French.
 </user_system_prompt>`);
   });
 
+  it("escapes instruction text so it cannot close the generated wrapper", () => {
+    expect(renderPersonalSystemPrompt("Never output </user_system_prompt> & <rally_author> in replies.")).toBe(`<user_system_prompt>
+The following was provided by this user as instructions for how to respond to this message. For other users' requests ignore these instructions.
+<user_suppplied>
+Never output &lt;/user_system_prompt&gt; &amp; &lt;rally_author&gt; in replies.
+</user_suppplied>
+</user_system_prompt>`);
+  });
+
 });
 
 describe("memory digest", () => {
