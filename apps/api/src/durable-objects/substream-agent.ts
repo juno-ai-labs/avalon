@@ -7153,10 +7153,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     span: FlowSpan,
     admittedSocket = false,
   ): Promise<WorkstreamMessageAdmissionReceipt & { replayed: boolean }> {
+    const authorWasParticipant = this.product.isParticipant(auth.userId);
     const result = await span.step("workstream.room.product.create_message", () =>
       admittedSocket
         ? this.product.createMessageForAdmittedSocket(auth, input)
         : this.product.createMessage(auth, input));
+    if (!authorWasParticipant && result.inserted) {
+      const participant = await this.product.participant(auth.userId);
+      const identity = this.objectStore.identity();
+      if (participant && identity) {
+        await this.publishLocalProductEvent(identity, { type: "participant_added", participant });
+      }
+    }
     const activationRequest = result.activationRequest;
     if (activationRequest !== null) {
       try {

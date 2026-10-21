@@ -1847,7 +1847,7 @@ export class WorkstreamObjectProductService {
     };
   }
 
-  private isParticipant(userId: string): boolean {
+  isParticipant(userId: string): boolean {
     return first(this.storage.sql.exec<{ one: number }>(
       `SELECT 1 AS one FROM participants WHERE user_id = ? AND status = 'active' LIMIT 1`,
       userId,
@@ -5003,7 +5003,7 @@ export class WorkstreamObjectProductService {
         startOffset: mention.startOffset,
         endOffset: mention.endOffset,
       }));
-      const admitted = this.storage.transactionSync(() => {
+      const committed = await this.objectStore.commitWithRegionalEffects(() => {
         const receipt = this.messageAdmissionReceipt(
           this.storage.sql,
           input.clientMessageId,
@@ -5024,7 +5024,7 @@ export class WorkstreamObjectProductService {
         }
         const concurrentPending = this.loops.inputByClientMessageId(input.clientMessageId);
         if (concurrentPending) {
-          return { kind: "pending" as const, input: concurrentPending, inserted: false };
+          return { kind: "pending" as const, input: concurrentPending, inserted: false, authorJoined: false };
         }
         if (receipt === "replayed") {
           throw new Error("substream_message_receipt_without_projection");
@@ -5041,6 +5041,22 @@ export class WorkstreamObjectProductService {
           if (latest?.run_id !== input.expectedLatestHarnessRunId) {
             throw new ApiError(409, "terminal_repository_request_stale", "The thread changed before this message was admitted");
           }
+        }
+        // Sending is participation when the message is accepted, even while
+        // its turn waits behind an active run. Handoff-owned rosters were
+        // already seated through prepareMessageParticipants above.
+        const authorJoined = !this.isParticipant(auth.userId);
+        if (authorJoined) {
+          if (new ParticipantAuthorityTransferStorage(this.storage).currentTransferId() !== null) {
+            throw new ApiError(409, "participant_access_changed", "Participant access changed; refresh and try again");
+          }
+          new WorkstreamIdentityStorage(this.storage).admitParticipant({
+            userId: auth.userId, addedByUserId: auth.userId, reason: "message", now,
+          });
+          this.storage.sql.exec(
+            `UPDATE participants SET first_opened_at = ?, updated_at = ? WHERE user_id = ?`,
+            now, now, auth.userId,
+          );
         }
         const result = this.loops.completeInputPreparation({
           inputId: messageId,
@@ -5109,8 +5125,12 @@ export class WorkstreamObjectProductService {
           kind: "pending" as const,
           input: result.input,
           inserted: result.outcome === "admitted",
+          authorJoined,
         };
-      });
+      }, (_sql, write) => write.kind === "pending" && write.authorJoined ? [{
+        partitionKey: `user:${auth.userId}`, effect: this.userEffect(this.root(), auth.userId),
+      }] : []);
+      const admitted = committed.result;
       if (admitted.kind === "canonical") {
         return this.canonicalMessageReplay(admitted.existing, input.clientMessageId);
       }

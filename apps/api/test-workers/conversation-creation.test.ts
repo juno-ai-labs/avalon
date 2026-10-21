@@ -532,6 +532,11 @@ describe("creating a work stream", () => {
     });
     const workstreamId = created.workstream.id;
 
+    const boot = await new WorkstreamObjectClient(creationEnv(), AUTH, workstreamId).boot();
+    expect(boot.workstream.participants.map((participant) => ({
+      userId: participant.user.id, reason: participant.participationReason,
+    }))).toEqual([{ userId: USER_ID, reason: "creator" }]);
+
     // Version 1 of the parent's projection: the child's first aggregate lands
     // as version 2 and replaces it. (The column CHECKs `waterline > 0`, so the
     // provisional row is 1, not 0.)
