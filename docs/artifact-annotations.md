@@ -239,6 +239,8 @@ layout box in place, which makes scroll bounds and annotation overlays diverge.
 must remain reachable when an image exceeds either viewport dimension, and zoom
 controls must remain outside that scrolling content.
 
+PR #1373.
+
 ### 2026-10-20 — Restore comment drafts and reconcile artifact revisions
 
 Confirmed comments are cached with their original evidence and resolved against
