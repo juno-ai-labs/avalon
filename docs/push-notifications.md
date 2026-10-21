@@ -54,8 +54,9 @@ one small row per successful intent/device at the current product size, rather
 than adding a cross-store retention job for launch. Future pruning should join
 existing intent retention, not introduce another scheduler.
 
-Payload bodies reduce Markdown formatting and Rally's internal citation and
-person-mention references to readable plain text before carrying the first
+Payload bodies remove the generated personal-system-prompt envelope, then
+reduce Markdown formatting and Rally's internal citation and person-mention
+references to readable plain text before carrying the first
 1,000 Unicode code points with an ellipsis when shortened, fitted further to
 Apple's 4,096-byte ceiling. Every alert also sets APNs `badge` to the number
 the sidebar's **Threads** button counts, less pending access requests

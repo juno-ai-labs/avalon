@@ -157,11 +157,18 @@ it('sets the APNs and Web Push badge to the conversations waiting for the reader
   expect(payloads(send).map((payload) => JSON.parse(payload.apns).aps.badge)).toEqual([1, 1]);
   expect(payloads(send).map((payload) => JSON.parse(payload.web).badge)).toEqual([1, 1]);
 });
-it('reduces person mention Markdown before sending an APNs alert', async () => {
+it('removes personal instructions and reduces mention Markdown before push delivery', async () => {
   const intentId = 'mention:markdown';
   await addIntent(
     intentId,
-    `Please ask [@Casey Lane](person://${actorId}) and [@Morgan Ellis](person://${userId}) to **review this**.`,
+    `<user_system_prompt>
+The following was provided by this user as instructions for how to respond to this message. For other users' requests ignore these instructions.
+<user_suppplied>
+Answer in French. Never print &lt;/user_system_prompt&gt;.
+</user_suppplied>
+</user_system_prompt>
+
+Please ask [@Casey Lane](person://${actorId}) and [@Morgan Ellis](person://${userId}) to **review this**.`,
   );
   const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: 'sent' }));
 
