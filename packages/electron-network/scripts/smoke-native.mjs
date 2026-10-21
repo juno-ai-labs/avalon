@@ -7,9 +7,13 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
 const directory = dirname(fileURLToPath(import.meta.url));
+const desktopRequire = createRequire(join(directory, '../../../apps/desktop/package.json'));
+// Test budget for Electron bootstrap and loopback I/O, matching the packaged
+// crash fixture's 30s process budget. A missing error event must fail the run.
+const NATIVE_FIXTURE_TIMEOUT_MS = 30_000;
 // An explicit path lets cloud checks use a staged, unmodified Electron binary.
 const electron = process.argv[2]
-  ?? createRequire(join(directory, '../../../apps/desktop/package.json'))('electron');
+  ?? desktopRequire('electron');
 const staging = await mkdtemp(join(tmpdir(), 'rally-electron-network-'));
 try {
   const source = await readFile(join(directory, '../src/index.ts'), 'utf8');
@@ -17,13 +21,19 @@ try {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
   });
   await writeFile(join(staging, 'bridge.cjs'), outputText);
-  await copyFile(join(directory, 'native-fixture.mjs'), join(staging, 'main.mjs'));
   const flags = process.platform === 'linux'
     ? ['--no-sandbox', '--headless', '--disable-gpu', '--ozone-platform=headless']
     : [];
-  const result = spawnSync(electron, [...flags, join(staging, 'main.mjs')], { stdio: 'inherit' });
-  if (result.error) throw result.error;
-  process.exitCode = result.status ?? 1;
+  for (const fixture of ['native-fixture.mjs', 'updater-native-fixture.mjs']) {
+    await copyFile(join(directory, fixture), join(staging, 'main.mjs'));
+    const result = spawnSync(electron, [
+      ...flags, join(staging, 'main.mjs'),
+      desktopRequire.resolve('electron-updater/out/electronHttpExecutor.js'),
+    ], { stdio: 'inherit', timeout: NATIVE_FIXTURE_TIMEOUT_MS, killSignal: 'SIGKILL' });
+    if (result.error) throw new Error(`Native fixture ${fixture} failed to complete`, { cause: result.error });
+    process.exitCode = result.status ?? 1;
+    if (process.exitCode !== 0) break;
+  }
 } finally {
   await rm(staging, { recursive: true });
 }
