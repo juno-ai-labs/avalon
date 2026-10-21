@@ -167,6 +167,82 @@ The host resolves stored-loadable Sidekicks against execution and conversation a
 | `apps/api/src/services/integrations.ts` | Context assembly and `loadRunPromptContext`. |
 | `packages/contracts` — `readStructuredFailure` | The shape a tool's machine-readable failure half is read through. |
 
+### Completion verification before stopping
+
+Ordinary persistent conversation loops use the evaluated premature-stop baseline
+question, pinned to JEV 1.14.0 with a one-second deadline. The host accepts a
+stop only when JEV reports `answer_or_result` or `blocker_or_question` with
+confidence **strictly above 0.70**. An unfinished or unclear result, confidence
+at or below 0.70, missing trigger context, unavailable credentials, timeout, or
+malformed response causes one verification reprompt. This is a narrow judgment
+of stopping behavior, not a proof of factual correctness or task completeness.
+
+The check runs at Bind's `onTurnWouldEnd` hook, after the model produces a
+response that would end its turn and before the host finalizes the run. The
+main model receives the verification prompt in its existing tool loop. It
+must finish remaining work, or briefly identify what it already delivered; it
+must inspect artifacts and receipts before repeating an action. The host does
+not replay tools. Existing attachment grounding runs first. A grounded terminal
+boundary, fixed-purpose profile, seeded demo, or nonpersistent host bypasses
+this check. There is no second classifier to admit only action requests: the
+four-way baseline also recognizes answers, plans and acknowledgements, as in
+the eval corpus. The classifier adds up to its one-second deadline to this
+terminal path, plus teammate lookup time. An unnecessary recovery spends one
+additional model turn and may produce a redundant completion confirmation;
+that cost is accepted to reduce missed unfinished work.
+
+The snapshot uses the exact triggering turn, including structured elicitation
+content, all user/assistant text in the current Bind projection, and current-
+execution tool receipt statuses, summaries and output references. It omits
+system policy and raw tool payloads. There is no last-N cutoff: nonadjacent
+instructions and later corrections remain available until ordinary compaction
+replaces them with a checkpoint. It does not retrieve discarded history or
+automatically add a Breakout's parent transcript. This production projection
+differs from the offline suite's curated antecedents; judge errors and oversized
+requests still take the verification fallback.
+
+An initial Sidekick activation with no triggering chat message uses its
+versioned definition's instructions, expected outputs, default behavior and
+trigger as the request. This is the same definition used by the acting model;
+it does not replace a referenced chat message that cannot be found. Otherwise,
+manual Sidekick runs would always consume recovery for falsely missing context.
+
+Authoritative lifecycle gates run before judging and again after it returns.
+Cancellation, required input, admitted/executing tools, ambiguous writes, an
+already-used recovery, or unknown execution state suppress verification. Every
+eligible stop checks teammates, including work delegated in earlier executions.
+An executing teammate, admitted or preparing input, or unavailable teammate
+status suppresses verification: the existing message-delivery path owns the
+reply. This is conservative at team scope and can defer a check when another
+teammate is busy. Terminal compaction precedes the lifecycle check; the nudge
+commit checks Stop atomically after materializing its payload, and model-turn
+reservation checks Stop again before admitting another request.
+
+The nudge is a `protocol_user_appended` transition with derived provenance
+`completion_verification` and the execution ID. The same atomic commit stores
+the model input and its one-use marker in `transcript_facts`; no separate flag
+can commit without the message. The marker is read from immutable facts rather
+than current projection links, so retry, compaction and eviction cannot reset
+it. A later execution can receive its own verification. Generation, revision
+and execution fences continue to protect the append. Ordinary string-valued
+host nudges retain protocol-only provenance.
+
+`completion_verification_decision` logs the mapped decision, confidence, model
+and failure kind; this is a recommendation, not evidence that a prompt was
+committed. `agent_completion_reprompted` records a successful recovery-prompt
+commit in structured logs and regional product telemetry, with reason, choice,
+confidence, threshold, requested judge model, and opaque run/parent IDs. It uses
+a stable event ID per execution, emits nothing when a lifecycle gate or commit
+rejects recovery, and never blocks continuation on telemetry. Join its
+`harnessRunId` to `run_terminal` to follow outcomes; it does not prove provider
+delivery or successful recovery. The shared classifier sink archives exact exchanges and
+records usage as `completion_verification`. The
+[eval suite](../packages/agent-harness/evals/premature-stop/README.md) shares the
+production question and fallback mapping; its existing reports remain frozen.
+The 0.70 result is exploratory: only one eligible real positive and a reused
+holdout. Deterministic integration tests establish recovery mechanics,
+not how often a live main model successfully finishes missing work.
+
 ### Exact Bind-loop durability
 
 The host mirrors Bind's accepted message state as an append/replacement ledger,
@@ -191,7 +267,8 @@ surviving exact message: participant and trigger wrappers point to their durable
 turn/event, tool wrappers point to receipts, and compaction continuations point
 to their checkpoint. The adapter
 strips that metadata while constructing OpenAI-compatible messages, so it never
-changes provider bytes. Runtime-created continuation nudges are protocol-only;
+changes provider bytes. Runtime-created continuation nudges are protocol-only unless a host supplies
+derived provenance for a durable policy decision such as completion verification;
 accepted assistant messages are canonical, and a host policy transformation is
 applied before either Bind or the participant transcript can accept one;
 accepted tool results retain their receipt identity. The work-stream host uses
@@ -1379,6 +1456,20 @@ outputs, summaries, token content, and provider responses remain excluded.
 
 ## Testing
 
+Completion verification is covered by
+`packages/agent-harness/src/completion-verification.test.ts` (JEV threshold,
+unavailability and cancellation), `packages/agent-harness/src/index.test.ts`
+(persist-before-inference and context delivery), and
+`apps/api/test/completion-verification.test.ts` (host lifecycle gates).
+The real workerd suites `workstream-transcript-runtime.test.ts` and
+`message-to-output-pipeline.test.ts` cover compaction/eviction and the complete
+production path for low confidence, unavailable judgment and accepted results.
+They also cover Stop during terminal compaction and nudge materialization,
+pending delegated inputs, and actual model-request delivery after eviction
+between the nudge commit and the next model call.
+Run them with `pnpm --filter @rally/api test:workers` and the respective paths;
+`-t 'completion verification'` scopes the added runtime cases.
+
 Sidekick catalog naming is covered by `apps/api/test/sidekick-presentation.test.ts`
 (`pnpm --filter @rally/api exec vitest run test/sidekick-presentation.test.ts`).
 The load, durable attachment, and next-execution instruction restoration path is
@@ -1500,6 +1591,28 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-10-21 — Verify uncertain completion once before ending a turn
+
+**What changed:** Ordinary persistent loops use the evaluated baseline JEV
+question with a 0.70 stop-acceptance threshold and one durable verification
+reprompt. The nudge and its execution-scoped marker commit as one derived fact.
+Message-less Sidekick activations resolve their request from the versioned
+definition used by the acting model. Stop fences the nudge commit and next
+reservation; teammate lifecycle includes queued work and earlier delegations.
+Committed reprompts have a separate, deduplicated telemetry event so classifier
+recommendations cancelled by lifecycle gates do not inflate recovery counts.
+
+**Why:** A promise that work is underway was being accepted as the final answer.
+Missing unfinished work is more costly than an extra verification turn. The chosen
+baseline caught all 19 eligible positives in the exploratory corpus; prompt
+variants increased confidence in a wrong answer and missed a recovery.
+
+**Considered and rejected:** A strict unfinished-label confidence gate misses
+confidently misclassified promises. An in-memory recovery flag resets after
+eviction, and checking current transcript text loses the marker on compaction.
+The host preserves lifecycle exclusions; the judge cannot override cancellation,
+existing work, ambiguous writes or required input.
 
 ### 2026-10-20 — Resume verified settled history after a loop relocation
 

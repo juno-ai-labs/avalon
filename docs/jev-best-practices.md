@@ -230,7 +230,39 @@ is a story about that run, and the cheapest way to find out which of the two
 regimes a decision is in is to repeat the baseline before ranking anything
 against it.
 
+The [premature-stop prompt experiment](../packages/agent-harness/evals/premature-stop/README.md#prompt-optimization-at-070)
+held its stop-acceptance threshold at 0.70 and repeated baseline plus three
+variants on development. The development winner saved one extra check, but
+missed a required reprompt in both holdout repeats; baseline missed none. The
+candidate made an incorrect result judgment more confident, bypassing the
+fallback. Keep baseline: optimize the operational decision, including confidence,
+not label agreement alone. This reused holdout is a regression comparison,
+not a fresh generalization test.
+
 ## Build ground truth that can disagree with production
+
+The [premature-stop suite](../packages/agent-harness/evals/premature-stop/README.md)
+compares 120 real thread/breakout cases with 60 synthetic cases using a dedicated
+Choice question. Its October 21 baseline shows why classifier accuracy and the
+downstream action need separate scores: 95% real label agreement still missed
+the one eligible real recovery and triggered a continuation on a blocked task.
+The labels are Codex-authored, and the corrected run reuses an inspected holdout.
+The user's preferred tradeoff now favors a verification reprompt over missed
+work: uncertainty fallback catches 18/19 needed reprompts, while checking once
+at every eligible stop catches 19/19 by construction. This removes JEV's veto
+over that first check, with extra verification turns measured as overhead. The
+main-model verification turn still needs an outcome evaluation; replaying the
+gate does not demonstrate completed tasks. Preserve source-linked context,
+authoritative lifecycle state, the one-use recovery marker, fixture revisions,
+and provider failures in future evaluations of this decision.
+
+The subsequent 0.70 confidence sweep and repeated prompt comparison selected
+baseline plus uncertainty fallback for the
+[production completion check](agent-harness.md#completion-verification-before-stopping).
+The host enforces lifecycle exclusions and persists one verification nudge per
+execution. Production and evaluation share the same question and decision
+mapping. Integration tests prove the loop continues and persists its marker;
+they do not establish live-model recovery success.
 
 Historical production output is a regression label, not automatically the
 correct answer. Keep it because it tells whether behavior changed, but add an
@@ -265,6 +297,18 @@ before changing those boundaries or interpreting their per-class metrics.
 
 Confidence is useful when it separates correct from incorrect cases in the
 actual distribution. It is not proof that the selected answer is correct.
+
+The premature-stop eval's exploratory confidence sweep illustrates the direction
+of the threshold. Requiring confidence above 0.70 before accepting an answer or
+blocker as a reason to stop caught 19/19 needed reprompts with 13 extra checks,
+compared with 18/19 and eight extras at 0.50. Always checking caused 106 extras.
+Lowering the original unfinished-label acceptance threshold could not catch the
+confidently wrong answer/result label. The sweep reuses inspected cases and has
+only one real positive. Production now adopts the baseline at 0.70 under the
+recall-first policy: uncertainty or judge failure triggers one verification
+turn. This is an operational threshold, not a calibrated probability of
+completion, and still needs validation on new thread families. See the suite's
+[confidence sweep](../packages/agent-harness/evals/premature-stop/README.md#confidence-sweep).
 
 For the optimized Rally Choice, mean confidence was 0.848 on correct cases and
 0.586 on incorrect cases. That separation supports a fallback policy, but the

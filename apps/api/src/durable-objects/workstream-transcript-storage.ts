@@ -666,12 +666,14 @@ export class WorkstreamTranscriptStorage {
     enqueueRegionalEffectsInTransaction?: (
       deliveries: readonly PendingInputDeliveryEffectInput[],
     ) => void,
+    assertAdmissionInTransaction?: () => void,
   ): Promise<void> {
     const previous = this.readBindProjection(transition.loopId);
     const next = applyBindLoopTransition(previous, transition);
     const facts = await this.materializeProjectionFacts(transition, previous, next);
 
     this.storage.transactionSync(() => {
+      assertAdmissionInTransaction?.();
       this.assertExpectedHead(previous, transition);
       for (const fact of facts.materials) this.insertFact(fact, now);
       this.writeBindState(transition, next, facts, now);

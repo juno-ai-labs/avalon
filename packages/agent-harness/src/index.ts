@@ -72,6 +72,7 @@ import type {
 import { reasoningEffortFor } from "./model-inference-defaults";
 
 export * from "./prompts";
+export * from "./completion-verification";
 export { hasAvalonToolProse, toolActivityName, type ToolActivityStatus } from "./tool-activity";
 export { isAzureBoundModel } from "./bind-runtime";
 export {
@@ -4507,7 +4508,10 @@ export interface RunHarnessInput {
   onTurnWouldEnd?: (turn: {
     assistantContent: string;
     cumulativeToolCalls: number;
-  }) => string | null | Promise<string | null>;
+    /** Exact current conversation, including delivered steers and compaction. */
+    messages: readonly ModelMessage[];
+  }) => string | { message: string; provenance: ModelMessageProvenance } | null
+    | Promise<string | { message: string; provenance: ModelMessageProvenance } | null>;
   signal?: AbortSignal;
 }
 
