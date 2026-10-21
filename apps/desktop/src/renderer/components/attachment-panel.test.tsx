@@ -28,7 +28,7 @@ describe('AttachmentPanel', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it('steps through a gallery with the arrow keys pressed inside the panel only', async () => {
+  it('keeps gallery arrow keys in the panel chrome and leaves viewport keys for scrolling', async () => {
     const first = { name: 'first.png', mimeType: 'image/png', loadContent: vi.fn(async () => new Blob(['first'])) };
     const second = { name: 'second.png', mimeType: 'image/png', loadContent: vi.fn(async () => new Blob(['second'])) };
     renderPanel({ ...first, gallery: [first, second], galleryIndex: 0 });
@@ -38,7 +38,11 @@ describe('AttachmentPanel', () => {
     fireEvent.keyDown(document.body, { key: 'ArrowRight' });
     expect(screen.getByRole('img', { name: 'first.png' })).toBeVisible();
 
-    fireEvent.keyDown(screen.getByRole('img', { name: 'first.png' }), { key: 'ArrowRight' });
+    // The image viewport keeps the browser's own horizontal scroll behavior.
+    expect(fireEvent.keyDown(screen.getByRole('region', { name: 'Image preview: first.png' }), { key: 'ArrowRight' })).toBe(true);
+    expect(screen.getByRole('img', { name: 'first.png' })).toBeVisible();
+
+    fireEvent.keyDown(screen.getByRole('complementary', { name: 'Attachment: first.png' }), { key: 'ArrowRight' });
     expect(await screen.findByRole('img', { name: 'second.png' })).toBeVisible();
     expect(screen.getByText('2 / 2')).toBeVisible();
   });
