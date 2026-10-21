@@ -48,6 +48,7 @@ export function securityMiddleware(): MiddlewareHandler<HonoAppEnv>[] {
       allowHeaders: [
         "authorization",
         "content-type",
+        "if-none-match",
         "idempotency-key",
         ...rallyHeaderAliases(RALLY_HEADERS.CLIENT_CONTRACT),
         ...rallyHeaderAliases(RALLY_HEADERS.DRAFT_ID),
@@ -55,7 +56,7 @@ export function securityMiddleware(): MiddlewareHandler<HonoAppEnv>[] {
         ...rallyHeaderAliases(RALLY_HEADERS.REGION),
         "x-request-id",
       ],
-      exposeHeaders: ["x-request-id"],
+      exposeHeaders: ["x-request-id", "etag"],
       allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       credentials: false,
       maxAge: 600,

@@ -72,6 +72,31 @@ it('serves a cold image with one admission RPC and one session/membership query'
   expect(statements.filter((sql) => /^SELECT/u.test(sql) && sql.includes('workspace_members'))).toHaveLength(1);
 });
 
+it('validates cached image bytes through one fresh admission and refuses the next revoked request', async () => {
+  await runInDurableObject(workspace(), (_instance, state) => {
+    state.storage.sql.exec('UPDATE resources SET content_sha256 = ? WHERE id = ?', 'a'.repeat(64), resourceId);
+  });
+  const requestHeaders = await headers();
+  const endpoint = `/resources/${resourceId}/preview`;
+  const first = await app.request(endpoint, { headers: requestHeaders }, observe([], []));
+  expect(first.status).toBe(200);
+  expect(new TextDecoder().decode(await first.arrayBuffer())).toBe('PNG fixture bytes');
+  // The digest update above advances the revision through the real resource trigger.
+  const validator = '"image-preview-v1:2:' + 'a'.repeat(64) + '"';
+  expect(first.headers.get('etag')).toBe(validator);
+  // A matching validator must not require the object that supplied the bytes.
+  await env.PAYLOADS.delete('read-admission/image');
+  const calls: string[] = [], statements: string[] = [];
+  const conditionalHeaders = { ...requestHeaders, 'if-none-match': validator };
+  const unchanged = await app.request(endpoint, { headers: conditionalHeaders }, observe(calls, statements));
+  expect(unchanged.status).toBe(304);
+  expect(await unchanged.text()).toBe('');
+  expect(calls).toEqual(['authorizationResourceFacts']);
+  expect(statements.filter((sql) => /^SELECT/u.test(sql) && sql.includes('workspace_members'))).toHaveLength(1);
+  await env.DB.prepare("UPDATE sessions SET revoked_at = '2026-10-21T00:00:00Z' WHERE id = ?").bind(auth.sessionId).run();
+  expect((await app.request(endpoint, { headers: conditionalHeaders }, observe([], []))).status).toBe(401);
+});
+
 it.each(['', '/content', '/versions', '/versions/1', '/versions/1/content', '/versions/1/preview'])(
   'admits attachment %s once and refuses a revoked session on the next request', async (suffix) => {
     const calls: string[] = [], statements: string[] = [];
