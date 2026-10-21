@@ -227,8 +227,11 @@ export type HarnessFailureCode = z.infer<typeof HarnessFailureCodeSchema>;
  * end of the list. The "orders each vendor's models newest first" test holds
  * the half of this a machine can check — a family whose ids carry comparable
  * version numbers must not ascend — which is every family except the two whose
- * members share a version (`gpt-5.6-*`, `deepseek-v4-*`) and are ordered by
- * hand.
+ * members share a version (`claude-*-5.5`, `deepseek-v4.1-*`) and are ordered
+ * by hand.
+ *
+ * **At most three per vendor.** Adding a vendor's newest model retires its
+ * oldest entry here, so the menu stays short enough to scan as it is refreshed.
  *
  * Nothing reads position 0. An earlier note here claimed the first entry was
  * what the selector showed before anything was chosen, and that has not been
@@ -247,6 +250,33 @@ export type HarnessFailureCode = z.infer<typeof HarnessFailureCodeSchema>;
  * See `docs/feature-flags.md` for how an override composes with the flags.
  */
 export const AGENT_MODEL_OVERRIDES = [
+  "x-ai/grok-4.7",
+  "x-ai/grok-4.6",
+  "x-ai/grok-4.5",
+  "google/gemini-4-argon",
+  "google/gemini-3.8-flash",
+  "google/gemini-3.7-flash",
+  "openai/gpt-6.1-sol",
+  "openai/gpt-6-luna",
+  "openai/gpt-5.6-sol",
+  "anthropic/claude-opus-5.5",
+  "anthropic/claude-sonnet-5.5",
+  "deepseek/deepseek-v4.1-flash-1017",
+  "deepseek/deepseek-v4.1-flash",
+  "deepseek/deepseek-v4-pro",
+] as const;
+export const AgentModelOverrideSchema = z.enum(AGENT_MODEL_OVERRIDES);
+export type AgentModelOverride = z.infer<typeof AgentModelOverrideSchema>;
+
+/**
+ * The pin list exactly as desktop builds released before 2026-10-21 parse
+ * `Workstream.modelOverride`: a closed enum, so one of those builds rejects the
+ * whole conversation when that field carries an id it has never heard of. The
+ * server therefore writes only these ids there and carries every pin in
+ * `pinnedModel`, which is an open string. Frozen: never add to it. Delete it,
+ * with `modelOverride`, once no build in the field reads that field.
+ */
+const LEGACY_WIRE_AGENT_MODEL_OVERRIDES = [
   "x-ai/grok-4.6",
   "x-ai/grok-4.5",
   "x-ai/grok-4.3",
@@ -261,8 +291,14 @@ export const AGENT_MODEL_OVERRIDES = [
   "deepseek/deepseek-v4-pro",
   "deepseek/deepseek-v4-flash-0731",
 ] as const;
-export const AgentModelOverrideSchema = z.enum(AGENT_MODEL_OVERRIDES);
-export type AgentModelOverride = z.infer<typeof AgentModelOverrideSchema>;
+const LegacyWireAgentModelOverrideSchema = z.enum(LEGACY_WIRE_AGENT_MODEL_OVERRIDES);
+type LegacyWireAgentModelOverride = z.infer<typeof LegacyWireAgentModelOverrideSchema>;
+
+/** A pin as `Workstream.modelOverride` may carry it: an id older builds know, or null. */
+export function legacyWireAgentModelOverride(model: string | null): LegacyWireAgentModelOverride | null {
+  const parsed = LegacyWireAgentModelOverrideSchema.safeParse(model);
+  return parsed.success ? parsed.data : null;
+}
 
 /** Every distinct model-using Rally task whose route is controlled by Flagship. */
 export const AGENT_MODEL_ROLES = [
@@ -666,8 +702,18 @@ export const WorkstreamSchema = z.object({
    * Re-validated against the closed set on the way out, so a model retired from
    * `AGENT_MODEL_OVERRIDES` reads as null here exactly as it resolves on the
    * server: back to the flag.
+   *
+   * An open string rather than the pin enum on purpose. Choosing a pin is a
+   * closed list; reading one must not be, or every model added to that list
+   * makes each installed build reject the conversations pinned to it.
    */
-  modelOverride: AgentModelOverrideSchema.nullable().default(null),
+  pinnedModel: z.string().min(1).nullable().default(null),
+  /**
+   * `pinnedModel` as builds released before 2026-10-21 read it: the same pin
+   * when it is one of the ids those builds know, null otherwise. Kept only for
+   * them; read `pinnedModel`.
+   */
+  modelOverride: LegacyWireAgentModelOverrideSchema.nullable().default(null),
   /** The first one-shot wake-up still waiting to fire, if there is one. */
   nextPendingWakeup: z.object({
     dueAt: TimestampSchema,
