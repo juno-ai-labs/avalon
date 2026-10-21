@@ -194,6 +194,13 @@ relationships; `ArtifactOpenService` applies the same resource authorization to
 both. A guest receives viewer identity only for a resource exposed in their
 shared scope. This does not change public content serving below.
 
+All four artifact API surfaces carry the HTTP request's membership proof into
+resource admission. The Organization returns the registry entry with its
+authorization facts, rather than requiring a registry RPC before authorization.
+The read admission lasts for this request; concurrent revocation may take effect
+on a later request, as described in [authorization](authorization.md). Viewer
+session revocation and expiry continue through their existing mechanism.
+
 
 Artifact content is public by default. A direct browser, crawler, or unfurler
 can `GET` or `HEAD` the stable URL without a Rally session. The Worker reads the
@@ -242,8 +249,8 @@ become unreachable from later opens. Artifacts currently use Rally's server-side
 data surface for durable state, so preserving that browser-local state was not
 worth retaining UUID origins for newly opened sessions.
 
-Data-table and error-log inspection use the same registry and current parent
-visibility checks as navigation, but do not load a viewer profile or mint a
+Data-table and error-log inspection use the same registry and canonical resource
+admission as navigation, but do not load a viewer profile or mint a
 browser bootstrap code. Only actual navigation calls `openForViewer`. Inspection
 also does not migrate legacy hostnames: it addresses the artifact object by ID.
 

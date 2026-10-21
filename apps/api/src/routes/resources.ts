@@ -1,5 +1,5 @@
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { zValidator } from "../middleware/validation";
 import { IdSchema, ResourceRevisionSchema, ResourceSchema } from "@rally/contracts";
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
@@ -10,6 +10,7 @@ import { workspaceRealtimeInvalidation } from "../middleware/workspace-realtime"
 import { getRequestMembership, getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { ArtifactOpenService } from "../services/artifact-open-service";
 import { ResourceService } from "../services/resource-service";
+import { ResourceReadContext } from "../services/authorization-service";
 import { ConversationService } from "../services/conversation-service";
 
 const idParam = z.object({ id: IdSchema });
@@ -77,9 +78,19 @@ export const resourceRoutes = new Hono<HonoAppEnv>();
 resourceRoutes.use("*",requireWorkspaceAuth);
 resourceRoutes.use("*",workspaceRealtimeInvalidation);
 
+function resourceReader(c: Context<HonoAppEnv>): ResourceService {
+  const auth = getWorkspaceAuth(c);
+  return new ResourceService(c.env, auth, undefined,
+    new ResourceReadContext(c.env, auth, getRequestMembership(c)));
+}
+
+function artifactReader(c: Context<HonoAppEnv>): ArtifactOpenService {
+  return new ArtifactOpenService(c.env, getWorkspaceAuth(c), getRequestMembership(c));
+}
+
 resourceRoutes.get("/", zValidator("query", listQuery), async (c) => {
   const query = c.req.valid("query");
-  return c.json(ResourcePageSchema.parse(await new ResourceService(c.env, getWorkspaceAuth(c)).list({
+  return c.json(ResourcePageSchema.parse(await resourceReader(c).list({
     ...(query.q ? { query: query.q } : {}),
     ...(query.cursor ? { cursor: query.cursor } : {}),
     limit: query.limit,
@@ -102,10 +113,10 @@ resourceRoutes.post("/resolve", zValidator("json", resolveBody), async (c) =>
   c.json(ResourceSchema.parse(await new ResourceService(c.env, getWorkspaceAuth(c)).resolve(c.req.valid("json"))), 201),
 );
 resourceRoutes.get("/:id", zValidator("param", idParam), async (c) =>
-  c.json(ResourceSchema.parse(await new ResourceService(c.env, getWorkspaceAuth(c)).get(c.req.valid("param").id))),
+  c.json(ResourceSchema.parse(await resourceReader(c).get(c.req.valid("param").id))),
 );
 resourceRoutes.get("/:id/content", zValidator("param", idParam), async (c) =>
-  new ResourceService(c.env, getWorkspaceAuth(c)).content(c.req.valid("param").id),
+  resourceReader(c).content(c.req.valid("param").id),
 );
 /**
  * Mint this person's access to a live artifact.
@@ -117,19 +128,19 @@ resourceRoutes.get("/:id/content", zValidator("param", idParam), async (c) =>
  * every request log on the way to the artifact origin.
  */
 resourceRoutes.post("/:id/artifact/open", zValidator("param", idParam), async (c) => {
-  const service = new ArtifactOpenService(c.env, getWorkspaceAuth(c), getRequestMembership(c));
+  const service = artifactReader(c);
   return c.json(ArtifactOpenResultSchema.parse(await service.open(c.req.valid("param").id)));
 });
 /** What the artifact's server module threw, for the rail to show a participant. */
 resourceRoutes.get("/:id/artifact/errors", zValidator("param", idParam), async (c) =>
   c.json(ArtifactErrorListSchema.parse(
-    await new ArtifactOpenService(c.env, getWorkspaceAuth(c)).errors(c.req.valid("param").id),
+    await artifactReader(c).errors(c.req.valid("param").id),
   )),
 );
 /** The tables a stateful artifact keeps, for the rail's Data view. */
 resourceRoutes.get("/:id/artifact/data", zValidator("param", idParam), async (c) =>
   c.json(ArtifactDataSchemaSchema.parse(
-    await new ArtifactOpenService(c.env, getWorkspaceAuth(c)).describeData(c.req.valid("param").id),
+    await artifactReader(c).describeData(c.req.valid("param").id),
   )),
 );
 /**
@@ -145,40 +156,40 @@ resourceRoutes.get(
   async (c) => {
     const param = c.req.valid("param");
     return c.json(ArtifactDataPageSchema.parse(
-      await new ArtifactOpenService(c.env, getWorkspaceAuth(c))
+      await artifactReader(c)
         .pageData(param.id, param.table, c.req.valid("query").offset),
     ));
   },
 );
 resourceRoutes.get("/:id/versions", zValidator("param", idParam), async (c) =>
   c.json(ResourceRevisionListSchema.parse(
-    await new ResourceService(c.env, getWorkspaceAuth(c)).versions(c.req.valid("param").id),
+    await resourceReader(c).versions(c.req.valid("param").id),
   )),
 );
 resourceRoutes.get("/:id/versions/:version", zValidator("param", versionParam), async (c) => {
   const param = c.req.valid("param");
   return c.json(ResourceRevisionSchema.parse(
-    await new ResourceService(c.env, getWorkspaceAuth(c)).version(param.id, param.version),
+    await resourceReader(c).version(param.id, param.version),
   ));
 });
 resourceRoutes.get("/:id/versions/:version/content", zValidator("param", versionParam), async (c) => {
   const param = c.req.valid("param");
-  return new ResourceService(c.env, getWorkspaceAuth(c)).versionContent(param.id, param.version, "original");
+  return resourceReader(c).versionContent(param.id, param.version, "original");
 });
 resourceRoutes.get("/:id/versions/:version/preview", zValidator("param",versionParam),async(c)=>{
   const param=c.req.valid('param');
-  return new ResourceService(c.env,getWorkspaceAuth(c)).versionPreview(param.id,param.version);
+  return resourceReader(c).versionPreview(param.id,param.version);
 });
 resourceRoutes.get("/:id/versions/:version/site-preview", zValidator("param", versionParam), zValidator("query",z.object({path:z.string().default('/')})), async (c) => {
   const param = c.req.valid("param");
-  return new ResourceService(c.env, getWorkspaceAuth(c)).annotationSitePreview(param.id,param.version,c.req.valid('query').path);
+  return resourceReader(c).annotationSitePreview(param.id,param.version,c.req.valid('query').path);
 });
 resourceRoutes.get("/:id/versions/:version/model-content", zValidator("param", versionParam), async (c) => {
   const param = c.req.valid("param");
-  return new ResourceService(c.env, getWorkspaceAuth(c)).versionContent(param.id, param.version, "model");
+  return resourceReader(c).versionContent(param.id, param.version, "model");
 });
 resourceRoutes.get("/:id/preview", zValidator("param", idParam), async (c) =>
-  new ResourceService(c.env, getWorkspaceAuth(c)).preview(c.req.valid("param").id, c.req.raw.signal),
+  resourceReader(c).preview(c.req.valid("param").id, c.req.raw.signal),
 );
 resourceRoutes.delete("/:id", zValidator("param", idParam), async (c) => {
   await new ResourceService(c.env, getWorkspaceAuth(c)).deleteDraft(c.req.valid("param").id);
