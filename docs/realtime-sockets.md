@@ -596,6 +596,12 @@ advances; advancing viewer state can never suppress a delayed common update. A
 breakout list applies only when its own waterline does not go back. No interval
 polling participates in convergence.
 
+The accepted breakout roster also reconciles cached Threads pages and their
+pinned copies: resolved children change rank and styling, and children absent
+from the roster are removed. Incoming REST pages use the same roster so an
+older response cannot restore a removed child. A thread visibility tombstone
+refreshes the navigation list; it is not itself proof of an archive.
+
 The retained feed sockets are deliberately not presence. Electron
 main reports whether the Rally application has any focused window; each
 renderer combines that with its own document/window focus and active route,

@@ -1,8 +1,8 @@
 import type { ArtifactPinList, ChannelStats, ContainerOrder, PersonalOrder, PinList, PinnedOrder, SpaceSnapshot } from '@rally/contracts';
-import { useQuery, type QueryClient, type UseQueryResult } from '@tanstack/react-query';
+import { useQuery, type InfiniteData, type QueryClient, type UseQueryResult } from '@tanstack/react-query';
 
 import { sameContainer } from './personal-order';
-import type { AutomationSummary } from './types';
+import type { AutomationSummary, SpaceConversationSummary } from './types';
 
 /**
  * The one receiver for the sidebar's two pushed lists.
@@ -64,6 +64,19 @@ export const ARTIFACT_PINS_QUERY_KEY = ['artifact-pins'] as const;
 export const CHANNEL_STATS_QUERY_KEY = ['channel-stats'] as const;
 /** The Threads tab's server list: threads and breakouts this person takes part in or pinned. */
 export const MY_THREADS_QUERY_KEY = ['my-threads'] as const;
+export interface ThreadNavigationPage {
+  items: SpaceConversationSummary[];
+  pinned?: SpaceConversationSummary[];
+}
+
+/** A confirmed local archive removes navigation copies before the socket evicts its marker. */
+export function removeArchivedThreadNavigation(queryClient: QueryClient, threadId: string): void {
+  const keep = (row: SpaceConversationSummary): boolean => row.id !== threadId && row.breakoutOf?.workstreamId !== threadId;
+  queryClient.setQueryData<InfiniteData<ThreadNavigationPage>>(MY_THREADS_QUERY_KEY, (current) => current ? {
+    ...current,
+    pages: current.pages.map((page) => ({ ...page, items: page.items.filter(keep), pinned: page.pinned?.filter(keep) })),
+  } : current);
+}
 /** The Activity tab's first page. */
 export const ACTIVITY_QUERY_KEY = ['activity'] as const;
 /** One Channel's feed. */
