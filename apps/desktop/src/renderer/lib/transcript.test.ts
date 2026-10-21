@@ -113,7 +113,7 @@ describe('transcript messages', () => {
   });
 
   it('keeps adjacent cards when their catalog id or scope differs', () => {
-    const card = (id: string, connectorId: 'google-mail-calendar' | 'google-drive-workspace', scope: 'personal' | 'workspace') =>
+    const card = (id: string, connectorId: 'google-mail-calendar' | 'google-drive', scope: 'personal' | 'workspace') =>
       createToolEventMessage({
         ...base,
         id,
@@ -127,8 +127,8 @@ describe('transcript messages', () => {
 
     expect(dedupeAdjacentConnectorConnectionCards([
       card('mail', 'google-mail-calendar', 'personal'),
-      card('drive-personal', 'google-drive-workspace', 'personal'),
-      card('drive-workspace', 'google-drive-workspace', 'workspace'),
+      card('drive-personal', 'google-drive', 'personal'),
+      card('drive-workspace', 'google-drive', 'workspace'),
     ]).map((message) => message.id)).toEqual(['mail', 'drive-personal', 'drive-workspace']);
   });
 

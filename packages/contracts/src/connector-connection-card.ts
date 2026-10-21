@@ -18,7 +18,7 @@ export const ConnectorConnectionCardCatalog = {
     providerType: "google",
     scopes: ["personal"],
   },
-  "google-drive-workspace": {
+  "google-drive": {
     capabilityPrefixes: ["drive.", "docs.", "sheets."],
     iconName: "google-drive",
     providerType: "google",
@@ -57,12 +57,9 @@ const personalOrWorkspaceConnectorIds = ConnectorConnectionCardIds.filter((conne
   ConnectorConnectionCardCatalog[connectorId].scopes.includes("workspace" as never));
 
 const ConnectorConnectionCardShape = z.strictObject({
-  // The `-workspace` in `google-drive-workspace` is Google Workspace, the
-  // product. Two agents read it as Rally's workspace scope and asked only
-  // about the Organization's connection while the person's own worked.
   connectorId: z.enum(ConnectorConnectionCardIds).describe(
     `Connector to check or show. Personal only: ${personalOnlyConnectorIds.join(", ")}. Personal or workspace: ${personalOrWorkspaceConnectorIds.join(", ")}.`
-    + " google-drive-workspace is Google Drive, Docs and Sheets; the word workspace in it names Google's product, not a scope.",
+    + " google-drive is Google Drive, Docs and Sheets.",
   ),
   scope: z.enum(ConnectorConnectionCardScopes).describe(
     "Use personal for the current user's account. Use workspace only for an id described as personal or workspace.",
@@ -82,6 +79,14 @@ export const ConnectorConnectionCardInputSchema = ConnectorConnectionCardShape.s
 );
 
 export type ConnectorConnectionCardInput = z.infer<typeof ConnectorConnectionCardInputSchema>;
+
+// Read old transcript cards without advertising the retired id to the model.
+const LEGACY_GOOGLE_DRIVE_CARD_ID = "google-drive-workspace";
+const StoredConnectorConnectionCardInputSchema = z.union([
+  ConnectorConnectionCardInputSchema,
+  ConnectorConnectionCardShape.extend({ connectorId: z.literal(LEGACY_GOOGLE_DRIVE_CARD_ID) })
+    .transform((input): ConnectorConnectionCardInput => ({ connectorId: "google-drive", scope: input.scope })),
+]);
 
 export const ConnectorConnectionStateSchema = z.enum([
   "connected",
@@ -184,7 +189,7 @@ export function connectorConnectionCardInputFromToolEvent(event: {
 } | undefined): ConnectorConnectionCardInput | null {
   if (!isConnectorConnectionCardWireName(event?.name) || event?.status !== "completed") return null;
   for (const candidate of [event.input, event.output]) {
-    const parsed = ConnectorConnectionCardInputSchema.safeParse(candidate);
+    const parsed = StoredConnectorConnectionCardInputSchema.safeParse(candidate);
     if (parsed.success) return parsed.data;
   }
   for (const connectorId of ConnectorConnectionCardIds) {
@@ -193,6 +198,11 @@ export function connectorConnectionCardInputFromToolEvent(event: {
       if (event.summary !== connectorConnectionCardSummary(candidate)) continue;
       const parsed = ConnectorConnectionCardInputSchema.safeParse(candidate);
       if (parsed.success) return parsed.data;
+    }
+  }
+  for (const scope of ConnectorConnectionCardScopes) {
+    if (event.summary === `Presented the ${LEGACY_GOOGLE_DRIVE_CARD_ID} ${scope} connection card`) {
+      return { connectorId: "google-drive", scope };
     }
   }
   return null;

@@ -62,6 +62,7 @@ import {
 
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { connectorPluginBindingViews } from "../lib/connector-plugin-views";
 import { connectorActivityTriggerDescriptors, storedConnectionScope } from "../lib/connector-activity-triggers";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { sha256 } from "../lib/crypto";
@@ -1133,21 +1134,28 @@ export class HostedSidekick {
       // Per bound plugin: whether its connection is usable by the claimant
       // (an Organization one, or the claimant's own), and if not, the
       // plugin's connection when the claimant may use it (one per plugin).
-      const decisions = this.sql.exec<{ plugin_id: string; usable: number; replacement_id: string | null }>(
-        `SELECT binding.key AS plugin_id,
-                EXISTS (
-                  SELECT 1 FROM connector_connections bound
-                   WHERE bound.id = binding.value AND bound.workspace_id = ?1 AND bound.status <> 'disabled'
-                     AND (bound.scope = 'workspace' OR bound.owner_user_id = ?2)
-                ) AS usable,
-                (SELECT replacement.id FROM connector_connections replacement
-                  WHERE replacement.workspace_id = ?1 AND replacement.status <> 'disabled'
-                    AND replacement.model_plugin_id = binding.key
-                    AND (replacement.scope = 'workspace' OR replacement.owner_user_id = ?2)
-                  ORDER BY replacement.id LIMIT 1) AS replacement_id
-           FROM json_each(?3) binding`,
-        row.workspace_id, claimant, row.connector_bindings_json,
+      const connections = this.sql.exec<{
+        id: string; connector_type: string; model_plugin_id: string; granted_scopes_json: string;
+      }>(
+        `SELECT id, connector_type, model_plugin_id, granted_scopes_json FROM connector_connections
+          WHERE workspace_id = ? AND status <> 'disabled'
+            AND (scope = 'workspace' OR owner_user_id = ?) ORDER BY id`,
+        row.workspace_id, claimant,
       ).toArray();
+      const usableIds = new Set(connections.map((connection) => connection.id));
+      const replacements = new Map<string, string>();
+      for (const connection of connections) {
+        for (const view of connectorPluginBindingViews(
+          connection.connector_type, connection.model_plugin_id, JSON.parse(connection.granted_scopes_json) as string[],
+        )) {
+          if (!replacements.has(view.modelPluginId)) replacements.set(view.modelPluginId, connection.id);
+        }
+      }
+      const decisions = Object.entries(bindings).map(([pluginId, connectionId]) => ({
+        plugin_id: pluginId,
+        usable: usableIds.has(connectionId) ? 1 : 0,
+        replacement_id: replacements.get(pluginId) ?? null,
+      }));
       const next = { ...bindings };
       const rebound: string[] = [];
       const unbound: string[] = [];
@@ -1775,13 +1783,15 @@ export class HostedSidekick {
     // request's bookkeeping that an in-object read does not need.
     const connections = selectedPluginIds.length === 0 ? [] : this.sql.exec<{
       id: string; connector_type: string; scope: string; owner_user_id: string | null;
-      model_plugin_id: string; status: string; config_json: string | null;
+      model_plugin_id: string; status: string; config_json: string | null; granted_scopes_json: string;
     }>(
-      `SELECT id, connector_type, scope, owner_user_id, model_plugin_id, status, config_json
+      `SELECT id, connector_type, scope, owner_user_id, model_plugin_id, status, config_json, granted_scopes_json
          FROM connector_connections WHERE workspace_id = ? AND status <> 'disabled'`,
       row.workspace_id,
     ).toArray();
-    const connectionsByPlugin = new Map(connections.map((connection) => [connection.model_plugin_id, connection]));
+    const connectionsByPlugin = new Map(connections.flatMap((connection) => connectorPluginBindingViews(
+      connection.connector_type, connection.model_plugin_id, JSON.parse(connection.granted_scopes_json) as string[],
+    ).map((view) => [view.modelPluginId, { ...connection, grantedScopes: view.grantedScopes }] as const)));
     const connectorBindings: Record<string, string> = {};
     for (const pluginId of selectedPluginIds) {
       const connection = connectionsByPlugin.get(pluginId);
@@ -1811,6 +1821,7 @@ export class HostedSidekick {
             registry.get(connection.connector_type),
             connection.config_json,
             storedConnectionScope(connection.scope),
+            connection.grantedScopes,
           )
           : undefined;
       },
@@ -1833,6 +1844,7 @@ export class HostedSidekick {
         registry.get(connection.connector_type),
         connection.config_json,
         storedConnectionScope(connection.scope),
+        connection.grantedScopes,
       );
       const eventFamilies: Record<string, string[]> = {};
       for (const descriptor of descriptors) {
