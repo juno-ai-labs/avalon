@@ -25,6 +25,8 @@ import { asSubstreamId } from "@rally/contracts";
 
 import { conversationObjectName } from "../src/durable-objects/names";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
+import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
+import { pendingChildEffects } from "./helpers/conversation-effects";
 import {
   WORKSPACE_ID,
   WORKSTREAM_ID,
@@ -90,6 +92,61 @@ function append(overrides: Record<string, unknown> = {}): Record<string, unknown
 }
 
 describe("message authority on real workerd", () => {
+  describe("source merge notices", () => {
+    useHeldEffectQueue();
+
+    it.each([false, true])("preserves every reader's unread state (existing unread: %s)", async (alreadyUnread) => {
+      // Bootstrap only; no run or provider call is needed for system notices.
+      const stub = agent();
+      await boot(stub);
+      const merger = "00000000-0000-4000-8000-000000000111";
+      const reader = "00000000-0000-4000-8000-000000000112";
+      await runInDurableObject(stub, (_instance, state) => {
+        seedWorkstreamRoot(state);
+        for (const userId of [merger, reader]) {
+          state.storage.sql.exec(`INSERT INTO participants
+            (user_id, participation_reason, added_by_user_id, status, participant_epoch, added_at, updated_at)
+            VALUES (?, 'creator', ?, 'active', 0, 1, 1)`, userId, merger);
+        }
+      });
+      if (alreadyUnread) {
+        expect((await messages(stub, "appendMessage", append())).status).toBe(200);
+      }
+      const notice = append({
+        messageId: "merge-notice", clientMessageId: "merge-notice", text: "Merged into Thread",
+        structuredContentJson: JSON.stringify({
+          type: "conversation_merged_into", schemaVersion: 1, mergedByUserId: merger,
+          messageId: "destination-merge", actingAgent: false,
+          mergedInto: { kind: "thread", id: WORKSTREAM_ID, title: "Thread" },
+        }),
+        now: 1_787_000_005_000,
+      });
+      expect((await messages(stub, "appendMessage", notice)).value).toMatchObject({ outcome: "appended" });
+      expect((await messages(stub, "appendMessage", notice)).value).toMatchObject({ outcome: "replayed" });
+
+      const effects = (await pendingChildEffects(stub)).map((envelope) => envelope.effect);
+      for (const userId of [merger, reader]) {
+        expect(effects.filter((effect) => effect.kind === "directory_user" && effect.userId === userId).at(-1))
+          .toMatchObject({ unreadCount: alreadyUnread ? 1 : 0, youAreMentioned: false });
+      }
+      await runInDurableObject(stub, (_instance, state) => {
+        const transcript = new WorkstreamTranscriptStorage(state.storage).createOpeningSnapshot({
+          unreadHighWaterAttentionOrdinal: alreadyUnread ? 1 : null,
+        });
+        expect(transcript.unreadAnchorSequence).toBe(alreadyUnread ? 1 : null);
+        expect(transcript.ranges.flatMap((range) => range.turns).find((turn) => turn.turnId === "merge-notice"))
+          .toMatchObject({ actor: "system", attentionOrdinal: null, blocks: [{ type: "text", text: "Merged into Thread" }] });
+        expect(state.storage.sql.exec(`SELECT next_attention_ordinal, last_people_activity_at FROM workstream`).one())
+          .toEqual({ next_attention_ordinal: alreadyUnread ? 2 : 1, last_people_activity_at: alreadyUnread ? 1_787_000_000_000 : 1 });
+      });
+
+      // The next ordinary message still gets the next unread ordinal.
+      expect((await messages(stub, "appendMessage", append({ messageId: "after", clientMessageId: "after" }))).status).toBe(200);
+      expect((await messages(stub, "messageByClientId", { clientMessageId: "after" })).value)
+        .toMatchObject({ attention_ordinal: alreadyUnread ? 2 : 1 });
+    });
+  });
+
   it("commits the appended row and the directory projection in one step", async () => {
     const stub = agent();
     await boot(stub);
