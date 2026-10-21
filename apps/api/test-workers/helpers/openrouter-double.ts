@@ -22,6 +22,7 @@
  * for when a test should use this and when it should keep the run away from the
  * model instead.
  */
+import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, expect, vi } from "vitest";
 import { providerRequestView, responsesStreamResponse } from "@rally/agent-harness/test-support/responses-stream";
 
@@ -138,7 +139,8 @@ function jsonReply(
 
 /**
  * Serve OpenRouter from `handler` for the duration of each test in the
- * enclosing `describe`.
+ * enclosing `describe`. Completed scripted turns receive a successful JEV
+ * completion judgment; other classifiers retain their unavailable response.
  *
  * Any other outbound host is refused rather than passed through, and the
  * refusal is recorded as well as thrown: production code turns a failed
@@ -150,10 +152,14 @@ function jsonReply(
 export function useOpenRouterDouble(handler: ProviderHandler): OpenRouterDouble {
   const calls: ProviderCall[] = [];
   const unexpected: string[] = [];
+  const mutableEnv: { TYPESAFE_API_KEY?: string } = env;
+  let originalTypesafeKey: string | undefined;
 
   beforeEach(() => {
     calls.length = 0;
     unexpected.length = 0;
+    originalTypesafeKey = mutableEnv.TYPESAFE_API_KEY;
+    mutableEnv.TYPESAFE_API_KEY = "openrouter-double-completion-key";
     vi.stubGlobal("fetch", async (
       input: RequestInfo | URL,
       init?: RequestInit,
@@ -161,6 +167,13 @@ export function useOpenRouterDouble(handler: ProviderHandler): OpenRouterDouble 
       const url = new URL(typeof input === "string" || input instanceof URL
         ? input.toString()
         : input.url);
+      if (url.href === "https://api.typesafe.ai/v1/systemone") {
+        const body = JSON.parse(typeof init?.body === "string" ? init.body
+          : input instanceof Request ? await input.clone().text() : "{}");
+        if (!body.questions?.stopping) return Response.json({ error: "test_classifier_unavailable" }, { status: 503 });
+        return Response.json({ model: "jev-1.14.0",
+          answers: { stopping: { type: "choice", choice: "answer_or_result", confidence: 0.99 } } });
+      }
       if (url.origin !== OPENROUTER_ORIGIN) {
         unexpected.push(url.toString());
         throw new Error(`openrouter_double_unexpected_host:${url.origin}${url.pathname}`);
@@ -207,6 +220,8 @@ export function useOpenRouterDouble(handler: ProviderHandler): OpenRouterDouble 
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    if (originalTypesafeKey === undefined) delete mutableEnv.TYPESAFE_API_KEY;
+    else mutableEnv.TYPESAFE_API_KEY = originalTypesafeKey;
     // Read before clearing so the next test starts clean even when this fails.
     const seen = [...unexpected];
     unexpected.length = 0;

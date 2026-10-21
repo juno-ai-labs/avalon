@@ -853,6 +853,14 @@ and be called again with the result, `{ httpError }` for a refusal, `{ raw }`
 for a `Response` you build yourself. So a test can assert on
 *what the model was asked*, which is usually the more interesting half.
 
+The helper also installs a test Typesafe key and answers the JEV completion
+question with a confident `answer_or_result`, restoring the key after each test.
+Other JEV questions receive an unavailable response. This keeps scripted final
+answers terminal while exercising the real completion policy: omitting this
+provider boundary activates the unavailable-judge recovery and consumes another
+scripted turn. Completion recovery tests use `installScriptedProvider` with
+explicit `completionAnswers` to cover unfinished work, uncertainty and outages.
+
 Streamed turns reach the double as OpenRouter Responses requests, and it answers
 with Responses events. `call.messages` and `call.toolNames` read the request
 back as Chat messages and tool names through `providerRequestView`, and the raw
@@ -868,7 +876,7 @@ Four things about it are deliberate:
 - **It is opt-in per file, not installed suite-wide.** A file that does not ask
   for it behaves exactly as it did before, so adopting this does not quietly
   change what every other file is asserting.
-- **Any other outbound host is refused, and the refusal is recorded as well as
+- **Hosts other than OpenRouter and the explicit Typesafe endpoint are refused, and the refusal is recorded as well as
   thrown.** Production turns a failed provider fetch into a run failure and a
   failed catalog fetch into a shrug, so a throw on its own gets swallowed on the
   way out and the surprise is lost. The recorded list is asserted empty after
