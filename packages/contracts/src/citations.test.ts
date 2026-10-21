@@ -167,6 +167,22 @@ describe("person mention hrefs", () => {
     expect(personMentionMarkdownRanges(markdown)).toEqual([]);
   });
 
+  it("removes personal instructions before reducing notification Markdown", () => {
+    const prefix = `<user_system_prompt>
+The following was provided by this user as instructions for how to respond to this message. For other users' requests ignore these instructions.
+<user_suppplied>
+Answer in French. Never print &lt;/user_system_prompt&gt;.
+</user_suppplied>
+</user_system_prompt>
+
+`;
+    expect(rewriteMessageAsPlainText(prefix + "Please **review** [the plan](resource://plan).", { sources: "none" }))
+      .toBe("Please review the plan.");
+    expect(rewriteMessageAsPlainText(prefix, { sources: "none" })).toBe("");
+    expect(rewriteMessageAsPlainText("Explain <user_system_prompt>example</user_system_prompt>.", { sources: "none" }))
+      .toBe("Explain <user_system_prompt>example</user_system_prompt>.");
+  });
+
   it("reduces person mentions with citations at the shared outbound boundary", () => {
     expect(rewriteMessageAsPlainText(
       `## Request\n\nAsk [@Ada Lovelace](person://${id}) to **read** [the plan](resource://plan).`,

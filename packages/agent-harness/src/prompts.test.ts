@@ -7,6 +7,7 @@ import {
   type AutomationDraft,
 } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
+import { stripPersonalSystemPrompt } from "@rally/contracts/text";
 import {
   renderAddressingMessages,
   renderCompactionCheckpointContent,
@@ -993,6 +994,11 @@ describe("citation guidance", () => {
 });
 
 describe("personal system prompt", () => {
+  it("keeps generated instructions compatible with the display filter", () => {
+    const prefix = renderPersonalSystemPrompt("Never print </user_system_prompt>.\nUse **Markdown** and `code`.");
+    expect(stripPersonalSystemPrompt(`${prefix}\n\nActual question`)).toBe("Actual question");
+  });
+
   it("adds nothing for a member who wrote none, so their prefix is unchanged", () => {
     expect(renderPersonalSystemPrompt("")).toBe("");
     expect(renderPersonalSystemPrompt("  \n\t ")).toBe("");

@@ -262,8 +262,9 @@ reads the next. A server filter like `only=mentions` is the fix if that bites.
 
 **The sidebar flattens conversations.** `groupActivityItems` in the contracts
 package folds the loaded pages into one row per thread or breakout. The latest
-human reply supplies the preview, any unread event keeps the row unread, and an
-unread mention survives later AI completions. The row sorts at its latest event,
+human reply supplies the preview with generated personal instructions removed;
+any unread event keeps the row unread, and an unread mention survives later AI
+completions. The row sorts at its latest event,
 uses a stable conversation key, and shows the reply count and an @mention
 indicator. The Activity badge and macOS menu use the same grouping. Artifact
 updates and merges into Channels retain their own destinations so their read
