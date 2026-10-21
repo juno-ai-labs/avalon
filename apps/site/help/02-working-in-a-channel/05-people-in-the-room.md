@@ -26,8 +26,12 @@ The quickest way is the menu itself:
 
 1. Click the Thread's name in its title pill and choose **Add people** (or
    **People**).
-2. Type in **Add someone by name or email**, or pick from **Suggested**.
+2. Type in **Add someone by name or email**, or pick from the people listed.
 3. Click **Add** beside the person.
+
+**Suggested** shows up to five people, prioritizing Rally replies and @mentions
+in this Channel, then across your Organization, then other Members and Guests.
+Each person appears once. Search by name or email to find anyone else.
 
 For the full list, click **Change** beside **Private** or **Public to
 organization** at the top of **People**. The **Add a participant** window lists

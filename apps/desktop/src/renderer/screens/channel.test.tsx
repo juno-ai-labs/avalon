@@ -23,6 +23,7 @@ const api = vi.hoisted(() => ({
   getResourceVersions: vi.fn(async (): Promise<ResourceVersion[]> => []),
   getResourceVersionContent: vi.fn(async () => new Blob(['The first model.'], { type: 'text/markdown' })),
   getWorkspaceMembers: vi.fn(async () => []),
+  getPeopleRanking: vi.fn(async () => ({ channel: [], organization: [] })),
   getWorkspaceInvitees: vi.fn(async () => []),
   archiveSpace: vi.fn(),
   updateSpacePresentation: vi.fn(),
@@ -1122,6 +1123,7 @@ describe('a Channel', () => {
     await screen.findByRole('menuitem', { name: 'Icon' });
     expect([...screen.getByRole('menu').querySelectorAll('[role^="menuitem"]')].map((item) => item.textContent?.trim()))
       .toEqual(['Icon', 'Pinned in my sidebar']);
+    expect(api.getPeopleRanking).not.toHaveBeenCalled();
   });
 
   it('offers its icon and colour in More, beside its settings', async () => {

@@ -116,6 +116,31 @@ fetch management choices. Canonical management denial hides the picker; unresolv
 creation and shows a loading row menu only for eligible rows. Attachment updates
 seed the selected cache and invalidate siblings without discarding the new seed.
 
+### People picker order
+
+The People level keeps the current participants and pending conversation
+invitations first, then requests to join. A single **Suggested** list shows at
+most five people total. Its ranking tiers are the top five collaborators in
+this Channel, the top five other collaborators in the Organization, remaining
+Members alphabetically, then Guests alphabetically. The tiers are internal
+ordering rules, not separate visible sections. Deduplication and eligibility
+filtering happen before taking the final five: current participants, inactive
+accounts and people who asked to join are excluded. Pending Organization
+invitees follow registered Members, with their Invited label. Search exposes
+all matching names and email addresses in that order, without the suggestion cap.
+
+`GET /navigation/people-ranking?channelId=…` returns ordered person ids from
+`workspace-people-ranking.ts`; [the activity log](digests.md#people-interaction-ranking)
+owns the scoring and indexed read. Thread ranking uses the route's Channel
+pane context; standalone Threads use Organization ranking alone.
+
+The title pill's `onMenuOpen` starts the host's optional ranking read before
+People is selected. People snapshots that order on entering the level: late
+responses apply on its next opening, so an Add button never moves under the
+pointer. Pending or failed reads silently keep the directory fallback usable.
+The host gates both automatic and manual reads on API, person and member
+eligibility, and shares any in-flight refresh on reopening.
+
 ## Invariants
 
 - Shared components import no application, IPC, authentication or transport code.
@@ -152,6 +177,33 @@ surfaces in Electron. The browser host in #825 adds Chrome verification; no seco
 component test runner is needed for the same implementations.
 
 ## Changelog
+
+### 2026-10-21 — People start with frequent collaborators
+
+**What changed:** The picker shows five eligible people total, ranked by Channel
+collaborators, Organization collaborators, Members and Guests. Search exposes
+everyone else. Indexed candidate seeks read existing human reply and mention
+facts. The title menu warms ranking before People is selected; each People
+opening keeps one order while late results wait for the next opening.
+
+**Why:** Five alphabetical suggestions gave unrelated accounts the same
+prominence as teammates. The first ranking query scanned all retained
+Organization activity: 10,000 unrelated replies increased its reads from 34 to
+60,034. Ranking must stay off the menu's opening path and exclude unrelated
+traffic from its read work.
+
+**Considered and rejected:** A second relationship ledger or a stale-result
+time window would add another state lifecycle. One partial author index and
+the existing target/conversation indexes keep the source facts authoritative.
+Connector activity does not contribute to the requested Rally-only ranking.
+
+**Consequences:** Keep Channel context route-owned, filter access at read time,
+and deduplicate before the final five-person limit. Guard manual reads as well
+as automatic queries for guests. Keep the visible order stable until People is
+reopened. Preserve the indexed candidate seeks and expression affinity; the real-workerd read-cost regression
+must remain independent of unrelated Organization history.
+
+PR: #1367.
 
 ### 2026-10-20 — Breadcrumbs attach to the command pill
 

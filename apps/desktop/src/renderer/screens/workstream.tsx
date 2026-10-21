@@ -917,6 +917,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       } : {}),
       title: naming ? <TitleSkeleton className="title-skeleton-header" /> : title,
       label: `Thread menu: ${title}`,
+      onMenuOpen: context?.people?.onOpen,
       ...(onSelect ? { onSelect } : {}),
       menu: <ChannelMenu
         actions={mainActions}
@@ -985,6 +986,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       bridge: { mark: workstreamMark(breakoutId, selectedAppearance ?? undefined), name: title, action: 'Open breakout' },
       title: naming ? <TitleSkeleton className="title-skeleton-header" /> : title,
       label: `Breakout menu: ${title}`,
+      onMenuOpen: context.people?.onOpen,
       menu: <BreakoutMenu
         actions={substreamActions}
         appearance={!channelWritable ? undefined : <AppearanceSubmenu

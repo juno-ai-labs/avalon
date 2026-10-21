@@ -106,6 +106,7 @@ export function TitleMenuMorph({ children }: { children: ReactNode }): React.JSX
         event.preventDefault();
         event.stopPropagation();
         next.focus({ preventScroll: true });
+        next.scrollIntoView({ block: 'nearest' });
       }}
       ref={inner}
     >
@@ -197,6 +198,8 @@ export interface TitlePillLevel {
   /** The accessible name of the menu trigger, e.g. `Channel menu: Launch`. */
   label: string;
   menu?: ReactNode;
+  /** Start optional menu reads on opening, before a nested level is selected. */
+  onMenuOpen?: (() => void) | undefined;
   onSelect?: () => void;
   /**
    * A control that replaces the icon, such as the appearance picker. It sits
@@ -234,6 +237,7 @@ export function TitlePill({ level, variant = 'current' }: {
   const onOpenChange = (open: boolean): void => {
     if (open) {
       blurTextEntry();
+      level.onMenuOpen?.();
       return;
     }
     setDirection('in');

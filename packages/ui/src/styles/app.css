@@ -8034,6 +8034,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   max-height: min(640px, calc(100vh - 96px));
   overflow-y: auto;
   padding: 14px;
+  scroll-padding-block: 14px;
   width: 380px;
 }
 .title-pill-menu .menu-separator { background: var(--av-sys-color-border-subtle); margin: 8px 0; }
@@ -8046,6 +8047,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
    read as the same surface changing rather than a new one appearing. */
 .title-pill-menu.menu-content { width: auto; }
 .title-menu-morph {
+  flex-shrink: 0;
   overflow: hidden;
   transition: height 320ms cubic-bezier(.32, .72, 0, 1), width 320ms cubic-bezier(.32, .72, 0, 1);
 }
