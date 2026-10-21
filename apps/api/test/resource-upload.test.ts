@@ -141,7 +141,7 @@ describe('uploaded attachment drafts', () => {
     expect(get).not.toHaveBeenCalled();
   });
 
-  it('rechecks search preview ownership after loading bytes', async () => {
+  it('finishes an admitted search preview and refuses the next read after ownership changes', async () => {
     let revoke = () => {};
     const { database, env } = fixture({ async put() {}, async get() {
       revoke();
@@ -151,6 +151,8 @@ describe('uploaded attachment drafts', () => {
     await service.upload(new File(['private'], 'private.txt', { type: 'text/plain' }), undefined, draftId);
     revoke = () => { database.prepare('UPDATE resources SET uploaded_by_user_id = ? WHERE id = ?')
       .run('00000000-0000-7000-8000-000000000004', draftId); };
+    const admitted = await service.searchPreview(draftId, new AbortController().signal);
+    expect(await admitted.text()).toBe('private');
     await expect(service.searchPreview(draftId, new AbortController().signal)).rejects.toMatchObject({ status: 404 });
   });
 
@@ -276,7 +278,7 @@ describe('uploaded attachment drafts', () => {
     expect(stored.size).toBe(2);
   });
 
-  it('reports re-fetch support from the connector adapter rather than watch state', async () => {
+  it('projects connector refresh support and watch state consistently for resource reads', async () => {
     const { database, env } = fixture({});
     insertHydratedResource(database, 'existing-original', 'b'.repeat(64));
 
@@ -289,6 +291,21 @@ describe('uploaded attachment drafts', () => {
     await expect(refreshable.list({ limit: 10 })).resolves.toMatchObject({
       items: [expect.objectContaining({ id: connectorResourceId, refreshSupported: true })],
     });
+
+    database.prepare(`INSERT INTO resource_watches
+      (id, workspace_id, workstream_id, resource_id, connection_id, watch_type, enabled, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'poll', 1, ?, ?)`).run(
+      '00000000-0000-7000-8000-000000000031', workspaceId,
+      '00000000-0000-7000-8000-000000000032', connectorResourceId, connectionId,
+      '2026-10-21T00:00:00.000Z', '2026-10-21T00:00:00.000Z',
+    );
+    await expect(refreshable.get(connectorResourceId)).resolves.toMatchObject({
+      refreshSupported: true, watchEnabled: true, watchStatus: 'watching',
+    });
+    await expect(refreshable.list({ limit: 10 })).resolves.toMatchObject({
+      items: [expect.objectContaining({ id: connectorResourceId, refreshSupported: true, watchEnabled: true, watchStatus: 'watching' })],
+    });
+    database.prepare('UPDATE resource_watches SET enabled = 0 WHERE resource_id = ?').run(connectorResourceId);
 
     const notRefreshable = new ResourceService(env, auth, {
       get() { return {}; },
