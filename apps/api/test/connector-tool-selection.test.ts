@@ -29,11 +29,10 @@ import {
 } from "./helpers/durable-authority";
 import { responsesStreamResponse } from "@rally/agent-harness/test-support/responses-stream";
 
-// Frozen from the real pre-cutover definitions at d7289cdbe, except Google:
-// adding draft attachment inputs intentionally changes its receipt digest, so
-// older receipts remain fenced. Input-schema prose participates in this hash.
+// Frozen pre-cutover definitions. Google uses a historical fixture because
+// new workflows and attachment inputs intentionally change the current receipt
+// digest; older receipts must remain fenced. Prose participates in the hash.
 it.each([
-  ["google", googleTools, "c1cdc3618c75ded8035ec4ab8b203604199eae5155fe29fbfffef1645d3e4a6d"],
   ["google", historicalGoogleTools as ToolDefinition[], "ee3d58df9c6be517cf31c61c24ff0a9e48496b6985952f2b1fb233c9e17107f3"],
   ["slack", slackTools, "4252e614c1b846896edb924fd3210d89339b1536a81b22b19e8c5010baa27820"],
   ["notion", notionTools, "9df5f6fbfe14255d35486d5efb4f90545bdf2919cab5a4321a5b3c43014f3ef6"],
@@ -1469,7 +1468,7 @@ describe("connector tools selected for harness runs", () => {
     const examples = workedExampleCalls(mail?.systemMessage ?? "")
       .filter((call) => /google_gmail_(?:send|create_draft|reply|create_reply_draft)$/u.test(call.wireName));
     expect(examples.map((call) => [call.wireName, call.arguments])).toMatchObject(
-      expected.map(([wireName, intent]) => [wireName, intent === "reply" ? { query: "from:dana@example.com subject:renewal after:2026/10/20 before:2026/10/22", body: "Thank you, Dana." } : { to: ["dana@example.com"], subject: "Renewal", body: "Hello Dana." }]),
+      expected.map(([wireName, intent]) => [wireName, intent === "reply" ? { messageId: "18f0a2c4d5e6f702", body: "Thank you, Dana." } : { to: ["dana@example.com"], subject: "Renewal", body: "Hello Dana." }]),
     );
     for (const call of examples) {
       const name = call.wireName.replace("google_gmail_", "gmail.");

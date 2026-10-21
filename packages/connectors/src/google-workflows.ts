@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { googleToolInputSchema } from "./google-tool-schema";
 import type { ToolDefinition } from "@rally/contracts";
-import { ConnectorError, type ConnectorConnectionContext, type ConnectorToolContext, type ConnectorToolResult } from "./types";
-import { CalendarSelectionFields, ConversationTargetFields, MailQuerySchema, selectCalendarEvent, selectMail, validateMailTarget, validateCalendarTarget } from "./google-selectors";
+import { ConnectorError, type ConnectorToolContext, type ConnectorToolResult } from "./types";
+import { CalendarSelectionFields, ConversationTargetFields, MailQuerySchema, selectCalendarEvent, selectMail, validateMailTarget, validateCalendarTarget, type GoogleSelectionDependencies } from "./google-selectors";
+import { LocalClockSchema, GoogleTimeZoneSchema } from "./google-time";
 import { suggestCalendarTimes } from "./google-availability";
 
 const calendarId = z.string().min(1).optional().describe("Calendar ID, primary, or an unambiguous calendar name from calendar.list_calendars. Omit for the configured calendar.");
@@ -21,7 +22,7 @@ const page = {
   maxResults: z.number().int().positive().max(500).optional().describe("Maximum drafts per page, at most Gmail's published limit of 500. Omit for Google's default page size."),
   pageToken: z.string().min(1).nullish().describe("Copy the previous page's nextPageToken exactly; never construct a cursor. Omit or null for the first page. When `nextPageToken` is `null`, stop: there are no more pages."),
 };
-const clock = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/u);
+const clock = LocalClockSchema;
 export const googleWorkflowSchemas: Record<string, z.ZodType> = {
   "calendar.cancel_event": z.strictObject({ ...CalendarActionTargetFields, sendUpdates: GoogleNotificationSchema }).superRefine(validateCalendarTarget),
   "calendar.cancel_recurring_series": z.strictObject({ ...CalendarActionTargetFields, sendUpdates: GoogleNotificationSchema }).superRefine(validateCalendarTarget),
@@ -35,7 +36,7 @@ export const googleWorkflowSchemas: Record<string, z.ZodType> = {
     startTime: z.string().datetime({ offset: true }).describe("Inclusive beginning of the search interval, RFC 3339 with an offset, for example 2026-10-21T09:00:00-07:00."),
     endTime: z.string().datetime({ offset: true }).describe("Exclusive end of the search interval, RFC 3339 with an offset; must be later than startTime."),
     durationMinutes: z.number().int().positive().describe("Required meeting duration in minutes, for example 30. Returned slots fit this duration."),
-    timeZone: z.string().min(1).optional().describe("IANA zone used for preferred hours and weekends, for example America/Los_Angeles. Omit for the connected calendar's zone."),
+    timeZone: GoogleTimeZoneSchema.optional().describe("IANA zone used for preferred hours and weekends, for example America/Los_Angeles. Omit for the connected calendar's zone."),
     preferences: z.strictObject({
       startHour: clock.optional().describe("Earliest local start, HH:mm, for example 09:00. Omit for midnight."),
       endHour: clock.optional().describe("Latest local end, HH:mm, for example 17:00. Omit for the end of the day. Must be after startHour."),
@@ -45,7 +46,6 @@ export const googleWorkflowSchemas: Record<string, z.ZodType> = {
   }).superRefine((value, ctx) => {
     if (Date.parse(value.endTime) <= Date.parse(value.startTime)) ctx.addIssue({ code: "custom", path: ["endTime"], message: "endTime must be after startTime" });
     if (value.preferences?.startHour && value.preferences.endHour && value.preferences.startHour >= value.preferences.endHour) ctx.addIssue({ code: "custom", path: ["preferences", "endHour"], message: "endHour must be after startHour" });
-    if (value.timeZone) try { new Intl.DateTimeFormat("en", { timeZone: value.timeZone }); } catch { ctx.addIssue({ code: "custom", path: ["timeZone"], message: "timeZone must be an IANA time zone" }); }
   }),
   "gmail.list_labels": z.strictObject({}),
   "gmail.create_label": z.strictObject({ displayName: z.string().min(1).describe("Exact name of the new label, for example Projects/Alpha. Gmail uses / for nested labels; existing labels are discovered with gmail.list_labels.") }),
@@ -101,10 +101,9 @@ function records(value: unknown): RecordValue[] { return Array.isArray(value) ? 
 function gmailWebUrl(thread: unknown, folder: "all" | "drafts" = "all"): string | null {
   return typeof thread === "string" && thread ? `https://mail.google.com/mail/u/0/#${folder}/${encodeURIComponent(thread)}` : null;
 }
-export interface GoogleWorkflowDependencies {
-  api: (connection: ConnectorConnectionContext, url: string, init?: RequestInit, allowedErrorStatuses?: readonly number[], argumentByParameter?: Readonly<Record<string, string>>) => Promise<Response>;
+export interface GoogleWorkflowDependencies extends GoogleSelectionDependencies {
+  mapMailDetails: (drafts: RecordValue[], mapper: (draft: RecordValue) => Promise<RecordValue>) => Promise<RecordValue[]>;
   resolveCalendarId: (calendarId: string | undefined) => Promise<string>;
-  readJson: (response: Response) => Promise<RecordValue>;
   sanitizeEvent: (event: RecordValue, calendarId: string) => RecordValue;
   sanitizeMessage: (message: RecordValue) => RecordValue;
 }
@@ -199,9 +198,8 @@ export async function executeGoogleWorkflow(name: string, rawArgs: unknown, cont
   }
   if (name === "gmail.update_thread_labels") {
     const args = googleWorkflowSchemas[name]!.parse(rawArgs) as { query?: string; threadId?: string; addLabels?: string[]; removeLabels?: string[] };
-    const kind = "threads";
     const query = args.removeLabels?.some((label) => label.toUpperCase() === "SPAM") ? `in:spam (${args.query})` : args.query;
-    const id = args.threadId ?? await selectMail(query!, "thread", context, deps);
+    const id = args.threadId ?? await selectMail(query!, "thread", context, deps, { includeSpamTrash: publicAction === "gmail.unmark_spam" });
     const references = [...args.addLabels ?? [], ...args.removeLabels ?? []];
     const systemLabels = ["INBOX", "UNREAD", "STARRED", "IMPORTANT", "SPAM"];
     const catalog = references.every((label) => systemLabels.includes(label.toUpperCase()))
@@ -219,17 +217,16 @@ export async function executeGoogleWorkflow(name: string, rawArgs: unknown, cont
     const remove = [...new Set((args.removeLabels ?? []).map((value) => resolved.get(value)!))];
     if (add.includes("TRASH") || remove.includes("TRASH")) throw new ConnectorError("invalid_payload", "Use gmail.trash or gmail.restore_from_trash to change Trash.", { field: "labels", reason: "use_trash_tool" });
     if (add.some((id) => remove.includes(id))) throw new ConnectorError("invalid_payload", "A label cannot be both added and removed, including when one reference uses its name and the other its id.", { field: "removeLabels", reason: "conflicting_label_changes" });
-    const { data } = await request(mail + kind + "/" + encodeURIComponent(id) + "/modify", "POST", { addLabelIds: add, removeLabelIds: remove });
-    return result({ id: data.id ?? id, threadId: data.threadId ?? (kind === "threads" ? id : null), labelIds: data.labelIds, addLabels: add, removeLabels: remove, webUrl: gmailWebUrl(data.threadId ?? (kind === "threads" ? id : null)) }, `Completed ${publicAction.replace("gmail.", "").replaceAll("_", " ")}`, id);
+    const { data } = await request(mail + "threads/" + encodeURIComponent(id) + "/modify", "POST", { addLabelIds: add, removeLabelIds: remove });
+    return result({ id: data.id ?? id, threadId: data.threadId ?? id, labelIds: data.labelIds, addLabels: add, removeLabels: remove, webUrl: gmailWebUrl(data.threadId ?? id) }, `Completed ${publicAction.replace("gmail.", "").replaceAll("_", " ")}`, id);
   }
   if (/^gmail\.(trash|restore)_thread$/u.test(name)) {
     const args = googleWorkflowSchemas[name]!.parse(rawArgs) as { query?: string; threadId?: string };
-    const kind = "thread";
     const query = name.includes(".restore_") ? `in:trash (${args.query})` : args.query;
-    const id = args.threadId ?? await selectMail(query!, kind, context, deps);
+    const id = args.threadId ?? await selectMail(query!, "thread", context, deps, { includeSpamTrash: name === "gmail.restore_thread" });
     const action = name.includes(".trash_") ? "trash" : "untrash";
-    const { data } = await request(mail + `${kind}s/` + encodeURIComponent(id) + "/" + action, "POST");
-    return result({ id, threadId: data.threadId ?? (kind === "thread" ? id : null), trashed: action === "trash", webUrl: gmailWebUrl(data.threadId ?? (kind === "thread" ? id : null)) }, action === "trash" ? "Moved mail to Trash" : "Restored mail from Trash", id);
+    const { data } = await request(mail + "threads/" + encodeURIComponent(id) + "/" + action, "POST");
+    return result({ id, threadId: data.threadId ?? id, trashed: action === "trash", webUrl: gmailWebUrl(data.threadId ?? id) }, action === "trash" ? "Moved mail to Trash" : "Restored mail from Trash", id);
   }
   if (name === "gmail.read_draft") {
     const args = googleWorkflowSchemas[name]!.parse(rawArgs) as { query?: string; draftId?: string };
@@ -244,11 +241,12 @@ export async function executeGoogleWorkflow(name: string, rawArgs: unknown, cont
     if (args.query) url.searchParams.set("q", args.query);
     if (args.pageToken) url.searchParams.set("pageToken", args.pageToken);
     const { data } = await request(url.toString());
-    const items = await Promise.all(records(data.drafts).map(async (draft) => {
-      const detail = (await request(mail + "drafts/" + encodeURIComponent(String(draft.id)) + "?format=metadata")).data;
+    const items = await deps.mapMailDetails(records(data.drafts), async (draft) => {
+      const { response, data: detail } = await request(mail + "drafts/" + encodeURIComponent(String(draft.id)) + "?format=metadata", "GET", undefined, [404]);
+      if (response.status === 404) return { id: draft.id, unavailable: true };
       const message = deps.sanitizeMessage(record(detail.message));
       return { id: draft.id, messageId: message.id, threadId: message.threadId, subject: message.subject, to: message.to, cc: message.cc, bcc: message.bcc, snippet: message.snippet, webUrl: gmailWebUrl(message.threadId, "drafts") };
-    }));
+    });
     return { ...result({ items, appliedFilters: { query: args.query ?? null } }, `Found ${items.length} Gmail drafts`), pagination: { continuations: typeof data.nextPageToken === "string" ? [{ operation: name, slot: "nextPageId", input: { ...args, pageToken: data.nextPageToken } }] : [] } };
   }
   return null;
