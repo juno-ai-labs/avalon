@@ -1843,10 +1843,16 @@ function ConversationSurfaceContent({
       ? artifactPinActions({ pinnedIds: pinnedArtifactIds, setPinned: setArtifactPinned, threadId: id, threadResources: pinnableResources })
       : undefined,
   ), [attachPending, attachResourceToChannel, citationActionsIdentity, pinActionsIdentity]);
-  // An artifact in Main's list is one a pin or a link can name: both open the
-  // thread's Main onto it, so a breakout's own artifact has neither.
+  // Pins name Main's artifacts. Links can name any file in Main, including uploads.
   const isMainArtifact = (resourceId: string): boolean =>
     Boolean(pinnableResources?.some((resource) => resource.id === resourceId && resource.direction === 'artifact'));
+  const resourceLink = (resourceId: string): (() => Promise<void>) | undefined => {
+    const workspace = session?.workspace;
+    const spaceId = linkSpaceId ?? threadPlacements?.[0] ?? null;
+    // The destination opens Main, so files available only in a breakout cannot be named.
+    if (!workspace || !spaceId || !pinnableResources?.some((resource) => resource.id === resourceId)) return undefined;
+    return () => copyArtifactLink({ region: workspace.region, workspaceId: workspace.id }, spaceId, id, resourceId);
+  };
   const citationPinned = useCallback((resourceId: string) => pinnedArtifactIds.has(resourceId), [pinnedArtifactIds]);
   // Citations resolve against the loaded work stream's resources, and the
   // transcript needs this before the screen has decided it has a work stream to
@@ -3949,14 +3955,7 @@ function ConversationSurfaceContent({
         {...(api && isMainArtifact(resourcePanel.resourceId) ? {
           onRenameResource: (resource: WorkstreamResource, title: string) => renameResource.mutateAsync({ resource, title }),
         } : {})}
-        resourceLink={(resource: WorkstreamResource) => {
-          const workspace = session?.workspace;
-          // A detail installed from the conversation's own object carries no
-          // placements, so the directory's stand in for the routed Channel.
-          const spaceId = linkSpaceId ?? threadPlacements?.[0] ?? null;
-          if (!workspace || !spaceId || !isMainArtifact(resource.id)) return undefined;
-          return () => copyArtifactLink({ region: workspace.region, workspaceId: workspace.id }, spaceId, id, resource.id);
-        }}
+        resourceLink={(resource: WorkstreamResource) => resourceLink(resource.id)}
         resourcePin={(resource: WorkstreamResource) => isMainArtifact(resource.id)
           ? { on: pinnedArtifactIds.has(resource.id), onChange: (next: boolean) => setArtifactPinned(resource.id, next, id) }
           : undefined}
@@ -3985,6 +3984,7 @@ function ConversationSurfaceContent({
         onResize={setRailWidth}
         onShow={reportGalleryShown}
         preview={panel.preview}
+        resourceLink={resourceLink}
         width={railWidth}
       />}
 
