@@ -2509,7 +2509,7 @@ export async function runWorkstreamHarness(
       saveSidekickSkills(snapshot: SidekickSkillSnapshot): void;
       activateSidekickSkill(ref: string): Promise<void>;
       projection: BindLoopProjectionState | null;
-      validateHistoricalAssistantReservation?(projection: BindLoopProjectionState): boolean;
+      validateHistoricalAssistantReservation(projection: BindLoopProjectionState): boolean;
       modelIterationsUsed: number;
       transcriptThrough: number;
       /** Extends the singleton loop lease after its subordinate attempt heartbeat commits. */
@@ -3351,8 +3351,7 @@ export async function runWorkstreamHarness(
         : modelMessages,
       ...(runtime?.persistentLoop ? {
         bindLoopProjection: runtime.persistentLoop.projection,
-        validateHistoricalAssistantReservation: (projection) =>
-          runtime.persistentLoop!.validateHistoricalAssistantReservation?.(projection) ?? false,
+        validateHistoricalAssistantReservation: runtime.persistentLoop.validateHistoricalAssistantReservation,
         modelIterationsUsed: runtime.persistentLoop.modelIterationsUsed,
         activationInputs,
         onActivationBoundary: (activation) =>

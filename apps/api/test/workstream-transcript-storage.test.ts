@@ -61,12 +61,20 @@ const systemProjection = {
   message: { role: "system", content: "System" },
 };
 
-async function relocatedReservation(toolCount = 0) {
+async function relocatedReservation(toolCount = 0, outcome: "accepted" | "failed" | "stopped" = "accepted") {
   const fixture = open();
   seedPendingInputRoot(fixture.sql);
   await fixture.transcript.commitBindTransition(initialize(), NOW);
   const reserved = await reserveAssistantFixture({ ...fixture, content: "Historical answer", toolCount, now: NOW + 1 });
-  await fixture.transcript.commitBindTransition(reserved.transition, NOW + 2, reserved.executionFence);
+  if (outcome === "accepted") {
+    await fixture.transcript.commitBindTransition(reserved.transition, NOW + 2, reserved.executionFence);
+  } else {
+    await fixture.transcript.settleActiveAssistantReservation({
+      loopId: "run-1", ...reserved.executionFence, outcome,
+      code: outcome === "stopped" ? "run_cancelled" : "assistant_turn_interrupted",
+      label: "Historical interruption", now: NOW + 2,
+    });
+  }
   // Reproduce the operator's copy: relational loop keys move; historical
   // turn IDs and the content-addressed transcript remain unchanged.
   fixture.storage.transactionSync(() => {
@@ -85,7 +93,7 @@ describe("historical assistant reservation validation", () => {
   it("preserves the historical transcript and advances to the next turn under the relocated loop", async () => {
     const { transcript, projection, sql, storage } = await relocatedReservation();
     expect(transcript.validateHistoricalAssistantReservation(projection)).toBe(true);
-    expect(transcript.readResumableBindProjection("relocated-loop")!.lastAssistantReservation!.turnId)
+    expect(transcript.readBindProjection("relocated-loop")!.lastAssistantReservation!.turnId)
       .toBe("run-1:turn:1");
     expect(transcript.participantTurn("run-1:turn:1")!.blocks).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "text", text: "Historical answer" }),
@@ -116,42 +124,40 @@ describe("historical assistant reservation validation", () => {
     expect(transcript.validateHistoricalAssistantReservation(projection)).toBe(false);
   });
 
-  it.each(["reserved", "streaming", "wrong execution", "future epoch"] as const)(
-    "recovers only the current namespace's reserved next turn after a crash: %s", async (state) => {
-      const { transcript, projection, storage, sql } = await relocatedReservation();
-      const loop = new SubstreamLoopStorage(storage);
-      const active = loop.loop()!;
-      loop.reserveAssistantTurn({
-        executionId: active.active_execution_id!, executionEpoch: active.active_execution_epoch!,
-        leaseOwner: active.lease_owner!, expectedLoopRevision: active.revision,
-        receiptRunId: active.active_execution_id!, turnId: "relocated-loop:turn:2",
-        modelTurnIndex: 2, streamId: "interrupted-stream", now: NOW + 3,
-      });
-      expect(transcript.validateHistoricalAssistantReservation(projection)).toBe(false);
-      if (state === "streaming") sql.exec(`UPDATE assistant_turn_reservations SET state = 'streaming', started_at = ? WHERE turn_id = 'relocated-loop:turn:2'`, NOW + 3);
-      if (state === "wrong execution") sql.exec(`UPDATE assistant_turn_reservations SET execution_id = 'other-execution' WHERE turn_id = 'relocated-loop:turn:2'`);
-      if (state === "future epoch") sql.exec(`UPDATE assistant_turn_reservations SET execution_epoch = 99 WHERE turn_id = 'relocated-loop:turn:2'`);
-      if (state !== "reserved") {
-        expect(() => transcript.readResumableBindProjection("relocated-loop", true))
-          .toThrow("bind_loop_resume_reservation_invalid");
-        return;
-      }
-      // A replacement executor has a newer epoch than the reservation that
-      // survived its predecessor. Recovery must recognize that old ownership.
-      sql.exec(`UPDATE substream_loops SET active_execution_epoch = active_execution_epoch + 1`);
-      const replacement = loop.loop()!;
-      expect(transcript.readResumableBindProjection("relocated-loop", true)!.lastModelTurnIndex).toBe(1);
-      await transcript.settleActiveAssistantReservation({
-        loopId: "relocated-loop", executionId: replacement.active_execution_id!,
-        executionEpoch: replacement.active_execution_epoch!, leaseOwner: replacement.lease_owner!,
-        outcome: "failed", code: "assistant_turn_interrupted", label: "Interrupted", now: NOW + 4,
-      });
-      expect(transcript.readResumableBindProjection("relocated-loop")!.lastAssistantReservation)
-        .toMatchObject({ turnId: "relocated-loop:turn:2", modelTurnIndex: 2, status: "failed" });
-      expect(loop.loop()!.next_assistant_turn_sequence).toBe(3);
-      expect(transcript.participantTurn("run-1:turn:1")).not.toBeNull();
-    },
-  );
+  it.each(["failed", "stopped"] as const)("resumes a materialized historical %s turn", async (outcome) => {
+    const { transcript, projection, sql } = await relocatedReservation(0, outcome);
+    expect(projection.lastAssistantReservation!.status).toBe(outcome);
+    expect(transcript.validateHistoricalAssistantReservation(projection)).toBe(true);
+    expect(transcript.participantTurn("run-1:turn:1")!.blocks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "text", text: "Historical interruption" }),
+    ]));
+    sql.exec(`UPDATE assistant_turn_reservations SET outcome = 'accepted'`);
+    expect(transcript.validateHistoricalAssistantReservation(projection)).toBe(false);
+  });
+
+  it("uses ordinary reservation settlement after a crash before the next Bind transition", async () => {
+    const { transcript, projection, storage, sql } = await relocatedReservation();
+    const loop = new SubstreamLoopStorage(storage);
+    const active = loop.loop()!;
+    loop.reserveAssistantTurn({
+      executionId: active.active_execution_id!, executionEpoch: active.active_execution_epoch!,
+      leaseOwner: active.lease_owner!, expectedLoopRevision: active.revision,
+      receiptRunId: active.active_execution_id!, turnId: "relocated-loop:turn:2",
+      modelTurnIndex: 2, streamId: "interrupted-stream", now: NOW + 3,
+    });
+    expect(transcript.validateHistoricalAssistantReservation(projection)).toBe(false);
+    sql.exec(`UPDATE substream_loops SET active_execution_epoch = active_execution_epoch + 1`);
+    const replacement = loop.loop()!;
+    await transcript.settleActiveAssistantReservation({
+      loopId: "relocated-loop", executionId: replacement.active_execution_id!,
+      executionEpoch: replacement.active_execution_epoch!, leaseOwner: replacement.lease_owner!,
+      outcome: "failed", code: "assistant_turn_interrupted", label: "Interrupted", now: NOW + 4,
+    });
+    expect(transcript.readBindProjection("relocated-loop")!.lastAssistantReservation)
+      .toMatchObject({ turnId: "relocated-loop:turn:2", modelTurnIndex: 2, status: "failed" });
+    expect(loop.loop()!.next_assistant_turn_sequence).toBe(3);
+    expect(transcript.participantTurn("run-1:turn:1")).not.toBeNull();
+  });
 
   it.each([
     ["wrong next counter", `UPDATE substream_loops SET next_assistant_turn_sequence = 7`],
@@ -167,8 +173,6 @@ describe("historical assistant reservation validation", () => {
     const { transcript, projection, sql } = await relocatedReservation();
     sql.exec(mutation);
     expect(transcript.validateHistoricalAssistantReservation(projection)).toBe(false);
-    expect(() => transcript.readResumableBindProjection("relocated-loop"))
-      .toThrow("bind_loop_resume_reservation_invalid");
   });
 
   it("rejects a stale head and a fabricated historical turn", async () => {

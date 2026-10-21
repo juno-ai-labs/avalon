@@ -53,7 +53,6 @@ type LocalOnlyTranscriptOperation =
   // The in-memory Bind projection uses an immutable suffix chain. It is a
   // same-isolate harness input, never an RPC/JSON response.
   | "readBindProjection"
-  | "readResumableBindProjection"
   | "validateHistoricalAssistantReservation"
   // Read by the owning object while it prepares a compaction; the positions
   // are meaningless to any caller that does not hold the loop.
