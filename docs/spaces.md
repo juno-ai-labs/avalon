@@ -154,6 +154,10 @@ revision, and the generated icon stands down rather than undo any of them. The
 new icon reaches clients by the ordinary Space snapshot over the workspace
 socket.
 
+The service's optional initial `participantUserIds` uses the existing audience
+mutation before scheduling icon selection. That creation-time audience change
+is included in the captured revision; later user edits still fence the pass.
+
 Only a newly reserved Space gets a pass; a replay of a stable creation id does
 not, and skips the icon in its "same Space?" comparison, because the first
 attempt's pass may already have written one. The desktop sidebar's **New
@@ -944,6 +948,16 @@ entirely. A conversation that is stale for this reader is not greyed out or
 pushed to the bottom; it is absent, and stays reachable from the sidebar under
 its Space and from search.
 
+Internal callers can reuse this reader for a complete directory:
+`SpaceService.listChannels` accepts optional `kind` (`channel` or `breakout`)
+and `needsViewerOnly: false`. The query applies these filters inside each arm
+before pagination, retaining the same visibility ladder, activity ordering,
+page size and cursor. Engineering MCP uses this mode for its user-scoped Thread
+and Breakout lists; the app route omits the options and keeps the dashboard's
+attention-only behavior. `SpaceService.list` exposes the existing active
+Channel directory from WorkspaceSpaceStorage.list, exactly as the workspace
+socket reads it, with its waterline and personal ordering.
+
 **Stale is a state, not an age.** A conversation is *live* for a viewer when
 its harness status is `scheduled`, `running` or `needs_input`, or it is unread
 for them, or it is unseen (new to them), or they are mentioned in it. That is
@@ -1630,7 +1644,7 @@ belongs in the route suite as well as wherever its authority is proved.
 | --- | --- |
 | `apps/api/test-workers/space-routes.test.ts` | The `/spaces` routes as a signed-in member drives them against real objects: creation (Organization-wide, including when a released client asks for a personal Space; a caller WorkspaceDO refuses writes no D1 anchor), audience (a participant change stages nothing for a member Channel and leaves its audience alone; a personal audience is refused), rename, archive and restore, and an equal-audience one-request Channel move whose returned summaries match the settled memberships. That a Space whose parent reservation fails commits no Space row, and that `openGeneralSpace` writes General once and is reused. `POST /workstreams` in a Space makes an Organization-wide Channel. The WorkspaceDO-driven membership calls: a private Channel added to a Space that lists somebody else stays private and settles; a private or Organization-wide Channel leaving a Space keeps every reader. A Space created without an icon gets the one the naming double answers, and keeps the icon a person picks while that call is still in flight. |
 | `apps/api/test-workers/space-authority.test.ts` | Every RPC against real Durable Object storage and real D1 membership, including the four negative controls, the Channel page's viewer predicate, that a placement reaches an already-open socket rather than waiting for a reload, that an archive whose only leftover Channel is archived is accepted, that an archive whose only Channel has no directory row is refused, and that one `addSpaceChannel` call activates the membership and stages the Space's defaults with no intent left behind. Reach: a participants-only Space named to somebody who can read a Channel in it and not to somebody who cannot, the summary that viewer is handed carrying the mark and neither participants nor defaults nor a count of what they cannot see, the reach on each row of the socket snapshot, every write refused `space_access_denied` with the Space left as its participant had it, a Channel that viewer cannot see moving into and out of the Space nudging them not at all while the Space's participant is nudged by every move, the Space leaving and returning to that viewer's snapshot as their participation in the one Channel reaching them into it moves — and staying put across an unread change — an audience that leaves its own caller out refused before anything is written, the single-Space read refusing a Space this viewer has no reach into rather than labelling it one, the ordering write that is not refused, and an archive taking the Space off that viewer's active list without putting it on their inactive one. Ordering: a write for each of the three container kinds coming back on that person's sidebar and on nobody else's, a Space's list dropping a Channel it does not hold and one the viewer cannot read, a write naming part of a list leaving the rest of it behind the part that moved, a write reaching a second session of the same person without it asking and no session of anybody else, and a Channel removed from a Space taking its place in that Space's list with it for everybody, and archive taking neither — the arrangement is still there when the Space is restored. Opening a new Organization: `initializeWorkspace` with General's anchor answers `spacesReady` with General listed and the cutover complete, without one answers not ready and creates nothing, refuses a guest creator, and answers an already-open Organization ready with no anchor. The Space directories are read off the workspace socket's connect payload rather than through a read of their own, because that is the only path a client has. |
-| `apps/api/test-workers/space-conversation-page.test.ts` | The dashboard list on real workerd: a breakout projection forwarded by its Channel landing in the breakout tables and nowhere else, a redelivery acked and leaving the row as it was, a breakout invisible to somebody who cannot see its parent Channel and to somebody whose own viewer row is not listable, Channel badge totals respecting that parent boundary and requiring an explicit guest grant, one activity-ordered list across both kinds, an Organization-wide breakout surviving a viewer row a generation behind while a personal one does not, a keyset walk whose page boundary falls inside a four-way tie of two breakouts and two Channels, the combination walk that keeps the page's SQL and `conversationNeedsViewer` equal — run against both renderings of the predicate, with unread produced by an attention ordinal and by a manual mark — and the dashboard nudge on real sockets — Channel activity, breakout activity, one person's read state, a membership settling, and the two cases where it must not arrive. |
+| `apps/api/test-workers/space-conversation-page.test.ts` | The dashboard list on real workerd, plus all-visible reads by kind with settled member/guest cases and complete per-kind cursor walks: a breakout projection forwarded by its Channel landing in the breakout tables and nowhere else, a redelivery acked and leaving the row as it was, a breakout invisible to somebody who cannot see its parent Channel and to somebody whose own viewer row is not listable, Channel badge totals respecting that parent boundary and requiring an explicit guest grant, one activity-ordered list across both kinds, an Organization-wide breakout surviving a viewer row a generation behind while a personal one does not, a keyset walk whose page boundary falls inside a four-way tie of two breakouts and two Channels, the combination walk that keeps the page's SQL and `conversationNeedsViewer` equal — run against both renderings of the predicate, with unread produced by an attention ordinal and by a manual mark — and the dashboard nudge on real sockets — Channel activity, breakout activity, one person's read state, a membership settling, and the two cases where it must not arrive. |
 | `packages/contracts/src/conversation-attention.test.ts` | The predicate itself over all 56 combinations, and that the three reader fields default to false rather than to unknown. |
 | `apps/api/test-workers/space-object.test.ts` | The role's differences, that what a Space's retired conversation still publishes is acknowledged and applied nowhere, that a Space's directory effect lands in the Space directory rather than the Channel one, and that a Channel product request aimed at a Space's conversation is refused by name. |
 | `apps/api/test/workspace-space-schema.test.ts` | Migration 61 against the real ledger: the CHECK vocabularies — including the containers a person can arrange — the order row's compound key, General's unique partial index, the default-target foreign key, and the retirement-graph rebuild carrying its `retired_at` receipts. |
@@ -2000,6 +2014,27 @@ while Spaces are not open, and closing the cutover queues it again when a
 member is still unseated.
 
 ## Changelog
+
+### 2026-10-21 — Reuse directories for user-scoped MCP lists
+
+**What changed:** SpaceService exposes the socket's active Channel directory.
+The existing conversation-page entryway accepts a kind and an optional all-visible
+mode, filtering within the authoritative query before paging. App callers retain
+the attention-only default. Creation accepts initial participants through the
+ordinary audience update before starting icon selection with the updated revision.
+
+**Why:** Engineers need a selected user's complete Channel/Thread/Breakout
+hierarchy through MCP. The attention dashboard omits settled, read conversations,
+and filtering a mixed page in an adapter would produce short or skipped pages.
+Applying initial participants after starting icon selection would invalidate
+creation's own revision fence and discard the generated icon.
+
+**Considered and rejected:** New directory SQL or custom guest rules in MCP.
+Reusing the app's readers preserves personal ordering, visibility and cursors.
+
+**Consequences:** Ordinary membership and child-listing rules remain the gates;
+all-visible means all unarchived, admitted rows, without the attention predicate.
+
 
 ### 2026-10-20 — Posting is the participation action
 

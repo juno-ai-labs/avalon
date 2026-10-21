@@ -15,6 +15,8 @@ import { AGENT_HANDOFF_TOOL_NAMES, AgentCommunicationService } from "../services
 import { RegionSchema } from "@rally/contracts/regions";
 import { agentIdForAddress, AgentExchangeSchema } from "@rally/contracts";
 import { conversationParentStub } from "../services/conversation-parent-client";
+import { ReadTranscriptRequestSchema, ReadTranscriptResultSchema, DEFAULT_TRANSCRIPT_READ_TURNS } from "@rally/contracts";
+import { conversationAsText } from "../services/conversation-text";
 import { safeParseSocketEvent, isUnknownSocketEvent, ClientSocketEventTypeSchema } from "@rally/contracts";
 import { SidekickSkillSnapshotSchema } from "@rally/contracts";
 import { SlackOriginContextSchema } from "@rally/contracts";
@@ -463,7 +465,7 @@ const ProductAuthSchema = z.strictObject({
   // uses `"resource_authorization"` after its state and grant are verified.
   // These are constructed only by server code; `IdentityAuthContext.principal`
   // says why.
-  principal: z.enum(["connector", "demo_seed", "impersonation", "resource_authorization"]).optional(),
+  principal: z.enum(["connector", "demo_seed", "impersonation", "resource_authorization", "engineering"]).optional(),
 });
 /**
  * One product operation, with the two fields every one of them carries.
@@ -498,6 +500,7 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
     links: z.array(z.strictObject({ turnId: TranscriptTurnIdSchema, linkId: z.string() })) }),
   productOperation({ operation: z.literal("search_link"), turnId: TranscriptTurnIdSchema, linkId: z.string() }),
   productOperation({ operation: z.literal("search_turns"), turnIds: z.array(TranscriptTurnIdSchema) }),
+  productOperation({ operation: z.literal("read_transcript"), input: ReadTranscriptRequestSchema }),
   productOperation({ operation: z.literal("read_resource_authorization_recovery"), toolCallId: z.string().min(1) }),
   productOperation({ operation: z.literal("update"), input: UpdateWorkstreamRequestSchema }),
   productOperation({ operation: z.literal("acknowledge_read"), input: AcknowledgeWorkstreamReadRequestSchema }),
@@ -3555,6 +3558,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           return turn?.entryKind === "conversation" ? [turn] : [];
         });
         return jsonResponse({ title: root.title, turns });
+      }
+      if (request.operation === "read_transcript") {
+        const root = await this.product.authorize(current);
+        const currentThrough = this.transcript.transcriptThrough();
+        const through = Math.min(request.input.throughSequence ?? currentThrough, currentThrough);
+        const start = Math.min(request.input.afterSequence, through) + 1;
+        const end = Math.min(through + 1, start + (request.input.limit ?? DEFAULT_TRANSCRIPT_READ_TURNS));
+        const snapshot = { snapshotId: "product-range", snapshotThrough: through, snapshotAtUtc: new Date().toISOString() };
+        const range = this.transcript.range(snapshot, { startInclusive: start, endExclusive: end }, "requested", false);
+        return jsonResponse(ReadTranscriptResultSchema.parse({ title: root.title, text: conversationAsText(range.turns),
+          throughSequence: through, nextAfterSequence: end <= through ? end - 1 : null }));
       }
       if (request.operation === "read_resource_authorization_recovery") {
         await this.product.authorize(current);

@@ -8,6 +8,7 @@ import {
   DEFAULT_WORKSTREAM_ICON_KEY,
   MoveChannelBetweenSpacesResultSchema,
   type SpaceChannelPage,
+  type SpaceDirectory,
   SpaceChannelPageSchema,
   type ActivityEvent,
   type ActivityFilter,
@@ -48,6 +49,8 @@ import {
   WorkspaceArtifactPinResultSchema,
   type WorkspaceArtifactPinResult,
   WorkspaceSpaceChannelPageResultSchema,
+  WorkspaceSpaceDirectoryResultSchema,
+  type WorkspaceSpaceConversationPageRequest,
   WorkspaceSpaceDefaultResultSchema,
   WorkspaceContainerOrderResultSchema,
   WorkspacePinnedOrderResultSchema,
@@ -200,6 +203,15 @@ function channelMemoryScope(spaceId: SpaceId): MemoryReviewScope {
 
 export class SpaceService {
   constructor(private readonly env: Env, private readonly auth: AuthContext) {}
+
+  /** The same active Channel directory and personal order as the workspace socket. */
+  async list(): Promise<SpaceDirectory> {
+    const result = WorkspaceSpaceDirectoryResultSchema.parse(await (await this.workspace()).listSpaceDirectory({
+      workspaceId: asWorkspaceId(this.auth.workspaceId), userId: asUserId(this.auth.userId),
+    }));
+    if (!result.ok) throw spaceRefusal(result.code, "");
+    return result.directory;
+  }
 
   /**
    * One container's order for the person asking: the Organization's Spaces, a
@@ -474,13 +486,16 @@ export class SpaceService {
     return space;
   }
 
-  async listChannels(spaceId: SpaceId, cursor: string | null): Promise<SpaceChannelPage> {
+  async listChannels(spaceId: SpaceId, cursor: string | null,
+    options: Pick<WorkspaceSpaceConversationPageRequest, "kind" | "needsViewerOnly"> = {},
+  ): Promise<SpaceChannelPage> {
     const result = WorkspaceSpaceChannelPageResultSchema.parse(
       await (await this.workspace()).listSpaceChannels({
         workspaceId: asWorkspaceId(this.auth.workspaceId),
         userId: asUserId(this.auth.userId),
         spaceId,
         cursor,
+        ...options,
       }),
     );
     if (!result.ok) throw spaceRefusal(result.code, "");
@@ -501,9 +516,11 @@ export class SpaceService {
    *
    * A request with no icon is reserved under the catalog's neutral mark and
    * handed to {@link chooseIcon}, off the caller's clock when `defer` is given.
+   * Initial participants use the ordinary audience mutation before that pass
+   * captures its revision, so creation does not invalidate its own icon write.
    */
   async create(
-    input: CreateSpaceRequest,
+    input: CreateSpaceRequest & { participantUserIds?: UserId[] },
     spaceId?: SpaceId,
     defer?: (work: Promise<void>) => void,
   ): Promise<SpaceSummary> {
@@ -514,9 +531,10 @@ export class SpaceService {
     const id = spaceId ?? asSpaceId(uuidV7());
     await this.throughSpaceAuthority(id, input.name, "provision", () =>
       claimParentAnchor(this.env, this.auth.workspaceId, id, "space"));
+    const { participantUserIds, ...creation } = input;
     const reservation = WorkspaceSpaceReserveResultSchema.parse(await workspace.reserveSpace({
       ...actor,
-      space: { ...input, iconKey: input.iconKey ?? DEFAULT_WORKSTREAM_ICON_KEY },
+      space: { ...creation, iconKey: input.iconKey ?? DEFAULT_WORKSTREAM_ICON_KEY },
       spaceId: id,
     }));
     if (!reservation.ok) throw spaceRefusal(reservation.code, input.name, reservation.unreachableUserIds, reservation.blockedWorkstreamIds);
@@ -528,11 +546,14 @@ export class SpaceService {
       || reserved.colorKey !== input.colorKey || reserved.reach === "through_channel")) {
       throw new ApiError(409, "space_revision_conflict", "The creation identity already names a different channel");
     }
+    const space = participantUserIds === undefined ? reserved
+      : await this.updateAudience(id, { scope: input.scope, participantUserIds });
+    if (!space) throw new ApiError(409, "created_channel_unavailable", "The created Channel is unavailable");
     if (input.iconKey === undefined && reservation.created) {
-      const choosing = this.chooseIcon(reserved);
+      const choosing = this.chooseIcon(space);
       if (defer) defer(choosing); else await choosing;
     }
-    return reserved;
+    return space;
   }
 
   /**

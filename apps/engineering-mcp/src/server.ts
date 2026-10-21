@@ -4,6 +4,19 @@ import {
   EngineeringArtifactTargetLookupSchema,
   EngineeringD1DatabaseSchema,
   EngineeringD1SqlResultSchema,
+  CreateEngineeringOrgInputSchema,
+  CreateEngineeringOrgResultSchema,
+  CreateEngineeringChannelInputSchema,
+  CreateEngineeringChannelResultSchema,
+  CreateEngineeringThreadInputSchema,
+  CreateEngineeringThreadResultSchema,
+  SendEngineeringMessageInputSchema,
+  SendEngineeringMessageResultSchema,
+  ReadEngineeringChannelInputSchema,
+  ReadEngineeringConversationInputSchema,
+  EngineeringTextResultSchema,
+  ListEngineeringUserChannelsInputSchema,
+  ListEngineeringUserConversationsInputSchema,
   EngineeringSidekickListLookupSchema,
   EngineeringSpaceListLookupSchema,
   EngineeringSqlLookupSchema,
@@ -18,12 +31,14 @@ import {
 } from "@rally/contracts/engineering-inspection";
 import {
   ArtifactIdSchema,
+  SpaceDirectorySchema,
+  SpaceChannelPageSchema,
   SubstreamIdSchema,
   WorkspaceIdSchema,
   WorkstreamIdSchema,
 } from "@rally/contracts";
 import { platformErrorCode } from "@rally/contracts/platform-diagnostics";
-import { isDiagnosticCode, zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
+import { isCodeShaped, isDiagnosticCode, zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import {
@@ -68,6 +83,9 @@ function toolErrorCode(error: unknown, tool: string): string {
   const schema = zodDiagnosticCode(error, tool);
   if (schema) return schema;
   if (!(error instanceof Error)) return "tool_failed";
+  // This prefix is emitted only for the regional product adapter's ApiError
+  // code, never its message (which may contain product data).
+  if (error.message.startsWith("engineering_operation_failed:") && isCodeShaped(error.message)) return error.message;
   if (isDiagnosticCode(error.message)) return error.message;
   const platform = platformErrorCode(error);
   return platform ? `tool_failed:${platform}` : "tool_failed";
@@ -139,7 +157,7 @@ async function tool(
       tool: name,
       ...target,
     }));
-    return jsonResult(value);
+    return typeof value === "string" ? { content: [{ type: "text", text: value }] } : jsonResult(value);
   } catch (error) {
     console.error(JSON.stringify({
       event: "engineering_mcp_tool_failed",
@@ -171,6 +189,94 @@ const sqlInputSchema = {
 
 export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal): McpServer {
   const server = new McpServer({ name: "Rally engineering", version: "1.0.0" });
+
+  server.registerTool("create_org", {
+    description: "Create a Rally Organization in the specified region, owned by creatorUserId, and directly add userIds as members. All users must already exist in that region (use search_users). No invitations or login credentials are created. Reuse operationId and the same arguments to resume an uncertain result; orgId is operationId.",
+    inputSchema: CreateEngineeringOrgInputSchema.unwrap().shape,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "create_org", {
+    region: request.region, workspace_id: request.operationId, creator_user_id: request.creatorUserId,
+  }, async () => {
+    const binding = env[`${regionConfiguration(request.region).bindingPrefix}_INSPECTION`];
+    if (!binding) throw new InspectionRefusal("regional_inspection_unavailable", "regional_inspection_unavailable");
+    return CreateEngineeringOrgResultSchema.parse(await binding.createOrg(request, principal));
+  }));
+
+  async function organizationBinding(orgId: string) {
+    const results = await Promise.all(inspectionBindings(env).map((binding) => binding.resolveWorkspace({ workspaceId: WorkspaceIdSchema.parse(orgId) })));
+    return oneRegionalTarget(env, results.map((result) => EngineeringWorkspaceTargetLookupSchema.parse(result)), `Organization ${orgId}`).binding;
+  }
+
+  server.registerTool("create_channel", {
+    description: "Create an Organization-wide Rally Channel in orgId and seat participantUserIds plus its creator. The selected user and participants must satisfy the app's ordinary creation and audience permissions. A Channel is stored as a Space, not a workstream. Reuse operationId and the same arguments after an uncertain outcome; channelId is operationId.",
+    inputSchema: CreateEngineeringChannelInputSchema.unwrap().shape,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "create_channel", {
+    workspace_id: request.orgId, space_id: request.operationId, creator_user_id: request.creatorUserId,
+  }, async () => CreateEngineeringChannelResultSchema.parse(await (await organizationBinding(request.orgId)).createChannel(request, principal))));
+
+  server.registerTool("create_thread", {
+    description: "Start a Rally Thread in channelId (a stored Space) in orgId, as creatorUserId, with prompt as its opening message. Starts the normal agent run, which may use connected tools. The creator must satisfy the app's ordinary Thread creation and Channel participation permissions. Private Channels keep the Thread private. Reuse operationId and the same arguments after an uncertain outcome; threadId is operationId.",
+    inputSchema: CreateEngineeringThreadInputSchema.unwrap().shape,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  }, (request) => tool(principal, "create_thread", {
+    workspace_id: request.orgId, space_id: request.channelId, workstream_id: request.operationId, creator_user_id: request.creatorUserId,
+  }, async () => CreateEngineeringThreadResultSchema.parse(await (await organizationBinding(request.orgId)).createThread(request, principal))));
+
+  server.registerTool("send_message", {
+    description: "Send a message as userId to a Thread's Main or the named Breakout, through the same composer admission as the app. Enforces that user's access, uses normal addressing, queue/steer behavior, notifications and agent execution. Reuse operationId and the same arguments to retry an uncertain send.",
+    inputSchema: SendEngineeringMessageInputSchema.unwrap().shape,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  }, (request) => tool(principal, "send_message", {
+    workspace_id: request.orgId, workstream_id: request.threadId, substream_id: request.breakoutId,
+    user_id: request.userId, operation_id: request.operationId,
+  }, async () => SendEngineeringMessageResultSchema.parse(await (await organizationBinding(request.orgId)).sendMessage(request, principal))));
+
+  server.registerTool("read_channel", {
+    description: "Read the Channel feed visible to userId as plain text, with messages and Thread cards in app order. The app's ordinary feed pagination applies; follow the returned cursor for older history. Does not read the contents of every Thread.",
+    inputSchema: ReadEngineeringChannelInputSchema.unwrap().shape,
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "read_channel", {
+    workspace_id: request.orgId, space_id: request.channelId, user_id: request.userId,
+  }, async () => EngineeringTextResultSchema.parse(await (await organizationBinding(request.orgId)).readChannel(request)).text));
+
+  const conversationReadSchema = ReadEngineeringConversationInputSchema.unwrap().omit({ breakoutId: true });
+  server.registerTool("read_thread", {
+    description: "Read the Thread's participant-visible message text as userId through ordinary conversation authorization. Omits tools, thinking and internal agent messages. Returns 20 committed turns by default, or the requested limit; follow the returned sequence fence to continue a page.",
+    inputSchema: conversationReadSchema.shape,
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "read_thread", {
+    workspace_id: request.orgId, workstream_id: request.threadId, user_id: request.userId,
+  }, async () => EngineeringTextResultSchema.parse(await (await organizationBinding(request.orgId)).readConversation(request)).text));
+
+  server.registerTool("read_breakout", {
+    description: "Read a Breakout's participant-visible message text as userId. The user's access to this exact Breakout is checked independently of the parent Thread. Returns plain text with the same history paging as read_thread.",
+    inputSchema: conversationReadSchema.extend({ breakoutId: SubstreamIdSchema.refine((id) => id !== "0", "A Breakout ID is required") }).shape,
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "read_breakout", {
+    workspace_id: request.orgId, workstream_id: request.threadId, substream_id: request.breakoutId, user_id: request.userId,
+  }, async () => EngineeringTextResultSchema.parse(await (await organizationBinding(request.orgId)).readConversation(request)).text));
+
+  server.registerTool("list_channels", {
+    description: "List the active Rally Channels visible to userId in orgId, in that user's app sidebar order. Uses the ordinary member/guest directory rules. Each item's id is a channelId for Channel reads and Thread creation; Personal Channels belong only to their owner.",
+    inputSchema: ListEngineeringUserChannelsInputSchema.unwrap().shape,
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "list_channels", {
+    workspace_id: request.orgId, user_id: request.userId,
+  }, async () => SpaceDirectorySchema.parse(await (await organizationBinding(request.orgId)).listUserChannels(request))));
+
+  const conversationListSchema = ListEngineeringUserConversationsInputSchema.unwrap().omit({ kind: true });
+  for (const [name, kind] of [["list_threads", "channel"], ["list_breakouts", "breakout"]] as const) {
+    server.registerTool(name, {
+      description: kind === "channel"
+        ? "List all unarchived Threads userId may open in channelId (a stored Space), newest activity first, including settled/read Threads. Each item's id is a threadId. Returns the app's ordinary conversation cards and nextCursor; repeat with cursor until nextCursor is null."
+        : "List all unarchived Breakouts visible to userId in channelId (a stored Space), across its Threads, including settled/read Breakouts. Each item's id is a breakoutId; breakoutOf.workstreamId is the threadId needed to read or send. Uses ordinary child visibility rules. Repeat with cursor until nextCursor is null.",
+      inputSchema: conversationListSchema.shape,
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    }, (request) => tool(principal, name, {
+      workspace_id: request.orgId, space_id: request.channelId, user_id: request.userId,
+    }, async () => SpaceChannelPageSchema.parse(await (await organizationBinding(request.orgId)).listUserConversations({ ...request, kind }))));
+  }
 
   server.registerTool("list_workspaces", {
     description: "List Rally workspaces from configured regional identity stores.",
@@ -211,7 +317,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     userPage(inspectionBindings(env), filter, { orderBy, direction, limit, page })));
 
   server.registerTool("list_workstreams", {
-    description: "List every work stream in the authoritative WorkspaceDO for a workspace ID.",
+    description: "List every Rally Thread (stored as a workstream) in the authoritative WorkspaceDO for an Organization's workspace ID.",
     inputSchema: { workspaceId: WorkspaceIdSchema },
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, ({ workspaceId }) => tool(principal, "list_workstreams", { workspace_id: workspaceId }, async () => {
@@ -250,7 +356,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
   }));
 
   server.registerTool("list_spaces", {
-    description: "List every Space in the authoritative WorkspaceDO for a workspace ID, archived Spaces included. A Space groups Channels; its parent state lives in the WorkspaceDO and it has no message feed. Until the Space directory projection ships, the list is empty for every workspace, so an empty answer here does not mean the workspace has no Spaces.",
+    description: "List every Rally Channel (stored as a Space) in the authoritative WorkspaceDO for an Organization's workspace ID, including archived Channels. Each spaceId can be passed as channelId to create_thread.",
     inputSchema: { workspaceId: WorkspaceIdSchema },
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, ({ workspaceId }) => tool(principal, "list_spaces", { workspace_id: workspaceId }, async () => {

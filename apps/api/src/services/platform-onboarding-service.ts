@@ -37,7 +37,7 @@ import {
 import { workspaceDOName } from "../durable-objects/names";
 import { BrowserSessionService } from "./browser-session-service";
 import { AuthService } from "./auth-service";
-import { openGeneralSpaceForNewWorkspace } from "./space-bootstrap-service";
+import { openGeneralSpaceForNewWorkspace, seatOrganizationMember } from "./space-bootstrap-service";
 import {
   acceptsNewWorkstreamWork,
   readWorkstreamAuthorityControl,
@@ -463,19 +463,30 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
    * anybody signing in. A session here would be a login credential minted on
    * somebody's behalf by an operator, which is not something preparation may
    * do. Idempotent through the journal exactly as `create` is: a replay of the
-   * same operation returns to the same workspace.
+   * same operation returns to the same workspace. Engineering MCP shares this
+   * entryway, optionally committing initial members with the owner and seating
+   * them through the ordinary membership bootstrap.
    */
   async createWorkspaceForMember(input: {
     operationId: string;
     workspaceId: WorkspaceId;
     name: string;
     userId: string;
+    /** Initial members, committed alongside the owner through ordinary onboarding. */
+    memberUserIds?: readonly string[];
   }): Promise<void> {
     const user = await this.env.DB.prepare(
       "SELECT id, platform_user_id, google_subject, email FROM users WHERE id = ?",
     ).bind(input.userId).first<RegionalUserRow>();
     if (!user?.platform_user_id) {
       throw new ApiError(404, "regional_user_not_found", "The member is not known in this region");
+    }
+    const members = [...new Set(input.memberUserIds ?? [])].filter((id) => id !== user.id);
+    if (members.length) {
+      const known = await this.env.DB.batch(members.map((id) => this.env.DB.prepare("SELECT id FROM users WHERE id = ?").bind(id)));
+      if (known.some((result) => result.results.length === 0)) {
+        throw new ApiError(404, "regional_user_not_found", "An initial member is not known in this region");
+      }
     }
     const placementAffinity = fallbackWorkspacePlacementAffinity(this.env.AVALON_REGION);
     const reference: OperationReference & { name: string; placementAffinity: WorkspacePlacementAffinity } = {
@@ -494,16 +505,24 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       await this.requireMembership(user.id, input.workspaceId);
       await this.requirePlacementAffinity(input.workspaceId, placementAffinity);
       await this.initializeWorkspaceObject(input.workspaceId, placementAffinity);
+      for (const id of members) {
+        await this.requireMembership(id, input.workspaceId);
+        await seatOrganizationMember(this.env, input.workspaceId, id);
+      }
       return;
     }
-    await this.createOwnedWorkspace(user.id, reference, authority, []);
+    await this.createOwnedWorkspace(user.id, reference, authority, members.map((id) => this.env.DB.prepare(
+      `INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+       VALUES (?, ?, 'member', 'active', ?)`,
+    ).bind(input.workspaceId, id, nowIso())));
+    for (const id of members) await seatOrganizationMember(this.env, input.workspaceId, id);
   }
 
   /**
    * The rows, the journal entry, General's anchor and the object, for both
    * creators above. One D1 batch writes the workspace, its owner, the journal
-   * entry and General's anchor and route; `trailing` statements (the
-   * creator's session) go last, after the membership they need, and their
+   * entry and General's anchor and route; `trailing` statements (initial
+   * members or the creator's session) go last, after the owner, and their
    * results are returned. The batch is all or nothing and the workspace insert
    * has no conflict clause, so a committed batch is the proof of the rows: no
    * read-back follows. One object call then initializes the Organization and
