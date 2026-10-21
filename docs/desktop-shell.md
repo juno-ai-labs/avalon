@@ -163,11 +163,14 @@ and Channel badges carry their names as tooltips. A row is unread
 messages, mentions the person, or was never opened, the three the Threads
 count is made of; what the run is doing is the thread's own header's to show.
 A row the socket holds is drawn from the socket, so its dot moves live.
-Resolved threads and breakouts use Activity's read-row treatment: 30% opacity,
-restored on hover or keyboard focus and at full opacity when the person asks
-for more contrast. This applies in All threads and both Pinned lists.
-Archived rows are omitted, including pinned rows and breakouts of a thread
-the socket marks archived; a pin does not keep an archived conversation visible.
+Resolved threads and breakouts use Activity's read-row treatment in All threads
+and both Pinned lists. Archived conversations are omitted by the navigation
+list. Accepted socket breakout rosters update resolution and remove conversations
+the viewer no longer reaches, including from an older REST page still arriving.
+A confirmed local thread archive removes its navigation rows before the socket
+evicts the temporary archive marker. Visibility tombstones refresh the list:
+membership loss alone does not imply that its breakouts were archived.
+Once the list loads, pins without a renderable row do not count or take a slot.
 Right-click pins or unpins. A row with a wake-up coming carries a clock whose
 tooltip says when and what. A thread Rally is still naming shows a shimmer in
 place of its title (`useNamingSkeleton`). Hovering a row for a second warms
@@ -585,6 +588,16 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-21 — Resolved work sits below ongoing work
+
+Resolved conversations were as prominent as ongoing work and could outrank it
+when unread. They now use Activity's read-row treatment and the final Needs
+attention group. Archived rows stay out of navigation even when still pinned.
+The existing versioned breakout roster reconciles cached navigation copies;
+visibility tombstones reread authority rather than guessing whether archive or
+membership changed. Pin drop slots follow the visible rows while preserving
+hidden pins in the stored order.
 
 ### 2026-10-21 — Opening a thread holds its slot in Needs attention
 

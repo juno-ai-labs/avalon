@@ -529,18 +529,14 @@ describe('the navigation sidebar', () => {
     const archivedAt = '2026-10-21T12:00:00.000Z';
     const open = thread('open', 'Open thread', { hasUnread: true });
     const resolved = thread('resolved', 'Resolved thread', { resolved: true });
-    const archived = thread('archived', 'Archived thread', { archivedAt, hasUnread: true });
+    const archived = thread('archived', 'Archived thread', { hasUnread: true });
     const liveArchived = thread('live-archived', 'Archived live', { hasUnread: true });
     const breakout = thread('child', 'Archived parent breakout', {
       kind: 'breakout', hasUnread: true,
       breakoutOf: { workstreamId: liveArchived.id, substreamId: 'child', title: liveArchived.title },
     });
-    const archivedBreakout = thread('archived-child', 'Archived breakout', {
-      kind: 'breakout', archivedAt, hasUnread: true,
-      breakoutOf: { workstreamId: open.id, substreamId: 'archived-child', title: open.title },
-    });
-    const rows = [open, resolved, archived, liveArchived, breakout, archivedBreakout];
-    live.rows = [{ ...liveArchived, archivedAt }];
+    const rows = [open, resolved, archived, liveArchived, breakout];
+    live.rows = [{ ...archived, archivedAt }, { ...liveArchived, archivedAt }];
     api.getMyThreads.mockResolvedValue({ nextCursor: null, items: rows, pinned: rows });
     renderSidebar((client) => client.setQueryData(PINS_QUERY_KEY, rows.map((row) => ({
       kind: row.kind === 'breakout' ? 'breakout' : 'thread', id: row.id, parentId: row.breakoutOf?.workstreamId ?? null,
@@ -563,6 +559,44 @@ describe('the navigation sidebar', () => {
     renderSidebar(() => undefined);
     expect(await screen.findByText('Threads you start or are added to appear here.')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Archived thread/u })).not.toBeInTheDocument();
+  });
+
+  it.each(['threads', 'pinned'] as const)('excludes missing pins from the loaded %s count and empty state', async (section) => {
+    useUiStore.getState().setSidebarSection(section);
+    api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [], pinned: [] });
+    renderSidebar((client) => client.setQueryData(PINS_QUERY_KEY, [{ kind: 'thread', id: 'hidden', parentId: null }]));
+    const list = within(screen.getByRole('region', { name: 'Pinned threads' }));
+    expect(await list.findByText(section === 'pinned' ? 'Pin a thread to keep it here' : 'Move a thread here to pin it')).toBeInTheDocument();
+    expect(list.queryByText(/Pinned, /u)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [80, ['hidden', 'a', 'x', 'b']],
+    [200, ['hidden', 'a', 'b', 'x']],
+  ] as const)('saves a visible thread drop at y=%s into the stored order without counting hidden pins', async (clientY, expected) => {
+    useUiStore.getState().setSidebarSection('threads');
+    const rows = [thread('a', 'Alpha'), thread('b', 'Beta'), thread('x', 'Extra')];
+    api.getMyThreads.mockResolvedValue({ nextCursor: null, items: rows, pinned: rows.slice(0, 2) });
+    const pinList = (ids: readonly string[]) => ids.map((id) => ({ kind: 'thread', id, parentId: null }));
+    api.setPinned.mockResolvedValue(pinList(['hidden', 'a', 'b', 'x']));
+    api.reorderPins.mockImplementation(async (_kind: string, ids: string[]) => pinList(ids));
+    let queryClient!: QueryClient;
+    renderSidebar((client) => {
+      queryClient = client;
+      client.setQueryData(PINS_QUERY_KEY, pinList(['hidden', 'a', 'b']));
+    });
+    const section = screen.getByRole('region', { name: 'Pinned threads' });
+    const alpha = await within(section).findByRole('link', { name: /Alpha/u });
+    const beta = within(section).getByRole('link', { name: /Beta/u });
+    expect(within(alpha).getByText('Pinned, 1 of 2.')).toBeInTheDocument();
+    vi.spyOn(alpha, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 40, 300, 50));
+    vi.spyOn(beta, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 90, 300, 50));
+    fireEvent.dragStart(screen.getByRole('link', { name: /Extra/u }), { dataTransfer: { effectAllowed: 'all', setData: vi.fn() } });
+    const over = createEvent.dragOver(section, { dataTransfer: { dropEffect: 'none' } });
+    Object.defineProperty(over, 'clientY', { value: clientY });
+    fireEvent(section, over);
+    fireEvent.drop(section);
+    await waitFor(() => expect(queryClient.getQueryData(PINS_QUERY_KEY)).toEqual(pinList(expected)));
   });
 
   it.each([

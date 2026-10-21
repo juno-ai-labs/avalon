@@ -4,11 +4,12 @@ import type {
   WorkstreamAppearancePatch,
   WorkstreamStateVersion,
 } from '@rally/contracts';
-import type { QueryClient } from '@tanstack/react-query';
+import type { InfiniteData, QueryClient } from '@tanstack/react-query';
 import { noteRailWaterline } from './channel-rails';
 import { retainConversationChildren } from './conversation-cache';
-import type { WorkstreamDetail } from './types';
+import type { SpaceConversationSummary, WorkstreamDetail } from './types';
 import { workstreamDetailQueryKey } from './workstreams-cache';
+import { MY_THREADS_QUERY_KEY, type ThreadNavigationPage } from './sidebar-list-store';
 
 /**
  * A Channel's per-viewer state beyond its directory row: the breakouts this
@@ -37,6 +38,20 @@ export type WorkstreamChildDirectory = Pick<Workstream, 'privateChildren' | 'pri
   /** Receipt-backed rows waiting for the parent's authoritative projection. */
   appearanceOverlays?: Record<string, BreakoutAppearanceOverlay>;
 };
+
+/** Apply accepted live breakout rosters to navigation rows, including a REST page already in flight. */
+export function reconcileThreadNavigationRows(queryClient: QueryClient, rows: SpaceConversationSummary[]): SpaceConversationSummary[] {
+  return rows.flatMap((row) => {
+    const parent = row.breakoutOf;
+    if (!parent) return [row];
+    const directory = queryClient.getQueryData<WorkstreamChildDirectory>(workstreamChildrenQueryKey(parent.workstreamId));
+    // Device seeds are not authoritative enough to remove a REST row.
+    if (!directory?.stateVersion || !directory.privateChildren) return [row];
+    const child = directory.privateChildren.find((candidate) => candidate.substreamId === parent.substreamId);
+    if (!child) return [];
+    return [child.resolved && !row.resolved ? { ...row, resolved: true } : row];
+  });
+}
 
 export interface BreakoutAppearanceUpdate {
   baseline: WorkstreamAppearance | undefined;
@@ -192,7 +207,8 @@ export function applyChannelViewerState(
   }
   if (row.privateChildren === undefined) return;
   const key = workstreamChildrenQueryKey(row.id);
-  const before = roster(queryClient.getQueryData<WorkstreamChildDirectory>(key));
+  const previous = queryClient.getQueryData<WorkstreamChildDirectory>(key);
+  const before = roster(previous);
   queryClient.setQueryData<WorkstreamChildDirectory>(key, (current) => {
     const stored = current?.stateVersion;
     if (stored && (stateVersion.authorityGeneration < stored.authorityGeneration
@@ -209,6 +225,16 @@ export function applyChannelViewerState(
   // already held rather than this row's: a stale row that lists fewer
   // children must not take a still-authorized child off the disk.
   const after = roster(queryClient.getQueryData<WorkstreamChildDirectory>(key));
+  if (queryClient.getQueryData<WorkstreamChildDirectory>(key) !== previous) {
+    queryClient.setQueryData<InfiniteData<ThreadNavigationPage>>(MY_THREADS_QUERY_KEY, (current) => current ? {
+      ...current,
+      pages: current.pages.map((page) => ({
+        ...page,
+        items: reconcileThreadNavigationRows(queryClient, page.items),
+        pinned: page.pinned ? reconcileThreadNavigationRows(queryClient, page.pinned) : undefined,
+      })),
+    } : current);
+  }
   if (localCacheScope !== null && after !== null && after !== before) {
     void retainConversationChildren(localCacheScope, row.id, new Set(after ? after.split(',') : []));
   }
