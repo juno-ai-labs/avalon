@@ -4531,13 +4531,11 @@ pre {
    covered by the same rule. */
 body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .attachment-lightbox-content { min-height: 0; overflow: auto; }
-.attachment-lightbox-content.is-image,
+.attachment-lightbox-content.is-image { display: block; height: 100%; overflow: hidden; padding: 60px 72px; }
+.attachment-lightbox-content.is-image:not(:has(.image-viewport)) { overflow: auto; }
 .attachment-lightbox-content.is-video { align-items: center; display: flex; height: 100%; justify-content: center; overflow: hidden; padding: 60px 72px; }
-.attachment-lightbox-content.is-image img { background: var(--av-sys-color-surface-default); border-radius: 16px; box-shadow: var(--av-sys-elevation-shadow-lg); height: auto; max-height: 100%; max-width: min(86vw, 1400px); object-fit: contain; user-select: none; width: auto; }
 .attachment-lightbox-content.is-video video { border-radius: 16px; box-shadow: var(--av-sys-elevation-shadow-lg); max-height: 100%; max-width: min(86vw, 1400px); }
-.attachment-lightbox-content.is-image.is-expanded,
 .attachment-lightbox-content.is-video.is-expanded { align-items: flex-start; justify-content: flex-start; overflow: auto; }
-.attachment-lightbox-content.is-image.is-expanded img,
 .attachment-lightbox-content.is-video.is-expanded video { margin: auto; max-height: none; max-width: none; }
 .attachment-lightbox-content.is-audio { align-items: center; display: flex; justify-content: center; padding: 32px; }
 .attachment-lightbox-content.is-audio audio { max-width: 560px; width: 100%; }
@@ -6166,9 +6164,9 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .attachment-panel-body { display: flex; flex-direction: column; min-height: 0; min-width: 0; outline: 0; }
 .attachment-panel-superseded { align-self: flex-start; margin: 12px 16px 0; }
 .attachment-panel-content { flex: 1 1 auto; min-height: 0; overflow: auto; }
-.attachment-panel-body.is-image .attachment-panel-content,
 .attachment-panel-body.is-video .attachment-panel-content { align-items: center; display: flex; justify-content: center; padding: 16px; }
-.attachment-panel-content > img,
+.attachment-panel-body.is-image .attachment-panel-content { padding: 16px; }
+.attachment-panel-body.is-image .attachment-panel-content:has(> .image-viewport, > .annotation-surface.is-image) { overflow: hidden; }
 .attachment-panel-content > video { border-radius: var(--av-sys-size-radius-md); max-height: 100%; max-width: 100%; object-fit: contain; user-select: none; }
 .attachment-panel-body.is-audio .attachment-panel-content { padding: 32px 22px; }
 .attachment-panel-content > audio { width: 100%; }
@@ -9220,8 +9218,20 @@ button.merged-into-label:hover { color: var(--av-sys-color-text-default); }
 .message-annotation small { display:flex; align-items:center; gap:6px; color:var(--av-sys-color-text-muted); font-size:11px; }
 .message-annotation q { font-size:13px; white-space:pre-wrap; max-height:100px; overflow:auto; }
 .message-annotation > span { font-size:13px; }
-.annotation-image { position:relative; display:inline-block; max-width:100%; }
-.annotation-image img { display:block; max-width:100%; }
+.annotation-surface.is-image { display:flex; flex-direction:column; height:100%; min-height:0; }
+.annotation-surface.is-image > .annotation-body { flex:1; min-height:0; }
+.image-viewport { display:flex; flex-direction:column; height:100%; min-height:0; min-width:0; width:100%; }
+.image-viewport-scroll { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; scrollbar-gutter:stable; touch-action:manipulation; }
+/* Auto margins center small images without moving overflow before the scroll origin. */
+.image-viewport-stage { display:flex; min-height:100%; min-width:100%; width:max-content; }
+.image-viewport .annotation-image { flex:none; margin:auto; position:relative; }
+.image-viewport .annotation-image img { display:block; height:auto; max-height:none; max-width:none; width:100%; user-select:none; }
+.image-viewport-toolbar { align-items:center; display:flex; flex:none; gap:4px; justify-content:center; padding:8px; }
+.image-viewport-toolbar > button { background:transparent; border:0; border-radius:6px; color:var(--av-sys-color-text-default); cursor:pointer; font:inherit; font-size:12px; padding:6px 8px; }
+.image-viewport-toolbar > button:hover { background-image:var(--hover-layer); }
+.annotation-surface.is-picking .image-viewport-toolbar button,
+.annotation-surface.is-picking .image-viewport-toolbar button * { cursor:pointer !important; }
+.image-viewport-scale { min-width:52px; font-variant-numeric:tabular-nums; }
 .annotation-image-region { position:absolute; border:2px solid var(--av-sys-color-accent-base); background:color-mix(in srgb, var(--av-sys-color-accent-base) 9%, transparent); pointer-events:none; }
 .annotation-saved-quote { border-left:3px solid var(--av-sys-color-accent-base); padding:12px; margin-top:10px; background:color-mix(in srgb, var(--av-sys-color-accent-base) 3%, transparent); white-space:pre-wrap; }
 .annotation-sheet-scroll { overflow:auto; max-height:360px; }
@@ -9250,7 +9260,7 @@ button.merged-into-label:hover { color: var(--av-sys-color-text-default); }
 .annotation-chip textarea { flex-basis:100%; margin:0 8px 8px; min-height:54px; background:transparent; color:inherit; border:0; font:inherit; resize:vertical; }
 .artifact-annotation-window-body > :is(audio,video) { max-width:100%; }
 .attachment-lightbox-document .annotation-body { font:inherit; }
-.attachment-lightbox-content .annotation-image img { max-height:calc(100vh - 160px); object-fit:contain; }
+.inspector-detail-document:has(> .annotation-surface.is-image) { height:calc(100vh - 160px); }
 
 .annotation-sheet td { overflow:hidden; text-overflow:ellipsis; max-width:160px; }
 
@@ -9270,6 +9280,7 @@ button.merged-into-label:hover { color: var(--av-sys-color-text-default); }
 
 .artifact-window-panel { display:flex; flex-direction:column; flex:1; min-height:0; }
 .artifact-window-panel > .rail-scroll { flex:1; }
+.artifact-window-panel > .rail-scroll:has(> .artifact-annotation-window-body > .annotation-surface.is-image) { display:flex; flex-direction:column; overflow:hidden; }
 .artifact-window-panel .panel-title-header { flex:0 0 64px; }
 
 .copy-status { display:block; flex:none; padding:8px 16px; font-size:12px; color:var(--av-sys-color-text-default); background:var(--av-sys-color-surface-subtle); }

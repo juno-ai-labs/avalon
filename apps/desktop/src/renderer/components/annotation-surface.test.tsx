@@ -155,7 +155,7 @@ describe('annotation source picker',()=>{
 
   it('reveals the saved quote when its original image cannot load',()=>{
     const saved={target:{resourceId,version:1,locator:{type:'region' as const,x:0,y:0,w:1,h:1}},content:{exact:'Region of Layout.png',source:'exact' as const,before:'',after:'',truncated:false},comment:'Use more contrast'};
-    render(<AnnotationSurface resourceId={resourceId} version={1} name="Layout.png" mimeType="image/png" src="broken-original.png" saved={saved}/>);
+    render(<Tooltip.Provider><AnnotationSurface resourceId={resourceId} version={1} name="Layout.png" mimeType="image/png" src="broken-original.png" saved={saved}/></Tooltip.Provider>);
     fireEvent.error(screen.getByRole('img',{name:'Layout.png'}));
     expect(screen.getByText('Region of Layout.png')).toBeVisible();
     expect(screen.getByText('Use more contrast')).toBeVisible();
