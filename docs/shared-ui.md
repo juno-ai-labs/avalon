@@ -215,8 +215,11 @@ src/renderer/components/sidekick-section.test.tsx` (as one command). The desktop
 suite imports the real shared implementations through their re-export adapters.
 Run `pnpm --filter @rally/desktop exec vitest run
 src/renderer/components/error-notice.test.tsx
-src/renderer/components/acknowledged-error-dialog.test.tsx` for the popup queue,
-acknowledgement, focus and nested-dialog behavior.
+src/renderer/components/acknowledged-error-dialog.test.tsx
+src/renderer/components/sideline-composer.test.tsx` for the popup queue,
+acknowledgement, focus, nested-dialog behavior and Sideline message validation.
+Sideline validation uses this DOM harness because static HTML cannot represent
+a client-side popup.
 Run `pnpm --filter @rally/desktop exec electron-vite build` and inspect the changed
 surfaces in Electron. The browser host in #825 adds Chrome verification; no second
 component test runner is needed for the same implementations.
