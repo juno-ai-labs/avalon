@@ -106,8 +106,8 @@ describe("connection tool counts in the connection list", () => {
   it("counts a fixed tool surface from the row's grants, with the page tools activation adds, without calling the provider", async () => {
     const { env, auth, object, providerRequests } = fixture();
     const service = new ConnectionService(env, auth);
-    // `gmail.read` authors five tools, one of them (`gmail.search`) paginated:
-    // activation offers `gmail.search_next` beside it, so the agent sees six.
+    // `gmail.read` authors eight tools; search and draft listing each add
+    // a continuation tool on activation, so the agent sees ten.
     insertConnection(object, {
       id: "00000000-0000-7000-8000-000000000101",
       connectorType: "google",
@@ -123,8 +123,8 @@ describe("connection tool counts in the connection list", () => {
     const listed = await service.list();
 
     expect(listed.map((connection) => [connection.id, connection.toolCount, connection.toolCountMissing])).toEqual([
-      ["00000000-0000-7000-8000-000000000101", 6, null],
-      ["00000000-0000-7000-8000-000000000102", 1, null],
+      ["00000000-0000-7000-8000-000000000101", 10, null],
+      ["00000000-0000-7000-8000-000000000102", 2, null],
     ]);
     expect(providerRequests).toEqual([]);
   });
@@ -342,7 +342,7 @@ describe("connection tool counts in the connection list", () => {
     expect(response.status).toBe(200);
     const body = await response.json() as { items: Array<{ id: string; toolCount: unknown; toolCountMissing: unknown }> };
     expect(body.items.map((item) => [item.id, item.toolCount, item.toolCountMissing])).toEqual([
-      ["00000000-0000-7000-8000-000000000105", 6, null],
+      ["00000000-0000-7000-8000-000000000105", 10, null],
       ["00000000-0000-7000-8000-000000000106", null, "connector_unavailable"],
     ]);
   });

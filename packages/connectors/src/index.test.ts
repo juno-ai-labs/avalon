@@ -2135,7 +2135,7 @@ describe("connectors", () => {
     ]);
   });
 
-  it("does not mail the guest list for an attendee change that changes nobody", async () => {
+  it("notifies guests about a renamed event even when an empty attendee addition changes nobody", async () => {
     const methods: string[] = [];
     const fetcher: typeof fetch = async (input, init) => {
       methods.push(init?.method ?? "GET");
@@ -2156,7 +2156,7 @@ describe("connectors", () => {
       }
     );
     expect(methods).toEqual(["PATCH"]);
-    expect(requests[0]?.searchParams.get("sendUpdates")).toBeNull();
+    expect(requests[0]?.searchParams.get("sendUpdates")).toBe("all");
   });
 
   it("keeps the other hits when one message cannot be hydrated", async () => {
@@ -2433,13 +2433,14 @@ describe("connectors", () => {
 
   // Gmail itself cannot run in this suite. Double only its HTTP boundary and
   // inspect the actual request bodies and MIME produced by the adapter.
-  it.each(["gmail.create_draft", "gmail.send"])("%s resolves a reply from one message and preserves explicit recipients", async (name) => {
+  it.each(["gmail.create_reply_draft", "gmail.reply"])("%s resolves a reply from one message and preserves explicit recipients", async (name) => {
     const requests: Array<{ url: URL; method: string; body: Record<string, unknown> }> = [];
-    const isDraft = name === "gmail.create_draft";
+    const isDraft = name.includes("draft");
     const fetcher: typeof fetch = async (input, init) => {
       const url = requestUrl(input);
       const method = init?.method ?? "GET";
       requests.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {} });
+      if (url.pathname.endsWith("/messages")) return googleJson({ messages: [{ id: "message-original" }] });
       if (method === "GET") return googleJson({
         threadId: "thread-original",
         payload: { headers: [
@@ -2455,22 +2456,21 @@ describe("connectors", () => {
         : { id: "message-created", threadId: "thread-original" });
     };
     const result = await googleAdapter(fetcher).executeTool(name, {
-      message: {
-        kind: "reply", messageId: "message-original", to: ["recipient@example.com"],
-        cc: ["chosen@example.com"], body: "Looks good.",
-      },
+      query: "subject:Design-review", to: ["recipient@example.com"],
+      cc: ["chosen@example.com"], body: "Looks good.",
     }, {
       connection: googleConnection([isDraft ? "gmail.draft" : "gmail.send", "gmail.read"]),
       principal: { type: "user", userId: TEST_USER_ID },
       signal: neverAborts(),
     });
     expect(requests.map(({ url, method }) => [method, url.pathname])).toEqual([
+      ["GET", "/gmail/v1/users/me/messages"],
       ["GET", "/gmail/v1/users/me/messages/message-original"],
       ["POST", `/gmail/v1/users/me/${isDraft ? "drafts" : "messages/send"}`],
     ]);
-    expect(requests[0]?.url.searchParams.get("format")).toBe("metadata");
-    expect(requests[0]?.url.searchParams.getAll("metadataHeaders")).toEqual(["Subject", "Message-ID", "References"]);
-    const posted = requests[1]?.body ?? {};
+    expect(requests[1]?.url.searchParams.get("format")).toBe("metadata");
+    expect(requests[1]?.url.searchParams.getAll("metadataHeaders")).toEqual(["Subject", "Message-ID", "References", "Reply-To", "From", "To"]);
+    const posted = requests[2]?.body ?? {};
     const message = isDraft ? posted.message as Record<string, unknown> : posted;
     expect(message.threadId).toBe("thread-original");
     const mime = atob(String(message.raw).replace(/-/gu, "+").replace(/_/gu, "/"));
@@ -2490,7 +2490,7 @@ describe("connectors", () => {
 
   it.each(["gmail.create_draft", "gmail.send"])("%s starts a new conversation without reading or adding reply headers", async (name) => {
     const requests: Array<{ url: URL; method: string; body: Record<string, unknown> }> = [];
-    const isDraft = name === "gmail.create_draft";
+    const isDraft = name.includes("draft");
     const fetcher: typeof fetch = async (input, init) => {
       requests.push({ url: requestUrl(input), method: init?.method ?? "GET", body: JSON.parse(String(init?.body)) as Record<string, unknown> });
       return googleJson(isDraft
@@ -2498,7 +2498,7 @@ describe("connectors", () => {
         : { id: "message-sent", threadId: "thread-sent" });
     };
     const result = await googleAdapter(fetcher).executeTool(name, {
-      message: { kind: "new", to: ["recipient@example.com"], cc: null, subject: "Shipped", body: "Done." },
+      to: ["recipient@example.com"], cc: null, subject: "Shipped", body: "Done.",
     }, {
       connection: googleConnection([isDraft ? "gmail.draft" : "gmail.send"]),
       principal: { type: "user", userId: TEST_USER_ID },
@@ -2529,7 +2529,7 @@ describe("connectors", () => {
     });
     const read = vi.fn(async () => ({ fileName: "Calm dossier.pdf", mimeType: "application/pdf", bytes: new TextEncoder().encode("%PDF-1.7\nOriginal dossier\n%%EOF") }));
     const result = await adapter.executeTool("gmail.create_draft", {
-      message: { kind: "new", to: ["candidate@example.com"], subject: "Follow-up", body: "Thank you for meeting." },
+      to: ["candidate@example.com"], subject: "Follow-up", body: "Thank you for meeting.",
       attachmentResourceIds: [TEST_WORKSPACE_ID, TEST_WORKSPACE_ID],
     }, {
       connection: googleConnection(["gmail.draft"]), principal: { type: "user", userId: TEST_USER_ID },
@@ -2556,7 +2556,7 @@ describe("connectors", () => {
       return googleJson({ id: "binary-draft" });
     });
     await adapter.executeTool("gmail.create_draft", {
-      message: { kind: "new", to: ["candidate@example.com"], subject: "Dossier", body: "Attached." }, attachmentResourceIds: [TEST_WORKSPACE_ID],
+      to: ["candidate@example.com"], subject: "Dossier", body: "Attached.", attachmentResourceIds: [TEST_WORKSPACE_ID],
     }, { connection: googleConnection(["gmail.draft"]), principal: { type: "user", userId: TEST_USER_ID }, signal: neverAborts(),
       readAttachment: async () => ({ fileName: "dossier.pdf", mimeType: "application/pdf", bytes }),
     });
@@ -2572,7 +2572,7 @@ describe("connectors", () => {
   it("does not create an incomplete Gmail draft when a resource cannot be read", async () => {
     const fetcher = vi.fn<typeof fetch>();
     await expect(googleAdapter(fetcher).executeTool("gmail.create_draft", {
-      message: { kind: "new", to: ["candidate@example.com"], subject: "Follow-up", body: "Thanks" },
+      to: ["candidate@example.com"], subject: "Follow-up", body: "Thanks",
       attachmentResourceIds: [TEST_WORKSPACE_ID],
     }, {
       connection: googleConnection(["gmail.draft"]), principal: { type: "user", userId: TEST_USER_ID }, signal: neverAborts(),
@@ -2581,25 +2581,12 @@ describe("connectors", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it.each(["gmail.create_draft", "gmail.send"])("%s rejects undeclared write options before any provider request", async (name) => {
+  it.each(["gmail.create_draft", "gmail.send", "gmail.create_reply_draft", "gmail.reply"])("%s rejects undeclared write options before any provider request", async (name) => {
     let requests = 0;
-    const adapter = googleAdapter(async () => {
-      requests++;
-      return googleJson({ id: "unexpected-write" });
-    });
-    const context = {
-      connection: googleConnection([name === "gmail.send" ? "gmail.send" : "gmail.draft", "gmail.read"]),
-      principal: { type: "user" as const, userId: TEST_USER_ID }, signal: neverAborts(),
-    };
-    for (const message of [
-      { kind: "new", to: ["recipient@example.com"], subject: "Hello", body: "Body." },
-      { kind: "reply", to: ["recipient@example.com"], messageId: "message-original", body: "Body." },
-    ]) {
-      for (const extra of [{ preview: true }, { threadId: ".", inReplyTo: ".", references: [] }]) {
-        await expect(adapter.executeTool(name, { message, ...extra }, context)).rejects.toThrow();
-        await expect(adapter.executeTool(name, { message: { ...message, ...extra } }, context)).rejects.toThrow();
-      }
-    }
+    const adapter = googleAdapter(async () => { requests++; return googleJson({ id: "unexpected-write" }); });
+    const context = { connection: googleConnection([name.includes("draft") ? "gmail.draft" : "gmail.send", "gmail.read"]), principal: { type: "user" as const, userId: TEST_USER_ID }, signal: neverAborts() };
+    const input = name === "gmail.reply" || name === "gmail.create_reply_draft" ? { query: "subject:Renewal", body: "Body." } : { to: ["recipient@example.com"], subject: "Hello", body: "Body." };
+    for (const extra of [{ preview: true }, { threadId: ".", inReplyTo: ".", references: [] }]) await expect(adapter.executeTool(name, { ...input, ...extra }, context)).rejects.toThrow();
     expect(requests).toBe(0);
   });
 
@@ -2631,11 +2618,12 @@ describe("connectors", () => {
     expect(mime).not.toContain("\r\nBcc:");
   });
 
-  it.each(["gmail.create_draft", "gmail.send"])("%s folds an inherited reply Subject beyond the new-message input limit", async (name) => {
+  it.each(["gmail.create_reply_draft", "gmail.reply"])("%s folds an inherited reply Subject beyond the new-message input limit", async (name) => {
     const subject = "Réunion 😀 ".repeat(200);
     const writes: Record<string, unknown>[] = [];
-    const isDraft = name === "gmail.create_draft";
-    const fetcher: typeof fetch = async (_input, init) => {
+    const isDraft = name.includes("draft");
+    const fetcher: typeof fetch = async (input, init) => {
+      if (requestUrl(input).pathname.endsWith("/messages")) return googleJson({ messages: [{ id: "message-original" }] });
       if (init?.method !== "POST") return googleJson({
         threadId: "thread-original",
         payload: { headers: [{ name: "Subject", value: subject }, { name: "Message-ID", value: "<parent@example.com>" }] },
@@ -2646,7 +2634,7 @@ describe("connectors", () => {
         : { id: "reply", threadId: "thread-original" });
     };
     await googleAdapter(fetcher).executeTool(name, {
-      message: { kind: "reply", messageId: "message-original", to: ["recipient@example.com"], body: "Reply body." },
+      query: "subject:Design-review", to: ["recipient@example.com"], body: "Reply body.",
     }, {
       connection: googleConnection([isDraft ? "gmail.draft" : "gmail.send", "gmail.read"]),
       principal: { type: "user", userId: TEST_USER_ID }, signal: neverAborts(),
@@ -2664,13 +2652,14 @@ describe("connectors", () => {
     expect(mime.endsWith("\r\n\r\nReply body.")).toBe(true);
   });
 
-  it.each(["gmail.create_draft", "gmail.send"])("%s folds a long References chain without losing or duplicating ancestors", async (name) => {
+  it.each(["gmail.create_reply_draft", "gmail.reply"])("%s folds a long References chain without losing or duplicating ancestors", async (name) => {
     const ancestors = Array.from({ length: 2_000 }, (_, index) => `<message-${index}@example.com>`);
     const parent = "<parent@example.com>";
     const oversizedAncestor = `<${"é".repeat(492)}@example.com>`; // 998 UTF-8 bytes, before continuation whitespace.
     const writes: Record<string, unknown>[] = [];
-    const isDraft = name === "gmail.create_draft";
-    const fetcher: typeof fetch = async (_input, init) => {
+    const isDraft = name.includes("draft");
+    const fetcher: typeof fetch = async (input, init) => {
+      if (requestUrl(input).pathname.endsWith("/messages")) return googleJson({ messages: [{ id: "message-original" }] });
       if (init?.method !== "POST") return googleJson({
         threadId: "thread-original",
         payload: { headers: [
@@ -2685,7 +2674,7 @@ describe("connectors", () => {
         : { id: "reply", threadId: "thread-original" });
     };
     await googleAdapter(fetcher).executeTool(name, {
-      message: { kind: "reply", messageId: "message-original", to: ["recipient@example.com"], body: "Reply body." },
+      query: "subject:Design-review", to: ["recipient@example.com"], body: "Reply body.",
     }, {
       connection: googleConnection([isDraft ? "gmail.draft" : "gmail.send", "gmail.read"]),
       principal: { type: "user", userId: TEST_USER_ID },
@@ -2712,7 +2701,8 @@ describe("connectors", () => {
     { label: "UTF-8", parent: `<${"é".repeat(491)}a@example.com>` },
   ])("folds a $label parent Message-ID at the 998-byte physical-line boundary", async ({ parent }) => {
     const writes: Record<string, unknown>[] = [];
-    const fetcher: typeof fetch = async (_input, init) => {
+    const fetcher: typeof fetch = async (input, init) => {
+      if (requestUrl(input).pathname.endsWith("/messages")) return googleJson({ messages: [{ id: "message-original" }] });
       if (init?.method !== "POST") return googleJson({
         threadId: "thread-original",
         payload: { headers: [{ name: "Subject", value: "Boundary" }, { name: "Message-ID", value: parent }] },
@@ -2720,8 +2710,8 @@ describe("connectors", () => {
       writes.push(JSON.parse(String(init.body)) as Record<string, unknown>);
       return googleJson({ id: "reply", threadId: "thread-original" });
     };
-    await googleAdapter(fetcher).executeTool("gmail.send", {
-      message: { kind: "reply", messageId: "message-original", to: ["recipient@example.com"], body: "Reply body." },
+    await googleAdapter(fetcher).executeTool("gmail.reply", {
+      query: "subject:Design-review", to: ["recipient@example.com"], body: "Reply body.",
     }, {
       connection: googleConnection(["gmail.send", "gmail.read"]),
       principal: { type: "user", userId: TEST_USER_ID },
@@ -2734,16 +2724,16 @@ describe("connectors", () => {
     expect(Math.max(...lines.map((line) => Buffer.byteLength(line, "utf8")))).toBe(998);
   });
 
-  it.each(["gmail.create_draft", "gmail.send"])("%s refuses a reply without read permission before contacting Gmail", async (name) => {
+  it.each(["gmail.create_reply_draft", "gmail.reply"])("%s refuses a reply without read permission before contacting Gmail", async (name) => {
     const requests: string[] = [];
     const adapter = googleAdapter(async (input) => {
       requests.push(requestUrl(input).pathname);
       return googleJson({});
     });
     await expect(adapter.executeTool(name, {
-      message: { kind: "reply", messageId: "message-original", to: ["recipient@example.com"], body: "Hello." },
+      query: "subject:Design-review", to: ["recipient@example.com"], body: "Hello.",
     }, {
-      connection: googleConnection([name === "gmail.send" ? "gmail.send" : "gmail.draft"]),
+      connection: googleConnection([name === "gmail.send" || name === "gmail.reply" ? "gmail.send" : "gmail.draft"]),
       principal: { type: "user", userId: TEST_USER_ID },
       signal: neverAborts(),
     })).rejects.toMatchObject({ code: "unsupported_capability" });
@@ -2760,17 +2750,18 @@ describe("connectors", () => {
     { label: "oversized UTF-8 Message-ID", status: 200, payload: { threadId: "thread-original", payload: { headers: [{ name: "Message-ID", value: `<${"é".repeat(492)}@example.com>` }] } }, reason: "reply_headers_unavailable" },
   ])("refuses a reply with $label before any Gmail write", async ({ status, payload, reason }) => {
     const methods: string[] = [];
-    const adapter = googleAdapter(async (_input, init) => {
+    const adapter = googleAdapter(async (input, init) => {
+      if (requestUrl(input).pathname.endsWith("/messages")) return googleJson({ messages: [{ id: "message-original" }] });
       methods.push(init?.method ?? "GET");
       return new Response(JSON.stringify(payload), { status, headers: { "Content-Type": "application/json" } });
     });
-    await expect(adapter.executeTool("gmail.send", {
-      message: { kind: "reply", messageId: "message-original", to: ["recipient@example.com"], body: "Hello." },
+    await expect(adapter.executeTool("gmail.reply", {
+      query: "subject:Design-review", to: ["recipient@example.com"], body: "Hello.",
     }, {
       connection: googleConnection(["gmail.send", "gmail.read"]),
       principal: { type: "user", userId: TEST_USER_ID },
       signal: neverAborts(),
-    })).rejects.toMatchObject({ code: "invalid_payload", details: { reason, field: "message.messageId" } });
+    })).rejects.toMatchObject({ code: "invalid_payload", details: { reason, field: "query" } });
     expect(methods).toEqual(["GET"]);
   });
 
@@ -3529,10 +3520,11 @@ describe("connectors", () => {
       const properties = (tool.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};
       return Object.hasOwn(properties, "pageToken");
     });
-    // The four that page today. A fifth added without a description fails here
+    // Every paginated tool states where its cursor comes from. A new tool without a description fails here
     // rather than in somebody's run: the value of an opaque cursor is the one
     // argument that cannot be reasoned out from its name and its bounds.
     expect(paginated.map((tool) => tool.name)).toEqual([
+      "gmail.list_drafts",
       "gmail.search",
       "calendar.list_calendars",
       "calendar.list_events",

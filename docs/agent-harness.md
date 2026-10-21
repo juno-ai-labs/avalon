@@ -941,6 +941,10 @@ though the run had merely looked at something. `apps/api/test/connector-tool-pro
 walks every tool in the connector registry and fails on any that reaches the
 generic row or that describes a `write` in passive words, so a connector added
 later either names its tools with a recognized verb or declares its own prose.
+Google calendar cancellation/RSVP and inbox state actions declare complete action
+paths: otherwise `mark_read` would be described as a read despite mutating mail,
+and a series cancellation would lose its distinction from one occurrence. See
+[Google workflows](google-workflows.md).
 
 ### Child agents
 
