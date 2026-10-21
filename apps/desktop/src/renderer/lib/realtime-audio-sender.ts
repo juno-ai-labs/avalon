@@ -81,7 +81,7 @@ export class RealtimeAudioSender {
 
   private schedule(): void {
     if (!this.active || this.failure || this.timer !== undefined || this.bytes === 0) return;
-    const delay = Math.max(0, this.nextSendAt - Date.now());
+    const delay = Math.max(0, this.nextSendAt - performance.now());
     if (delay === 0) this.sendBatch();
     else this.timer = window.setTimeout(() => {
       this.timer = undefined;
@@ -92,8 +92,8 @@ export class RealtimeAudioSender {
   private sendBatch(): void {
     const length = Math.min(this.bytes, TRANSCRIPTION_MAX_APPEND_BYTES);
     // Socket congestion delays delivery; it does not discard the queued PCM.
-    if (this.transport.bufferedAmount() + Math.ceil(length / 3) * 4 + APPEND_ENVELOPE_CHARACTERS > MAX_BUFFERED_AUDIO_BYTES) {
-      this.nextSendAt = Date.now() + TRANSCRIPTION_AUDIO_SEND_INTERVAL_MS;
+    if (this.transport.bufferedAmount() + queuedMessageBytes(length) > MAX_BUFFERED_AUDIO_BYTES) {
+      this.nextSendAt = performance.now() + TRANSCRIPTION_AUDIO_SEND_INTERVAL_MS;
       this.schedule();
       return;
     }
@@ -114,7 +114,7 @@ export class RealtimeAudioSender {
       this.fail(caught instanceof Error ? caught : new Error('Dictation audio could not be sent.'));
       return;
     }
-    this.nextSendAt = Date.now() + TRANSCRIPTION_AUDIO_SEND_INTERVAL_MS;
+    this.nextSendAt = performance.now() + TRANSCRIPTION_AUDIO_SEND_INTERVAL_MS;
     if (this.bytes === 0) {
       for (const drain of this.drains) drain.resolve();
       this.drains.clear();
