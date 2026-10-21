@@ -221,7 +221,7 @@ describe("Avalon connector connection tools", () => {
       mode: "read",
       idempotency: "safe",
     });
-    await expect(stateTool!.execute({ connectorId: "google-drive-workspace", scope: "personal" }, context()))
+    await expect(stateTool!.execute({ connectorId: "google-drive", scope: "personal" }, context()))
       .resolves.toMatchObject({ output: { state: "not_connected" } });
     await expect(stateTool!.execute({ connectorId: "github", scope: "personal" }, context()))
       .resolves.toMatchObject({ output: { state: "unavailable" } });
@@ -258,7 +258,7 @@ describe("Avalon connector connection tools", () => {
       "00000000-0000-4000-8000-000000000099",
       JSON.stringify(["drive.read"]),
     );
-    await expect(stateTool!.execute({ connectorId: "google-drive-workspace", scope: "personal" }, context()))
+    await expect(stateTool!.execute({ connectorId: "google-drive", scope: "personal" }, context()))
       .resolves.toMatchObject({ output: { state: "not_connected" } });
 
     objectDatabase.prepare(
@@ -276,25 +276,25 @@ describe("Avalon connector connection tools", () => {
 
     await expect(stateTool!.execute({ connectorId: "google-mail-calendar", scope: "personal" }, context()))
       .resolves.toMatchObject({ output: { state: "not_connected" } });
-    await expect(stateTool!.execute({ connectorId: "google-drive-workspace", scope: "personal" }, context()))
+    await expect(stateTool!.execute({ connectorId: "google-drive", scope: "personal" }, context()))
       .resolves.toEqual({
         output: {
-          connectorId: "google-drive-workspace",
+          connectorId: "google-drive",
           state: "connected",
           connections: [{ scope: "personal", state: "connected" }, { scope: "workspace", state: "not_connected" }],
         },
-        summary: "google-drive-workspace: personal connected, workspace not_connected",
+        summary: "google-drive: personal connected, workspace not_connected",
       });
 
     objectDatabase.prepare(
       "UPDATE connector_connections SET status = 'needs_reconnect' WHERE model_plugin_id = 'plugin_google'",
     ).run();
-    await expect(stateTool!.execute({ connectorId: "google-drive-workspace", scope: "personal" }, context()))
+    await expect(stateTool!.execute({ connectorId: "google-drive", scope: "personal" }, context()))
       .resolves.toMatchObject({ output: { state: "reconnect_required" } });
     objectDatabase.prepare(
       "UPDATE connector_connections SET status = 'error' WHERE model_plugin_id = 'plugin_google'",
     ).run();
-    await expect(stateTool!.execute({ connectorId: "google-drive-workspace", scope: "personal" }, context()))
+    await expect(stateTool!.execute({ connectorId: "google-drive", scope: "personal" }, context()))
       .resolves.toMatchObject({ output: { state: "connected" } });
 
     objectDatabase.prepare(
@@ -308,7 +308,7 @@ describe("Avalon connector connection tools", () => {
       WORKSPACE_ID,
       JSON.stringify(["drive.read"]),
     );
-    await expect(stateTool!.execute({ connectorId: "google-drive-workspace", scope: "workspace" }, context()))
+    await expect(stateTool!.execute({ connectorId: "google-drive", scope: "workspace" }, context()))
       .resolves.toMatchObject({ output: { state: "connected" } });
   });
 
@@ -331,21 +331,21 @@ describe("Avalon connector connection tools", () => {
       JSON.stringify(["drive.read", "sheets.write"]),
     );
 
-    await expect(stateTool!.execute({ connectorId: "google-drive-workspace" }, context()))
+    await expect(stateTool!.execute({ connectorId: "google-drive" }, context()))
       .resolves.toEqual({
         output: {
-          connectorId: "google-drive-workspace",
+          connectorId: "google-drive",
           state: "connected",
           connections: [
             { scope: "personal", state: "connected" },
             { scope: "workspace", state: "not_connected" },
           ],
         },
-        summary: "google-drive-workspace: personal connected, workspace not_connected",
+        summary: "google-drive: personal connected, workspace not_connected",
       });
     // What two agents asked in production: the workspace scope, by name, while
     // the person's own Drive worked. The answer must still say so.
-    await expect(stateTool!.execute({ connectorId: "google-drive-workspace", scope: "workspace" }, context()))
+    await expect(stateTool!.execute({ connectorId: "google-drive", scope: "workspace" }, context()))
       .resolves.toMatchObject({ output: {
         state: "connected",
         connections: [{ scope: "personal", state: "connected" }, { scope: "workspace", state: "not_connected" }],
@@ -365,7 +365,7 @@ describe("Avalon connector connection tools", () => {
     objectDatabase.prepare(
       "UPDATE connector_connections SET status = 'disabled' WHERE model_plugin_id = 'plugin_google'",
     ).run();
-    await expect(stateTool!.execute({ connectorId: "google-drive-workspace" }, context()))
+    await expect(stateTool!.execute({ connectorId: "google-drive" }, context()))
       .resolves.toMatchObject({
         output: {
           state: "reconnect_required",

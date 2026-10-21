@@ -619,6 +619,7 @@ function workedExampleCalls(
 function workedExampleCallsAgainstSchemas(
   plugin: {
     modelId: string;
+    shortWireName?: string;
     systemMessage?: string | undefined;
     tools: Awaited<ReturnType<typeof __integrationTesting.loadHarnessTools>>["tools"];
   },
@@ -628,7 +629,7 @@ function workedExampleCallsAgainstSchemas(
   // Derived, not assumed: a second credential of the same provider is
   // `google_2_…`, and hardcoding the first one's prefix made this check
   // silently validate nothing for every plugin but the first.
-  const wirePrefix = plugin.modelId.replace(/^plugin_/u, "");
+  const wirePrefix = plugin.shortWireName ?? plugin.modelId.replace(/^plugin_/u, "");
   const schemas = new Map(tools.map((tool) => {
     const schema = tool.definition.inputSchema as { properties?: Record<string, unknown> };
     return [
@@ -938,7 +939,7 @@ describe("connector tools selected for harness runs", () => {
 
   it("shares a durable connector activation with ready automation validation", async () => {
     const database = new ToolSelectionDatabase([
-      connection(WORKSPACE_CONNECTION_ID, "workspace", null),
+      connection(WORKSPACE_CONNECTION_ID, "workspace", null, GOOGLE_MAIL_CALENDAR_CAPABILITIES),
     ]);
     database.objectStore.prepare(
       `INSERT INTO runs
@@ -1249,6 +1250,82 @@ describe("connector tools selected for harness runs", () => {
     expect(submitted.evaluatorRules.evaluators[0]!.source).not.toHaveProperty("resourceId");
   });
 
+  it("splits one combined credential into independently loadable Google plugins", async () => {
+    const database = new ToolSelectionDatabase([
+      connection(OWNER_CONNECTION_ID, "personal", USER_ID, [...GOOGLE_WORKSPACE_CAPABILITIES, ...GOOGLE_MAIL_CALENDAR_CAPABILITIES]),
+    ]);
+    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const plugins = selected.plugins.filter((plugin) => plugin.connectorType === "google")
+      .sort((left, right) => left.modelId.localeCompare(right.modelId)).reverse();
+    expect(plugins.map((plugin) => [plugin.modelId, plugin.canonicalId, plugin.displayName])).toEqual([
+      ["plugin_google_mail_calendar", `connection:${OWNER_CONNECTION_ID}:mail_calendar`, "Google Mail + Calendar"],
+      ["plugin_google_drive", `connection:${OWNER_CONNECTION_ID}:drive`, "Google Drive + Docs + Sheets"],
+    ]);
+    expect(plugins.map((plugin) => plugin.shortWireName)).toEqual(["google", "google"]);
+    expect(plugins[0]?.tools.every((tool) => /^(gmail|calendar)\./u.test(tool.definition.capability))).toBe(true);
+    expect(plugins[1]?.tools.every((tool) => /^(drive|docs|sheets)\./u.test(tool.definition.capability))).toBe(true);
+    expect(plugins[0]?.tools.map((tool) => tool.definition.name)).toContain("gmail.search");
+    expect(plugins[1]?.tools.map((tool) => tool.definition.name)).toContain("drive.search");
+    for (const plugin of plugins) expect(workedExampleCallsAgainstSchemas(plugin)).toEqual([]);
+    expect([...selected.frozenConnections.values()].map((plugin) => plugin.connectionId)).toEqual([
+      OWNER_CONNECTION_ID, OWNER_CONNECTION_ID,
+    ]);
+    expect(__integrationTesting.eligibleConnectionCapabilityMap(plugins, selected.frozenConnections))
+      .toEqual({ [OWNER_CONNECTION_ID]: expect.arrayContaining(["gmail.read", "calendar.read", "drive.read", "docs.read"]) });
+    const catalog = (await __integrationTesting.loadAutomationCreatorPluginCatalog(env(database), WORKSPACE_ID, USER_ID))
+      .sort((left, right) => left.pluginId.localeCompare(right.pluginId)).reverse();
+    expect(catalog.map((entry) => entry.pluginId)).toEqual(["plugin_google_mail_calendar", "plugin_google_drive"]);
+    expect(catalog[0]?.activityTriggers.map((trigger) => trigger.eventType)).toEqual([
+      "email.received", "calendar.event_changed", "calendar.event_completed", "email.updated",
+    ]);
+    expect(catalog[1]?.activityTriggers.map((trigger) => trigger.eventType)).toEqual([
+      "drive.file_changed", "docs.document_changed", "sheets.spreadsheet_changed",
+    ]);
+  });
+
+  it("loads Mail and Drive independently through the harness discovery tools", async () => {
+    const database = new ToolSelectionDatabase([
+      connection(OWNER_CONNECTION_ID, "personal", USER_ID, ["gmail.read", "drive.read"]),
+    ]);
+    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const visibleTools: string[][] = [];
+    const modelFetch = vi.fn<typeof globalThis.fetch>(async (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as { tools: Array<{ name: string }> };
+      visibleTools.push(body.tools.map((tool) => tool.name));
+      const pluginId = ["plugin_google_mail_calendar", "plugin_google_drive"][visibleTools.length - 1];
+      return authorityStreamResponse([{
+        choices: [{
+          delta: pluginId ? { tool_calls: [{
+            index: 0, id: `load-${visibleTools.length}`, type: "function",
+            function: { name: "load_plugin", arguments: JSON.stringify({ pluginId }) },
+          }] } : { content: "Loaded both Google plugins." },
+          finish_reason: pluginId ? "tool_calls" : "stop",
+        }],
+      }]);
+    });
+    const outcome = await runHarness({
+      config: {
+        apiKey: "test-key", primaryModel: "google/gemini-2.5-flash-lite", fetch: modelFetch,
+        maxIterations: 4, maxToolCalls: 3, maxWallClockMs: 120_000, toolTimeoutMs: 30_000, maxWebResults: 4,
+      },
+      workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID,
+      loopId: workflowInput().loopId, harnessRunId: HARNESS_RUN_ID,
+      executionPrincipal: { type: "user", userId: USER_ID },
+      systemPrompt: "Load the requested Google plugins.",
+      messages: [{ role: "user", content: "Load Mail, then Drive." }],
+      corePlugins: [], plugins: selected.plugins, activationHints: [], reauthorizePlugin: () => "authorized",
+      onEvent: () => {},
+    });
+    expect(outcome, JSON.stringify(outcome)).toMatchObject({ status: "completed" });
+    expect(visibleTools).toHaveLength(3);
+    expect(visibleTools[0]).not.toContain("google_gmail_search");
+    expect(visibleTools[0]).not.toContain("google_drive_search");
+    expect(visibleTools[1]).toContain("google_gmail_search");
+    expect(visibleTools[1]).not.toContain("google_drive_search");
+    expect(visibleTools[2]).toEqual(expect.arrayContaining(["google_gmail_search", "google_drive_search"]));
+    expect(new Set(visibleTools[2]).size).toBe(visibleTools[2]?.length);
+  });
+
   it("exposes every granted read and write tool from a workspace connection to an ad-hoc workstream", async () => {
     const database = new ToolSelectionDatabase([
       connection(WORKSPACE_CONNECTION_ID, "workspace", null),
@@ -1436,7 +1513,7 @@ describe("connector tools selected for harness runs", () => {
       connection(OWNER_CONNECTION_ID, "personal", USER_ID, capabilities),
     ]);
     const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
-    const plugin = selected.plugins.find((item) => item.canonicalId === `connection:${OWNER_CONNECTION_ID}`)!;
+    const plugin = selected.plugins.find((item) => item.canonicalId.startsWith(`connection:${OWNER_CONNECTION_ID}`))!;
     // Assert the presentation the harness actually receives, including Calendar-
     // only credentials that must load a separate Docs plugin to read the file.
 
@@ -1447,7 +1524,7 @@ describe("connector tools selected for harness runs", () => {
     ]);
     expect(skills[0]?.body).toContain("pass fileId as documentId");
     const examples = workedExampleCalls(plugin.systemMessage ?? "");
-    if (capabilities.includes("docs.read")) expect(workedExampleCallsAgainstSchemas(plugin)).toEqual([]);
+    if (plugin.tools.some((tool) => tool.definition.capability === "docs.read")) expect(workedExampleCallsAgainstSchemas(plugin)).toEqual([]);
     expect(examples.some((call) => call.wireName.endsWith("_docs_read_document"))).toBe(false);
   });
 

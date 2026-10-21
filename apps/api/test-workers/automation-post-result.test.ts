@@ -19,6 +19,7 @@ import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:tes
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  readStructuredFailure,
   agentIdForAddress,
   agentAddressForId,
   WorkstreamWorkflowInputSchema,
@@ -512,17 +513,21 @@ describe("a room Sidekick's run and the room's agents", () => {
     expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed" });
     const discovered = await service.sidekicks();
     expect(discovered.sidekicks.find((item) => item.sidekickId === sidekickId))
-      .toMatchObject({ agentId: created.agentId, scope: "workstream", ownedByThisWorkstream: true, canEdit: true });
-    // Another thread sees the same room-scoped Sidekick as not its own, and the
-    // host refuses it a change whatever the model makes of that list.
+      .toMatchObject({ agentId: created.agentId, scope: "workstream", ownedByThisWorkstream: true, canEdit: true,
+        status: "active", nextRunAt: null, lastRunAt: null });
+    // Another thread receives no setup candidate and is told to create one
+    // locally. The host still refuses a foreign id supplied directly.
     const elsewhere = crypto.randomUUID();
     const otherRoom = new AgentCommunicationService(TEST_ENV, WorkstreamWorkflowInputSchema.parse({ ...input,
       parentId: elsewhere, loopId: `workstream:${elsewhere}:substream:0:loop`, harnessRunId: crypto.randomUUID() }));
-    expect((await otherRoom.sidekicks()).sidekicks.find((item) => item.sidekickId === sidekickId))
-      .toMatchObject({ scope: "workstream", ownedByThisWorkstream: false, canEdit: false });
-    await expect(otherRoom.send({ agentId: created.agentId, message: "CONFIGURE_SIDEKICK REVISE: take this over.",
-      attachmentIds: [] }, { ...context, workstreamId: elsewhere, effectIntentId: crypto.randomUUID() }))
-      .rejects.toThrow("This Sidekick belongs to another thread");
+    expect(await otherRoom.sidekicks()).toEqual({ sidekicks: [],
+      next: "This thread has no editable Sidekicks. Create one here with create_sidekick (scope=workstream), then send setup instructions to its authoring agent." });
+    const refusal = await otherRoom.send({ agentId: created.agentId, message: "CONFIGURE_SIDEKICK REVISE: take this over.",
+      attachmentIds: [] }, { ...context, workstreamId: elsewhere, effectIntentId: crypto.randomUUID() }).catch((error: unknown) => error);
+    expect(readStructuredFailure(refusal)).toEqual({ code: "sidekick_owned_by_another_thread", details: {
+        reason: "This message was not delivered. Refresh sidekicks_list. For setup in this thread, choose a suitable Sidekick with ownedByThisWorkstream=true and canEdit=true, or use create_sidekick with scope=workstream if none fits. If the user explicitly named this Sidekick, report its refusal instead of silently replacing it. This refusal does not establish a connector or scheduling blocker. Verify current status and nextRunAt before reporting activation.",
+        retryable: false, available: ["sidekicks_list", "create_sidekick"],
+      } });
     await service.send({ agentId: created.agentId, message: "CONFIGURE_SIDEKICK REVISE: add cost comparison.", attachmentIds: [] },
       { ...context, effectIntentId: crypto.randomUUID() });
     expect((await settledRun(authoring, 2))[1]).toMatchObject({ status: "completed", error_json: null });
@@ -544,17 +549,16 @@ describe("a room Sidekick's run and the room's agents", () => {
       toolCallId: crypto.randomUUID(), executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
     const roomOwned = await room.createSidekick("workstream", { ...context, effectIntentId: crypto.randomUUID() });
     const personal = await room.createSidekick("personal", { ...context, effectIntentId: crypto.randomUUID() });
-    const sibling = await room.createSidekick("personal", { ...context, effectIntentId: crypto.randomUUID() });
+    await room.createSidekick("personal", { ...context, effectIntentId: crypto.randomUUID() });
+    await room.createSidekick("workspace", { ...context, effectIntentId: crypto.randomUUID() });
+    expect((await room.sidekicks()).sidekicks.map((item) => item.sidekickId).sort())
+      .toEqual([AUTOMATION_ID, roomOwned.sidekickId].sort());
     // A personal Sidekick's own conversation: it acts for no thread.
     const own = new AgentCommunicationService(TEST_ENV, WorkstreamWorkflowInputSchema.parse({ ...input,
       parentKind: "automation", parentId: personal.sidekickId, loopId: `automation:${personal.sidekickId}:substream:0:loop`,
       harnessRunId: crypto.randomUUID() }));
-    const listed = (await own.sidekicks()).sidekicks;
-    expect(listed.map((item) => item.sidekickId)).not.toContain(personal.sidekickId);
-    expect(listed.find((item) => item.sidekickId === sibling.sidekickId))
-      .toMatchObject({ scope: "personal", ownedByThisWorkstream: false, canEdit: true });
-    expect(listed.find((item) => item.sidekickId === roomOwned.sidekickId))
-      .toMatchObject({ scope: "workstream", ownedByThisWorkstream: false, canEdit: false });
+    expect(await own.sidekicks()).toEqual({ sidekicks: [],
+      next: "This conversation has no owning thread. Set up a thread-owned Sidekick from the intended thread." });
   });
 
   it("admits a guest to a Sidekick's authoring agent only through the guest's grants", async () => {

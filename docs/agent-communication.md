@@ -214,14 +214,35 @@ still filters personal ownership and workstream participation. Ordinary director
 callers perform their own active-member check. This is a host-selected execution
 path, not a model argument, durable grant, or run-long authorization cache.
 
-Sidekick discovery uses the existing authorized directory. Each result carries
-`ownedByThisWorkstream` and `canEdit` rather than the owner's id, because the
-model is not given its own thread id to compare against. Both come from
-`sidekickOwnership`, the same rule `authorizeSidekick` enforces when a message
-reaches a Sidekick's authoring agent: a Sidekick another thread owns is refused,
-and a personal or organization one is not. A Sidekick's own conversation acts
-for the thread that owns it. Minimal creation defaults to workstream ownership;
-setup travels through messages. First authorized contact joins the authoring
+Sidekick setup discovery filters the existing authorized directory to Sidekicks
+owned by the current thread, excluding the author's own Sidekick when called
+from an authoring conversation. Those candidates have `ownedByThisWorkstream`
+and `canEdit` set to true: eligibility reuses the existing access filter and
+`sidekickOwnership`, not a new permission model or per-candidate RPC. Actual
+messages and mutations retain their existing authorization checks. Another
+thread's, personal, and organization Sidekicks are not setup fallbacks. An empty
+list tells the agent to create one here with `scope=workstream` and send setup
+instructions to its authoring agent. A conversation acting for no thread instead
+receives guidance to set up from the intended thread.
+
+Reusable procedures are discovered separately in the Skills catalog and loaded
+with `load_skill`; loading their instructions does not message an authoring
+agent. A Sidekick's own conversation acts for the thread that owns it. Setup
+discovery also returns current `status`, `nextRunAt`, and `lastRunAt`, so an agent
+can distinguish a saved draft, an active Sidekick, and a scheduled or previously
+executed run. A sent setup message or an old memory fact establishes none of
+these.
+
+An access or ownership refusal carries structured recovery through the existing
+failure `reason`, `retryable`, and `available` fields. The rejected message was
+not delivered. For thread-local setup, the agent refreshes discovery and selects
+an editable, suitable Sidekick this thread owns, or creates one here. An
+explicit request to change a named Sidekick keeps that target and reports its
+refusal. A refused message is not evidence of a connector or scheduling blocker;
+only the authoring submission's actual refusal establishes an activation blocker.
+After verifying current state, the agent corrects or retracts superseded blocker
+or pending-status memory while preserving the user's preferences.
+First authorized contact joins the authoring
 conversation to the team. Drafting tools are available only on a Sidekick's main
 authoring conversation, not ordinary workstreams, workers or scheduled runs.
 Authoring guidance identifies its own Sidekick, reads the current definition,
@@ -310,6 +331,32 @@ the ownership flags from a conversation that acts for no thread, and a guest's
 grant-only contact. Complete desktop behavior remains an implementation gate.
 
 ## Changelog
+
+### 2026-10-21 — Setup discovery stays in its thread and recovers against current state
+
+**What changed:** Setup discovery returns only authorized candidates owned by
+this thread, with explicit creation guidance when empty. Reusable instructions
+stay in the separate Skills catalog, with skill terminology for names, loaded
+instructions and recommendation tools. Sidekick contact refusals give structured
+rediscovery and creation guidance. The directory returns lifecycle status and next/last run
+times, and the agents plugin requires those observations before claiming
+activation or execution.
+
+**Why:** The ownership guard stopped a later update to a previously misselected
+Sidekick, but the coordinator kept describing that foreign draft as its own
+pending monitor and repeated a saved Organization-connection blocker. Preventing
+a write did not repair the agent's plan. A broad user directory also made a
+foreign draft look like a setup candidate. Filtering by the existing ownership
+rule was chosen over ranking foreign results or adding another permission
+framework. The refusal now identifies the
+undelivered operation and its recovery path, while discovery supplies the state
+needed to verify the result. Automatically retargeting or creating a Sidekick
+was rejected because a request to change one explicitly named must preserve
+that target.
+
+**Consequences:** Recovery remains within current ownership and user intent.
+Refusals and remembered claims cannot stand in for submission or schedule state.
+
 
 ### 2026-10-15 — Only the owning thread changes a thread's Sidekick, and the model reads `sidekick/…`
 

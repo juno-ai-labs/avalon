@@ -18,7 +18,7 @@ describe('connectorPresentation', () => {
   // purpose, and the two Google cards share one connector type, so a mention
   // picks between their bundles by display name rather than by type — the test
   // above covers that pair.
-  const notKeyedByTypeAlone = new Set(['custom-mcp', 'slack', 'google-mail-calendar', 'google-drive-workspace']);
+  const notKeyedByTypeAlone = new Set(['custom-mcp', 'slack', 'google-mail-calendar', 'google-drive']);
   it.each(connectorProviders.filter((provider) => !notKeyedByTypeAlone.has(provider.id)).map((provider) => [provider.id, provider.provider, provider.description] as const))(
     'describes %s in the transcript with the sentence its card shows',
     (_id, providerType, description) => {
