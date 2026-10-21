@@ -345,6 +345,7 @@ export interface DesktopSiteArtifactWindowRequest {
   /** Whether the owning surface exposes Main thread artifact actions. */
   editable?: boolean;
   annotationScope?: string;
+  annotationDraftKey?: string;
   kind: 'site';
   restoreId?: string;
   resourceId: string;
@@ -359,6 +360,7 @@ export interface DesktopGeneratedArtifactWindowRequest {
   /** Whether the owning surface exposes Main thread artifact actions. */
   editable?: boolean;
   annotationScope?: string;
+  annotationDraftKey?: string;
   sourceMimeType?: string;
   kind: 'generated';
   restoreId?: string;
@@ -379,6 +381,7 @@ export interface DesktopRestorableArtifactWindow {
   /** Whether the owning surface exposes Main thread artifact actions. */
   editable?: boolean;
   annotationScope?: string;
+  annotationDraftKey?: string;
   id: string;
   kind: 'site' | 'generated';
   resourceId: string;
@@ -583,9 +586,9 @@ export interface RallyDesktopBridge {
   artifactWindowAction?: (action: ArtifactWindowAction) => Promise<unknown>;
   readArtifactWindow?: () => Promise<DesktopArtifactWindowRequest | null>;
   registerAnnotationComposer?: (scope: string, active: boolean) => Promise<void>;
-  returnArtifactAnnotations?: (pins: { annotation: Annotation; image?: Uint8Array }[]) => Promise<boolean>;
+  returnArtifactAnnotations?: (pins: { id?: string; generation?: string; annotation: Annotation; image?: Uint8Array }[]) => Promise<boolean>;
   completeArtifactAnnotationTransfer?: (transferId:string, accepted:boolean) => Promise<void>;
-  onArtifactAnnotations?: (listener: (value: { transferId:string; scope: string; name: string; pins: { annotation: Annotation; image?: Uint8Array }[] }) => void) => () => void;
+  onArtifactAnnotations?: (listener: (value: { transferId:string; scope: string; name: string; pins: { id?: string; generation?: string; annotation: Annotation; image?: Uint8Array }[] }) => void) => () => void;
   onArtifactWindowUpdated?: (listener: () => void) => () => void;
   popOutArtifact: (request: DesktopArtifactWindowRequest) => Promise<boolean>;
   getRestorableArtifactWindows: () => Promise<DesktopRestorableArtifactWindow[]>;

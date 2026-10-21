@@ -1,5 +1,6 @@
+import { validateAnnotationSend } from '../lib/use-annotation-pins';
 import { loadAnnotationPreview } from '../lib/annotation-preview';
-import { useAnnotationDraft } from './artifact-annotations';
+import { useAnnotationDraft, type AnnotationPin } from './artifact-annotations';
 import type { Annotation } from '@rally/contracts';
 import { asSubstreamId, asWorkspaceId, asWorkstreamId, MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE, type SpaceColorKey } from '@rally/contracts';
 import { IconCloudDownload } from '@tabler/icons-react';
@@ -14,7 +15,7 @@ import { useAppSession } from '../lib/app-session';
 import { newWorkstreamDraftKey } from '../lib/draft-keys';
 import { optimisticOpeningTranscript } from '../lib/launched-conversation';
 import { optimisticMentionRendering } from '../lib/transcript';
-import { OPEN_EXPANDED, threadRoute } from '../lib/navigation-routes';
+import { OPEN_EXPANDED, channelArtifactRoute, threadRoute } from '../lib/navigation-routes';
 import { holdCreationTraceUntilSendReady, startPerfTrace, type PerfTrace } from '../lib/perf-trace';
 import { uuidV7 } from '../lib/telemetry';
 import type { AgentModelOverride, CreatedWorkstream, MessageAttachment, Workspace, WorkspaceMember, WorkstreamDetail } from '../lib/types';
@@ -29,7 +30,7 @@ import { type ComposerConversation, WorkstreamComposer } from './workstream-comp
 
 interface CreateThreadInput {
   annotations: Annotation[];
-  pinIds: string[];
+  sentPins: AnnotationPin[];
   attachmentIds: string[];
   attachmentLocalIds: string[];
   attachments: MessageAttachment[];
@@ -123,9 +124,9 @@ export function ChannelComposer({ channelColor, channelId, channelName, channelS
   const setAnnotationPreviewOpener=annotationDraft?.setPreviewOpener;
   useEffect(()=>{
     if(!api)return;
-    setAnnotationPreviewOpener?.((preview)=>{void loadAnnotationPreview(api,preview,()=>setAttachmentPreview(null)).then(setAttachmentPreview);});
+    setAnnotationPreviewOpener?.((preview)=>{if(!preview.annotation&&preview.resourceId){void navigate(channelArtifactRoute(channelId,preview.resourceId));return;}void loadAnnotationPreview(api,preview,()=>setAttachmentPreview(null)).then(setAttachmentPreview);});
     return()=>setAnnotationPreviewOpener?.(null);
-  },[api,setAnnotationPreviewOpener]);
+  },[api,setAnnotationPreviewOpener,navigate,channelId]);
   const [tooLong, setTooLong] = useState(false);
   const attachmentDraft = useFileAttachments(api, draftKey);
   useWindowFilePaste(attachmentDraft.addFiles, !visible || threadOpen);
@@ -218,7 +219,7 @@ export function ChannelComposer({ channelColor, channelId, channelName, channelS
       );
       void queryClient.invalidateQueries({ queryKey: ['workstream', created.workstream.id], exact: true });
       attachmentDraft.consume(input.attachmentLocalIds);
-      annotationDraft?.clear(input.pinIds);
+      annotationDraft?.clearAccepted(input.sentPins);
       if (createTrace.current) holdCreationTraceUntilSendReady(
         createTrace.current,
         created.workstream.id,
@@ -246,7 +247,9 @@ export function ChannelComposer({ channelColor, channelId, channelName, channelS
     }
     setTooLong(false);
     const readyAttachments = attachmentDraft.ready;
-    const pins = annotationDraft?.pins ?? [];
+    const pins = await annotationDraft?.prepareSend() ?? [];
+    validateAnnotationSend(pins, readyAttachments.length);
+    if (!openingMessage.trim() && !pins.length && !readyAttachments.length) throw new Error('Reattach a comment before sending it.');
     const annotations = pins.map((pin) => pin.annotation);
     const cropIds = annotations.flatMap((annotation) => annotation.content.imageAttachmentId ? [annotation.content.imageAttachmentId] : []);
     const participantIds = [...new Set([
@@ -276,7 +279,7 @@ export function ChannelComposer({ channelColor, channelId, channelName, channelS
     });
     void navigate(threadRoute(threadId, channelId), { state: OPEN_EXPANDED });
     await create.mutateAsync({
-      annotations, pinIds:pins.map((pin) => pin.id),
+      annotations, sentPins:pins,
       attachmentIds: [...readyAttachments.map((attachment) => attachment.resource!.id),...cropIds],
       attachmentLocalIds: readyAttachments.map((attachment) => attachment.localId),
       attachments,

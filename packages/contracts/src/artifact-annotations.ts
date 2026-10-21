@@ -31,7 +31,7 @@ export const AnnotationLocatorSchema = z.discriminatedUnion('type', [
 // The team chooses those budgets and expected pins. No new cap is guessed here.
 export const ANNOTATION_EXACT_MAX_CHARACTERS = Number.POSITIVE_INFINITY;
 export const ANNOTATIONS_MAX_CHARACTERS = Number.POSITIVE_INFINITY;
-export const ANNOTATION_CONTEXT_CHARACTERS = 200;
+export { ANNOTATION_CONTEXT_CHARACTERS } from './annotation-context';
 export const AnnotationSchema = z.strictObject({
   target: z.strictObject({ resourceId: z.string().uuid(), version: z.number().int().positive(), locator: AnnotationLocatorSchema }),
   content: z.strictObject({ exact: z.string(), source: z.enum(['exact', 'converted', 'rendered']), before: z.string(), after: z.string(), truncated: z.boolean(), imageAttachmentId: z.string().uuid().optional() }),
@@ -90,7 +90,7 @@ export function renderAnnotations(content: unknown): string {
   })].join('\n\n');
 }
 
-export const ArtifactPickerPinSchema = z.strictObject({ css: z.string().min(1), box, visibleText: z.string(), html: z.string(), pagePath: z.string(), replace: z.boolean(), point: z.strictObject({x:z.number().finite().nonnegative(),y:z.number().finite().nonnegative()}).optional(), screenshot: z.string().optional() });
+export const ArtifactPickerPinSchema = z.strictObject({ css: z.string().min(1), box, visibleText: z.string(), before: z.string().optional(), after: z.string().optional(), html: z.string(), pagePath: z.string(), replace: z.boolean(), point: z.strictObject({x:z.number().finite().nonnegative(),y:z.number().finite().nonnegative()}).optional(), screenshot: z.string().optional() });
 export type ArtifactPickerPin = z.infer<typeof ArtifactPickerPinSchema>;
 
 export const AnnotationCommentPinsSchema = z.array(z.strictObject({id:z.string(),annotation:AnnotationSchema}));

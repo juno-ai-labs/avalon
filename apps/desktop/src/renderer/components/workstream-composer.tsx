@@ -209,10 +209,10 @@ export function WorkstreamComposer({
 }: WorkstreamComposerProps): React.JSX.Element {
   const inheritedAnnotationDraft = useAnnotationDraft();
   const annotationDraft = annotationsEnabled ? inheritedAnnotationDraft : null;
-  const annotationPayloadValid = AnnotationsSchema.safeParse(annotationDraft?.pins.map((p) => p.annotation) ?? []).success;
-  const annotationAttachmentCount = annotationDraft?.pins.filter((p) => p.annotation.content.imageAttachmentId).length ?? 0;
+  const annotationPayloadValid = AnnotationsSchema.safeParse(annotationDraft?.readyPins.map((p) => p.annotation) ?? []).success;
+  const annotationAttachmentCount = annotationDraft?.readyPins.filter((p) => p.annotation.content.imageAttachmentId).length ?? 0;
   const annotationBlocked = (Boolean(sending) && Boolean(annotationDraft?.pins.length)) || !annotationPayloadValid || annotationAttachmentCount + attachments.length > MAX_ATTACHMENTS || annotationDraft?.uploading;
-  const hasCommentedPin = annotationDraft?.pins.some((p) => p.annotation.comment.trim()) ?? false;
+  const hasCommentedPin = annotationDraft?.readyPins.some((p) => p.annotation.comment.trim()) ?? false;
   const annotationSendPending = useRef(false);
   const submitMessage: typeof onSend = async (...args) => {
     const withPins=Boolean(annotationDraft?.pins.length);

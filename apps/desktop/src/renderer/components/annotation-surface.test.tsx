@@ -5,7 +5,7 @@ import { AnnotationDraftProvider, AnnotationChips, MessageAnnotations, useAnnota
 import { sourceSelectionPoint,annotationDomRange } from '../lib/annotation-source';
 import { AnnotationSurface } from './annotation-surface';
 const resourceId='00000000-0000-7000-8000-0000000000a1';
-function Observe():React.JSX.Element {const draft=useAnnotationDraft();return <><AnnotationChips /><button onClick={()=>draft?.clear(draft.pins.map((pin)=>pin.id))}>Accept message</button><output data-testid="pins">{JSON.stringify(draft?.selections.map(p=>p.annotation))}</output></>;}
+function Observe():React.JSX.Element {const draft=useAnnotationDraft();return <><AnnotationChips /><button onClick={()=>draft?.clearAccepted(draft.pins)}>Accept message</button><output data-testid="pins">{JSON.stringify(draft?.selections.map(p=>p.annotation))}</output></>;}
 afterEach(cleanup);
 describe('annotation source picker',()=>{
   it('shows website words instead of markup in saved annotations',()=>{

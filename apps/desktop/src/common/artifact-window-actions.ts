@@ -12,6 +12,7 @@ export const ArtifactWindowActionSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('open') }),
   z.strictObject({ type: z.literal('data') }),
   z.strictObject({ type: z.literal('table'), table: z.string().min(1) }),
+  z.strictObject({ type: z.literal('site-preview'), version: z.number().int().positive(), pagePath: z.string() }),
   z.strictObject({ type: z.literal('content'), version: z.number().int().positive().optional(), original: z.boolean().optional() }),
 ]);
 export type ArtifactWindowAction = z.infer<typeof ArtifactWindowActionSchema>;
