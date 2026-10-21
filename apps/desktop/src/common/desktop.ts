@@ -586,9 +586,9 @@ export interface RallyDesktopBridge {
   artifactWindowAction?: (action: ArtifactWindowAction) => Promise<unknown>;
   readArtifactWindow?: () => Promise<DesktopArtifactWindowRequest | null>;
   registerAnnotationComposer?: (scope: string, active: boolean) => Promise<void>;
-  returnArtifactAnnotations?: (pins: { id?: string; annotation: Annotation; image?: Uint8Array }[]) => Promise<boolean>;
+  returnArtifactAnnotations?: (pins: { id?: string; generation?: string; annotation: Annotation; image?: Uint8Array }[]) => Promise<boolean>;
   completeArtifactAnnotationTransfer?: (transferId:string, accepted:boolean) => Promise<void>;
-  onArtifactAnnotations?: (listener: (value: { transferId:string; scope: string; name: string; pins: { id?: string; annotation: Annotation; image?: Uint8Array }[] }) => void) => () => void;
+  onArtifactAnnotations?: (listener: (value: { transferId:string; scope: string; name: string; pins: { id?: string; generation?: string; annotation: Annotation; image?: Uint8Array }[] }) => void) => () => void;
   onArtifactWindowUpdated?: (listener: () => void) => () => void;
   popOutArtifact: (request: DesktopArtifactWindowRequest) => Promise<boolean>;
   getRestorableArtifactWindows: () => Promise<DesktopRestorableArtifactWindow[]>;

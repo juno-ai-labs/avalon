@@ -1,3 +1,5 @@
+import { desktopWorkspaceIdentityKey, type RallyRegion } from './desktop';
+
 /**
  * Every composer that caches a draft names it here, so a text draft and its
  * attachments always agree on one key and no two surfaces can collide.
@@ -28,7 +30,6 @@ export function newAutomationDraftKey(
     ? `${workspaceDraftPrefix(region, workspaceId)}new-automation:${draftAutomationId}`
     : `${workspaceDraftPrefix(region, workspaceId)}new-automation`;
 }
-import { desktopWorkspaceIdentityKey, type RallyRegion } from './desktop';
 
 export function workspaceDraftPrefix(region: RallyRegion, workspaceId: string): string {
   return `workspace:${desktopWorkspaceIdentityKey(region, workspaceId)}:`;

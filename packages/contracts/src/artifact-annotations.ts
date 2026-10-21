@@ -31,7 +31,7 @@ export const AnnotationLocatorSchema = z.discriminatedUnion('type', [
 // The team chooses those budgets and expected pins. No new cap is guessed here.
 export const ANNOTATION_EXACT_MAX_CHARACTERS = Number.POSITIVE_INFINITY;
 export const ANNOTATIONS_MAX_CHARACTERS = Number.POSITIVE_INFINITY;
-export const ANNOTATION_CONTEXT_CHARACTERS = 200;
+export { ANNOTATION_CONTEXT_CHARACTERS } from './annotation-context';
 export const AnnotationSchema = z.strictObject({
   target: z.strictObject({ resourceId: z.string().uuid(), version: z.number().int().positive(), locator: AnnotationLocatorSchema }),
   content: z.strictObject({ exact: z.string(), source: z.enum(['exact', 'converted', 'rendered']), before: z.string(), after: z.string(), truncated: z.boolean(), imageAttachmentId: z.string().uuid().optional() }),

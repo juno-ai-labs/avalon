@@ -4443,7 +4443,7 @@ function registerIpc(): void {
     const window = BrowserWindow.fromWebContents(event.sender)!;
     const source = poppedOutArtifacts.get(window);
     if (!source?.owner || source.owner.isDestroyed() || !source.request.annotationScope || !annotationComposerScopes.get(source.owner)?.has(source.request.annotationScope)) return false;
-    const pins = z.array(z.strictObject({ id: z.string().uuid().optional(), annotation: AnnotationSchema, image: z.instanceof(Uint8Array).optional() })).parse(raw);
+    const pins = z.array(z.strictObject({ id: z.string().uuid().optional(), generation: z.string().uuid().optional(), annotation: AnnotationSchema, image: z.instanceof(Uint8Array).optional() })).parse(raw);
     // A newer preview can arrive while older pins are still in this draft.
     // Keep resource confinement; admission validates each pin's saved version.
     if (pins.some((pin) => pin.annotation.target.resourceId !== source.resourceId)) return false;

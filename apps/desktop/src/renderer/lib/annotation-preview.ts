@@ -23,10 +23,9 @@ export async function loadAnnotationPreview(api:RallyApi,preview:AttachmentPrevi
 }
 
 /** Resolve site selections from their frozen page, and other selections from the canonical preview. */
-export async function readAnnotationVersion(api: RallyApi, id: string, version: number, signal: AbortSignal, annotation?: Annotation): Promise<Blob> {
+export async function readAnnotationVersion(api: RallyApi, id: string, version: number, signal: AbortSignal, annotation?: Annotation, mimeType?: string | null): Promise<Blob> {
   if (annotation?.target.locator.type === 'element') {
-    const resource = await api.getResource(id);
-    if (resource.mimeType === 'application/vnd.rally.site-manifest+json') return api.getAnnotationSitePreview(id, version, annotation.target.locator.pagePath ?? '/', signal);
+    if (mimeType === 'application/vnd.rally.site-manifest+json') return api.getAnnotationSitePreview(id, version, annotation.target.locator.pagePath ?? '/', signal);
   }
   return api.getResourceVersionPreview(id, version, signal);
 }

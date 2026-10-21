@@ -73,6 +73,10 @@ restored records with edits already made during hydration. There is no whole-lis
 replacement write. Same-origin windows notify one another through BroadcastChannel;
 local providers receive the same notifications directly. An unavailable cache
 leaves the in-memory draft usable. Confirmations and edits write immediately.
+Comment-only cross-window edits preserve the resolved target state, avoiding a
+network check on each keystroke. Dirty and restored records retain their original
+sort position. Detached transfers carry the captured edit generation and preserve
+comments edited, removed, or sent while an image upload is in flight.
 
 Annotations use the same conversation/breakout or Channel launcher key as text.
 Detached windows receive that key from main's registered window identity, filter
