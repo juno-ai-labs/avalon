@@ -52,6 +52,8 @@ has refreshed since the first attempt.
   turn for a member runs without it.
 - **Only a member's own act carries it.** `PERSONAL_SYSTEM_PROMPT_REASONS`
   allows messages, elicitation answers, retries and linked Slack messages.
+  Human room-only messages carry the same snapshot and refresh even though
+  they start no run, so later requests see setting changes refreshed by them.
   Sidekick parents and background agents are excluded. A wake-up, connector
   trigger or inbound email must not acquire instructions from its principal.
 - **Instructions live in user-role history, never the system prompt.** The
@@ -98,7 +100,7 @@ instead of entering the system prompt.
 Ordinary history retains that value across later turns and eviction; compaction
 can read it as user history. A frontend regex removes the block for display.
 Admission owns the cached read and background refresh together, including on a
-new conversation's empty first read; inference does neither.
+new conversation's empty first read and on room-only messages; inference does neither.
 Opening retries hash the original request and replay its frozen instructions.
 
 **Why:** These are the user's instructions for their requests, and should behave
