@@ -508,7 +508,7 @@ function ResourceVersionItems({
 
   let body: React.ReactNode;
   if (failed) {
-    body = <ErrorNotice>Resource history couldn’t be loaded.</ErrorNotice>;
+    body = <ErrorNotice automatic={false} detailsLabel="History details">Resource history couldn’t be loaded.</ErrorNotice>;
   } else if (versions === undefined) {
     body = (
       <DropdownMenu.Item className="menu-item" disabled>

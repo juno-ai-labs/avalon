@@ -1211,7 +1211,7 @@ function ThreadsSection({ guest, motion, scroll }: { guest: boolean; motion?: ()
       {list.hasNextPage && <button className="navigation-more" disabled={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()} type="button">Show more</button>}
       {list.isError && <ErrorNotice occurrence={list.error}>Your threads couldn’t be loaded.</ErrorNotice>}
     </section>}
-    {pinnedOnly && list.isError && <ErrorNotice>Your threads couldn’t be loaded.</ErrorNotice>}
+    {pinnedOnly && list.isError && <ErrorNotice occurrence={list.error}>Your threads couldn’t be loaded.</ErrorNotice>}
     {actionError && !archiveTarget && <ErrorNotice>{actionError}</ErrorNotice>}
     <ArchiveConversationModal
       target={archiveTarget ? { title: archiveTarget.title, noun: 'thread' } : null}

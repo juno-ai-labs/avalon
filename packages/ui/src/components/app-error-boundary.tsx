@@ -18,8 +18,11 @@ export class AppErrorBoundary extends Component<PropsWithChildren<{ onError?: (e
         <main className="fatal-error-screen window-drag">
           <section className="fatal-error-card window-no-drag">
             <RallyMark />
-            <ErrorNotice title="Rally needs to reopen this view">{this.state.error.message}</ErrorNotice>
-            <Button className="button-primary" onClick={() => window.location.reload()}>Reload Rally</Button>
+            <h1>Reopen this view</h1>
+            <div className="fatal-error-actions">
+              <ErrorNotice detailsLabel="View details" occurrence={this.state.error} title="Rally needs to reopen this view">{this.state.error.message}</ErrorNotice>
+              <Button className="button-primary" onClick={() => window.location.reload()}>Reload Rally</Button>
+            </div>
           </section>
         </main>
       );

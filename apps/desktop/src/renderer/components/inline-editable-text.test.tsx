@@ -98,6 +98,8 @@ describe('InlineEditableText', () => {
     expect(input).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(input).toHaveValue('J');
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Use 2 to 120 characters.');
   });
 
   it('returns focus to the name after Enter or Escape, but not after a click away', async () => {

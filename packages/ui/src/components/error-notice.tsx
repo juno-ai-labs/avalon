@@ -28,13 +28,20 @@ export function AcknowledgedErrorDialog({ error, onAcknowledge }: {
   </Modal></Tooltip.Provider>;
 }
 
-interface Notice extends AcknowledgedError { signature: string }
-const ErrorNotices = createContext<((notice: Notice) => void) | null>(null);
+interface Notice extends AcknowledgedError { signature: string; occurrence?: unknown }
+const ErrorNotices = createContext<((notice: Notice, reopen?: boolean) => void) | null>(null);
 
 /** One queue per window; errors survive a menu or failed surface unmounting. */
 export function ErrorNoticeProvider({ children }: PropsWithChildren): React.JSX.Element {
   const [queue, setQueue] = useState<Notice[]>([]);
-  const publish = useCallback((notice: Notice) => {
+  const reportedOccurrences = useRef(new Map<unknown, Set<string>>());
+  const publish = useCallback((notice: Notice, reopen = false) => {
+    if (notice.occurrence !== undefined) {
+      const reported = reportedOccurrences.current.get(notice.occurrence) ?? new Set<string>();
+      if (!reopen && reported.has(notice.signature)) return;
+      reported.add(notice.signature);
+      reportedOccurrences.current.set(notice.occurrence, reported);
+    }
     setQueue((current) => current.some((item) => item.signature === notice.signature)
       ? current : [...current, notice]);
   }, []);
@@ -55,27 +62,40 @@ function copyText(children: ReactNode): string {
 /**
  * Declare a failure where its state is owned, without occupying layout space.
  * Acknowledgement leaves the draft and failure/retry state with the caller.
- * Clearing and re-raising the error (or changing occurrence) reports it again.
+ * New attempts supply a new occurrence; old occurrences stay acknowledged
+ * across remounts. Without an occurrence, clearing and raising reports again.
  */
-export function ErrorNotice({ children, title = 'Something went wrong', occurrence }: PropsWithChildren<{
+export function ErrorNotice({ children, title = 'Something went wrong', occurrence, automatic = true, detailsLabel }: PropsWithChildren<{
   title?: string;
   /** A query error object or attempt id distinguishes identical retry failures. */
   occurrence?: unknown;
+  /** Stored transcript failures expose details without interrupting on scroll. */
+  automatic?: boolean;
+  /** Keep the popup available after acknowledgement without inline error copy. */
+  detailsLabel?: string;
 }>): React.JSX.Element | null {
   const publish = useContext(ErrorNotices);
   const signature = JSON.stringify([title, copyText(children)]);
   const reported = useRef<{ signature: string; occurrence: unknown } | null>(null);
   const [dismissed, setDismissed] = useState<{ signature: string; occurrence: unknown } | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   useEffect(() => {
-    if (!publish || (reported.current?.signature === signature && Object.is(reported.current.occurrence, occurrence))) return;
+    if (!automatic || !publish || (reported.current?.signature === signature && Object.is(reported.current.occurrence, occurrence))) return;
     reported.current = { signature, occurrence };
-    publish({ title, copy: children, signature });
-  }, [publish, signature, title, children, occurrence]);
+    publish({ title, copy: children, signature, occurrence });
+  }, [automatic, publish, signature, title, children, occurrence]);
+
+  const details = detailsLabel && <Button onClick={(event) => {
+    event.stopPropagation();
+    if (publish) publish({ title, copy: children, signature, occurrence }, true);
+    else setDetailsOpen(true);
+  }}>{detailsLabel}</Button>;
 
   // Also usable in an isolated component host, without an application shell.
-  if (publish) return null;
-  return <AcknowledgedErrorDialog
-    error={dismissed?.signature === signature && Object.is(dismissed.occurrence, occurrence) ? null : { title, copy: children }}
-    onAcknowledge={() => setDismissed({ signature, occurrence })}
-  />;
+  if (publish) return details || null;
+  const acknowledged = dismissed?.signature === signature && Object.is(dismissed.occurrence, occurrence);
+  return <>{details}<AcknowledgedErrorDialog
+    error={detailsOpen || (automatic && !acknowledged) ? { title, copy: children } : null}
+    onAcknowledge={() => { setDetailsOpen(false); setDismissed({ signature, occurrence }); }}
+  /></>;
 }

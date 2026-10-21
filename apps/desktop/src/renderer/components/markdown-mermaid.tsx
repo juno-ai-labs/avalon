@@ -294,7 +294,7 @@ export function MarkdownMermaid({ code, fallback }: {
   return (
     <>
       {current?.status === 'failed' ? (
-        <ErrorNotice>Couldn’t render diagram; showing source.</ErrorNotice>
+        <ErrorNotice automatic={false} detailsLabel="Diagram details">Couldn’t render diagram; showing source.</ErrorNotice>
       ) : null}
       {fallback}
     </>

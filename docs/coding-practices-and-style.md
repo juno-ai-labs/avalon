@@ -64,13 +64,9 @@ must be added to the registry and its scope test.
 
 ## Errors require acknowledgement
 
-Desktop and browser operational errors use the shared `ErrorNotice` popup with
-an **OK** action. Inline error banners, paragraphs and DOM `role="alert"` are
-banned. `rally/no-inline-errors` rejects these known patterns in both hosts and
-shared UI, including the retired `InlineError` import. See
-[shared UI](shared-ui.md#error-popups) for queue, retry and focus behavior.
-Historical transcript/run status and loading indicators remain content; a new
-failed operation is reported over the surface rather than inserted into it.
+`rally/no-inline-errors` enforces acknowledged error popups across desktop,
+browser and shared UI; see [shared UI](shared-ui.md#error-popups) for the
+presentation, history and retry contract.
 
 ## Construct Zod object modes directly
 

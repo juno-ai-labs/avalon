@@ -465,6 +465,8 @@ describe('InspectorRail details', () => {
 
     // Offline, a 500, and "this document never changed" are four different
     // truths; silence tells the reader the last one.
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'History details' }));
     expect(screen.getByRole('alertdialog')).toHaveTextContent('Resource history couldn’t be loaded.');
   });
 

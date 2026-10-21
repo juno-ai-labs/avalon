@@ -28,7 +28,7 @@ export function InlineEditableText({
   value: string;
 }): React.JSX.Element {
   const [draft, setDraft] = useState<string | null>(null);
-  const [invalid, setInvalid] = useState<string | null>(null);
+  const [invalid, setInvalid] = useState<{ reason: string } | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
   // Set by Enter and Escape, not by blur: a keyboard user keeps their place,
   // while a click elsewhere keeps the focus it moved to.
@@ -54,7 +54,7 @@ export function InlineEditableText({
     }
     const reason = validate?.(next) ?? null;
     if (reason) {
-      setInvalid(reason);
+      setInvalid({ reason });
       return;
     }
     close(true);
@@ -98,7 +98,7 @@ export function InlineEditableText({
           }}
           value={draft}
         />
-        {invalid && <ErrorNotice>{invalid}</ErrorNotice>}
+        {invalid && <ErrorNotice occurrence={invalid}>{invalid.reason}</ErrorNotice>}
       </span>
     );
   }

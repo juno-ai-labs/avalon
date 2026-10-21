@@ -327,9 +327,7 @@ export function WorkspaceAccountMenu({
                         <span aria-hidden="true" className="workspace-mark">{workspace.name.slice(0, 1).toLocaleUpperCase()}</span>
                         <span className="workspace-menu-copy">
                           <span>{workspace.name}</span>
-                          {error
-                            ? <ErrorNotice>{error}</ErrorNotice>
-                            : signingIn && <small className="workspace-menu-note">{FINISH_SIGN_IN_IN_BROWSER}</small>}
+                          {signingIn && <small className="workspace-menu-note">{FINISH_SIGN_IN_IN_BROWSER}</small>}
                         </span>
                         {multipleRegions && <small className="workspace-region-tag">{regionLabel(workspace.region)}</small>}
                         {switching && (
@@ -417,6 +415,11 @@ export function WorkspaceAccountMenu({
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
+      {workspaces.map((workspace) => {
+        const key = desktopWorkspaceIdentityKey(workspace.region, workspace.id);
+        const error = workspaceErrors[key];
+        return error ? <ErrorNotice key={key}>{error}</ErrorNotice> : null;
+      })}
 
       <Modal
         description={invitation ? `${invitation.invitedByName} invited you as ${invitation.role}.` : undefined}

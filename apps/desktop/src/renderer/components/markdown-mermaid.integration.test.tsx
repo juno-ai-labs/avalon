@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MarkdownMermaid } from './markdown-mermaid';
 
@@ -101,7 +101,8 @@ flowchart TD
 
     const { container } = render(<MarkdownMermaid code={source} fallback={<pre>{source}</pre>} />);
 
-    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    fireEvent.click(await screen.findByRole('button', { name: 'Diagram details' }));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
     expect(container.querySelector('pre')?.textContent).toBe(source);
     expect(screen.queryByRole('img')).toBeNull();
   });
@@ -113,7 +114,8 @@ flowchart TD
 
     const { container } = render(<MarkdownMermaid code={source} fallback={<pre>{source}</pre>} />);
 
-    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    fireEvent.click(await screen.findByRole('button', { name: 'Diagram details' }));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
     expect(container.querySelector('pre')?.textContent).toBe(source);
     expect(screen.queryByRole('img')).toBeNull();
   });
@@ -136,7 +138,8 @@ flowchart TD
 
     const { container } = render(<MarkdownMermaid code={source} fallback={<pre>{source}</pre>} />);
 
-    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    fireEvent.click(await screen.findByRole('button', { name: 'Diagram details' }));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
     expect(assignedSource).not.toHaveBeenCalled();
     expect(container.querySelector('pre')?.textContent).toBe(source);
     expect(screen.queryByRole('img')).toBeNull();
