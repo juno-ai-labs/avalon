@@ -8,6 +8,7 @@ import {
   DEFAULT_WORKSTREAM_ICON_KEY,
   MoveChannelBetweenSpacesResultSchema,
   type SpaceChannelPage,
+  type SpaceDirectory,
   SpaceChannelPageSchema,
   type ActivityEvent,
   type ActivityFilter,
@@ -48,6 +49,8 @@ import {
   WorkspaceArtifactPinResultSchema,
   type WorkspaceArtifactPinResult,
   WorkspaceSpaceChannelPageResultSchema,
+  WorkspaceSpaceDirectoryResultSchema,
+  type WorkspaceSpaceConversationPageRequest,
   WorkspaceSpaceDefaultResultSchema,
   WorkspaceContainerOrderResultSchema,
   WorkspacePinnedOrderResultSchema,
@@ -200,6 +203,15 @@ function channelMemoryScope(spaceId: SpaceId): MemoryReviewScope {
 
 export class SpaceService {
   constructor(private readonly env: Env, private readonly auth: AuthContext) {}
+
+  /** The same active Channel directory and personal order as the workspace socket. */
+  async list(): Promise<SpaceDirectory> {
+    const result = WorkspaceSpaceDirectoryResultSchema.parse(await (await this.workspace()).listSpaceDirectory({
+      workspaceId: asWorkspaceId(this.auth.workspaceId), userId: asUserId(this.auth.userId),
+    }));
+    if (!result.ok) throw spaceRefusal(result.code, "");
+    return result.directory;
+  }
 
   /**
    * One container's order for the person asking: the Organization's Spaces, a
@@ -474,13 +486,16 @@ export class SpaceService {
     return space;
   }
 
-  async listChannels(spaceId: SpaceId, cursor: string | null): Promise<SpaceChannelPage> {
+  async listChannels(spaceId: SpaceId, cursor: string | null,
+    options: Pick<WorkspaceSpaceConversationPageRequest, "kind" | "needsViewerOnly"> = {},
+  ): Promise<SpaceChannelPage> {
     const result = WorkspaceSpaceChannelPageResultSchema.parse(
       await (await this.workspace()).listSpaceChannels({
         workspaceId: asWorkspaceId(this.auth.workspaceId),
         userId: asUserId(this.auth.userId),
         spaceId,
         cursor,
+        ...options,
       }),
     );
     if (!result.ok) throw spaceRefusal(result.code, "");

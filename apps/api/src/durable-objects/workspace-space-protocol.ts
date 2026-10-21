@@ -23,6 +23,7 @@ import {
   PeopleRankingSchema,
   ArtifactPinListSchema,
   SpaceChannelPageSchema,
+  SpaceDirectorySchema,
   SpaceErrorCodeSchema,
   SpaceIconKeySchema,
   SpaceIdSchema,
@@ -69,6 +70,11 @@ const SpaceFailureSchema = z.strictObject({
 
 export const WorkspaceSpaceListRequestSchema = SpaceActorSchema;
 export type WorkspaceSpaceListRequest = z.infer<typeof WorkspaceSpaceListRequestSchema>;
+
+export const WorkspaceSpaceDirectoryResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), directory: SpaceDirectorySchema }),
+  SpaceFailureSchema,
+]);
 
 /**
  * `openGeneralSpace`. With a `spaceId` (whose D1 anchor the caller has already
@@ -420,6 +426,13 @@ export const WorkspaceSpaceChannelPageRequestSchema = SpaceActorSchema.extend({
   cursor: z.string().min(1).max(200).nullable(),
 }).strict();
 export type WorkspaceSpaceChannelPageRequest = z.infer<typeof WorkspaceSpaceChannelPageRequestSchema>;
+
+/** The dashboard remains attention-only; other callers can list all visible rows. */
+export const WorkspaceSpaceConversationPageRequestSchema = WorkspaceSpaceChannelPageRequestSchema.extend({
+  kind: z.enum(["channel", "breakout"]).optional(),
+  needsViewerOnly: z.boolean().optional(),
+});
+export type WorkspaceSpaceConversationPageRequest = z.infer<typeof WorkspaceSpaceConversationPageRequestSchema>;
 
 export const WorkspaceSpaceChannelPageResultSchema = z.union([
   z.strictObject({ ok: z.literal(true), page: SpaceChannelPageSchema }),
@@ -839,7 +852,7 @@ export const SpaceActorAuthSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   region: RegionSchema,
   role: z.enum(["owner", "admin", "member"]).nullable(),
-  principal: z.enum(["connector", "demo_seed", "impersonation", "resource_authorization"]).optional(),
+  principal: z.enum(["connector", "demo_seed", "impersonation", "resource_authorization", "engineering"]).optional(),
 });
 export type SpaceActorAuth = z.infer<typeof SpaceActorAuthSchema>;
 

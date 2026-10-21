@@ -49,6 +49,7 @@ import {
   type Viewer,
 } from "./listing-rules";
 import type {
+  WorkspaceSpaceConversationPageRequest,
   WorkspaceSpaceAudienceNoteRequest,
   WorkspaceSpaceDefaultRequest,
   WorkspaceSpaceDefaultResult,
@@ -2238,7 +2239,9 @@ export class WorkspaceSpaceStorage {
    * Channel first, which is the unbounded read the page bound exists to
    * prevent.
    *
-   * **Stale is left out here, not on the client.** `liveForViewerSql` is
+   * **Stale is left out here by default, not on the client.** Internal
+   * all-visible reads omit only this attention predicate; kind is also filtered
+   * before pagination. `liveForViewerSql` is
    * applied inside the query, so the page is `SPACE_CHANNEL_PAGE_SIZE`
    * conversations that need this viewer rather than that many rows of which
    * some do. A client-side filter would have made every page arbitrarily short
@@ -2276,6 +2279,7 @@ export class WorkspaceSpaceStorage {
     viewer: Viewer,
     spaceId: string,
     cursor: string | null,
+    options: Pick<WorkspaceSpaceConversationPageRequest, "kind" | "needsViewerOnly"> = {},
   ): SpaceConversationPage | "invalid_cursor" | false {
     if (this.reach(viewer, spaceId) === null) return false;
     const userId = viewer.userId;
@@ -2309,7 +2313,8 @@ export class WorkspaceSpaceStorage {
             WHERE membership.space_id = ?2 AND membership.state = 'active'
               AND directory.archived_at IS NULL
               AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}
-              AND ${liveForViewerSql("directory", "viewer")}
+              AND ${options.kind === "breakout" ? "0" : "1"}
+              AND ${options.needsViewerOnly === false ? "1" : liveForViewerSql("directory", "viewer")}
               AND ${afterCursorSql("channel", "directory.last_activity_at", "directory.workstream_id")}
             ORDER BY directory.last_activity_at DESC, directory.workstream_id
             LIMIT ?6
@@ -2340,7 +2345,8 @@ export class WorkspaceSpaceStorage {
               AND ${channelListedSql("directory", "viewer", viewer.accessClass, { breakouts, userId: "?1" })}
               AND breakout.archived_at IS NULL
               AND ${breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass)}
-              AND ${liveForViewerSql("breakout", "breakout_viewer")}
+              AND ${options.kind === "channel" ? "0" : "1"}
+              AND ${options.needsViewerOnly === false ? "1" : liveForViewerSql("breakout", "breakout_viewer")}
               AND ${afterCursorSql("breakout", "breakout.last_activity_at", "breakout.substream_id")}
             ORDER BY breakout.last_activity_at DESC, breakout.substream_id
             LIMIT ?6
