@@ -125,7 +125,7 @@ describe('MemoryFactList', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Remove “The fiscal year starts in February.”' }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('You can’t remove this.');
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('You can’t remove this.');
     expect(screen.getByText('The fiscal year starts in February.')).toBeInTheDocument();
   });
 
@@ -137,7 +137,7 @@ describe('MemoryFactList', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Remove “Prefers short answers.”' }));
 
     await waitFor(() => expect(screen.queryByText('Prefers short answers.')).toBeNull());
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 
   it('reports each removal on its own row when two are in flight', async () => {
@@ -155,11 +155,10 @@ describe('MemoryFactList', () => {
     await waitFor(() => expect(screen.queryByText('Works in Go.')).toBeNull());
     // The first is still on its way: its button stays held and nothing is said about it yet.
     expect(removeFirst).toBeDisabled();
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
 
     await act(async () => { first.reject(new ApiError('Forbidden', 403, 'memory_fact_not_removable')); });
-    const row = screen.getByText('Prefers short answers.').closest('li')!;
-    expect(within(row).getByRole('alert')).toHaveTextContent('You can’t remove this.');
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('You can’t remove this.');
     expect(removeFirst).toBeEnabled();
   });
 

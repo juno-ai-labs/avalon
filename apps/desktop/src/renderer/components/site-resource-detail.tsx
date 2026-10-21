@@ -1,3 +1,4 @@
+import { ErrorNotice } from './primitives';
 import { isComposingKeyEvent } from '@rally/ui/lib/ime';
 import { buildAnnotation, type AnnotationCommentPins, type AnnotationCommentAction, type ArtifactPickerPin } from '@rally/contracts';
 import { AnnotationComment, useAnnotationDraft } from './artifact-annotations';
@@ -536,10 +537,10 @@ export function SiteResourceDetail({
   return (
     <div className="site-detail">
       <CopyStatus state={copyState} visible />
-      {pickError && <p role="alert">{pickError}</p>}
+      {pickError && <ErrorNotice>{pickError}</ErrorNotice>}
 
           <div className="site-detail-pane" data-testid="site-preview-pane" ref={paneRef}>
-            {accessError && <EmptyState description={accessError} title="This site could not be opened" />}
+            {accessError && <ErrorNotice title="This site could not be opened">{accessError}</ErrorNotice>}
             {!accessError && previewShown === null && <p className="site-detail-status">Opening…</p>}
             {/*
               Nothing is rendered *into* the pane when the preview is live: the
@@ -605,7 +606,7 @@ function SiteDataPanel({
     return () => { cancelled = true; };
   }, [loadTable, resourceId, selected]);
 
-  if (error) return <EmptyState description={error} title="Data unavailable" />;
+  if (error) return <ErrorNotice title="Data unavailable">{error}</ErrorNotice>;
   if (!tables) return <p className="site-detail-status">Reading…</p>;
   if (tables.length === 0) {
     return <EmptyState description="Nothing has been submitted yet." title="No data yet" />;

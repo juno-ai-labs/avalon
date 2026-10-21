@@ -1,3 +1,4 @@
+import { AcknowledgedErrorDialog } from '../components/acknowledged-error-dialog';
 import { BreakoutMenu, ChannelMenu, type ConversationRowTarget } from '@rally/ui/components/conversation-menus';
 import type { BreakoutMark } from '@rally/ui/components/breakout-marks';
 import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
@@ -29,7 +30,7 @@ import type { WorkstreamChildDirectory } from '../lib/channel-viewer-state';
 import type { MessageMergedInto, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { EmailMentionContext, emailMentionDirectory, NO_INVITEES, useWorkspaceInvitees } from '../lib/workspace-invitees';
 import { useRetainedWorkstreamSocket } from '../lib/workstream-socket-pool';
-import { Button, InlineError, Modal, TitleSkeleton } from '../components/primitives';
+import { Button, ErrorNotice, Modal, TitleSkeleton } from '../components/primitives';
 import { SessionImportUpdateDialog, importedSourceUpdatable } from '../components/session-import-update-dialog';
 
 import { useCachedWorkstreamAppearance, useCachedWorkstreamSummary } from '../lib/use-workstreams-query';
@@ -1120,7 +1121,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       open={Boolean(renameTarget)}
       title={renameTarget?.substreamId === '0' ? 'Rename thread' : 'Rename breakout'}
     >
-      {substreamMenuFailure && <InlineError>{failureCopyOf(substreamMenuFailure).copy}</InlineError>}
+      {substreamMenuFailure && <ErrorNotice>{failureCopyOf(substreamMenuFailure).copy}</ErrorNotice>}
       <form onSubmit={(event) => { event.preventDefault(); void submitSubstreamRename(); }}>
         <label className="form-field">
           <span>Title</span>
@@ -1135,14 +1136,10 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       onClose={() => { setArchiveTarget(null); setSubstreamMenuFailure(null); }}
       onConfirm={() => void submitSubstreamArchive()}
     />
-    <Modal
-      footer={<Button onClick={() => setSubstreamMenuFailure(null)}>Close</Button>}
-      onOpenChange={(open) => { if (!open) setSubstreamMenuFailure(null); }}
-      open={Boolean(substreamMenuFailure) && !renameTarget && !archiveTarget}
-      title={substreamMenuFailure ? failureCopyOf(substreamMenuFailure).title : 'That couldn’t be updated'}
-    >
-      {substreamMenuFailure && <InlineError>{failureCopyOf(substreamMenuFailure).copy}</InlineError>}
-    </Modal>
+    <AcknowledgedErrorDialog
+      error={substreamMenuFailure && !renameTarget && !archiveTarget ? failureCopyOf(substreamMenuFailure) : null}
+      onAcknowledge={() => setSubstreamMenuFailure(null)}
+    />
     </>
   );
 }

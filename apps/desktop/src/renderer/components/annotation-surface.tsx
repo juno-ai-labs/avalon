@@ -1,3 +1,4 @@
+import { ErrorNotice } from './primitives';
 import { isComposingKeyEvent } from '@rally/ui/lib/ime';
 import { Tip } from './primitives';
 import { ImageViewport, type ImageSizing, type ImageZoomState } from './image-viewport';
@@ -277,7 +278,7 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
     </div>
     {!html && draft?.pins.filter((pin) => pin.id !== editing && pin.annotation.comment.trim() && pin.annotation.target.resourceId === resourceId && pin.annotation.target.version === version).map((pin) => <AnchoredAnnotationComment key={pin.id} pin={pin} anchorElement={pin.annotation.target.locator.type === 'region' ? root.current?.querySelector('img') : undefined} resolveAnchor={() => resolveCommentAnchor(pin.annotation)} onEdit={() => {if(editing)draft.discard(editing);const box=resolveCommentAnchor(pin.annotation);if(box)setAnchor({x:box.right,y:box.top-12});setEditing(pin.id);}} onRemove={() => draft.remove(pin.id)} />)}
     {current && <AnnotationComment pin={current} style={{ left: Math.min(anchor.x, window.innerWidth - 320), top: Math.min(anchor.y + 12, window.innerHeight - 190) }} onClose={() => {draft?.discard(current.id);setEditing(null); root.current?.focus();}} onEscape={() => setPicking(false)} />}
-    {busy && <p role="status">Uploading annotation image…</p>}{error && <p role="alert">{error}</p>}
+    {busy && <p role="status">Uploading annotation image…</p>}{error && <ErrorNotice>{error}</ErrorNotice>}
     {missing && saved && <aside className="annotation-saved-quote"><p>The original page cannot be shown again.</p><q>{annotationQuote(saved,name)}</q>{savedImage && <img alt="Saved selection" src={savedImage} />}{saved.comment && <p>{saved.comment}</p>}</aside>}
   </div>;
 }

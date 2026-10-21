@@ -283,7 +283,7 @@ it('returns to email entry on a non-JSON unauthorized response', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response('Unauthorized', { status: 401 })));
   render(<BrowserEntry />);
   expect(await screen.findByRole('heading', { name: 'Welcome to Rally' })).toBeInTheDocument();
-  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.queryByRole('alertdialog')).toBeNull();
 });
 
 it('leads with Google and opens the email form only when asked', async () => {
@@ -452,7 +452,8 @@ it('starts Google sign-in for the page it was opened on and explains a declined 
   history.replaceState(null, '', `/app/workspaces/global/${workspace.id}#google_error=google_oauth_denied`);
   const view = render(<BrowserEntry />);
   try {
-    expect(await screen.findByRole('alert')).toHaveTextContent('Google sign-in was cancelled.');
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Google sign-in was cancelled.');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(location.hash).toBe('');
     await waitFor(() => expect(views).toHaveLength(1));
     view.rerender(<BrowserEntry />);
@@ -542,7 +543,7 @@ it.each(['google', 'email'] as const)('keeps %s sign-in available on an older st
   const expected = { ...starts[0] };
   delete expected.signupFlowId;
   expect(starts[1]).toEqual(expected);
-  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.queryByRole('alertdialog')).toBeNull();
   if (method === 'email') expect(await screen.findByRole('textbox', { name: 'Sign-in code' })).toBeVisible();
 });
 
@@ -560,7 +561,7 @@ it.each([[503, 'unavailable'], [400, 'not_a_validation_error']] as const)('does 
   }));
   render(<BrowserEntry />);
   fireEvent.click(await screen.findByRole('button', { name: 'Continue with Google' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent('Start unavailable');
+  expect(await screen.findByRole('alertdialog')).toHaveTextContent('Start unavailable');
   expect(starts).toHaveLength(1);
 });
 
@@ -618,16 +619,17 @@ it('drops a returned Google failure once an email sign-in starts', async () => {
   }));
   history.replaceState(null, '', '/#google_error=google_oauth_failed');
   render(<BrowserEntry />);
-  expect(await screen.findByRole('alert')).toHaveTextContent('Google sign-in did not complete. Try again or use your email.');
+  expect(await screen.findByRole('alertdialog')).toHaveTextContent('Google sign-in did not complete. Try again or use your email.');
+  fireEvent.click(screen.getByRole('button', { name: 'OK' }));
   fireEvent.click(screen.getByRole('button', { name: 'Continue with email' }));
   fireEvent.change(screen.getByRole('textbox', { name: 'Email' }), { target: { value: 'person@example.test' } });
   fireEvent.click(screen.getByRole('button', { name: 'Email me a sign-in link' }));
   expect(await screen.findByRole('heading', { name: 'Check your email' })).toBeInTheDocument();
-  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.queryByRole('alertdialog')).toBeNull();
   // Back on the signed-out screen, the old Google failure stays gone.
   fireEvent.click(screen.getByRole('button', { name: 'Use another email or request a new code' }));
   expect(await screen.findByRole('heading', { name: 'Welcome to Rally' })).toBeInTheDocument();
-  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.queryByRole('alertdialog')).toBeNull();
 });
 
 it('shows the opening mark, not an empty organization list, while a sign-in opens the linked organization', async () => {
@@ -776,6 +778,7 @@ it('holds Back while an organization is being created and reuses its operation a
     expect(screen.getByRole('button', { name: 'Back' })).toBeDisabled();
     await act(async () => { fail(); });
     await screen.findByText('The regional onboarding action could not be confirmed');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Create an organization' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Organization name' }), { target: { value: 'Acme Research' } });

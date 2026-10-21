@@ -53,7 +53,7 @@ export function useRevealSetting(
           && (!request.instanceId || element.dataset.settingInstance === request.instanceId));
       // Failed destination reads already render their error; stop waiting until
       // the reader explicitly retries the search instead of retaining a scan.
-      if (!target) return Boolean(container.querySelector('.inline-error'));
+      if (!target) return Boolean(document.querySelector('[data-error-notice]'));
       highlighted = target.closest('.settings-preference-row, .settings-pane-heading, .settings-theme-card, .settings-app-icon-card, article, td') ?? target;
       highlighted.classList.add('settings-search-highlight');
       target.scrollIntoView?.({ block: 'center', behavior: 'auto' });

@@ -1,3 +1,4 @@
+import { ErrorNotice } from './primitives';
 import { Globe2, X } from 'lucide-react';
 import { useRef } from 'react';
 import {
@@ -41,7 +42,7 @@ export function EmbeddedBrowserRail({
         </div>
         <EmbeddedBrowserNavigation active={active} addressRef={addressRef} className="window-no-drag" command={command} />
       </div>
-      {error && <div className="embedded-browser-error" role="alert">{error}</div>}
+      {error && <ErrorNotice>{error}</ErrorNotice>}
       <div className="embedded-browser-page" ref={pageRef}>
         {active?.url === 'about:blank' && <div className="embedded-browser-start">
           <Globe2 aria-hidden="true" size={24} />

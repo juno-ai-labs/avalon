@@ -1,3 +1,4 @@
+import { ErrorNotice } from './primitives';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { PLAN_IDS, PlanIdSchema } from '@rally/contracts/usage';
 import { useEffect, useRef } from 'react';
@@ -93,7 +94,7 @@ function UsageReadingRows({ api, canChangePlan, offline, organizationName, readi
       <SettingCopy
         setting={settings.plan}
         description={setPlan.error
-          ? <span className="usage-plan-error" role="alert">The plan could not be changed. {setPlan.error.message}</span>
+          ? <ErrorNotice>The plan could not be changed. {setPlan.error.message}</ErrorNotice>
           : undefined}
       />
       <DropdownSelect

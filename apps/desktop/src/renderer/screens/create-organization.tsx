@@ -1,6 +1,6 @@
 import { Building2, LoaderCircle } from 'lucide-react';
 import { useEffect, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
-import { Button, InlineError, RallyMark } from '../components/primitives';
+import { Button, ErrorNotice, RallyMark } from '../components/primitives';
 import { isComposingKeyEvent } from '../lib/ime';
 import { reportTelemetryProductIntent, uuidV7 } from '../lib/telemetry';
 
@@ -106,7 +106,7 @@ export function CreateOrganizationCard({ initialName = '', suggestedName = null,
         </span>
       </label>
 
-      {error && <InlineError>{error}</InlineError>}
+      {error && <ErrorNotice>{error}</ErrorNotice>}
       <Button className="button-primary onboarding-continue" disabled={working || name.trim().length < 2} onClick={() => void continueSetup()}>
         {working && <LoaderCircle aria-hidden="true" className="spin" size={16} />}
         Create organization

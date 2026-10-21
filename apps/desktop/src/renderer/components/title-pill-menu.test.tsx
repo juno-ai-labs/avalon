@@ -139,10 +139,12 @@ describe('a title pill menu with levels', () => {
     openMenu();
 
     fireEvent.click(await screen.findByRole('menuitem', { name: /^Memory\s*2/u }));
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('You can’t remove this.');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(await screen.findByRole('button', { name: 'Thread menu: Launch, Memory' })).toBeInTheDocument();
     expect(onOpen).toHaveBeenCalledOnce();
     expect(screen.getByText('Launch is on Nov 4.')).toBeInTheDocument();
-    expect(screen.getByRole('alert')).toHaveTextContent('You can’t remove this.');
+    expect(screen.queryByRole('alertdialog')).toBeNull();
     // Remove only where the server allows it.
     expect(screen.queryByRole('button', { name: 'Remove “Legal signs off first.”' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Remove “Launch is on Nov 4.”' }));
@@ -360,7 +362,7 @@ describe('a title pill menu with levels', () => {
     fireEvent.change(search, { target: { value: 'dan' } });
     fireEvent.keyDown(search, { key: 'Enter' });
 
-    expect(screen.getByRole('alert')).toHaveTextContent('Enter email addresses separated by spaces, commas or semicolons.');
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Enter email addresses separated by spaces, commas or semicolons.');
     expect(onAdd).not.toHaveBeenCalled();
     expect(onInvite).not.toHaveBeenCalled();
   });
@@ -390,7 +392,7 @@ describe('a title pill menu with levels', () => {
 
     fireEvent.change(search, { target: { value: 'nobody' } });
     fireEvent.keyDown(search, { key: 'Enter' });
-    expect(screen.getByRole('alert')).toHaveTextContent('Enter email addresses separated by spaces, commas or semicolons.');
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Enter email addresses separated by spaces, commas or semicolons.');
 
     fireEvent.change(search, { target: { value: 'guest@example.test' } });
     expect(screen.getByText('Press Enter to invite them as a guest.')).toBeInTheDocument();
@@ -451,12 +453,14 @@ describe('a title pill menu with levels', () => {
     } });
     openMenu();
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'OK' }));
     const search = await screen.findByRole('textbox', { name: 'Add someone by name or email' });
 
     fireEvent.change(search, { target: { value: 'guest@example.test' } });
     fireEvent.keyDown(search, { key: 'Enter' });
     expect(onInvite).not.toHaveBeenCalled();
     expect(screen.getByText('Invitations couldn’t be loaded. Try again.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(onRetryLoad).toHaveBeenCalledOnce();
   });
@@ -475,7 +479,7 @@ describe('a title pill menu with levels', () => {
     fireEvent.change(search, { target: { value: 'former@example.test' } });
     fireEvent.keyDown(search, { key: 'Enter' });
     expect(onInvite).not.toHaveBeenCalled();
-    expect(screen.getByRole('alert')).toHaveTextContent('former@example.test has an organization account that isn’t active.');
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('former@example.test has an organization account that isn’t active.');
   });
 
   it('lists invitations still waiting among the people, and cancels one from its dots menu', async () => {

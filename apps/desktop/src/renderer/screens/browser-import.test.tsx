@@ -131,7 +131,8 @@ describe('browser import window', () => {
     await act(async () => { harness.settle({ kind: 'failed', reason: 'sign_in_required' }); });
     // The Channel will not open, so the main window takes its row away.
     expect(harness.bridge.reportBrowserImport).toHaveBeenLastCalledWith({ phase: 'failed', workstreamId: 'w-reserved' });
-    expect(await screen.findByRole('alert')).toHaveTextContent('Sign in to the conversation’s site in this window, then import again.');
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Sign in to the conversation’s site in this window, then import again.');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(screen.getByRole('button', { name: 'Import' })).toBeEnabled();
   });
 
@@ -169,6 +170,7 @@ describe('browser import window', () => {
     await waitFor(() => expect(harness.bridge.getBrowserImportContext).toHaveBeenCalled());
     fireEvent.click(screen.getByRole('button', { name: 'Import' }));
     const sheet = await screen.findByRole('dialog', { name: 'Import thread' });
+    expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(within(sheet).getByRole('button', { name: 'Import' })).toBeDisabled();
 
     await act(async () => { deliver(harness.state.context); });
@@ -202,6 +204,6 @@ describe('browser import window', () => {
     harness.bridge.copyText.mockRejectedValueOnce(new Error('clipboard denied'));
     fireEvent.pointerDown(within(progress).getByRole('button', { name: 'More import actions' }), { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy import id' }));
-    expect(await within(progress).findByText('The import id could not be copied.')).toBeVisible();
+    expect(await screen.findByText('The import id could not be copied.')).toBeVisible();
   });
 });

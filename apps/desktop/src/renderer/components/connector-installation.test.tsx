@@ -1,3 +1,4 @@
+import { ErrorNoticeProvider } from '@rally/ui/components/error-notice';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { onlineManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -30,7 +31,7 @@ function registration(key: string, state: string, providerId: string | null = nu
 }
 function show(element: React.ReactNode) {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-    <Tooltip.Provider>{element}</Tooltip.Provider>
+    <Tooltip.Provider><ErrorNoticeProvider>{element}</ErrorNoticeProvider></Tooltip.Provider>
   </QueryClientProvider>);
 }
 
@@ -83,15 +84,15 @@ describe('organization event controls', () => {
     show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
     await screen.findByText('Connected');
     fireEvent.click(screen.getByRole('button', { name: 'Test' }));
-    const failed = await screen.findByRole('alert');
-    expect(failed).toHaveClass('is-failed');
+    const failed = await screen.findByRole('alertdialog');
     expect(failed).toHaveTextContent('Connection test failed');
     expect(failed).toHaveTextContent('Invalid API key format');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     fireEvent.click(screen.getByRole('button', { name: 'Test' }));
     const passed = (await screen.findByText('Connection test passed')).closest('.connection-test-outcome');
     expect(passed).toHaveClass('is-passed');
     expect(passed).toHaveTextContent('Approved webhook configuration is verified');
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(test).toHaveBeenCalledTimes(2);
   });
 
@@ -103,8 +104,7 @@ describe('organization event controls', () => {
     show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
     await screen.findByText('Connected');
     fireEvent.click(screen.getByRole('button', { name: 'Test' }));
-    const outcome = await screen.findByRole('alert');
-    expect(outcome).toHaveClass('is-unavailable');
+    const outcome = await screen.findByRole('alertdialog');
     expect(outcome).toHaveTextContent('Couldn’t run the connection test');
     expect(outcome).toHaveTextContent('could not be reached');
     expect(screen.queryByText('Connection test failed')).toBeNull();
@@ -132,6 +132,7 @@ describe('organization event controls', () => {
     show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
     await screen.findByText('Setting up');
     act(() => onlineManager.setOnline(false));
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(screen.getByRole('button', { name: 'Test' }).hasAttribute('disabled')).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Test' }));
     act(() => onlineManager.setOnline(true));
@@ -161,6 +162,7 @@ describe('organization event controls', () => {
     fireEvent.change(input, { target: { value: 'fixture-key' } });
     fireEvent.click(screen.getByRole('button', { name: 'Connect for organization' }));
     await screen.findByText('Connection unavailable');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Connect for organization' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Connect for organization' }));
     await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
@@ -187,7 +189,10 @@ describe('organization event controls', () => {
     show(<AshbyWorkspaceSetup api={api} attemptId={installation().attemptId} onSuccess={() => {}} onClose={() => {}} onRecovered={recovered} />);
     fireEvent.change(screen.getByLabelText('Ashby organization API key'), { target: { value: 'fixture-key' } });
     fireEvent.click(screen.getByRole('button', { name: 'Connect for organization' }));
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Response lost');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     await screen.findByText('Existing installations could not be checked. Check again before retrying setup.');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     fireEvent.change(screen.getByLabelText('Ashby organization API key'), { target: { value: 'corrected-key' } });
     expect(screen.getByRole('button', { name: 'Connect for organization' })).toBeDisabled();
     read.mockResolvedValue([{ id: connectionId, modelPluginId: 'plugin_ashby_fixture', connectorType: 'ashby', scope: 'workspace', displayName: 'Ashby organization events', status: 'healthy', capabilities: ['ashby.workspace.events'] }]);
@@ -245,14 +250,15 @@ describe('organization event controls', () => {
 
     fireEvent.paste(field);
     fireEvent.change(field, { target: { value: 'sk-live-wrong-provider-key' } });
-    expect(screen.getByRole('alert')).toHaveTextContent('Granola keys start with grn_');
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Granola keys start with grn_');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(screen.getByRole('button', { name: 'Replace API key' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Replace API key' }));
     expect(replace).not.toHaveBeenCalled();
 
     const key = `grn_${'b'.repeat(24)}`;
     fireEvent.change(field, { target: { value: key } });
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Replace API key' }));
     await waitFor(() => expect(replace).toHaveBeenCalledWith(connectionId, key));
   });
@@ -271,7 +277,7 @@ describe('organization event controls', () => {
     const field = screen.getByLabelText('New API key');
     fireEvent.paste(field);
     fireEvent.change(field, { target: { value: 'opaque-ashby-key' } });
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Replace API key' }));
     await waitFor(() => expect(replace).toHaveBeenCalledWith(connectionId, 'opaque-ashby-key'));
   });
@@ -303,9 +309,10 @@ describe('organization event controls', () => {
     fireEvent.click(screen.getByText('Replace organization API key'));
     const field = screen.getByLabelText('New API key');
     for (const typed of ['g', 'gr', 'grn']) fireEvent.change(field, { target: { value: typed } });
-    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
     fireEvent.blur(field);
-    expect(screen.getByRole('alert')).toHaveTextContent('Granola keys start with grn_');
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Granola keys start with grn_');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
   });
 });
 

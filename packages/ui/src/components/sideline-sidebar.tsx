@@ -1,3 +1,4 @@
+import { ErrorNotice } from './primitives';
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { IconDeviceDesktopDown, IconLogout, IconMasksTheater } from "@tabler/icons-react";
@@ -200,7 +201,7 @@ export function SidelineSidebar(props: {
                             <span aria-hidden="true" className="workspace-mark">{organization.name.slice(0, 1).toLocaleUpperCase()}</span>
                             <span className="workspace-menu-copy">
                               <span>{organization.name}</span>
-                              {error && <small className="workspace-menu-error">{error}</small>}
+                              {error && <ErrorNotice>{error}</ErrorNotice>}
                             </span>
                             {switching && <LoaderCircle aria-label="Opening organization" className="spin" size={14} />}
                             {active && <Check aria-label="Current" size={14} />}

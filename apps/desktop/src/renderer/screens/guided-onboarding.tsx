@@ -8,7 +8,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, us
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, X } from 'lucide-react';
 import { PERSONAL_COLOR_KEYS, personalColorKey, type AccountOnboarding, type OnboardingJourney, type PersonalPresentation } from '@rally/contracts';
-import { Button, InlineError, RallyMark } from '../components/primitives';
+import { Button, ErrorNotice, RallyMark } from '../components/primitives';
 import { PersonalAvatar, personalColor, personalColorInk } from '../components/personal-avatar';
 import { useAppSession } from '../lib/app-session';
 import { accountOnboardingQueryKey } from '../lib/account-onboarding-query';
@@ -66,7 +66,7 @@ export function AccountOnboardingGate({ children }: { children: ReactNode }): Re
   // providers in place so a background result does not remount its socket/feed.
   // Accounts without a workspace still record their introduction before setup.
   if (!session.workspace && !account.data) {
-    if (account.error) return <OnboardingPage title="Let's pick up where you left off" footer={<><Button onClick={() => void account.refetch()}>Retry</Button><Button onClick={() => void signOut()}>Sign out</Button></>}><InlineError>{account.error.message}</InlineError></OnboardingPage>;
+    if (account.error) return <OnboardingPage title="Let's pick up where you left off" footer={<><Button onClick={() => void account.refetch()}>Retry</Button><Button onClick={() => void signOut()}>Sign out</Button></>}><ErrorNotice occurrence={account.error}>{account.error.message}</ErrorNotice></OnboardingPage>;
     return <OnboardingPage title="Opening Rally"><RallyMark /></OnboardingPage>;
   }
   return <MemberPresentationContext.Provider value={presentations}><AccountContext.Provider value={account.data ?? null}><ProfileEditorContext.Provider value={account.data ? editor : null}><AccountLoadingContext.Provider value={!supportSession && (account.isPending || account.isFetching)}><ConversationAdmissionProvider allowed={guest || supportSession || Boolean(account.data ? !account.data.eligible || account.data.introduced : account.error)}>{!guest && account.data?.eligible && !account.data.introduced ? <RecordIntroduction /> : children}</ConversationAdmissionProvider></AccountLoadingContext.Provider></ProfileEditorContext.Provider></AccountContext.Provider></MemberPresentationContext.Provider>;
@@ -107,7 +107,7 @@ function RecordIntroduction(): React.JSX.Element {
   useEffect(() => {
     if (!recorded.current) { recorded.current = true; void complete(); }
   }, [complete]);
-  return <OnboardingPage title="Opening Rally" footer={error ? <Button onClick={() => void complete()}>Retry</Button> : undefined}>{error ? <InlineError>{error}</InlineError> : <RallyMark />}</OnboardingPage>;
+  return <OnboardingPage title="Opening Rally" footer={error ? <Button onClick={() => void complete()}>Retry</Button> : undefined}>{error ? <ErrorNotice>{error}</ErrorNotice> : <RallyMark />}</OnboardingPage>;
 }
 
 export function PersonalSetup({ onSaved, variant = 'onboarding', profileDetails }: { onSaved?: () => Promise<void>; variant?: 'onboarding' | 'settings'; profileDetails?: (name: string) => ReactNode }): React.JSX.Element {
@@ -149,7 +149,7 @@ function OnboardingPersonalSetup({ onSaved }: { onSaved?: () => Promise<void> })
     {colorPicker}
     <label className="guided-email-field">Name<input data-saved-value={account?.presentation?.displayName ?? session?.user.name ?? ''} value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" /></label>
     <label className="guided-email-field">Avatar initials<input data-saved-value={account?.presentation?.initials ?? nameInitials(session?.user.name ?? '')} value={initials} onChange={(event) => setInitials(event.target.value)} /></label>
-    {error && <InlineError>{error}</InlineError>}
+    {error && <ErrorNotice>{error}</ErrorNotice>}
     <Button className="button-primary" disabled={busy || !name.trim() || !initials.trim()} onClick={() => void save()}>{busy ? 'Saving…' : onSaved ? 'Continue with this look' : 'Save appearance'}</Button>
   </div>;
 }
@@ -162,7 +162,7 @@ function AccountProfileSettings({ profileDetails }: { profileDetails?: (name: st
   // Rally staff member's, which is not the person shown here.
   if (session?.impersonator) return <p className="settings-support-note">{session.impersonator.name} is signed in as {session.user.name}. Their profile is theirs to change.</p>;
   if (!editor && loading) return <p role="status">Loading account profile…</p>;
-  if (!editor) return <InlineError>Account profile is unavailable.</InlineError>;
+  if (!editor) return <ErrorNotice>Account profile is unavailable.</ErrorNotice>;
   return <AccountProfileFields editor={editor} profileDetails={profileDetails} />;
 }
 
@@ -182,7 +182,7 @@ function AccountProfileFields({ editor, profileDetails }: { editor: AccountProfi
         <div className="personal-colors" role="group" aria-label={settings.profileColor.label}>{PERSONAL_COLOR_KEYS.map((value) => <button type="button" key={value} aria-label={value} aria-pressed={personalColorKey(profile.color) === value} style={{ background: personalColor(value), color: personalColorInk(value) }} onClick={() => editor.update({ color: value })}>{personalColorKey(profile.color) === value && <Check size={14} />}</button>)}</div>
       </div>
     </div>
-    {error && <div className="settings-account-actions" role="status"><InlineError>{error}</InlineError><Button onClick={editor.retry}>Retry</Button></div>}
+    {error && <div className="settings-account-actions" role="status"><ErrorNotice>{error}</ErrorNotice><Button onClick={editor.retry}>Retry</Button></div>}
   </div>;
 }
 
@@ -216,7 +216,7 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
   const content = (allowed: boolean): React.JSX.Element => <ConversationAdmissionProvider allowed={allowed}>{children}</ConversationAdmissionProvider>;
   if (!workspace) return content(false);
   if (!eligible) return content(true);
-  if (journey.error && !journey.data) return <OnboardingPage title="Resume your setup" footer={<Button onClick={() => void journey.refetch()}>Retry</Button>}><InlineError>{journey.error.message}</InlineError></OnboardingPage>;
+  if (journey.error && !journey.data) return <OnboardingPage title="Resume your setup" footer={<Button onClick={() => void journey.refetch()}>Retry</Button>}><ErrorNotice occurrence={journey.error}>{journey.error.message}</ErrorNotice></OnboardingPage>;
   const state = journey.data;
   // A workspace session can render while setup progress loads; only a known
   // unfinished journey interrupts it. Completed users never flash a second gate.
@@ -271,9 +271,9 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
           onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === 'Enter') { event.preventDefault(); addEmails(emailDraft, true); } }} />
       </div>
       <p id="invite-email-hint">Separate emails with a space, comma, or semicolon.</p>
-      {invalidEmails && <p className="inline-error">Enter a complete email address for each teammate.</p>}
+      {invalidEmails && <ErrorNotice>Enter a complete email address for each teammate.</ErrorNotice>}
     </div>
-    {sent.length > 0 && <p role="status">Invited: {sent.join(', ')}</p>}{error && <InlineError>{error}</InlineError>}
+    {sent.length > 0 && <p role="status">Invited: {sent.join(', ')}</p>}{error && <ErrorNotice>{error}</ErrorNotice>}
   </OnboardingPage>;
   return <>{children}</>;
 }

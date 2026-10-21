@@ -83,7 +83,8 @@ describe('appearance picker', () => {
     // roll back and the final assertion passes whether or not the failed choice
     // is retired.
     fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Red' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Couldn’t update');
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Couldn’t update');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(screen.getByRole('menuitemradio', { name: 'Red' })).toHaveAttribute('aria-checked', 'false');
     expect(screen.getByRole('menuitemradio', { name: 'Blue' })).toHaveAttribute('aria-checked', 'true');
   });
@@ -112,7 +113,7 @@ describe('appearance picker', () => {
     await act(async () => { fail(new Error('offline')); });
     expect(screen.getByRole('menuitemradio', { name: 'Blue' })).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByRole('menuitemradio', { name: 'Rocket' })).toHaveAttribute('aria-checked', 'true');
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
   });
 
   it('does not show a stale failure when reopened', async () => {
@@ -125,7 +126,7 @@ describe('appearance picker', () => {
     await act(async () => { fail(new Error('offline')); });
     openPicker();
     expect(await screen.findByRole('menuitemradio', { name: 'Blue' })).toHaveAttribute('aria-checked', 'true');
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
   });
 
   it('shows no swatch for a colour reserved to accounts, but still renders a channel holding one', () => {
