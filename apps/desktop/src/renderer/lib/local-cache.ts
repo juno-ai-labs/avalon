@@ -22,6 +22,7 @@ import { createIndexedDbStore } from './indexeddb-store';
 const DATABASE_NAME = 'rally-local-cache';
 const DATABASE_VERSION = 2;
 const ENTRY_STORE = 'entries';
+const GENERATION_KEY = ['', 'generation', ''];
 /** Every row of one kind about one subject, whatever scope it sits in. */
 const KIND_SUBJECT_INDEX = 'kindSubject';
 /** One row of one kind, whatever scope it sits in. */
@@ -68,9 +69,10 @@ export interface LocalCacheSlice<T> {
   /**
    * Returns whether the row landed. A write from before the last wipe is
    * dropped and reports false, so nothing in flight at sign-out can restore
-   * what the wipe removed.
+   * what the wipe removed. Supplying localCacheGeneration() also fences a wipe
+   * from another renderer, with the comparison inside the write transaction.
    */
-  write(scope: string, key: string, value: T, subject?: string, atEpoch?: number): Promise<boolean>;
+  write(scope: string, key: string, value: T, subject?: string, atEpoch?: number, atGeneration?: string | null): Promise<boolean>;
   remove(scope: string, key: string): Promise<void>;
   /** The identities of every row of this kind in one scope, for pruning. */
   entries(scope: string): Promise<LocalCacheEntryIdentity[]>;
@@ -189,6 +191,22 @@ function parseRow(value: unknown): LocalCacheRow | null {
   };
 }
 
+function generationOf(row: unknown): string | null {
+  const value = parseRow(row)?.value;
+  return typeof value === 'string' ? value : null;
+}
+
+/** Shared by same-origin tabs; writes compare this in their own transaction. */
+export function localCacheGeneration(): Promise<string | null> {
+  return withEntries('readonly', async (entries) =>
+    generationOf(await awaitRequest(entries.get(GENERATION_KEY))), null);
+}
+
+function advanceGeneration(entries: IDBObjectStore): void {
+  entries.put({ scope: '', kind: 'generation', key: '', subject: '', version: 1,
+    updatedAt: Date.now(), value: crypto.randomUUID() } satisfies LocalCacheRow);
+}
+
 async function deleteKeys(store: IDBObjectStore, keys: readonly IDBValidKey[]): Promise<void> {
   for (const key of keys) store.delete(key);
   await Promise.resolve();
@@ -218,9 +236,11 @@ export function defineLocalCacheSlice<T>(definition: LocalCacheSliceDefinition<T
       if (parsed === null) void remove(scope, key);
       return parsed;
     },
-    async write(scope, key, value, subject = key, atEpoch = store.epoch()) {
+    async write(scope, key, value, subject = key, atEpoch = store.epoch(), atGeneration) {
       if (atEpoch !== store.epoch()) return false;
       return withEntries('readwrite', async (store) => {
+        if (atGeneration !== undefined && generationOf(await awaitRequest(store.get(GENERATION_KEY))) !== atGeneration) return false;
+        if (atEpoch !== localCacheEpoch()) return false;
         store.put({ scope, kind, key, subject, version, updatedAt: Date.now(), value } satisfies LocalCacheRow);
         return true;
       }, false);
@@ -264,6 +284,7 @@ export async function clearAllLocalCache(): Promise<void> {
   store.advanceEpoch();
   await withEntries('readwrite', async (store) => {
     store.clear();
+    advanceGeneration(store);
   }, undefined);
 }
 
@@ -271,6 +292,7 @@ export async function clearAllLocalCache(): Promise<void> {
 export async function clearWorkspaceLocalCache(userId: string, region: RallyRegion, workspaceId: string): Promise<void> {
   store.advanceEpoch();
   await withEntries('readwrite', async (store) => {
+    advanceGeneration(store);
     for (const accessClass of ['member', 'guest'] as const) {
       store.delete(prefixRange([localCacheScope(userId, region, workspaceId, accessClass)]));
     }
