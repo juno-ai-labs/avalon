@@ -371,6 +371,11 @@ interface PartAttachmentRow extends SqlRow {
 
 const D1_ID_CHUNK_SIZE = 90;
 
+/** Strip the generated envelope before applying the existing notification budget. */
+function notificationMessageExcerpt(text: string): string {
+  return truncateUtf16Safe(stripPersonalSystemPrompt(text), 8_000);
+}
+
 function chunks<T>(values: readonly T[], size = D1_ID_CHUNK_SIZE): T[][] {
   const result: T[][] = [];
   for (let offset = 0; offset < values.length; offset += size) {
@@ -1773,7 +1778,7 @@ export class WorkstreamObjectProductService {
             actorUserId: input.creatorUserId,
             actorLabel: actorName,
             title: truncateUtf16Safe(root.title, 500),
-            body: truncateUtf16Safe(stripPersonalSystemPrompt(prepared.text), 8_000),
+            body: notificationMessageExcerpt(prepared.text),
             canonicalUrl: null,
             digestible: true,
             occurredAt,
@@ -1804,7 +1809,7 @@ export class WorkstreamObjectProductService {
               authorUserId: input.creatorUserId,
               authorNameSnapshot: actorName,
               workstreamTitleSnapshot: truncateUtf16Safe(root.title, 500),
-              messageText: truncateUtf16Safe(stripPersonalSystemPrompt(prepared.text), 8_000),
+              messageText: notificationMessageExcerpt(prepared.text),
               occurredAt,
             },
           }));
@@ -4044,7 +4049,7 @@ export class WorkstreamObjectProductService {
           actorUserId: delivery.authorUserId,
           actorLabel: authorLabel,
           title,
-          body: truncateUtf16Safe(stripPersonalSystemPrompt(delivery.text), 8_000),
+          body: notificationMessageExcerpt(delivery.text),
           canonicalUrl: null,
           digestible: true,
           occurredAt,
@@ -4079,7 +4084,7 @@ export class WorkstreamObjectProductService {
               authorUserId: delivery.authorUserId,
               authorNameSnapshot: authorLabel,
               workstreamTitleSnapshot: title,
-              messageText: truncateUtf16Safe(stripPersonalSystemPrompt(delivery.text), 8_000),
+              messageText: notificationMessageExcerpt(delivery.text),
               occurredAt,
             },
           });
@@ -5396,7 +5401,7 @@ export class WorkstreamObjectProductService {
             actorUserId: auth.userId,
             actorLabel: people.get(auth.userId)?.name ?? "Workspace member",
             title: truncateUtf16Safe(current.title, 500),
-            body: truncateUtf16Safe(stripPersonalSystemPrompt(prepared.text), 8_000),
+            body: notificationMessageExcerpt(prepared.text),
             canonicalUrl: null,
             digestible: true,
             occurredAt,
@@ -5425,7 +5430,7 @@ export class WorkstreamObjectProductService {
             authorUserId: auth.userId,
             authorNameSnapshot: people.get(auth.userId)?.name ?? "Workspace member",
             workstreamTitleSnapshot: truncateUtf16Safe(current.title, 500),
-            messageText: truncateUtf16Safe(stripPersonalSystemPrompt(prepared.text), 8_000),
+            messageText: notificationMessageExcerpt(prepared.text),
             occurredAt,
           },
         }));

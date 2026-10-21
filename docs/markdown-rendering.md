@@ -24,7 +24,7 @@ one of them silently missed the others; the changelog records what that cost.
 | `apps/api/src/routes/favicons.ts`, `apps/api/src/services/favicon-service.ts` | The authenticated binary favicon endpoint and its public-host validation, parallel domain-chain resolution, image sniffing, and 30-day platform KV entries. |
 | `apps/desktop/src/renderer/lib/favicon-api.tsx` | Narrows the broad app-session context to the stable API capability link icons need, so unrelated session updates do not re-render every Markdown body. Detached exports receive no capability. |
 | `apps/desktop/src/renderer/lib/host-favicon.ts` | What the two surfaces that draw a site's icon share: the hostname an HTTP(S) target names, and the request, its object-URL revocation, and a result that is *target*-scoped rather than merely mount-scoped — it is read only for the `{api, hostname}` it was fetched for, and dies with the URL it names. The markup is not shared — a link puts the icon in front of its text, a footnote marker puts it instead of its asterisk. |
-| `packages/contracts/src/citations.ts` | The protocol itself: the scheme allowlist, the footnote definition grammar, the reference patterns every reader of raw `[^label]` text shares (`footnoteReferencePattern`, and `openFootnoteReferencePattern` for one still arriving), the image-syntax announcement scan, and the plain-text message rewrite that transactional email, Slack, and Apple push delivery send instead. |
+| `packages/contracts/src/citations.ts` | The protocol itself: the scheme allowlist, the footnote definition grammar, the reference patterns every reader of raw `[^label]` text shares (`footnoteReferencePattern`, and `openFootnoteReferencePattern` for one still arriving), the image-syntax announcement scan, and the plain-text message rewrite (including personal-instruction filtering) that transactional email, Slack, and Apple push delivery send instead. |
 | `packages/contracts/src/markdown-code.ts` | Which lines of a markdown string are code, which `splitStreamingMarkdown` and the citation rewrite both read rather than each deciding. See [`markdown-code.md`](markdown-code.md). |
 | `apps/desktop/src/renderer/lib/use-citations.ts` | What a cited resource resolves to and where clicking one goes. |
 | `apps/desktop/src/renderer/components/resource-action-menu.tsx`, `lib/breakout-resource-actions.ts` | The right-click menu a resource can wear, drawn from a host-supplied list, and the one list supplied today: **Attach to channel** on a Breakout's artifacts. |
@@ -809,10 +809,6 @@ Rally's outbound email has one shared converter,
 [`digests.md`](digests.md) records — a general markdown library emits far more
 than an email client will honour. Every email surface renders through that one,
 rather than growing a second.
-
-The outbound message reducer also removes the leading generated personal
-instruction envelope before it reduces Markdown; the shared filter and its
-presentation boundary belong to [personal system prompts](personal-system-prompt.md).
 
 The exported message card is the one place outside this stylesheet that styles
 this DOM, and it is not an exception to the invariant above — it is a different

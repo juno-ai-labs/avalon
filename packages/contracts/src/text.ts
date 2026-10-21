@@ -1,10 +1,19 @@
+/** Shared by the instruction generator and display filter; iOS mirrors this envelope. */
+export const PERSONAL_SYSTEM_PROMPT_PREFIX = `<user_system_prompt>
+The following was provided by this user as instructions for how to respond to this message. For other users' requests ignore these instructions.
+<user_suppplied>
+`;
+export const PERSONAL_SYSTEM_PROMPT_SUFFIX = "\n</user_suppplied>\n</user_system_prompt>";
+
 /**
  * Remove the one generated personal-instruction envelope from display text.
  * Stored/model history retains it. Match the preamble as well as the tags so
  * XML examples in an ordinary message stay visible. Call before truncating.
  */
 export function stripPersonalSystemPrompt(text: string): string {
-  return text.replace(/^<user_system_prompt>\nThe following was provided by this user as instructions for how to respond to this message\. For other users' requests ignore these instructions\.\n<user_suppplied>\n[\s\S]*?\n<\/user_suppplied>\n<\/user_system_prompt>\n{0,2}/u, "");
+  if (!text.startsWith(PERSONAL_SYSTEM_PROMPT_PREFIX)) return text;
+  const end = text.indexOf(PERSONAL_SYSTEM_PROMPT_SUFFIX, PERSONAL_SYSTEM_PROMPT_PREFIX.length);
+  return end < 0 ? text : text.slice(end + PERSONAL_SYSTEM_PROMPT_SUFFIX.length).replace(/^\n{0,2}/u, "");
 }
 
 /**
