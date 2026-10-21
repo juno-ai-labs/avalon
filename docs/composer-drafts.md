@@ -3,7 +3,8 @@
 Every Rally composer keeps what the user has entered on the device until it is
 sent or cleared. Closing a work stream, walking to another screen, or quitting
 Rally mid-sentence does not cost the sentence, and it does not cost the files that
-were dropped next to it.
+were dropped next to it or confirmed artifact comments. Unconfirmed comment
+selections remain transient.
 
 The cache is device-local, best-effort, and short-lived: it is an IndexedDB
 database in the renderer's origin, it forgets rather than fails, and everything in
@@ -14,8 +15,8 @@ the attachment hook, or the cache itself.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/lib/draft-cache.ts` | The `avalon-composer-drafts` IndexedDB database, both object stores, the epoch, and `pruneExpiredDrafts`. |
-| `apps/desktop/src/renderer/lib/draft-keys.ts` | **Every** cache key string. The single source. |
+| `apps/desktop/src/renderer/lib/draft-cache.ts` | The `rally-composer-drafts` IndexedDB database, its object stores, the epoch, and `pruneExpiredDrafts`. |
+| `apps/desktop/src/common/draft-keys.ts` (re-exported by renderer `lib/draft-keys.ts`) | **Every** cache key string. The single source. |
 | `apps/desktop/src/renderer/lib/use-draft-text.ts` | The text half: hydration, the debounce, the two commits, `releaseDraft`. |
 | `apps/desktop/src/renderer/lib/use-file-attachments.ts` | The attachment half: restore, re-upload, the ten-file settle. |
 | `apps/desktop/src/renderer/lib/app-session.tsx` | Watches the session and calls `clearAllDrafts` on a scope change. |
@@ -30,7 +31,7 @@ Two surfaces cache a draft, and they are the only ones that do:
 | A conversation's composer, a work stream's or an automation's | `ConversationSurface` through `WorkstreamComposer` | `workspace:<region>:<workspaceId>:workstream:<parentId>`, the parent being the work stream or the automation |
 | A Channel's composer | `ChannelComposer` | `workspace:<region>:<workspaceId>:new-workstream:space:<channelId>`, `newWorkstreamDraftKey` plus the Channel's id |
 
-`lib/draft-keys.ts` is the single place those strings are built. A draft's text and
+`common/draft-keys.ts` is the single place those strings are built. A draft's text and
 its attachments share one key, so the two halves of a composer can never drift
 apart, and the launchers are scoped by regional workspace identity so switching
 workspaces does not surface another workspace's words even if configured deployments hold
@@ -45,14 +46,17 @@ them now.
 
 ### What is stored, and where
 
-Drafts live in an IndexedDB database named `avalon-composer-drafts` in the
+Drafts live in an IndexedDB database named `rally-composer-drafts` in the
 renderer's origin, owned by `lib/draft-cache.ts` and opened through
 `createIndexedDbStore` in `lib/indexeddb-store.ts`, the best-effort, epoch-fenced
-store the local cache shares. It has two object stores:
+store the local cache shares. It has three object stores:
 
 - `text` — one row per key holding the drafted text and the mentions the user
   picked while writing it. **Writing empty text deletes the row**: a composer the
   user has cleared has no draft, and nothing comes back on the next visit.
+- `annotations` — one row per confirmed comment, keyed by `[draftKey, id]`,
+  containing its edit generation, original selection, resolved annotation, name,
+  last user edit time, and optional crop/screenshot bytes.
 - `attachments` — one row per pending file, keyed by `[draftKey, localId]`, holding
   the file's bytes as an `ArrayBuffer` plus its name, MIME type, modification time,
   content hash, and — once the upload finishes — the draft resource the API
@@ -61,6 +65,30 @@ store the local cache shares. It has two object stores:
 Bytes are stored as a buffer rather than a `Blob` because not every IndexedDB
 implementation clones a `Blob` faithfully, and the composer rebuilds a `File` from
 the buffer on restore anyway.
+
+### Annotation lifecycle
+
+`use-annotation-pins.ts` persists each confirmed comment independently and merges
+restored records with edits already made during hydration. There is no whole-list
+replacement write. Same-origin windows notify one another through BroadcastChannel;
+local providers receive the same notifications directly. An unavailable cache
+leaves the in-memory draft usable. Confirmations and edits write immediately.
+Comment-only cross-window edits preserve the resolved target state, avoiding a
+network check on each keystroke. Dirty and restored records retain their original
+sort position. Detached transfers carry the captured edit generation and preserve
+comments edited, removed, or sent while an image upload is in flight.
+
+Annotations use the same conversation/breakout or Channel launcher key as text.
+Detached windows receive that key from main's registered window identity, filter
+it to their own artifact, and preserve IDs through acknowledged transfers. They
+share the draft rather than deleting it on transfer; the actual message receipt
+clears it. Crop bytes use the same ArrayBuffer representation as file drafts and
+are re-uploaded through the ordinary resource upload path after restoration.
+
+Resolution does not refresh the last user edit time. A send captures comment IDs
+and edit generations; acceptance conditionally deletes those generations, leaving
+newer edits and unresolved comments intact. Workspace departure and sign-out clear
+annotation rows too, notify mounted windows, and fence queued writes.
 
 ### Lifetime
 
@@ -231,6 +259,9 @@ a draft is a convenience over state the server has never been told about.
 
 ## Testing
 
+`use-annotation-pins.test.tsx` covers persistence, concurrent providers, expiry,
+scope isolation, sign-out fencing, partial submissions and edit-aware receipts.
+
 `fake-indexeddb` backs the renderer's jsdom environment (`test/setup.ts`). It is a
 single database shared by every test in a file, so a test that touches a composer
 must call `clearAllDrafts()` in its `beforeEach`; the suites that do are the ones
@@ -255,6 +286,16 @@ under Electron's `userData` directory. That is deliberate and bounded: nothing e
 is written there, no credential ever is, every draft expires after 12 hours, and
 signing out deletes all of them. [`security.md`](security.md) owns the boundary this
 sits inside.
+
+## Changelog
+
+### 2026-10-20 — Persist confirmed artifact comments with composer drafts
+
+Comments now survive navigation and restart using per-comment rows in the existing
+cache. Independent writes and generation-checked receipts preserve concurrent
+window edits and feedback typed during submission. Reusing whole-list component
+state would lose drafts on navigation and let a stale window erase another's work.
+Resolution and hydration deliberately preserve expiry from the last authored edit.
 
 ### 2026-09-10 — The store beneath the drafts is shared with the local cache
 

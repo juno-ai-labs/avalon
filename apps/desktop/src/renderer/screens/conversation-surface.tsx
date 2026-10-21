@@ -1,5 +1,6 @@
+import { validateAnnotationSend } from '../lib/use-annotation-pins';
 import { TranscriptHistoryStatus } from '../components/transcript-history-status';
-import { loadAnnotationPreview } from '../lib/annotation-preview';
+import { loadAnnotationPreview, readAnnotationVersion } from '../lib/annotation-preview';
 import { AnnotationDraftProvider, useAnnotationDraft } from '../components/artifact-annotations';
 import { ScopeSharingPanel, useScopeInvitations } from "../components/scope-sharing-panel";
 import { EmailMentionContext, emailMentionDirectory, inviteeAsMember, NO_INVITEES, useWorkspaceInvitees } from "../lib/workspace-invitees";
@@ -1374,8 +1375,8 @@ export interface ConversationSurfaceProps {
  * socket, which only a work stream has and the socket hook mounts only for it.
  */
 export function ConversationSurface(props: ConversationSurfaceProps): React.JSX.Element {
-  const { api } = useCollaborationSession();
-  return <AnnotationDraftProvider scopeKey={`${props.parentId}:${props.substreamId}`} readResource={api ? (id) => api.getResource(id) : undefined} readResourceVersion={api ? (id,version,signal) => api.getResourceVersionPreview(id,version,signal) : undefined} upload={api ? async (file) => (await api.uploadResource(file, crypto.randomUUID())).id : undefined}><ConversationSurfaceContent {...props} /></AnnotationDraftProvider>;
+  const { api, session } = useCollaborationSession();
+  return <AnnotationDraftProvider draftKey={workstreamDraftKey(session?.workspace?.region ?? 'global', session?.workspace?.id ?? 'unbound', props.parentId, props.substreamId)} scopeKey={`${props.parentId}:${props.substreamId}`} readResource={api ? (id) => api.getResource(id) : undefined} readResourceVersion={api ? (id,version,signal,annotation,mimeType) => readAnnotationVersion(api,id,version,signal,annotation,mimeType) : undefined} upload={api ? async (file) => (await api.uploadResource(file, crypto.randomUUID())).id : undefined}><ConversationSurfaceContent {...props} /></AnnotationDraftProvider>;
 }
 
 function ConversationSurfaceContent({
@@ -1543,6 +1544,7 @@ function ConversationSurfaceContent({
       void loadAnnotationPreview(api,preview,(resourceId)=>openPanel({kind:'resource',resourceId})).then((loaded)=>openPanel({kind:'attachment',preview:loaded}));
       return;
     }
+    if (preview.resourceId && !preview.loadContent) {openPanel({kind:'resource',resourceId:preview.resourceId});return;}
     openPanel({ kind: 'attachment', preview });
   }, [openPanel, api]);
   const setAnnotationPreviewOpener = annotationDraft?.setPreviewOpener;
@@ -2833,7 +2835,7 @@ function ConversationSurfaceContent({
     invitedEmails: string[] = [],
   ): Promise<void> => {
     if (!api || !routedDetail) throw new Error('This thread is not ready to receive messages.');
-    if (annotationDraft?.pins.length && (sending || activeElicitation)) throw new Error(activeElicitation ? 'Answer the open question before sending artifact comments.' : 'Your artifact comments are still sending.');
+    if (annotationDraft?.readyPins.length && (sending || activeElicitation)) throw new Error(activeElicitation ? 'Answer the open question before sending artifact comments.' : 'Your artifact comments are still sending.');
     // Ahead of the optimistic turn and of `sending`. A message the server will
     // refuse must not appear in the transcript first and be pulled back out of
     // it, and the person is the only one who can resolve this.
@@ -2848,6 +2850,10 @@ function ConversationSurfaceContent({
       setSendError(MESSAGE_TOO_LONG_MESSAGE);
       throw new ApiError(MESSAGE_TOO_LONG_MESSAGE, 400, 'message_too_long');
     }
+    const sentPins = await annotationDraft?.prepareSend() ?? [];
+    validateAnnotationSend(sentPins, attachmentDraft.ready.length);
+    if (sentPins.length && (sending || activeElicitation)) throw new Error(activeElicitation ? 'Answer the open question before sending artifact comments.' : 'Your artifact comments are still sending.');
+    if (annotationDraft?.pins.length && !text.trim() && !sentPins.length && !attachmentDraft.ready.length) throw new Error('Reattach a comment before sending it.');
     // Sending is the strongest statement anyone can make that they mean to be
     // at the end: they are about to add to it, and the answer is what they are
     // waiting for. Before the follow could be stopped at all this happened by
@@ -2873,7 +2879,6 @@ function ConversationSurfaceContent({
       }
       return;
     }
-    const sentPins = annotationDraft?.pins ?? [];
     const annotationContent = sentPins.length ? { kind: 'artifact_annotations', annotations: sentPins.map((p) => p.annotation), names: Object.fromEntries(sentPins.map((p) => [p.annotation.target.resourceId, p.name])) } : undefined;
     const attachmentLease = await attachmentDraft.leaseReady();
     // Shared before the message is sent, as a member mentioned from outside is
@@ -2958,7 +2963,7 @@ function ConversationSurfaceContent({
         attachmentIds: [...readyAttachments.flatMap((attachment) => attachment.resource ? [attachment.resource.id] : []), ...sentPins.flatMap((p) => p.annotation.content.imageAttachmentId ? [p.annotation.content.imageAttachmentId] : [])],
         ...(deliveryMode ? { runMode: deliveryMode } : {}),
       });
-      annotationDraft?.clear(sentPins.map((p) => p.id));
+      annotationDraft?.clearAccepted(sentPins);
       queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id, substreamId), (current) => {
         const optimistic = (current ?? []).find((overlay) =>
           overlay.identity.type === 'client_message'
@@ -3589,7 +3594,7 @@ function ConversationSurfaceContent({
         onCreate={substreamLaunch.onCreate}
         onOpenAttachment={openAttachment}
         parent={displayedDetail}
-        sendBlocked={feedFromLocalCache || Boolean(activeElicitation && annotationDraft?.pins.length)}
+        sendBlocked={feedFromLocalCache || Boolean(activeElicitation && annotationDraft?.readyPins.length)}
         titlePill={parentKind !== 'automation'}
         {...(launchOrigin ? { origin: { channelTitle: displayedDetail.title, ...launchOrigin } } : {})}
         workspaceId={workspaceId}

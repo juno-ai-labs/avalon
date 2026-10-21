@@ -1,11 +1,24 @@
-const ARTIFACT_ELEMENT_HTML_SOURCE = String.raw`(function(element) {
-    const clone = element.cloneNode(true);
-    clone.querySelectorAll('script,style,[data-rally-picker]').forEach(n=>n.remove());
-    for (const n of [clone,...clone.querySelectorAll('*')]) for (const a of [...n.attributes]) {
-      if (a.name.startsWith('on') || a.name === 'd' || a.value.trim().startsWith('data:')) n.removeAttribute(a.name);
-    }
-    return clone.outerHTML.replace(/\s+/gu,' ').trim();
-  })`;
+import { ANNOTATION_CONTEXT_CHARACTERS } from './annotation-context';
+
+/** Shared normalization for live picking and deterministic revision matching. */
+export function artifactElementHtml(element: Element): string {
+  const clone = element.cloneNode(true) as Element;
+  clone.querySelectorAll('script,style,[data-rally-picker]').forEach((node) => node.remove());
+  for (const node of [clone, ...Array.from(clone.querySelectorAll('*'))]) for (const attr of Array.from(node.attributes)) {
+    if (attr.name.startsWith('on') || attr.name === 'd' || attr.value.trim().startsWith('data:')) node.removeAttribute(attr.name);
+  }
+  return clone.outerHTML.replace(/\s+/gu, ' ').trim();
+}
+const ARTIFACT_ELEMENT_HTML_SOURCE = `(${artifactElementHtml.toString()})`;
+/** Context next to the selection, excluding executable and styling content. */
+export function artifactElementContext(element: Element | null, before: boolean, limit: number): string {
+  if (!element || element.matches('script,style,[data-rally-picker]')) return '';
+  const clone = element.cloneNode(true) as Element;
+  clone.querySelectorAll('script,style,[data-rally-picker]').forEach((node) => node.remove());
+  const text = clone.textContent ?? '';
+  return before ? text.slice(-limit) : text.slice(0, limit);
+}
+const ARTIFACT_ELEMENT_CONTEXT_SOURCE = `(${artifactElementContext.toString()})`;
 /** Tabler pointer-collaboration, MIT. Hotspot matches the pointer tip. */
 export const ARTIFACT_COMMENT_CURSOR = `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="white" stroke="#2563eb" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13.943 13.013l5.016 -1.957c1.445 -.563 1.367 -2.633 -.116 -3.087l-12.727 -3.895c-1.253 -.384 -2.426 .79 -2.042 2.042l3.895 12.727c.454 1.483 2.524 1.56 3.087 .116l1.957 -5.017c.166 -.426 .503 -.763 .93 -.929"/><path d="M20 15l-3.151 1.064a1.25 1.25 0 0 0 -.785 .785l-1.064 3.151" fill="none"/></svg>')}") 4 4, crosshair`;
 /** Trusted comment UI, shared by opaque HTML previews and native isolated worlds. */
@@ -77,7 +90,7 @@ export const ARTIFACT_PICKER_SOURCE = String.raw`(function(report) {
     const height = Math.max(document.documentElement.scrollHeight,innerHeight);
     const x = Math.min(1,Math.max(0,(r.x+scrollX)/width));
     const y = Math.min(1,Math.max(0,(r.y+scrollY)/height));
-    report({ point:{x:Math.max(0,e.clientX),y:Math.max(0,e.clientY)}, css:path.join(' > '), box:{x,y,w:Math.max(0,Math.min(1-x,r.width/width)),h:Math.max(0,Math.min(1-y,r.height/height))},visibleText:selected || element.textContent || '',html:trim(element),pagePath:location.pathname+location.search,replace:e.detail>1 });
+    report({ point:{x:Math.max(0,e.clientX),y:Math.max(0,e.clientY)}, css:path.join(' > '), box:{x,y,w:Math.max(0,Math.min(1-x,r.width/width)),h:Math.max(0,Math.min(1-y,r.height/height))},visibleText:selected || element.textContent || '',html:trim(element),before:${ARTIFACT_ELEMENT_CONTEXT_SOURCE}(element.previousElementSibling,true,${ANNOTATION_CONTEXT_CHARACTERS}),after:${ARTIFACT_ELEMENT_CONTEXT_SOURCE}(element.nextElementSibling,false,${ANNOTATION_CONTEXT_CHARACTERS}),pagePath:location.pathname+location.search,replace:e.detail>1 });
   }
   function trim(element) { return ${ARTIFACT_ELEMENT_HTML_SOURCE}(element); }
   function double(e) { pin(e); }

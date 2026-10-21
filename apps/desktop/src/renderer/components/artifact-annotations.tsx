@@ -1,6 +1,8 @@
 import { isComposingKeyEvent } from '@rally/ui/lib/ime';
 import { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo, type CSSProperties, type ReactNode } from 'react';
 import { AnnotatedMessageContentSchema, type Annotation } from '@rally/contracts';
+import { useAnnotationPins, type AnnotationPin } from '../lib/use-annotation-pins';
+export type { AnnotationPin } from '../lib/use-annotation-pins';
 import type { AttachmentPreview } from './attachments';
 
 /** Website markup is agent context; people see the selected visible words. */
@@ -10,34 +12,40 @@ export function annotationQuote(annotation: Annotation, name: string): string {
   return annotation.content.exact || name;
 }
 
-export interface AnnotationPin { id: string; annotation: Annotation; name: string; reveal: () => boolean | void; pending?: boolean }
 interface AnnotationDraft {
   scopeKey?: string | undefined;
+  readyPins: AnnotationPin[];
+  prepareSend: () => Promise<AnnotationPin[]>;
+  clearAccepted: (pins: AnnotationPin[]) => void;
+  retry: () => void;
+  repair: (pin: AnnotationPin) => void;
+  repairing: string | null;
+  cancelRepair: () => void;
   pins: AnnotationPin[];
   selections: AnnotationPin[];
   confirm: (id: string) => void;
   discard: (id: string) => void;
   uploading: boolean;
   readResource?: ((id: string) => Promise<{ currentVersion: number }>) | undefined;
-  readResourceVersion?: ((id:string,version:number,signal:AbortSignal)=>Promise<Blob>) | undefined;
+  readResourceVersion?: ((id:string,version:number,signal:AbortSignal,annotation?:Annotation,mimeType?:string|null)=>Promise<Blob>) | undefined;
   upload?: ((file: File) => Promise<string>) | undefined;
   add: (annotation: Annotation, name: string, reveal: () => boolean | void, replaceId?: string, pending?: boolean) => string;
   remove: (id: string) => void;
   comment: (id: string, comment: string) => void;
-  clear: (ids: string[]) => void;
   setPreviewOpener: (open:((preview:AttachmentPreview)=>void)|null)=>void;
   reveal: (pin:AnnotationPin)=>boolean;
 }
 const Context = createContext<AnnotationDraft | null>(null);
 export const useAnnotationDraft = (): AnnotationDraft | null => useContext(Context);
-export function AnnotationDraftProvider({ children, upload, readResource, readResourceVersion, scopeKey }: { children: ReactNode; readResourceVersion?: ((id:string,version:number,signal:AbortSignal)=>Promise<Blob>) | undefined; scopeKey?: string; readResource?: ((id: string) => Promise<{ currentVersion: number }>) | undefined; upload?: ((file: File) => Promise<string>) | undefined }): React.JSX.Element {
+export function AnnotationDraftProvider({ children, upload, readResource, readResourceVersion, scopeKey, draftKey, resourceId }: { children: ReactNode; resourceId?: string | undefined; draftKey?: string | undefined; readResourceVersion?: ((id:string,version:number,signal:AbortSignal,annotation?:Annotation,mimeType?:string|null)=>Promise<Blob>) | undefined; scopeKey?: string; readResource?: ((id: string) => Promise<{ currentVersion: number }>) | undefined; upload?: ((file: File) => Promise<string>) | undefined }): React.JSX.Element {
   const [uploads, setUploads] = useState(0);
-  const [pins, setPins] = useState<AnnotationPin[]>([]);
-  const [heldScope,setHeldScope]=useState(scopeKey);
+  const { pins, mutate: setPins, check, prepareSend, clearAccepted } = useAnnotationPins(draftKey ?? scopeKey, { readResource, readResourceVersion }, upload, resourceId);
+  const [repairing,setRepairing] = useState<string|null>(null);
+  const pinsRef=useRef(pins);pinsRef.current=pins;
+  const repairRef=useRef(repairing);repairRef.current=repairing;
+  const images=useRef(new Map<string, NonNullable<AnnotationPin['image']>>());
   const scopeRef=useRef(scopeKey);scopeRef.current=scopeKey;
-  // Reset the draft without remounting the conversation and losing its
-  // in-flight history requests when navigation moves between conversations.
-  if(heldScope!==scopeKey){setHeldScope(scopeKey);setPins([]);}
+  useEffect(()=>{setRepairing(null);images.current.clear();},[draftKey,scopeKey]);
   const previewOpener=useRef<((preview:AttachmentPreview)=>void)|null>(null);
   const setPreviewOpener=useCallback((open:((preview:AttachmentPreview)=>void)|null):void=>{previewOpener.current=open;},[]);
   const uploadRef = useRef(upload);
@@ -49,49 +57,74 @@ export function AnnotationDraftProvider({ children, upload, readResource, readRe
       if (value.scope !== scopeKey) return;
       const transferUpload=uploadRef.current;
       void (async () => {
-        const incoming: AnnotationPin[] = [];
+        const incoming: {pin: AnnotationPin; generation?: string}[] = [];
         for (const pin of value.pins) {
+          // Shared drafts already exist in the cache. A missing/different edit
+          // may have been removed, sent, or edited since the transfer began.
+          if (pin.generation && !pinsRef.current.some((current)=>current.id===pin.id && current.generation===pin.generation)) continue;
           const annotation = structuredClone(pin.annotation);
-          if (pin.image) {
+          if (pin.image && annotation.content.imageAttachmentId) {
             if (!transferUpload) throw new Error('Annotation image upload unavailable');
             annotation.content.imageAttachmentId = await transferUpload(new File([Uint8Array.from(pin.image)], `Annotation — ${value.name}.png`, { type: 'image/png' }));
           }
-          incoming.push({ id: crypto.randomUUID(), annotation, name: value.name, reveal: () => false });
+          incoming.push({ ...(pin.generation ? {generation:pin.generation} : {}), pin:{ imageUploaded:true, id: pin.id ?? crypto.randomUUID(), annotation, name: value.name, reveal: () => false, ...(pin.image ? {image:{bytes:Uint8Array.from(pin.image).buffer,name:`Annotation — ${value.name}.png`,type:'image/png'}} : {}) } });
         }
         if(scopeRef.current!==scopeKey)throw new Error('Annotation composer changed');
-        setPins((current) => [...current, ...incoming]);
+        setPins((current) => {
+          const accepted=incoming.filter((entry)=>!entry.generation || current.some((pin)=>pin.id===entry.pin.id && pin.generation===entry.generation)).map((entry)=>entry.pin);
+          return [...current.filter((pin)=>!accepted.some((entry)=>entry.id===pin.id)), ...accepted];
+        });
         await window.rally?.completeArtifactAnnotationTransfer?.(value.transferId,true);
       })().catch(() => {void window.rally?.completeArtifactAnnotationTransfer?.(value.transferId,false);});
     });
     return () => { stop?.(); void window.rally?.registerAnnotationComposer?.(scopeKey, false); };
-  }, [scopeKey]);
+  }, [scopeKey, setPins]);
   const readers=useRef({readResource,readResourceVersion}); readers.current={readResource,readResourceVersion};
   const read=useCallback((id:string)=>readers.current.readResource!(id),[]);
   const readVersion=useCallback((id:string,version:number,signal:AbortSignal)=>readers.current.readResourceVersion!(id,version,signal),[]);
-  const reveal=useCallback((pin:AnnotationPin):boolean=>{setPins((current)=>current.filter((selection)=>!selection.pending));if(pin.reveal()===false){previewOpener.current?.({name:pin.name,resourceId:pin.annotation.target.resourceId,annotation:pin.annotation});return false;}return true;},[]);
+  const reveal=useCallback((pin:AnnotationPin):boolean=>{setPins((current)=>current.filter((selection)=>!selection.pending));if(pin.reveal()===false){previewOpener.current?.({name:pin.name,resourceId:pin.annotation.target.resourceId,annotation:pin.annotation});return false;}return true;},[setPins]);
+  const repair=useCallback((pin:AnnotationPin):void=>{setRepairing(pin.id);previewOpener.current?.({name:pin.name,resourceId:pin.annotation.target.resourceId});},[]);
+  const cancelRepair=useCallback(()=>{setPins((current)=>current.filter((pin)=>!pin.repairOf||!pin.pending));setRepairing(null);},[setPins]);
+  const retry=useCallback(()=>{void check(true);},[check]);
   const add=useCallback((annotation:Annotation,name:string,reveal:AnnotationPin['reveal'],replaceId?:string,pending=false):string=>{
     const id=replaceId??crypto.randomUUID();
     if(scopeRef.current!==scopeKey)return id;
-    setPins((current)=>[...current.filter((pin)=>pin.id!==id && (!pending || !pin.pending)),{id,annotation,name,reveal,pending}]);
+    setPins((current)=>{
+      const repairPin=current.find((pin)=>pin.id===repairRef.current && pin.annotation.target.resourceId===annotation.target.resourceId);
+      return [...current.filter((pin)=>pin.id!==id && (!pending || !pin.pending)),{id,imageUploaded:true,annotation:repairPin?{...annotation,comment:repairPin.annotation.comment}:annotation,name,reveal,pending,
+        ...(repairPin?{repairOf:repairPin.id,original:repairPin.original??repairPin.annotation}:{}),...(annotation.content.imageAttachmentId && images.current.has(annotation.content.imageAttachmentId)?{image:images.current.get(annotation.content.imageAttachmentId)!}:{})}];
+    });
+    if(annotation.content.imageAttachmentId)images.current.delete(annotation.content.imageAttachmentId);
     return id;
-  },[scopeKey]);
-  const confirm=useCallback((id:string)=>setPins((current)=>current.map((pin)=>pin.id===id?{...pin,pending:false}:pin)),[]);
-  const discard=useCallback((id:string)=>setPins((current)=>current.filter((pin)=>pin.id!==id || !pin.pending)),[]);
+  },[scopeKey,setPins]);
+  const confirm=useCallback((id:string)=>{setPins((current)=>{const selected=current.find((pin)=>pin.id===id);return current.filter((pin)=>pin.id!==selected?.repairOf).map((pin)=>{
+    if(pin.id!==id)return pin;
+    const confirmed:AnnotationPin={...pin,id:pin.repairOf??pin.id,...(pin.repairOf?{reveal:()=>false}:{}),pending:false,state:readResource?'checking':'ready'};
+    delete confirmed.repairOf;
+    return confirmed;
+  });});setRepairing(null);},[setPins,Boolean(readResource)]);
+  const discard=useCallback((id:string)=>{setPins((current)=>{if(current.some((pin)=>pin.id===id&&pin.pending&&pin.repairOf))setRepairing(null);return current.filter((pin)=>pin.id!==id || !pin.pending);});},[setPins]);
   const committedPins=useMemo(()=>pins.filter((pin)=>!pin.pending),[pins]);
-  const remove=useCallback((id:string)=>setPins((current)=>current.filter((pin)=>pin.id!==id)),[]);
-  const comment=useCallback((id:string,comment:string)=>setPins((current)=>current.map((pin)=>pin.id===id?{...pin,annotation:{...pin.annotation,comment}}:pin)),[]);
-  const clear=useCallback((ids:string[])=>setPins((current)=>current.filter((pin)=>!pin.pending && !ids.includes(pin.id))),[]);
-  const uploadFile=useCallback(async(file:File):Promise<string>=>{if(scopeRef.current!==scopeKey)throw new Error('The conversation changed.');const upload=uploadRef.current;if(!upload)throw new Error('Annotation image upload unavailable');setUploads((count)=>count+1);try{return await upload(file);}finally{setUploads((count)=>count-1);}},[scopeKey]);
-  const value=useMemo(()=>({setPreviewOpener,reveal,pins:committedPins,selections:pins,confirm,discard,scopeKey,uploading:uploads>0,readResource:readResource?read:undefined,readResourceVersion:readResourceVersion?readVersion:undefined,upload:upload?uploadFile:undefined,add,remove,comment,clear}),[setPreviewOpener,reveal,pins,committedPins,confirm,discard,scopeKey,uploads,Boolean(readResource),read,Boolean(readResourceVersion),readVersion,Boolean(upload),uploadFile,add,remove,comment,clear]);
+  const remove=useCallback((id:string)=>{setPins((current)=>{if(repairRef.current===id||current.some((pin)=>pin.id===id&&pin.repairOf))setRepairing(null);return current.filter((pin)=>pin.id!==id&&pin.repairOf!==id);});},[setPins]);
+  const comment=useCallback((id:string,comment:string)=>setPins((current)=>current.map((pin)=>pin.id===id?{...pin,annotation:{...pin.annotation,comment}}:pin)),[setPins]);
+
+  const uploadFile=useCallback(async(file:File):Promise<string>=>{if(scopeRef.current!==scopeKey)throw new Error('The conversation changed.');const upload=uploadRef.current;if(!upload)throw new Error('Annotation image upload unavailable');setUploads((count)=>count+1);try{const bytes=await file.arrayBuffer();const id=await upload(file);images.current.set(id,{bytes,name:file.name,type:file.type});return id;}finally{setUploads((count)=>count-1);}},[scopeKey]);
+  const readyPins=useMemo(()=>committedPins.filter((pin)=>pin.state!=='needs-attention'&&pin.state!=='checking'),[committedPins]);
+  const value=useMemo(()=>({readyPins,prepareSend,clearAccepted,retry,repair,repairing,cancelRepair,setPreviewOpener,reveal,pins:committedPins,selections:pins,confirm,discard,scopeKey,uploading:uploads>0,readResource:readResource?read:undefined,readResourceVersion:readResourceVersion?readVersion:undefined,upload:upload?uploadFile:undefined,add,remove,comment}),[readyPins,prepareSend,clearAccepted,retry,repair,repairing,cancelRepair,setPreviewOpener,reveal,pins,committedPins,confirm,discard,scopeKey,uploads,Boolean(readResource),read,Boolean(readResourceVersion),readVersion,Boolean(upload),uploadFile,add,remove,comment]);
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 export function AnnotationChips(): React.JSX.Element | null {
   const draft = useAnnotationDraft();
   const [editing,setEditing] = useState<string|null>(null);
   if (!draft?.pins.length) return null;
-  return <div className="annotation-chips" aria-label="Annotation pins">{draft.pins.map((pin, i) => <div className="annotation-chip" key={pin.id}>
+  return <div className="annotation-chips" aria-label="Annotation pins">
+    <small role="status">{draft.readyPins.length} {draft.readyPins.length===1?'comment':'comments'} ready to send{draft.pins.length>draft.readyPins.length?` · ${draft.pins.length-draft.readyPins.length} will stay in this draft`:''}</small>
+    {draft.repairing && <div role="status">Select a replacement in the current artifact, then confirm the comment. <button type="button" onClick={draft.cancelRepair}>Cancel reattachment</button></div>}
+    {draft.pins.map((pin, i) => <div className="annotation-chip" data-state={pin.state??'ready'} key={pin.id}>
     <button className="annotation-chip-quote" onClick={() => { setEditing(draft.reveal(pin)?null:pin.id); }} type="button"><span className="annotation-number">{i + 1}</span><span><q>{annotationQuote(pin.annotation, pin.name)}</q>{pin.annotation.comment && <small>{pin.annotation.comment}</small>}</span></button>
     <button aria-label={`Remove pin ${i + 1}`} onClick={() => draft.remove(pin.id)} type="button">×</button>
+    {pin.state==='checking' && <small role="status">Checking selection…</small>}
+    {pin.state==='needs-attention' && <div role="alert"><small>{pin.reason}</small><button type="button" onClick={()=>draft.repair(pin)}>Reattach</button><button type="button" onClick={draft.retry}>Retry</button></div>}
     {editing===pin.id && <textarea autoFocus aria-label={`Comment on pin ${i+1}`} placeholder="Ask Rally to change this…" value={pin.annotation.comment} onChange={(e)=>draft.comment(pin.id,e.target.value)} onKeyDown={(e)=>{if(isComposingKeyEvent(e.nativeEvent))return;if((e.key==='Enter'&&!e.shiftKey)||e.key==='Escape'){e.preventDefault();e.stopPropagation();setEditing(null);}}} />}
   </div>)}</div>;
 }

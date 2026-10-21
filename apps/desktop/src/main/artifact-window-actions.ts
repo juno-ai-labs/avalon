@@ -20,6 +20,7 @@ export function artifactWindowActionRequest(preview: DesktopArtifactWindowReques
     if (action.type === 'open') return { path: `${root}/artifact/open`, method: 'POST' };
     if (action.type === 'data') return { path: `${root}/artifact/data`, method: 'GET' };
     if (action.type === 'table') return { path: `${root}/artifact/data/${encodeURIComponent(action.table)}`, method: 'GET' };
+    if (action.type === 'site-preview') return { path: `${root}/versions/${action.version}/site-preview?path=${encodeURIComponent(action.pagePath)}`, method: 'GET', binary: true };
     if (action.type === 'content') return {
       path: `${root}${action.version ? `/versions/${action.version}` : ''}/${action.original ? 'content' : 'preview'}`,
       method: 'GET', binary: true,
