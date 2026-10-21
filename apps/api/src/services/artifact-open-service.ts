@@ -24,7 +24,7 @@ import {
 
 import { artifactHostDOName } from "../durable-objects/names";
 import type { AuthContext, Env, RequestMembershipObservation } from "../env";
-import { ResourceReadContext } from "./authorization-service";
+import { AuthorizationService } from "./authorization-service";
 import { ApiError } from "../lib/api-error";
 import { ensureArtifactHostname } from "./artifact-hostname";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
@@ -58,7 +58,6 @@ export class ArtifactOpenService {
     env: Env,
     private readonly auth: AuthContext,
     private readonly requestMembership?: RequestMembershipObservation,
-    private readonly requestReads?: ResourceReadContext,
   ) {
     this.regionalEnv = env;
     this.env = withWorkspaceRuntimeDatabase(env, auth.workspaceId);
@@ -75,8 +74,9 @@ export class ArtifactOpenService {
   private async resolveAuthorized(resourceId: string) {
     const workspaceId = this.auth.workspaceId;
     if (!workspaceId) throw new ApiError(403, "workspace_required", "Choose a workspace before opening an artifact.");
-    const metadata = await (this.requestReads ?? new ResourceReadContext(this.regionalEnv, this.auth, this.requestMembership))
-      .read(resourceId).catch((error: unknown) => {
+    const metadata = await new AuthorizationService(this.regionalEnv, this.requestMembership)
+      .readResource({ workspaceId, userId: this.auth.userId, delegation: null }, resourceId)
+      .catch((error: unknown) => {
         if (error instanceof ApiError && error.status === 404) {
           throw new ApiError(404, "artifact_not_found", "That artifact does not exist here.");
         }

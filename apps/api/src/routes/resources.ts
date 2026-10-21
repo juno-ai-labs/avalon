@@ -10,7 +10,6 @@ import { workspaceRealtimeInvalidation } from "../middleware/workspace-realtime"
 import { getRequestMembership, getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { ArtifactOpenService } from "../services/artifact-open-service";
 import { ResourceService } from "../services/resource-service";
-import { ResourceReadContext } from "../services/authorization-service";
 import { ConversationService } from "../services/conversation-service";
 
 const idParam = z.object({ id: IdSchema });
@@ -81,7 +80,7 @@ resourceRoutes.use("*",workspaceRealtimeInvalidation);
 function resourceReader(c: Context<HonoAppEnv>): ResourceService {
   const auth = getWorkspaceAuth(c);
   return new ResourceService(c.env, auth, undefined,
-    new ResourceReadContext(c.env, auth, getRequestMembership(c)));
+    getRequestMembership(c));
 }
 
 function artifactReader(c: Context<HonoAppEnv>): ArtifactOpenService {

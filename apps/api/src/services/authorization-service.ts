@@ -101,29 +101,6 @@ export class AuthorizationService {
 export type ResourceReadMetadata = NonNullable<Extract<Awaited<ReturnType<WorkspaceDO['authorizationResourceFacts']>>[number],
   { exists: true }>['readMetadata']>;
 
-/** One HTTP request or read operation. Never retain this across requests. */
-export class ResourceReadContext {
-  readonly access: AccessContext;
-  private readonly authorization: AuthorizationService;
-  private readonly subject: AuthorizationSubject;
-  private readonly reads = new Map<string, Promise<ResourceReadMetadata>>();
-
-  constructor(env: Env, auth: AuthContext, membership?: RequestMembershipObservation) {
-    this.subject = { workspaceId: auth.workspaceId, userId: auth.userId, delegation: null };
-    this.authorization = new AuthorizationService(env, membership);
-    this.access = new AccessContext(this.subject, this.authorization);
-  }
-
-  read(resourceId: string): Promise<ResourceReadMetadata> {
-    let pending = this.reads.get(resourceId);
-    if (!pending) {
-      pending = this.authorization.readResource(this.subject, resourceId);
-      this.reads.set(resourceId, pending);
-    }
-    return pending;
-  }
-}
-
 /** Owner observations, including settled reads, live for exactly one batch. */
 class AuthorizationBatch {
   readonly readMetadata = new Map<string, ResourceReadMetadata>();

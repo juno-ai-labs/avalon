@@ -10,9 +10,6 @@ import { errorHandler } from '../src/middleware/errors';
 import { requireIdentityAuth } from '../src/middleware/auth';
 import { resourceRoutes } from '../src/routes/resources';
 import { issueAccessToken } from '../src/services/auth-service';
-import { ResourceReadContext } from '../src/services/authorization-service';
-import { ResourceService } from '../src/services/resource-service';
-import { ArtifactOpenService } from '../src/services/artifact-open-service';
 import { countingEnv } from './helpers/counting-namespace';
 import { boot, seedWorkspaceControlPlane, seedWorkstreamRoot } from './helpers/substream-fixture';
 import { insertChannelRow, withHostedParent } from './helpers/hosted-parent';
@@ -107,26 +104,6 @@ it.each(['/artifact/open', '/artifact/errors', '/artifact/data', '/artifact/data
     expect((await app.request(endpoint, request, testEnv)).status).toBe(401);
   },
 );
-
-it('coalesces reads only inside an explicit request and reloads changed ownership in a new one', async () => {
-  const calls: string[] = [];
-  const testEnv = countingEnv(calls);
-  const reads = new ResourceReadContext(testEnv, auth);
-  const service = new ResourceService(testEnv, auth, undefined, reads);
-  const [preview, content, errors] = await Promise.all([
-    service.preview(resourceId, new AbortController().signal), service.content(resourceId),
-    new ArtifactOpenService(testEnv, auth, undefined, reads).errors(resourceId),
-  ]);
-  expect(new TextDecoder().decode(await preview.arrayBuffer())).toBe('PNG fixture bytes');
-  expect(new TextDecoder().decode(await content.arrayBuffer())).toBe('PNG fixture bytes');
-  expect(errors).toEqual([]);
-  expect(calls).toEqual(['authorizationResourceFacts']);
-  await runInDurableObject(workspace(), (_instance, state) => {
-    state.storage.sql.exec("UPDATE resources SET uploaded_by_user_id = NULL, attachment_status = 'draft' WHERE id = ?", resourceId);
-  });
-  await expect(new ResourceService(testEnv, auth).preview(resourceId, new AbortController().signal))
-    .rejects.toMatchObject({ status: 404, code: 'resource_not_found' });
-});
 
 const target = { kind: 'conversation' as const, workspaceId, parentId, substreamId: asSubstreamId('0') };
 

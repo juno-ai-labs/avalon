@@ -194,13 +194,8 @@ relationships; `ArtifactOpenService` applies the same resource authorization to
 both. A guest receives viewer identity only for a resource exposed in their
 shared scope. This does not change public content serving below.
 
-All four artifact API surfaces carry the HTTP request's membership proof into
-resource admission. The Organization returns the registry entry with its
-authorization facts, rather than requiring a registry RPC before authorization.
-The read admission lasts for this request; concurrent revocation may take effect
-on a later request, as described in [authorization](authorization.md). Viewer
-session revocation and expiry continue through their existing mechanism.
-
+API read admission and its revocation contract are owned by
+[authorization](authorization.md).
 
 Artifact content is public by default. A direct browser, crawler, or unfurler
 can `GET` or `HEAD` the stable URL without a Rally session. The Worker reads the
