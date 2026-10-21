@@ -448,11 +448,14 @@ export function WorkstreamComposer({
       return resolvedPersonIds.has(member.id);
     });
     const invitedEmails = mentionedInvitees(trimmed, invitees).filter((email) => !sharedInviteeEmails.includes(email));
-    if (workstream.scope === 'personal' && (nonparticipants.length > 0 || invitedEmails.length > 0)) {
+    const peopleNeedingConfirmation = workstream.scope === 'personal'
+      ? nonparticipants
+      : nonparticipants.filter((member) => member.accessClass === 'guest');
+    if (peopleNeedingConfirmation.length > 0 || (workstream.scope === 'personal' && invitedEmails.length > 0)) {
       setPendingConfirmation({
         text: trimmed,
         mentions: submitted.mentions,
-        members: nonparticipants,
+        members: peopleNeedingConfirmation,
         invitedEmails,
         ...(workstream.harnessStatus === 'running' ? { deliveryMode: 'steer' as const } : {}),
       });
