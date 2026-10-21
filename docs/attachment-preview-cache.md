@@ -60,8 +60,10 @@ full IndexedDB falls back to ordinary downloads. Blob URLs belong to their
 mounted views; only bytes persist. New loads still pay authorization latency,
 and cold thumbnails still download originals.
 Access refusal or resource deletion (403/404) removes the saved bytes; other
-server errors preserve them. Only a failed conditional network request gets the
-plain-read retry; uncached failures and aborted requests are not replayed.
+server errors preserve them. A successful uncacheable replacement also removes
+the old image bytes without delaying display. Only a failed conditional network
+request gets the plain-read retry; uncached failures and aborted requests are
+not replayed.
 
 Retention follows account/Organization wipes and the browser storage quota.
 There is no application retention ceiling; the PR hands the retention/eviction
