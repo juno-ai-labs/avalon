@@ -145,7 +145,7 @@ const provider = useOpenRouterDouble((call) => {
   }
   if (loadSkillOnNextTurn) {
     loadSkillOnNextTurn = false;
-    return { callTool: { name: "load_skill", arguments: { name: "sidekick-manual-helper-2" } } };
+    return { callTool: { name: "load_skill", arguments: { name: "skill-manual-helper-2" } } };
   }
   return { say: "Done." };
 });
@@ -480,9 +480,12 @@ describe("a hosted Sidekick", () => {
       }), { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe('completed');
       return provider.calls.slice(before).map((call) => call.messages.filter((message) => message.role === 'system').map((message) => promptText(message.content)).join('\n')).join('\n');
     }
-    await execute(first, [{ name: 'load_plugin', arguments: { pluginId: 'rally_sidekicks' } }, { name: 'sidekick_sidekicks_list', arguments: {} }, { name: 'sidekick_attach', arguments: { sidekickId: AUTOMATION_ID } }]);
-    const listing = provider.calls.flatMap((call) => call.messages).find((message) => message.role === 'tool' && typeof message.content === 'string' && message.content.includes('workspaceSidekicks'));
-    expect(listing?.content).toContain('"canAttach":true');
+    await execute(first, [{ name: 'load_plugin', arguments: { pluginId: 'rally_skill_recommendations' } }, { name: 'list_skill_recommendations', arguments: {} }, { name: 'recommend_skill', arguments: { skillId: AUTOMATION_ID } }]);
+    const listing = provider.calls.flatMap((call) => call.messages).find((message) => message.role === 'tool' && typeof message.content === 'string' && message.content.includes('canRecommend'));
+    expect(listing?.content).toContain('"canRecommend":true');
+    expect(listing?.content).toContain('"skillId":');
+    expect(listing?.content).not.toContain('sidekickId');
+    expect(listing?.content).not.toContain('workspaceSidekicks');
     // A room edits no Sidekick here, so its list carries no edit state.
     expect(listing?.content).not.toContain('canEdit');
     expect(await parent.recommendedSidekickIds({ workspaceId: WORKSPACE_ID, parentId: workstreamId }), JSON.stringify(provider.calls.map((call) => call.messages.filter((message) => message.role === 'tool')))).toEqual([AUTOMATION_ID]);
@@ -491,17 +494,17 @@ describe("a hosted Sidekick", () => {
       expect(prompt).toContain('[Recommended]');
       expect(prompt).not.toContain('Secret body loaded only on request.');
     }
-    await execute(first, [{ name: 'load_skill', arguments: { name: 'sidekick-manual-helper' } }]);
+    await execute(first, [{ name: 'load_skill', arguments: { name: 'skill-manual-helper' } }]);
     expect(await first.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([AUTOMATION_ID]);
     expect(await root.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([]);
     expect(await sibling.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([]);
-    await execute(sibling, [{ name: 'load_skill', arguments: { name: 'sidekick-manual-helper' } }]);
-    await execute(first, [{ name: 'load_plugin', arguments: { pluginId: 'rally_sidekicks' } }, { name: 'sidekick_detach', arguments: { sidekickId: AUTOMATION_ID } }]);
+    await execute(sibling, [{ name: 'load_skill', arguments: { name: 'skill-manual-helper' } }]);
+    await execute(first, [{ name: 'load_plugin', arguments: { pluginId: 'rally_skill_recommendations' } }, { name: 'unrecommend_skill', arguments: { skillId: AUTOMATION_ID } }]);
     expect(await first.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId }), JSON.stringify(provider.calls.at(-1)?.messages.filter((message) => message.role === 'tool'))).toEqual([]);
     expect(await sibling.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([AUTOMATION_ID]);
     const after = await execute(root);
     expect(after).not.toContain('[Recommended]');
-    expect(after).toContain('sidekick-manual-helper');
+    expect(after).toContain('skill-manual-helper');
     expect(after).not.toContain('Secret body loaded only on request.');
     // Ownership recommends the Sidekick independently of the explicit table.
     const ownedId = asAutomationId('00000000-0000-7000-8000-00000000ad98');
@@ -511,15 +514,15 @@ describe("a hosted Sidekick", () => {
       evaluatorRules: null, submittedByRunId: null, actor: { ...actor(), participantOfOwningWorkstream: true } });
     for (const agent of [root, first, sibling]) {
       const prompt = await execute(agent);
-      expect(prompt.split('\n').find((line) => line.includes('sidekick-owned-helper'))).toContain('[Recommended]');
+      expect(prompt.split('\n').find((line) => line.includes('skill-owned-helper'))).toContain('[Recommended]');
       expect(prompt).not.toContain('Owned body loaded only on request.');
     }
-    await execute(first, [{ name: 'load_plugin', arguments: { pluginId: 'rally_sidekicks' } }, { name: 'sidekick_detach', arguments: { sidekickId: ownedId } }]);
-    expect((await execute(root)).split('\n').find((line) => line.includes('sidekick-owned-helper'))).toContain('[Recommended]');
+    await execute(first, [{ name: 'load_plugin', arguments: { pluginId: 'rally_skill_recommendations' } }, { name: 'unrecommend_skill', arguments: { skillId: ownedId } }]);
+    expect((await execute(root)).split('\n').find((line) => line.includes('skill-owned-helper'))).toContain('[Recommended]');
 
     // A delegated agent has a real local participant but no human-viewable
     // private-child membership. Its tools must use execution authority.
-    await execute(root, [{ name: 'load_skill', arguments: { name: 'sidekick-manual-helper' } }]);
+    await execute(root, [{ name: 'load_skill', arguments: { name: 'skill-manual-helper' } }]);
     const input = WorkstreamWorkflowInputSchema.parse({ region: 'global', workspaceId: WORKSPACE_ID,
       parentKind: 'workstream', parentId: workstreamId, substreamId: '0', loopId: `workstream:${workstreamId}:substream:0:loop`,
       harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
@@ -528,9 +531,9 @@ describe("a hosted Sidekick", () => {
     const toolContext = { workspaceId: WORKSPACE_ID, workstreamId, harnessRunId: input.harnessRunId,
       toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(), executionPrincipal: input.executionPrincipal,
       signal: new AbortController().signal };
-    sidekickToolScript = [{ name: 'load_plugin', arguments: { pluginId: 'rally_sidekicks' } },
-      { name: 'sidekick_attach', arguments: { sidekickId: AUTOMATION_ID } },
-      { name: 'load_skill', arguments: { name: 'sidekick-manual-helper' } }];
+    sidekickToolScript = [{ name: 'load_plugin', arguments: { pluginId: 'rally_skill_recommendations' } },
+      { name: 'recommend_skill', arguments: { skillId: AUTOMATION_ID } },
+      { name: 'load_skill', arguments: { name: 'skill-manual-helper' } }];
     const rootCompletedRuns = () => runInDurableObject(root, (_instance, state) =>
       state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM runs WHERE status = 'completed'").one().n);
     const rootRunsBefore = await rootCompletedRuns();
@@ -552,15 +555,15 @@ describe("a hosted Sidekick", () => {
       .rejects.toMatchObject({ status: 404 });
     expect(await parent.recommendedSidekickIds({ workspaceId: WORKSPACE_ID, parentId: workstreamId })).toEqual([AUTOMATION_ID]);
     expect(await hidden.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([AUTOMATION_ID]);
-    sidekickToolScript = [{ name: 'load_plugin', arguments: { pluginId: 'rally_sidekicks' } },
-      { name: 'sidekick_detach', arguments: { sidekickId: AUTOMATION_ID } }];
+    sidekickToolScript = [{ name: 'load_plugin', arguments: { pluginId: 'rally_skill_recommendations' } },
+      { name: 'unrecommend_skill', arguments: { skillId: AUTOMATION_ID } }];
     await agents.send({ agentId: started.agentId, message: 'Detach that recommendation.', attachmentIds: [] },
       { ...toolContext, effectIntentId: crypto.randomUUID() });
     await expect.poll(completedRuns, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(2);
     await expect.poll(rootCompletedRuns, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(rootRunsBefore + 2);
     const managementResults = provider.calls.flatMap((call) => call.messages)
       .filter((message) => message.role === 'tool' && 'tool_call_id' in message
-        && ['call-sidekick_attach', 'call-sidekick_detach'].includes(String(message.tool_call_id)));
+        && ['call-recommend_skill', 'call-unrecommend_skill'].includes(String(message.tool_call_id)));
     expect(managementResults.length).toBeGreaterThan(0);
     for (const message of managementResults) {
       expect(JSON.parse(promptText(message.content)), promptText(message.content)).toMatchObject({ success: true });
@@ -783,6 +786,11 @@ describe("a hosted Sidekick", () => {
     await expect.poll(() => root.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId }), { timeout: RUN_SETTLE_TIMEOUT_MS }).toEqual([AUTOMATION_ID]);
     await expect.poll(() => runInDurableObject(root, (_instance, state) => state.storage.sql.exec<{ status: string }>(`SELECT status FROM runs ORDER BY created_at DESC LIMIT 1`).one().status), { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe("completed");
     expect((await snapshots())[0].sources).toContainEqual(expect.objectContaining({ id: AUTOMATION_ID, revision: 1 }));
+    // Simulate aliases persisted before reusable instructions used skill terms.
+    // A later run projects them without rewriting identities or attachments.
+    await runInDurableObject(root, (_instance, state) => state.storage.sql.exec(
+      `UPDATE sidekick_skill_names SET name = replace(name, 'skill-', 'sidekick-')`,
+    ));
     await workspaceStub().sidekickRemove({ workspaceId: WORKSPACE_ID, automationId: earlierId, actor: actor() });
     await evictDurableObject(root);
     await workspaceStub().sidekickSaveDefinition({ ...addressed(), draft: { ...draft, name: "Updated helper", instructions: "Second accepted Sidekick instructions." }, evaluatorRules: null, submittedByRunId: null, actor: actor() });
@@ -801,7 +809,7 @@ describe("a hosted Sidekick", () => {
     ).one().name)).toBe("sidekick-manual-helper-2");
     await expect.poll(() => provider.calls.some((call) => call.messages.some((message) =>
       message.role === "system" && promptText(message.content).includes("Second accepted Sidekick instructions.")
-      && promptText(message.content).includes('name="sidekick-manual-helper-2"'))),
+      && promptText(message.content).includes('name="skill-manual-helper-2"'))),
     { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(true);
     expect(await root.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId, removeId: AUTOMATION_ID })).toEqual([]);
   });
@@ -809,6 +817,60 @@ describe("a hosted Sidekick", () => {
   it("keeps the connector tables out of regional D1, which is what makes the binding tests evidence", async () => {
     await expect(env.DB.prepare(`SELECT id FROM connector_connections LIMIT 1`).all())
       .rejects.toThrow(/no such table: connector_connections/u);
+  });
+
+  it.each([
+    { pluginIds: ["plugin_google_mail_calendar", "plugin_google_drive"], retained: ["gmail.read", "calendar.read", "drive.read", "docs.read", "sheets.read"] },
+    { pluginIds: ["plugin_google"], retained: ["gmail.read", "calendar.read", "drive.read", "docs.read", "sheets.read"] },
+    { pluginIds: ["plugin_google_mail_calendar"], retained: ["gmail.read", "calendar.read"] },
+    { pluginIds: ["plugin_google_drive"], retained: ["drive.read", "docs.read", "sheets.read"] },
+  ])("binds Google bundle IDs $pluginIds to their shared credential across grant changes", async ({ pluginIds, retained }) => {
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO connector_connections
+          (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+           display_name, granted_scopes_json, status, cursor_json, config_json,
+           created_at, updated_at, model_plugin_id)
+         VALUES (?, ?, 'google', 'personal', ?, 'google-account', 'Google',
+           '["gmail.read","calendar.read","drive.read","docs.read","sheets.read"]',
+           'healthy', '{}', '{}', ?, ?, 'plugin_google')`,
+        SLACK_CONNECTION_ID, WORKSPACE_ID, AUTHOR_ID, NOW, NOW,
+      );
+    });
+    await createDraft();
+    const definition = { ...DEFINITION,
+      recommendedPlugins: pluginIds.map((pluginId) => ({ pluginId, recommendedTools: [], reason: "Needed" })),
+    };
+    await submit(definition);
+    const detail = await apply();
+    expect(detail).toMatchObject({
+      lifecycle: "active",
+      connectorBindings: Object.fromEntries(pluginIds.map((pluginId) => [pluginId, SLACK_CONNECTION_ID])),
+    });
+    expect(JSON.parse((await automationRow()).connector_bindings_json ?? "null"))
+      .toEqual(Object.fromEntries(pluginIds.map((pluginId) => [pluginId, SLACK_CONNECTION_ID])));
+    await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec(
+      `UPDATE connector_connections SET granted_scopes_json = ? WHERE id = ?`, JSON.stringify(retained), SLACK_CONNECTION_ID,
+    ));
+    await workspaceStub().sidekickSaveDefinition({ ...addressed(), draft: definition, evaluatorRules: null,
+      submittedByRunId: null, actor: actor() });
+    expect(await workspaceStub().sidekickReadDetail({ ...addressed(), actor: actor() })).toMatchObject({
+      acceptedDefinitionRevision: 2, connectorBindings: Object.fromEntries(pluginIds.map((id) => [id, SLACK_CONNECTION_ID])),
+    });
+    const replacementId = "00000000-0000-7000-8000-00000000ad06";
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE connector_connections SET status = 'disabled' WHERE id = ?`, SLACK_CONNECTION_ID);
+      state.storage.sql.exec(`INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+         display_name, granted_scopes_json, status, cursor_json, config_json, created_at, updated_at, model_plugin_id)
+        SELECT ?, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+         display_name, granted_scopes_json, 'healthy', cursor_json, config_json, created_at, updated_at, model_plugin_id
+         FROM connector_connections WHERE id = ?`, replacementId, SLACK_CONNECTION_ID);
+    });
+    const claim = await workspaceStub().sidekickClaimExecutionPrincipal({ ...addressed(), actor: actor() });
+    expect(claim).toMatchObject({ reboundPluginIds: pluginIds, unboundProviders: [], changed: true });
+    expect(JSON.parse((await automationRow()).connector_bindings_json ?? "null"))
+      .toEqual(Object.fromEntries(pluginIds.map((pluginId) => [pluginId, replacementId])));
   });
 
   it("applies a ready revision: binds the workspace connection, reserves the address, activates", async () => {

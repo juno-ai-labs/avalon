@@ -1,0 +1,20 @@
+[
+  {
+    "pluginId": "connection:00000000-0000-4000-8000-000000000007",
+    "canonicalToolName": "drive.get_metadata",
+    "capability": "drive.read",
+    "mode": "read",
+    "idempotency": "safe",
+    "connectionId": "00000000-0000-4000-8000-000000000007",
+    "toolSurfaceHash": "b2iF1zP6BV9PZXBAESvCHe-0Ofkw1xwhrYp3j8IoTBw"
+  },
+  {
+    "pluginId": "connection:00000000-0000-4000-8000-000000000007",
+    "canonicalToolName": "docs.create_document",
+    "capability": "docs.write",
+    "mode": "write",
+    "idempotency": "record_before_execute",
+    "connectionId": "00000000-0000-4000-8000-000000000007",
+    "toolSurfaceHash": "b2iF1zP6BV9PZXBAESvCHe-0Ofkw1xwhrYp3j8IoTBw"
+  }
+]

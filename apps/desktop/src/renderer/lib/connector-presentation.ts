@@ -41,7 +41,7 @@ const GOOGLE_MAIL: CatalogEntry & { readonly capabilityPrefixes: readonly string
 
 const GOOGLE_FILES: CatalogEntry & { readonly capabilityPrefixes: readonly string[] } = {
   name: 'Google Drive + Docs + Sheets',
-  description: cardDescription('google-drive-workspace'),
+  description: cardDescription('google-drive'),
   capabilityPrefixes: ['drive.', 'docs.', 'sheets.'],
 };
 

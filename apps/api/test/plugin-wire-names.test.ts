@@ -178,6 +178,7 @@ describe("plugin wire names", () => {
       "describe_artifact_data",
       "edit_file",
       "edit_image",
+      "find_sidekick",
       "generate_audio",
       "generate_image",
       "get_connector_connection_state",

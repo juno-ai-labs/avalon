@@ -72,6 +72,14 @@ therefore reconstruct the card from durable history after reload, pagination,
 recovery, or virtualization. Summary-only interrupted-run recovery uses the
 same shared summary formatter as the writer. Arbitrary assistant prose cannot
 create a card.
+
+The Drive/Docs/Sheets card id is `google-drive` in both the model and desktop
+catalogs. Historical `google-drive-workspace` card inputs, outputs, and exact
+summaries normalize to that id when read, so saved cards retain their existing
+connection controls. The retired id is not advertised or accepted for new tool
+requests. Older clients do not recognize new `google-drive` cards and show their
+existing update/reload requirement.
+
 Unknown connector IDs or scopes in completed structured tool requests render a generic
 **Connector not recognized** card with **Update Rally** (desktop) or **Reload
 Rally** (browser), including when agent work is hidden. This is display-only;
@@ -519,9 +527,45 @@ Google identity and connector authorization are separate. Connector authorizatio
 | **Google Mail + Calendar** | `gmail.read`, `gmail.modify`, `gmail.draft`, `gmail.send`, `calendar.read`, `calendar.write` |
 | **Google Drive + Docs + Sheets** | `drive.read`, `docs.read`, `docs.write`, `sheets.read`, `sheets.write` |
 
-The capability check is enforced for every tool invocation. The current Google tools are:
+The capability check is enforced for every tool invocation.
 
 Every Google tool parses its arguments with a strict schema, so an undeclared key is an error naming the key rather than a silently dropped intent, and every list-shaped result returns `items` with an optional `nextPageToken` so one tool's shape generalizes to the rest. Header hydration degrades per hit: a message that cannot be fetched — deleted or refused — keeps its identifiers and reports `headersUnavailable`, so one rate-limited hit in a fan-out of up to fifty costs that row rather than the whole search. A revoked grant is the exception and is raised, because reporting it per row would read as an empty mailbox rather than a connection to reconnect. Address headers are truncated at the end of the last address that fits, never mid-address, because a fragment cut inside a domain still parses as an address and would be reported as a real correspondent.
+
+Google always exposes two logical plugins: **Google Mail + Calendar** and
+**Google Drive + Docs + Sheets**. A credential granting both bundles produces
+both catalog entries, each with its own instructions, tools, trigger descriptors,
+activation, and receipt identity. Loading one does not load the other's tools.
+`connector-plugin-views.ts` projects these views from the existing connection;
+there is no combined Google Workspace plugin and no additional OAuth grant.
+
+A combined credential's model IDs append `_mail_calendar` and `_drive` to its
+stored `model_plugin_id`; canonical IDs append `:mail_calendar` and `:drive`
+to `connection:<id>`. Single-bundle credentials retain their existing IDs.
+Both views retain the credential's wire prefix because their operation names
+are disjoint. Resource access probes use the files view, while run scope unions
+both views' capabilities under the underlying connection ID. Trigger descriptors
+follow the granted polling streams: Gmail read, Calendar read, and Drive read
+(the latter carries Drive, Docs, and Sheets changes).
+
+Sidekick publication and principal rebinding resolve either view to the same
+connection row. Previously saved combined IDs remain binding aliases and preload
+both views; old combined activation hints expand the same way. These aliases are
+not catalog entries. A retained bundle's suffixed binding and activation aliases
+also survive when reauthorization removes the other bundle; a removed bundle
+cannot preload the surviving family's tools. Default selection and stored
+activation hints translate only to currently granted views. Existing credentials,
+ownership, Organization/personal scope,
+and tool execution authorization retain their existing meaning.
+
+Completed receipts also retain verified identity compatibility across a split,
+merge to one granted family, or expansion from one family. The loader reconstructs
+prior single-family and combined tool surfaces under their original canonical
+IDs. Replay still requires the same connection, operation, capability, execution
+mode, retry policy, input hash and a matching surface hash; a bare ID alias never
+bypasses these checks. Single-family receipt labels retain a renamed account's
+name, and pre-split receipts can infer a family from their recorded capability.
+
+The current Google tools are:
 
 - Gmail: `google_gmail_read_profile`, `google_gmail_search`, `google_gmail_find_contacts`, `google_gmail_read_thread`, `google_gmail_read_message`, `google_gmail_create_draft`, and `google_gmail_send`, plus label discovery/mutation, reversible trash/restore, and draft list/read tools described in [Google workflows](google-workflows.md). `google_gmail_read_profile` answers which account is connected — the address it sends from, which is also what `me` matches in a search operator, with its message and thread totals. It exists so the account holder's own address is read rather than inferred from a signature or a From header, which are somebody's claim about the account rather than the account. It needs no scope beyond the existing Gmail read grant. Search returns each hit's sender, recipients, subject, date, labels, snippet, and RFC `Message-ID` by hydrating the metadata headers behind the bare identifiers Gmail's list endpoint returns, so a result is answerable without a read per hit. New conversations and replies use distinct tools, described below. `google_gmail_find_contacts` resolves a person's name to ranked candidate addresses by scanning the address headers of prior correspondence, excluding Spam and Trash so a spoofed message cannot become a sourced address, each returned with the message it was drawn from; it needs no People API scope, excludes the authorized mailbox's own address, and returns an empty list rather than a guess when nothing matches — carrying a `reason` of `no_messages_matched` or `no_address_matched_name` and a `hint` in its output, since a tool result's `summary` never reaches the model. Gmail message and thread identifiers are both bare hex and cannot be told apart at the schema boundary, so `google_gmail_read_message` and `google_gmail_read_thread` translate the provider's 404 into a `wrong_id_family` failure that names which of a search hit's two identifiers belongs where. `google_gmail_create_draft` returns a `webUrl` alongside its id. `body` is plain text; optional `htmlBody` adds an HTML alternative and `attachments` adds MIME file parts. Draft and send share the same composition and reply-threading path.
   New conversations and replies use flat inputs with distinct tools:
@@ -1592,6 +1636,23 @@ active workspace guest is insufficient after the addressed share is revoked.
 Workspace-principal automation runs retain their separate lifecycle authority.
 
 ## Changelog
+
+### 2026-10-21 — Google credentials expose separate product bundles
+
+**What changed:** Chat and Sidekick catalogs split a credential with mail/calendar
+and file grants into independently loadable plugins. Publication binds both IDs
+to the original credential, including saved combined and surviving-bundle aliases
+across grant changes, while resource discovery and access checks select the matching bundle.
+
+**Why:** One credential previously produced a Google Workspace plugin that
+collapsed the two products and made their tool and connection choices ambiguous.
+The product boundary must survive shared authentication. Requiring people to
+reconnect or duplicate credentials was rejected: credential ownership and grants
+already supply authority; plugin views supply discovery and activation.
+
+**Consequences:** Future Google surfaces must keep bundle tools and triggers
+separate and preserve the shared connection identity for execution and receipts.
+
 
 ### 2026-10-19 — Connection state and reauthorization remain separate
 
