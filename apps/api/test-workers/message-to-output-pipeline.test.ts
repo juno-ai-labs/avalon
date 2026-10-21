@@ -2406,11 +2406,13 @@ describe("a member's message travels the whole pipeline", () => {
     }
   });
 
-  it("lands an aside on an idle loop when the admission it waited behind fails", async () => {
-    // An aside waits only on what was sent ahead of it. When that fails instead
-    // of landing, nothing will ever activate the loop on the aside's behalf —
-    // it starts no run — so the idle loop has to land it by itself.
+  it("lands an aside without a run after an earlier admission fails", async () => {
+    // Classification waits for earlier preparations. Start both admissions
+    // before releasing the failed one, so the aside must be unblocked by its
+    // settlement rather than by an unrelated message or a forced alarm.
     const stub = agentStub();
+    let gate: { open: boolean } | undefined;
+    const admissions: ReturnType<typeof product>[] = [];
     try {
       await installScriptedProvider(
         stub,
@@ -2430,10 +2432,10 @@ describe("a member's message travels the whole pipeline", () => {
 
       // Mentions someone outside the workspace, so preparation refuses it once
       // the held read is released; until then it is `preparing`, ahead of the aside.
-      const gate = await runInDurableObject(stub, (instance) => holdFirstWorkspaceRead(
+      gate = await runInDurableObject(stub, (instance) => holdFirstWorkspaceRead(
         (instance as unknown as { product: WorkstreamObjectProductService }).product as unknown as { env: Env },
       ));
-      void product(stub, {
+      const doomed = product(stub, {
         operation: "create_message",
         auth: AUTH,
         input: {
@@ -2450,7 +2452,8 @@ describe("a member's message travels the whole pipeline", () => {
           confirmedParticipantUserIds: [],
           attachmentIds: [],
         },
-      }).catch(() => undefined);
+      });
+      admissions.push(doomed);
       await expect.poll(() => runInDurableObject(stub, (_instance, state) =>
         state.storage.sql.exec<{ count: number }>(
           `SELECT COUNT(*) AS count FROM pending_loop_input_mailbox WHERE state = 'preparing'`,
@@ -2460,7 +2463,7 @@ describe("a member's message travels the whole pipeline", () => {
         message: "the doomed admission never reserved its mailbox row",
       }).toBe(1);
 
-      const aside = await product(stub, {
+      const pendingAside = product(stub, {
         operation: "create_message",
         auth: AUTH,
         input: {
@@ -2471,12 +2474,23 @@ describe("a member's message travels the whole pipeline", () => {
           attachmentIds: [],
         },
       });
-      expect(aside.body.deliveryState).toBe("pending");
-      const asideTurnId = (aside.body.turn as { turnId: string }).turnId;
+      admissions.push(pendingAside);
+      await expect.poll(() => runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM pending_loop_input_mailbox WHERE state = 'preparing'`,
+        ).one().count), {
+        timeout: SUBSCRIPTION_SETTLE_TIMEOUT_MS,
+        interval: 25,
+        message: "the aside never reserved behind the doomed admission",
+      }).toBe(2);
 
       gate.open = true;
-      // No forced alarm: the failed admission's own settlement is the only
-      // thing that can bring the loop back to the aside.
+      const [failed, aside] = await Promise.all([doomed, pendingAside]);
+      expect(failed.status).toBe(422);
+      expect(aside.status).toBe(200);
+      expect(aside.body.deliveryState).toBe("canonical");
+      const asideTurnId = (aside.body.turn as { turnId: string }).turnId;
+
       await expect.poll(() => runInDurableObject(stub, (_instance, state) => ({
         canonical: state.storage.sql.exec<{ count: number }>(
           `SELECT COUNT(*) AS count FROM participant_transcript_turns WHERE turn_id = ?`,
@@ -2494,6 +2508,8 @@ describe("a member's message travels the whole pipeline", () => {
         state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM runs`).one().count))
         .toBe(runsBefore);
     } finally {
+      if (gate) gate.open = true;
+      await Promise.allSettled(admissions);
       await restoreProviderFetch(stub);
     }
   });
