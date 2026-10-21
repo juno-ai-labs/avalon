@@ -194,6 +194,8 @@ unread waterline or people-activity clock for anyone, including the person who
 merged. Existing unread messages keep their unread state and anchor. A merge
 Rally makes mid-run gets its row the same way, and it draws where the merge
 happened: after the tool step, before Rally's reply.
+Unread tracking and suggestion resolution share the `mergedIntoMarker` parser
+so they recognize the same source marker.
 
 The merge lands before its marker is written, so a marker that cannot be
 written is logged as `conversation_merge_source_marker_failed`, naming the

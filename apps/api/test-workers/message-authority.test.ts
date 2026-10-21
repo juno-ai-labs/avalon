@@ -3,6 +3,8 @@
 /**
  * The durable transcript authority, on real workerd.
  *
+ * Fixtures bootstrap objects without admitting agent runs or calling providers.
+ *
  * The Node suite proves what the SQL decides — which columns an append writes,
  * which counters it moves, what a page contains. None of that needs the
  * runtime. Three things this slice claims do:
@@ -96,7 +98,6 @@ describe("message authority on real workerd", () => {
     useHeldEffectQueue();
 
     it.each([false, true])("preserves every reader's unread state (existing unread: %s)", async (alreadyUnread) => {
-      // Bootstrap only; no run or provider call is needed for system notices.
       const stub = agent();
       await boot(stub);
       const merger = "00000000-0000-4000-8000-000000000111";
