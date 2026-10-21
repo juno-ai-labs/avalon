@@ -12,6 +12,12 @@ through it, including telemetry and native crash uploads. Both Electron Vite
 configurations bundle the workspace package into the main-process output; a
 packaged app must not try to load its TypeScript source from node_modules.
 
+The third-party updater uses its own Chromium transport. The pnpm patch at
+`patches/electron-updater@6.8.9.patch` owns every native response's error event
+before passing it to the updater's consumer. Electron already forwards the same
+native failure to the request; the response listener prevents a second, unowned
+stream error without duplicating request errors or changing update retry policy.
+
 ## How it works
 
 Private and file protocol requests use Electron's `net.fetch`. All HTTP requests
@@ -63,6 +69,13 @@ the Chromium network-error family and real loader origin as described in
 fetches and embedded-page navigation remain Electron-owned. Review this workaround when upgrading Electron
 and remove it only after proving upstream handles the upload rejection.
 
+Electron Updater 6.8.9 has a separate response-ownership gap: its HTTP 404/204
+early returns and some piped differential-download responses omit an error
+listener. A later reset destroys that native response and produces a direct
+uncaught exception with the same loader stack. The process-level rejection
+handler cannot contain it. Keep the updater patch until its response consumers
+own all error paths; re-run the native regression when upgrading the dependency.
+
 ## Testing
 
 `pnpm --filter @rally/electron-network test` exercises real Web streams and Node
@@ -77,8 +90,33 @@ after response headers, and an errored source stream. The comparison
 reproduces the upstream detached rejection; the bridge returns the original
 source error without an orphaned rejection. Linux uses Electron's headless
 Ozone backend and requires no X server.
+The same command also exercises the installed updater transport against reset
+responses: a rejected feed, a rejected download, and an interrupted body read.
+It verifies that the original request still fails, each reset is delivered once
+to the request, and no exception or rejection escapes to the process. The fixture
+drains rejected responses to advance Chromium's data-pipe backpressure before
+resetting the loopback socket; it does not install a response error handler.
 
 ## Changelog
+
+### 2026-10-21 — Contain updater response resets during sleep
+
+**What changed:** A pinned Electron Updater patch installs a response error
+listener before dispatching to consumers. Native regression coverage exercises
+both rejected HTTP responses and an interrupted successful response.
+
+**Why:** A sleep-time `ERR_CONNECTION_RESET` reached Rally 1.648.0 as a direct
+main-process exception despite the upload bridge and rejection recovery. The
+updater's early HTTP-error return reproduced the exact Electron loader stack:
+the request rejection was handled but its response stream had no error owner.
+
+**Considered and rejected:** Recovering direct exceptions globally would expand
+the process boundary and conceal the missing owner. Forwarding the response
+error again duplicates the failure Electron already sends to the request.
+
+**Consequences:** Preserve the updater's existing request error, session, retry,
+and signing behavior. Review the patch and run the native fixture on upgrades;
+this containment does not establish which background request failed on a device.
 
 ### 2026-10-20 — Own Electron upload failures at the request boundary
 
