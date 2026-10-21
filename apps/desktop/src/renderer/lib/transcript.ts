@@ -1,7 +1,7 @@
 import { ImportedMessageProvenanceSchema } from "@rally/contracts";
+import { visibleParticipantText } from "@rally/contracts/text";
 import { personMentionMarkdownRanges } from '@rally/contracts/citations';
 import { prepareMentionMarkdown } from '@rally/contracts/message-mentions';
-import { stripPersonalSystemPrompt } from '@rally/contracts/text';
 import type { MentionIdentity } from './api';
 import { resolveMentionPayload } from './mention-draft';
 import { connectorConnectionCardDisplayInputFromToolEvent } from './connector-connection-card';
@@ -129,13 +129,6 @@ export function transcriptOverlaysQueryKey(
   return substreamId === '0'
     ? ['transcript-overlays', workstreamId]
     : ['substream-transcript-overlays', workstreamId, substreamId];
-}
-
-/** Personal instructions stay in history; display surfaces remove the XML block. */
-function visibleParticipantText(text: string, actor: string): string {
-  return actor === 'human' || actor === 'external'
-    ? stripPersonalSystemPrompt(text)
-    : text;
 }
 
 type TextMessageInput = Omit<Message, 'messageType' | 'text'> & { text: string };

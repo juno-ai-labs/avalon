@@ -450,10 +450,12 @@ workspace IDs and gain only the nullable `workspaces.abandoned_at` lifecycle
 column. `platform_workspace_operations` journals UUIDv7 create/accept operations;
 the desktop retains one operation ID until its request reaches a terminal
 answer, so a transport retry reaches the same journal row. The regional create
-path has a second caller: demo preparation creates the presenter's workspace
-through `createWorkspaceForMember` — the same rows, journal, placement check and
+path also serves demo preparation and Engineering MCP through
+`createWorkspaceForMember` — the same rows, journal, placement check and
 object initialization as `create`, with no session — journaled under the demo
-operation's own id, which Ace mints as a random UUID. The journal keys on the
+operation's own id (or the Engineering MCP creation UUID). An optional initial
+member list is validated first and committed with the owner in the same batch;
+ordinary member seating runs after initialization and on replay. The journal keys on the
 id's identity, not its version
 ([`demo-workspaces.md`](demo-workspaces.md#preparing-a-demo)).
 
@@ -474,6 +476,24 @@ encrypts the complete account set, while sign-out erases it locally before
 best-effort remote revocation.
 
 ## Changelog
+
+### 2026-10-21 — Initial members through shared Organization creation
+
+**What changed:** The session-less `createWorkspaceForMember` entryway accepts
+initial member IDs. It validates them before creating anything, commits their
+memberships with the owner, and runs ordinary member seating after initialization
+and on replay. Engineering MCP is another caller of that entryway.
+
+**Why:** An operator creating an Organization with users needs the same journal,
+placement, membership deliveries and General/Personal Channel bootstrap as the
+app, without recreating setup writes in an MCP adapter or minting credentials.
+
+**Considered and rejected:** Adding member rows in the adapter after onboarding;
+that duplicates the membership entrance and can leave partial membership setup.
+
+**Consequences:** Callers retry the original creation and member list. Memberships
+commit together; unfinished Channel seating is resumed rather than re-created.
+
 
 ### 2026-10-12: A retired refresh token lasts until its successor is used
 

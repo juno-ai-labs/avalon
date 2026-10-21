@@ -7,7 +7,9 @@ It recreates the useful part of Cloudflare's dashboard database console through
 standard MCP tools at `https://mcp.internal.rallywith.ai/mcp`, including deliberate
 repair writes. It also reads and changes the feature flags and agent model
 routes that Ace manages, through Ace, and runs read-only queries against the
-Global analytical lakehouses and the account's Workers Logs and Traces. It is not a product API and it is never
+Global analytical lakehouses and the account's Workers Logs and Traces. Product tools create Organizations, Channels and Threads, send messages,
+read participant-visible text, and list the selected user's Channels, Threads
+and Breakouts through the same services as the app. It is not a product API and it is never
 available to Rally users by virtue of product membership.
 
 ## Where the code lives
@@ -16,6 +18,11 @@ available to Rally users by virtue of product membership.
   tool registry, deployment provisioner, and its tests.
 - `apps/api/src/engineering-inspection-bridge.ts` is the private named
   `WorkerEntrypoint` exported by each regional API Worker.
+- `apps/api/src/services/engineering-creation.ts` adapts operator creation to
+  regional onboarding, Channel audience changes and ordinary Thread creation.
+- `apps/api/src/services/engineering-messages.ts` adapts the ordinary composer,
+  Channel feed and transcript range reader; `engineering-conversation-text.ts`
+  formats participant prose with shared display and plaintext helpers.
 - `apps/api/src/durable-objects/internally-inspectable-durable-object.ts` owns
   the shared raw-SQL Durable Object RPC.
 - `apps/api/src/durable-objects/scheduled-alarms.ts` makes every scheduled
@@ -55,6 +62,14 @@ The regional bridge uses D1 only for identity and routing:
 
 | Tool | Route lookup | Authoritative read or write |
 | --- | --- | --- |
+| `create_org` | Caller names the region | Regional onboarding commits the owner and initial members together, then performs ordinary member seating |
+| `create_channel` | Resolve the Organization in exactly one region | SpaceService creation and audience update in WorkspaceDO |
+| `create_thread` | Resolve the Organization in exactly one region | WorkstreamObjectCreationService, placement, opening turn and normal agent run |
+| `send_message` | Resolve the Organization in exactly one region | ConversationService.writableClient and ordinary create_message admission |
+| `read_channel` | Resolve the Organization in exactly one region | SpaceService summary and authorized Channel feed |
+| `list_channels` | Resolve the Organization in exactly one region | SpaceService.list and the workspace socket's active Channel directory |
+| `list_threads`, `list_breakouts` | Resolve the Organization in exactly one region | SpaceService.listChannels with kind and all-visible filters in the ordinary paginated reader |
+| `read_thread`, `read_breakout` | Resolve the Organization in exactly one region | ConversationService.client and the conversation's authorized transcript range reader |
 | `list_workspaces` | Regional `workspaces` identity plus the open authority generation | D1 identity inventory from configured deployments |
 | `list_orgs`, `search_orgs` | None | D1 `workspaces` and `workspace_members` in every region, filtered there and ordered here |
 | `list_users`, `search_users` | None | D1 `users`, `workspace_members` and `workspaces` in every region, filtered there and ordered here |
@@ -119,6 +134,106 @@ only through the product's own read-only admitted query path
 (`queryData`/`pageData`, behind work-stream authorization), and giving the
 console arbitrary SQL there would mean changing the facet host module every
 stateful artifact runs. See [`live-web-artifacts.md`](live-web-artifacts.md).
+
+### Product creation
+
+The tools use today's product names: `orgId` is a stored workspace ID,
+`channelId` is a stored Space ID, and `threadId` is a stored workstream ID.
+`creatorUserId` (creation) or `userId` (send/read) selects an existing regional
+Rally user. The Access identity remains the audited operator. No tool issues a
+login credential, promotes a guest, or bypasses the selected user's ordinary
+product permissions. Guests can be selected; actions the app refuses for them,
+including Channel and Thread creation, are refused here too.
+
+Creation takes a fresh UUID `operationId`, reused with the original arguments
+after an uncertain outcome. The entity's ID is that operation ID. Organization
+creation uses the onboarding journal, Channel creation uses the stable Space
+reservation, and Thread creation uses the ordinary creation receipt and message
+key. A failure can leave member seating or a Channel audience update unfinished;
+replay the original call to finish it. Reusing an ID with changed arguments is
+not a new creation; audience updates apply the requested participant set.
+
+`create_org` takes `region`, `name`, and `userIds`. The creator becomes its owner;
+the existing regional users become initial members, without invitations.
+`RegionalOnboardingService.createWorkspaceForMember` accepts the initial member
+list, validates it before creation, and commits those memberships alongside the
+owner in the shared onboarding batch. Ordinary member seating gives each member
+General and their Personal Channel, including when a retry resumes seating.
+The MCP adapter writes no membership rows of its own.
+
+`create_channel` takes `orgId`, `name`, and `participantUserIds`, always including
+the creator. It calls the same SpaceService creation and audience update as
+`POST /spaces` and the audience route. It starts Organization-wide with the
+normal automatic icon choice and a blue mark. The ordinary audience gate decides who can
+be seated; merely being an active guest does not bypass it.
+
+`create_thread` takes `orgId`, `channelId`, and `prompt`. It uses the same
+WorkstreamObjectCreationService initialization, placement and prompt admission
+as `POST /workstreams`, including private-Channel narrowing and notifications.
+It can start a real agent run with connected tools; returned IDs are admission,
+not proof that execution completed.
+
+The private `engineering` principal lets the regional bridge enter existing
+product services without a user login session. Authorities recheck the person's
+current relationship and permissions. It carries no extra product capability;
+operator calls retain the existing non-session exclusion from human-use metrics.
+
+### Messages and text reads
+
+`send_message` takes `orgId`, `userId`, `threadId`, `text`, and a UUID
+`operationId`; optional `breakoutId` targets a child instead of Main. The other
+composer fields reuse CreateMessageRequestSchema: mentions, confirmed participant
+additions, attachments, annotations and queue/steer mode. After resolving the
+Organization, the adapter uses ConversationService.writableClient and
+WorkstreamObjectClient.createMessage, the same boundary as the app's send route.
+There are no transcript inserts, forced run starts, or scripted replies. Normal
+addressing decides whether Rally responds. Reuse the message operation ID and
+original arguments after an uncertain result; the ordinary receipt reports
+`pending` or `canonical`, not completion of the agent run.
+
+`read_channel`, `read_thread`, and `read_breakout` return plain MCP text, without
+a JSON envelope. Channel reads use SpaceService's normal summary and feed, so
+Thread cards and visible Channel messages have the same access filtering and
+ordering as the app. They do not recursively open Threads. The ordinary feed
+page size applies; a text footer supplies the cursor for older history.
+
+Conversation reads authorize the exact Thread or Breakout through
+ConversationService.client. A generic `read_transcript` product operation exposes
+the existing transcript range reader used by socket hydration. It does not boot
+the feed or acknowledge read state. The adapter formats committed participant
+prose with frozen author bylines and attachment names, including elicitation
+questions and annotation comments, while omitting tool payloads, thinking, internal mailbox messages,
+private personal-instruction prefixes and suggested prompts. Live pending-input
+and activity overlays are outside this committed-history read.
+
+Omit `limit` to read all committed turns. With a caller-chosen `limit`, the footer
+supplies `afterSequence` and `throughSequence` to continue under the same append
+fence. No new default cutoff is imposed. A later call without the fence includes
+newer turns. Read and send both enforce the selected user's exact Breakout
+membership independently of their parent Thread access.
+
+### User-visible lists
+
+`list_channels` takes `orgId` and `userId` and returns the active Channel
+directory the workspace socket shows that person, including their personal
+order and the directory waterline. Each item's `id` is a `channelId`.
+Archived Channels and other people's Personal Channels are absent. The new
+SpaceService.list facade calls the existing WorkspaceSpaceStorage.list reader;
+it does not inspect raw product tables or reconstruct visibility.
+
+`list_threads` and `list_breakouts` also take `channelId`, plus an optional
+`cursor`. They adapt the same SpaceService.listChannels reader as the app's
+Channel dashboard, with `kind` selected on the server and `needsViewerOnly:
+false`. Settled, read conversations remain listable here. The dashboard keeps
+its attention-only default. The authoritative query filters kind before taking
+the page, retaining its ordinary visibility checks, activity order, page size
+and continuation cursor. Follow `nextCursor` with the same arguments until null.
+
+Results use the app's conversation cards. A Thread item's `id` is its
+`threadId`; a Breakout item's `id` is its `breakoutId`, and
+`breakoutOf.workstreamId` is its parent `threadId` for reads and sends. A guest
+sees only their granted hierarchy; a private Breakout is not listed merely
+because the person may open its parent Thread.
 
 ### D1
 
@@ -228,7 +343,7 @@ names the view only; filter values and the needle can quote product data.
   creation or import initializes that object. Child substreams still require a
   directory membership row before their stub is obtained, and so does every
   artifact.
-- **A tool never materializes an object that does not exist, with one stated
+- **An inspection tool never materializes an object that does not exist, with one stated
   exception.** An artifact's registry row is written *before*
   `pointArtifactAtVersion` initializes its supervisor, so between those two
   calls — and permanently if the second never returns — `run_artifact_sql`
@@ -297,8 +412,8 @@ its contents are reachable only through the product's admitted read path.
 `MigrationProbeDO` holds no product state by design.
 
 The Worker does not retain query history, cache results, copy databases, or
-provide a D1 fallback. It also does not turn Access identity into Rally product
-identity or authorization.
+provide a D1 fallback. Creation explicitly names the Rally identity to act as;
+Access identity is never silently mapped to a product user.
 
 ## Failure modes and limits
 
@@ -320,6 +435,25 @@ identity or authorization.
   until its secret is installed.
 
 ## Testing
+
+`apps/api/test-workers/engineering-creation.test.ts` drives the regional bridge
+against real D1 and Durable Objects: initial membership and seating, stable-ID
+retries, Channel participants, private-Channel narrowing, opening-prompt
+persistence, member and guest sends with normal execution, author snapshots,
+ordinary guest creation refusals, exact Breakout access, history paging and
+user-scoped lists after delivering the ordinary directory effects.
+Only the external model provider is doubled. The text formatter's unit tests
+cover bylines, display text, attachments, elicitation, annotations and hidden
+internal content; the desktop transcript suite covers the extracted display helper.
+The MCP transport suite checks annotations, regional routing, ambiguous-target
+refusal, plain-text results and content-free auditing. Mutation checks drop the
+initial member list, route a Breakout send to Main, skip transcript history and
+drop the Channel feed in turn; each must fail its corresponding assertion.
+Listing checks also coerce a guest directory into member visibility, reinstate
+the attention filter for a complete listing, and remove the kind filter; the
+corresponding guest, settled-history and kind assertions must fail.
+`space-conversation-page.test.ts` covers the unchanged dashboard default,
+all-visible mode, per-kind pagination and independent child visibility.
 
 `apps/api/test-workers/engineering-inspection.test.ts` calls the inherited RPC
 on real WorkspaceDO and SubstreamAgent instances under workerd.
@@ -433,6 +567,32 @@ each selected model's configured default; an explicit value applies to the
 primary and fallbacks. Ace owns validation and the atomic write.
 
 ## Changelog
+
+### 2026-10-21 — Exercise product workflows as a named user
+
+**What changed:** Operator tools create Organizations, Channels and Threads,
+send messages, read Channel/Thread/Breakout text, and list the selected user's
+visible Channels, Threads and Breakouts. They adapt shared onboarding,
+SpaceService, WorkstreamObjectCreationService, ConversationService and ordinary
+message admission. Onboarding accepts initial members in its existing atomic
+creation batch; a generic product read exposes the existing transcript range
+reader. User-visible lists reuse the socket directory and the existing paged
+conversation query, with server-selected kind and attention filters applied
+before pagination. The selected member or guest keeps their normal permissions.
+
+**Why:** Engineers need realistic product behavior through MCP, including
+identity, visibility, retries, placement, notifications and agent execution.
+Copied state writes or operator-only permission exceptions would produce objects
+and messages that behave differently from the app.
+
+**Considered and rejected:** Direct product-table writes, synthetic transcript
+insertion, extra guest permissions, and minting user login credentials. Reuse the
+existing entryways and extend their inputs where a second caller needs them.
+
+**Consequences:** Writes can execute connected tools as the selected user. Retry
+with the same operation ID and original arguments. Reads return committed prose;
+Channel pagination and explicit conversation sequence fences remain visible.
+Product-use metrics continue excluding non-session operator actions.
 
 ### 2026-10-19 — Read and write D1
 

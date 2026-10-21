@@ -1274,8 +1274,9 @@ export type SpaceConversation = z.infer<typeof SpaceConversationSchema>;
  * The route is still `GET /spaces/:id/channels` and this is still the answer
  * to it, but what it answers is *conversations*: the Space's member Channels
  * and those Channels' breakouts in one list, newest activity first, with
- * everything that is stale for this viewer left out entirely
- * (`conversationNeedsViewer`). The name is kept because the route is, and
+ * everything that is stale for this viewer left out entirely by default
+ * (`conversationNeedsViewer`). Internal callers may request all visible rows
+ * of one kind through the same reader. The name is kept because the route is, and
  * renaming a shipped path to describe its payload buys a reader nothing.
  *
  * The same rows the Channel directory serves, shaped for the viewer: General

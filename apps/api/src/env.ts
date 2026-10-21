@@ -325,11 +325,15 @@ export interface IdentityAuthContext {
    * Worker verifies its sealed provider state, connection, and membership,
    * then the room re-checks membership under `"resource_authorization"`.
    *
+   * `"engineering"` is the Access-authenticated operator product path. It
+   * names an existing active member or guest without minting a session, and
+   * product objects re-check that person's current regional relationship.
+   *
    * Only server code constructs these values. The auth middleware builds its
    * context from verified token claims and never sets it, so a client cannot
    * claim a non-session path from outside.
    */
-  principal?: "connector" | "demo_seed" | "impersonation" | "resource_authorization";
+  principal?: "connector" | "demo_seed" | "impersonation" | "resource_authorization" | "engineering";
   /**
    * Set on a support session: the Rally staff member actually acting as
    * `userId`, read from `sessions.impersonator_user_id` with the same query that

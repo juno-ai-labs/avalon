@@ -45,6 +45,13 @@ external delivery attempts. Regional D1 retains identity/membership, opaque
 ingress and object routing, migration controls, and bounded audit/telemetry; it
 does not serve workspace product state or transcripts after cutover.
 
+Worker-side transcript reads use the generic `read_transcript` product operation
+through WorkstreamObjectClient. It authorizes the current reader, then uses the
+same WorkstreamTranscriptStorage.range primitive as socket hydration, with an
+optional append fence and caller-chosen page size. Text formatting belongs to the
+caller; this boundary returns canonical participant turns without booting the
+feed or acknowledging read state.
+
 ## Context-residency ledger
 
 Substream migration 51 adds `resident_context_blocks` and
@@ -1911,6 +1918,21 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-10-21 — Reuse transcript hydration for Worker-side reads
+
+**What changed:** An authorized product RPC exposes the existing transcript
+range reader to WorkstreamObjectClient, with optional sequence paging.
+
+**Why:** Engineering MCP needs readable conversation history through the same
+participant authority as the app. Keeping it on the existing reader avoids a
+second SQL history implementation and leaves presentation in the adapter.
+
+**Considered and rejected:** Reading raw transcript tables from MCP, or treating
+the app's bounded opening snapshot as complete history.
+
+**Consequences:** These reads return committed turns and do not acknowledge read
+state; callers may retain a through-sequence fence while paging.
 
 ### 2026-10-21 — Join repeated sends while admission is preparing
 
