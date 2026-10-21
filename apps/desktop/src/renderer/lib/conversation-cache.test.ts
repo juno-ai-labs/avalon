@@ -148,6 +148,61 @@ describe('conversation cache', () => {
     client.clear();
   });
 
+  it('does not let a header-only preview prevent disk hydration', () => {
+    const client = new QueryClient();
+    const keys = keysFor('0');
+    const empty = transcript();
+    empty.ranges = [];
+    const event = WorkspaceConversationViewEventSchema.parse({
+      type: 'workspace_conversation_view', parentId, substreamId: '0',
+      requestId: '00000000-0000-7000-8000-000000000012',
+      view: { header: { title: 'Only a header', titleStatus: 'settled', scope: 'workspace', harnessStatus: 'completed',
+        createdAt: '2026-10-20T00:00:00.000Z', updatedAt: '2026-10-21T00:00:00.000Z' }, transcript: empty },
+    });
+    expect(seedWorkspaceConversation(client, event, keys)).toBe(false);
+    expect(client.getQueryData(keys.detail)).toBeUndefined();
+    expect(client.getQueryData(keys.transcript)).toBeUndefined();
+    client.clear();
+  });
+
+  it.each(['0', childId])('refreshes a disk seed only with newer visible turns (%s)', (substreamId) => {
+    const client = new QueryClient();
+    const keys = keysFor(substreamId);
+    client.setQueryData(keys.feedSource, 'local_cache');
+    client.setQueryData(keys.detail, detail());
+    client.setQueryData(keys.transcript, transcript());
+    client.setQueryData(keys.initialContext, { remembered: true });
+    const held = client.getQueryData(keys.transcript);
+    const preview = transcript();
+    preview.ranges = [preview.ranges[1]!];
+    const event = WorkspaceConversationViewEventSchema.parse({
+      type: 'workspace_conversation_view', parentId, substreamId,
+      requestId: '00000000-0000-7000-8000-000000000012',
+      view: { header: { title: 'Fresh preview', titleStatus: 'settled', scope: 'workspace', harnessStatus: 'completed',
+        createdAt: '2026-10-20T00:00:00.000Z', updatedAt: '2026-10-21T00:00:00.000Z' }, transcript: preview },
+    });
+    // Equal compact content cannot throw away the disk's richer ranges.
+    expect(seedWorkspaceConversation(client, event, keys)).toBe(false);
+    expect(client.getQueryData(keys.transcript)).toBe(held);
+    event.view!.transcript.ranges[0]!.turns[0] = { ...turn(3, 'Edited on another device'), revision: 2 };
+    expect(seedWorkspaceConversation(client, event, keys)).toBe(true);
+    expect(client.getQueryData<WorkstreamTranscriptSnapshot>(keys.transcript)?.ranges.flatMap((range) => range.turns).find((item) => item.turnId === 'turn-3')?.blocks[0])
+      .toMatchObject({ text: 'Edited on another device' });
+    expect(client.getQueryData<WorkstreamTranscriptSnapshot>(keys.transcript)?.ranges.flatMap((range) => range.turns).map((item) => item.turnId))
+      .toEqual(['turn-1', 'turn-2', 'turn-3']);
+    expect(client.getQueryData<WorkstreamDetail>(keys.detail)?.latestAttentionSequenceNumber).toBe(3);
+    expect(client.getQueryData(keys.initialContext)).toEqual({ remembered: true });
+    expect(client.getQueryData(keys.feedSource)).toBe('local_cache');
+    // Even a later tail must not put the edited turn's previous revision back.
+    event.view!.transcript.snapshotThrough = 4;
+    event.view!.transcript.ranges[0]!.turns = [turn(3, 'Old edit'), turn(4, 'New tail')];
+    expect(seedWorkspaceConversation(client, event, keys)).toBe(false);
+    event.view!.transcript.snapshotThrough = 2;
+    event.view!.transcript.ranges[0]!.turns = [turn(2, 'Old tail')];
+    expect(seedWorkspaceConversation(client, event, keys)).toBe(false);
+    client.clear();
+  });
+
   it('seeds empty caches from the row and marks them as a seed', async () => {
     await conversationSlice.write(scope, conversationCacheKey(parentId, '0'), {
       detail: detail(), transcript: transcript(), initialContext: null, cachedAt: '2026-09-01T12:00:00.000Z',

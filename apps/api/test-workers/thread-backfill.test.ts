@@ -189,6 +189,29 @@ describe("a one-off job over every thread", () => {
     ).toArray())).toEqual([]);
   });
 
+  it("settles a preview backfill whose Main is an identity-only placeholder", async () => {
+    await project(1);
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO thread_backfill(job, workstream_id, attempts, not_before, in_flight)
+        VALUES ('conversation_view', ?, 1, ?, 1) ON CONFLICT DO NOTHING`, THREAD, Date.now() + 60_000);
+    });
+    const main = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, THREAD));
+    await boot(main);
+    await runInDurableObject(main, (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: THREAD });
+      state.storage.sql.exec("UPDATE workstream SET authority_mode = 'preparing', authority_generation = 0 WHERE id = 1");
+    });
+    const batch = createMessageBatch("avalon-global-activity", [{
+      id: crypto.randomUUID(), timestamp: new Date(), attempts: 1,
+      body: { ...message(), job: 'conversation_view' },
+    }]);
+    await consumeActivityQueue(batch, env);
+    expect((await getQueueResult(batch, createExecutionContext())).retryMessages).toEqual([]);
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      "SELECT 1 FROM thread_backfill WHERE job = 'conversation_view' AND workstream_id = ?", THREAD,
+    ).toArray())).toEqual([]);
+  });
+
   it("answers Main and each open Breakout, and settles only when told", async () => {
     await project(1);
     await project(1, BREAKOUT);

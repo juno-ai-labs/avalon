@@ -6256,7 +6256,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   async conversationViewProjection(input: unknown) {
     await this.storageReady;
     const request = parseRpcInput(ConversationViewJobSchema, input, "conversation_view_job");
-    if (!this.objectStore.identity()) return null;
+    if (!this.objectStore.isAuthoritative()) return null;
     this.searchProjectionIdentity(request);
     const root = this.identityRows.identity();
     if (!root) return null;
@@ -6296,7 +6296,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   async backfillConversationView(input: unknown): Promise<"queued" | "delivered" | "missing"> {
     await this.storageReady;
     const request = parseRpcInput(ConversationViewJobSchema, input, "conversation_view_backfill");
-    if (!this.objectStore.identity()) return "missing";
+    // An identity-only placeholder has no readable product state. Its pending
+    // migration header must not hold every later child of this parent behind it.
+    // Activation retains the ledger and the ordinary projection lane drains it.
+    if (!this.objectStore.isAuthoritative()) return "missing";
     this.searchProjectionIdentity(request);
     const next = nextConversationViewAt(this.state.storage.sql);
     if (next !== null) await this.ensureAlarmNoLaterThan(next);
