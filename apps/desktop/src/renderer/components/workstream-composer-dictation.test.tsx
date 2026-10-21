@@ -43,6 +43,10 @@ vi.mock('../lib/use-realtime-dictation', async (importOriginal) => {
       dictationHarness.setError = setError;
       dictationHarness.setState = setState;
       return {
+        clearError: () => {
+          setError(undefined);
+          if (state === 'error') setState('idle');
+        },
         devices: [],
         ...(error ? { error } : {}),
         prefetch: dictationHarness.prefetch,
@@ -695,5 +699,48 @@ describe('WorkstreamComposer live dictation', () => {
 
     act(() => dictationHarness.setError?.('Microphone disconnected.'));
     expect(screen.getByText('Microphone disconnected.')).toBeVisible();
+  });
+
+  it.each(['edit', 'send'] as const)('clears a failed recording notice when the user chooses to %s', async (action) => {
+    const onSend = vi.fn(async () => undefined);
+    render(
+      <Tooltip.Provider>
+        <WorkstreamComposer
+          draftKey="test-draft"
+          api={{ getTranscriptionSocketTicket: vi.fn(), prefetchTranscriptionSocketTicket: vi.fn() }}
+          attachments={[]}
+          fileInputRef={createRef<HTMLInputElement>()}
+          members={[]}
+          onOpenAttachment={() => undefined}
+          onRemoveAttachment={() => undefined}
+          onRetryAttachment={() => undefined}
+          onSend={onSend}
+          onStop={async () => undefined}
+          sending={false}
+          uploading={false}
+          workstream={workstream}
+        />
+      </Tooltip.Provider>,
+    );
+
+    const input = screen.getByRole('textbox', { name: 'Message the thread' });
+    fireEvent.change(input, { target: { value: 'Keep the recovered transcript' } });
+    act(() => {
+      dictationHarness.setState?.('error');
+      dictationHarness.setError?.('Dictation audio arrived too quickly.');
+    });
+    expect(screen.getByRole('alert')).toHaveTextContent('Dictation audio arrived too quickly.');
+    expect(input).toHaveValue('Keep the recovered transcript');
+    expect(onSend).not.toHaveBeenCalled();
+
+    if (action === 'edit') {
+      fireEvent.change(input, { target: { value: 'Keep the recovered transcript and continue typing' } });
+      expect(onSend).not.toHaveBeenCalled();
+    } else {
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      await waitFor(() => expect(onSend).toHaveBeenCalledOnce());
+      expect(onSend).toHaveBeenCalledWith('Keep the recovered transcript', [], undefined, undefined);
+    }
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 });
