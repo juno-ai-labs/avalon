@@ -11,9 +11,11 @@ The displayed message keeps only the person's ordinary text.
 RPC schemas and allowed message origins. `workstream-object-product.ts` freezes
 instructions into the ordinary message text and refreshes the local copy in
 the background.
-`packages/agent-harness/src/prompts/personal.ts` renders the XML. The frontend
-`apps/desktop/src/renderer/lib/transcript.ts` removes the block from display text
-with one regular expression, for both settled and queued messages.
+`packages/agent-harness/src/prompts/personal.ts` renders the XML from the
+envelope strings in `packages/contracts/src/text.ts`, which also owns
+`stripPersonalSystemPrompt`, shared by desktop transcript display (settled and
+queued messages), outbound message reduction, and Activity/mention effect
+producers before their excerpt limit.
 The iOS `FeedProjection` applies the same display rule.
 
 ## How it works
@@ -59,10 +61,16 @@ has refreshed since the first attempt.
 - **Instructions live in user-role history, never the system prompt.** The
   XML scopes them to that speaker's requests, including when later turns or a
   compaction read them. The memory digest still uses `principalSystemSection`.
-- **Only the frontend filters the block.** The server transcript contains the
-  XML; frontend transcript projection removes one leading envelope with the
-  generated preamble before display and copy. XML examples in the message body
-  remain visible. Instruction text is XML-escaped so it cannot close the envelope.
+- **Display and notification text filters the block.** The server transcript
+  contains the XML. Transcript projection and the shared plain-text reducer
+  remove one leading envelope with the generated preamble before display, copy,
+  push, mention email, Slack delivery and conversation previews. Activity and
+  mention effect producers remove it before truncation, so even long instructions
+  cannot consume an excerpt or leave a partial envelope. Activity reads also
+  filter complete envelopes on older rows. Digest entries contain names, titles
+  and links.
+  XML examples in the message body remain visible. Instruction text is
+  XML-escaped so it cannot close the envelope.
 - **Blank instructions add nothing.** Attachment parts remain intact after the
   prefix. Only the refresh writes the local copy.
 
@@ -72,10 +80,10 @@ This module owns the saved text and its placement in user messages. The route
 is under the members-only `/workspace` mount, so guests cannot set one.
 Bind owns model-history persistence and ordinary compaction.
 These instructions are ordinary shared message content, not a private field:
-conversation readers receive them, and search, links, notifications, previews,
-and exports may contain them. Frontend hiding is a display convention rather
-than an access boundary. Typing the exact generated envelope has the same effect
-as saving it in settings.
+conversation readers receive them, and raw search results and exports may
+contain them. Display and notification filtering is a presentation convention
+rather than an access boundary. Typing the exact generated envelope has the same
+effect as saving it in settings.
 
 ## Failure modes and limits
 
@@ -89,9 +97,30 @@ as saving it in settings.
 
 `message-to-output-pipeline.test.ts` proves admission refresh, retry stability and
 durable user-role history. Desktop transcript and iOS feed tests cover display
-filtering; harness prompt tests cover XML formatting and escaping.
+filtering; harness prompt tests cover XML formatting, escaping and compatibility
+with the shared display filter.
+`citations.test.ts`, `mention-email.test.ts`, `slack-notification-service.test.ts`,
+`push-delivery.test.ts` and `activity-push.test.ts` cover notification reduction.
+The admission/history pipeline test uses instructions longer than the outbound
+excerpt budget and checks that Activity receives the ordinary message.
 
 ## Changelog
+
+### 2026-10-21 — Filter instructions at notification and preview boundaries
+
+**What changed:** The desktop's exact-envelope filter is shared with outbound
+plain-text reduction and uses the same envelope strings as the generator.
+Activity and mention effects share one excerpt function that strips before
+truncating; stored transcript/model history retains it.
+
+**Why:** Filtering only the transcript let the generated instructions appear in
+push, email, Slack and Activity instead of the person's actual message. Removing
+them after an excerpt was cut could not recover a message hidden behind a long
+instruction block.
+
+**Consequences:** New notification excerpts contain ordinary message text, and
+complete envelopes on existing Activity rows are filtered when read. This is
+presentation filtering, not a new access boundary; literal XML examples remain.
 
 ### 2026-10-21 — Keep personal instructions in the user's message history
 
