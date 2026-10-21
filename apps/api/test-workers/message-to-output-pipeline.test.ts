@@ -80,7 +80,9 @@ import {
 } from "../src/durable-objects/substream-loop-storage";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import { WorkstreamMessageStorage } from "../src/durable-objects/workstream-message-storage";
+import { WorkstreamIdentityStorage } from "../src/durable-objects/workstream-identity-storage";
 import { ParticipantAuthorityTransferStorage } from "../src/durable-objects/participant-authority-transfer";
+import { enqueueSemanticRealtimeReference } from "../src/durable-objects/workstream-semantic-realtime-outbox";
 import type { ScopeGrantStorage } from "../src/durable-objects/scope-grant-storage";
 import { hostedParentStub, insertChannelRow, readSharedWorkstream, withHostedParent } from "./helpers/hosted-parent";
 import { resolveSidekickSkills } from "../src/services/sidekick-skills";
@@ -1019,6 +1021,168 @@ describe("a member's message travels the whole pipeline", () => {
       ).one().count,
     }));
     expect(durableAfterTerminalReplay).toEqual(durableBeforeTerminalReplay);
+  });
+
+  it.each(["healthy", "publication_failed", "canonical_blocked", "removed_before_recovery"] as const)("adds a public Channel author while queued and recovers participant publication (%s)", async (delivery) => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await settledRun(stub, opened.body.harnessRunId as string);
+    expect(await product(stub, { operation: "update", auth: AUTH, input: { scope: "workspace" } }))
+      .toMatchObject({ status: 200 });
+    const otherSessionId = crypto.randomUUID();
+    await env.DB.prepare(`INSERT INTO sessions (id,user_id,workspace_id,region,expires_at)
+      VALUES (?,?,?,'global','2099-01-01T00:00:00.000Z')`).bind(otherSessionId, OTHER_USER_ID, WORKSPACE_ID).run();
+    const otherAuth = { ...AUTH, userId: OTHER_USER_ID, sessionId: otherSessionId };
+    const { socket } = await openSubscribedSocket(stub, crypto.randomUUID());
+    const live = collectSocketFrames(socket);
+    try {
+      // Hold execution so this proves admission, without letting this message
+      // reach a provider or relying on the loop promoting its turn first.
+      await runInDurableObject(stub, (_instance, state) => holdLoopExecuting(state, { loopId: substreamLoopId(WORKSTREAM_ID) }));
+      if (delivery !== "healthy") await runInDurableObject(stub, (instance, state) => {
+        if (delivery === "canonical_blocked") {
+          const turnId = state.storage.sql.exec<{ turn_id: string }>(
+            "SELECT turn_id FROM participant_transcript_turns ORDER BY transcript_sequence LIMIT 1",
+          ).one().turn_id;
+          enqueueSemanticRealtimeReference(state.storage.sql, { kind: "transcript_turn", turnId }, Date.now());
+        }
+        const publisher = instance as unknown as {
+          deliverCommittedRealtimeEvent(event: { type: string }): Promise<void>;
+        };
+        const deliver = publisher.deliverCommittedRealtimeEvent.bind(instance);
+        vi.spyOn(publisher, "deliverCommittedRealtimeEvent").mockImplementation(async (event) => {
+          if (event.type === (delivery === "canonical_blocked" ? "transcript_turn_upserted" : "participant_added")) {
+            throw new Error("forced_participant_publication_failure");
+          }
+          await deliver(event);
+        });
+      });
+      const input = { text: "Start my thread here", clientMessageId: crypto.randomUUID(),
+        forcedHarnessOrigin: "user_message", mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] };
+      expect(await product(stub, { operation: "create_message", auth: otherAuth, input }))
+        .toMatchObject({ status: 200, body: { deliveryState: "pending" } });
+      expect(await product(stub, { operation: "get", auth: AUTH }))
+        .toMatchObject({ status: 200, body: { participants: expect.arrayContaining([
+          expect.objectContaining({ user: expect.objectContaining({ id: OTHER_USER_ID }), participationReason: "message" }),
+        ]) } });
+      if (delivery === "canonical_blocked") await runInDurableObject(stub, async (instance) => {
+        // A later drain must not bypass the predecessor's deferred retry gate.
+        expect(await (instance as unknown as { flushSemanticRealtimeOutboxBestEffort(): Promise<boolean> })
+          .flushSemanticRealtimeOutboxBestEffort()).toBe(false);
+      });
+      if (delivery !== "healthy") await runInDurableObject(stub, (_instance, state) => {
+        expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM durable_outbox
+          WHERE channel='semantic_realtime_v1' AND json_extract(payload_json, '$.reference.kind')='participant_changed'`).one())
+          .toEqual({ count: 1 });
+      });
+      if (delivery === "removed_before_recovery") {
+        expect(await product(stub, { operation: "remove_participant", auth: AUTH, userId: OTHER_USER_ID }))
+          .toMatchObject({ status: 200 });
+      }
+      expect(await product(stub, { operation: "create_message", auth: otherAuth, input }))
+        .toMatchObject({ status: 200, body: { deliveryState: "pending" } });
+      if (delivery !== "healthy") await runInDurableObject(stub, async (instance, state) => {
+        const publisher = instance as unknown as {
+          deliverCommittedRealtimeEvent(event: { type: string }): Promise<void>;
+          flushSemanticRealtimeOutboxBestEffort(): Promise<boolean>;
+        };
+        vi.mocked(publisher.deliverCommittedRealtimeEvent).mockRestore();
+        state.storage.sql.exec("UPDATE durable_outbox SET not_before=0 WHERE channel='semantic_realtime_v1'");
+        expect(await publisher.flushSemanticRealtimeOutboxBestEffort()).toBe(true);
+      });
+      if (delivery === "removed_before_recovery") {
+        await expect.poll(() => live.frames.filter((frame) => frame.type === "participant_removed"))
+          .toMatchObject([{ userId: OTHER_USER_ID }]);
+        expect(live.frames.filter((frame) => frame.type === "participant_added")).toEqual([]);
+      } else {
+        await expect.poll(() => live.frames.filter((frame) => frame.type === "participant_added"))
+          .toMatchObject([{ participant: { user: { id: OTHER_USER_ID } } }]);
+      }
+      await runInDurableObject(stub, (_instance, state) => {
+        expect(state.storage.sql.exec("SELECT COUNT(*) AS count FROM participants WHERE user_id=? AND status='active'", OTHER_USER_ID).one())
+          .toEqual({ count: delivery === "removed_before_recovery" ? 0 : 1 });
+        expect(state.storage.sql.exec("SELECT 1 FROM canonical_conversation_turn_details WHERE client_message_id=?", input.clientMessageId).toArray())
+          .toEqual([]);
+      });
+    } finally {
+      vi.restoreAllMocks();
+      live.stop();
+      socket.close(1000, "test complete");
+    }
+  });
+
+  it("hydrates one participant in a roster larger than D1's parameter limit", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await settledRun(stub, opened.body.harnessRunId as string);
+    const userIds = Array.from({ length: 101 }, () => crypto.randomUUID());
+    await env.DB.batch(userIds.map((id) => env.DB.prepare(`INSERT INTO users
+      (id,email,name,timezone,created_at) VALUES (?,?,'Roster member','UTC','2026-01-01T00:00:00.000Z')`)
+      .bind(id, `${id}@example.test`)));
+    await runInDurableObject(stub, async (instance, state) => {
+      new WorkstreamIdentityStorage(state.storage).admitParticipants({
+        userIds: [...userIds, OTHER_USER_ID], addedByUserId: USER_ID, reason: "explicit", now: Date.parse("2026-10-21T00:00:00.000Z"),
+      });
+      // Read the actual service output against real D1, without loading the
+      // whole roster or starting another model run.
+      expect(await (instance as unknown as { product: WorkstreamObjectProductService }).product.participant(OTHER_USER_ID))
+        .toMatchObject({ user: { id: OTHER_USER_ID }, participationReason: "explicit", joinedAt: "2026-10-21T00:00:00.000Z" });
+    });
+  });
+
+  it.each(["removed", "added"] as const)("publishes the admission's actual participant transition when the author is %s during preparation", async (change) => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await settledRun(stub, opened.body.harnessRunId as string);
+    expect(await product(stub, { operation: "update", auth: AUTH, input: { scope: "workspace" } }))
+      .toMatchObject({ status: 200 });
+    const sessionId = crypto.randomUUID();
+    await env.DB.prepare(`INSERT INTO sessions (id,user_id,workspace_id,region,expires_at)
+      VALUES (?,?,?,'global','2099-01-01T00:00:00.000Z')`).bind(sessionId, OTHER_USER_ID, WORKSPACE_ID).run();
+    const otherAuth = { ...AUTH, userId: OTHER_USER_ID, sessionId };
+    if (change === "removed") expect(await product(stub, { operation: "add_participant", auth: AUTH, userId: OTHER_USER_ID }))
+      .toMatchObject({ status: 200 });
+    const { socket } = await openSubscribedSocket(stub, crypto.randomUUID());
+    const live = collectSocketFrames(socket);
+    await runInDurableObject(stub, (_instance, state) => holdLoopExecuting(state, { loopId: substreamLoopId(WORKSTREAM_ID) }));
+    const gate = { open: false, entered: false };
+    await runInDurableObject(stub, (instance) => {
+      const service = (instance as unknown as { product: {
+        reserveAttachmentDrafts(...args: unknown[]): Promise<unknown>;
+      } }).product;
+      const reserve = service.reserveAttachmentDrafts.bind(service);
+      // Pause an existing preparation await; execute the real reservation on
+      // release. The gate decides ordering; polling only waits for its state.
+      vi.spyOn(service, "reserveAttachmentDrafts").mockImplementation(async (...args) => {
+        gate.entered = true;
+        while (!gate.open) await scheduler.wait(10);
+        return reserve(...args);
+      });
+    });
+    const clientMessageId = crypto.randomUUID();
+    const sending = product(stub, { operation: "create_message", auth: otherAuth, input: {
+      text: "Participating now", clientMessageId, forcedHarnessOrigin: "user_message",
+      mentions: [], confirmedParticipantUserIds: [], attachmentIds: [],
+    } });
+    try {
+      // Execution stays held, so the accepted message never reaches a provider.
+      await expect.poll(() => gate.entered).toBe(true);
+      expect(await product(stub, { operation: change === "removed" ? "remove_participant" : "add_participant",
+        auth: AUTH, userId: OTHER_USER_ID })).toMatchObject({ status: 200 });
+      gate.open = true;
+      expect(await sending).toMatchObject({ status: 200, body: { deliveryState: "pending" } });
+      await expect.poll(() => live.frames.filter((frame) => frame.type === "participant_added"))
+        .toMatchObject([{ participant: { user: { id: OTHER_USER_ID } } }]);
+      expect(await product(stub, { operation: "get", auth: AUTH })).toMatchObject({ status: 200, body: {
+        participants: expect.arrayContaining([expect.objectContaining({ user: expect.objectContaining({ id: OTHER_USER_ID }) })]),
+      } });
+    } finally {
+      gate.open = true;
+      await sending;
+      vi.restoreAllMocks();
+      live.stop();
+      socket.close(1000, "test complete");
+    }
   });
 
   it("admits an addressed follow-up as immutable pending input without publishing it early", async () => {
@@ -3841,8 +4005,17 @@ describe("a member's message travels the whole pipeline", () => {
           mentions: participation === "self" ? [] : [{ type: "person", userId: OTHER_USER_ID,
             connectorType: null, startOffset: 6, endOffset: 19 }],
           confirmedParticipantUserIds: participation === "self" ? [] : [OTHER_USER_ID] } };
-      expect(await product(stub, message)).toMatchObject({ status: 200 });
-      expect(await product(stub, message)).toMatchObject({ status: 200 });
+      const { socket } = await openSubscribedSocket(stub, crypto.randomUUID());
+      const live = collectSocketFrames(socket);
+      try {
+        expect(await product(stub, message)).toMatchObject({ status: 200 });
+        expect(await product(stub, message)).toMatchObject({ status: 200 });
+        await expect.poll(() => live.frames.filter((frame) => frame.type === "participant_added"))
+          .toMatchObject([{ participant: { user: { id: OTHER_USER_ID } } }]);
+      } finally {
+        live.stop();
+        socket.close(1000, "test complete");
+      }
       await withParentGrants(parent, request, (store) => {
         expect(store.forUser(OTHER_USER_ID))
           .toMatchObject([{ active: true, target: { kind: "conversation", substreamId: "0" } }]);
