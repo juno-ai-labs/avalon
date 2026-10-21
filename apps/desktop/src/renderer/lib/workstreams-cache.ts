@@ -361,12 +361,12 @@ export function evictCachedWorkstream(
 export function holdCachedWorkstreamArchive(
   queryClient: QueryClient,
   archived: WorkstreamSummary,
-): void {
+): boolean {
   if (!archived.archivedAt) {
     // The archive route promises the committed archived row. If an older
     // server cannot supply that fact, retain the safe historical behavior.
     evictCachedWorkstream(queryClient, archived.id);
-    return;
+    return true;
   }
   let archiveApplied = false;
   setCachedWorkstreams(queryClient, (current) => {
@@ -388,6 +388,7 @@ export function holdCachedWorkstreamArchive(
     removeArchivedThreadNavigation(queryClient, archived.id);
     evictCachedWorkstreamContent(queryClient, archived.id);
   }
+  return archiveApplied;
 }
 
 function evictCachedWorkstreamContent(

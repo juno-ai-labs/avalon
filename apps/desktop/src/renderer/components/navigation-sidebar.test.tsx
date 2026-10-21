@@ -1,7 +1,7 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { act, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '../lib/api';
@@ -11,10 +11,14 @@ import type { SpaceConversationSummary, Workspace } from '../lib/types';
 import { markDeepLinkWorkstreamNavigation } from '../lib/deep-link-navigation';
 import type * as TelemetryModule from '../lib/telemetry';
 import { useUiStore } from '../lib/ui-store';
+import { setCachedWorkstreams, evictCachedWorkstream } from '../lib/workstreams-cache';
+import type { WorkstreamSummary } from '../lib/types';
 import { NavigationSidebar } from './navigation-sidebar';
 
 const api = vi.hoisted(() => ({
   createSpace: vi.fn(),
+  resolveConversation: vi.fn(),
+  archiveWorkstream: vi.fn(),
   getMyThreads: vi.fn(),
   getActivity: vi.fn(),
   markActivitySeen: vi.fn(async () => undefined),
@@ -94,7 +98,9 @@ function threadRows(list: ReturnType<typeof within>): Array<[string | null | und
     .map((row: HTMLElement) => [row.querySelector('.navigation-row-title')?.textContent, row.querySelector('.navigation-row-detail')?.textContent]);
 }
 
+let navigateInTest: ReturnType<typeof useNavigate>;
 function Location(): React.JSX.Element {
+  navigateInTest = useNavigate();
   const location = useLocation();
   return <div data-key={location.key} data-state={JSON.stringify(location.state)} data-testid="location">{location.pathname}{location.search}</div>;
 }
@@ -1286,6 +1292,153 @@ describe('the navigation sidebar', () => {
       api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [plan] });
       renderSidebar(seedThreads);
       expect(await screen.findByRole('link', { name: /Q4 plan/u })).toHaveAttribute('href', `/channels/outbound/threads/${plan.id}`);
+    });
+
+    it('resolves the right-clicked thread without leaving a different open thread', async () => {
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [plan], pinned: [] });
+      api.resolveConversation.mockResolvedValue(undefined);
+      renderSidebar(seedThreads, 0, { route: '/workstreams/another-thread' });
+      fireEvent.contextMenu(await screen.findByRole('link', { name: /Q4 plan/u }));
+      expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Pin', 'Resolve thread', 'Archive thread']);
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Resolve thread' }));
+      await waitFor(() => expect(api.resolveConversation).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000020', '0'));
+      expect(screen.getByTestId('location')).toHaveTextContent('/workstreams/another-thread');
+      expect(api.archiveWorkstream).not.toHaveBeenCalled();
+    });
+
+    it('returns to the Channel after resolving the open thread', async () => {
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [plan], pinned: [] });
+      api.resolveConversation.mockResolvedValue(undefined);
+      renderSidebar(seedThreads, 0, { route: `/channels/outbound/threads/${plan.id}` });
+      fireEvent.contextMenu(await screen.findByRole('link', { name: /Q4 plan/u }));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Resolve thread' }));
+      await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/channels/outbound'));
+    });
+
+    it('confirms archive against the clicked title and leaves a different open thread in place', async () => {
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [plan], pinned: [] });
+      api.archiveWorkstream.mockResolvedValue({ ...plan, archivedAt: '2026-10-21T12:00:00.000Z' });
+      renderSidebar(seedThreads, 0, { route: '/workstreams/another-thread' });
+      fireEvent.contextMenu(await screen.findByRole('link', { name: /Q4 plan/u }));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Archive thread' }));
+      const dialog = await screen.findByRole('dialog', { name: 'Archive thread' });
+      expect(dialog).toHaveTextContent('Q4 plan leaves the sidebar for everyone in it');
+      expect(api.archiveWorkstream).not.toHaveBeenCalled();
+      // The directory can still return its older projection after the write.
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Archive' }));
+      await waitFor(() => expect(api.archiveWorkstream).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000020'));
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      expect(screen.getByTestId('location')).toHaveTextContent('/workstreams/another-thread');
+      await waitFor(() => expect(screen.queryByRole('link', { name: /Q4 plan/u })).not.toBeInTheDocument());
+    });
+
+    it('can cancel archive and shows failures against the selected thread', async () => {
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [plan], pinned: [] });
+      api.archiveWorkstream.mockRejectedValue(new Error('offline'));
+      renderSidebar(seedThreads);
+      fireEvent.contextMenu(await screen.findByRole('link', { name: /Q4 plan/u }));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Archive thread' }));
+      fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Cancel' }));
+      expect(api.archiveWorkstream).not.toHaveBeenCalled();
+      fireEvent.contextMenu(screen.getByRole('link', { name: /Q4 plan/u }));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Archive thread' }));
+      fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Archive' }));
+      expect(await screen.findByText('“Q4 plan” couldn’t be archived. Try again.')).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /Q4 plan/u, hidden: true })).toBeInTheDocument();
+    });
+
+    it.each([
+      ['resolve', 'section'], ['resolve', 'history'], ['archive', 'section'], ['archive', 'history'],
+    ] as const)('does not navigate after %s completes across a %s change', async (action, change) => {
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [plan], pinned: [] });
+      let finish!: () => void;
+      if (action === 'resolve') api.resolveConversation.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+      else api.archiveWorkstream.mockImplementation(() => new Promise<WorkstreamSummary>((resolve) => { finish = () => resolve({ ...plan, archivedAt: '2026-10-21T12:00:00.000Z' }); }));
+      renderSidebar(seedThreads, 0, { route: `/workstreams/${plan.id}` });
+      fireEvent.contextMenu(await screen.findByRole('link', { name: /Q4 plan/u }));
+      fireEvent.click(screen.getByRole('menuitem', { name: action === 'resolve' ? 'Resolve thread' : 'Archive thread' }));
+      if (action === 'archive') fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Archive' }));
+      if (change === 'section') act(() => useUiStore.getState().setSidebarSection('channels'));
+      await act(async () => { await navigateInTest('/workstreams/newer-thread'); });
+      if (change === 'history') await act(async () => { await navigateInTest(-1); });
+      await act(async () => { finish(); });
+      expect(screen.getByTestId('location').textContent).toBe(change === 'section' ? '/workstreams/newer-thread' : `/workstreams/${plan.id}`);
+    });
+
+    it('keeps a confirmed archive hidden when switching tabs triggers a stale refetch', async () => {
+      const stale = { nextCursor: null, items: [plan], pinned: [plan] };
+      api.getMyThreads.mockResolvedValue(stale);
+      api.archiveWorkstream.mockResolvedValue({ ...plan, archivedAt: '2026-10-21T12:00:00.000Z' });
+      let cache!: QueryClient;
+      renderSidebar((client) => { cache = client; seedThreads(client); client.setQueryData(PINS_QUERY_KEY, [{ kind: 'thread', id: plan.id, parentId: null }]); });
+      fireEvent.contextMenu(await screen.findByRole('link', { name: /Q4 plan/u }));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Archive thread' }));
+      fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Archive' }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      evictCachedWorkstream(cache, plan.id);
+      fireEvent.click(screen.getByRole('button', { name: 'Pinned' }));
+      await waitFor(() => expect(api.getMyThreads).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(cache.isFetching({ queryKey: MY_THREADS_QUERY_KEY })).toBe(0));
+      expect(screen.queryByRole('link', { name: /Q4 plan/u })).not.toBeInTheDocument();
+    });
+
+    it('leaves a newer restored thread visible after the older archive response', async () => {
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [plan], pinned: [] });
+      let finish!: (row: WorkstreamSummary) => void;
+      api.archiveWorkstream.mockImplementation(() => new Promise<WorkstreamSummary>((resolve) => { finish = resolve; }));
+      let cache!: QueryClient;
+      renderSidebar((client) => { cache = client; seedThreads(client); });
+      fireEvent.contextMenu(await screen.findByRole('link', { name: /Q4 plan/u }));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Archive thread' }));
+      fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Archive' }));
+      act(() => setCachedWorkstreams(cache, [{ ...plan, updatedAt: '2026-10-21T12:02:00.000Z' }]));
+      await act(async () => { finish({ ...plan, archivedAt: '2026-10-21T12:01:00.000Z', updatedAt: '2026-10-21T12:01:00.000Z' }); });
+      expect(await screen.findByRole('link', { name: /Q4 plan/u })).toBeInTheDocument();
+    });
+
+    it.each([
+      [409, 'substream_archived', 'Restore this conversation before resolving it.'],
+      [403, 'conversation_participant_required', 'You no longer have access to resolve this conversation.'],
+      [404, 'substream_not_found', 'This conversation is no longer available.'],
+    ] as const)('explains resolve refusal %s and lets the person dismiss it', async (status, code, copy) => {
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [plan], pinned: [] });
+      api.resolveConversation.mockRejectedValue(new ApiError('refused', status, code));
+      renderSidebar(seedThreads);
+      fireEvent.contextMenu(await screen.findByRole('link', { name: /Q4 plan/u }));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Resolve thread' }));
+      expect(await screen.findByText(copy)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+      expect(screen.queryByText(copy)).not.toBeInTheDocument();
+    });
+
+    it('keeps Resolve thread visible but disabled when the thread is resolved', async () => {
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [thread(plan.id, plan.title, { resolved: true })], pinned: [] });
+      renderSidebar(seedThreads);
+      fireEvent.contextMenu(await screen.findByRole('link', { name: /Q4 plan/u }));
+      const resolve = await screen.findByRole('menuitem', { name: 'Resolve thread' });
+      expect(resolve).toHaveAttribute('aria-disabled', 'true');
+      fireEvent.click(resolve);
+      expect(api.resolveConversation).not.toHaveBeenCalled();
+      expect(screen.getByRole('menuitem', { name: 'Archive thread' })).not.toHaveAttribute('aria-disabled', 'true');
+    });
+
+    it.each([
+      ['inaccessible Main', { mainWithheld: true as const }, ['Pin']],
+      ['pending', { pending: true as const }, ['Pin']],
+      ['breakout', { kind: 'breakout' as const, breakoutOf: { workstreamId: 'parent', substreamId: '0', title: 'Parent' } }, ['Pin']],
+    ])('offers appropriate actions for a %s row', async (_state, overrides, labels) => {
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [thread(plan.id, plan.title, overrides)] });
+      renderSidebar(seedThreads);
+      const list = within(await screen.findByRole('region', { name: 'All threads' }));
+      fireEvent.contextMenu(await list.findByRole('link'));
+      expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(labels);
+    });
+
+    it('omits archive for guests', async () => {
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [plan], pinned: [] });
+      renderSidebar(seedThreads, 0, { person: { ...workspace, currentUser: { ...workspace.currentUser, accessClass: 'guest' } } });
+      fireEvent.contextMenu(await screen.findByRole('link', { name: /Q4 plan/u }));
+      expect(screen.queryByRole('menuitem', { name: 'Archive thread' })).not.toBeInTheDocument();
     });
 
     it('starts the open measurement on a plain click, and not for the open thread clicked again', async () => {
