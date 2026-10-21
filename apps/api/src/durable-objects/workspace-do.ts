@@ -668,6 +668,10 @@ import {
   WorkspaceActivityPushReadResultSchema,
   WorkspaceActivityRequestSchema,
   WorkspaceActivityResultSchema,
+  WorkspacePeopleRankingRequestSchema,
+  WorkspacePeopleRankingResultSchema,
+  type WorkspacePeopleRankingRequest,
+  type WorkspacePeopleRankingResult,
   WorkspaceActivitySeenRequestSchema,
   WorkspaceActivityEventsRequestSchema,
   type WorkspaceActivityPushReadRequest,
@@ -867,6 +871,7 @@ import {
 } from "./thread-backfill";
 import { unreadState } from "./unread-state";
 import { artifactActivityId, WorkspaceActivityFeed, WORKSPACE_ACTIVITY_READS_MIGRATION } from "./workspace-activity-feed";
+import { rankPeople, WORKSPACE_PEOPLE_RANKING_MIGRATION } from "./workspace-people-ranking";
 import { activityEnqueueKey, ActivityAlertRecordSchema, ActivityAlertClaimSchema, type ActivityAlertClaim, type ActivityAlertRecord, REPLY_BATCH_SECONDS, WORKSPACE_REPLY_ALERT_MIGRATION, ACTIVITY_PUSH_KINDS, WorkspaceActivityPushes, WORKSPACE_ACTIVITY_PUSH_MIGRATION, type ActivityPushSubject } from "./workspace-activity-push";
 import {
   PersonalSystemPromptReadRequestSchema,
@@ -4745,6 +4750,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 125,
   description: "index participating-conversation replies and distinguish queued batches from actual per-channel alerts",
   statements: WORKSPACE_REPLY_ALERT_MIGRATION,
+}, {
+  version: 126,
+  description: "seek a person's authored messages for People ranking without scanning Organization history",
+  statements: WORKSPACE_PEOPLE_RANKING_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -10292,6 +10301,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         pinned: this.conversationRows(viewer, request.workspaceId, pinned),
       },
     });
+  }
+
+  /** The People picker's two frequency-ordered lists, read from existing Rally activity. */
+  async peopleRanking(input: WorkspacePeopleRankingRequest): Promise<WorkspacePeopleRankingResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspacePeopleRankingRequestSchema, input, "people_ranking");
+    this.assertWorkspace(request.workspaceId);
+    const viewer = await this.spaceReader(request.workspaceId, request.userId);
+    if (!viewer || viewer.accessClass === "guest") return { ok: false, code: "space_access_denied" };
+    if (request.spaceId !== null && this.spaceStorage().readable(viewer, request.spaceId) === false) {
+      return { ok: false, code: "space_not_found" };
+    }
+    return WorkspacePeopleRankingResultSchema.parse({ ok: true, ranking: rankPeople(this.state.storage, viewer, request.spaceId) });
   }
 
   /** One page of the Activity tab; see `workspace-activity-feed.ts`. */

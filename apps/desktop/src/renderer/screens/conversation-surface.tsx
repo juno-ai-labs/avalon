@@ -61,6 +61,7 @@ import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useBrowserRailLinks } from '../lib/browser-rail-links';
 import { BreakoutTickBar, breakoutsByOrigin, orderBreakoutsForTicks, type BreakoutMark } from '@rally/ui/components/breakout-marks';
 import type { TitleMenuPeople } from '@rally/ui/components/conversation-menus';
+import { usePeopleRanking } from '../lib/use-people-ranking';
 import { TitlePillLeading, TitlePillNavigation, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { WorkstreamGlyph, workstreamMark } from '@rally/ui/components/workstream-glyph';
 import { RelativeTime } from '../components/relative-time';
@@ -1984,6 +1985,7 @@ function ConversationSurfaceContent({
     staleTime: 60_000,
   });
   const visibleMembers = guest ? routedDetail?.participants ?? NO_MEMBERS : members.data ?? NO_MEMBERS;
+  const peopleRanking = usePeopleRanking(api, workspaceId, session?.user.id, channelPane?.channelId ?? null, !guest && parentKind === 'workstream');
   const visibleConnections = guest ? routedDetail?.connections : connections.data;
   // People invited to the Organization who have not joined: offered where a
   // member can share this Channel with them, and named in its chips.
@@ -3615,6 +3617,7 @@ function ConversationSurfaceContent({
         rename: (title) => renameWorkstream.mutateAsync(title).then(() => undefined),
         setAppearance: socketConnection.setAppearance,
         people: parentKind === 'workstream' ? {
+          ...peopleRanking,
           candidates: visibleMembers,
           invitees: visibleInvitees.map((invitee) => invitee.email),
           onAdd: async (member) => {

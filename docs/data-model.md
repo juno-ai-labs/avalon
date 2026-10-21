@@ -903,6 +903,10 @@ column catalog; what follows is only what WorkspaceDO still holds.
   lets a consumer lead with it; a target outside the audience is stored but still
   filtered out on read. `event_type` and `subject_type` are open strings so a
   producer adds a value rather than a column.
+  Migration 126 adds `workspace_activity_people_actor_idx`, a partial index on
+  human message authors and event ids excluding merged copies. The People
+  picker combines those author seeks with existing target and conversation
+  indexes instead of scanning the Organization's retained activity.
 - `workspace_activity_events.digestible` is the separate question of whether anybody *wants*
   to hear about an event, as opposed to who *may*. It is still written, but nothing
   reads it today: the digest lists unread Activity, which carries no connector

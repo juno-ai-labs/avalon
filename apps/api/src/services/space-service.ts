@@ -20,6 +20,7 @@ import {
   type MyThreadsPage,
   type PinKind,
   type PinList,
+  type PeopleRanking,
   type ArtifactPinList,
   type SpaceDefaultKind,
   type SpaceErrorCode,
@@ -36,6 +37,7 @@ import {
 import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import {
   WorkspaceActivityResultSchema,
+  WorkspacePeopleRankingResultSchema,
   WorkspaceChannelFeedResultSchema,
   WorkspaceChannelMessageRemoveResultSchema,
   WorkspaceChannelStatsResultSchema,
@@ -283,6 +285,14 @@ export class SpaceService {
     }));
     if (!result.ok) throw spaceRefusal(result.code, "");
     return result.page;
+  }
+
+  async peopleRanking(spaceId: SpaceId | null): Promise<PeopleRanking> {
+    const result = WorkspacePeopleRankingResultSchema.parse(await (await this.workspace()).peopleRanking({
+      workspaceId: asWorkspaceId(this.auth.workspaceId), userId: asUserId(this.auth.userId), spaceId,
+    }));
+    if (!result.ok) throw spaceRefusal(result.code, "");
+    return result.ranking;
   }
 
   /** The Activity tab, newest first. */
