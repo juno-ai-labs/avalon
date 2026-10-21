@@ -25,11 +25,13 @@ import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  agentAddressForId,
   asAutomationId,
   asHarnessRunId,
   asSubstreamId,
   asUserId,
   asWorkspaceId,
+  WorkstreamWorkflowInputSchema,
   type AutomationDraft,
 } from "@rally/contracts";
 import {
@@ -42,6 +44,7 @@ import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { conversationObjectName, substreamLoopId, workspaceDOName } from "../src/durable-objects/names";
 import type { AuthContext, Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
+import { AgentCommunicationService } from "../src/services/agent-communication-service";
 import { __integrationTesting } from "../src/services/integrations";
 import { externalBindingReplyAdmission } from "../src/services/slack-agent-service";
 import { admitExternalWorkstreamMessage } from "../src/services/workstream-service";
@@ -321,6 +324,46 @@ beforeEach(async () => {
 });
 
 describe("Sidekick run continuation", () => {
+  it.each(["authoring", "run"] as const)("starts and continues a background worker under Sidekick %s", async (origin) => {
+    await activeSidekick();
+    const ownerSubstreamId = origin === "run" ? await completedRun() : "0";
+    const ownerInput = origin === "run"
+      ? WorkstreamWorkflowInputSchema.parse(JSON.parse((await receipts(ownerSubstreamId))[0]!.execution_context_json))
+      : WorkstreamWorkflowInputSchema.parse({
+        region: "global", workspaceId: WORKSPACE_ID, parentKind: "automation", parentId: AUTOMATION_ID,
+        substreamId: "0", loopId: substreamLoopId(AUTOMATION_ID, asSubstreamId("0")),
+        harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+        executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test",
+      });
+    const owner = new AgentCommunicationService(TEST_ENV, ownerInput);
+    const context = {
+      workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, harnessRunId: ownerInput.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+      executionPrincipal: ownerInput.executionPrincipal, signal: new AbortController().signal,
+    };
+    const assignment = "Inspect the activity counts independently.";
+    const started = await owner.start({ name: "Activity researcher", description: "Check daily activity",
+      message: assignment, attachmentIds: [] }, context);
+    const workerId = agentAddressForId(started.agentId).substreamId;
+    const execution = await settledExecutionFor(workerId, workerId);
+    expect(execution.status).toBe("completed");
+    expect(callThatSaw(assignment)).toBeDefined();
+    const workerInput = WorkstreamWorkflowInputSchema.parse(JSON.parse(execution.execution_context_json));
+    expect(workerInput).toMatchObject({
+      parentKind: "automation", parentId: AUTOMATION_ID, substreamId: workerId,
+      backgroundAgent: true, executionPrincipal: { type: "user", userId: AUTHOR_ID },
+    });
+    expect(workerInput.automationRun).toBeUndefined();
+    expect(await refusals(workerId)).toEqual([]);
+
+    const followUp = await owner.send({ agentId: started.agentId,
+      message: "Check the shared-conversation count too.", attachmentIds: [] },
+    { ...context, effectIntentId: crypto.randomUUID() });
+    expect((await settledExecutionFor(workerId, followUp.messageId)).status).toBe("completed");
+    expect(callThatSaw("Check the shared-conversation count too.")).toBeDefined();
+    expect(await refusals(workerId)).toEqual([]);
+  });
+
   it("continues a completed run as its run-as user, with its instructions at the revision accepted now", async () => {
     await activeSidekick();
     const runId = await completedRun();
