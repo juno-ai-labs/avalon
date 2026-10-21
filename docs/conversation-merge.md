@@ -472,6 +472,8 @@ real unread messages. Hiding only the divider would leave unread badges set.
 Previously stored attention ordinals are retained; destination merge messages
 continue to carry the result as new content.
 
+PR: [#1368](https://github.com/juno-ai-labs/avalon/pull/1368).
+
 ### 2026-10-20 — Resolve a conversation without merging
 
 **What changed:** Thread and Breakout title menus offer Resolve below Merge, backed by
