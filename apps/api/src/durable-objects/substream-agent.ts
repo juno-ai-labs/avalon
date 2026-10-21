@@ -4047,9 +4047,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       `SELECT archived_at FROM workstream WHERE id = 1`,
     ).toArray()[0];
     if (authority && authority.archived_at !== null) return null;
-    const backgroundStopped = this.state.storage.sql.exec<{ stopped_at: number | null }>(
+    const background = this.state.storage.sql.exec<{ stopped_at: number | null }>(
       "SELECT stopped_at FROM background_agent WHERE id = 1",
-    ).toArray()[0]?.stopped_at != null;
+    ).toArray()[0];
+    const backgroundStopped = background?.stopped_at != null;
     let loop = this.ensurePersistentLoop();
     // Messages that start no run land first, whatever else holds the loop:
     // they were waiting only on what was sent ahead of them, not on Rally.
@@ -4118,7 +4119,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // head of the queue holding everything behind it.
       let continuation: Extract<SidekickRunContinuation, { outcome: "continue" }> | null = null;
       const externalSubstreamId = this.externalSubstreamId();
-      if (identity.parentKind === "automation" && externalSubstreamId !== "0") {
+      // Delegated workers share the Sidekick parent, but have no sidekick_runs
+      // row. Their persisted background identity keeps their inherited authority.
+      if (identity.parentKind === "automation" && externalSubstreamId !== "0" && !background) {
         const decided = await continueSidekickRun(this.env, {
           region: this.env.AVALON_REGION,
           workspaceId: identity.workspaceId,
@@ -4169,7 +4172,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
             }
           : {}),
         ...(authorization.agentExchange ? { agentExchange: authorization.agentExchange } : {}),
-        backgroundAgent: this.isBackgroundAgent(),
+        backgroundAgent: Boolean(background),
         ...(authorization.telemetryOperationId
           ? {
               telemetryOperationId: authorization.telemetryOperationId,
