@@ -18,6 +18,42 @@ import {
 } from "./connector-connection-card";
 
 describe("connector connection card contract", () => {
+  it("accepts google-drive in either scope and retires the old id for new requests", () => {
+    for (const scope of ["personal", "workspace"]) {
+      expect(ConnectorConnectionCardInputSchema.parse({ connectorId: "google-drive", scope }))
+        .toEqual({ connectorId: "google-drive", scope });
+      expect(ConnectorConnectionStateInputSchema.parse({ connectorId: "google-drive", scope }))
+        .toEqual({ connectorId: "google-drive", scope });
+      expect(ConnectorConnectionCardInputSchema.safeParse({ connectorId: "google-drive-workspace", scope }).success)
+        .toBe(false);
+      expect(ConnectorConnectionStateInputSchema.safeParse({ connectorId: "google-drive-workspace", scope }).success)
+        .toBe(false);
+    }
+  });
+
+  it("normalizes historical Drive cards from input, output, or exact summary", () => {
+    for (const name of ["show_connector_connection", "core_show_connector_connection"]) {
+      for (const scope of ["personal", "workspace"]) {
+        for (const facts of [
+          { input: { connectorId: "google-drive-workspace", scope } },
+          { output: { connectorId: "google-drive-workspace", scope } },
+          { summary: `Presented the google-drive-workspace ${scope} connection card` },
+        ]) {
+          expect(connectorConnectionCardInputFromToolEvent({ name, status: "completed", ...facts }))
+            .toEqual({ connectorId: "google-drive", scope });
+        }
+      }
+    }
+    expect(connectorConnectionCardInputFromToolEvent({
+      name: "show_connector_connection", status: "completed",
+      input: { connectorId: "google-drive-workspace", scope: "invalid" },
+    })).toBeNull();
+    expect(connectorConnectionCardInputFromToolEvent({
+      name: "show_connector_connection", status: "completed",
+      input: { connectorId: "google-drive-workspace", scope: "personal", authorizationUrl: "https://example.com" },
+    })).toBeNull();
+  });
+
   it("accepts Apollo personal cards and refuses workspace cards", () => {
     expect(ConnectorConnectionCardInputSchema.parse({ connectorId: "apollo", scope: "personal" }))
       .toEqual({ connectorId: "apollo", scope: "personal" });

@@ -44,8 +44,8 @@ describe("connector connection tool guidance", () => {
     expect(connectorIds).toBe(
       "Connector to check or show."
       + " Personal only: google-mail-calendar, apollo, ashby, canva, fireflies, granola."
-      + " Personal or workspace: google-drive-workspace, github, linear, slack, notion."
-      + " google-drive-workspace is Google Drive, Docs and Sheets; the word workspace in it names Google's product, not a scope.",
+      + " Personal or workspace: google-drive, github, linear, slack, notion."
+      + " google-drive is Google Drive, Docs and Sheets.",
     );
     // The second is that the sentence keeps naming every id the catalog holds,
     // so a connector added there cannot be quietly missing from what the model

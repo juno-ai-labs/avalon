@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createConnectorRegistry, createCustomMcpConnector } from "@rally/connectors";
+import { connectorPluginViews } from "../src/lib/connector-plugin-views";
 import { __integrationTesting } from "../src/services/integrations";
 
 /**
@@ -88,22 +89,24 @@ describe("finding a connector in the catalog", () => {
     for (const type of TOOL_CONNECTORS) {
       const adapter = registry.get(type);
       const fallbackAliases = __integrationTesting.connectorSearchAliases(adapter);
-      const presentation = __integrationTesting.connectorPluginPresentation(
-        type,
-        adapter.agentPlugin.tools.map((tool) => tool.capability),
-        adapter.agentPlugin.wireNamePrefix,
-        {
-          displayName: adapter.manifest.displayName,
-          description: adapter.agentPlugin.description,
-          searchAliases: fallbackAliases,
-          systemMessage: adapter.agentPlugin.systemMessage,
-        },
-      );
+      for (const view of connectorPluginViews(type, `plugin_${type}`, adapter.agentPlugin.tools.map((tool) => tool.capability))) {
+        const presentation = __integrationTesting.connectorPluginPresentation(
+          type,
+          view.grantedScopes,
+          adapter.agentPlugin.wireNamePrefix,
+          {
+            displayName: adapter.manifest.displayName,
+            description: adapter.agentPlugin.description,
+            searchAliases: fallbackAliases,
+            systemMessage: adapter.agentPlugin.systemMessage,
+          },
+        );
 
-      expect(presentation.searchAliases.length, `${type} lost its aliases in presentation`)
-        .toBeGreaterThan(3);
-      expect(presentation.description).toMatch(/Load this plugin for/u);
-      expect(presentation.systemMessage.trim()).not.toBe("");
+        expect(presentation.searchAliases.length, `${type} lost its aliases in presentation`)
+          .toBeGreaterThan(3);
+        expect(presentation.description).toMatch(/Load this plugin for/u);
+        expect(presentation.systemMessage.trim()).not.toBe("");
+      }
     }
   });
 
@@ -129,16 +132,14 @@ describe("the Google presentation, which is rebuilt rather than passed through",
     },
   );
 
-  it("tells a mail-and-files credential when to load it, in one sentence not two", () => {
-    const { description, searchAliases } = present(["gmail.read", "drive.read", "sheets.read"]);
-
-    // This shape used to fall to a fallback that named neither half. It then
-    // briefly carried two differently worded load-me sentences, because the
-    // descriptor grew its own and this branch appended another.
-    expect(description.match(/Load this plugin for/gu)).toHaveLength(1);
-    expect(description).toContain("email");
-    expect(description).toContain("file");
-    expect(searchAliases).toEqual(expect.arrayContaining(["gmail", "drive"]));
+  it("presents two bundles for a mail-and-files credential", () => {
+    const views = connectorPluginViews("google", "plugin_google", ["gmail.read", "drive.read", "sheets.read"]);
+    const presentations = views.map((view) => present(view.grantedScopes));
+    expect(presentations.map((presentation) => presentation.displayName)).toEqual([
+      "Google Mail + Calendar", "Google Drive + Docs + Sheets",
+    ]);
+    expect(presentations[0]?.searchAliases).not.toContain("drive");
+    expect(presentations[1]?.searchAliases).not.toContain("gmail");
   });
 
   it.each([
@@ -156,6 +157,27 @@ describe("the Google presentation, which is rebuilt rather than passed through",
     const { searchAliases } = present([]);
     expect(searchAliases).toContain("email");
     expect(searchAliases).toContain("spreadsheets");
+  });
+});
+
+
+describe("Google tool receipt attribution", () => {
+  it.each([
+    ["mail_calendar", "gmail.read", "Google Mail + Calendar", "brand-google"],
+    ["drive", "drive.read", "Google Drive + Docs + Sheets", "brand-google-drive"],
+  ])("retains the %s view after credential grants change", (bundle, capability, displayName, icon) => {
+    expect(__integrationTesting.toolInvocationOwningPlugin({
+      connection_id: "google-account",
+      owner_model_plugin_id: "plugin_google",
+      owner_connector_type: "google",
+      owner_display_name: "Google Workspace · Person",
+      owner_granted_scopes_json: "[]",
+      execution_plan_json: JSON.stringify({ pluginId: `connection:google-account:${bundle}`, capability }),
+    })).toEqual({
+      pluginId: `plugin_google_${bundle}`,
+      canonicalId: `connection:google-account:${bundle}`,
+      connectorType: "google", displayName, icon,
+    });
   });
 });
 

@@ -38,6 +38,12 @@ Triggered execution retains the existing occurrence-admission and run machinery.
 Publication records a `sidekick_publication` alarm alongside its accepted state,
 so a partial effect tail can reconcile without asking a person to apply again.
 
+Instruction-only Sidekicks appear to the model as reusable Skills, loaded with
+`load_skill`. Their names and instruction wrappers use skill terminology; the
+product still calls them Sidekicks. Thread-local setup discovery is a separate
+surface and does not enumerate reusable instructions as authoring candidates
+from other threads or scopes.
+
 The harness host resolves eligible Sidekicks through WorkspaceDO candidates and
 an authorized `readSkillSource` on each owner. A private source's audience must
 contain the entire receiving conversation; workspace sources stay regional and
@@ -295,9 +301,11 @@ instructions open the authoring conversation and are shown there as its
 ([`plugin-activity-rows.md`](plugin-activity-rows.md)). Drafting
 tools are available only in that authoring conversation. The persisted drafting
 plugin id and canonical tool names stay; the model reads the plugin as
-`rally_sidekicks` and its tools under the `sidekick_` prefix. In a room that
-plugin offers only `sidekick_sidekicks_list`, `sidekick_attach` and
-`sidekick_detach`, and its list carries only the organization Sidekicks the room
+`rally_sidekicks` and its tools under the `sidekick_` prefix in the authoring
+conversation. In a room the same persisted plugin identity is presented as
+`rally_skill_recommendations`, exposing reusable instructions through
+`list_skill_recommendations`, `recommend_skill` and `unrecommend_skill`. Its list
+carries only available or already recommended organization skills the room
 can recommend; in an authoring conversation the list is that Sidekick's own
 definition. Workstream-owned
 entries are managed in the library and listed in their own room's Channel menu, beside
@@ -363,7 +371,10 @@ Instruction-only definitions bypass connector binding, schedule preparation,
 email reservation and memory-table creation. Triggered definitions reuse the
 existing validation and execution setup: bindings resolve against WorkspaceDO,
 workspace Sidekicks require workspace credentials, evaluator rules must name
-inspected sources, and schedules use their explicit or resolved timezone.
+inspected sources, and schedules use their explicit or resolved timezone. Google bundle plugin IDs resolve through the same
+connection views used by the model catalog: Mail + Calendar and Drive + Docs +
+Sheets can bind one credential without sharing tools or trigger descriptors.
+Saved combined IDs remain binding aliases; see [connectors](connectors.md).
 The object's current revision and lifecycle are checked again after asynchronous
 preparation, before committing publication. An archived owning workstream refuses
 publication; an ordinary pause is preserved by editing.

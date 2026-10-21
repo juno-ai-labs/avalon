@@ -422,6 +422,38 @@ describe("automation-creator plugin catalog", () => {
     });
   });
 
+  it("assigns resources to the matching Google bundle on a shared credential", async () => {
+    const localDb = localDatabase();
+    localDb.prepare(`INSERT INTO workspace_members (workspace_id, user_id, role, status)
+      VALUES (?, ?, 'member', 'active')`).run(WORKSPACE_ID, USER_ID);
+    const connectionId = "00000000-0000-4000-8000-000000000601";
+    insertConnection(localDb, {
+      id: connectionId, connectorType: "google", scope: "workspace", ownerUserId: null,
+      modelPluginId: "plugin_google", grantedScopes: ["gmail.read", "calendar.read", "drive.read", "docs.read"],
+    });
+    for (const [id, type] of [["00000000-0000-4000-8000-000000000602", "gmail_thread"],
+      ["00000000-0000-4000-8000-000000000603", "google_doc"]]) {
+      localDb.prepare(`INSERT INTO resources
+        (id, workspace_id, connection_id, resource_type, provider, provider_resource_id, title, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'google', ?, 'Google bundle resource', ?, ?)`).run(
+        id!, WORKSPACE_ID, connectionId, type!, id!, "2026-08-01T00:00:00.000Z", "2026-08-01T00:00:00.000Z",
+      );
+    }
+    const runtimeEnv = createTestEnv({ ...env(localDb),
+      GOOGLE_CONNECTOR_OAUTH_CLIENT_ID: "google-client", GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET: "google-secret",
+    });
+    const selected = await __integrationTesting.loadHarnessTools(runtimeEnv, workflowInput());
+    const search = selected.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")!
+      .tools.find((tool) => tool.definition.name === "resources_search")!;
+    const result = await search.execute({ query: "Google bundle" }, { toolCallId: "google-resources" } as never);
+    expect(result.output).toMatchObject({ resources: expect.arrayContaining([
+      { id: "00000000-0000-4000-8000-000000000602", title: "Google bundle resource", resourceType: "gmail_thread",
+        provider: "google", pluginId: "plugin_google_mail_calendar", relationships: ["thread"], sourceBindingKeys: [] },
+      { id: "00000000-0000-4000-8000-000000000603", title: "Google bundle resource", resourceType: "google_doc",
+        provider: "google", pluginId: "plugin_google_drive", relationships: ["file"], sourceBindingKeys: [] },
+    ]) });
+  });
+
   it("returns nothing rather than everything when the workspace's connectors declare no bindable resource", async () => {
     const localDb = localDatabase();
     localDb.prepare(
