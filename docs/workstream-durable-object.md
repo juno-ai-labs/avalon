@@ -1002,6 +1002,14 @@ activation or safe step, or at the next idle drain if what was ahead fails. A
 safe step promotes only the steers ahead of the first such message, so a later
 steer never lands above it. The run that answers the input reads it as said to
 the room.
+
+Before classifying a human message, earlier input preparations settle in arrival
+order through the existing mailbox and cancellation recovery. The addressing
+window combines canonical text with earlier accepted queued text before taking
+the newest ten text turns. Failed or still-unvalidated preparations supply no
+context. This prevents simultaneous prerequisite reports from each missing the
+other while neither has become canonical.
+
 While the loop is executing, Electron always admits a newly composed message
 as `queue`. Slack and other external producers still send `steer` when they
 mean a safe-step interruption. The pending set renders in the feed for every
@@ -1883,6 +1891,23 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-10-21 — Classify replies against settled preceding admissions
+
+**What changed:** Human-message classification waits for earlier preparations
+and includes accepted queued text in its ten-turn window.
+
+**Why:** Concurrent prerequisite replies each saw the other as missing when
+neither was canonical, so both could leave Rally inactive.
+
+**Considered and rejected:** Unvalidated mailbox envelopes can still fail
+admission and cannot establish another contributor's response.
+
+**Consequences:** Concurrent classifications follow admission order; cancellation
+recovery settles the same mailbox rows and releases local waiters. The classifier
+policy is owned by [agent-harness.md](agent-harness.md#addressing).
+
+PR: [#1376](https://github.com/juno-ai-labs/avalon/pull/1376).
 
 ### 2026-10-21 — Sending in a Channel joins at admission
 
