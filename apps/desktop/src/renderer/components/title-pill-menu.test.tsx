@@ -35,7 +35,7 @@ function openMenu(): void {
 }
 
 describe('a title pill menu with levels', () => {
-  it('opens with Artifacts directly below People even when there are none', async () => {
+  it('opens at a root of actions and level rows, with Artifacts below People even when empty', async () => {
     renderChannelPill();
     openMenu();
 
@@ -48,6 +48,48 @@ describe('a title pill menu with levels', () => {
     const artifacts = screen.getByRole('menuitem', { name: /^Artifacts\s*0/u });
     expect(artifacts.previousElementSibling).toHaveTextContent('People');
     fireEvent.click(artifacts);
+    expect(await screen.findByText('No artifacts yet.')).toBeInTheDocument();
+  });
+
+  it.each([
+    { state: 'empty', resources: [] },
+    { state: 'disabled', resources: [{ id: 'r1', title: 'Pricing sheet', resourceType: 'spreadsheet', direction: 'artifact', currentVersion: 1 }] },
+  ])('keeps keyboard navigation inside Artifacts when the list is $state', async ({ resources }) => {
+    renderChannelPill({ workstream: { id: 'c1', title: 'Launch', participants: [member], resources } });
+    openMenu();
+    const row = await screen.findByRole('menuitem', { name: /^Artifacts/u });
+    row.focus();
+    fireEvent.keyDown(row, { key: 'Enter' });
+
+    expect(screen.getByRole('menu')).toContainElement(document.activeElement as HTMLElement);
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowLeft' });
+    expect(await screen.findByRole('menuitem', { name: /^Artifacts/u })).toHaveFocus();
+  });
+
+  it('focuses the first enabled artifact when entering its level by keyboard', async () => {
+    renderChannelPill({ onOpenArtifact: vi.fn(), workstream: { id: 'c1', title: 'Launch', participants: [member], resources: [
+      { id: 'r1', title: 'Pricing sheet', resourceType: 'spreadsheet', direction: 'artifact', currentVersion: 1 },
+    ] } });
+    openMenu();
+    const row = await screen.findByRole('menuitem', { name: /^Artifacts/u });
+    row.focus();
+    fireEvent.keyDown(row, { key: 'Enter' });
+    expect(await screen.findByRole('menuitem', { name: 'Pricing sheet' })).toHaveFocus();
+  });
+
+  it('shows unknown artifacts as loading until their resources arrive', async () => {
+    const { rerender } = renderChannelPill({ resourcesPending: true });
+    openMenu();
+    const row = await screen.findByRole('menuitem', { name: 'Artifacts' });
+    row.focus();
+    fireEvent.keyDown(row, { key: 'Enter' });
+    expect(await screen.findByText('Loading artifacts…')).toBeInTheDocument();
+    expect(screen.queryByText('No artifacts yet.')).not.toBeInTheDocument();
+    expect(screen.getByRole('menu')).toContainElement(document.activeElement as HTMLElement);
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowLeft' });
+    expect(await screen.findByRole('menuitem', { name: 'Artifacts' })).toHaveFocus();
+    rerender(channelPill({ resourcesPending: false }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Artifacts\s*0/u }));
     expect(await screen.findByText('No artifacts yet.')).toBeInTheDocument();
   });
 

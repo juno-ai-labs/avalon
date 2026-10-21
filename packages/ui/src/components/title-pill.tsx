@@ -51,13 +51,15 @@ const TITLE_MENU_CONTROLS = [
  * Where focus lands after a move between levels. Entering one, its search when
  * it has one, else its first item; returning to the root, the row that led to
  * the level just left. Selecting that row unmounted it, so without this focus
- * falls to the page and the menu stops answering the keyboard.
+ * falls to the page and the menu stops answering the keyboard. An empty or
+ * disabled level keeps focus on the view itself until it offers a control.
  */
 function focusAfterMove(view: HTMLElement, left: string | null): void {
   const target = (left && view.querySelector<HTMLElement>(`[data-title-menu-level="${left}"]`))
     || view.querySelector<HTMLElement>('[data-title-menu-autofocus]')
-    || view.querySelector<HTMLElement>(TITLE_MENU_CONTROLS);
-  target?.focus({ preventScroll: true });
+    || view.querySelector<HTMLElement>(TITLE_MENU_CONTROLS)
+    || view;
+  target.focus({ preventScroll: true });
 }
 
 /**
@@ -109,6 +111,7 @@ export function TitleMenuMorph({ children }: { children: ReactNode }): React.JSX
         next.scrollIntoView({ block: 'nearest' });
       }}
       ref={inner}
+      tabIndex={-1}
     >
       {children}
     </div>
