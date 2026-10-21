@@ -19,6 +19,7 @@ import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-stor
 import { WorkstreamHarnessRunStorage } from "../src/durable-objects/workstream-harness-run-storage";
 import { WorkstreamToolReceiptStorage } from "../src/durable-objects/workstream-tool-receipt-storage";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
+import { readCompletionVerificationSnapshot } from "../src/durable-objects/completion-verification-storage";
 import { createTestEnv } from "../test/helpers/cloudflare-test";
 import { seedWorkstreamRoot } from "./helpers/substream-fixture";
 
@@ -34,6 +35,67 @@ interface TranscriptOperationExecutor {
 beforeEach(async () => reset());
 
 describe("work-stream transcript on workerd SQLite", () => {
+  it("keeps completion verification consumed across compaction and eviction", async () => {
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    const runId = "00000000-0000-7000-8000-0000000007f1";
+    await runInDurableObject(stub, async (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
+      const now = Date.now();
+      const transcript = new WorkstreamTranscriptStorage(state.storage);
+      const systemProjection = { revision: 1, rendererVersion: "workstream-system-v1", inputHash: "test",
+        message: { role: "system", content: "System" } };
+      await transcript.commitBindTransition({ kind: "state_initialized", loopId: LOOP_ID,
+        generation: 1, stateRevision: 1, systemProjection, nonSystemMessages: [], nonSystemMessageOrigins: [] });
+      const runs = new WorkstreamHarnessRunStorage(state.storage);
+      expect(runs.admitRun({ runId, origin: "member_message", executionPrincipalJson: JSON.stringify({ type: "user", userId: USER_ID }),
+        status: "running", startedAt: now, model: "test/model", triggerPartId: null,
+        parentRunId: null, expectedLatestRunId: null, now })).toEqual({ outcome: "admitted" });
+      state.storage.sql.exec(`UPDATE runs SET execution_context_json = '{}' WHERE run_id = ?`, runId);
+      const loop = new SubstreamLoopStorage(state.storage);
+      loop.ensureLoop({ loopId: LOOP_ID, bindStateRevision: 1, now });
+      loop.activateExecutionReceipt({ runId, loopId: LOOP_ID, executionEpoch: 1, leaseOwner: "test-owner",
+        leaseExpiresAt: now + 60_000, expectedLoopRevision: loop.loop()!.revision, expectedBindStateRevision: 1, now });
+      expect(readCompletionVerificationSnapshot(state.storage, runId, null).lifecycle).toBe("ready");
+      state.storage.sql.exec(`UPDATE runs SET cancellation_requested_at = ? WHERE run_id = ?`, now, runId);
+      expect(readCompletionVerificationSnapshot(state.storage, runId, null).lifecycle).toBe("cancelled");
+      state.storage.sql.exec(`UPDATE runs SET cancellation_requested_at = NULL WHERE run_id = ?`, runId);
+      state.storage.sql.exec(`INSERT INTO elicitation_requests
+        (elicitation_id, run_id, tool_call_id, prompt, response_type, options_json, minimum_selections, status, created_at)
+        VALUES ('question', ?, 'question-call', 'Which publication?', 'text', '[]', 0, 'pending', ?)`, runId, now);
+      expect(readCompletionVerificationSnapshot(state.storage, runId, null).lifecycle).toBe("input_required");
+      state.storage.sql.exec(`UPDATE elicitation_requests SET status = 'answered', answer_json = '"Blog"' WHERE elicitation_id = 'question'`);
+      state.storage.sql.exec(`INSERT INTO tool_effects
+        (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key, tool_name, mode,
+         request_hash, authority_revision, status, tool_call_id, input_json, output_summary, output_ref)
+        VALUES ('effect', ?, 1, 0, 'occurrence', 'publish_article', 'write', 'request', 'authority',
+          'executing', 'tool-1', '{}', NULL, NULL)`, runId);
+      expect(readCompletionVerificationSnapshot(state.storage, runId, null).lifecycle).toBe("background_pending");
+      state.storage.sql.exec(`UPDATE tool_effects SET status = 'ambiguous' WHERE effect_intent_id = 'effect'`);
+      expect(readCompletionVerificationSnapshot(state.storage, runId, null).lifecycle).toBe("ambiguous_write");
+      state.storage.sql.exec(`UPDATE tool_effects SET status = 'completed', output_summary = 'Published', output_ref = 'article-ref' WHERE effect_intent_id = 'effect'`);
+      expect(readCompletionVerificationSnapshot(state.storage, runId, null)).toMatchObject({ lifecycle: "ready",
+        receipts: [{ id: "tool-1", operation: "publish_article", status: "completed", summary: "Published", output_refs: ["article-ref"] }] });
+      await transcript.commitBindTransition({ kind: "protocol_user_appended", loopId: LOOP_ID,
+        generation: 1, stateRevision: 2, message: { role: "user", content: "Verify completion once." },
+        provenance: { originKind: "derived", sourceKind: "completion_verification", sourceId: runId, sourceRevision: null },
+        activationInputId: null });
+      expect(readCompletionVerificationSnapshot(state.storage, runId, null).lifecycle).toBe("recovery_used");
+      await transcript.commitBindTransition({ kind: "state_replaced", loopId: LOOP_ID,
+        generation: 1, nextGeneration: 2, stateRevision: 3, systemProjection,
+        nonSystemMessages: [{ role: "user", content: "Compacted conversation" }], compactionEventId: "completion-test-compaction" });
+      expect(bindLoopNonSystemMessages(transcript.readBindProjection(LOOP_ID)!)).toEqual([
+        { role: "user", content: "Compacted conversation" },
+      ]);
+    });
+    await evictDurableObject(stub);
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(readCompletionVerificationSnapshot(state.storage, runId, null).lifecycle).toBe("recovery_used");
+      expect(readCompletionVerificationSnapshot(state.storage, "another-execution", null).lifecycle).toBe("unknown");
+    });
+  });
+
   it("keeps transaction-local transcript mutations off the internal RPC boundary", async () => {
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),

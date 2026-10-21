@@ -18,7 +18,7 @@ are in
 
 | Path | Responsibility |
 | --- | --- |
-| `packages/contracts/src/usage.ts` | The single source for plans, the 22 metered activities, the `ORGANIZATION_PAYS` payer map, `UsageEvent`, the `GET /workspace/usage` response, and the week, period and overage arithmetic (`usageWeekStart`, `usagePeriod`, `deriveOrganizationUsage`). |
+| `packages/contracts/src/usage.ts` | The single source for plans, metered activities, the `ORGANIZATION_PAYS` payer map, `UsageEvent`, the `GET /workspace/usage` response, and the week, period and overage arithmetic (`usageWeekStart`, `usagePeriod`, `deriveOrganizationUsage`). |
 | `apps/api/src/services/usage-metering.ts` | `emitUsage` and `emitInferenceUsage` (the only producers), `applyUsageBatch` (the only D1 ledger writer), `readOrganizationUsage` (the only reader), `setWorkspacePlan`, `publishOrganizationUsage`, `pruneUsageEvents` and `USAGE_EVENTS_D1_RETENTION_DAYS`. |
 | `apps/api/src/durable-objects/workspace-do.ts` (`publishUsage`) | Sends the meter after a plan change to every subscribed member socket as `workspace_usage` (`WorkspaceUsageEventSchema`), never a guest's, and drops a meter read before the last one sent. |
 | `apps/api/src/queues/usage-consumer.ts` | The `avalon-<region>-usage` consumer: validates, rejects misrouted messages, applies the batch to D1, then sends it to the usage lakehouse, logs `usage_batch_applied`. `usageLakehouseRecord` shapes the R2 row. |
@@ -57,6 +57,10 @@ own work produces the same ID: `inf:<inferenceRequestId>` for model calls,
 `gen:<resourceId>` for generated media. Embedding cost is read from the raw
 response by `embeddingCallCostUsd`, because the SDK's embeddings shape drops
 the bring-your-own-key upstream charge.
+
+Completion-stop JEV calls use `completion_verification`, recorded by the same
+classifier diagnostic sink and Organization payer policy as the other classifiers.
+The additional main-model verification turn remains ordinary agent-run usage.
 
 ### Applying
 
