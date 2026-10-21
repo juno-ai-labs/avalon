@@ -1589,6 +1589,8 @@ export class WorkstreamObjectProductService {
     // started work already authorize a run, even when their text looks like a title.
     const classifyOpening = input.reason === "opening_message" && !input.slackOrigin
       && !input.createdFromOpportunityId && !input.seed;
+    const initialConversation: PreparedConversation = history ?? { messages: [{ role: "user", text: prepared.text,
+      structuredContent: input.openingStructuredContent, attachmentIds: input.attachmentIds }] };
     const [startsRun, [routing], materialization] = await Promise.all([
       history ? false : !classifyOpening || openingMessageStartsRun(this.env, {
         workspaceId: input.workspaceId,
@@ -1610,11 +1612,13 @@ export class WorkstreamObjectProductService {
             workspaceId: input.workspaceId, workstreamId: input.workstreamId,
           }).then((route) => route.model)]),
       this.prepareConversationMaterialization({
-        conversation: history ?? { messages: [{ role: "user", text: this.withPersonalSystemPrompt(
-          prepared.text, input.creatorUserId, input.reason),
-          structuredContent: input.openingStructuredContent, attachmentIds: input.attachmentIds }] },
+        conversation: history ?? { messages: [{ ...initialConversation.messages[0]!,
+          text: this.withPersonalSystemPrompt(prepared.text, input.creatorUserId, input.reason) }] },
         operationId: input.clientMessageId, firstTurnId: messageId, clientMessageId: input.clientMessageId,
-        ...(input.initialization.kind === "history" && input.initialization.identityHash ? { identityHash: input.initialization.identityHash } : {}),
+        // Receipt identity follows the request; a cache refresh may change the
+        // proposed prefix on retry, but the receipt replays its frozen content.
+        identityHash: input.initialization.kind === "history" && input.initialization.identityHash
+          ? input.initialization.identityHash : workstreamImportHash(initialConversation),
         userId: input.creatorUserId, snapshot: authorSnapshot, now,
         workspaceId: input.workspaceId, workstreamId: input.workstreamId,
       }),

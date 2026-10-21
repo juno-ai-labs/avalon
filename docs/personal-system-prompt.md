@@ -14,6 +14,7 @@ the background.
 `packages/agent-harness/src/prompts/personal.ts` renders the XML. The frontend
 `apps/desktop/src/renderer/lib/transcript.ts` removes the block from display text
 with one regular expression, for both settled and queued messages.
+The iOS `FeedProjection` applies the same display rule.
 
 ## How it works
 
@@ -40,6 +41,10 @@ with one regular expression, for both settled and queued messages.
 4. **Refresh.** The same admission read hands a refresh to `waitUntil`, without waiting for
    WorkspaceDO. It writes the copy only if the source revision is newer.
 
+Opening-message receipt identity hashes the original message before adding the
+cached instructions. A retry reuses the receipt's frozen text even if the cache
+has refreshed since the first attempt.
+
 ## Invariants
 
 - **No cross-object read delays a message or inference.** An edit reaches each
@@ -53,7 +58,9 @@ with one regular expression, for both settled and queued messages.
   XML scopes them to that speaker's requests, including when later turns or a
   compaction read them. The memory digest still uses `principalSystemSection`.
 - **Only the frontend filters the block.** The server transcript contains the
-  XML; frontend transcript projection removes it before display and copy.
+  XML; frontend transcript projection removes one leading envelope with the
+  generated preamble before display and copy. XML examples in the message body
+  remain visible. Instruction text is XML-escaped so it cannot close the envelope.
 - **Blank instructions add nothing.** Attachment parts remain intact after the
   prefix. Only the refresh writes the local copy.
 
@@ -62,6 +69,11 @@ with one regular expression, for both settled and queued messages.
 This module owns the saved text and its placement in user messages. The route
 is under the members-only `/workspace` mount, so guests cannot set one.
 Bind owns model-history persistence and ordinary compaction.
+These instructions are ordinary shared message content, not a private field:
+conversation readers receive them, and search, links, notifications, previews,
+and exports may contain them. Frontend hiding is a display convention rather
+than an access boundary. Typing the exact generated envelope has the same effect
+as saving it in settings.
 
 ## Failure modes and limits
 
@@ -73,15 +85,9 @@ Bind owns model-history persistence and ordinary compaction.
 
 ## Testing
 
-The real-workerd test in `message-to-output-pipeline.test.ts` saves instructions
-through WorkspaceDO, verifies user-role placement, clears the setting, evicts
-the conversation object, and checks that subsequent requests retain the old
-message values while new messages omit the prefix. It blocks the first provider
-response to prove that a queued message refreshes the copy before its run can
-start. Its socket snapshot checks
-that the server retains the XML. Frontend transcript tests check that settled
-and queued messages display only ordinary text. Harness prompt tests cover the
-XML format.
+`message-to-output-pipeline.test.ts` proves admission refresh, retry stability and
+durable user-role history. Desktop transcript and iOS feed tests cover display
+filtering; harness prompt tests cover XML formatting and escaping.
 
 ## Changelog
 
@@ -93,6 +99,7 @@ Ordinary history retains that value across later turns and eviction; compaction
 can read it as user history. A frontend regex removes the block for display.
 Admission owns the cached read and background refresh together, including on a
 new conversation's empty first read; inference does neither.
+Opening retries hash the original request and replay its frozen instructions.
 
 **Why:** These are the user's instructions for their requests, and should behave
 as if they typed them with every message. Keeping them in the system prompt
@@ -104,6 +111,9 @@ history and compaction. It loses the exact instructions later turns should read.
 **Consequences:** Changing the setting affects future messages after the existing
 background refresh lag. Earlier instructions remain in history, scoped by the
 XML to their author's requests; clearing the setting does not erase them.
+The previous system-only placement kept the instructions out of other readers'
+transcripts. This design deliberately shares them as ordinary message content;
+frontend hiding does not preserve that earlier privacy property.
 
 ### 2026-10-05 — Personal system prompt, stored in the WorkspaceDO and copied into each conversation
 

@@ -133,7 +133,7 @@ export function transcriptOverlaysQueryKey(
 /** Personal instructions stay in history; only the frontend removes the XML block. */
 function visibleParticipantText(text: string, actor: string): string {
   return actor === 'human' || actor === 'external'
-    ? text.replace(/<user_system_prompt>[\s\S]*?<\/user_system_prompt>\n{0,2}/gu, '')
+    ? text.replace(/^<user_system_prompt>\nThe following was provided by this user as instructions for how to respond to this message\. For other users' requests ignore these instructions\.\n<user_suppplied>\n[\s\S]*?\n<\/user_suppplied>\n<\/user_system_prompt>\n{0,2}/u, '')
     : text;
 }
 
