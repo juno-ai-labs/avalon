@@ -37,6 +37,9 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
   const { resourceId, version, name, mimeType, text, src, saved } = props;
   const draft = useAnnotationDraft();
   const [picking, setPicking] = useState(false);
+  const retry=draft?.retry;
+  useEffect(()=>{retry?.();},[resourceId,version,retry]);
+  useEffect(()=>{if(draft?.repairing && draft.pins.some((pin)=>pin.id===draft.repairing&&pin.annotation.target.resourceId===resourceId))setPicking(true);},[draft?.repairing,resourceId]);
   const [hover, setHover] = useState<{ element: HTMLElement; start: number; end: number } | null>(null);
   const leaf = useRef<HTMLElement | null>(null);
   const root = useRef<HTMLDivElement>(null);
@@ -81,11 +84,11 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
   },[html,draft,htmlPins]);
   const current = draft?.selections.find((p) => p.id === editing);
 
-  const commit = (locator: AnnotationLocator, exact: string, start = 0, end = 0, replace = false, imageAttachmentId?: string): void => {
+  const commit = (locator: AnnotationLocator, exact: string, start = 0, end = 0, replace = false, imageAttachmentId?: string, context?: {before?:string;after?:string}): void => {
     if (!draft) return;
     const annotation = buildAnnotation({ target: { resourceId, version, locator }, content: { exact,
       source: locator.type === 'element' ? 'rendered' : ['pdf', 'document', 'presentation', 'spreadsheet'].includes(kind) ? 'converted' : 'exact',
-      before: text?.slice(Math.max(0, start - ANNOTATION_CONTEXT_CHARACTERS), start) ?? '', after: text?.slice(end, end + ANNOTATION_CONTEXT_CHARACTERS) ?? '', truncated: false,
+      before: context?.before ?? text?.slice(Math.max(0, start - ANNOTATION_CONTEXT_CHARACTERS), start) ?? '', after: context?.after ?? text?.slice(end, end + ANNOTATION_CONTEXT_CHARACTERS) ?? '', truncated: false,
       ...(imageAttachmentId ? { imageAttachmentId } : {}),
     }, comment: replace ? draft.selections.find((p) => p.id === lastPin.current)?.annotation.comment ?? '' : '' });
     let pinId = '';
@@ -177,7 +180,7 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
       if (!locator.success || typeof pin.html !== 'string') return;
       const frameBox = frame.current?.getBoundingClientRect();
       if (pin.point && frameBox) setAnchor({x:frameBox.x+pin.point.x,y:frameBox.y+pin.point.y});
-      commit(locator.data, pin.html, 0, 0, pin.replace === true);
+      commit(locator.data, pin.html, 0, 0, pin.replace === true, undefined, pin);
     };
     window.addEventListener('message', receive); return () => window.removeEventListener('message', receive);
   });

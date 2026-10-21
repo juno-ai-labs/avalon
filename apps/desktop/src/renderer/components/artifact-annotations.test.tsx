@@ -1,4 +1,4 @@
-import {fireEvent,render,screen} from '@testing-library/react';
+import {act,fireEvent,render,screen} from '@testing-library/react';
 import {describe,expect,it} from 'vitest';
 import {AnnotationChips,AnnotationDraftProvider,useAnnotationDraft} from './artifact-annotations';
 function Fixture():React.JSX.Element {
@@ -18,4 +18,24 @@ describe('draft annotation editing',()=>{
     expect(screen.queryByRole('textbox')).toBeNull();
     expect(screen.getByText('Use Try Rally')).toBeVisible();
   });
+});
+
+it('manual reattachment preserves the authored comment and cancellation preserves the original',()=>{
+  let draft:ReturnType<typeof useAnnotationDraft>;
+  function Observe():React.JSX.Element|null {draft=useAnnotationDraft();return null;}
+  render(<AnnotationDraftProvider><Observe/><AnnotationChips/></AnnotationDraftProvider>);
+  const annotation={target:{resourceId:'00000000-0000-7000-8000-000000000001',version:1,locator:{type:'text' as const,start:0,end:3,lines:[1,1] as [number,number]}},content:{exact:'Old',source:'exact' as const,before:'',after:'',truncated:false},comment:'Please clarify'};
+  act(()=>{draft!.add(annotation,'Notes',()=>false);});
+  const original=draft!.pins[0]!;
+  act(()=>{draft!.repair(original);});
+  let candidate='';
+  act(()=>{candidate=draft!.add({...annotation,target:{...annotation.target,version:2},content:{...annotation.content,exact:'New'},comment:''},'Notes',()=>false,undefined,true);});
+  expect(draft!.selections.find((pin)=>pin.id===candidate)?.annotation.comment).toBe('Please clarify');
+  act(()=>{draft!.cancelRepair();});
+  expect(draft!.pins[0]?.annotation.content.exact).toBe('Old');
+  act(()=>{draft!.repair(original);});
+  act(()=>{candidate=draft!.add({...annotation,target:{...annotation.target,version:2},content:{...annotation.content,exact:'New'},comment:''},'Notes',()=>false,undefined,true);});
+  act(()=>{draft!.confirm(candidate);});
+  expect(draft!.pins).toHaveLength(1);
+  expect(draft!.pins[0]).toMatchObject({id:original.id,annotation:{comment:'Please clarify',target:{version:2},content:{exact:'New'}},original:{target:{version:1},content:{exact:'Old'}}});
 });
