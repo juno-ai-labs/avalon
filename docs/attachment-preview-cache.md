@@ -34,7 +34,7 @@ Only image responses with an ETag beginning with `"image-preview-v1:` are saved.
 Raw R2 ETags cannot revalidate, so they are ignored and any previously saved
 rows using them are discarded. The server's preview validator names the
 representation, resource revision and source digest. A matching conditional
-request passes both canonical access checks and returns 304 without reading R2;
+request passes fresh canonical admission and returns 304 without reading R2;
 a changed image replaces the saved bytes. Cold reads add no metadata request.
 Downloaded bytes display before their background save commits. A conditional
 network failure retries the read once without the header, allowing an older
@@ -80,7 +80,9 @@ policy decision to the team rather than inventing a budget.
 
 Run desktop `resource-preview-cache.test.ts`, `api.test.ts` and
 `attachments.test.tsx`, plus API `resource-upload.test.ts` and
-`security-and-config.test.ts`. Cache tests reopen fake-indexeddb; service tests
+`security-and-config.test.ts` and Worker `resource-read-admission.test.ts`.
+The Worker route test checks one admission on a 304, no R2 read, and revocation
+on the next request. Cache tests reopen fake-indexeddb; service tests
 use the actual WorkspaceDO schema over SQLite with the existing R2 fixture.
 Real Electron window checks verify rendering and persistence after process restart.
 
@@ -98,7 +100,7 @@ enter this cache because the preview endpoint cannot return 304 for them.
 **Considered and rejected:** A separate metadata request slows cold opens.
 Reusing bytes without validation can retain obsolete content or revoked access.
 
-**Consequences:** Preserve canonical checks on 304 responses, shared wipe fencing
+**Consequences:** Preserve fresh canonical admission on 304 responses, shared wipe fencing
 and rollback to an API without conditional CORS support. Keep wipe fences scoped
 and pending refreshes separate across observed revisions. Version the validator
 when the representation changes. Authorization latency remains.

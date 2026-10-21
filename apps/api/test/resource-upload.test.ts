@@ -459,7 +459,8 @@ describe('uploaded attachment drafts', () => {
       VALUES (?, ?, 'uploaded_file', 'avalon_upload', 'image.png', 'image/png', 'original-image',
         ?, 'pending', '{}', 'attached', ?, '2026-10-21T00:00:00.000Z', '2026-10-21T00:00:00.000Z')`)
       .run(draftId, workspaceId, 'a'.repeat(64), userId);
-    const preview = (etag?: string) => new ResourceService(env, auth).preview(draftId, new AbortController().signal, etag);
+    const service = new ResourceService(env, auth);
+    const preview = (etag?: string) => service.preview(draftId, new AbortController().signal, etag);
     const first = await preview();
     expect(first.status).toBe(200);
     expect(await first.text()).toBe('PNG image bytes');
