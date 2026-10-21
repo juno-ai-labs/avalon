@@ -105,6 +105,11 @@ hours old.
 
 #### Retention
 
+The People picker's frequency ranking also reads these existing human message
+and mention facts, applying current conversation access before aggregating.
+It stores no second history; this log's retention is its evidence window too.
+[`shared-ui.md`](shared-ui.md#people-picker-order) owns its grouping and scoring.
+
 The WorkspaceDO alarm drops events older than ninety days oldest-first in
 bounded batches and lets the cascade take their targets. The oldest retained
 row schedules the next expiry; an idle workspace does not wake on a polling

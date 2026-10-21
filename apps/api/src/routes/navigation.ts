@@ -13,6 +13,8 @@ import {
   PinListSchema,
   PinOrderRequestSchema,
   PinRequestSchema,
+  PeopleRankingSchema,
+  SpaceIdSchema,
 } from "@rally/contracts";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -37,6 +39,11 @@ const artifactPinParam = z.strictObject({ id: IdSchema });
 export const navigationRoutes = new Hono<HonoAppEnv>();
 
 navigationRoutes.use("*", requireWorkspaceAuth);
+
+navigationRoutes.get("/people-ranking", zValidator("query", z.strictObject({ channelId: SpaceIdSchema.optional() })), async (c) =>
+  c.json(PeopleRankingSchema.parse(await new SpaceService(c.env, getWorkspaceAuth(c))
+    .peopleRanking(c.req.valid("query").channelId ?? null))),
+);
 
 navigationRoutes.get("/threads", zValidator("query", pageQuery), async (c) =>
   c.json(MyThreadsPageSchema.parse(

@@ -200,7 +200,7 @@ describe('a title pill menu with levels', () => {
     expect(onAdd).toHaveBeenCalledWith(newcomer);
   });
 
-  it('lists people who asked to join above Suggested, answered in place and not suggested again', async () => {
+  it('lists people who asked to join above Suggested, answered in place and not offered again', async () => {
     const onDecide = vi.fn();
     const asker = { id: 'user-3', name: 'Samantha Lee', email: 'sam@example.test', timezone: 'UTC' };
     const other = { id: 'user-2', name: 'Jordan', email: 'jordan@example.test', timezone: 'UTC' };
@@ -231,6 +231,50 @@ describe('a title pill menu with levels', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
     expect(await screen.findByText('You')).toBeInTheDocument();
     expect(screen.queryByText('Asked to join')).not.toBeInTheDocument();
+  });
+
+  it('shows five ranked suggestions in one list, while search can reach every other person', async () => {
+    const candidates = Array.from({ length: 14 }, (_, index) => ({
+      id: `person-${index}`, name: `Person ${String(index).padStart(2, '0')}`, email: `person-${index}@example.test`, timezone: 'UTC',
+      ...(index === 13 ? { accessClass: 'guest' as const } : {}),
+    }));
+    const onAdd = vi.fn(() => Promise.resolve());
+    renderChannelPill({ people: {
+      candidates: [member, ...candidates, { ...candidates[0]!, id: 'inactive', status: 'suspended' }], onAdd, adding: false,
+      ranking: {
+        channel: [member.id, 'inactive', 'missing', ...candidates.slice(0, 7).map((person) => person.id)],
+        organization: candidates.slice(0, 12).map((person) => person.id),
+      },
+    } });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+    const sections = [...document.querySelectorAll('.title-menu-section-heading')];
+    expect(sections.map((node) => node.textContent)).toEqual(['Suggested']);
+    expect(screen.getAllByRole('button', { name: /^Add Person/u }).map((button) => button.getAttribute('aria-label')))
+      .toEqual(['Add Person 00', 'Add Person 01', 'Add Person 02', 'Add Person 03', 'Add Person 04']);
+    const search = screen.getByRole('textbox', { name: 'Add someone by name or email' });
+    fireEvent.change(search, { target: { value: 'person' } });
+    expect(screen.getAllByRole('button', { name: /^Add Person/u })).toHaveLength(14);
+    fireEvent.change(search, { target: { value: 'PERSON-13@' } });
+    expect(screen.getAllByRole('button', { name: /^Add Person/u }).map((button) => button.getAttribute('aria-label'))).toEqual(['Add Person 13']);
+    fireEvent.click(screen.getByRole('button', { name: 'Add Person 13' }));
+    expect(onAdd).toHaveBeenCalledWith(candidates[13]);
+    fireEvent.change(search, { target: { value: '' } });
+    expect(screen.getAllByRole('button', { name: /^Add Person/u })).toHaveLength(5);
+  });
+
+  it('fills five suggestions from Channel interactions, Organization interactions, Members, then Guests', async () => {
+    const person = (id: string, name: string) => ({ id, name, email: `${id}@example.test`, timezone: 'UTC' });
+    renderChannelPill({ people: {
+      candidates: [member, person('channel', 'Zoe'), person('org', 'Ari'), person('member-z', 'Zed'), person('member-b', 'Beta'),
+        { ...person('guest', 'Alex'), accessClass: 'guest' }, { ...person('guest-z', 'Zoe Guest'), accessClass: 'guest' }],
+      ranking: { channel: [member.id, 'channel'], organization: ['channel', 'org'] },
+      onAdd: vi.fn(() => Promise.resolve()), adding: false,
+    } });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
+    expect(screen.getAllByRole('button', { name: /^Add /u }).map((button) => button.getAttribute('aria-label')))
+      .toEqual(['Add Zoe', 'Add Ari', 'Add Beta', 'Add Zed', 'Add Alex']);
   });
 
   it('invites new addresses as guests on Enter, adds people already in the organization, and stays open', async () => {

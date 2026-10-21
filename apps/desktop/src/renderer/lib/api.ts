@@ -21,6 +21,8 @@ import {
   type ChannelStats,
   type ChannelStatsList,
   PinListSchema,
+  PeopleRankingSchema,
+  type PeopleRanking,
   ArtifactPinListSchema,
   type ActivityEvent,
   type ActivityFilter,
@@ -1600,6 +1602,11 @@ export class RallyApi {
 
   getChannelStats(signal?: AbortSignal): Promise<ChannelStatsList> {
     return this.request('/navigation/channel-stats', { schema: ChannelStatsListSchema, ...(signal ? { signal } : {}) });
+  }
+
+  getPeopleRanking(channelId: string | null, signal?: AbortSignal): Promise<PeopleRanking> {
+    const query = channelId === null ? '' : `?${new URLSearchParams({ channelId })}`;
+    return this.request(`/navigation/people-ranking${query}`, { schema: PeopleRankingSchema, signal });
   }
 
   /**
