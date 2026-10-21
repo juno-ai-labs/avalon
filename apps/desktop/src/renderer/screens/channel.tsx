@@ -1,5 +1,6 @@
 import { readAnnotationVersion } from '../lib/annotation-preview';
 import { newWorkstreamDraftKey } from '../lib/draft-keys';
+import { usePeopleRanking } from '../lib/use-people-ranking';
 import { AnnotationDraftProvider } from '../components/artifact-annotations';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import clsx from 'clsx';
@@ -940,6 +941,7 @@ function ChannelHeader({ members, space, workspace }: {
     lazy: true,
   });
   const member = workspace.currentUser.accessClass !== 'guest';
+  const peopleRanking = usePeopleRanking(api, workspace.id, workspace.currentUser.id, space.id, member);
   const editable = member && space.reach !== 'through_channel';
   const general = space.systemRole === 'general';
   // A Personal Channel is its owner's alone: nobody can be added, it cannot
@@ -1080,6 +1082,7 @@ function ChannelHeader({ members, space, workspace }: {
     } : {}),
     title: space.name,
     label: `Channel menu: ${space.name}`,
+    onMenuOpen: editable && !personal ? peopleRanking.onOpen : undefined,
     menu: <ChannelContainerMenu
       addSidekick={editable && addable.length > 0 ? <DropdownMenu.Sub>
         <DropdownMenu.SubTrigger className="menu-item title-menu-item">
@@ -1111,6 +1114,7 @@ function ChannelHeader({ members, space, workspace }: {
       onOpenSidekick={(id) => void desktopBridge().openSidekicks(id)}
       onRename={editable ? () => setRenaming(space.name) : undefined}
       people={editable && !personal ? {
+        ...peopleRanking,
         candidates: members.filter((candidate) => !participantIds.includes(candidate.id) && (candidate.status ?? 'active') === 'active'),
         adding,
         currentUserId: workspace.currentUser.id,

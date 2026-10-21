@@ -20,6 +20,7 @@ import {
   MyThreadsPageSchema,
   PinKindSchema,
   PinListSchema,
+  PeopleRankingSchema,
   ArtifactPinListSchema,
   SpaceChannelPageSchema,
   SpaceErrorCodeSchema,
@@ -456,6 +457,14 @@ export const WorkspaceActivityResultSchema = z.union([
   SpaceFailureSchema,
 ]);
 export type WorkspaceActivityResult = z.infer<typeof WorkspaceActivityResultSchema>;
+
+export const WorkspacePeopleRankingRequestSchema = SpaceActorSchema.extend({ spaceId: SpaceIdSchema.nullable() }).strict();
+export type WorkspacePeopleRankingRequest = z.infer<typeof WorkspacePeopleRankingRequestSchema>;
+export const WorkspacePeopleRankingResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), ranking: PeopleRankingSchema }),
+  SpaceFailureSchema,
+]);
+export type WorkspacePeopleRankingResult = z.infer<typeof WorkspacePeopleRankingResultSchema>;
 
 /** One Activity row a push names, read back when the push is sent. */
 export const WorkspaceActivityPushReadRequestSchema = SpaceActorSchema.extend({

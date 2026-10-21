@@ -16,7 +16,7 @@
  */
 import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   asSpaceId,
@@ -46,6 +46,7 @@ import { WorkspaceRegionalEffectApplyRequestSchema } from "../src/durable-object
 import { applyWorkstreamRegionalEnvelope } from "../src/durable-objects/workspace-regional-effect-storage";
 import { hostedParentStub } from "./helpers/hosted-parent";
 import { withSpaceStorage, placeMembership, removeMembership } from "./helpers/space-membership";
+import { rankPeople } from "../src/durable-objects/workspace-people-ranking";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000e100");
 const OWNER = asUserId("00000000-0000-7000-8000-00000000e101");
@@ -271,6 +272,105 @@ describe("Channel feed", () => {
     ]);
     // The owner opens both, so both are listed for them.
     expect((await feed(channelId, OWNER)).items.map((item) => item.thread.id)).toEqual([PRIVATE_THREAD, OPEN_THREAD]);
+  });
+});
+
+describe("People interaction ranking", () => {
+  async function message(threadId: WorkstreamId, author: UserId, targets: Array<{ userId: UserId; relation: string }>, options: {
+    substreamId?: string; metadata?: Record<string, unknown>; actorType?: 'user' | 'agent'; occurredAt?: string;
+  } = {}) {
+    await workspace().recordActivityEvent({
+      workspaceId: WORKSPACE_ID, eventType: 'workstream_message_created', subjectType: 'workstream', subjectId: threadId,
+      actorType: options.actorType ?? 'user', actorUserId: author, actorLabel: 'A person', title: 'A message',
+      audience: { kind: 'workstream', workstreamId: threadId }, digestible: false,
+      occurredAt: options.occurredAt ?? '2026-10-20T12:00:00.000Z', sourceKind: 'workstream_message', dedupeKey: messageId(),
+      targets, metadata: { substreamId: options.substreamId ?? '0', ...options.metadata },
+    });
+  }
+
+  it("seeks a person's interactions without scanning unrelated Organization history", async () => {
+    const spaceId = await channelWithThreads();
+    await message(OPEN_THREAD, OWNER, [{ userId: MEMBER, relation: 'mentioned' }]);
+    await message(OPEN_THREAD, GUEST, [{ userId: OWNER, relation: 'mentioned' }]);
+    await publish(OPEN_THREAD, [breakoutEffect('Shared breakout'), viewerEffect(OWNER), viewerEffect(MEMBER)], BREAKOUT);
+    await message(OPEN_THREAD, MEMBER, [], { substreamId: BREAKOUT });
+    await runInDurableObject(workspace(), (_instance, state) => {
+      const reads = (): number => {
+        const spy = vi.spyOn(state.storage.sql, 'exec');
+        try {
+          expect(rankPeople(state.storage, { userId: OWNER, accessClass: 'member' }, spaceId)).toEqual({
+            channel: [MEMBER, GUEST], organization: [MEMBER, GUEST],
+          });
+          return (spy.mock.results[0]!.value as ReturnType<SqlStorage['exec']>).rowsRead;
+        } finally { spy.mockRestore(); }
+      };
+      const before = reads();
+      // Public replies between other people, with real target edges, must not
+      // make this person's read grow with the Organization's retained traffic.
+      state.storage.sql.exec(`WITH RECURSIVE numbers(n) AS
+        (SELECT 1 UNION ALL SELECT n + 1 FROM numbers WHERE n < 10000)
+        INSERT INTO workspace_activity_events (
+          event_id, event_type, subject_type, subject_id, actor_type, actor_user_id, actor_label, title, body,
+          audience_kind, audience_workstream_id, digestible, occurred_at, created_at, source_kind, dedupe_key, metadata_json
+        ) SELECT 'unrelated:' || n, 'workstream_message_created', 'workstream', ?, 'user', ?, 'Other', 'Other', '',
+          'workstream', ?, 0, 1, 1, 'workstream_message', 'unrelated:' || n, '{"substreamId":"0"}' FROM numbers`,
+      OPEN_THREAD, MEMBER, OPEN_THREAD);
+      state.storage.sql.exec(`INSERT INTO workspace_activity_event_targets (event_id, user_id, relation, created_at)
+        SELECT event_id, ?, 'mentioned', 1 FROM workspace_activity_events WHERE event_id LIKE 'unrelated:%'`, GUEST);
+      const after = reads();
+      expect(after).toBeLessThanOrEqual(before + 2);
+    });
+  });
+
+  it("given replies and mentions, when ranking people, then Channel frequency and Organization frequency differ and each message counts once per person", async () => {
+    const spaceId = await channelWithThreads();
+    await publish(MEMBER_THREAD, [threadEffect('Another Channel'), viewerEffect(OWNER)]);
+    const target = (userId: UserId) => [{ userId, relation: 'participant' }, { userId, relation: 'mentioned' }];
+    await message(OPEN_THREAD, MEMBER, target(OWNER));
+    await message(OPEN_THREAD, OWNER, [...target(MEMBER), { userId: GUEST, relation: 'mentioned' }]);
+    for (let i = 0; i < 3; i += 1) await message(MEMBER_THREAD, GUEST, target(OWNER));
+    // Public activity between other people, copied merges and agent text are not interactions with the reader.
+    for (let i = 0; i < 5; i += 1) {
+      await message(OPEN_THREAD, MEMBER, target(GUEST));
+      await message(OPEN_THREAD, MEMBER, target(OWNER), { actorType: 'agent' });
+      await message(OPEN_THREAD, MEMBER, target(OWNER), { metadata: { mergedFrom: { breakoutId: BREAKOUT } } });
+    }
+    expect(await workspace().peopleRanking({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId })).toEqual({
+      ok: true, ranking: { channel: [MEMBER, GUEST], organization: [GUEST, MEMBER] },
+    });
+    expect(await workspace().peopleRanking({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: null })).toEqual({
+      ok: true, ranking: { channel: [], organization: [GUEST, MEMBER] },
+    });
+  });
+
+  it("given inaccessible conversations, when ranking people, then their messages do not contribute and guests cannot read the ranking", async () => {
+    const spaceId = await channelWithThreads();
+    await message(PRIVATE_THREAD, OWNER, [{ userId: MEMBER, relation: 'mentioned' }]);
+    await publish(OPEN_THREAD, [breakoutEffect('Private breakout'), viewerEffect(OWNER)], BREAKOUT);
+    await message(OPEN_THREAD, OWNER, [{ userId: MEMBER, relation: 'mentioned' }], { substreamId: BREAKOUT });
+    expect(await workspace().peopleRanking({ workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId })).toEqual({
+      ok: true, ranking: { channel: [], organization: [] },
+    });
+    expect(await workspace().peopleRanking({ workspaceId: WORKSPACE_ID, userId: GUEST, spaceId: null })).toEqual({
+      ok: false, code: 'space_access_denied',
+    });
+  });
+
+  it("given a shared breakout, when ranking its replies and mentions, then both directions count and recency breaks frequency ties", async () => {
+    const spaceId = await channelWithThreads();
+    await publish(OPEN_THREAD, [breakoutEffect('Shared breakout'), viewerEffect(OWNER), viewerEffect(MEMBER)], BREAKOUT);
+    await message(OPEN_THREAD, MEMBER, [], { substreamId: BREAKOUT });
+    await message(OPEN_THREAD, OWNER, [{ userId: MEMBER, relation: 'mentioned' }], { substreamId: BREAKOUT });
+    await message(OPEN_THREAD, GUEST, [{ userId: OWNER, relation: 'mentioned' }], { occurredAt: '2026-10-21T12:00:00.000Z' });
+    await message(OPEN_THREAD, OWNER, [{ userId: GUEST, relation: 'mentioned' }], { occurredAt: '2026-10-21T12:01:00.000Z' });
+    expect(await workspace().peopleRanking({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId })).toEqual({
+      ok: true, ranking: { channel: [GUEST, MEMBER], organization: [GUEST, MEMBER] },
+    });
+    // Losing the breakout grant removes that evidence immediately.
+    await publish(OPEN_THREAD, [viewerEffect(OWNER, { isParticipant: false, listable: false })], BREAKOUT, 2);
+    expect(await workspace().peopleRanking({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId })).toEqual({
+      ok: true, ranking: { channel: [GUEST], organization: [GUEST] },
+    });
   });
 });
 
