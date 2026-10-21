@@ -979,10 +979,14 @@ describe("naming somebody when the work stream is created", () => {
   });
 });
 
-describe("confirming a nonparticipant mention on an existing work stream", () => {
-  it("persists a workspace-visible mention without seating or confirming the recipient", async () => {
+describe("mentioning a nonparticipant on an existing conversation", () => {
+  it.each(["queued", "direct"] as const)("seats a workspace-visible mention recipient without confirmation (%s)", async (mode) => {
     const stub = agentStub(WORKSPACE_VISIBLE_MENTION_ID);
     await provisionWorkstream(stub, WORKSPACE_VISIBLE_MENTION_ID, { scope: "workspace" });
+    await sendAndSettle(stub, {
+      clientMessageId: "workspace-history-before-mention",
+      seed: { packVersion: "test", actionId: "workspace-history", assistant: null },
+    });
     const sent = await product(stub, {
       operation: "create_message",
       auth: AUTH,
@@ -998,16 +1002,19 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
         }],
         confirmedParticipantUserIds: [],
         attachmentIds: [],
+        ...(mode === "direct" ? {
+          seed: { packVersion: "test", actionId: "workspace-mention", assistant: null },
+        } : {}),
       },
     });
     expect(sent.status).toBe(200);
     await waitForCanonicalTurn(stub, (sent.body.turn as { turnId: string }).turnId);
 
     await runInDurableObject(stub, (_instance, state) => {
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM participants WHERE user_id = ?`,
+      expect(state.storage.sql.exec<{ status: string; first_opened_at: number | null }>(
+        `SELECT status, first_opened_at FROM participants WHERE user_id = ?`,
         INVITEE_ID,
-      ).one().count).toBe(0);
+      ).one()).toMatchObject({ status: "active", first_opened_at: null });
       expect(state.storage.sql.exec<{ target_user_id: string }>(
         `SELECT target_user_id FROM participant_transcript_mentions WHERE turn_id = ?`,
         (sent.body.turn as { turnId: string }).turnId,
@@ -1018,6 +1025,14 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
       envelope.effect.kind === "mention_notification"
       && envelope.effect.recipientUserId === INVITEE_ID
     ))).toHaveLength(1);
+    expect(envelopes.filter((envelope) => (
+      envelope.effect.kind === "participant_notification"
+      && envelope.effect.recipientUserId === INVITEE_ID
+    ))).toHaveLength(0);
+    expect(await openedByInvitee(stub)).toMatchObject({
+      firstUnreadSequenceNumber: 2,
+      readThroughSequenceNumber: 1,
+    });
   });
 
   it("seats the accepted target and emits only the specific mention notification", async () => {
@@ -1127,9 +1142,9 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
     });
   });
 
-  it("does not let confirmation seat the raw target of a rejected mention", async () => {
+  it.each(["personal", "workspace"] as const)("does not seat the raw target of a rejected mention (%s)", async (scope) => {
     const stub = agentStub(REJECTED_CONFIRMED_MENTION_ID);
-    await provisionWorkstream(stub, REJECTED_CONFIRMED_MENTION_ID);
+    await provisionWorkstream(stub, REJECTED_CONFIRMED_MENTION_ID, { scope });
     const sent = await product(stub, {
       operation: "create_message",
       auth: AUTH,

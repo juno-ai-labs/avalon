@@ -4766,10 +4766,13 @@ export class WorkstreamObjectProductService {
     const prepared = prepareMentionMarkdown(input.text, input.mentions, people);
     const personIds = [...new Set(prepared.mentions.flatMap((mention) =>
       mention.type === "person" && mention.userId ? [mention.userId] : []))];
-    // Confirmation is authority for an accepted mention, not a second generic
-    // participant-add API. A malformed or spoofed range cannot smuggle its raw
-    // target into the audience after canonicalization rejects it.
-    const confirmedParticipantUserIds = input.confirmedParticipantUserIds.filter((userId) => personIds.includes(userId));
+    // Every accepted person mention seats its recipient. Workspace-visible
+    // conversations already grant read access; personal conversations still
+    // require confirmation before enlarging their audience. Only canonical
+    // mentions can seat people, never raw IDs from a rejected range.
+    const confirmedParticipantUserIds = root.scope === "workspace"
+      ? personIds
+      : input.confirmedParticipantUserIds.filter((userId) => personIds.includes(userId));
     if (root.scope === "personal" && confirmedParticipantUserIds.length > 0) {
       const currentAudience = this.readerAudience(root);
       if (currentAudience.scope !== "personal") throw new Error("personal_reader_audience_expected");
