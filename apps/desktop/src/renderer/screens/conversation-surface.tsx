@@ -1,3 +1,4 @@
+import { validateAnnotationSend } from '../lib/use-annotation-pins';
 import { TranscriptHistoryStatus } from '../components/transcript-history-status';
 import { loadAnnotationPreview, readAnnotationVersion } from '../lib/annotation-preview';
 import { AnnotationDraftProvider, useAnnotationDraft } from '../components/artifact-annotations';
@@ -1375,7 +1376,7 @@ export interface ConversationSurfaceProps {
  */
 export function ConversationSurface(props: ConversationSurfaceProps): React.JSX.Element {
   const { api, session } = useCollaborationSession();
-  return <AnnotationDraftProvider draftKey={workstreamDraftKey(session?.workspace?.region ?? 'global', session?.workspace?.id ?? 'unbound', props.parentId, props.substreamId)} scopeKey={`${props.parentId}:${props.substreamId}`} readResource={api ? (id) => api.getResource(id) : undefined} readResourceVersion={api ? (id,version,signal,annotation) => readAnnotationVersion(api,id,version,signal,annotation) : undefined} upload={api ? async (file) => (await api.uploadResource(file, crypto.randomUUID())).id : undefined}><ConversationSurfaceContent {...props} /></AnnotationDraftProvider>;
+  return <AnnotationDraftProvider draftKey={workstreamDraftKey(session?.workspace?.region ?? 'global', session?.workspace?.id ?? 'unbound', props.parentId, props.substreamId)} scopeKey={`${props.parentId}:${props.substreamId}`} readResource={api ? (id) => api.getResource(id) : undefined} readResourceVersion={api ? (id,version,signal,annotation,mimeType) => readAnnotationVersion(api,id,version,signal,annotation,mimeType) : undefined} upload={api ? async (file) => (await api.uploadResource(file, crypto.randomUUID())).id : undefined}><ConversationSurfaceContent {...props} /></AnnotationDraftProvider>;
 }
 
 function ConversationSurfaceContent({
@@ -2850,6 +2851,8 @@ function ConversationSurfaceContent({
       throw new ApiError(MESSAGE_TOO_LONG_MESSAGE, 400, 'message_too_long');
     }
     const sentPins = await annotationDraft?.prepareSend() ?? [];
+    validateAnnotationSend(sentPins, attachmentDraft.ready.length);
+    if (sentPins.length && (sending || activeElicitation)) throw new Error(activeElicitation ? 'Answer the open question before sending artifact comments.' : 'Your artifact comments are still sending.');
     if (annotationDraft?.pins.length && !text.trim() && !sentPins.length && !attachmentDraft.ready.length) throw new Error('Reattach a comment before sending it.');
     // Sending is the strongest statement anyone can make that they mean to be
     // at the end: they are about to add to it, and the answer is what they are

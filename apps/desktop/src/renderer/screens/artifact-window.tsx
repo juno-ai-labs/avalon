@@ -39,7 +39,7 @@ export function ArtifactWindow(): React.JSX.Element {
       const value=z.object({content:z.instanceof(Uint8Array),mimeType:z.string()}).parse(await command(action));
       return new Blob([Uint8Array.from(value.content)],{type:value.mimeType});
     }} upload={async (file) => { const id = crypto.randomUUID(); files.current.set(id,file); return id; }}>
-    {preview && <ArtifactWindowContent preview={preview} files={files.current} />}
+    <ArtifactWindowContent preview={preview} files={files.current} />
   </AnnotationDraftProvider>}</Tooltip.Provider>;
 }
 export function ArtifactWindowContent({preview: request,files}: {preview:DesktopArtifactWindowRequest;files:Map<string,File>}): React.JSX.Element {
@@ -112,7 +112,7 @@ export function ArtifactWindowContent({preview: request,files}: {preview:Desktop
       if(!submitted.length)throw new Error('Reattach a comment before adding it to the message.');
       const pins = await Promise.all(submitted.map(async (pin) => {
         const image = pin.annotation.content.imageAttachmentId ? files.get(pin.annotation.content.imageAttachmentId) : undefined;
-        return { id:pin.id, annotation:pin.annotation,...(pin.image ? {image:new Uint8Array(pin.image.bytes)} : image ? {image:new Uint8Array(await image.arrayBuffer())} : {}) };
+        return { id:pin.id, ...(request.annotationDraftKey && pin.generation ? {generation:pin.generation} : {}), annotation:pin.annotation,...(pin.annotation.content.imageAttachmentId && pin.image ? {image:new Uint8Array(pin.image.bytes)} : image ? {image:new Uint8Array(await image.arrayBuffer())} : {}) };
       }));
       if (!await window.rally?.returnArtifactAnnotations?.(pins)) throw new Error('Open the original conversation to add these pins.');
       if (!request.annotationDraftKey) draft.clearAccepted(submitted);

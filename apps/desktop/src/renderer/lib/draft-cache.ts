@@ -338,7 +338,7 @@ function regionalDraftKey(
  * session identifies their authority. Only legacy prefixes are considered, so
  * retries are idempotent; a newer regional row wins an interrupted rewrite. */
 export async function migrateLegacyDrafts(region: RallyRegion, workspaceId: string): Promise<void> {
-  await withStores([TEXT_STORE, ATTACHMENT_STORE, ANNOTATION_STORE], 'readwrite', async (transaction) => {
+  await withStores([TEXT_STORE, ATTACHMENT_STORE], 'readwrite', async (transaction) => {
     const textStore = transaction.objectStore(TEXT_STORE);
     for (const record of await awaitRequest(textStore.getAll())) {
       const legacy = parseCachedText(record);
