@@ -141,6 +141,13 @@ Organization-wide.
 thread and breakout they take part in under **All threads**
 (`GET /navigation/threads`), ordered **Recent** (default), **A–Z** or
 **Needs attention** (`rally.sidebar-thread-sort`).
+Under Needs attention, opening a thread or Breakout holds its current position
+while its unread state clears; selecting it never grants attention priority.
+Other rows continue sorting relative to one another by attention and activity,
+so the held row can sit between unread rows. Opening another row releases the
+previous one to its natural order, and changing the sort resets the hold. A
+Breakout's `substream` query identifies its held and highlighted row; the parent
+thread named in its pathname continues sorting normally.
 A row is the thread's circle tile with a squircle badge for each Channel it
 sits in (two at most, the room a tile has), its title, its last activity time, and the Channels' names. A
 breakout's tile carries its thread's circle badge instead, with the thread's
@@ -570,6 +577,27 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-21 — Opening a thread holds its slot in Needs attention
+
+**What changed:** The open thread or Breakout keeps its last displayed position
+under Needs attention, including after its unread state clears. Navigating away
+releases it; an explicit sort change starts a fresh order.
+
+**Why:** Treating the open thread as needing attention promoted already-read
+threads on selection. The intended protection against a row dropping while
+being read instead made the list jump when someone opened it.
+
+**Considered and rejected:** Removing the hold entirely would let an unread
+thread drop as soon as opening it marks it read. Freezing the whole list would
+hide unrelated attention and activity changes.
+
+**Consequences:** Selection never supplies attention rank. Only the open row's
+slot is held locally; the other rows continue sorting from current data. A
+Breakout's own ID from the query owns the hold and highlight, leaving its
+parent free to reorder.
+
+PR: [#1379](https://github.com/juno-ai-labs/avalon/pull/1379).
 
 ### 2026-10-19 — Electron history controls before the breadcrumb
 

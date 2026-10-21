@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '../lib/api';
-import { ARTIFACT_PINS_QUERY_KEY, CHANNEL_STATS_QUERY_KEY, PINS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
+import { ARTIFACT_PINS_QUERY_KEY, CHANNEL_STATS_QUERY_KEY, MY_THREADS_QUERY_KEY, PINS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
 import type { ArtifactPin, ChannelStats } from '@rally/contracts';
 import type { SpaceConversationSummary, Workspace } from '../lib/types';
 import { markDeepLinkWorkstreamNavigation } from '../lib/deep-link-navigation';
@@ -574,6 +574,113 @@ describe('the navigation sidebar', () => {
     await waitFor(() => expect(screen.getByRole('tooltip')).toHaveTextContent('Q4 plan'));
     fireEvent.click(list.getByRole('link', { name: /Make a website/u }));
     expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/plan?substream=site');
+  });
+
+  describe('holding the open thread in Needs attention', () => {
+    const items = [
+      thread('fresh', 'Fresh unread', { hasUnread: true, lastActivityAt: '2026-10-04T00:00:00.000Z' }),
+      thread('old', 'Old unread', { hasUnread: true, lastActivityAt: '2026-10-01T00:00:00.000Z' }),
+      thread('new-read', 'New read', { lastActivityAt: '2026-10-05T00:00:00.000Z' }),
+      thread('old-read', 'Old read', { lastActivityAt: '2026-10-02T00:00:00.000Z' }),
+    ];
+    const names = (): Array<string | null | undefined> => threadRows(within(screen.getByRole('region', { name: 'All threads' })))
+      .map(([title]) => title);
+    const seed = (client: QueryClient): void => {
+      client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] });
+    };
+
+    beforeEach(() => {
+      useUiStore.getState().setSidebarSection('threads');
+      useUiStore.getState().setThreadSort('needs_you');
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items, pinned: [] });
+    });
+
+    it('leaves an already-read thread in its slot when opened, including on the initial route', async () => {
+      renderSidebar(seed, 0, { route: '/channels/outbound/threads/old-read' });
+      await waitFor(() => expect(names()).toEqual(['Fresh unread', 'Old unread', 'New read', 'Old read']));
+
+      fireEvent.click(screen.getByRole('link', { name: /^New read/u }));
+      expect(screen.getByTestId('location')).toHaveTextContent('/channels/outbound/threads/new-read');
+      expect(names()).toEqual(['Fresh unread', 'Old unread', 'New read', 'Old read']);
+    });
+
+    it('keeps an unread thread in its slot after reading it, then releases it on navigation', async () => {
+      // Deliver the same query-cache update the workspace socket publishes after a read.
+      let cache!: QueryClient;
+      renderSidebar((queryClient) => { cache = queryClient; seed(queryClient); });
+      await waitFor(() => expect(names()).toEqual(['Fresh unread', 'Old unread', 'New read', 'Old read']));
+
+      fireEvent.click(screen.getByRole('link', { name: /^Old unread/u }));
+      cache.setQueryData(MY_THREADS_QUERY_KEY, {
+        pages: [{ nextCursor: null, pinned: [], items: items.map((row) => row.id === 'old' ? { ...row, hasUnread: false } : row) }],
+        pageParams: [null],
+      });
+      await waitFor(() => expect(screen.getByRole('link', { name: /^Old unread/u })).not.toHaveClass('is-unread'));
+      expect(names()).toEqual(['Fresh unread', 'Old unread', 'New read', 'Old read']);
+
+      fireEvent.click(screen.getByRole('link', { name: /^Fresh unread/u }));
+      expect(names()).toEqual(['Fresh unread', 'New read', 'Old read', 'Old unread']);
+    });
+
+    it.each(['/channels/outbound/threads/new-read', '/workstreams/new-read'])(
+      'holds the breakout row instead of its parent under %s', async (route) => {
+        const breakoutItems = items.map((row) => row.id === 'old' ? {
+          ...row, kind: 'breakout' as const,
+          breakoutOf: { workstreamId: 'new-read', substreamId: 'old', title: 'New read' },
+        } : row);
+        api.getMyThreads.mockResolvedValue({ nextCursor: null, items: breakoutItems, pinned: [] });
+        let cache!: QueryClient;
+        renderSidebar((queryClient) => { cache = queryClient; seed(queryClient); }, 0, { route: `${route}?substream=old` });
+        await waitFor(() => expect(names()).toEqual(['Fresh unread', 'Old unread', 'New read', 'Old read']));
+
+        cache.setQueryData(MY_THREADS_QUERY_KEY, {
+          pages: [{ nextCursor: null, pinned: [], items: breakoutItems.map((row) => row.id === 'old' ? { ...row, hasUnread: false } : row) }],
+          pageParams: [null],
+        });
+        await waitFor(() => expect(screen.getByRole('link', { name: /^Old unread/u })).not.toHaveClass('is-unread'));
+        expect(names()).toEqual(['Fresh unread', 'Old unread', 'New read', 'Old read']);
+        expect(screen.getByRole('link', { name: /^Old unread/u })).toHaveAttribute('aria-current', 'page');
+        expect(screen.getByRole('link', { name: /^New read/u })).not.toHaveAttribute('aria-current');
+
+        // Its parent still responds to new activity rather than inheriting the hold.
+        cache.setQueryData(MY_THREADS_QUERY_KEY, {
+          pages: [{ nextCursor: null, pinned: [], items: breakoutItems.map((row) => row.id === 'old'
+            ? { ...row, hasUnread: false }
+            : row.id === 'new-read' ? { ...row, hasUnread: true, lastActivityAt: '2026-10-06T00:00:00.000Z' } : row) }],
+          pageParams: [null],
+        });
+        await waitFor(() => expect(names()).toEqual(['New read', 'Old unread', 'Fresh unread', 'Old read']));
+      },
+    );
+
+    it('sorts other threads from live activity while holding the open thread’s slot', async () => {
+      let cache!: QueryClient;
+      renderSidebar((queryClient) => { cache = queryClient; seed(queryClient); });
+      await waitFor(() => expect(names()).toEqual(['Fresh unread', 'Old unread', 'New read', 'Old read']));
+      fireEvent.click(screen.getByRole('link', { name: /^Old unread/u }));
+
+      cache.setQueryData(MY_THREADS_QUERY_KEY, {
+        pages: [{ nextCursor: null, pinned: [], items: items.map((row) => row.id === 'old'
+          ? { ...row, hasUnread: false }
+          : row.id === 'old-read' ? { ...row, hasUnread: true, lastActivityAt: '2026-10-06T00:00:00.000Z' } : row) }],
+        pageParams: [null],
+      });
+      await waitFor(() => expect(names()).toEqual(['Old read', 'Old unread', 'Fresh unread', 'New read']));
+      expect(screen.getByRole('link', { name: /^Old unread/u })).not.toHaveClass('is-unread');
+    });
+
+    it('respects an explicit sort change while the thread is open', async () => {
+      renderSidebar(seed);
+      await waitFor(() => expect(names()).toEqual(['Fresh unread', 'Old unread', 'New read', 'Old read']));
+      fireEvent.click(screen.getByRole('link', { name: /^Old unread/u }));
+
+      fireEvent.click(screen.getByRole('button', { name: 'Sorted by Needs attention. Sort by Recent' }));
+      expect(names()).toEqual(['New read', 'Fresh unread', 'Old read', 'Old unread']);
+      fireEvent.click(screen.getByRole('button', { name: 'Sorted by Recent. Sort by A–Z' }));
+      expect(names()).toEqual(['Fresh unread', 'New read', 'Old read', 'Old unread']);
+      fireEvent.click(screen.getByRole('button', { name: 'Sorted by A–Z. Sort by Needs attention' }));
+      expect(names()).toEqual(['Fresh unread', 'Old unread', 'New read', 'Old read']);
+    });
   });
 
   it('badges a breakout with its thread’s live appearance, not the one its listed page carried', async () => {
