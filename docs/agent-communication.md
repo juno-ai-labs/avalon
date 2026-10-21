@@ -99,6 +99,11 @@ Migration 69 adds the root conversation: the first conversation up the
 delegation chain that nobody delegated. `start_agent` sets it to the starter's
 own conversation, or to the starter's root when the starter is itself a
 background agent.
+Under a Sidekick, a non-main root is the worker's run authority: activation and
+model/tool boundaries retain that run's pause, principal and stop-generation
+fences without loading its instructions. Authoring-rooted workers have no run
+gate. [`automation-lifecycle.md`](automation-lifecycle.md#continuing-a-run) owns
+that distinction and the authority-only `automationDelegation` reference.
 Stopping also requests the existing active-execution stop. The timestamp holds
 pending work when the loop is idle; a newly accepted continuation clears it in
 the same transaction that admits the message.
