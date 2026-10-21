@@ -9,8 +9,20 @@ import type { AttachmentPreview } from './attachments';
 import { AttachmentGalleryThumbnails, AttachmentViewBody, useAttachmentView } from './attachment-lightbox';
 import { IconButton } from './primitives';
 import { RailSurface } from './rail-surface';
-import { useCopy } from '../lib/use-copy';
+import { useCopy, type CopyState } from '../lib/use-copy';
 import { CopyStatus, copyStateLabel } from './copy-button';
+
+/** A gallery selection owns its feedback; unmounting also discards pending writes' outcomes. */
+function AttachmentCopyScope({ copyLink, children }: {
+  copyLink: (() => Promise<void>) | undefined;
+  children: (copy: () => Promise<void>, state: CopyState) => React.JSX.Element;
+}): React.JSX.Element {
+  const { copy, state } = useCopy({ value: '', copyText: async () => {
+    if (!copyLink) throw new Error('This attachment has no link');
+    await copyLink();
+  } });
+  return children(copy, state);
+}
 
 /**
  * An attachment, a file a citation names, or a prior version of a resource,
@@ -40,10 +52,6 @@ export function AttachmentPanel({ ancestors, expandAction, preview, leaving = fa
   const view = useAttachmentView(preview);
   const { gallery, active, mode, src, error, step } = view;
   const copyLink = active?.resourceId ? resourceLink?.(active.resourceId) : undefined;
-  const { copy, state: copyState } = useCopy({ value: '', copyText: async () => {
-    if (!copyLink) throw new Error('This attachment has no link');
-    await copyLink();
-  } });
   const shownId = active?.resourceId ?? null;
   useEffect(() => {
     onShow?.(preview, shownId);
@@ -69,6 +77,7 @@ export function AttachmentPanel({ ancestors, expandAction, preview, leaving = fa
       resizeLabel="Resize attachment panel"
       width={width}
     >
+      <AttachmentCopyScope key={shownId ?? view.activeIndex} copyLink={copyLink}>{(copy, copyState) => <>
       <TitlePillHeader
         className="panel-title-header"
         current={{
@@ -78,7 +87,7 @@ export function AttachmentPanel({ ancestors, expandAction, preview, leaving = fa
           label: `Attachment menu: ${active.name}`,
           menu: <>
             <TitleMenuHeader eyebrow={preview.superseded ? preview.superseded.label : 'Attachment'} icon={icon} title={active.name} />
-            <ActionTiles>
+            <ActionTiles className="artifact-menu-tiles">
               <ActionTile disabled={Boolean(error) || !(src || active.loadContent)} icon={<IconDownload aria-hidden="true" size={20} stroke={1.6} />} label="Download" onSelect={view.download} />
               {copyLink && <ActionTile icon={<IconLink aria-hidden="true" size={20} stroke={1.6} />} label={copyStateLabel(copyState, 'Copy URL')} onSelect={() => void copy()} />}
               {active.onDetails && <ActionTile icon={<IconInfoCircle aria-hidden="true" size={20} stroke={1.6} />} label="Details" onSelect={active.onDetails} />}
@@ -115,6 +124,7 @@ export function AttachmentPanel({ ancestors, expandAction, preview, leaving = fa
           </footer>
         )}
       </div>
+      </>}</AttachmentCopyScope>
     </RailSurface></DetailHeaderActionsHost>
   );
 }
