@@ -4411,6 +4411,13 @@ export interface RunHarnessInput {
   /** Called after the exact post-validation provider input has been hash-checked. */
   onBindProviderBoundary?: (boundary: BindProviderBoundary) => void | Promise<void>;
   /**
+   * Validate a completed reservation whose historical turn ID predates a loop
+   * relocation. The host must verify the exact current head, local materialized
+   * reservation and transcript, and next-turn counters. No IDs are rewritten.
+   * Absent or false keeps the ordinary strict resume check.
+   */
+  validateHistoricalAssistantReservation?: (projection: BindLoopProjectionState) => boolean | Promise<boolean>;
+  /**
    * Reserve the participant transcript position before any provider request for
    * this model turn. Transcript-aware hosts require this port and must commit
    * before resolving; generic Bind hosts omit it and receive sequence-less

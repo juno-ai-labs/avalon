@@ -371,7 +371,8 @@ export function pendingBindToolBatch(
     if (accepted.has(providerToolCallId)) return [];
     return [{
       providerToolCallId,
-      receiptToolCallId: `${state.loopId}:turn:${reservation.modelTurnIndex}:tool:${callIndex}`,
+      // Turn IDs survive relocation; receipts and elicitations retain that identity.
+      receiptToolCallId: `${reservation.turnId}:tool:${callIndex}`,
       callIndex,
       toolName,
     }];

@@ -5301,6 +5301,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         });
       },
       projection: this.transcript.readBindProjection(input.loopId),
+      validateHistoricalAssistantReservation: (projection) => {
+        fence();
+        return this.transcript.validateHistoricalAssistantReservation(projection);
+      },
       modelIterationsUsed: this.loop.assistantTurnCountForExecution(execution.runId),
       // What the projection has considered, not the transcript's high-water
       // mark. A compaction checkpoint records this as the sequence it covers,
