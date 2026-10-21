@@ -84,7 +84,8 @@ export const CONVERSATION_VIEW_SOURCE_MIGRATION: readonly string[] = [
 
 export function nextConversationViewAt(sql: SqlStorage): number | null {
   return sql.exec<{ due: number | null }>(
-    `SELECT CASE WHEN EXISTS (SELECT 1 FROM workstream WHERE id = 1) THEN COALESCE(
+    `SELECT CASE WHEN EXISTS (SELECT 1 FROM workstream WHERE id = 1
+       AND authority_mode = 'authoritative' AND authority_generation > 0) THEN COALESCE(
        (SELECT MAX(in_flight_until) FROM conversation_view_changes WHERE in_flight_revision IS NOT NULL AND in_flight_until > ?),
        (SELECT MIN(not_before) FROM conversation_view_changes WHERE pending = 1))
      END AS due`, Date.now(),

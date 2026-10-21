@@ -5,9 +5,9 @@ import { z } from 'zod';
 import { defineLocalCacheSlice, localCacheEpoch } from './local-cache';
 import { mirrorQueriesToLocalCache, queryKeyIsOneOf, type QueryMirror } from './local-cache-mirror';
 import type { WorkstreamFeedSource } from './telemetry';
-import { openingTranscriptSnapshot } from './transcript';
+import { activitiesForTurns, mergeCanonicalTranscriptSnapshot, openingTranscriptSnapshot } from './transcript';
 import type { WorkstreamDetail } from './types';
-import type { WorkspaceConversationViewEvent } from '@rally/contracts/conversation-view';
+import { projectConversationView, type WorkspaceConversationViewEvent } from '@rally/contracts/conversation-view';
 import { normalizeHarnessStatus } from './api';
 
 /**
@@ -162,25 +162,102 @@ export function seedWorkspaceConversation(
   event: WorkspaceConversationViewEvent,
   keys: ConversationCacheKeys,
 ): boolean {
-  if (!event.view) return false;
-  // Resident live data, optimistic launches, and a richer disk seed all win.
-  if (queryClient.getQueryData(keys.detail) !== undefined || queryClient.getQueryData(keys.transcript) !== undefined) return false;
+  // A header-only delivery must not win the race against a useful disk row.
+  if (!event.view || !event.view.transcript.ranges.some((range) => range.turns.length > 0)) return false;
+  const residentDetail = queryClient.getQueryData<WorkstreamDetail>(keys.detail);
+  const residentTranscript = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(keys.transcript);
+  // A preview can refresh a disk seed, but never a live or optimistic feed.
+  if ((residentDetail !== undefined || residentTranscript !== undefined)
+    && !conversationSeededFromLocalCache(queryClient, keys)) return false;
   const { header, transcript } = event.view;
+  if (residentTranscript) {
+    // Compare visible content with visible content: the disk also contains
+    // mailbox and tool-only turns the projection deliberately omits.
+    const held = new Map([...residentTranscript.ranges.flatMap((range) => range.turns), ...residentTranscript.activeTurns]
+      .map((turn) => [turn.turnId, turn]));
+    const visibleHeld = [...held.values()].filter((turn) => projectConversationView({
+      purpose: 'requested',
+      requested: { startInclusive: turn.transcriptSequence, endExclusive: turn.transcriptSequence + 1 },
+      covered: { startInclusive: turn.transcriptSequence, endExclusive: turn.transcriptSequence + 1 },
+      turns: [turn], activities: [],
+      pluginRuns: residentTranscript.pluginRuns.filter((run) => run.turnId === turn.turnId),
+    }) !== null);
+    if (visibleHeld.some((turn) => turn.transcriptSequence > transcript.snapshotThrough)) return false;
+    const incoming = transcript.ranges.flatMap((range) => range.turns);
+    const incomingIds = new Set(incoming.map((turn) => turn.turnId));
+    if (visibleHeld.some((turn) => !incomingIds.has(turn.turnId)
+      && transcript.ranges.some((range) => turn.transcriptSequence >= range.covered.startInclusive
+        && turn.transcriptSequence < range.covered.endExclusive))) return false;
+    if (incoming.some((turn) => turn.revision < (held.get(turn.turnId)?.revision ?? 0))) return false;
+    if (!incoming.some((turn) => turn.revision > (held.get(turn.turnId)?.revision ?? 0))) return false;
+  }
   const detail: WorkstreamDetail = {
+    ...(residentDetail ?? {
+      id: event.parentId, lastActivityAt: header.updatedAt,
+      latestAttentionSequenceNumber: 0, readThroughSequenceNumber: 0,
+      manualUnreadFromSequenceNumber: null, manualUnreadGeneration: 0, hasUnread: false,
+      firstUnreadSequenceNumber: null, participantUserIds: [], participantExtraCount: 0,
+      nextPendingWakeup: null, pinPosition: null, spaceIds: [],
+      participants: [], viewers: [], resources: [], connections: [], backgroundTasks: [],
+    }),
     ...header, harnessStatus: normalizeHarnessStatus(header.harnessStatus),
-    id: event.parentId, lastActivityAt: header.updatedAt,
-    latestAttentionSequenceNumber: 0, readThroughSequenceNumber: 0,
-    manualUnreadFromSequenceNumber: null, manualUnreadGeneration: 0, hasUnread: false,
-    firstUnreadSequenceNumber: null, participantUserIds: [], participantExtraCount: 0,
-    nextPendingWakeup: null, pinPosition: null, spaceIds: [],
-    participants: [], viewers: [], resources: [], connections: [], backgroundTasks: [],
   };
   notifyManager.batch(() => {
     queryClient.setQueryData(keys.feedSource, LOCAL_CACHE_FEED_SOURCE);
     queryClient.setQueryData(keys.detail, detail);
-    queryClient.setQueryData(keys.transcript, transcript);
+    queryClient.setQueryData(keys.transcript, residentTranscript
+      ? mergeConversationPreview(residentTranscript, transcript) : transcript);
   });
   return true;
+}
+
+/** Add compact display updates without treating omitted data as deletions. */
+function mergeConversationPreview(
+  current: WorkstreamTranscriptSnapshot,
+  incoming: WorkstreamTranscriptSnapshot,
+): WorkstreamTranscriptSnapshot {
+  const held = new Map([...current.ranges.flatMap((range) => range.turns), ...current.activeTurns]
+    .map((turn) => [turn.turnId, turn]));
+  const updates = new Map(incoming.ranges.flatMap((range) => range.turns)
+    .filter((turn) => turn.revision > (held.get(turn.turnId)?.revision ?? 0))
+    .map((turn) => [turn.turnId, turn]));
+  const activities = new Map(current.activities.map((activity) => [activity.activityId, activity]));
+  for (const activity of incoming.activities) {
+    if (activity.revision > (activities.get(activity.activityId)?.revision ?? 0)) activities.set(activity.activityId, activity);
+  }
+  const mergedActivities = [...activities.values()];
+  const pluginRuns = new Map(current.pluginRuns.map((run) => [run.pluginRunId, run]));
+  for (const run of incoming.pluginRuns) {
+    if (updates.has(run.turnId) || !pluginRuns.has(run.pluginRunId)) pluginRuns.set(run.pluginRunId, run);
+  }
+  const mergedRuns = [...pluginRuns.values()];
+  const snapshotThrough = Math.max(current.snapshotThrough, incoming.snapshotThrough);
+  const ranges = incoming.ranges.map((range) => {
+    const turns = new Map(range.turns.map((turn) => [turn.turnId, updates.get(turn.turnId) ?? held.get(turn.turnId) ?? turn]));
+    // The projection's coverage spans intentionally hidden turns too. Keep
+    // those, and equal-revision full turns, with their rendering metadata.
+    for (const turn of held.values()) {
+      if (!turns.has(turn.turnId) && turn.transcriptSequence >= range.covered.startInclusive
+        && turn.transcriptSequence < range.covered.endExclusive) turns.set(turn.turnId, turn);
+    }
+    return { ...range, turns: [...turns.values()].sort((a, b) => a.transcriptSequence - b.transcriptSequence) };
+  });
+  // Reuse interval subtraction, not the canonical snapshot's deletion rules.
+  // All snapshot-level state stays a read-only memory until the live frame.
+  const merged = mergeCanonicalTranscriptSnapshot(current, { ...incoming, snapshotThrough, ranges });
+  return {
+    ...current,
+    snapshotThrough,
+    ranges: merged.ranges.map((range) => {
+      const turnIds = new Set(range.turns.map((turn) => turn.turnId));
+      return { ...range, activities: activitiesForTurns(mergedActivities, range.turns),
+        pluginRuns: mergedRuns.filter((run) => turnIds.has(run.turnId)) };
+    }),
+    activities: mergedActivities,
+    activeActivities: mergedActivities.filter((activity) => activity.state === 'active'),
+    pluginRuns: mergedRuns,
+    activeTurns: current.activeTurns.map((turn) => updates.get(turn.turnId) ?? turn),
+  };
 }
 
 /**
