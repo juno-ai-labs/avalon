@@ -198,6 +198,12 @@ automatically add a Breakout's parent transcript. This production projection
 differs from the offline suite's curated antecedents; judge errors and oversized
 requests still take the verification fallback.
 
+An initial Sidekick activation with no triggering chat message uses its
+versioned definition's instructions, expected outputs, default behavior and
+trigger as the request. This is the same definition used by the acting model;
+it does not replace a referenced chat message that cannot be found. Otherwise,
+manual Sidekick runs would always consume recovery for falsely missing context.
+
 Authoritative lifecycle gates run before judging and again after it returns.
 Cancellation, required input, admitted/executing tools, ambiguous writes, an
 already-used recovery, or unknown execution state suppress verification. After
@@ -1574,6 +1580,8 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 **What changed:** Ordinary persistent loops use the evaluated baseline JEV
 question with a 0.70 stop-acceptance threshold and one durable verification
 reprompt. The nudge and its execution-scoped marker commit as one derived fact.
+Message-less Sidekick activations resolve their request from the versioned
+definition used by the acting model.
 
 **Why:** A promise that work is underway was being accepted as the final answer.
 The user prioritizes missed recovery over an extra model turn. The chosen

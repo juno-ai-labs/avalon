@@ -3544,6 +3544,8 @@ export async function runWorkstreamHarness(
       // Fixed-purpose profiles and seeded demos have their own output contract.
       // A nonpersistent host cannot enforce a durable one-use recovery marker.
       if (!persistentLoop || profile || input.seed) return null;
+      const sidekickDefinition = input.automationRun && !input.triggerMessageId
+        ? await runDefinitionPreparation.get() : null;
       return completionVerificationNudge({
         runId: input.harnessRunId, assistantContent, messages, signal: harnessSignal,
         snapshot: () => {
@@ -3553,6 +3555,17 @@ export async function runWorkstreamHarness(
           if (!snapshot.trigger && activation && typeof activation.message.content === "string") {
             snapshot.trigger = { id: activation.message.provenance.sourceId,
               text: activation.message.content, origin: activation.message.provenance.sourceKind };
+          }
+          // A Sidekick's initial activation can have no chat message: its task
+          // lives in the same versioned definition used to build the model prompt.
+          // Do not substitute it for a referenced message that is missing.
+          if (!snapshot.trigger && sidekickDefinition && input.automationRun) {
+            snapshot.trigger = { id: sidekickDefinition.runId, origin: "sidekick_definition",
+              text: JSON.stringify({ instructions: sidekickDefinition.definition.instructions,
+                expectedOutputs: sidekickDefinition.definition.expectedOutputs,
+                defaultBehavior: sidekickDefinition.definition.defaultBehavior,
+                definitionRevision: sidekickDefinition.definitionRevision,
+                trigger: input.automationRun.trigger }) };
           }
           return snapshot;
         },
