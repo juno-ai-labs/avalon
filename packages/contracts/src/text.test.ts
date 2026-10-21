@@ -22,6 +22,11 @@ describe("stripPersonalSystemPrompt", () => {
     expect(stripPersonalSystemPrompt(envelope)).toBe("");
   });
 
+  it("preserves a generated-looking prefix with no complete closing envelope", () => {
+    const incomplete = envelope.slice(0, envelope.lastIndexOf("\n</user_suppplied>"));
+    expect(stripPersonalSystemPrompt(incomplete)).toBe(incomplete);
+  });
+
   it.each([
     "<user_system_prompt>example</user_system_prompt>",
     "Please explain <user_system_prompt>example</user_system_prompt>",
