@@ -140,6 +140,28 @@ describe('resource image preview cache', () => {
     expect(await savedImages.entries(scope)).toEqual([]);
   });
 
+  it('preserves saved bytes when the plain retry body fails before a replacement loads', async () => {
+    const cache = new ResourcePreviewCache();
+    await cache.load(scope, key, async () => image());
+    expect(await savedImages.entries(scope)).toEqual([{ key, subject: key }]);
+    const validators: (string | undefined)[] = [];
+    const failed = cache.load(scope, key, async (etag) => {
+      validators.push(etag);
+      if (etag) throw Object.assign(new Error('preflight rejected'), { code: 'network_error' });
+      return new Response(new ReadableStream({
+        start(controller) { controller.error(new Error('download interrupted')); },
+      }), { headers: { 'content-type': 'image/png', etag: '"raw-storage-etag"' } });
+    });
+    await expect(failed).rejects.toThrow('download interrupted');
+    expect(validators).toEqual(['"image-preview-v1:1:abc"', undefined]);
+    expect(await savedImages.entries(scope)).toEqual([{ key, subject: key }]);
+    const reopened = await cache.load(scope, key, async (etag) => {
+      expect(etag).toBe('"image-preview-v1:1:abc"');
+      return new Response(null, { status: 304 });
+    });
+    expect(await reopened.text()).toBe('first image');
+  });
+
   it('does not replay uncached network failures or server errors', async () => {
     const cache = new ResourcePreviewCache();
     const networkFailure = vi.fn(async () => { throw Object.assign(new Error('offline'), { code: 'network_error' }); });
