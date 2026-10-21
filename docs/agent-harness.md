@@ -257,6 +257,19 @@ settles it; neither step invokes the provider, and either may be safely resumed
 after a crash.
 Stream and checkpoint events for participant loops carry that same sequence.
 
+A relocated conversation may retain the original IDs of settled historical
+turns. A differing last-reservation ID is accepted only for an accepted, failed,
+or stopped assistant reservation with no unfinished tool batch and an affirmative
+`validateHistoricalAssistantReservation` host result. The host proves the exact
+head, local reservation/transcript relationship, and next-turn counters; an absent,
+false, or failing port stops the run. New reservations still require the current
+loop's ID format. The next normal reservation replaces the historical pointer
+without rewriting any old turn, payload, or receipt.
+Host recovery uses the original reservation turn ID to find tool receipts and
+elicitations before resuming the harness. The owning
+[durable-object document](workstream-durable-object.md) describes that proof and
+recovery path.
+
 ### Addressing
 
 For subsequent messages that need addressing classification, a lightweight classifier returns `agent_action`, `human_only`, `both`, or `uncertain` with confidence and a terse rationale code. Explicit Rally/connector mentions and clear work requests invoke the harness. Social acknowledgement and human-only coordination can remain unanswered — including a message aimed at a teammate: the caller passes the display names of the people the message mentions (`humanMentions`, resolved from validated mention rows), and the prompt rules that a message telling or asking a mentioned person something is that person's to act on, even mid-task, unless it also asks Rally for work. The same signal gates the deterministic fast paths: an opening imperative short-circuits to `agent_action` only while the message mentions nobody, since "Please review the deck @Alex" hands the work to Alex, not to Rally. Uncertain messages invoke only when an active task or explicit tool context exists. The current message is preserved in full. Only the newest ten context messages are retained; older ones are omitted, and each retained message is bounded to 1,000 Unicode code points by keeping its opening and conclusion around a middle ellipsis. JEV receives that history in its state payload, and the model-independent OpenRouter prompt receives the same bytes: Terra uses that renderer when evaluated directly, while the hosted cascade uses it for the pinned DeepSeek fallback. The label is not exposed in the UI.
@@ -1483,6 +1496,21 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-10-20 — Resume verified settled history after a loop relocation
+
+**What changed:** Added host validation for historical accepted, failed, and
+stopped reservations. Pending reservations and unfinished tool batches still
+require host settlement before inference.
+
+**Why:** A relocated conversation may retain historical turn IDs; the incident
+and host proof are described in [Workstream Durable Object](workstream-durable-object.md#changelog).
+
+**Considered and rejected:** Unconditional acceptance would bypass the host's
+proof that historical state is settled and consistent.
+
+**Consequences:** The harness preserves historical IDs and allocates the next
+turn under the current loop ID. Hosts without validation retain strict rejection.
 
 ### 2026-10-20 — Opening messages can establish a conversation without starting work
 
