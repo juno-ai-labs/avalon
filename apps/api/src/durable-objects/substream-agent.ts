@@ -2262,6 +2262,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return {
       name: identity.title, description: identity.description,
       status: background?.stopped_at != null ? "stopped" : this.loop.loop()?.status ?? "idle",
+      pendingWork: background?.stopped_at == null && this.loop.hasPendingWork(),
       background: !!background,
       executionPrincipal: background ? ExecutionPrincipalSchema.parse(JSON.parse(background.execution_principal_json)) : null,
       rootSubstreamId: background?.root_substream_id ?? null,
@@ -5334,7 +5335,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           executionEpoch: execution.executionEpoch,
           leaseOwner: execution.leaseOwner,
           expectedBindStateRevision: current.bind_state_revision,
-        }, (effects) => this.product.enqueueRegionalEffectsInTransaction(effects));
+        }, (effects) => this.product.enqueueRegionalEffectsInTransaction(effects), () => {
+          if (transition.kind === "protocol_user_appended"
+            && transition.provenance.sourceKind === "completion_verification"
+            && readCompletionVerificationSnapshot(this.state.storage, execution.runId, null).lifecycle === "cancelled") {
+            throw new Error("completion_verification_stopped");
+          }
+        });
         await this.flushSemanticRealtimeOutboxBestEffort();
       },
       commitBindCompaction: async (compaction) => {

@@ -365,7 +365,8 @@ export class AgentCommunicationService {
       // `status` says whether a teammate is still running, which a message
       // cannot ask without resuming it. The way to wait for one is to finish.
       const runtime = await (await this.conversation(agentId)).agentRuntimeInfo();
-      return runtime ? { agentId, name: runtime.name, description: runtime.description, status: runtime.status } : null;
+      return runtime ? { agentId, name: runtime.name, description: runtime.description,
+        status: runtime.status, pendingWork: runtime.pendingWork } : null;
     }));
     return { agents: agents.filter((agent) => agent !== null) };
   }

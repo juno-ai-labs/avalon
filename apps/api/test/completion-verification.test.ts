@@ -3,7 +3,7 @@ import { completionVerificationNudge } from "../src/services/completion-verifica
 import type { CompletionVerificationSnapshot } from "../src/durable-objects/completion-verification-storage";
 
 const ready: CompletionVerificationSnapshot = {
-  lifecycle: "ready", handedOff: false, receipts: [],
+  lifecycle: "ready", receipts: [],
   trigger: { id: "request", text: "Build the article", origin: "human" },
 };
 function setup(snapshot: CompletionVerificationSnapshot = ready) {
@@ -26,11 +26,11 @@ it("returns a durable execution-scoped nudge for judge failure", async () => {
     provenance: { originKind: "derived", sourceKind: "completion_verification", sourceId: "execution-1", sourceRevision: null },
   });
   expect(input.judge).toHaveBeenCalledTimes(1);
-  expect(input.pendingDelegation).not.toHaveBeenCalled();
+  expect(input.pendingDelegation).toHaveBeenCalledTimes(1);
 });
 
-it("defers to existing delegated work", async () => {
-  const input = setup({ ...ready, handedOff: true });
+it("defers to delegated work from an earlier execution without a current handoff receipt", async () => {
+  const input = setup();
   input.pendingDelegation.mockResolvedValue(true);
   expect(await completionVerificationNudge(input)).toBeNull();
   expect(input.judge).not.toHaveBeenCalled();

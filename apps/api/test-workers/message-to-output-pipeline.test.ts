@@ -2183,6 +2183,48 @@ describe("a member's message travels the whole pipeline", () => {
     }
   });
 
+  it.each(["terminal compaction", "nudge materialization"] as const)("completion verification honors Stop during %s", async (boundary) => {
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(stub, [
+        [{ choices: [{ delta: { content: "I'm drafting the article now." }, finish_reason: "stop" }],
+          ...(boundary === "terminal compaction" ? { usage: { prompt_tokens: 900_000, completion_tokens: 10 } } : {}) }],
+        [{ choices: [{ delta: { content: "The user requested an article; it is not delivered yet." }, finish_reason: "stop" }] }],
+      ], { primaryModel: PERSONAL_PROMPT_MODEL, fallbackModels: [],
+        completionAnswers: [{ choice: "announces_unfinished_work", confidence: 0.99 }] });
+      await runInDurableObject(stub, (instance) => {
+        const target = instance as unknown as {
+          product: WorkstreamObjectProductService;
+          transcript: Record<string, (...args: unknown[]) => Promise<unknown>>;
+        };
+        const method = boundary === "terminal compaction" ? "commitBindCompaction" : "materializeProjectionFacts";
+        const original = target.transcript[method]!;
+        target.transcript[method] = async function (...args) {
+          const result = await original.apply(this, args);
+          const transition = args[0] as { kind?: string; provenance?: { sourceKind?: string } };
+          if (boundary === "terminal compaction" || (transition.kind === "protocol_user_appended"
+            && transition.provenance?.sourceKind === "completion_verification")) {
+            target.transcript[method] = original;
+            await target.product.stop(AUTH, "00000000-0000-7000-8000-0000000005d0");
+          }
+          return result;
+        };
+      });
+      const opened = await initializeWorkstream(stub, "Write an article about launch planning.", PERSONAL_PROMPT_MODEL);
+      const run = await externallySettledRun(stub, opened.body.harnessRunId as string);
+      expect(run.status).toBe("cancelled");
+      expect(await capturedCompletionRequests(stub)).toHaveLength(boundary === "terminal compaction" ? 0 : 1);
+      expect((await capturedProviderRequests(stub)).filter((request) => request.url.endsWith("/responses")))
+        .toHaveLength(boundary === "terminal compaction" ? 2 : 1);
+      expect(await runInDurableObject(stub, (_instance, state) => state.storage.sql.exec<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM transcript_facts WHERE source_kind = 'completion_verification' AND source_id = ?`,
+        run.run_id,
+      ).one().n)).toBe(0);
+    } finally {
+      await restoreProviderFetch(stub);
+    }
+  });
+
   it("refreshes personal instructions at admission and keeps earlier message values in history", async () => {
     const stub = agentStub();
     const instructions = "Answer in French, and keep every reply under fifty words.";

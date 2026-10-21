@@ -1,4 +1,3 @@
-import { AGENT_HANDOFF_TOOL_NAMES } from "@rally/contracts";
 import { COMPLETION_VERIFICATION_SOURCE, type CompletionState } from "@rally/agent-harness";
 import { WorkstreamMessageStorage } from "./workstream-message-storage";
 
@@ -6,7 +5,6 @@ export interface CompletionVerificationSnapshot {
   lifecycle: "ready" | "cancelled" | "input_required" | "background_pending" | "ambiguous_write" | "recovery_used" | "unknown";
   trigger: CompletionState["triggering_request"] | null;
   receipts: CompletionState["tool_receipts"];
-  handedOff: boolean;
 }
 
 /** Reads existing authorities. The derived nudge fact is both the message and
@@ -42,7 +40,6 @@ export function readCompletionVerificationSnapshot(storage: DurableObjectStorage
     : effects.some((effect) => effect.status === "admitted" || effect.status === "executing") ? "background_pending"
     : run.status !== "running" ? "unknown" : "ready";
   return { lifecycle, trigger,
-    handedOff: effects.some((effect) => effect.status === "completed" && AGENT_HANDOFF_TOOL_NAMES.some((name) => name === effect.tool_name)),
     receipts: effects.map((effect) => ({ id: effect.tool_call_id, operation: effect.tool_name,
       target: {}, status: effect.status, summary: effect.output_summary ?? effect.error_json,
       output_refs: effect.output_ref ? [effect.output_ref] : [] })),
