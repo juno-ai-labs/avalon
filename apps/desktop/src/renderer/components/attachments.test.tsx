@@ -19,6 +19,41 @@ function render(ui: React.JSX.Element) {
 }
 
 describe('attachment presentation', () => {
+  it('dismisses empty image backdrop clicks without dismissing image or zoom interactions', () => {
+    function Example(): React.JSX.Element {
+      const [open,setOpen] = useState(true);
+      return <AttachmentLightbox preview={open ? {name:'Image.png',mimeType:'image/png',src:'image.png'} : null} onClose={()=>setOpen(false)} />;
+    }
+    render(<Example />);
+    const image = screen.getByRole('img', {name:'Image.png'});
+    fireEvent.mouseDown(image);
+    fireEvent.mouseDown(screen.getByRole('button', {name:'Zoom in'}));
+    expect(screen.getByRole('dialog')).toBeVisible();
+    fireEvent.mouseDown(image.closest('.image-viewport-stage')!);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('keeps the lightbox full-size action synchronized with toolbar and image gestures', () => {
+    const first = {name:'Image.png',mimeType:'image/png',src:'image.png'};
+    const second = {name:'Second.png',mimeType:'image/png',src:'second.png'};
+    render(<AttachmentLightbox preview={{...first,gallery:[first,second]}} onClose={vi.fn()} />);
+    const image = screen.getByRole('img', {name:'Image.png'});
+    Object.defineProperties(image, {naturalWidth:{value:1800},naturalHeight:{value:4200}});
+    fireEvent.load(image);
+    fireEvent.click(screen.getByRole('button', {name:'Show preview at full size'}));
+    expect(screen.getByRole('button', {name:'Fit preview to window'})).toBeVisible();
+    fireEvent.click(screen.getByRole('button', {name:'Fit'}));
+    expect(screen.getByRole('button', {name:'Show preview at full size'})).toBeVisible();
+    fireEvent.click(screen.getByRole('button', {name:'Show preview at full size'}));
+    expect(screen.getByRole('button', {name:'Show image at 100%'})).toHaveTextContent('100%');
+    fireEvent.doubleClick(image);
+    expect(screen.getByRole('button', {name:'Show preview at full size'})).toBeVisible();
+    fireEvent.click(screen.getByRole('button', {name:'Show image at 100%'}));
+    fireEvent.click(screen.getByRole('button', {name:'Next attachment'}));
+    expect(screen.getByRole('dialog', {name:'Preview of Second.png'})).toBeVisible();
+    expect(screen.getByRole('button', {name:'Show preview at full size'})).toBeVisible();
+  });
+
   it('opens bytes immediately and resolves a version only when commenting',async()=>{
     const readResource=vi.fn(async()=>({currentVersion:2}));
     const readResourceVersion=vi.fn(async()=>new Blob(['# Version two'],{type:'text/markdown'}));
