@@ -53,47 +53,24 @@ import { providerRequestView, providerStreamResponse } from "@rally/agent-harnes
 describe("tool schema sanitization", () => {
   it.each(["OpenRouter", "Azure"])("preserves the complete Gmail argument contract through the actual %s request", async (provider) => {
     const adapter = createTestConnectorRegistry().get("google");
-    const content = { to: ["recipient@example.com"], body: "Hello." };
-    const newMessage = { kind: "new", ...content, subject: "A new conversation" };
-    const reply = { kind: "reply", ...content, messageId: "18f0a2c4d5e6f702" };
-    const cases: Array<{ label: string; args: unknown; accepted: boolean }> = [
-      ...[newMessage, reply].flatMap((message) => [
-        { label: `${message.kind} without cc`, args: { message }, accepted: true },
-        ...[null, [], ["copied@example.com"]].map((cc) => ({
-          label: `${message.kind} with cc=${JSON.stringify(cc)}`, args: { message: { ...message, cc } }, accepted: true,
-        })),
-      ]),
-      { label: "no kind", args: { message: content }, accepted: false },
-      { label: "unknown kind", args: { message: { ...newMessage, kind: "forward" } }, accepted: false },
-      { label: "empty subject", args: { message: { ...newMessage, subject: "" } }, accepted: false },
-      { label: "long subject", args: { message: { ...newMessage, subject: "a".repeat(999) } }, accepted: false },
-      { label: "Unicode subject at character limit", args: { message: { ...newMessage, subject: "😀".repeat(998) } }, accepted: true },
-      { label: "Unicode subject over character limit", args: { message: { ...newMessage, subject: "😀".repeat(999) } }, accepted: false },
-      { label: "long body", args: { message: { ...newMessage, body: "a".repeat(500_001) } }, accepted: false },
-      { label: "no recipients", args: { message: { ...newMessage, to: [] } }, accepted: false },
-      { label: "invalid address", args: { message: { ...newMessage, to: ["recipient"] } }, accepted: false },
-      { label: "invalid cc", args: { message: { ...newMessage, cc: ["recipient"] } }, accepted: false },
-      { label: "new with messageId", args: { message: { ...newMessage, messageId: "." } }, accepted: false },
-      { label: "reply with subject", args: { message: { ...reply, subject: "Unrelated subject" } }, accepted: false },
-      { label: "reply with empty messageId", args: { message: { ...reply, messageId: "" } }, accepted: false },
-      { label: "reply without messageId", args: { message: { kind: "reply", ...content } }, accepted: false },
-      // The old production shape, with nonempty reply placeholders.
-      { label: "old flat arguments", args: { ...content, subject: "Hello", threadId: ".", inReplyTo: ".", references: [] }, accepted: false },
-    ];
-    for (const message of [newMessage, reply]) {
-      for (const cc of [undefined, null, [], ["copied@example.com"]]) {
-        const withCc = cc === undefined ? message : { ...message, cc };
-        for (const [field, value] of Object.entries({ preview: true, threadId: ".", inReplyTo: ".", references: [], arbitrary: "undeclared" })) {
-          const label = `${message.kind}, cc=${JSON.stringify(cc)}, undeclared ${field}`;
-          cases.push(
-            { label: `${label} at root`, args: { message: withCc, [field]: value }, accepted: false },
-            { label: `${label} in message`, args: { message: { ...withCc, [field]: value } }, accepted: false },
-          );
-        }
-      }
-    }
-    const mailWrites = adapter.agentPlugin.tools.filter((tool) => ["gmail.send", "gmail.create_draft"].includes(tool.name));
-    expect(mailWrites.map((tool) => tool.name)).toEqual(["gmail.create_draft", "gmail.send"]);
+    const casesForTool = (name: string): Array<{ label: string; args: unknown; accepted: boolean; schemaAccepted?: boolean }> => {
+      const reply = name === "gmail.reply" || name === "gmail.create_reply_draft";
+      const base = reply ? { query: "from:sender@example.com subject:Renewal after:2026/10/20", body: "Hello." } : { to: ["recipient@example.com"], subject: "A new conversation", body: "Hello." };
+      return [
+        { label: "minimal", args: base, accepted: true },
+        { label: "rich", args: { ...base, bcc: ["hidden@example.com"], cc: null, htmlBody: "<b>Hello</b>", includeSignature: true, attachments: [{ filename: "report.pdf", mimeType: "application/pdf", content: "JVBERi0=" }] }, accepted: true },
+        { label: "invalid BCC", args: { ...base, bcc: ["invalid"] }, accepted: false },
+        { label: "invalid address", args: { ...base, to: ["invalid"] }, accepted: false },
+        { label: "long body", args: { ...base, body: "a".repeat(500_001) }, accepted: false },
+        { label: "old discriminated message", args: { message: { kind: reply ? "reply" : "new", ...base } }, accepted: false },
+        ...["kind", "preview", "threadId", ...reply ? [] : ["messageId"], "inReplyTo", "references", "arbitrary"].map((field) => ({ label: `undeclared ${field}`, args: { ...base, [field]: field === "preview" ? true : "undeclared" }, accepted: false })),
+        { label: "invalid attachment bytes", args: { ...base, attachments: [{ filename: "report.pdf", mimeType: "application/pdf", content: "not base64" }] }, accepted: false },
+        { label: "undeclared attachment field", args: { ...base, attachments: [{ filename: "report.pdf", mimeType: "application/pdf", content: "JVBERi0=", preview: true }] }, accepted: false },
+        ...(reply ? [{ label: "exact message ID", args: { body: "Hello.", messageId: "18f0a2c4d5e6f702" }, accepted: true }, { label: "both selectors", args: { ...base, messageId: "18f0a2c4d5e6f702" }, accepted: false, schemaAccepted: true }, { label: "no query", args: { body: "Hello." }, accepted: false, schemaAccepted: true }, { label: "reply subject override", args: { ...base, subject: "Unrelated subject" }, accepted: false }] : [{ label: "no recipients", args: { ...base, to: [] }, accepted: false }, { label: "query on new mail", args: { ...base, query: "subject:Renewal" }, accepted: false }]),
+      ];
+    };
+    const mailWrites = adapter.agentPlugin.tools.filter((tool) => ["gmail.send", "gmail.create_draft", "gmail.reply", "gmail.create_reply_draft"].includes(tool.name));
+    expect(mailWrites.map((tool) => tool.name)).toEqual(["gmail.create_draft", "gmail.send", "gmail.create_reply_draft", "gmail.reply"]);
     const requests: Array<{ tools: Array<{ function: { name: string; parameters: Record<string, unknown>; strict?: boolean } }> }> = [];
     const urls: string[] = [];
     const usesAzure = provider === "Azure";
@@ -151,26 +128,15 @@ describe("tool schema sanitization", () => {
       // These are ordinary Chat Completions tools, not strict structured output.
       expect(wireTool.strict).toBeUndefined();
       const wireSchema = ajv.compile(wireTool.parameters);
-      const draft = tool.name === "gmail.create_draft";
-      const attachmentCases = [
-        ...[null, [], ["00000000-0000-4000-8000-000000000001"]].map((attachmentResourceIds) => ({
-          label: `attachment IDs ${JSON.stringify(attachmentResourceIds)}`,
-          args: { message: newMessage, attachmentResourceIds }, accepted: draft,
-        })),
-        { label: "invalid attachment ID", args: { message: newMessage, attachmentResourceIds: ["not-a-resource-id"] }, accepted: false },
-        { label: "undeclared root field beside attachments", args: { message: newMessage, attachmentResourceIds: [], preview: true }, accepted: false },
-      ];
-      for (const { label, args, accepted } of [...cases, ...attachmentCases]) {
+      // Target exclusivity is an executor refinement, as required by the
+      // cross-provider plain-object schema contract. Unknown-key closure must
+      // agree in both authored and serialized schemas.
+      for (const { label, args, accepted, schemaAccepted = accepted } of casesForTool(tool.name)) {
         expect(adapter.validateToolInput?.(tool.name, args) === null, `${tool.name}: ${label}, executor`).toBe(accepted);
-        expect(authoredSchema(args), `${tool.name}: ${label}, authored`).toBe(accepted);
-        expect(wireSchema(args), `${tool.name}: ${label}, ${provider} HTTP payload`).toBe(accepted);
+        expect(authoredSchema(args), `${tool.name}: ${label}, authored`).toBe(schemaAccepted);
+        expect(wireSchema(args), `${tool.name}: ${label}, ${provider} HTTP payload`).toBe(schemaAccepted);
       }
-      const messageSchema = wireTool.parameters.properties as { message: { description: string; oneOf: Array<{ description: string }> } };
-      expect(messageSchema.message.description).toContain("Do not supply threadId, inReplyTo, or references");
-      expect(messageSchema.message.oneOf.map((branch) => branch.description)).toEqual([
-        "Allowed keys only: kind, to, cc, subject, body. Omit messageId and every threading field.",
-        "Allowed keys only: kind, to, cc, messageId, body. Omit subject and every threading field.",
-      ]);
+
     }
   });
 
@@ -234,7 +200,7 @@ describe("tool schema sanitization", () => {
     expect(Object.fromEntries(
       [...new Set(cursors.map(({ connector }) => connector))].sort()
         .map((connector) => [connector, cursors.filter((c) => c.connector === connector).length]),
-    )).toEqual({ google: 4, granola: 2, linear: 4, notion: 3, slack: 5, x: 4 });
+    )).toEqual({ google: 5, granola: 2, linear: 4, notion: 3, slack: 5, x: 4 });
     expect(cursors.flatMap(({ connector, tool, cursor }) => {
       const where = `${connector}.${tool.name}.${cursor}`;
       if (!authorsNullBranch(tool, cursor)) return [`${where}: authors no null branch`];

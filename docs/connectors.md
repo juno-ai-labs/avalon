@@ -516,20 +516,20 @@ Google identity and connector authorization are separate. Connector authorizatio
 
 | Settings preset | Requested Rally capabilities |
 | --- | --- |
-| **Google Mail + Calendar** | `gmail.read`, `gmail.draft`, `gmail.send`, `calendar.read`, `calendar.write` |
+| **Google Mail + Calendar** | `gmail.read`, `gmail.modify`, `gmail.draft`, `gmail.send`, `calendar.read`, `calendar.write` |
 | **Google Drive + Docs + Sheets** | `drive.read`, `docs.read`, `docs.write`, `sheets.read`, `sheets.write` |
 
 The capability check is enforced for every tool invocation. The current Google tools are:
 
 Every Google tool parses its arguments with a strict schema, so an undeclared key is an error naming the key rather than a silently dropped intent, and every list-shaped result returns `items` with an optional `nextPageToken` so one tool's shape generalizes to the rest. Header hydration degrades per hit: a message that cannot be fetched — deleted or refused — keeps its identifiers and reports `headersUnavailable`, so one rate-limited hit in a fan-out of up to fifty costs that row rather than the whole search. A revoked grant is the exception and is raised, because reporting it per row would read as an empty mailbox rather than a connection to reconnect. Address headers are truncated at the end of the last address that fits, never mid-address, because a fragment cut inside a domain still parses as an address and would be reported as a real correspondent.
 
-- Gmail: `google_gmail_read_profile`, `google_gmail_search`, `google_gmail_find_contacts`, `google_gmail_read_thread`, `google_gmail_read_message`, `google_gmail_create_draft`, and `google_gmail_send`. `google_gmail_read_profile` answers which account is connected — the address it sends from, which is also what `me` matches in a search operator, with its message and thread totals. It exists so the account holder's own address is read rather than inferred from a signature or a From header, which are somebody's claim about the account rather than the account. It needs no scope beyond the existing Gmail read grant. Search returns each hit's sender, recipients, subject, date, labels, snippet, and RFC `Message-ID` by hydrating the metadata headers behind the bare identifiers Gmail's list endpoint returns, so a result is answerable without a read per hit. Drafts and sends take an explicit new/reply message, described below. `google_gmail_find_contacts` resolves a person's name to ranked candidate addresses by scanning the address headers of prior correspondence, excluding Spam and Trash so a spoofed message cannot become a sourced address, each returned with the message it was drawn from; it needs no People API scope, excludes the authorized mailbox's own address, and returns an empty list rather than a guess when nothing matches — carrying a `reason` of `no_messages_matched` or `no_address_matched_name` and a `hint` in its output, since a tool result's `summary` never reaches the model. Gmail message and thread identifiers are both bare hex and cannot be told apart at the schema boundary, so `google_gmail_read_message` and `google_gmail_read_thread` translate the provider's 404 into a `wrong_id_family` failure that names which of a search hit's two identifiers belongs where. `google_gmail_create_draft` returns a `webUrl` alongside its id. A draft or message body is delivered as `text/plain` exactly as written — `serializeEmail` builds no alternative part — so the descriptor's system message, the capability-gated Google presentation, and the `body` parameter's own description all say to write plain text rather than Markdown, which would otherwise reach the recipient as `#` and `**`.
-  Both Gmail writes accept one `message` object, with two complete shapes:
+- Gmail: `google_gmail_read_profile`, `google_gmail_search`, `google_gmail_find_contacts`, `google_gmail_read_thread`, `google_gmail_read_message`, `google_gmail_create_draft`, and `google_gmail_send`, plus label discovery/mutation, reversible trash/restore, and draft list/read tools described in [Google workflows](google-workflows.md). `google_gmail_read_profile` answers which account is connected — the address it sends from, which is also what `me` matches in a search operator, with its message and thread totals. It exists so the account holder's own address is read rather than inferred from a signature or a From header, which are somebody's claim about the account rather than the account. It needs no scope beyond the existing Gmail read grant. Search returns each hit's sender, recipients, subject, date, labels, snippet, and RFC `Message-ID` by hydrating the metadata headers behind the bare identifiers Gmail's list endpoint returns, so a result is answerable without a read per hit. New conversations and replies use distinct tools, described below. `google_gmail_find_contacts` resolves a person's name to ranked candidate addresses by scanning the address headers of prior correspondence, excluding Spam and Trash so a spoofed message cannot become a sourced address, each returned with the message it was drawn from; it needs no People API scope, excludes the authorized mailbox's own address, and returns an empty list rather than a guess when nothing matches — carrying a `reason` of `no_messages_matched` or `no_address_matched_name` and a `hint` in its output, since a tool result's `summary` never reaches the model. Gmail message and thread identifiers are both bare hex and cannot be told apart at the schema boundary, so `google_gmail_read_message` and `google_gmail_read_thread` translate the provider's 404 into a `wrong_id_family` failure that names which of a search hit's two identifiers belongs where. `google_gmail_create_draft` returns a `webUrl` alongside its id. `body` is plain text; optional `htmlBody` adds an HTML alternative and `attachments` adds MIME file parts. Draft and send share the same composition and reply-threading path.
+  New conversations and replies use flat inputs with distinct tools:
 
-  | Intent | Arguments |
+  | Intent | Tools and arguments |
   | --- | --- |
-  | New conversation | `{ "message": { "kind": "new", "to": ["dana@example.com"], "subject": "Renewal", "body": "Hello Dana." } }` |
-  | Reply to a message | `{ "message": { "kind": "reply", "messageId": "id-from-a-search-hit", "to": ["dana@example.com"], "body": "Thank you." } }` |
+  | New conversation | `gmail.create_draft` / `gmail.send`: `{ "to": ["dana@example.com"], "subject": "Renewal", "body": "Hello Dana." }` |
+  | Reply | `gmail.create_reply_draft` / `gmail.reply`: `{ "messageId": "known-message-id", "body": "Thank you." }`, or a unique Gmail `query` instead of `messageId` |
 
   Gmail drafts additionally accept `attachmentResourceIds` beside `message`,
   containing PDF resource IDs from the conversation's resource tools. The host
@@ -539,12 +539,13 @@ Every Google tool parses its arguments with a strict schema, so an undeclared ke
   or output. A missing, inaccessible, or non-PDF resource stops before creating
   the draft; repeated IDs attach once. `gmail.send` does not accept this field.
 
-  `cc` is optional in either shape; omitted, `null`, and `[]` all mean none.
-  Recipients remain explicit, including for replies: the adapter does not infer
-  reply-all recipients or copy the original's recipient list. A new message has
-  no message id or threading fields. A reply accepts a Gmail **message id** from
-  the same connection's search/read result, and has no caller-supplied subject,
-  `threadId`, `inReplyTo`, or `references`.
+  `cc` and `bcc` are optional; omitted, `null`, and `[]` mean none. Both paths
+  accept `htmlBody`, `attachments`, and `includeSignature`; signature lookup
+  requires `gmail.read`. New messages require recipients. Replies derive the
+  recipient from the original's Reply-To/From (original To for sent mail) unless `to` explicitly overrides
+  it; this does not infer reply-all recipients. A reply has no caller-supplied
+  subject, `threadId`, `inReplyTo`, or `references`. Known IDs remain precise
+  targets; queries use Gmail syntax and refuse ambiguity before writing.
 
   Before either reply write, the adapter checks `gmail.read` and reads that
   message's metadata from the same account. Its subject, thread id, and validated
@@ -561,8 +562,8 @@ Every Google tool parses its arguments with a strict schema, so an undeclared ke
   bounds the input. A
   missing or invalid parent Message-ID, missing thread id, or unreadable message
   stops before the write. It never falls back to sending a new conversation.
-  New messages need only the existing send/draft capability and perform no read.
-  Resolving a reply adds one metadata request and depends on that message still
+  New messages need only the existing send/draft capability and perform no read unless signature lookup is requested.
+  Resolving an exact-ID reply adds one metadata request and depends on that message still
   being readable at execution time.
 
   Short ASCII subjects stay plain. Longer or non-ASCII subjects use UTF-8
@@ -575,35 +576,26 @@ Every Google tool parses its arguments with a strict schema, so an undeclared ke
   original spaces stay inside the encoded text. Input CR/LF is neutralized
   before serialization.
 
-  `EmailArgsSchema` supplies both runtime validation and the advertised schema
-  through `z.toJSONSchema(..., { io: "input" })`. Its new/reply union is nested
-  under `message` so the root remains an object across providers. Unknown fields
-  are rejected in both branches by execution, including old flat arguments.
-  Bind's `toolWireDefinition` sanitizes even `rawJsonSchema` before Rally's root
-  repair. Its xAI compatibility pass removes `additionalProperties: false`.
-  Gmail therefore also expresses each closed object as a complete required-key
-  set with `maxProperties` equal to that set's size. Optional `cc` has absent
-  and present variants inside `message`. A draft's optional root
-  `attachmentResourceIds` uses `propertyNames` to allow only that key and
-  `message`: root unions are repaired away by the harness for provider
-  compatibility, so a union there would silently admit undeclared fields. These constraints survive Bind without changing its
-  treatment of other tools or relaxing execution. Ignoring
-  undeclared write options could change intent, such as turning an invented
-  `preview: true` into an actual send. The regression test captures the real
-  harness HTTP request and uses Ajv to check declared-field constraints and
-  unknown-key rejection against execution; Zod's JSON Schema importer does not
-  enforce `maxProperties` and cannot prove this boundary. The selected
-  plugin's worked examples show both kinds for each granted write capability,
-  with replies shown only when read access is granted. Callers using older flat arguments need the refreshed tool definition
-  before retrying.
+  Flat new-message and reply schemas supply runtime validation and advertised
+  schemas through `z.toJSONSchema(..., { io: "input" })`; provider roots remain
+  plain objects. Bind's `toolWireDefinition` sanitizes even `rawJsonSchema`
+  before Rally's root repair, and its xAI compatibility pass removes boolean
+  `additionalProperties: false`. Composition and workflow schemas use
+  `additionalProperties: { not: {} }`, which survives that sanitizer and rejects
+  unknown keys without enumerating optional-key combinations. Execution remains
+  strict, including mutually exclusive ID/query selection. Regression tests
+  capture real harness HTTP requests and compare declared-field constraints and
+  unknown-key rejection with execution using Ajv. Worked examples show distinct
+  new/reply tools, with replies shown only when read access is granted. Older
+  nested `message.kind` calls require the refreshed tool definition before retry.
 
-- Calendar: `google_calendar_list_calendars`, `google_calendar_query_availability`, `google_calendar_list_events`, `google_calendar_read_event`, `google_calendar_create_event`, and `google_calendar_update_event`. Event tools accept a calendar ID, `primary`, or a calendar's **name**, which is resolved against the account's calendar list — a name matching two calendars is an `ambiguous_calendar_name` failure listing both rather than a guess — and otherwise use the configured calendar, which defaults to primary. An event ID that looks like a calendar address is rejected as `wrong_id_family` at the boundary. Scheduled activity polling still follows the configured calendar.
+- Calendar: `google_calendar_query_availability`, `google_calendar_list_calendars`, `google_calendar_list_events`, `google_calendar_read_event`, `google_calendar_create_event`, and `google_calendar_update_event`, with `google_calendar_cancel_event`, `google_calendar_cancel_recurring_series`, `google_calendar_respond_to_event`, `google_calendar_respond_to_recurring_series`, `google_calendar_create_all_day_event`, `google_calendar_create_recurring_event`, and `google_calendar_suggest_time` for cancellation, RSVP and availability. Event tools accept a calendar ID, `primary`, or a calendar's **name**, which is resolved against the account's calendar list — a name matching two calendars is an `ambiguous_calendar_name` failure listing both rather than a guess — and otherwise use the configured calendar, which defaults to primary. An event ID that looks like a calendar address is rejected as `wrong_id_family` at the boundary. Scheduled activity polling still follows the configured calendar.
 
   `google_calendar_query_availability` checks known calendar IDs or verified email addresses through Google's free/busy endpoint using the existing `calendar.read` capability and `calendar.readonly` scope; calendar-list membership is not an access boundary. Errors and missing or malformed results mean `unknown`, never free, with a fixed explanation and next step alongside the diagnostic code. The tool does not resolve groups or display names, and reads no event details.
 
   A relative change carries each existing guest across whole rather than rebuilding them from an address, so `responseStatus`, `optional`, `displayName`, and a room's `resource` flag survive an addition; re-sending bare addresses would reset every RSVP and re-invite everyone. The read is uncapped and an `attendeesOmitted` response is refused rather than patched from, because `maxAttendees` returns only the participant past its cap rather than a prefix — a capped read is how a large event loses its guest list. Resolving a calendar by name needs the connection's calendar read capability, and says so rather than failing as an opaque provider error.
 
-  Attendee changes are stated relatively. Google's event PATCH replaces the whole `attendees` array, so `google_calendar_update_event` takes `addAttendeeEmails` and `removeAttendeeEmails`, which it applies to the event's current guest list after reading it, and `replaceAllAttendeeEmails` for the rare case of setting the list outright. Empty attendee arrays are treated as omitted, so an empty replacement never clears the list; to remove everyone, name them in `removeAttendeeEmails`, or use Google Calendar if the guest list is incomplete. The create-shaped `attendeeEmails` is deliberately absent from the update schema: reaching for it fails the strict parse instead of silently deleting everyone who was already invited. Any attendee change emails everyone remaining on the event, and creating an event with attendees sends real invitations — both tools say so in their descriptions.
+  Attendee changes are stated relatively. Google's event PATCH replaces the whole `attendees` array, so `google_calendar_update_event` takes `addAttendeeEmails` and `removeAttendeeEmails`, which it applies to the event's current guest list after reading it, and `replaceAllAttendeeEmails` for the rare case of setting the list outright. The create-shaped `attendeeEmails` is deliberately absent from the update schema: reaching for it fails the strict parse instead of silently deleting everyone who was already invited. Actual event or attendee changes default to notifying guests; `sendUpdates` can select all, external-only, or no update emails. A no-op relative attendee change alone does not send notification mail. Recurring/all-day creation and Meet links are detailed in [Google workflows](google-workflows.md).
 - Drive: `google_drive_search`, `google_drive_get_metadata`, `google_drive_download`, and `google_drive_export`. Search matches a plain-text `query` against file **names and indexed contents** — it is not a Drive query expression, so an operator written into it is matched literally — and narrows through its own `fileType` (named as a person would: `document`, `spreadsheet`, `pdf`, …), `modifiedAfter`, and `orderBy` parameters rather than through query syntax. A name-only search made a request for what a document *says* come back empty, which the plugin message then licensed reporting as the content not existing.
 - Docs: `google_docs_read_document`, `google_docs_create_document`, `google_docs_append_text`, and `google_docs_replace_text`.
 - Sheets: `google_sheets_read_spreadsheet`, `google_sheets_read_values`, `google_sheets_create_spreadsheet`, `google_sheets_update_values`, and `google_sheets_append_values`.

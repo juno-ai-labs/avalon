@@ -1,4 +1,4 @@
-import { ConnectorConnectionCardCatalog } from '@rally/contracts';
+import { ConnectorConnectionCardCatalog, GOOGLE_MAIL_CALENDAR_CAPABILITIES } from '@rally/contracts';
 import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
 const linearNativeAgentEnabled = import.meta.env.VITE_LINEAR_NATIVE_AGENT_ENABLED === 'true';
 import { Webhook } from 'lucide-react';
@@ -13,7 +13,7 @@ export const connectorProviders = [
     description: 'Gmail messages, drafts, sent mail, and calendar events.',
     mark: ConnectorConnectionCardCatalog['google-mail-calendar'].iconName,
     scopes: ['you'] as const,
-    capabilities: ['gmail.read', 'gmail.draft', 'gmail.send', 'calendar.read', 'calendar.write'],
+    capabilities: [...GOOGLE_MAIL_CALENDAR_CAPABILITIES],
   },
   {
     id: 'google-drive-workspace' as const,
