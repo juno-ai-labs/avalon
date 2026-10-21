@@ -2,7 +2,7 @@ import { useState } from 'react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { Plus } from 'lucide-react';
 import type { SidekickRecommendationOptions } from '@rally/contracts';
-import { Button, InlineError, Modal, Tip } from './primitives';
+import { Button, ErrorNotice, Modal, Tip } from './primitives';
 import { SidebarRow } from './resizable-sidebar';
 import { SidebarNavigationRowContent } from './navigation';
 export type SidekickPickerFailure = 'load' | 'attach';
@@ -33,7 +33,7 @@ export function SidekickPicker({ options, loading, saving, failure, open, setOpe
       <DropdownMenu.Portal>
         <DropdownMenu.Content className="menu-content" align="start" sideOffset={4}>
           {loading && <DropdownMenu.Label className="menu-label">Loading Sidekicks…</DropdownMenu.Label>}
-          {failure && <InlineError>{sidekickPickerFailureCopy[failure]}</InlineError>}
+          {failure && <ErrorNotice>{sidekickPickerFailureCopy[failure]}</ErrorNotice>}
           {!loading && options && !options.canManage && <DropdownMenu.Label className="menu-label">Sidekick management is unavailable here.</DropdownMenu.Label>}
           <DropdownMenu.Item className="menu-item" disabled={!options?.canManage} onSelect={() => setOpen(true)}>Attach existing Sidekick</DropdownMenu.Item>
           {onCreate && <DropdownMenu.Item className="menu-item" disabled={!options?.canManage} onSelect={() => void onCreate()}>Create new Sidekick</DropdownMenu.Item>}
@@ -43,7 +43,7 @@ export function SidekickPicker({ options, loading, saving, failure, open, setOpe
     <Modal open={open} onOpenChange={setOpen} title="Attach existing Sidekick">
       <input className="sidekick-picker-search" aria-label="Search organization Sidekicks" placeholder="Search organization Sidekicks" value={search} onChange={(event) => setSearch(event.target.value)} />
       {loading && <p>Loading Sidekicks…</p>}
-      {failure && <InlineError>{sidekickPickerFailureCopy[failure]}</InlineError>}
+      {failure && <ErrorNotice>{sidekickPickerFailureCopy[failure]}</ErrorNotice>}
       {items?.length === 0 && <p>No organization Sidekicks found.</p>}
       <ul className="sidekick-picker-list">{items?.map((item) => <li key={item.id}>
         <Button aria-label={item.name} aria-description={item.description} disabled={saving} onClick={() => onAttach(item.id)}><strong>{item.name}</strong><span>{item.description}</span></Button>

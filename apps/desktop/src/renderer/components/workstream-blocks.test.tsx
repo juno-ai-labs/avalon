@@ -1411,7 +1411,7 @@ describe('MessageBlock markdown', () => {
 
     render(<MarkdownBody>{'```mermaid\nnot a diagram\n```'}</MarkdownBody>);
 
-    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
     expect(screen.getByText('not a diagram')).toBeVisible();
   });
 
@@ -1422,7 +1422,7 @@ describe('MessageBlock markdown', () => {
 
     render(<MarkdownBody>{'```mermaid\ngraph TD; A-->B\n```'}</MarkdownBody>);
 
-    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
     expect(getMermaidDiagram).toHaveBeenCalledTimes(parseCallBaseline);
     expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline);
   });
@@ -1434,7 +1434,7 @@ describe('MessageBlock markdown', () => {
 
     render(<MarkdownBody>{'```mermaid\ngraph TD; A-->B\n```'}</MarkdownBody>);
 
-    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
     expect(screen.queryByText('Unsafe graph')).toBeNull();
   });
 
@@ -1445,7 +1445,7 @@ describe('MessageBlock markdown', () => {
 
     render(<MarkdownBody>{'```mermaid\ngraph TD; A-->B\n```'}</MarkdownBody>);
 
-    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
     expect(screen.queryByText('Unsafe graph')).toBeNull();
   });
 
@@ -1457,7 +1457,7 @@ describe('MessageBlock markdown', () => {
 
     render(<MarkdownBody>{'```mermaid\nflowchart TD; A-->B\n```'}</MarkdownBody>);
 
-    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
     expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline);
   });
 
@@ -1469,7 +1469,7 @@ describe('MessageBlock markdown', () => {
 
     render(<MarkdownBody>{'```mermaid\nblock-beta\n  A["Review"]\n```'}</MarkdownBody>);
 
-    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
     expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline);
   });
 
@@ -1481,7 +1481,7 @@ describe('MessageBlock markdown', () => {
 
     render(<MarkdownBody>{`\`\`\`mermaid\n${source}\n\`\`\``}</MarkdownBody>);
 
-    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
     expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline);
   });
 
@@ -1739,8 +1739,9 @@ describe('MessageBlock export actions', () => {
     const { rerender } = render(<MessageBlock {...actions} message={agentMessage} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Save response as an image' }));
-    await waitFor(() => expect(screen.getByText('Image failed')).toBeVisible());
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('The image could not be saved.');
 
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     exportMessage.mockResolvedValueOnce({ saved: false });
     rerender(<MessageBlock {...actions} message={{ ...agentMessage, id: 'message-agent-dismissed' }} />);
     fireEvent.click(screen.getByRole('button', { name: 'Save response as a PDF' }));
@@ -1748,16 +1749,18 @@ describe('MessageBlock export actions', () => {
     expect(screen.queryByText('PDF failed')).not.toBeInTheDocument();
   });
 
-  it('forgets a failure once the pointer leaves the row', async () => {
+  it('keeps a failure until acknowledged even when the pointer leaves the row', async () => {
     exportMessage.mockRejectedValueOnce(new Error('no surface'));
     const { container } = render(<MessageBlock {...actions} message={agentMessage} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Save response as an image' }));
-    await waitFor(() => expect(screen.getByText('Image failed')).toBeVisible());
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('The image could not be saved.');
 
     fireEvent.pointerLeave(container.querySelector('.message-actions')!);
 
-    expect(screen.queryByText('Image failed')).not.toBeInTheDocument();
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('The image could not be saved.');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save response as an image' })).toBeEnabled();
   });
 

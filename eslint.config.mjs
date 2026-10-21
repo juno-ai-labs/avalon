@@ -10,6 +10,7 @@ import {
 } from "./scripts/eslint-rules/inference-boundaries.mjs";
 import { noBareZodUrlRule } from "./scripts/eslint-rules/no-bare-zod-url.mjs";
 import { noDynamicImportRule } from "./scripts/eslint-rules/no-dynamic-import.mjs";
+import { noInlineErrorsRule } from "./scripts/eslint-rules/no-inline-errors.mjs";
 import { preferZodDirectObjectRule } from "./scripts/eslint-rules/prefer-zod-direct-object.mjs";
 import { thesvgSubpathImportsRule } from "./scripts/eslint-rules/thesvg-subpath-imports.mjs";
 import { noRawEntryPointCheckRule } from "./scripts/eslint-rules/no-raw-entry-point-check.mjs";
@@ -62,6 +63,7 @@ export default tseslint.config(
         rules: {
           "no-bare-zod-url": noBareZodUrlRule,
           "no-dynamic-import": noDynamicImportRule,
+          "no-inline-errors": noInlineErrorsRule,
           "prefer-zod-direct-object": preferZodDirectObjectRule,
           "thesvg-subpath-imports": thesvgSubpathImportsRule,
           "no-raw-entry-point-check": noRawEntryPointCheckRule,
@@ -94,6 +96,11 @@ export default tseslint.config(
       "rally/thesvg-subpath-imports": "error",
       "rally/provider-json-schema-complexity": "error",
     },
+  },
+  {
+    files: ["apps/desktop/src/renderer/**/*.{ts,tsx}", "apps/browser/src/**/*.{ts,tsx}", "packages/ui/src/**/*.{ts,tsx}"],
+    ignores: ["**/*.test.{ts,tsx}"],
+    rules: { "rally/no-inline-errors": "error" },
   },
   {
     // Sidebar and rail components own their failure language. Exceptions and

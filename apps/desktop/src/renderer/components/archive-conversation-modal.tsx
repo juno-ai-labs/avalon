@@ -1,4 +1,4 @@
-import { Button, InlineError, Modal } from './primitives';
+import { Button, ErrorNotice, Modal } from './primitives';
 
 export function ArchiveConversationModal({ target, pending, error, onClose, onConfirm }: {
   target: { title: string; noun: 'thread' | 'breakout' } | null;
@@ -17,6 +17,6 @@ export function ArchiveConversationModal({ target, pending, error, onClose, onCo
     </>}
   >
     <p className="modal-copy"><strong>{target?.title}</strong> leaves the sidebar for everyone in it, and stops accepting messages.</p>
-    {error && <InlineError>{error}</InlineError>}
+    {error && <ErrorNotice>{error}</ErrorNotice>}
   </Modal>;
 }

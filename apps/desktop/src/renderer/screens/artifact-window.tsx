@@ -1,3 +1,4 @@
+import { ErrorNotice } from '../components/primitives';
 import { SITE_MANIFEST_MIME_TYPE, ResourceSchema, ResourceRevisionSchema } from '@rally/contracts';
 import { z } from 'zod';
 import { isDiagnosticCode, zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
@@ -150,7 +151,7 @@ export function ArtifactWindowContent({preview: request,files}: {preview:Desktop
     {preview.kind==='generated' ? <div className="artifact-annotation-window-body">{preview.mimeType.startsWith('audio/') ? <audio controls src={src} aria-label={preview.title} /> : preview.mimeType.startsWith('video/') ? <video controls src={src} aria-label={preview.title} /> : <AnnotationSurface resourceId={preview.resourceId} version={preview.version} name={preview.title} mimeType={preview.sourceMimeType ?? preview.mimeType} src={src} text={preview.mimeType.startsWith('image/')?undefined:new TextDecoder().decode(preview.content)} />}</div>
       : <ArtifactSiteWindow preview={preview} />}
     </InspectorRail>
-    <footer><AnnotationChips />{error && <p role="alert">{error}</p>}<button disabled={!preview.annotationScope||!draft?.readyPins.length||draft.uploading||sending} onClick={()=>void send()} type="button">{sending?'Adding pins…':'Add pins to message'}</button></footer>
+    <footer><AnnotationChips />{error && <ErrorNotice>{error}</ErrorNotice>}<button disabled={!preview.annotationScope||!draft?.readyPins.length||draft.uploading||sending} onClick={()=>void send()} type="button">{sending?'Adding pins…':'Add pins to message'}</button></footer>
   </main>;
 }
 

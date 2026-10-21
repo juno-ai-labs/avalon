@@ -1,4 +1,4 @@
-import { useContext, useState } from 'react';
+import { useContext, useRef, useState } from 'react';
 import { MemberPresentationContext } from '../lib/member-presentation';
 import { PersonalAvatar, personalColor } from './personal-avatar';
 import * as AvatarPrimitive from '@radix-ui/react-avatar';
@@ -755,6 +755,7 @@ export function DropdownSelect({
 }
 
 interface ModalProps {
+  role?: 'dialog' | 'alertdialog';
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
@@ -762,6 +763,9 @@ interface ModalProps {
   children?: ReactNode;
   footer?: ReactNode;
   initialFocusRef?: RefObject<HTMLElement | null>;
+  /** Return focus to the interrupted control when acknowledging an error. */
+  restoreFocus?: boolean;
+  showCloseButton?: boolean;
   /**
    * Refuse Escape, a click outside and the header's close button, leaving the
    * footer as the only way out, and open with focus on the dialog itself
@@ -786,6 +790,7 @@ interface ModalProps {
 }
 
 export function Modal({
+  role = 'dialog',
   open,
   onOpenChange,
   title,
@@ -793,15 +798,19 @@ export function Modal({
   children,
   footer,
   initialFocusRef,
+  restoreFocus = false,
+  showCloseButton = true,
   dismissible = true,
   headerActions,
   backdrop = 'scrim',
 }: ModalProps): React.JSX.Element {
+  const previousFocus = useRef<HTMLElement | null>(null);
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className={backdrop === 'blur' ? 'dialog-overlay is-blurred' : 'dialog-overlay'} />
+        <Dialog.Overlay className={backdrop === 'blur' ? 'dialog-overlay is-blurred' : 'dialog-overlay'} data-error-notice-overlay={role === 'alertdialog' || undefined} />
         <Dialog.Content
+          role={role}
           className="dialog-content"
           /* Escape belongs to the IME while it is composing: it abandons the
              candidate, and Radix must not read the same keystroke as a request
@@ -825,6 +834,9 @@ export function Modal({
             }
           }}
           onOpenAutoFocus={(event) => {
+            if (restoreFocus && document.activeElement instanceof HTMLElement) {
+              previousFocus.current = document.activeElement;
+            }
             const initialFocus = initialFocusRef?.current;
             if (initialFocus) {
               event.preventDefault();
@@ -834,15 +846,21 @@ export function Modal({
               event.currentTarget.focus();
             }
           }}
+          onCloseAutoFocus={(event) => {
+            if (restoreFocus && previousFocus.current?.isConnected) {
+              event.preventDefault();
+              previousFocus.current.focus();
+            }
+          }}
         >
           <header className="dialog-header">
             <div>
               <Dialog.Title className="dialog-title">{title}</Dialog.Title>
               {description && <Dialog.Description className="dialog-description">{description}</Dialog.Description>}
             </div>
-            {(headerActions || dismissible) && <div className="dialog-header-actions">
+            {(headerActions || (dismissible && showCloseButton)) && <div className="dialog-header-actions">
               {headerActions}
-              {dismissible && <Dialog.Close asChild>
+              {dismissible && showCloseButton && <Dialog.Close asChild>
                 <IconButton label="Close dialog" showTooltip={false}>
                   <X size={16} />
                 </IconButton>
@@ -893,13 +911,7 @@ export function ActivityCountBadge({ count }: { count: number }): React.JSX.Elem
   return <span aria-hidden="true" className="activity-count-badge">{count > 99 ? '99+' : count}</span>;
 }
 
-export function InlineError({ children }: PropsWithChildren): React.JSX.Element {
-  return (
-    <p className="inline-error" role="alert">
-      {children}
-    </p>
-  );
-}
+export { ErrorNotice } from './error-notice';
 
 /**
  * One hairline box around a group, rather than a card around each member.

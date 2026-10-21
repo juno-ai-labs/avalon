@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { ApiError } from '../lib/api';
 import { channelRoute, threadRoute } from '../lib/navigation-routes';
 import { desktopBridge } from '../lib/platform';
-import { InlineError, LoadingState } from './primitives';
+import { ErrorNotice, LoadingState } from './primitives';
 
 /** One scope's facts, with `onOpen` for a host that reads them only once they are asked for. */
 export interface MemoryFacts extends MemoryFactsState {
@@ -133,7 +133,7 @@ export function MemoryFactList({ emptyCopy, label, ...state }: MemoryFactsState 
   const { facts, failure } = state;
   return <section aria-label={label} className="memory-review">
     {facts === undefined
-      ? failure ? <InlineError>{failure}</InlineError> : <LoadingState label="Loading what Rally remembers…" />
+      ? failure ? <ErrorNotice>{failure}</ErrorNotice> : <LoadingState label="Loading what Rally remembers…" />
       : facts.length === 0
         ? <p className="memory-review-empty">{emptyCopy}</p>
         : <MemoryFactRows

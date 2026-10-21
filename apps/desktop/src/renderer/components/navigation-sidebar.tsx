@@ -58,7 +58,7 @@ import { archiveThread, reconcileThreadPage, resolutionFailure, resolveConversat
 import { ArchiveConversationModal } from './archive-conversation-modal';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import { resourceKindLabel } from './markdown-citations';
-import { Avatar, Button, IconButton, InlineError, Modal, RallyAvatar, TitleSkeleton, Tip } from './primitives';
+import { Avatar, Button, IconButton, ErrorNotice, Modal, RallyAvatar, TitleSkeleton, Tip } from './primitives';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 import { RailItem } from './rail-item';
 import { RelativeTime } from './relative-time';
@@ -316,7 +316,7 @@ export function NavigationSidebar({
           </div>
         </header>
         <SidebarScroll className="navigation-panel-scroll" scrollRef={scroll}>
-          {pinFailure && <InlineError>{pinFailure}</InlineError>}
+          {pinFailure && <ErrorNotice>{pinFailure}</ErrorNotice>}
           {section === 'pinned' && <PinnedPanel guest={guest} scroll={scroll} />}
           {section === 'threads' && <ThreadsSection guest={guest} scroll={scroll} />}
           {section === 'artifacts' && <ArtifactsSection scroll={scroll} />}
@@ -1209,10 +1209,10 @@ function ThreadsSection({ guest, motion, scroll }: { guest: boolean; motion?: ()
       ))}
       {list.isSuccess && visibleRows.length === 0 && <p className="navigation-empty">Threads you start or are added to appear here.</p>}
       {list.hasNextPage && <button className="navigation-more" disabled={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()} type="button">Show more</button>}
-      {list.isError && <InlineError>Your threads couldn’t be loaded.</InlineError>}
+      {list.isError && <ErrorNotice occurrence={list.error}>Your threads couldn’t be loaded.</ErrorNotice>}
     </section>}
-    {pinnedOnly && list.isError && <InlineError>Your threads couldn’t be loaded.</InlineError>}
-    {actionError && !archiveTarget && <InlineError>{actionError} <button className="text-button" onClick={() => setActionError(null)} type="button">Dismiss</button></InlineError>}
+    {pinnedOnly && list.isError && <ErrorNotice>Your threads couldn’t be loaded.</ErrorNotice>}
+    {actionError && !archiveTarget && <ErrorNotice>{actionError}</ErrorNotice>}
     <ArchiveConversationModal
       target={archiveTarget ? { title: archiveTarget.title, noun: 'thread' } : null}
       pending={actionPending}
@@ -1647,7 +1647,7 @@ function NewChannelDialog({ onClose }: { onClose: () => void }): React.JSX.Eleme
         <input autoFocus maxLength={180} onChange={(event) => setName(event.target.value)} placeholder="e.g. Outbound" value={name} />
       </label>
     </form>
-    {failed && <InlineError>The channel couldn’t be created. Try again.</InlineError>}
+    {failed && <ErrorNotice>The channel couldn’t be created. Try again.</ErrorNotice>}
   </Modal>;
 }
 
@@ -1795,7 +1795,7 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
         type="button"
       >{candidate.label}</button>)}
     </div>
-    {accessDecisionFailed && <InlineError>That didn’t go through. Try again.</InlineError>}
+    {accessDecisionFailed && <ErrorNotice>That didn’t go through. Try again.</ErrorNotice>}
     {accessRequests.length > 0 && chip === 'all' && <section aria-label="Requests to join" className="navigation-section">
       <SectionHeading motionKey="requests">Requests</SectionHeading>
       {accessRequests.map((request) => <div
@@ -1872,7 +1872,7 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
     </section>)}
     {feed.isSuccess && items.length === 0 && (chip !== 'all' || accessRequests.length === 0) && <p className="navigation-empty">{empty}</p>}
     {feed.hasNextPage && <button className="navigation-more" disabled={feed.isFetchingNextPage} onClick={() => void feed.fetchNextPage()} type="button">Show more</button>}
-    {feed.isError && <InlineError>Activity couldn’t be loaded.</InlineError>}
+    {feed.isError && <ErrorNotice occurrence={feed.error}>Activity couldn’t be loaded.</ErrorNotice>}
   </>;
 }
 

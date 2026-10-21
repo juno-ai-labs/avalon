@@ -288,7 +288,7 @@ describe('organization account menu', () => {
     expect(screen.getByRole('menu')).toBeVisible();
   });
 
-  it('ignores a second choice of a row that is opening, and shows a failed sign-in under the row', () => {
+  it('acknowledges a failed sign-in and keeps a row that is opening from being chosen twice', () => {
     const enterpriseKey = desktopWorkspaceIdentityKey(enterprise.region, enterprise.id);
     const props = renderMenu({
       attention: {},
@@ -297,8 +297,9 @@ describe('organization account menu', () => {
     });
     openMenu();
 
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Sign in could not be completed: access denied');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     const europe = screen.getByRole('menuitem', { name: /Europe Studio/u });
-    expect(within(europe).getByText('Sign in could not be completed: access denied')).toBeVisible();
     expect(within(europe).queryByText(FINISH_SIGN_IN_IN_BROWSER)).not.toBeInTheDocument();
     expect(within(europe).getByLabelText('Opening organization')).toBeVisible();
     fireEvent.click(europe);
@@ -443,7 +444,8 @@ describe('organization account menu', () => {
     const create = await screen.findByRole('dialog', { name: 'Create an organization' });
     fireEvent.change(within(create).getByLabelText('Organization name'), { target: { value: 'New Lab' } });
     fireEvent.click(within(create).getByRole('button', { name: 'Create organization' }));
-    expect(await within(create).findByText('response lost')).toBeVisible();
+    expect(await screen.findByText('response lost')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
 
     fireEvent.click(within(create).getByRole('button', { name: 'Create organization' }));
 
@@ -465,7 +467,8 @@ describe('organization account menu', () => {
     fireEvent.change(within(create).getByLabelText('Organization name'), { target: { value: 'New Lab' } });
     fireEvent.click(within(create).getByRole('button', { name: 'Create organization' }));
 
-    expect(await within(create).findByText('Sign in again to create an organization')).toBeVisible();
+    expect(await screen.findByText('Sign in again to create an organization')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(within(create).queryByText(/Error invoking remote method/u)).not.toBeInTheDocument();
     fireEvent.click(within(create).getByRole('button', { name: 'Cancel' }));
     openMenu();

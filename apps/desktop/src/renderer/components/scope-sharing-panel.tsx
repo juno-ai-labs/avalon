@@ -5,7 +5,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { asSubstreamId, asWorkspaceId, asWorkstreamId } from '@rally/contracts';
 import { CreateScopeInvitationsSchema, type ScopeGrantTarget } from '@rally/contracts/scope-grants';
 import { ApiError, type RallyApi } from '../lib/api';
-import { InlineError, Modal } from './primitives';
+import { ErrorNotice, Modal } from './primitives';
 
 /**
  * A conversation's guest invitations by email: the ones still waiting for
@@ -93,13 +93,13 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId, onS
       <p>Separate email addresses with spaces, commas, or semicolons.</p>
       <Button type="submit" className="button-primary" disabled={invite.isPending || !emails.trim()}>{invite.isPending ? 'Sharing…' : 'Share'}</Button>
     </form>
-    {failure ? <InlineError>{failure === 'invalid_emails'
+    {failure ? <ErrorNotice>{failure === 'invalid_emails'
       ? 'Enter valid email addresses, separated by spaces, commas, or semicolons.'
       : failure === 'joined' ? 'They have already joined. Remove them from the participants instead.'
       : failure === 'remove' ? 'That guest couldn’t be removed. Try again.'
-        : 'The conversation couldn’t be shared. Try again.'}</InlineError> : null}
+        : 'The conversation couldn’t be shared. Try again.'}</ErrorNotice> : null}
     {pending.isError ? <div className="scope-sharing-guests-failed">
-      <InlineError>Guests waiting to sign in couldn’t be loaded.</InlineError>
+      <ErrorNotice>Guests waiting to sign in couldn’t be loaded.</ErrorNotice>
       <Button disabled={pending.isFetching} onClick={() => void pending.refetch()}>Try again</Button>
     </div> : null}
     {pending.data?.length ? <div className="member-action-list" role="group" aria-label="Guests who have not signed in yet">

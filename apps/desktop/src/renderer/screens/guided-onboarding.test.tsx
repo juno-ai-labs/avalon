@@ -111,6 +111,7 @@ describe('new-account learning paths', () => {
     await screen.findByRole('heading', { name: 'This is you in Rally' });
     fireEvent.click(screen.getByRole('button', { name: 'Continue with this look' }));
     await screen.findByText('Profile changed in another session');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(state.updateJourney).not.toHaveBeenCalled();
   });
   it('starts creators at personal setup, then invitations, with no connector step', async () => {
@@ -178,6 +179,7 @@ describe('new-account learning paths', () => {
     state.saveAccount.mockRejectedValueOnce(new Error('Profile changed in another session'));
     show();
     expect(await screen.findByText('Profile changed in another session')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     await waitFor(() => expect(state.getAccount).toHaveBeenCalledTimes(2));
     state.saveAccount.mockReturnValue(new Promise(() => {}));
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -208,6 +210,7 @@ describe('new-account learning paths', () => {
     state.hasWorkspace = false;
     state.getAccount.mockRejectedValue(new Error('Identity unavailable'));
     show();
+    fireEvent.click(await screen.findByRole('button', { name: 'OK' }));
     expect(await screen.findByRole('heading', { name: "Let's pick up where you left off" })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
     expect(screen.queryByText('Ordinary organization')).not.toBeInTheDocument();
@@ -218,6 +221,7 @@ describe('new-account learning paths', () => {
     expect(state.getAccount).toHaveBeenCalledTimes(2);
     expect(screen.queryByText('Ordinary organization')).not.toBeInTheDocument();
     await act(async () => { rejectLookup(new Error('Identity still unavailable')); });
+    fireEvent.click(await screen.findByRole('button', { name: 'OK' }));
     expect(await screen.findByRole('button', { name: 'Retry' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
     expect(screen.queryByText('Ordinary organization')).not.toBeInTheDocument();
@@ -274,6 +278,7 @@ describe('new-account learning paths', () => {
     fireEvent.change(field, { target: { value: 'aspen@example.com' } });
     fireEvent.click(screen.getByRole('button', { name: 'Invite 1 teammate' }));
     await screen.findByText(/Could not invite:/u);
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     state.invitations.mockResolvedValue([{ email: 'aspen@example.com', status: 'pending' }]);
     fireEvent.click(screen.getByRole('button', { name: 'Invite 1 teammate' }));
     await screen.findByText('Ordinary organization');

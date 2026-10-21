@@ -78,7 +78,7 @@ describe('attachment presentation', () => {
 
   it('shows unavailable content without a spinner or a dead download action', () => {
     render(<AttachmentLightbox preview={{ name: 'Unavailable.pdf' }} onClose={vi.fn()} />);
-    expect(screen.getByRole('alert')).toHaveTextContent('no preview available');
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('no preview available');
     expect(screen.queryByRole('button', { name: 'Download Unavailable.pdf' })).toBeNull();
     expect(screen.queryByText('Preparing preview…')).toBeNull();
   });
@@ -97,7 +97,7 @@ describe('attachment presentation', () => {
     render(<AttachmentLightbox preview={{ name: 'note.txt', mimeType: 'text/plain', loadContent }} onClose={vi.fn()} />);
     await screen.findByText('preview');
     fireEvent.click(screen.getByRole('button', { name: 'Download note.txt' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Download failed');
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Download failed');
   });
 
   beforeEach(() => {
@@ -335,7 +335,8 @@ describe('attachment presentation', () => {
     render(<MessageAttachments attachments={[attachment]} loadContent={loadContent} onOpen={vi.fn()} />);
     expect(loadContent).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Play sample.wav' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Audio unavailable');
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Audio unavailable');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     fireEvent.click(screen.getByRole('button', { name: 'Play sample.wav' }));
     expect(await screen.findByLabelText('Audio: sample.wav')).toHaveAttribute('src');
     expect(loadContent).toHaveBeenCalledTimes(2);

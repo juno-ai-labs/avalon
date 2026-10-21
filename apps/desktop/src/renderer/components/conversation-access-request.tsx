@@ -4,7 +4,7 @@ import { Check, LoaderCircle } from 'lucide-react';
 
 import type { RallyApi } from '../lib/api';
 import { ApiError } from '../lib/api';
-import { Button, InlineError } from './primitives';
+import { Button, ErrorNotice } from './primitives';
 
 /**
  * What a member sees on a link to a Channel or Breakout they are not in: its
@@ -63,11 +63,11 @@ export function ConversationAccessRequest({ api, parentId, substreamId, fallback
           </Button>
         )}
         {request.error && (
-          <InlineError>
+          <ErrorNotice>
             {request.error instanceof ApiError && request.error.code === 'access_request_no_approver'
               ? request.error.message
               : 'The request couldn’t be sent. Try again.'}
-          </InlineError>
+          </ErrorNotice>
         )}
       </div>
     </div>

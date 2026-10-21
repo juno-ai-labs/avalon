@@ -1,3 +1,4 @@
+import { ErrorNotice } from './primitives';
 import { IconCornerUpLeft, IconFileText, IconUsers, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
@@ -119,7 +120,7 @@ export function MergeResponseCard({
           ))}
         </ul>
       )}
-      {error && <p className="merge-response-card-error" role="alert">{error}</p>}
+      {error && <ErrorNotice>{error}</ErrorNotice>}
       <p className="merge-response-card-audience"><IconUsers aria-hidden="true" size={14} stroke={1.8} />{audience}</p>
       <div className="merge-response-card-foot">
         {targetPill}

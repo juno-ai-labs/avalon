@@ -41,7 +41,7 @@ import { useFilePaste } from '../lib/use-file-paste';
 import { MAX_ATTACHMENTS } from '../lib/attachment-limits';
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import { type AttachmentPreview, PendingAttachmentTile } from './attachments';
-import { IconButton, InlineError, Tip } from './primitives';
+import { IconButton, ErrorNotice, Tip } from './primitives';
 
 /**
  * The model control a composer offers, in whichever of its two shapes fits
@@ -927,7 +927,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
         </div>
       </div>
       {(error || dictation.error) && (
-        <div className="composer-error-slot"><InlineError>{error || dictation.error}</InlineError></div>
+        <ErrorNotice>{error || dictation.error}</ErrorNotice>
       )}
       {onAttach && <input
         className="sr-only"

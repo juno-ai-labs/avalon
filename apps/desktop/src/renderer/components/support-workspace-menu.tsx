@@ -1,3 +1,4 @@
+import { ErrorNotice } from './primitives';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { IconSpy } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
@@ -78,9 +79,9 @@ export function SupportWorkspaceMenuRow({ workspace, current, loadPeople, onChoo
         <DropdownMenu.SubContent alignOffset={-5} className="menu-content nested-menu-content support-people-menu" collisionPadding={8} sideOffset={3}>
           {people.isPending && <DropdownMenu.Label className="menu-label support-people-status">Loading people…</DropdownMenu.Label>}
           {people.isError && (
-            <DropdownMenu.Label className="menu-label support-people-status workspace-menu-error">
+            <ErrorNotice>
               {errorMessage(people.error, 'Rally could not list the people here.')}
-            </DropdownMenu.Label>
+            </ErrorNotice>
           )}
           {people.data && people.data.length === 0 && (
             <DropdownMenu.Label className="menu-label support-people-status">Nobody is in this organization.</DropdownMenu.Label>
@@ -89,7 +90,7 @@ export function SupportWorkspaceMenuRow({ workspace, current, loadPeople, onChoo
           {members.map(personItem)}
           {guests.length > 0 && <DropdownMenu.Label className="menu-label workspace-menu-section">Guests</DropdownMenu.Label>}
           {guests.map(personItem)}
-          {error && <DropdownMenu.Label className="menu-label support-people-status workspace-menu-error">{error}</DropdownMenu.Label>}
+          {error && <ErrorNotice>{error}</ErrorNotice>}
         </DropdownMenu.SubContent>
       </DropdownMenu.Portal>
     </DropdownMenu.Sub>

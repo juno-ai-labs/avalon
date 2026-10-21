@@ -113,6 +113,7 @@ describe('SidekickSection', () => {
       failure: 'remove',
     });
     expect(screen.getByText('That Sidekick couldn’t be removed.')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(screen.queryByText('Some Sidekick information may be out of date.')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Editor' })).toBeVisible();
   });
