@@ -62,6 +62,7 @@ import type { AuthContext, Env } from "../src/env";
 import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import {
   capturedProviderRequests,
+  capturedCompletionRequests,
   installProviderCapture,
   installScriptedProvider,
   openProviderGate,
@@ -2143,6 +2144,40 @@ describe("a member's message travels the whole pipeline", () => {
       expect(String(users.at(-2)?.content)).toContain("sounds good");
       expect(String(users.at(-1)?.content)).toContain("please summarize what we agreed");
       expect(String(users.at(-1)?.content)).not.toContain("<user_system_prompt>");
+    } finally {
+      await restoreProviderFetch(stub);
+    }
+  });
+
+  it.each([
+    { name: "uncertain promise", answer: { choice: "answer_or_result" as const, confidence: 0.70 }, verify: true },
+    { name: "unavailable judge", answer: "unavailable" as const, verify: true },
+    { name: "confident result", answer: { choice: "answer_or_result" as const, confidence: 0.95 }, verify: false },
+  ])("completion verification handles $name in the production loop", async ({ answer, verify }) => {
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(stub, [
+        [{ choices: [{ delta: { content: verify ? "I'm drafting the article now." : "Here is the article." }, finish_reason: "stop" }] }],
+        ...(verify ? [[{ choices: [{ delta: { content: "Here is the completed article." }, finish_reason: "stop" }] }]] : []),
+      ], { primaryModel: PERSONAL_PROMPT_MODEL, fallbackModels: [], completionAnswers: [answer] });
+      const opened = await initializeWorkstream(stub, "Write an article about launch planning.", PERSONAL_PROMPT_MODEL);
+      expect(opened.status).toBe(200);
+      const run = await externallySettledRun(stub, opened.body.harnessRunId as string);
+      expect(run.status).toBe("completed");
+      const requests = (await capturedProviderRequests(stub)).filter((request) => request.url.endsWith("/responses"));
+      expect(requests).toHaveLength(verify ? 2 : 1);
+      const judgments = await capturedCompletionRequests(stub);
+      expect(judgments).toHaveLength(1);
+      expect(judgments[0]!.body).toMatchObject({ model: "jev-1.14.0", state: {
+        triggering_request: { text: "Write an article about launch planning." }, context_status: "resolved",
+      } });
+      const saved = await runInDurableObject(stub, (_instance, state) => ({
+        markers: state.storage.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM transcript_facts
+          WHERE source_kind = 'completion_verification' AND source_id = ?`, run.run_id).one().n,
+        final: new WorkstreamMessageStorage(state.storage).message({ messageId: run.final_turn_id! })?.text_content,
+      }));
+      expect(saved).toEqual({ markers: verify ? 1 : 0,
+        final: verify ? "Here is the completed article." : "Here is the article." });
     } finally {
       await restoreProviderFetch(stub);
     }

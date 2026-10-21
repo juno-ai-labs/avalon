@@ -1,0 +1,954 @@
+{
+  "manifest": {
+    "threshold": 0.7,
+    "policy": "uncertainty_fallback",
+    "model": "jev-1.14.0",
+    "timeoutMs": 1000,
+    "variants": [
+      "baseline",
+      "temporal",
+      "active_request",
+      "compact"
+    ],
+    "developmentRepeats": 2,
+    "holdoutRepeats": 2,
+    "selection": "Lowest worst-repeat development missed reprompts, then mean extra checks, then mean unavailable, then mean label errors; baseline wins an exact tie. Select before accessing new holdout outcomes.",
+    "caveat": "This holdout was examined during prior eval turns and confidence selection; no pristine generalization claim. No labels or state changed.",
+    "variantSourceSha256": "c5e9174c4f4cc7756d63adcd7b884dc106a66a24dc26aee189ab824bfb1cabfd",
+    "datasets": {
+      "development": {
+        "cases": 85,
+        "sha256": "dd88a84efc27f02c7ec32e1960005a0dcc7a7cdf5ed84a4e031aab242987037a"
+      },
+      "holdout": {
+        "cases": 95,
+        "sha256": "203be6075d1f79c61c1b54143a77116276fb324880e6fde83b5f5d969fc11b87"
+      }
+    }
+  },
+  "selection": {
+    "selected": "active_request",
+    "developmentRanking": [
+      {
+        "variant": "active_request",
+        "score": [
+          0,
+          4,
+          0,
+          4.5,
+          1
+        ]
+      },
+      {
+        "variant": "baseline",
+        "score": [
+          0,
+          5,
+          0,
+          3.5,
+          0
+        ]
+      },
+      {
+        "variant": "temporal",
+        "score": [
+          0,
+          5,
+          0,
+          4,
+          1
+        ]
+      },
+      {
+        "variant": "compact",
+        "score": [
+          0,
+          5,
+          0,
+          4.5,
+          1
+        ]
+      }
+    ],
+    "holdoutOutcomesAccessed": false
+  },
+  "runs": [
+    {
+      "split": "development",
+      "variant": "baseline",
+      "repeat": 1,
+      "sourceReportSha256": "c1619ddde3e4b8100756b5f3bbc54e79f7a9d188f1ad8649d52be91e4bb05cfa",
+      "questionsSha256": "fc03eb3b41d9c614411bb950d6c32fb91d762196f8e63feb04577d4a24a9e15e",
+      "startedAt": "2026-10-21T17:10:06.408Z",
+      "finishedAt": "2026-10-21T17:10:19.148Z",
+      "resolvedModels": [
+        "jev-1.14.0"
+      ],
+      "metrics": {
+        "cases": 85,
+        "needsContinuation": 8,
+        "totalReprompts": 13,
+        "caught": 8,
+        "missed": 0,
+        "extraVerificationTurns": 5,
+        "recall": 1,
+        "bySuite": {
+          "real": {
+            "cases": 58,
+            "needsContinuation": 1,
+            "caught": 1,
+            "missed": 0,
+            "extraVerificationTurns": 5
+          },
+          "synthetic": {
+            "cases": 27,
+            "needsContinuation": 7,
+            "caught": 7,
+            "missed": 0,
+            "extraVerificationTurns": 0
+          }
+        },
+        "bySplit": {
+          "development": {
+            "cases": 85,
+            "needsContinuation": 8,
+            "caught": 8,
+            "missed": 0,
+            "extraVerificationTurns": 5
+          },
+          "holdout": {
+            "cases": 0,
+            "needsContinuation": 0,
+            "caught": 0,
+            "missed": 0,
+            "extraVerificationTurns": 0
+          }
+        }
+      },
+      "labelCorrect": 81,
+      "unavailable": 0,
+      "latencyMs": {
+        "p50": 142.05617900000016,
+        "p95": 197.481315
+      },
+      "inputTokens": {
+        "p50": 1570,
+        "p95": 4333
+      }
+    },
+    {
+      "split": "development",
+      "variant": "baseline",
+      "repeat": 2,
+      "sourceReportSha256": "8edcb898e2c77f9a51b26d29b8a531157fefc13b58c97d36d5c47228ef574afa",
+      "questionsSha256": "fc03eb3b41d9c614411bb950d6c32fb91d762196f8e63feb04577d4a24a9e15e",
+      "startedAt": "2026-10-21T17:10:31.571Z",
+      "finishedAt": "2026-10-21T17:10:44.261Z",
+      "resolvedModels": [
+        "jev-1.14.0"
+      ],
+      "metrics": {
+        "cases": 85,
+        "needsContinuation": 8,
+        "totalReprompts": 13,
+        "caught": 8,
+        "missed": 0,
+        "extraVerificationTurns": 5,
+        "recall": 1,
+        "bySuite": {
+          "real": {
+            "cases": 58,
+            "needsContinuation": 1,
+            "caught": 1,
+            "missed": 0,
+            "extraVerificationTurns": 5
+          },
+          "synthetic": {
+            "cases": 27,
+            "needsContinuation": 7,
+            "caught": 7,
+            "missed": 0,
+            "extraVerificationTurns": 0
+          }
+        },
+        "bySplit": {
+          "development": {
+            "cases": 85,
+            "needsContinuation": 8,
+            "caught": 8,
+            "missed": 0,
+            "extraVerificationTurns": 5
+          },
+          "holdout": {
+            "cases": 0,
+            "needsContinuation": 0,
+            "caught": 0,
+            "missed": 0,
+            "extraVerificationTurns": 0
+          }
+        }
+      },
+      "labelCorrect": 82,
+      "unavailable": 0,
+      "latencyMs": {
+        "p50": 136.8152140000002,
+        "p95": 229.68800800000008
+      },
+      "inputTokens": {
+        "p50": 1570,
+        "p95": 4333
+      }
+    },
+    {
+      "split": "development",
+      "variant": "temporal",
+      "repeat": 1,
+      "sourceReportSha256": "64019d2ced95d51e7243289f40bbc3c2e4d237314fad316e73be9f9492c0e2e0",
+      "questionsSha256": "74e215d64d8a8415942f1d6459be45366191b519d46895a449f7bddd56ec427a",
+      "startedAt": "2026-10-21T17:10:44.601Z",
+      "finishedAt": "2026-10-21T17:10:56.738Z",
+      "resolvedModels": [
+        "jev-1.14.0"
+      ],
+      "metrics": {
+        "cases": 85,
+        "needsContinuation": 8,
+        "totalReprompts": 13,
+        "caught": 8,
+        "missed": 0,
+        "extraVerificationTurns": 5,
+        "recall": 1,
+        "bySuite": {
+          "real": {
+            "cases": 58,
+            "needsContinuation": 1,
+            "caught": 1,
+            "missed": 0,
+            "extraVerificationTurns": 5
+          },
+          "synthetic": {
+            "cases": 27,
+            "needsContinuation": 7,
+            "caught": 7,
+            "missed": 0,
+            "extraVerificationTurns": 0
+          }
+        },
+        "bySplit": {
+          "development": {
+            "cases": 85,
+            "needsContinuation": 8,
+            "caught": 8,
+            "missed": 0,
+            "extraVerificationTurns": 5
+          },
+          "holdout": {
+            "cases": 0,
+            "needsContinuation": 0,
+            "caught": 0,
+            "missed": 0,
+            "extraVerificationTurns": 0
+          }
+        }
+      },
+      "labelCorrect": 81,
+      "unavailable": 0,
+      "latencyMs": {
+        "p50": 134.8511610000005,
+        "p95": 215.6753930000002
+      },
+      "inputTokens": {
+        "p50": 1621,
+        "p95": 4384
+      }
+    },
+    {
+      "split": "development",
+      "variant": "temporal",
+      "repeat": 2,
+      "sourceReportSha256": "80e9cfc5c8c1976079f330acdde567dbff2c222e9c3f0b2f0e9d13ff29a35539",
+      "questionsSha256": "74e215d64d8a8415942f1d6459be45366191b519d46895a449f7bddd56ec427a",
+      "startedAt": "2026-10-21T17:11:47.257Z",
+      "finishedAt": "2026-10-21T17:12:00.073Z",
+      "resolvedModels": [
+        "jev-1.14.0"
+      ],
+      "metrics": {
+        "cases": 85,
+        "needsContinuation": 8,
+        "totalReprompts": 13,
+        "caught": 8,
+        "missed": 0,
+        "extraVerificationTurns": 5,
+        "recall": 1,
+        "bySuite": {
+          "real": {
+            "cases": 58,
+            "needsContinuation": 1,
+            "caught": 1,
+            "missed": 0,
+            "extraVerificationTurns": 5
+          },
+          "synthetic": {
+            "cases": 27,
+            "needsContinuation": 7,
+            "caught": 7,
+            "missed": 0,
+            "extraVerificationTurns": 0
+          }
+        },
+        "bySplit": {
+          "development": {
+            "cases": 85,
+            "needsContinuation": 8,
+            "caught": 8,
+            "missed": 0,
+            "extraVerificationTurns": 5
+          },
+          "holdout": {
+            "cases": 0,
+            "needsContinuation": 0,
+            "caught": 0,
+            "missed": 0,
+            "extraVerificationTurns": 0
+          }
+        }
+      },
+      "labelCorrect": 81,
+      "unavailable": 0,
+      "latencyMs": {
+        "p50": 142.17823599999974,
+        "p95": 229.78144499999985
+      },
+      "inputTokens": {
+        "p50": 1621,
+        "p95": 4384
+      }
+    },
+    {
+      "split": "development",
+      "variant": "active_request",
+      "repeat": 1,
+      "sourceReportSha256": "abb17c17d726d5a5ed0227e65b1576c20d78b92ea78c17ec1b04fe67c5f5a2f7",
+      "questionsSha256": "a54c2d87826bf34204ff17a566b056aee4dad7f945a9122e8ff36c073e558392",
+      "startedAt": "2026-10-21T17:10:57.092Z",
+      "finishedAt": "2026-10-21T17:11:08.883Z",
+      "resolvedModels": [
+        "jev-1.14.0"
+      ],
+      "metrics": {
+        "cases": 85,
+        "needsContinuation": 8,
+        "totalReprompts": 12,
+        "caught": 8,
+        "missed": 0,
+        "extraVerificationTurns": 4,
+        "recall": 1,
+        "bySuite": {
+          "real": {
+            "cases": 58,
+            "needsContinuation": 1,
+            "caught": 1,
+            "missed": 0,
+            "extraVerificationTurns": 4
+          },
+          "synthetic": {
+            "cases": 27,
+            "needsContinuation": 7,
+            "caught": 7,
+            "missed": 0,
+            "extraVerificationTurns": 0
+          }
+        },
+        "bySplit": {
+          "development": {
+            "cases": 85,
+            "needsContinuation": 8,
+            "caught": 8,
+            "missed": 0,
+            "extraVerificationTurns": 4
+          },
+          "holdout": {
+            "cases": 0,
+            "needsContinuation": 0,
+            "caught": 0,
+            "missed": 0,
+            "extraVerificationTurns": 0
+          }
+        }
+      },
+      "labelCorrect": 80,
+      "unavailable": 0,
+      "latencyMs": {
+        "p50": 135.551516,
+        "p95": 184.68045100000018
+      },
+      "inputTokens": {
+        "p50": 1603,
+        "p95": 4366
+      }
+    },
+    {
+      "split": "development",
+      "variant": "active_request",
+      "repeat": 2,
+      "sourceReportSha256": "0a6dd9dc153527270ba87841644db451d7d402cf785ee5a21f89155ede25578c",
+      "questionsSha256": "a54c2d87826bf34204ff17a566b056aee4dad7f945a9122e8ff36c073e558392",
+      "startedAt": "2026-10-21T17:11:35.634Z",
+      "finishedAt": "2026-10-21T17:11:46.896Z",
+      "resolvedModels": [
+        "jev-1.14.0"
+      ],
+      "metrics": {
+        "cases": 85,
+        "needsContinuation": 8,
+        "totalReprompts": 12,
+        "caught": 8,
+        "missed": 0,
+        "extraVerificationTurns": 4,
+        "recall": 1,
+        "bySuite": {
+          "real": {
+            "cases": 58,
+            "needsContinuation": 1,
+            "caught": 1,
+            "missed": 0,
+            "extraVerificationTurns": 4
+          },
+          "synthetic": {
+            "cases": 27,
+            "needsContinuation": 7,
+            "caught": 7,
+            "missed": 0,
+            "extraVerificationTurns": 0
+          }
+        },
+        "bySplit": {
+          "development": {
+            "cases": 85,
+            "needsContinuation": 8,
+            "caught": 8,
+            "missed": 0,
+            "extraVerificationTurns": 4
+          },
+          "holdout": {
+            "cases": 0,
+            "needsContinuation": 0,
+            "caught": 0,
+            "missed": 0,
+            "extraVerificationTurns": 0
+          }
+        }
+      },
+      "labelCorrect": 81,
+      "unavailable": 0,
+      "latencyMs": {
+        "p50": 129.6087120000011,
+        "p95": 179.7438600000005
+      },
+      "inputTokens": {
+        "p50": 1603,
+        "p95": 4366
+      }
+    },
+    {
+      "split": "development",
+      "variant": "compact",
+      "repeat": 1,
+      "sourceReportSha256": "ed95f33edd446010619ae8c8486a91c4ac13bb3ad86bf5b9bce720fff762cd12",
+      "questionsSha256": "abc567c0f577c66d1eeb906b8301fd5671fcb64710ce902a3fe9f7730a3f913c",
+      "startedAt": "2026-10-21T17:11:09.488Z",
+      "finishedAt": "2026-10-21T17:11:23.195Z",
+      "resolvedModels": [
+        "jev-1.14.0"
+      ],
+      "metrics": {
+        "cases": 85,
+        "needsContinuation": 8,
+        "totalReprompts": 14,
+        "caught": 8,
+        "missed": 0,
+        "extraVerificationTurns": 6,
+        "recall": 1,
+        "bySuite": {
+          "real": {
+            "cases": 58,
+            "needsContinuation": 1,
+            "caught": 1,
+            "missed": 0,
+            "extraVerificationTurns": 5
+          },
+          "synthetic": {
+            "cases": 27,
+            "needsContinuation": 7,
+            "caught": 7,
+            "missed": 0,
+            "extraVerificationTurns": 1
+          }
+        },
+        "bySplit": {
+          "development": {
+            "cases": 85,
+            "needsContinuation": 8,
+            "caught": 8,
+            "missed": 0,
+            "extraVerificationTurns": 6
+          },
+          "holdout": {
+            "cases": 0,
+            "needsContinuation": 0,
+            "caught": 0,
+            "missed": 0,
+            "extraVerificationTurns": 0
+          }
+        }
+      },
+      "labelCorrect": 80,
+      "unavailable": 0,
+      "latencyMs": {
+        "p50": 155.37549599999966,
+        "p95": 252.07032700000002
+      },
+      "inputTokens": {
+        "p50": 1364,
+        "p95": 4127
+      }
+    },
+    {
+      "split": "development",
+      "variant": "compact",
+      "repeat": 2,
+      "sourceReportSha256": "dc5ccd66e5dbe44e8649d4ec3ba9b4f0f48fcbc9096c5593bd8d6c1073cb219d",
+      "questionsSha256": "abc567c0f577c66d1eeb906b8301fd5671fcb64710ce902a3fe9f7730a3f913c",
+      "startedAt": "2026-10-21T17:11:23.596Z",
+      "finishedAt": "2026-10-21T17:11:35.299Z",
+      "resolvedModels": [
+        "jev-1.14.0"
+      ],
+      "metrics": {
+        "cases": 85,
+        "needsContinuation": 8,
+        "totalReprompts": 12,
+        "caught": 8,
+        "missed": 0,
+        "extraVerificationTurns": 4,
+        "recall": 1,
+        "bySuite": {
+          "real": {
+            "cases": 58,
+            "needsContinuation": 1,
+            "caught": 1,
+            "missed": 0,
+            "extraVerificationTurns": 4
+          },
+          "synthetic": {
+            "cases": 27,
+            "needsContinuation": 7,
+            "caught": 7,
+            "missed": 0,
+            "extraVerificationTurns": 0
+          }
+        },
+        "bySplit": {
+          "development": {
+            "cases": 85,
+            "needsContinuation": 8,
+            "caught": 8,
+            "missed": 0,
+            "extraVerificationTurns": 4
+          },
+          "holdout": {
+            "cases": 0,
+            "needsContinuation": 0,
+            "caught": 0,
+            "missed": 0,
+            "extraVerificationTurns": 0
+          }
+        }
+      },
+      "labelCorrect": 81,
+      "unavailable": 0,
+      "latencyMs": {
+        "p50": 135.24646699999994,
+        "p95": 187.9484910000001
+      },
+      "inputTokens": {
+        "p50": 1364,
+        "p95": 4127
+      }
+    },
+    {
+      "split": "holdout",
+      "variant": "baseline",
+      "repeat": 1,
+      "sourceReportSha256": "8da07913ad21b0d8542019306ccc4072bb1282198a1d20f31663f61fe79fe2ec",
+      "questionsSha256": "fc03eb3b41d9c614411bb950d6c32fb91d762196f8e63feb04577d4a24a9e15e",
+      "startedAt": "2026-10-21T17:13:26.950Z",
+      "finishedAt": "2026-10-21T17:13:41.197Z",
+      "resolvedModels": [
+        "jev-1.14.0"
+      ],
+      "metrics": {
+        "cases": 95,
+        "needsContinuation": 11,
+        "totalReprompts": 19,
+        "caught": 11,
+        "missed": 0,
+        "extraVerificationTurns": 8,
+        "recall": 1,
+        "bySuite": {
+          "real": {
+            "cases": 62,
+            "needsContinuation": 0,
+            "caught": 0,
+            "missed": 0,
+            "extraVerificationTurns": 4
+          },
+          "synthetic": {
+            "cases": 33,
+            "needsContinuation": 11,
+            "caught": 11,
+            "missed": 0,
+            "extraVerificationTurns": 4
+          }
+        },
+        "bySplit": {
+          "development": {
+            "cases": 0,
+            "needsContinuation": 0,
+            "caught": 0,
+            "missed": 0,
+            "extraVerificationTurns": 0
+          },
+          "holdout": {
+            "cases": 95,
+            "needsContinuation": 11,
+            "caught": 11,
+            "missed": 0,
+            "extraVerificationTurns": 8
+          }
+        }
+      },
+      "labelCorrect": 91,
+      "unavailable": 0,
+      "latencyMs": {
+        "p50": 139.4127640000006,
+        "p95": 253.01149800000167
+      },
+      "inputTokens": {
+        "p50": 1485,
+        "p95": 6840
+      }
+    },
+    {
+      "split": "holdout",
+      "variant": "baseline",
+      "repeat": 2,
+      "sourceReportSha256": "2c2372b78e920e61dd128063a6f91b5789a3e3c3c056c745d37281bf5c4b6b66",
+      "questionsSha256": "fc03eb3b41d9c614411bb950d6c32fb91d762196f8e63feb04577d4a24a9e15e",
+      "startedAt": "2026-10-21T17:14:11.065Z",
+      "finishedAt": "2026-10-21T17:14:25.071Z",
+      "resolvedModels": [
+        "jev-1.14.0"
+      ],
+      "metrics": {
+        "cases": 95,
+        "needsContinuation": 11,
+        "totalReprompts": 19,
+        "caught": 11,
+        "missed": 0,
+        "extraVerificationTurns": 8,
+        "recall": 1,
+        "bySuite": {
+          "real": {
+            "cases": 62,
+            "needsContinuation": 0,
+            "caught": 0,
+            "missed": 0,
+            "extraVerificationTurns": 4
+          },
+          "synthetic": {
+            "cases": 33,
+            "needsContinuation": 11,
+            "caught": 11,
+            "missed": 0,
+            "extraVerificationTurns": 4
+          }
+        },
+        "bySplit": {
+          "development": {
+            "cases": 0,
+            "needsContinuation": 0,
+            "caught": 0,
+            "missed": 0,
+            "extraVerificationTurns": 0
+          },
+          "holdout": {
+            "cases": 95,
+            "needsContinuation": 11,
+            "caught": 11,
+            "missed": 0,
+            "extraVerificationTurns": 8
+          }
+        }
+      },
+      "labelCorrect": 91,
+      "unavailable": 0,
+      "latencyMs": {
+        "p50": 138.67407100000128,
+        "p95": 229.10421099999985
+      },
+      "inputTokens": {
+        "p50": 1485,
+        "p95": 6840
+      }
+    },
+    {
+      "split": "holdout",
+      "variant": "active_request",
+      "repeat": 1,
+      "sourceReportSha256": "6123a07463a524ca13e985f4567af34e6590aea0fd1f0134d07073394c994c7b",
+      "questionsSha256": "a54c2d87826bf34204ff17a566b056aee4dad7f945a9122e8ff36c073e558392",
+      "startedAt": "2026-10-21T17:13:41.529Z",
+      "finishedAt": "2026-10-21T17:13:55.086Z",
+      "resolvedModels": [
+        "jev-1.14.0"
+      ],
+      "metrics": {
+        "cases": 95,
+        "needsContinuation": 11,
+        "totalReprompts": 19,
+        "caught": 10,
+        "missed": 1,
+        "extraVerificationTurns": 9,
+        "recall": 0.9090909090909091,
+        "bySuite": {
+          "real": {
+            "cases": 62,
+            "needsContinuation": 0,
+            "caught": 0,
+            "missed": 0,
+            "extraVerificationTurns": 5
+          },
+          "synthetic": {
+            "cases": 33,
+            "needsContinuation": 11,
+            "caught": 10,
+            "missed": 1,
+            "extraVerificationTurns": 4
+          }
+        },
+        "bySplit": {
+          "development": {
+            "cases": 0,
+            "needsContinuation": 0,
+            "caught": 0,
+            "missed": 0,
+            "extraVerificationTurns": 0
+          },
+          "holdout": {
+            "cases": 95,
+            "needsContinuation": 11,
+            "caught": 10,
+            "missed": 1,
+            "extraVerificationTurns": 9
+          }
+        }
+      },
+      "labelCorrect": 90,
+      "unavailable": 0,
+      "latencyMs": {
+        "p50": 134.80394799999885,
+        "p95": 226.66236300000003
+      },
+      "inputTokens": {
+        "p50": 1518,
+        "p95": 6873
+      }
+    },
+    {
+      "split": "holdout",
+      "variant": "active_request",
+      "repeat": 2,
+      "sourceReportSha256": "15da7317e44db0cadc6673f681bb993e348f9eb4b61320bcfe89edb7cab894ac",
+      "questionsSha256": "a54c2d87826bf34204ff17a566b056aee4dad7f945a9122e8ff36c073e558392",
+      "startedAt": "2026-10-21T17:13:55.452Z",
+      "finishedAt": "2026-10-21T17:14:10.743Z",
+      "resolvedModels": [
+        "jev-1.14.0"
+      ],
+      "metrics": {
+        "cases": 95,
+        "needsContinuation": 11,
+        "totalReprompts": 18,
+        "caught": 10,
+        "missed": 1,
+        "extraVerificationTurns": 8,
+        "recall": 0.9090909090909091,
+        "bySuite": {
+          "real": {
+            "cases": 62,
+            "needsContinuation": 0,
+            "caught": 0,
+            "missed": 0,
+            "extraVerificationTurns": 4
+          },
+          "synthetic": {
+            "cases": 33,
+            "needsContinuation": 11,
+            "caught": 10,
+            "missed": 1,
+            "extraVerificationTurns": 4
+          }
+        },
+        "bySplit": {
+          "development": {
+            "cases": 0,
+            "needsContinuation": 0,
+            "caught": 0,
+            "missed": 0,
+            "extraVerificationTurns": 0
+          },
+          "holdout": {
+            "cases": 95,
+            "needsContinuation": 11,
+            "caught": 10,
+            "missed": 1,
+            "extraVerificationTurns": 8
+          }
+        }
+      },
+      "labelCorrect": 91,
+      "unavailable": 0,
+      "latencyMs": {
+        "p50": 154.22678199999973,
+        "p95": 251.0863219999992
+      },
+      "inputTokens": {
+        "p50": 1518,
+        "p95": 6873
+      }
+    }
+  ],
+  "stability": [
+    {
+      "split": "development",
+      "variant": "baseline",
+      "cases": 85,
+      "labelFlips": 1,
+      "repromptFlips": 0
+    },
+    {
+      "split": "development",
+      "variant": "temporal",
+      "cases": 85,
+      "labelFlips": 0,
+      "repromptFlips": 0
+    },
+    {
+      "split": "development",
+      "variant": "active_request",
+      "cases": 85,
+      "labelFlips": 1,
+      "repromptFlips": 0
+    },
+    {
+      "split": "development",
+      "variant": "compact",
+      "cases": 85,
+      "labelFlips": 1,
+      "repromptFlips": 2
+    },
+    {
+      "split": "holdout",
+      "variant": "baseline",
+      "cases": 95,
+      "labelFlips": 0,
+      "repromptFlips": 0
+    },
+    {
+      "split": "holdout",
+      "variant": "active_request",
+      "cases": 95,
+      "labelFlips": 1,
+      "repromptFlips": 1
+    }
+  ],
+  "pairedComparisons": [
+    {
+      "split": "development",
+      "repeat": 1,
+      "newMisses": 0,
+      "recoveredMisses": 0,
+      "extraChecksRemoved": 1,
+      "extraChecksAdded": 0
+    },
+    {
+      "split": "development",
+      "repeat": 2,
+      "newMisses": 0,
+      "recoveredMisses": 0,
+      "extraChecksRemoved": 1,
+      "extraChecksAdded": 0
+    },
+    {
+      "split": "holdout",
+      "repeat": 1,
+      "newMisses": 1,
+      "recoveredMisses": 0,
+      "extraChecksRemoved": 0,
+      "extraChecksAdded": 1
+    },
+    {
+      "split": "holdout",
+      "repeat": 2,
+      "newMisses": 1,
+      "recoveredMisses": 0,
+      "extraChecksRemoved": 1,
+      "extraChecksAdded": 1
+    }
+  ],
+  "limitations": [
+    "Only one eligible real positive; reference labels are Codex-authored, not human gold.",
+    "Previously inspected holdout; no fresh generalization claim.",
+    "Two repeated runs per variant are a limited stability check.",
+    "Scores measure reprompt decisions, not main-model recovery success or duplicate actions.",
+    "Confidence is a routing signal, not a calibrated completion probability.",
+    "Production behavior is unchanged."
+  ],
+  "decision": {
+    "retain": "baseline",
+    "threshold": 0.7,
+    "policy": "uncertainty_fallback",
+    "reason": "The development winner missed the synthetic calendar promise in both holdout repeats; baseline missed none. Recall takes precedence over extra verification turns.",
+    "productionChanged": false
+  },
+  "holdoutRegression": {
+    "caseId": "synthetic-calendar-promise",
+    "expectedReprompt": true,
+    "baseline": [
+      {
+        "repeat": 1,
+        "choice": "answer_or_result",
+        "confidence": 0.6
+      },
+      {
+        "repeat": 2,
+        "choice": "answer_or_result",
+        "confidence": 0.6
+      }
+    ],
+    "active_request": [
+      {
+        "repeat": 1,
+        "choice": "answer_or_result",
+        "confidence": 0.81
+      },
+      {
+        "repeat": 2,
+        "choice": "answer_or_result",
+        "confidence": 0.72
+      }
+    ]
+  }
+}

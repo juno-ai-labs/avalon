@@ -2556,6 +2556,39 @@ describe("agent harness", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it("persists a completion verification marker before the next model call and exposes current context", async () => {
+    const requests: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const responses = [
+      streamResponse([{ choices: [{ delta: { content: "I'm writing it now." }, finish_reason: "stop" }] }]),
+      streamResponse([{ choices: [{ delta: { content: "Here is the article." }, finish_reason: "stop" }] }]),
+    ];
+    const transitions: BindLoopTransition[] = [];
+    let used = false;
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      if (requests.length > 0) expect(used).toBe(true);
+      requests.push(providerRequestView(JSON.parse(String(init?.body))) as typeof requests[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      onBindLoopTransition: (transition) => {
+        transitions.push(transition);
+        if (transition.kind === "protocol_user_appended" && transition.provenance.sourceKind === "completion_verification") used = true;
+      },
+      onTurnWouldEnd: ({ assistantContent, messages }) => {
+        expect(messages).toEqual(expect.arrayContaining([expect.objectContaining({ role: "assistant", content: assistantContent })]));
+        return used ? null : { message: "Verify and finish the requested article.",
+          provenance: { originKind: "derived", sourceKind: "completion_verification", sourceId: "execution-1", sourceRevision: null } };
+      },
+    });
+    expect(outcome).toMatchObject({ status: "completed", content: "Here is the article." });
+    expect(requests).toHaveLength(2);
+    expect(requests[1]!.messages).toEqual(expect.arrayContaining([
+      { role: "user", content: "Verify and finish the requested article." },
+    ]));
+    expect(transitions.filter((transition) => transition.kind === "protocol_user_appended")).toHaveLength(1);
+  });
+
   it("records a tool-less continuation nudge as protocol-only provenance", async () => {
     const responses = [
       streamResponse([{
@@ -7079,6 +7112,7 @@ describe("agent harness", () => {
     expect(onTurnWouldEnd).toHaveBeenCalledWith({
       assistantContent: "recovered",
       cumulativeToolCalls: 0,
+      messages: expect.arrayContaining([expect.objectContaining({ role: "assistant", content: "recovered" })]),
     });
   });
 

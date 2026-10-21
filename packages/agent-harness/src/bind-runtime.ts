@@ -1983,12 +1983,15 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       ...(onTurnWouldEnd || input.compaction
         ? {
             onTurnWouldEnd: async (assistantMessage: ProviderAssistantResult, cumulativeToolCalls: number) => {
-              const nudge = await onTurnWouldEnd?.({
+              const continuation = await onTurnWouldEnd?.({
                 assistantContent: typeof assistantMessage.content === "string" ? assistantMessage.content : "",
                 cumulativeToolCalls,
+                messages: fromOpenAiMessages(state.messages),
               });
+              const nudge = typeof continuation === "string" ? continuation : continuation?.message;
               await compactTerminalTurn();
               if (nudge?.trim()) {
+                signal.throwIfAborted();
                 if (!bindLoopProjection) throw new Error("bind_loop_not_initialized");
                 await commitBindTransition({
                   kind: "protocol_user_appended",
@@ -1996,7 +1999,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
                   generation: bindLoopProjection.generation,
                   stateRevision: bindLoopProjection.stateRevision + 1,
                   message: { role: "user", content: nudge },
-                  provenance: {
+                  provenance: typeof continuation === "object" && continuation ? continuation.provenance : {
                     originKind: "protocol",
                     sourceKind: null,
                     sourceId: null,

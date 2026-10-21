@@ -52,6 +52,8 @@ function asResponsesEvents(events: readonly unknown[]): unknown[] {
 
 interface ProviderCaptureEntry {
   requests: CapturedProviderRequest[];
+  completionRequests: CapturedProviderRequest[];
+  completionAnswers: CompletionJudgeAnswer[];
   scripts: (unknown[] | "refuse")[];
   models: string[];
   /**
@@ -60,6 +62,18 @@ interface ProviderCaptureEntry {
    * that want no gate at all.
    */
   gate: { open: boolean } | null;
+}
+
+type CompletionJudgeAnswer = { choice: "announces_unfinished_work" | "answer_or_result" | "blocker_or_question" | "unclear"; confidence: number } | "unavailable";
+
+async function completionJudgeResponse(entry: ProviderCaptureEntry, request: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const body = JSON.parse(typeof init?.body === "string" ? init.body : request instanceof Request ? await request.clone().text() : "{}");
+  // Other classifiers remain unavailable, as before this boundary was added.
+  if (!body.questions?.stopping) return Response.json({ error: "test_classifier_unavailable" }, { status: 503 });
+  entry.completionRequests.push({ url: "https://api.typesafe.ai/v1/systemone", body });
+  const answer = entry.completionAnswers.shift() ?? { choice: "answer_or_result", confidence: 0.99 };
+  return answer === "unavailable" ? Response.json({ error: "test_classifier_unavailable" }, { status: 503 })
+    : Response.json({ model: "jev-1.14.0", answers: { stopping: { type: "choice", ...answer } } });
 }
 
 type ProviderCaptureGlobal = typeof globalThis & {
@@ -95,7 +109,7 @@ export async function installProviderCapture(
     const scope = globalThis as ProviderCaptureGlobal;
     scope.__rallyPipelineOriginalFetch ??= scope.fetch;
     const objects = scope.__rallyPipelineProviderState ??= new Map<string, ProviderCaptureEntry>();
-    objects.set(objectId, { requests: [], scripts: [], models: [model], gate: null });
+    objects.set(objectId, { requests: [], completionRequests: [], completionAnswers: [], scripts: [], models: [model], gate: null });
     scope.fetch = (async (request: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof request === "string"
         ? request
@@ -105,6 +119,7 @@ export async function installProviderCapture(
       if (url === "https://openrouter.ai/api/v1/models") return providerCatalog(objects);
       const entry = providerCaller(objects, request, init);
       if (!entry) return unattributedProviderResponse();
+      if (url === "https://api.typesafe.ai/v1/systemone") return completionJudgeResponse(entry, request, init);
       if (url === RESPONSES_URL || url === CHAT_COMPLETIONS_URL) {
         const text = typeof init?.body === "string"
           ? init.body
@@ -202,6 +217,8 @@ export async function installScriptedProvider(
      * test racing a stream that answers in microseconds.
      */
     gateFirstCall?: boolean;
+    /** Defaults to accepting a completed answer; individual tests supply errors or promises. */
+    completionAnswers?: readonly CompletionJudgeAnswer[];
   },
 ): Promise<void> {
   await runInDurableObject(stub, (instance, state) => {
@@ -210,6 +227,7 @@ export async function installScriptedProvider(
     target.env = new Proxy(target.env, {
       get: (current, property, receiver) => {
         if (property === "OPENROUTER_API_KEY") return `${PROVIDER_KEY_PREFIX}${objectId}`;
+        if (property === "TYPESAFE_API_KEY") return `${PROVIDER_KEY_PREFIX}${objectId}`;
         if (property === "OPENROUTER_PRIMARY_MODEL") return routing.primaryModel;
         if (property === "OPENROUTER_FALLBACK_MODELS") {
           return routing.fallbackModels.join(",");
@@ -222,6 +240,8 @@ export async function installScriptedProvider(
     const objects = scope.__rallyPipelineProviderState ??= new Map<string, ProviderCaptureEntry>();
     objects.set(objectId, {
       requests: [],
+      completionRequests: [],
+      completionAnswers: [...routing.completionAnswers ?? []],
       scripts: scripts.map((events) => events === "refuse" ? "refuse" : [...events]),
       models: [routing.primaryModel, ...routing.fallbackModels],
       gate: routing.gateFirstCall === true ? { open: false } : null,
@@ -235,6 +255,7 @@ export async function installScriptedProvider(
       if (url === "https://openrouter.ai/api/v1/models") return providerCatalog(objects);
       const entry = providerCaller(objects, request, init);
       if (!entry) return unattributedProviderResponse();
+      if (url === "https://api.typesafe.ai/v1/systemone") return completionJudgeResponse(entry, request, init);
       if (url !== RESPONSES_URL && url !== CHAT_COMPLETIONS_URL) {
         throw new Error(`unexpected_pipeline_provider_request:${url}`);
       }
@@ -282,6 +303,13 @@ export async function capturedProviderRequests(stub: DurableObjectStub): Promise
     return structuredClone(
       scope.__rallyPipelineProviderState?.get(state.id.toString())?.requests ?? [],
     );
+  });
+}
+
+export async function capturedCompletionRequests(stub: DurableObjectStub): Promise<CapturedProviderRequest[]> {
+  return runInDurableObject(stub, (_instance, state) => {
+    const scope = globalThis as ProviderCaptureGlobal;
+    return structuredClone(scope.__rallyPipelineProviderState?.get(state.id.toString())?.completionRequests ?? []);
   });
 }
 
