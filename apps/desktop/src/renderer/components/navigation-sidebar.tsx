@@ -200,7 +200,7 @@ export function NavigationSidebar({
     if (!panel.current?.contains(document.activeElement)) menuToggle.current?.focus();
     const closeOnEscape = (event: KeyboardEvent): void => {
       // A menu or dialog open over the sheet takes this Escape for itself.
-      if (event.key !== 'Escape' || document.querySelector('[role="menu"], [role="dialog"]')) return;
+      if (event.key !== 'Escape' || document.querySelector('[role="menu"], [role="dialog"], [role="alertdialog"]')) return;
       setSidebarOpen(false);
       menuToggle.current?.focus();
     };
