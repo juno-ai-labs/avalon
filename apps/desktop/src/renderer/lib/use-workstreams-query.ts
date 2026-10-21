@@ -111,8 +111,10 @@ export type WorkstreamsQuery = UseQueryResult<WorkstreamSummary[]> & {
  * - **`fetchMore` appends rather than refetching.** It asks for one page and
  *   merges it in, so reaching the bottom costs one request rather than
  *   re-reading everything above it.
+ *
+ * `includeArchived` lets a list overlay retain archive tombstones from the socket.
  */
-export function useWorkstreamsQuery(): WorkstreamsQuery {
+export function useWorkstreamsQuery({ includeArchived = false }: { includeArchived?: boolean } = {}): WorkstreamsQuery {
   const { listWorkstreams, sidebarConnect, walkSpaceChannels } = useWorkspaceSocket();
   const queryClient = useQueryClient();
   const debugEnabled = useDebugEnabled();
@@ -208,7 +210,7 @@ export function useWorkstreamsQuery(): WorkstreamsQuery {
     // something explicitly invalidates, which is the debug toggle or a pin.
     enabled: sidebarConnect !== null,
     staleTime: Number.POSITIVE_INFINITY,
-    select: selectActiveWorkstreams,
+    select: includeArchived ? undefined : selectActiveWorkstreams,
   });
 
   // Paging is the client's own position and the payload knows nothing about it.

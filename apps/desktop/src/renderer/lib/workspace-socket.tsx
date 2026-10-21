@@ -1273,6 +1273,10 @@ export function WorkspaceSocketProvider({
             // reach may have changed, and only the conversation directory says.
             if (workstreamState.data.workstream === null) {
               void queryClient.invalidateQueries({ queryKey: ['shared-navigation'] });
+              // A loss of visibility may be archive or membership. Ask the
+              // authoritative conversation list rather than guessing which
+              // breakouts the viewer still reaches through this parent.
+              if (!applied.visible) void queryClient.invalidateQueries({ queryKey: MY_THREADS_QUERY_KEY });
             }
             scheduleRailPrefetch();
             return;

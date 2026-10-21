@@ -524,6 +524,100 @@ describe('the navigation sidebar', () => {
     expect(screen.getByRole('img', { name: '2 with new threads' })).toBeInTheDocument();
   });
 
+  it.each(['threads', 'pinned'] as const)('omits archived conversations from %s, including pins and live archived parents', async (section) => {
+    useUiStore.getState().setSidebarSection(section);
+    const archivedAt = '2026-10-21T12:00:00.000Z';
+    const open = thread('open', 'Open thread', { hasUnread: true });
+    const resolved = thread('resolved', 'Resolved thread', { resolved: true });
+    const archived = thread('archived', 'Archived thread', { hasUnread: true });
+    const liveArchived = thread('live-archived', 'Archived live', { hasUnread: true });
+    const breakout = thread('child', 'Archived parent breakout', {
+      kind: 'breakout', hasUnread: true,
+      breakoutOf: { workstreamId: liveArchived.id, substreamId: 'child', title: liveArchived.title },
+    });
+    const rows = [open, resolved, archived, liveArchived, breakout];
+    live.rows = [{ ...archived, archivedAt }, { ...liveArchived, archivedAt }];
+    api.getMyThreads.mockResolvedValue({ nextCursor: null, items: rows, pinned: rows });
+    renderSidebar((client) => client.setQueryData(PINS_QUERY_KEY, rows.map((row) => ({
+      kind: row.kind === 'breakout' ? 'breakout' : 'thread', id: row.id, parentId: row.breakoutOf?.workstreamId ?? null,
+    }))));
+
+    await screen.findByRole('link', { name: /Open thread/u });
+    expect(screen.getByRole('link', { name: /Resolved thread/u })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Archived/u })).not.toBeInTheDocument();
+    expect(screen.getByRole('img', { name: '1 pinned with news' })).toBeInTheDocument();
+    const list = within(screen.getByRole('region', { name: 'Pinned threads' }));
+    expect(list.getByText('Pinned, 1 of 2.')).toBeInTheDocument();
+    expect(list.getByText('Pinned, 2 of 2.')).toBeInTheDocument();
+  });
+
+  it('shows the empty Threads state when every unpinned conversation is archived', async () => {
+    useUiStore.getState().setSidebarSection('threads');
+    api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [
+      thread('archived', 'Archived thread', { archivedAt: '2026-10-21T12:00:00.000Z' }),
+    ], pinned: [] });
+    renderSidebar(() => undefined);
+    expect(await screen.findByText('Threads you start or are added to appear here.')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Archived thread/u })).not.toBeInTheDocument();
+  });
+
+  it.each(['threads', 'pinned'] as const)('excludes missing pins from the loaded %s count and empty state', async (section) => {
+    useUiStore.getState().setSidebarSection(section);
+    api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [], pinned: [] });
+    renderSidebar((client) => client.setQueryData(PINS_QUERY_KEY, [{ kind: 'thread', id: 'hidden', parentId: null }]));
+    const list = within(screen.getByRole('region', { name: 'Pinned threads' }));
+    expect(await list.findByText(section === 'pinned' ? 'Pin a thread to keep it here' : 'Move a thread here to pin it')).toBeInTheDocument();
+    expect(list.queryByText(/Pinned, /u)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [80, ['hidden', 'a', 'x', 'b']],
+    [200, ['hidden', 'a', 'b', 'x']],
+  ] as const)('saves a visible thread drop at y=%s into the stored order without counting hidden pins', async (clientY, expected) => {
+    useUiStore.getState().setSidebarSection('threads');
+    const rows = [thread('a', 'Alpha'), thread('b', 'Beta'), thread('x', 'Extra')];
+    api.getMyThreads.mockResolvedValue({ nextCursor: null, items: rows, pinned: rows.slice(0, 2) });
+    const pinList = (ids: readonly string[]) => ids.map((id) => ({ kind: 'thread', id, parentId: null }));
+    api.setPinned.mockResolvedValue(pinList(['hidden', 'a', 'b', 'x']));
+    api.reorderPins.mockImplementation(async (_kind: string, ids: string[]) => pinList(ids));
+    let queryClient!: QueryClient;
+    renderSidebar((client) => {
+      queryClient = client;
+      client.setQueryData(PINS_QUERY_KEY, pinList(['hidden', 'a', 'b']));
+    });
+    const section = screen.getByRole('region', { name: 'Pinned threads' });
+    const alpha = await within(section).findByRole('link', { name: /Alpha/u });
+    const beta = within(section).getByRole('link', { name: /Beta/u });
+    expect(within(alpha).getByText('Pinned, 1 of 2.')).toBeInTheDocument();
+    vi.spyOn(alpha, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 40, 300, 50));
+    vi.spyOn(beta, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 90, 300, 50));
+    fireEvent.dragStart(screen.getByRole('link', { name: /Extra/u }), { dataTransfer: { effectAllowed: 'all', setData: vi.fn() } });
+    const over = createEvent.dragOver(section, { dataTransfer: { dropEffect: 'none' } });
+    Object.defineProperty(over, 'clientY', { value: clientY });
+    fireEvent(section, over);
+    fireEvent.drop(section);
+    await waitFor(() => expect(queryClient.getQueryData(PINS_QUERY_KEY)).toEqual(pinList(expected)));
+  });
+
+  it.each([
+    ['needs_you', ['Attention newest', 'Attention older', 'Quiet newest', 'Quiet older', 'Resolved newest', 'Resolved older']],
+    ['recent', ['Resolved newest', 'Resolved older', 'Quiet newest', 'Attention newest', 'Attention older', 'Quiet older']],
+  ] as const)('orders threads by %s, putting resolved rows in the final attention group even when unread and open', async (sort, expected) => {
+    useUiStore.getState().setSidebarSection('threads');
+    useUiStore.getState().setThreadSort(sort);
+    api.getMyThreads.mockResolvedValue({ nextCursor: null, pinned: [], items: [
+      thread('resolved-older', 'Resolved older', { resolved: true, lastActivityAt: '2026-10-22T12:00:00.000Z' }),
+      thread('quiet-newest', 'Quiet newest', { lastActivityAt: '2026-10-21T12:00:00.000Z' }),
+      thread('attention-newest', 'Attention newest', { hasUnread: true, lastActivityAt: '2026-10-20T12:00:00.000Z' }),
+      thread('resolved-newest', 'Resolved newest', { resolved: true, hasUnread: true, lastActivityAt: '2026-10-23T12:00:00.000Z' }),
+      thread('attention-older', 'Attention older', { hasUnread: true, lastActivityAt: '2026-10-18T12:00:00.000Z' }),
+      thread('quiet-older', 'Quiet older', { lastActivityAt: '2026-10-17T12:00:00.000Z' }),
+    ] });
+    renderSidebar(() => undefined, 0, { route: '/channels/outbound/threads/resolved-newest' });
+    const list = within(screen.getByRole('region', { name: 'All threads' }));
+    await waitFor(() => expect(threadRows(list).map(([title]) => title)).toEqual(expected));
+  });
+
   it('counts unread Activity on the Activity button from any tab, and clears it on Mark all read', async () => {
     const at = new Date().toISOString();
     const row = (id: string, unread: boolean) => ({
@@ -667,6 +761,30 @@ describe('the navigation sidebar', () => {
       });
       await waitFor(() => expect(names()).toEqual(['Old read', 'Old unread', 'Fresh unread', 'New read']));
       expect(screen.getByRole('link', { name: /^Old unread/u })).not.toHaveClass('is-unread');
+    });
+
+    it('releases the held slot when the open thread becomes resolved', async () => {
+      let cache!: QueryClient;
+      renderSidebar((queryClient) => { cache = queryClient; seed(queryClient); });
+      await waitFor(() => expect(names()).toEqual(['Fresh unread', 'Old unread', 'New read', 'Old read']));
+      fireEvent.click(screen.getByRole('link', { name: /^Old unread/u }));
+      cache.setQueryData(MY_THREADS_QUERY_KEY, {
+        pages: [{ nextCursor: null, pinned: [], items: items.map((row) => row.id === 'old' ? { ...row, resolved: true } : row) }],
+        pageParams: [null],
+      });
+      await waitFor(() => expect(names()).toEqual(['Fresh unread', 'New read', 'Old read', 'Old unread']));
+    });
+
+    it('keeps a held unresolved thread above the resolved group when that boundary moves', async () => {
+      let cache!: QueryClient;
+      renderSidebar((queryClient) => { cache = queryClient; seed(queryClient); });
+      await waitFor(() => expect(names()).toEqual(['Fresh unread', 'Old unread', 'New read', 'Old read']));
+      fireEvent.click(screen.getByRole('link', { name: /^Old read/u }));
+      cache.setQueryData(MY_THREADS_QUERY_KEY, {
+        pages: [{ nextCursor: null, pinned: [], items: items.map((row) => row.id === 'old-read' ? row : { ...row, resolved: true }) }],
+        pageParams: [null],
+      });
+      await waitFor(() => expect(names()).toEqual(['Old read', 'New read', 'Fresh unread', 'Old unread']));
     });
 
     it('respects an explicit sort change while the thread is open', async () => {
