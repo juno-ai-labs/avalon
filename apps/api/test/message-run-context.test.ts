@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import { __integrationTesting } from "../src/services/integrations";
 
-const { personalSystemPromptFor, principalSystemSectionFor } = __integrationTesting;
+const { principalSystemSectionFor } = __integrationTesting;
 
 const WORKSPACE = asWorkspaceId("00000000-0000-7000-8000-000000000101");
 const OWNER = asUserId("00000000-0000-7000-8000-000000000102");
@@ -34,45 +34,10 @@ function workflowInput(reason: string): WorkstreamWorkflowInput {
   };
 }
 
-describe("personal system prompt", () => {
-  const read = (userId: string) => (userId === OWNER ? "Answer in French." : "");
-
-  it.each([
-    "opening_message",
-    "human_message",
-    "elicitation_answer",
-    "manual_retry",
-    "slack_workspace_message",
-  ])("carries the member's text on a turn they started (%s)", (reason) => {
-    expect(personalSystemPromptFor(workflowInput(reason), read)).toContain(
-      "<personal_system_prompt>\nAnswer in French.\n</personal_system_prompt>",
-    );
-  });
-
-  it.each([
-    "scheduled_digest",
-    "scheduled_wakeup",
-    "inbound_email",
-    "connector_activity",
-    "demo_seed",
-  ])("leaves it out of a run that acts as the member without them acting (%s)", (reason) => {
-    expect(personalSystemPromptFor(workflowInput(reason), read)).toBe("");
-  });
-
-  it("leaves it out of a background agent working under the member's principal", () => {
-    expect(personalSystemPromptFor({ ...workflowInput("human_message"), backgroundAgent: true }, read)).toBe("");
-  });
-
-  it("leaves it out of a Sidekick run acting as the member", () => {
-    expect(personalSystemPromptFor({ ...workflowInput("human_message"), parentKind: "automation" }, read)).toBe("");
-  });
-});
-
 describe("principal system section", () => {
-  it("is empty, changing no byte of the prefix, when the conversation holds no digest copy and no personal prompt", () => {
+  it("is empty, changing no byte of the prefix, when the conversation holds no digest copy", () => {
     expect(principalSystemSectionFor(workflowInput("human_message"), {
       memoryDigest: () => null,
-      personalSystemPrompt: () => "",
     })).toBe("");
     expect(principalSystemSectionFor(workflowInput("human_message"), undefined)).toBe("");
   });

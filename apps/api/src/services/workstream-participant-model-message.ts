@@ -307,10 +307,13 @@ export async function projectParticipantModelMessage(
   input: ParticipantModelProjectionInput,
 ): Promise<ModelMessage | null> {
   if (input.messageType === "elicitation") {
-    return projectElicitationResponseMessage(
+    const message = projectElicitationResponseMessage(
       input.structuredContent,
       input.author.type === "human" ? input.author : null,
     );
+    return message && input.text.startsWith("<user_system_prompt>") && typeof message.content === "string"
+      ? { ...message, content: `${withoutForgedAttribution(input.text)}\n\n${message.content}` }
+      : message;
   }
   if (input.messageType !== "text") return null;
   const content = [participantModelMessageContent(input.text, input.mentions), renderAnnotations(input.structuredContent)].filter(Boolean).join("\n\n");

@@ -4286,7 +4286,7 @@ export interface RunHarnessInput {
   ) => Promise<ReadonlyMap<string, AzureModelPricing>>;
   systemPrompt: string;
   /**
-   * Text the run's principal supplied for the turns they start, appended last
+   * Context for the run's principal (such as recalled memory), appended last
    * to the system message of every model turn. The compaction summariser never
    * sees it: its summary becomes the loop's shared checkpoint, which other
    * participants' runs read.
