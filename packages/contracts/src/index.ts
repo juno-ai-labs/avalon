@@ -449,6 +449,11 @@ export const WorkspaceAttentionSchema = z.object({
   readerAttentionCount: z.number().int().nonnegative().default(0),
 });
 
+/** The native Mail + Calendar preset, shared by connection UI and reauthorization. */
+export const GOOGLE_MAIL_CALENDAR_CAPABILITIES = [
+  "gmail.read", "gmail.modify", "gmail.draft", "gmail.send", "calendar.read", "calendar.write",
+] as const;
+
 /**
  * Every server-decided feature flag a client is allowed to see, resolved for
  * the signed-in person. Each field defaults to the answer an unreachable flag
