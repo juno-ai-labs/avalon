@@ -441,6 +441,51 @@ describe('uploaded attachment drafts', () => {
     expect(reads).toEqual(['source-markdown', 'source-csv', 'model-document', 'source-audio']);
   });
 
+  it('validates cached images without reading R2 and refuses a revoked reader', async () => {
+    const reads: string[] = [];
+    const { database, env } = fixture({
+      async get(key: string) {
+        reads.push(key);
+        return {
+          body: new Blob([key === 'updated-image' ? 'updated image bytes' : 'PNG image bytes']).stream(), httpEtag: '"object-etag"',
+          writeHttpMetadata(headers: Headers) { headers.set('content-type', 'image/png'); },
+        };
+      },
+    });
+    database.prepare(`INSERT INTO resources
+      (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
+       content_sha256, model_content_status, metadata_json, attachment_status,
+       uploaded_by_user_id, created_at, updated_at)
+      VALUES (?, ?, 'uploaded_file', 'avalon_upload', 'image.png', 'image/png', 'original-image',
+        ?, 'pending', '{}', 'attached', ?, '2026-10-21T00:00:00.000Z', '2026-10-21T00:00:00.000Z')`)
+      .run(draftId, workspaceId, 'a'.repeat(64), userId);
+    const service = new ResourceService(env, auth);
+    const preview = (etag?: string) => service.preview(draftId, new AbortController().signal, etag);
+    const first = await preview();
+    expect(first.status).toBe(200);
+    expect(await first.text()).toBe('PNG image bytes');
+    const etag = first.headers.get('etag')!;
+    expect(etag).toBe(`"image-preview-v1:1:${'a'.repeat(64)}"`);
+    const cached = await preview(`"another-image", W/${etag}`);
+    expect(cached.status).toBe(304);
+    expect(await cached.text()).toBe('');
+    expect(cached.headers.get('cache-control')).toBe('private, no-store');
+    expect(reads).toEqual(['original-image']);
+
+    // A changed resource must ignore the old validator and deliver new bytes.
+    database.prepare("UPDATE resources SET content_sha256 = ?, content_ref = 'updated-image' WHERE id = ?").run('b'.repeat(64), draftId);
+    const changed = await preview(etag);
+    expect(changed.status).toBe(200);
+    expect(await changed.text()).toBe('updated image bytes');
+    expect(changed.headers.get('etag')).not.toBe(etag);
+    expect(reads).toEqual(['original-image', 'updated-image']);
+
+    database.prepare('UPDATE resources SET uploaded_by_user_id = ? WHERE id = ?')
+      .run('00000000-0000-7000-8000-000000000004', draftId);
+    await expect(preview(changed.headers.get('etag')!)).rejects.toMatchObject({ status: 404 });
+    expect(reads).toEqual(['original-image', 'updated-image']);
+  });
+
   it('normalizes HEIF and TIFF preview bytes into a format Chromium can decode', async () => {
     const heif = new Uint8Array([
       0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63, 0, 0, 0, 0,
