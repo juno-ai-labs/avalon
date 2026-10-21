@@ -55,8 +55,7 @@ const browserApplicationSettingsListeners = new Set<(settings: DesktopApplicatio
  * The count this tab's shell last reported for the installed app's icon, or
  * null before the first. The icon is one for every tab, so only the tab that
  * holds it writes: the focused tab, or the one focused last. A tab that gains
- * focus takes it and puts its own count back, as main does for the Mac dock
- * after another Organization's push.
+ * focus or becomes visible takes it and puts its own count back.
  */
 let browserAppBadgeCount: number | null = null;
 const browserAppBadgeOwnerKey = 'rally.app-badge-owner';
@@ -331,7 +330,14 @@ const browserBridge: RallyDesktopBridge = {
     // The Badging API marks an installed app's icon (a Home Screen app on
     // iPhone and iPad); a plain tab has none, and browsers ignore the call.
     if (!('setAppBadge' in navigator)) return;
-    if (browserAppBadgeCount === null) window.addEventListener('focus', takeBrowserAppBadge);
+    if (browserAppBadgeCount === null) {
+      window.addEventListener('focus', takeBrowserAppBadge);
+      // A Home Screen app on iPhone and iPad returns from the background
+      // visible, without a focus event.
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') takeBrowserAppBadge();
+      });
+    }
     browserAppBadgeCount = count;
     if (!holdsBrowserAppBadge()) return;
     await setBrowserAppBadge(count);

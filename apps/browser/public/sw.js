@@ -39,7 +39,7 @@ self.addEventListener("activate", (event) => {
 // A focused Rally tab keeps its own count, as a Mac foreground alert leaves the
 // dock badge alone: the push may be for another Organization.
 async function setBadge(count) {
-  if (!Number.isSafeInteger(count) || count < 0 || !("setAppBadge" in self.navigator)) return;
+  if (typeof count !== "number" || !("setAppBadge" in self.navigator)) return;
   const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
   if (windows.some((client) => client.focused)) return;
   try {
