@@ -781,7 +781,7 @@ export interface WorkstreamDetail extends WorkstreamSummary {
    * actually ran — so that a pinned work stream whose only run failed before it
    * streamed is never described as following the flag.
    */
-  modelOverride?: AgentModelOverride | null;
+  modelOverride?: string | null;
   createdBy?: WorkspaceMember;
   participants: Participant[];
   viewers: Participant[];

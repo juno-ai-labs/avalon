@@ -217,8 +217,8 @@ describe("boundary contracts", () => {
     // The selector groups by vendor, so this ordering is what a reader sees
     // under each heading — and the mistake it exists to catch is a new model
     // appended to the end of the list rather than added to the top of its
-    // family. Only a version a machine can compare is checked: the three
-    // two Claude 5.5 ids share a version, as do the two `deepseek-v4.1` ids, and
+    // family. Only a version a machine can compare is checked: the two
+    // Claude 5.5 ids share a version, as do the two `deepseek-v4.1` ids, and
     // ties are ordered by hand rather than by this rule.
     // The *first* numeric run in the model segment, which is the version in
     // every id the list carries: `grok-4.6` and `gemini-3.8-flash` match on the
