@@ -295,10 +295,10 @@ describe('organization account menu', () => {
       switchingWorkspaceKey: enterpriseKey,
       workspaceErrors: { [enterpriseKey]: 'Sign in could not be completed: access denied' },
     });
-    openMenu();
-
     expect(screen.getByRole('alertdialog')).toHaveTextContent('Sign in could not be completed: access denied');
     fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    openMenu();
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
     const europe = screen.getByRole('menuitem', { name: /Europe Studio/u });
     expect(within(europe).queryByText(FINISH_SIGN_IN_IN_BROWSER)).not.toBeInTheDocument();
     expect(within(europe).getByLabelText('Opening organization')).toBeVisible();

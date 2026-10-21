@@ -36,6 +36,25 @@ function show(element: React.ReactNode) {
 }
 
 describe('organization event controls', () => {
+  it('opens stored installation and subscription failures only on request', async () => {
+    const api = new RallyApi('https://api.example.test', null);
+    vi.spyOn(api, 'connectorInstallation').mockResolvedValue({ installation: {
+      ...installation(), error: 'Stored installation failure',
+      registrations: [{ ...registration('applicationSubmit', 'unknown'), error: 'Stored subscription failure' }],
+    } });
+    show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
+    await screen.findByText('Setting up');
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Advanced' }));
+    screen.getByText('Subscription details', { selector: 'summary' }).parentElement?.setAttribute('open', '');
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Installation details' }));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Stored installation failure');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Subscription details' }));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Stored subscription failure');
+  });
+
   it.each(['current', 'action_required'] as const)('keeps %s technical recovery controls out of the main view', async (state) => {
     const api = new RallyApi('https://api.example.test', null);
     vi.spyOn(api, 'connectorInstallation').mockResolvedValue({ installation: { ...installation(), state,
@@ -132,7 +151,8 @@ describe('organization event controls', () => {
     show(<ConnectorInstallationDetails api={api} connectionId={connectionId} onClose={() => {}} />);
     await screen.findByText('Setting up');
     act(() => onlineManager.setOnline(false));
-    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(screen.getByText('Connect to the internet to manage this connection. Saved status may be out of date.')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Test' }).hasAttribute('disabled')).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Test' }));
     act(() => onlineManager.setOnline(true));

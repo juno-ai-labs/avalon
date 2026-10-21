@@ -621,6 +621,18 @@ describe('JumpToLatestButton', () => {
 });
 
 describe('RunFailureNotice', () => {
+  it('keeps historical failures inspectable without interrupting on mount', () => {
+    render(<RunFailureNotice automatic={false} code="provider_timeout" message="The provider timed out."
+      requestId="historic-run" onRetry={vi.fn()} retrying={false} />, { wrapper: ErrorNoticeProvider });
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Run details' }));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('historic-run');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Run details' }));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('The provider timed out.');
+  });
+
   it('shows a typed member-safe error, the request id beside its copy control, and retry', async () => {
     copyText.mockReset();
     copyText.mockResolvedValue(undefined);

@@ -941,9 +941,11 @@ export function WorkstreamErrorState({
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
       </div>
-      <ErrorNotice title={`${parentNoun === 'automation' ? 'Sidekick' : 'Thread'} could not be opened`}>{description}</ErrorNotice>
       <EmptyState
-        action={<Button onClick={onRetry}><RefreshCcw size={14} /> Try again</Button>}
+        action={<div className="empty-state-actions">
+          <ErrorNotice detailsLabel="Connection details" title={`${parentNoun === 'automation' ? 'Sidekick' : 'Thread'} could not be opened`}>{description}</ErrorNotice>
+          <Button onClick={onRetry}><RefreshCcw size={14} /> Try again</Button>
+        </div>}
         description="Try opening it again."
         title={parentNoun === 'automation' ? 'Sidekick' : 'Thread'}
       />
@@ -1036,12 +1038,14 @@ export function conversationReadAcknowledgement(input: {
 }
 
 export function RunFailureNotice({
+  automatic = true,
   code,
   message,
   requestId,
   retrying,
   onRetry,
 }: {
+  automatic?: boolean;
   code: string;
   message: string;
   requestId?: string;
@@ -1050,7 +1054,7 @@ export function RunFailureNotice({
 }): React.JSX.Element {
   return (
     <section aria-label="Run recovery" className="run-recovery">
-      <ErrorNotice occurrence={requestId} title="Run failed">
+      <ErrorNotice automatic={automatic} detailsLabel="Run details" occurrence={requestId} title="Run failed">
       <div className="run-failure-copy">
         <p>{message}</p>
         <code>{code}</code>
@@ -1710,6 +1714,14 @@ function ConversationSurfaceContent({
     orderedTranscript.data,
   );
   const routedDetail = payloadBelongsToRoute ? workstream.data : undefined;
+  // A stored failure is available through Run details. Only a run seen active
+  // in this conversation is a new interruption, including across cache updates.
+  const observedActiveRun = useRef<string | null>(null);
+  useEffect(() => {
+    if (routedDetail?.harnessStatus === 'running') {
+      observedActiveRun.current = routedDetail.latestHarnessRunId ?? routedDetail.latestHarnessRun?.id ?? null;
+    }
+  }, [routedDetail]);
   // Only a thread's Main merges into a Channel; nothing else asks.
   const eligibleMergeChannels = useMergeChannels(api, id,
     parentKind === 'workstream' && substreamId === '0' && !guest && routedDetail !== undefined);
@@ -3847,6 +3859,7 @@ function ConversationSurfaceContent({
               && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...activityRow.timing} />}</ActivityPresence>
           {detail.harnessStatus === 'failed' && detail.latestHarnessRun?.status === 'failed' && (
             <RunFailureNotice
+              automatic={observedActiveRun.current === detail.latestHarnessRun.id}
               code={detail.latestHarnessRun.error?.code ?? 'harness_execution_failed'}
               message={latestRunFailureMessage}
               onRetry={() => retry.mutate()}
