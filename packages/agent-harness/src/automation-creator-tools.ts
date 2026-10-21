@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 import {
-  IdSchema,
   AutomationSetEvaluatorRulesModelInputV1Schema,
   automationActivitySourcePluginIds,
   automationDraftAcceptanceBlocker,
@@ -71,9 +70,6 @@ export interface AutomationCreatorToolHost {
   /** The automations this conversation may edit, each with its current definition. */
   automationDirectoryPort?: {
     listAutomations(): Promise<unknown>;
-  };
-  attachmentPort?: {
-    setAttached(sidekickId: string, attached: boolean): Promise<unknown>;
   };
   draftMutationPort?: {
     /**
@@ -261,26 +257,6 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
         };
       },
     },
-    ...(["attach", "detach"] as const).filter(() => input.attachmentPort !== undefined).map((operation): HarnessTool => ({
-      definition: {
-        name: operation,
-        description: `${operation === "attach" ? "Attach" : "Detach"} a workspace Sidekick ${operation === "attach" ? "as a recommendation for" : "from"} this workstream. Use an ID returned by sidekick_sidekicks_list.`,
-        capability: `rally.sidekick.${operation}`,
-        mode: "write",
-        idempotency: "record_before_execute",
-        inputSchema: { type: "object", additionalProperties: false, properties: { sidekickId: { type: "string" } }, required: ["sidekickId"] },
-      },
-      serial: true,
-      validateInput: (raw) => {
-        const parsed = z.strictObject({ sidekickId: IdSchema }).safeParse(raw);
-        return parsed.success ? null : parsed.error;
-      },
-      execute: async (raw) => {
-        const { sidekickId } = z.strictObject({ sidekickId: IdSchema }).parse(raw);
-        const result = await input.attachmentPort!.setAttached(sidekickId, operation === "attach");
-        return { output: { result, note: "Recommendations apply to future executions. Call load_skill to use the Sidekick in this execution." }, summary: `${operation === "attach" ? "Attached" : "Detached"} workstream Sidekick` };
-      },
-    })),
     {
       definition: creatorDefinition("submit_draft"),
       serial: true,
@@ -595,7 +571,7 @@ export const AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE = [
   "Before declaring a required capability unavailable, inspect the other authorized plugins that can supply it; a workflow may combine connections. For Google Meet transcripts and notes, load reading-google-meeting-notes and read an attached Doc before any Drive search or blocked conclusion. Use an actual declared Calendar or Drive source, or polling-for-events when no suitable event exists. Gmail drafts accept PDF attachmentResourceIds from authorized Rally resources.",
   "Only a refused submission blocks activation; report its refusal exactly. Treat a blocker another agent reports as a claim to test by submitting, not as a reason to stay a draft.",
   "After saving a draft, briefly acknowledge what was saved; after a partial submission, ask for the missing details.",
-  "Use an empty triggers array for reusable knowledge. Use inbound_email only when the person wants email to start work. Do not add manual or scheduled triggers to make a knowledge Sidekick valid.",
+  "Use an empty triggers array for reusable knowledge. Use inbound_email only when the person wants email to start work. Do not add manual or scheduled triggers to make a reusable skill valid.",
   "Use the scope already selected for this Sidekick. Do not ask participants to choose it again. Workstream ownership cannot change. Before first publication, change between personal and workspace scope only when explicitly requested. Published scope cannot change.",
   "\"personal\" belongs to the person who asked and acts with their own connections,",
   "\"workspace\" belongs to the admins and acts with the workspace's own connections,",

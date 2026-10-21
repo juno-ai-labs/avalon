@@ -19,6 +19,7 @@ import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:tes
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  readStructuredFailure,
   agentIdForAddress,
   agentAddressForId,
   WorkstreamWorkflowInputSchema,
@@ -40,6 +41,7 @@ import {
 import type { AuthContext, Env } from "../src/env";
 import { SlackAgentService } from "../src/services/slack-agent-service";
 import { createAutomation } from "../src/services/automation-service";
+import { encryptString } from "../src/lib/crypto";
 import { attachWorkstreamRuntimeResource } from "../src/services/workstream-object-client";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
@@ -512,17 +514,22 @@ describe("a room Sidekick's run and the room's agents", () => {
     expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed" });
     const discovered = await service.sidekicks();
     expect(discovered.sidekicks.find((item) => item.sidekickId === sidekickId))
-      .toMatchObject({ agentId: created.agentId, scope: "workstream", ownedByThisWorkstream: true, canEdit: true });
-    // Another thread sees the same room-scoped Sidekick as not its own, and the
-    // host refuses it a change whatever the model makes of that list.
+      .toMatchObject({ agentId: created.agentId, scope: "workstream", ownedByThisWorkstream: true, canEdit: true,
+        status: "active", nextRunAt: null, lastRunAt: null });
+    // Another thread receives no setup candidate and is told to create one
+    // locally. The host still refuses a foreign id supplied directly.
     const elsewhere = crypto.randomUUID();
     const otherRoom = new AgentCommunicationService(TEST_ENV, WorkstreamWorkflowInputSchema.parse({ ...input,
       parentId: elsewhere, loopId: `workstream:${elsewhere}:substream:0:loop`, harnessRunId: crypto.randomUUID() }));
-    expect((await otherRoom.sidekicks()).sidekicks.find((item) => item.sidekickId === sidekickId))
-      .toMatchObject({ scope: "workstream", ownedByThisWorkstream: false, canEdit: false });
-    await expect(otherRoom.send({ agentId: created.agentId, message: "CONFIGURE_SIDEKICK REVISE: take this over.",
-      attachmentIds: [] }, { ...context, workstreamId: elsewhere, effectIntentId: crypto.randomUUID() }))
-      .rejects.toThrow("This Sidekick belongs to another thread");
+    expect(await otherRoom.sidekicks()).toEqual({ sidekicks: [],
+      next: "This thread has no editable Sidekicks. Create one here with create_sidekick (scope=workstream), then send setup instructions to its authoring agent." });
+    expect((await otherRoom.findSidekick("Research guide")).sidekicks).toEqual([]);
+    const refusal = await otherRoom.send({ agentId: created.agentId, message: "CONFIGURE_SIDEKICK REVISE: take this over.",
+      attachmentIds: [] }, { ...context, workstreamId: elsewhere, effectIntentId: crypto.randomUUID() }).catch((error: unknown) => error);
+    expect(readStructuredFailure(refusal)).toEqual({ code: "sidekick_owned_by_another_thread", details: {
+        reason: "This message was not delivered. For setup here, refresh sidekicks_list. For an explicitly named target, use find_sidekick or report its refusal without replacing it. This refusal does not establish a connector or scheduling blocker.",
+        retryable: false, available: ["sidekicks_list", "find_sidekick", "create_sidekick"],
+      } });
     await service.send({ agentId: created.agentId, message: "CONFIGURE_SIDEKICK REVISE: add cost comparison.", attachmentIds: [] },
       { ...context, effectIntentId: crypto.randomUUID() });
     expect((await settledRun(authoring, 2))[1]).toMatchObject({ status: "completed", error_json: null });
@@ -544,17 +551,90 @@ describe("a room Sidekick's run and the room's agents", () => {
       toolCallId: crypto.randomUUID(), executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
     const roomOwned = await room.createSidekick("workstream", { ...context, effectIntentId: crypto.randomUUID() });
     const personal = await room.createSidekick("personal", { ...context, effectIntentId: crypto.randomUUID() });
-    const sibling = await room.createSidekick("personal", { ...context, effectIntentId: crypto.randomUUID() });
+    await room.createSidekick("personal", { ...context, effectIntentId: crypto.randomUUID() });
+    await room.createSidekick("workspace", { ...context, effectIntentId: crypto.randomUUID() });
+    expect((await room.sidekicks()).sidekicks.map((item) => item.sidekickId).sort())
+      .toEqual([AUTOMATION_ID, roomOwned.sidekickId].sort());
     // A personal Sidekick's own conversation: it acts for no thread.
     const own = new AgentCommunicationService(TEST_ENV, WorkstreamWorkflowInputSchema.parse({ ...input,
       parentKind: "automation", parentId: personal.sidekickId, loopId: `automation:${personal.sidekickId}:substream:0:loop`,
       harnessRunId: crypto.randomUUID() }));
-    const listed = (await own.sidekicks()).sidekicks;
-    expect(listed.map((item) => item.sidekickId)).not.toContain(personal.sidekickId);
-    expect(listed.find((item) => item.sidekickId === sibling.sidekickId))
-      .toMatchObject({ scope: "personal", ownedByThisWorkstream: false, canEdit: true });
-    expect(listed.find((item) => item.sidekickId === roomOwned.sidekickId))
-      .toMatchObject({ scope: "workstream", ownedByThisWorkstream: false, canEdit: false });
+    expect(await own.sidekicks()).toEqual({ sidekicks: [],
+      next: "This conversation has no owning thread. Set up a thread-owned Sidekick from the intended thread." });
+  });
+
+  it("resolves an explicitly named personal or organization Sidekick without widening setup discovery", async () => {
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    for (const scope of ["personal", "workspace"] as const) {
+      const created = await service.createSidekick(scope, { ...context, effectIntentId: crypto.randomUUID() });
+      await sidekickHost().sidekickSaveDefinition({ workspaceId: WORKSPACE_ID, automationId: asAutomationId(created.sidekickId),
+        draft: { ...DEFINITION, definitionVersion: 2, name: `${scope} research`, suggestedScope: scope, triggers: [] },
+        evaluatorRules: null, submittedByRunId: null, actor: manager() });
+      expect((await service.findSidekick(` ${scope.toUpperCase()} RESEARCH `)).sidekicks).toMatchObject([
+        { sidekickId: created.sidekickId, agentId: created.agentId, scope, ownedByThisWorkstream: false, canEdit: true },
+      ]);
+      expect((await service.sidekicks()).sidekicks.map((item) => item.sidekickId)).not.toContain(created.sidekickId);
+    }
+    expect(await service.findSidekick("research")).toEqual({ sidekicks: [],
+      next: "No editable Sidekick with that exact name is available here. Report that the named target could not be reached; do not silently create a replacement." });
+  });
+
+  it("reports a recorded run in setup discovery instead of a hardcoded null", async () => {
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    expect((await service.sidekicks()).sidekicks.find((item) => item.sidekickId === AUTOMATION_ID)?.lastRunAt).toBeNull();
+    const run = await sidekickHost().sidekickRunNow({ ...addressed(), actor: manager(), idempotencyKey: "directory-history" });
+    await runInDurableObject(sidekickHost(), (_instance, state) => state.storage.sql.exec(
+      `UPDATE sidekick_runs SET created_at = ? WHERE sidekick_id = ? AND run_id = ?`,
+      Date.parse("2026-10-20T08:00:00.000Z"), AUTOMATION_ID, run.runId,
+    ));
+    expect((await service.sidekicks()).sidekicks.find((item) => item.sidekickId === AUTOMATION_ID)?.lastRunAt)
+      .toBe("2026-10-20T08:00:00.000Z");
+  });
+
+  it.each([
+    { hint: "mail_calendar", grants: ["gmail.read"], tools: ["google_gmail_search"] },
+    { hint: "drive", grants: ["drive.read"], tools: ["google_drive_search"] },
+    { hint: "drive", grants: ["gmail.read"], tools: [] },
+    { hint: null, grants: ["gmail.read", "drive.read"], tools: ["google_gmail_search", "google_drive_search"] },
+  ])("restores only granted Google tools from a saved $hint activation hint", async ({ hint, grants, tools }) => {
+    const connectionId = "00000000-0000-7000-8000-00000000ad40";
+    const credentials = await encryptString(JSON.stringify({ accessToken: "fixture-access", refreshToken: "fixture-refresh",
+      expiresAt: "2099-01-01T00:00:00.000Z" }), TEST_ENV.CONNECTOR_CREDENTIALS_KEY, connectionId);
+    const providerFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url === "https://openidconnect.googleapis.com/v1/userinfo") return Response.json({ sub: "fixture-account" });
+      return providerFetch(input, init);
+    });
+    await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec(
+      `INSERT INTO connector_connections (id, workspace_id, connector_type, scope, owner_user_id,
+         provider_account_id, display_name, granted_scopes_json, status, cursor_json, config_json,
+         created_at, updated_at, model_plugin_id, encrypted_credentials, credential_iv, credential_key_version)
+       VALUES (?, ?, 'google', 'personal', ?, 'google-account', 'Google', ?, 'healthy', '{}', '{}', ?, ?, 'plugin_google', ?, ?, 1)`,
+      connectionId, WORKSPACE_ID, AUTHOR_ID, JSON.stringify(grants), NOW, NOW, credentials.ciphertext, credentials.iv,
+    ));
+    const pluginId = `connection:${connectionId}${hint === null ? "" : `:${hint}`}`;
+    await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec(
+      `INSERT INTO plugin_activation_hints (plugin_id, activated_at, last_authorized_at) VALUES (?, ?, ?)`,
+      pluginId, Date.now(), Date.now(),
+    ));
+    const response = await post(roomConversation(), "/internal/product", { operation: "create_message", auth: AUTH,
+      input: { text: "Inspect the tools available from the saved Google activation.", clientMessageId: crypto.randomUUID(),
+        mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] } });
+    expect(response.status).toBe(200);
+    expect((await settledRun(roomConversation()))[0]).toMatchObject({ status: "completed", error_json: null });
+    expect(provider.calls[0]?.toolNames.filter((name) => ["google_gmail_search", "google_drive_search"].includes(name)).sort())
+      .toEqual([...tools].sort());
   });
 
   it("admits a guest to a Sidekick's authoring agent only through the guest's grants", async () => {

@@ -3850,7 +3850,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   },
   {
     name: "sidekicks_list",
-    description: "In a Sidekick's own conversation, its current definition, which an edit starts from. In a thread, the organization Sidekicks this thread can recommend (canAttach, attached); use attach or detach for those. Recommendations affect future executions; load_skill is still required to use one now.",
+    description: "Read this Sidekick's current definition in its authoring conversation before revising it. To load reusable instructions in another conversation, use load_skill from the Skills catalog.",
     capability: "rally.sidekick.list",
     mode: "read",
     idempotency: "safe",

@@ -8,7 +8,7 @@ import type { AgentCommunicationService } from "./agent-communication-service";
 
 /** What the tools call: the service's model-facing operations and nothing else. */
 export type AgentCommunicationTools = Pick<AgentCommunicationService,
-  "sidekicks" | "createSidekick" | "start" | "list" | "send" | "stop">;
+  "sidekicks" | "findSidekick" | "createSidekick" | "start" | "list" | "send" | "stop">;
 
 export function createAgentCommunicationPlugin(service: AgentCommunicationTools, roleGuidance: string): HarnessPlugin {
   function tool<T>(name: string, description: string, schema: z.ZodType<T>,
@@ -16,8 +16,8 @@ export function createAgentCommunicationPlugin(service: AgentCommunicationTools,
     return {
       definition: {
         name, description, inputSchema: z.toJSONSchema(schema, { io: "input" }) as Record<string, unknown>,
-        capability: `agents.${name}`, mode: (name === "list_agents" || name === "sidekicks_list") ? "read" : "write",
-        idempotency: name === "list_agents" || name === "sidekicks_list" ? "safe"
+        capability: `agents.${name}`, mode: (name === "list_agents" || name === "sidekicks_list" || name === "find_sidekick") ? "read" : "write",
+        idempotency: name === "list_agents" || name === "sidekicks_list" || name === "find_sidekick" ? "safe"
           : name === "stop_agent" ? "record_before_execute" : "provider_key",
       },
       async execute(input, context) {
@@ -38,10 +38,11 @@ export function createAgentCommunicationPlugin(service: AgentCommunicationTools,
     shortWireName: "",
     displayName: "Background agents", description: "Delegate work to background agents and communicate with teammates.",
     searchAliases: ["background", "delegate", "teammate", "send message", "reply", "subagent"],
-    systemMessage: `${roleGuidance} Send results and questions explicitly to the intended agent. Your final response stays in your own conversation. New agents receive only the instructions and attachments you provide, not your transcript. Include enough context to do the work. Agents inherit your model and authorized tools. Continue existing agents through messages. list_agents shows whether one is still running. Messages start idle agents, resume stopped agents, and reach busy agents between execution steps. You may stop only agents you own and their descendants. A Sidekick is a saved agent someone set up to reuse: it has its own instructions, can run on a schedule or when an event arrives, and can be loaded into a conversation to do its job. One thread, one person, or the organization owns it, and its authoring agent changes its setup when you message it. To set up a Sidekick, first look in sidekicks_list for a suitable one this thread owns and send its authoring agent the changes. Change a personal or organization Sidekick only when the person names it and asks you to. If none fits, create one in this thread and send its authoring agent setup instructions. The Sidekick handles its own setup and sends back questions or results.`,
+    systemMessage: `${roleGuidance} Send results and questions explicitly to the intended agent. Your final response stays in your own conversation. New agents receive only the instructions and attachments you provide, not your transcript. Include enough context to do the work. Agents inherit your model and authorized tools. Continue existing agents through messages. list_agents shows whether one is still running. Messages start idle agents, resume stopped agents, and reach busy agents between execution steps. You may stop only agents you own and their descendants. Reusable procedures appear under Skills; call load_skill to use their instructions. To set up delegated work here, use sidekicks_list and message a suitable authoring agent. Use find_sidekick only when the person explicitly names an existing Sidekick to edit; never silently replace a named target. The authoring agent handles setup and replies with questions or results. Verify activation and scheduling from current state; a run timestamp does not prove completion. Correct superseded blocker memory while preserving the person’s preferences.`,
     preload: true,
     tools: [
-      tool("sidekicks_list", "List the Sidekicks you can see, each with the agentId of its authoring agent. ownedByThisWorkstream is true only for Sidekicks this thread owns; scope does not say which thread. canEdit is false for a Sidekick another thread owns: only that thread can change it.", z.strictObject({}), () => service.sidekicks()),
+      tool("sidekicks_list", "List only editable Sidekicks owned by this thread for setup, with authoring agentId and current status, nextRunAt and lastRunAt. Reusable instructions are listed under Skills. A draft or sent setup request is not evidence of activation.", z.strictObject({}), () => service.sidekicks()),
+      tool("find_sidekick", "Find editable Sidekicks by the exact name the person explicitly asked to change, including personal or organization Sidekicks. Use only for a named edit, never for setup discovery. If several match, ask which one the person means.", z.strictObject({ name: z.string().min(1).describe("Exact Sidekick name from the person’s request.") }), (input) => service.findSidekick(input.name)),
       tool("create_sidekick", "Create a Sidekick when none you can edit fits. Returns its authoring agentId; send setup instructions to that agent next.", z.strictObject({ scope: z.enum(["workstream", "personal", "workspace"]).default("workstream").describe("workstream (the default) makes this thread its owner. Choose personal or workspace (organization) only when the person asks.") }), (input, context) => service.createSidekick(input.scope, context)),
       tool("start_agent", "Delegate work to a new background agent. Returns its agentId at once. Include the full assignment and needed context.", StartAgentInputSchema, (input, context) => service.start(input, context)),
       tool("list_agents", "Find teammates: their agentId, name, description and execution status. Use it to choose whom to message or stop. To get a teammate's reply, wait for its message.", ListAgentsInputSchema, () => service.list()),

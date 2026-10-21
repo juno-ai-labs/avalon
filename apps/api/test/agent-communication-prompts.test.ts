@@ -72,10 +72,10 @@ describe("the agents plugin", () => {
   const sidekickId = "00000000-0000-4000-8000-000000000001";
   const unused = async (): Promise<never> => { throw new Error("not called"); };
   const service = {
-    sidekicks: async () => ({ sidekicks: [{ sidekickId, name: "Monitor", description: "", scope: "personal" as const,
-      ownedByThisWorkstream: false, canEdit: true, agentId: `automation/${sidekickId}/0` as never }] }),
+    sidekicks: async () => ({ sidekicks: [{ sidekickId, name: "Monitor", description: "", scope: "workstream" as const,
+      ownedByThisWorkstream: true, canEdit: true, status: "draft" as const, nextRunAt: null, lastRunAt: null, agentId: `automation/${sidekickId}/0` as never }] }),
     send: async (input) => ({ messageId: sidekickId, next: "agentId" in input ? input.agentId : "" }),
-    createSidekick: unused, start: unused, list: unused, stop: unused,
+    findSidekick: unused, createSidekick: unused, start: unused, list: unused, stop: unused,
   } satisfies AgentCommunicationTools;
   const plugin = createAgentCommunicationPlugin(service, "");
   const tool = (name: string) => plugin.tools.find((candidate) => candidate.definition.name === name)!;
@@ -83,7 +83,7 @@ describe("the agents plugin", () => {
 
   it("shows a Sidekick's agent id as sidekick/… and takes it back in stored form", async () => {
     await expect(tool("sidekicks_list").execute({}, context)).resolves.toMatchObject({
-      output: { sidekicks: [{ sidekickId, agentId: `sidekick/${sidekickId}/0` }] },
+      output: { sidekicks: [{ sidekickId, agentId: `sidekick/${sidekickId}/0`, status: "draft", nextRunAt: null, lastRunAt: null }] },
     });
     // The service receives the stored id; its echo comes back to the model translated.
     await expect(tool("send_message").execute({ agentId: `sidekick/${sidekickId}/0`, message: "Hi" }, context))
@@ -92,7 +92,7 @@ describe("the agents plugin", () => {
 
   it("keeps the rule that a thread changes only Sidekicks it may edit", () => {
     // The incident behind this line: a thread rewrote another thread's draft.
-    expect(plugin.systemMessage).toContain("Change a personal or organization Sidekick only when the person names it and asks you to.");
-    expect(tool("sidekicks_list").definition.description).toContain("canEdit is false for a Sidekick another thread owns");
+    expect(plugin.systemMessage).toContain("Use find_sidekick only when the person explicitly names an existing Sidekick to edit; never silently replace a named target.");
+    expect(tool("sidekicks_list").definition.description).toContain("List only editable Sidekicks owned by this thread for setup");
   });
 });

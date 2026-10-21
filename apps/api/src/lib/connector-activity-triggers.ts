@@ -55,6 +55,7 @@ export function connectorActivityTriggerDescriptors(
   adapter: TriggerSource,
   connectionConfigJson: string | null | undefined,
   connectionScope: Scope,
+  grantedScopes?: readonly string[],
 ): ConnectorActivityTriggerDescriptorV2[] {
   // A connection whose scope cannot receive this connector's events advertises
   // nothing, whatever its manifest declares. Granola, Fireflies and Ashby all
@@ -64,6 +65,14 @@ export function connectorActivityTriggerDescriptors(
   // which nothing in the product distinguishes from a Sidekick that simply
   // has nothing to do yet.
   if (!connectorActivitySupportsScope(adapter, connectionScope)) return [];
+  if (adapter.manifest.type === "google" && grantedScopes) {
+    return adapter.manifest.activityTriggers.filter((descriptor) => {
+      // Docs and Sheets changes arrive through the Drive polling stream.
+      const capability = descriptor.eventType.startsWith("email.") ? "gmail.read"
+        : descriptor.eventType.startsWith("calendar.") ? "calendar.read" : "drive.read";
+      return grantedScopes.includes(capability);
+    });
+  }
   if (adapter.manifest.type === "ashby") {
     const selected = new Set(configuredEventTypes(connectionConfigJson, "selectedEvents"));
     return adapter.manifest.activityTriggers.filter((descriptor) => selected.has(descriptor.eventType));

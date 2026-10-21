@@ -149,7 +149,7 @@ policy and the current request, and grants no tools or credentials.
 
 ## Sidekick instruction sources
 
-The host resolves stored-loadable Sidekicks against execution and conversation audiences when the run starts and when it loads a new skill. An active Sidekick skill is then trusted for the rest of that run; withdrawing its audience does not interrupt an in-flight model or tool turn, and the next run resolves it again. Model-facing skill names use kebab-case Sidekick names (`sidekick-brand-voice`) with integer suffixes only for collisions (`sidekick-brand-voice-2`). Conversation-owned name assignments survive retries, renames, and removal of earlier duplicates; durable activation refs and attachments retain canonical Sidekick IDs. Per-execution snapshots and loaded refs live in the owning substream; main-conversation loads also attach the Sidekick for future executions. Loading adds instructions, never credentials or access to the Sidekick memory scope.
+The host resolves stored-loadable Sidekicks against execution and conversation audiences when the run starts and when it loads a new skill. An active Sidekick skill is then trusted for the rest of that run; withdrawing its audience does not interrupt an in-flight model or tool turn, and the next run resolves it again. The model sees these reusable instructions as Skills, with `skill-brand-voice` names and integer suffixes only for collisions (`skill-brand-voice-2`); catalog guidance and loaded instruction wrappers use skill terminology. Previously persisted `sidekick-…` aliases are projected as `skill-…` while retaining their suffixes. Conversation-owned name assignments survive retries, renames, and removal of earlier duplicates; durable activation refs and attachments retain canonical Sidekick IDs. Per-execution snapshots and loaded refs live in the owning substream; main-conversation loads also attach the Sidekick for future executions. Loading adds instructions, never credentials or access to the Sidekick memory scope.
 
 ## Where the code lives
 
@@ -636,6 +636,8 @@ A plugin gives the model a capability; a **skill** gives it a procedure. Skills 
 
 A run's skills are **frozen with its scope**, exactly like its plugins. The host resolves them against the execution principal before admission and passes them on `RunHarnessInput.skills`; nothing in the loop reaches a store, so `load_skill` can only surface a body the run was already authorized to read. When a run has no skills, neither prompt section nor either tool appears.
 
+The deferred `rally_skill_recommendations` plugin manages recommendations through `list_skill_recommendations`, `recommend_skill`, and `unrecommend_skill`. It exposes skill IDs and recommendation state, with no authoring agent targets. It reuses the existing recommendation service and permissions. Sidekick authoring remains a separate surface; the product still calls these saved sources Sidekicks.
+
 The always-active `rally_skills` plugin owns two globally named controls. `load_skill` takes an exact name from the `# Skills` catalog and adds the skill's body to `# Active Skill Instructions` for the rest of the run. `read_skill_resource` reads a bundled reference file, and refuses until its skill has been loaded — that gate is what stops a model pulling every catalog skill's references without taking on the instructions they belong to.
 
 **Loading a skill grants no authority.** Where a skill declares an owner plugin it is offered only to a run whose scope already includes that plugin — the eligible plugin ids are handed to the skill registry, which drops the rest before the catalog is built — and loading it *names* the plugin for the model to load separately rather than activating it: an auto-activation would let a document issue a capability grant. Skill bodies are also not trusted prose about the world — they are workspace-authored instructions, and are wrapped in a `<skill_content name=…>` element so the model can tell them apart from platform policy and from one another.
@@ -654,7 +656,10 @@ known or Calendar-attached Doc first, searches Drive for missing artifacts, and
 keeps generated notes distinct from transcripts. Its bundled storage/access
 reference records official Google sources, including unattached manual notes,
 current and legacy Drive folders, shortcuts, and independent sharing rules.
-Loading it activates neither its owning connection nor the other Google preset.
+Loading it activates neither its owning connection nor the other Google preset. A shared Google credential still appears as separate
+Mail + Calendar and Drive + Docs + Sheets plugins. The host freezes each view's
+capabilities and activation independently, while joining their capabilities by
+connection ID for run scope; see [Google connector views](connectors.md#google).
 
 `polling-for-events` is what a run reads when somebody asks to be told whenever something happens. Its first instruction is to *not* poll: most connectors declare events Rally can trigger on, so the skill sends the model to `plugin_inspect` before it reaches for a timer, and the interval is the fallback for what inspection rules out. It then carries the three things a model gets wrong unaided: the cadence floor (no `interval` trigger faster than every ten minutes, slower is fine, and the person's own stated cadence wins), the keyed memory table that stops a run re-reporting what the last one already saw, and the steer away from `resource_watch`, which a model reaches for when told to watch one document and which `SidekickDO` builds neither a schedule nor an evaluator for. It sets `ownerPlugin: "rally:sidekicks"` because the whole procedure is drafting a Sidekick, which also keeps it out of an automation occurrence's catalog — an occurrence is deliberately never given the drafting tools.
 
@@ -729,6 +734,15 @@ not from the seeded context, so it is never seeded. Owned by
 [`demo-workspaces.md`](demo-workspaces.md).
 
 ### Durable receipts and terminal state
+
+Google plugin splits retain compatibility with verified earlier receipt
+identities. The host reconstructs the complete prior tool surface under the
+original canonical ID, for the same connection and currently granted operations.
+The normal operation, capability, mode, retry-policy and input-hash fences still
+apply. Pre-pagination surfaces are accepted only for unchanged operations.
+Identity aliases alone never authorize replay. This also supplies prior request
+plans to idempotency lookup, so a retry does not repeat an external effect merely
+because its plugin was split.
 
 Authored pageable tools use [receipt-owned page IDs](tool-pagination.md). Their
 first-call schema has no cursor; `_next` accepts only a page ID. Private executor
@@ -1634,6 +1648,20 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 ## Changelog
 
+### 2026-10-21 — Google plugin splits preserve verified receipt identities
+
+**What changed:** Google views carry compatible prior single-family and combined
+surfaces, including their canonical IDs, into receipt replay and idempotency lookup.
+
+**Why:** Splitting an already-used credential changes the plugin ID and whole
+surface hash without changing a completed operation. Treating that receipt as a
+new tool could interrupt recovery or repeat an effect. Accepting ID aliases alone
+was rejected because a changed schema or policy must still refuse replay.
+
+**Consequences:** Compatibility is proved against reconstructed tool surfaces
+and the existing connection, operation and policy fences; future changes must
+preserve those checks and the captured pre-split receipt regression.
+
 ### 2026-10-21 — Verify uncertain completion once before ending a turn
 
 **What changed:** Ordinary persistent loops use the evaluated baseline JEV
@@ -1693,6 +1721,7 @@ review fixes changed composition and clarified sender identity, with corrected
 synthetic regressions evaluated again.
 
 PR: [#1376](https://github.com/juno-ai-labs/avalon/pull/1376).
+
 
 ### 2026-10-20 — Resume verified settled history after a loop relocation
 
