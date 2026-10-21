@@ -524,6 +524,66 @@ describe('the navigation sidebar', () => {
     expect(screen.getByRole('img', { name: '2 with new threads' })).toBeInTheDocument();
   });
 
+  it.each(['threads', 'pinned'] as const)('omits archived conversations from %s, including pins and live archived parents', async (section) => {
+    useUiStore.getState().setSidebarSection(section);
+    const archivedAt = '2026-10-21T12:00:00.000Z';
+    const open = thread('open', 'Open thread', { hasUnread: true });
+    const resolved = thread('resolved', 'Resolved thread', { resolved: true });
+    const archived = thread('archived', 'Archived thread', { archivedAt, hasUnread: true });
+    const liveArchived = thread('live-archived', 'Archived live', { hasUnread: true });
+    const breakout = thread('child', 'Archived parent breakout', {
+      kind: 'breakout', hasUnread: true,
+      breakoutOf: { workstreamId: liveArchived.id, substreamId: 'child', title: liveArchived.title },
+    });
+    const archivedBreakout = thread('archived-child', 'Archived breakout', {
+      kind: 'breakout', archivedAt, hasUnread: true,
+      breakoutOf: { workstreamId: open.id, substreamId: 'archived-child', title: open.title },
+    });
+    const rows = [open, resolved, archived, liveArchived, breakout, archivedBreakout];
+    live.rows = [{ ...liveArchived, archivedAt }];
+    api.getMyThreads.mockResolvedValue({ nextCursor: null, items: rows, pinned: rows });
+    renderSidebar((client) => client.setQueryData(PINS_QUERY_KEY, rows.map((row) => ({
+      kind: row.kind === 'breakout' ? 'breakout' : 'thread', id: row.id, parentId: row.breakoutOf?.workstreamId ?? null,
+    }))));
+
+    await screen.findByRole('link', { name: /Open thread/u });
+    expect(screen.getByRole('link', { name: /Resolved thread/u })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Archived/u })).not.toBeInTheDocument();
+    expect(screen.getByRole('img', { name: '1 pinned with news' })).toBeInTheDocument();
+    const list = within(screen.getByRole('region', { name: 'Pinned threads' }));
+    expect(list.getByText('Pinned, 1 of 2.')).toBeInTheDocument();
+    expect(list.getByText('Pinned, 2 of 2.')).toBeInTheDocument();
+  });
+
+  it('shows the empty Threads state when every unpinned conversation is archived', async () => {
+    useUiStore.getState().setSidebarSection('threads');
+    api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [
+      thread('archived', 'Archived thread', { archivedAt: '2026-10-21T12:00:00.000Z' }),
+    ], pinned: [] });
+    renderSidebar(() => undefined);
+    expect(await screen.findByText('Threads you start or are added to appear here.')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Archived thread/u })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['needs_you', ['Attention newest', 'Attention older', 'Quiet newest', 'Quiet older', 'Resolved newest', 'Resolved older']],
+    ['recent', ['Resolved newest', 'Resolved older', 'Quiet newest', 'Attention newest', 'Attention older', 'Quiet older']],
+  ] as const)('orders threads by %s, putting resolved rows in the final attention group even when unread and open', async (sort, expected) => {
+    useUiStore.getState().setSidebarSection('threads');
+    useUiStore.getState().setThreadSort(sort);
+    api.getMyThreads.mockResolvedValue({ nextCursor: null, pinned: [], items: [
+      thread('resolved-older', 'Resolved older', { resolved: true, lastActivityAt: '2026-10-22T12:00:00.000Z' }),
+      thread('quiet-newest', 'Quiet newest', { lastActivityAt: '2026-10-21T12:00:00.000Z' }),
+      thread('attention-newest', 'Attention newest', { hasUnread: true, lastActivityAt: '2026-10-20T12:00:00.000Z' }),
+      thread('resolved-newest', 'Resolved newest', { resolved: true, hasUnread: true, lastActivityAt: '2026-10-23T12:00:00.000Z' }),
+      thread('attention-older', 'Attention older', { hasUnread: true, lastActivityAt: '2026-10-18T12:00:00.000Z' }),
+      thread('quiet-older', 'Quiet older', { lastActivityAt: '2026-10-17T12:00:00.000Z' }),
+    ] });
+    renderSidebar(() => undefined, 0, { route: '/channels/outbound/threads/resolved-newest' });
+    const list = within(screen.getByRole('region', { name: 'All threads' }));
+    await waitFor(() => expect(threadRows(list).map(([title]) => title)).toEqual(expected));
+  });
+
   it('counts unread Activity on the Activity button from any tab, and clears it on Mark all read', async () => {
     const at = new Date().toISOString();
     const row = (id: string, unread: boolean) => ({

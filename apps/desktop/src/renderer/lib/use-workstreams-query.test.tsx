@@ -64,6 +64,21 @@ describe('useWorkstreamsQuery', () => {
     return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
   }
 
+  it('exposes archive tombstones to list overlays while ordinary directory readers omit them', async () => {
+    const open = summary('open', 'Open');
+    const archived = { ...summary('archived', 'Archived'), archivedAt: '2026-10-21T12:00:00.000Z' };
+    setCachedWorkstreams(queryClient, [open, archived]);
+    const { result } = renderHook(() => ({
+      directory: useWorkstreamsQuery().data,
+      overlay: useWorkstreamsQuery({ includeArchived: true }).data,
+    }), { wrapper });
+    expect(result.current.directory?.map((row) => row.id)).toEqual(['open']);
+    expect(result.current.overlay?.map((row) => row.id)).toEqual(['open', 'archived']);
+    act(() => holdCachedWorkstreamArchive(queryClient, { ...open, archivedAt: '2026-10-21T13:00:00.000Z' }));
+    await waitFor(() => expect(result.current.directory).toEqual([]));
+    expect(result.current.overlay?.every((row) => Boolean(row.archivedAt))).toBe(true);
+  });
+
   /**
    * Stand in for the workspace socket's connect payload, which the provider —
    * not this hook — writes. Everything here starts from that having happened,
