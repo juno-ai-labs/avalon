@@ -191,7 +191,7 @@ import {
   type ToolReceiptOperationRequest,
   ToolReceiptOperationRequestSchema,
 } from "./workstream-tool-receipt-protocol";
-import { WorkstreamMessageStorage } from "./workstream-message-storage";
+import { mergedIntoMarker, WorkstreamMessageStorage } from "./workstream-message-storage";
 import {
   WorkstreamTranscriptStorage,
   UnsettledToolBatchError,
@@ -305,18 +305,6 @@ function isAppendedMessageOutcome(
   return candidate.outcome === "appended"
     && typeof candidate.messageId === "string"
     && typeof candidate.sequenceNumber === "number";
-}
-
-/** The merge marker's who, when an appended system row is one; null for any other row. */
-function mergedIntoMarker(structuredContentJson: string | null | undefined): { mergedByUserId: string | null } | null {
-  if (!structuredContentJson) return null;
-  try {
-    const parsed = JSON.parse(structuredContentJson) as { type?: unknown; mergedByUserId?: unknown };
-    if (parsed.type !== "conversation_merged_into") return null;
-    return { mergedByUserId: typeof parsed.mergedByUserId === "string" ? parsed.mergedByUserId : null };
-  } catch {
-    return null;
-  }
 }
 
 function isPersistedElicitationOutcome(value: unknown): boolean {
