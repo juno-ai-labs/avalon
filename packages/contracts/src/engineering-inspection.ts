@@ -1,15 +1,119 @@
 import { z } from "zod";
 import { deferredZodSchema } from "./deferred-zod-schema";
 
-import { RegionSchema } from "./index";
+import { CreateMessageRequestSchema, RegionSchema, WorkspaceNameSchema, WorkstreamMessageAdmissionReceiptSchema, type SpaceChannelPage } from "./index";
 import { AutomationIdSchema } from "./automation-agent";
 import {
   ArtifactIdSchema,
+  IdSchema,
   SubstreamIdSchema,
+  UserIdSchema,
   WorkspaceIdSchema,
   WorkstreamIdSchema,
 } from "./identifiers";
-import { SpaceIdSchema } from "./spaces";
+import { SpaceIdSchema, SpaceSummarySchema, type SpaceDirectory } from "./spaces";
+import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
+import { ReadTranscriptRequestSchema } from "./workstream-transcript";
+
+/** Trusted Access identity supplied by the MCP Worker, never a tool argument. */
+export const EngineeringOperatorSchema = z.strictObject({
+  subject: z.string().min(1),
+  email: z.string().nullable(),
+  audience: z.string().min(1),
+});
+export type EngineeringOperator = z.infer<typeof EngineeringOperatorSchema>;
+
+const creationIdentity = {
+  operationId: IdSchema.describe("A fresh UUID for this creation. Reuse it and the same arguments after an uncertain outcome."),
+  creatorUserId: UserIdSchema.describe("Existing regional Rally user to create as. For an existing Organization, selects any active member or guest and enforces the app's permissions; no login session is minted."),
+};
+
+export const CreateEngineeringOrgInputSchema = deferredZodSchema(() => z.strictObject({
+  ...creationIdentity,
+  region: RegionSchema,
+  name: WorkspaceNameSchema,
+  userIds: z.array(UserIdSchema).describe("Existing users in this region to add as members. The creator is always included as owner."),
+}));
+export type CreateEngineeringOrgInput = z.infer<typeof CreateEngineeringOrgInputSchema>;
+export const CreateEngineeringOrgResultSchema = deferredZodSchema(() => z.strictObject({
+  region: RegionSchema,
+  orgId: WorkspaceIdSchema,
+  userIds: z.array(UserIdSchema),
+}));
+export type CreateEngineeringOrgResult = z.infer<typeof CreateEngineeringOrgResultSchema>;
+
+export const CreateEngineeringChannelInputSchema = deferredZodSchema(() => z.strictObject({
+  ...creationIdentity,
+  orgId: WorkspaceIdSchema,
+  name: z.string().trim().min(1),
+  participantUserIds: z.array(UserIdSchema).describe("Organization users to seat, subject to the app's audience permissions; the creator is always included. Channels are Organization-wide."),
+}));
+export type CreateEngineeringChannelInput = z.infer<typeof CreateEngineeringChannelInputSchema>;
+export const CreateEngineeringChannelResultSchema = deferredZodSchema(() => z.strictObject({
+  region: RegionSchema,
+  orgId: WorkspaceIdSchema,
+  channelId: SpaceIdSchema,
+  channel: SpaceSummarySchema,
+}));
+export type CreateEngineeringChannelResult = z.infer<typeof CreateEngineeringChannelResultSchema>;
+
+export const CreateEngineeringThreadInputSchema = deferredZodSchema(() => z.strictObject({
+  ...creationIdentity,
+  orgId: WorkspaceIdSchema,
+  channelId: SpaceIdSchema,
+  prompt: z.string().max(MESSAGE_MAX_CHARACTERS).refine((value) => value.trim().length > 0, "A starting prompt is required"),
+}));
+export type CreateEngineeringThreadInput = z.infer<typeof CreateEngineeringThreadInputSchema>;
+export const CreateEngineeringThreadResultSchema = deferredZodSchema(() => z.strictObject({
+  region: RegionSchema,
+  orgId: WorkspaceIdSchema,
+  channelId: SpaceIdSchema,
+  threadId: WorkstreamIdSchema,
+  turnId: IdSchema,
+  harnessRunId: IdSchema.nullable(),
+}));
+export type CreateEngineeringThreadResult = z.infer<typeof CreateEngineeringThreadResultSchema>;
+
+const engineeringViewer = { orgId: WorkspaceIdSchema, userId: UserIdSchema };
+export const ListEngineeringUserChannelsInputSchema = deferredZodSchema(() => z.strictObject(engineeringViewer));
+export type ListEngineeringUserChannelsInput = z.infer<typeof ListEngineeringUserChannelsInputSchema>;
+export const SendEngineeringMessageInputSchema = deferredZodSchema(() => z.strictObject({
+  text: CreateMessageRequestSchema.shape.text,
+  mentions: CreateMessageRequestSchema.shape.mentions,
+  confirmedParticipantUserIds: CreateMessageRequestSchema.shape.confirmedParticipantUserIds,
+  attachmentIds: CreateMessageRequestSchema.shape.attachmentIds,
+  annotations: CreateMessageRequestSchema.shape.annotations,
+  runMode: CreateMessageRequestSchema.shape.runMode,
+  ...engineeringViewer,
+  operationId: IdSchema.describe("A fresh UUID for this message; reuse it after an uncertain outcome."),
+  threadId: WorkstreamIdSchema,
+  breakoutId: SubstreamIdSchema.optional().describe("Omit for the Thread's Main; a Breakout is authorized independently."),
+}));
+export type SendEngineeringMessageInput = z.infer<typeof SendEngineeringMessageInputSchema>;
+export const SendEngineeringMessageResultSchema = deferredZodSchema(() => z.strictObject({
+  receipt: WorkstreamMessageAdmissionReceiptSchema,
+}));
+export type SendEngineeringMessageResult = z.infer<typeof SendEngineeringMessageResultSchema>;
+
+export const ReadEngineeringChannelInputSchema = deferredZodSchema(() => z.strictObject({
+  ...engineeringViewer,
+  channelId: SpaceIdSchema,
+  cursor: z.string().min(1).optional(),
+}));
+export type ReadEngineeringChannelInput = z.infer<typeof ReadEngineeringChannelInputSchema>;
+export const ListEngineeringUserConversationsInputSchema = deferredZodSchema(() => ReadEngineeringChannelInputSchema.unwrap().extend({
+  kind: z.enum(["channel", "breakout"]),
+}));
+export type ListEngineeringUserConversationsInput = z.infer<typeof ListEngineeringUserConversationsInputSchema>;
+export const ReadEngineeringConversationInputSchema = deferredZodSchema(() => z.strictObject({
+  ...engineeringViewer,
+  threadId: WorkstreamIdSchema,
+  breakoutId: SubstreamIdSchema.optional(),
+  ...ReadTranscriptRequestSchema.shape,
+}));
+export type ReadEngineeringConversationInput = z.infer<typeof ReadEngineeringConversationInputSchema>;
+export const EngineeringTextResultSchema = deferredZodSchema(() => z.strictObject({ text: z.string() }));
+export type EngineeringTextResult = z.infer<typeof EngineeringTextResultSchema>;
 
 export const InspectionSqlBindingSchema = deferredZodSchema(() => z.union([
   z.string(),
@@ -411,6 +515,14 @@ export type EngineeringD1SqlResult = z.infer<typeof EngineeringD1SqlResultSchema
 
 /** The named regional WorkerEntrypoint surface bound only to the engineering MCP Worker. */
 export interface EngineeringInspectionRpcBinding {
+  listUserChannels(input: ListEngineeringUserChannelsInput): Promise<SpaceDirectory>;
+  listUserConversations(input: ListEngineeringUserConversationsInput): Promise<SpaceChannelPage>;
+  sendMessage(input: SendEngineeringMessageInput, operator: EngineeringOperator): Promise<SendEngineeringMessageResult>;
+  readChannel(input: ReadEngineeringChannelInput): Promise<EngineeringTextResult>;
+  readConversation(input: ReadEngineeringConversationInput): Promise<EngineeringTextResult>;
+  createOrg(input: CreateEngineeringOrgInput, operator: EngineeringOperator): Promise<CreateEngineeringOrgResult>;
+  createChannel(input: CreateEngineeringChannelInput, operator: EngineeringOperator): Promise<CreateEngineeringChannelResult>;
+  createThread(input: CreateEngineeringThreadInput, operator: EngineeringOperator): Promise<CreateEngineeringThreadResult>;
   listWorkspaces(input: ListEngineeringWorkspacesInput): Promise<ListEngineeringWorkspacesResult>;
   searchOrganizations(input: SearchEngineeringOrganizationsInput): Promise<SearchEngineeringOrganizationsResult>;
   searchUsers(input: SearchEngineeringUsersInput): Promise<SearchEngineeringUsersResult>;

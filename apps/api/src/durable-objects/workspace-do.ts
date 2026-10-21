@@ -664,6 +664,9 @@ import {
   WorkspaceSpaceBootstrapStatusSchema,
   WorkspaceSpaceChannelPageRequestSchema,
   WorkspaceSpaceChannelPageResultSchema,
+  WorkspaceSpaceDirectoryResultSchema,
+  WorkspaceSpaceConversationPageRequestSchema,
+  type WorkspaceSpaceConversationPageRequest,
   WorkspaceChannelFeedResultSchema,
   WorkspaceActivityPushReadRequestSchema,
   WorkspaceActivityPushReadResultSchema,
@@ -10195,13 +10198,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
+  /** The active directory uses the same reader and personal ordering as the socket. */
+  async listSpaceDirectory(input: WorkspaceSpaceListRequest) {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSpaceListRequestSchema, input, "list_space_directory");
+    this.assertWorkspace(request.workspaceId);
+    const viewer = await this.spaceReader(request.workspaceId, request.userId);
+    return WorkspaceSpaceDirectoryResultSchema.parse(viewer
+      ? { ok: true, directory: this.spaceStorage().list(request.workspaceId, viewer) }
+      : { ok: false, code: "space_access_denied" });
+  }
+
   /**
-   * One page of the conversations in a Space that currently need this viewer.
+   * One page of visible conversations in a Space; attention-only by default.
    *
    * The route is still `/spaces/:id/channels` and the RPC still carries that
    * word, but what it answers is the Space's member Channels *and their
    * breakouts* in one activity-ordered list, with everything that is stale for
-   * this viewer left out. The Space authority decides which conversations the
+   * this viewer left out by default. Internal callers may request all visible
+   * rows of one kind. The Space authority decides which conversations the
    * page is about and in what order; this method decides what each of them
    * looks like to this viewer, through the same projection `listDirectory`
    * answers a sidebar page with for a Channel and its breakout equivalent for
@@ -10216,13 +10231,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * than its cursor suggests and the cursor still continues from the
    * conversation it was taken at.
    */
-  async listSpaceChannels(input: WorkspaceSpaceChannelPageRequest): Promise<WorkspaceSpaceChannelPageResult> {
+  async listSpaceChannels(input: WorkspaceSpaceConversationPageRequest): Promise<WorkspaceSpaceChannelPageResult> {
     await this.initialized;
-    const request = parseRpcInput(WorkspaceSpaceChannelPageRequestSchema, input, "list_space_channels");
+    const request = parseRpcInput(WorkspaceSpaceConversationPageRequestSchema, input, "list_space_channels");
     this.assertWorkspace(request.workspaceId);
     const viewer = await this.spaceReader(request.workspaceId, request.userId);
     if (!viewer) return { ok: false, code: "space_access_denied" };
-    const page = this.spaceStorage().conversationPage(viewer, request.spaceId, request.cursor);
+    const page = this.spaceStorage().conversationPage(viewer, request.spaceId, request.cursor, request);
     if (page === "invalid_cursor") return { ok: false, code: "space_cursor_invalid" };
     if (page === false) return { ok: false, code: "space_not_found" };
     const items = this.conversationRows(viewer, request.workspaceId, page.items);
