@@ -12,12 +12,6 @@ through it, including telemetry and native crash uploads. Both Electron Vite
 configurations bundle the workspace package into the main-process output; a
 packaged app must not try to load its TypeScript source from node_modules.
 
-The third-party updater uses its own Chromium transport. The pnpm patch at
-`patches/electron-updater@6.8.9.patch` owns every native response's error event
-before passing it to the updater's consumer. Electron already forwards the same
-native failure to the request; the response listener prevents a second, unowned
-stream error without duplicating request errors or changing update retry policy.
-
 ## How it works
 
 Private and file protocol requests use Electron's `net.fetch`. All HTTP requests
@@ -73,8 +67,10 @@ Electron Updater 6.8.9 has a separate response-ownership gap: its HTTP 404/204
 early returns and some piped differential-download responses omit an error
 listener. A later reset destroys that native response and produces a direct
 uncaught exception with the same loader stack. The process-level rejection
-handler cannot contain it. Keep the updater patch until its response consumers
-own all error paths; re-run the native regression when upgrading the dependency.
+handler cannot contain it. `patches/electron-updater@6.8.9.patch` installs an
+error listener before consumer dispatch; Electron still delivers the failure
+through the existing request handler. Keep the patch until the updater's response
+consumers own all error paths; re-run the native regression on dependency upgrades.
 
 ## Testing
 
@@ -90,12 +86,14 @@ after response headers, and an errored source stream. The comparison
 reproduces the upstream detached rejection; the bridge returns the original
 source error without an orphaned rejection. Linux uses Electron's headless
 Ozone backend and requires no X server.
+
 The same command also exercises the installed updater transport against reset
 responses: a rejected feed, a rejected download, and an interrupted body read.
 It verifies that the original request still fails, each reset is delivered once
-to the request, and no exception or rejection escapes to the process. The fixture
-drains rejected responses to advance Chromium's data-pipe backpressure before
-resetting the loopback socket; it does not install a response error handler.
+to the request, and no exception or rejection escapes to the process. Each native
+fixture has a 30-second process budget, including startup; a hang terminates the
+child and fails the command with the fixture name. The executor path is the final
+argument so Chromium switches retained in Linux's `process.argv` do not shift it.
 
 ## Changelog
 
