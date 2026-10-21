@@ -51,6 +51,13 @@ const browserApplicationSettings: DesktopApplicationSettings = {
   nativeCrashRestartRequired: false,
 };
 const browserApplicationSettingsListeners = new Set<(settings: DesktopApplicationSettings) => void>();
+/**
+ * The count the shell last put on the installed app's icon, or null before the
+ * first. The service worker sets another Organization's count when its push
+ * arrives, so a tab that regains focus puts this one back, as main does for the
+ * Mac dock.
+ */
+let browserAppBadgeCount: number | null = null;
 const browserSessionListeners = new Set<(session: DesktopSession | null) => void>();
 const browserArtifactWindows = new Map<Window, { resourceId: string; version: number }>();
 const browserAuthAttempts = new Map<string, {
@@ -205,6 +212,10 @@ async function browserOnboardingSession(
   return installBrowserSession(raw, browserGlobalApiBaseUrl());
 }
 
+function setBrowserAppBadge(count: number): Promise<void> {
+  return count > 0 ? navigator.setAppBadge(count) : navigator.clearAppBadge();
+}
+
 const browserBridge: RallyDesktopBridge = {
   async getRuntimeConfig() {
     return {
@@ -294,8 +305,17 @@ const browserBridge: RallyDesktopBridge = {
   },
   async setPushNotificationsEnabled() { return this.getApplicationSettings(); },
   async openNotificationSettings() {},
-  async setDockBadgeCount() {
-    // A browser tab has no dock icon.
+  async setDockBadgeCount(count) {
+    // The Badging API marks an installed app's icon (a Home Screen app on
+    // iPhone and iPad); a plain tab has none, and browsers ignore the call.
+    if (!('setAppBadge' in navigator)) return;
+    if (browserAppBadgeCount === null) {
+      window.addEventListener('focus', () => {
+        void setBrowserAppBadge(browserAppBadgeCount ?? 0).catch(() => undefined);
+      });
+    }
+    browserAppBadgeCount = count;
+    await setBrowserAppBadge(count);
   },
   async setMenuBarEnabled() {
     throw new Error('The menu bar item is available only in the Rally desktop app.');
