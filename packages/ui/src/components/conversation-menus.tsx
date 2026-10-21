@@ -56,13 +56,14 @@ export interface ConversationRowActions {
   /** Mark this conversation done while keeping it visible. */
   onResolve?: ((target: ConversationRowTarget) => void) | undefined;
   resolveDisabled?: boolean | undefined;
+  resolveDisabledReason?: string | undefined;
   /**
    * Merge this conversation's result up: a Breakout into its Thread, a Thread
    * into one of its Channels. The label names the target ("Merge to thread",
    * "Merge to GTM"); absent where nothing here can merge.
    */
   /** `target` names where it goes, at the row's end: the Thread, or "Channel". */
-  merge?: { label: string; target?: string | undefined; onSelect: () => void } | undefined;
+  merge?: { label: string; target?: string | undefined; disabledReason?: string | undefined; onSelect: () => void } | undefined;
 }
 
 /** The menu row that opens the composer's merge mode; the breakout mark rotated 180°. */
@@ -70,11 +71,12 @@ function MergeRow({ actions }: { actions?: ConversationRowActions | undefined })
   if (!actions?.merge) return null;
   // Drawn as the rows under it are, so it reads as one of the menu's rows:
   // the target where they show their count, and no chevron, since it acts.
-  return <DropdownMenu.Item className="menu-item title-menu-level-row title-menu-merge-row" onSelect={actions.merge.onSelect}>
+  const row = <DropdownMenu.Item className="menu-item title-menu-level-row title-menu-merge-row" disabled={Boolean(actions.merge.disabledReason)} onSelect={actions.merge.onSelect}>
     <IconCornerUpLeft aria-hidden="true" size={17} stroke={1.7} />
     <span className="title-menu-item-copy">{actions.merge.label}</span>
     {actions.merge.target && <span className="title-menu-level-meta">{actions.merge.target}</span>}
   </DropdownMenu.Item>;
+  return actions.merge.disabledReason ? <Tip label={actions.merge.disabledReason}>{row}</Tip> : row;
 }
 
 /** Resolution is independent of publishing a result or archiving the conversation. */
@@ -82,10 +84,13 @@ function ResolveRow({ actions, target, noun }: {
   actions?: ConversationRowActions | undefined; target: ConversationRowTarget; noun: 'Thread' | 'Breakout';
 }): React.JSX.Element | null {
   if (!actions?.onResolve) return null;
-  return <DropdownMenu.Item className="menu-item title-menu-level-row" disabled={actions.resolveDisabled} onSelect={() => actions.onResolve?.(target)}>
+  const row = <DropdownMenu.Item className="menu-item title-menu-level-row" disabled={actions.resolveDisabled} onSelect={() => actions.onResolve?.(target)}>
     <IconCheck aria-hidden="true" size={17} stroke={1.7} />
     <span className="title-menu-item-copy">Resolve {noun}</span>
   </DropdownMenu.Item>;
+  return actions.resolveDisabled && actions.resolveDisabledReason
+    ? <Tip label={actions.resolveDisabledReason}>{row}</Tip>
+    : row;
 }
 
 /** How many Breakouts the Breakouts view lists before "Show N more". */

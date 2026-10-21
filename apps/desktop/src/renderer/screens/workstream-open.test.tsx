@@ -100,6 +100,7 @@ import { ChannelPaneContextValue, type ChannelPaneContext } from '../lib/navigat
 import type { HarnessRunMetadata, HarnessStatus, WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import type * as CollaborationSessionModule from '../lib/collaboration-session';
 import type { ClientSession } from '@rally/contracts/client-session';
+import { asSpaceId, type SpaceDirectory } from '@rally/contracts';
 
 const workstreamId = '00000000-0000-7000-8000-000000000650';
 
@@ -1049,13 +1050,18 @@ describe('socket-first channel open', () => {
     expect(api.setSubstreamArchived).not.toHaveBeenCalled();
   });
 
-  it.each(['0', '00000000-0000-7000-8000-000000000660'])('keeps Resolve visible but disabled for resolved conversation %s', async (childId) => {
+  it.each(['0', '00000000-0000-7000-8000-000000000660'])('keeps resolved conversation actions visible but disabled %s', async (childId) => {
     const parent = recoveryBoot();
     const child = recoveryBoot({ title: 'Private child' });
     renderScreen((cache) => {
       cache.setQueryData(['workstream', workstreamId], parent);
       cache.setQueryData(['ordered-transcript', workstreamId], parent.transcript);
       setCachedWorkstreams(cache, [{ ...parent, resolved: childId === '0' }]);
+      cache.setQueryData<SpaceDirectory>(['spaces'], { waterline: 1, items: parent.spaceIds.map((id) => ({
+        id: asSpaceId(id), name: 'Engineering', iconKey: 'briefcase', colorKey: 'blue', scope: 'workspace', reach: 'organization', status: 'active',
+        systemRole: null, revision: 1, participants: [], channelCount: 1, attentionCount: 0,
+        defaultResourceIds: [], defaultSidekickIds: [], createdAt: parent.createdAt, updatedAt: parent.createdAt,
+      })) });
       cache.setQueryData(['workstream-children', workstreamId], { privateChildren: [{
         substreamId: childId, title: child.title, resolved: true,
         createdByUserId: null, createdAt: child.createdAt, updatedAt: child.createdAt,
@@ -1068,6 +1074,19 @@ describe('socket-first channel open', () => {
     }), { button: 0, ctrlKey: false });
     const resolve = await screen.findByRole('menuitem', { name: childId === '0' ? 'Resolve Thread' : 'Resolve Breakout' });
     expect(resolve).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.pointerMove(resolve, { pointerType: 'mouse' });
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      childId === '0' ? 'This thread is already resolved.' : 'This breakout is already resolved.',
+    );
+    if (childId === '0') {
+      const merge = screen.getByRole('menuitem', { name: /^Merge to Engineering/u });
+      expect(merge).toHaveAttribute('aria-disabled', 'true');
+      fireEvent.pointerLeave(resolve, { pointerType: 'mouse' });
+      fireEvent.pointerMove(merge, { pointerType: 'mouse' });
+      expect(await screen.findByRole('tooltip')).toHaveTextContent('This thread is already resolved.');
+      fireEvent.click(merge);
+      expect(screen.queryByRole('textbox', { name: 'Merge note' })).not.toBeInTheDocument();
+    }
     fireEvent.click(resolve);
     expect(api.resolveConversation).not.toHaveBeenCalled();
     expect(locationInTest.pathname).toBe(`/workstreams/${workstreamId}`);
