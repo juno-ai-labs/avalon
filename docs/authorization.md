@@ -11,7 +11,7 @@ participants or become a new canonical owner of memberships.
 | `services/authorization-policy.ts` | Typed addresses, subject, four outcomes, proof composition, evidence validation, `AccessContext` |
 | `services/search-authorization.ts` | The old KV/regional search decision store. Unread and unpushed since member search filters on row audience ([text search](text-search.md#invariants)); deleted in the audience-filtering PRD's phase 4 |
 | `durable-objects/search-authorization-universe.ts` | The subjects and resources a push target reached; unused since phase 3, deleted in phase 4 |
-| `services/authorization-service.ts` | Member policy, batch-local owner observations and HTTP disclosure adapter |
+| `services/authorization-service.ts` | Member policy, batch-local owner observations, request-scoped `ResourceReadContext` and HTTP disclosure adapter |
 | `services/resource-read-rules.ts` | The draft and attachment rules for a resource, shared by the canonical check and the search audience its rows carry |
 | `durable-objects/authorization-storage.ts` | Exact attachment locations, inventory revision ordering and shipped migration tables |
 | `durable-objects/search-authorization-projection.ts` | The old store's mutation triggers and push outbox; the outbox is no longer flushed, and phase 4 drops both |
@@ -101,8 +101,11 @@ An alternative attachment location can independently grant access. Denial from
 one location does not override a valid grant from another.
 
 An authorization batch may receive the active regional workspace-membership
-observation separately produced by trusted request middleware. The artifact-open
-route carries that proof explicitly; a generic `AuthContext`, a retargeted
+observation separately produced by trusted request middleware. Attachment reads
+and artifact open, data and error routes carry that proof explicitly. The session
+query also supplies its incarnation and revision, which a migrated conversation
+uses in its grant decision without another D1 relationship lookup. The proof is
+server-owned; no HTTP body or header can supply it. A generic `AuthContext`, a retargeted
 subject, and every non-request caller load the fact canonically from D1. Each
 observation is shared within one authorization batch. Each batch gathers conversation IDs from
 its requests and resource locations before loading a parent, preserving one parent
@@ -146,7 +149,24 @@ This removes the member search path's serial scan of all work streams and all
 children. Content and search passages still come from canonical source records.
 
 Public resource metadata, content, version reads and previews admit workspace-bound
-guests through this same policy; the byte handlers recheck after storage awaits.
+guests through this same policy. `ResourceReadContext` shares an exact resource's
+pending and completed admission within one HTTP request. Its authorization-facts
+RPC optionally returns resource metadata and the artifact registry row from the
+same Organization owner, removing the separate metadata/registry RPC from the
+first load. It carries that owner's placement too, so artifact host selection
+does not repeat the cold routing lookup through another database facade.
+Metadata is disclosed only after the complete policy allows it;
+ordinary fact batches do not request these additional rows.
+
+An admitted read finishes without rechecking membership or access after storage
+awaits. Revocation is eventually consistent: a concurrent revocation may arrive
+after admission, while the next request authenticates again and starts fresh
+canonical resource admission. No request context, grant decision or metadata
+snapshot is cached across requests. A service used outside HTTP starts a new
+context for each read operation, even when the service instance is reused.
+Search previews retain their independent source-version comparison after storage;
+that comparison does not reauthorize. This contract does not relax mutations,
+socket admission or the existing artifact viewer-session revocation mechanism.
 Resources attached to workstream-owned Sidekick conversations reuse that
 Sidekick's viewer admission, which for a guest follows the Sidekick's home: the
 owning workstream's management grant for a home in its Main conversation, and
@@ -421,6 +441,11 @@ workspace isolation, aged evidence, future timestamps and explicit incomplete li
 out-of-order inventory delivery, ignored legacy grants and discovery completion.
 `test-workers/conversation-parent-contract.test.ts` exercises stale roster
 projections and private-child search before and after queued backfill without activation.
+`test-workers/resource-read-admission.test.ts` drives attachment and artifact
+HTTP routes over real D1, WorkspaceDO and R2, checking first-load RPC counts,
+request-local coalescing, session/membership/grant revocation, admitted reads
+during revocation, and membership-incarnation fencing. `test/resource-upload.test.ts`
+also covers a search preview whose ownership changes while R2 is being read.
 Existing memory, attachment-tool, resource-list, identity-authority and search
 projection suites cover the retained integration boundaries.
 
@@ -509,6 +534,28 @@ Worker timestamps; they are not exact replication timestamps. Remove probe deplo
 after the experiment. Pair these results with mutation-to-write-ack queue events.
 
 ## Changelog
+
+### 2026-10-21 — Admit attachment and artifact reads once per request
+
+**What changed:** Resource reads reuse HTTP membership evidence, including its
+incarnation for migrated grants, and share admission inside an explicit request
+context. The authorization-facts RPC can return resource metadata and artifact
+registry data together. Byte reads no longer repeat authorization after storage.
+
+**Why:** A production image preview spent about one second on its second
+authorization RPC after reading R2, with two extra membership lookups and a
+separate metadata RPC along the way. The team accepts eventually consistent
+revocation, so replaying the full policy around each await paid network latency
+for a stronger consistency rule the product does not require.
+
+**Considered and rejected:** A cross-request grant cache adds invalidation state
+without removing the first-load metadata hop. Keep fresh request admission and
+combine reads already owned by the same Organization instead.
+
+**Consequences:** An in-flight read can finish after revocation. Subsequent
+requests reauthenticate and observe canonical grant changes. Callers must never
+retain `ResourceReadContext` between requests or use it as mutation authority;
+membership incarnations and concealment remain part of admission.
 
 ### 2026-10-19 — A Channel is a place a resource can be shared with
 

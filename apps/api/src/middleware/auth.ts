@@ -99,7 +99,7 @@ export async function authenticate(c: Context): Promise<IdentityAuthContext> {
     throw new ApiError(401, "authentication_required", "A valid Rally session is required");
   }
   const claims = await verifyAccessToken(c.env, authorization.slice(7));
-  return authenticateSession(c.env, claims);
+  return authenticateSession(c.env, claims, (membership) => c.set('requestMembership', membership));
 }
 
 /**
@@ -155,7 +155,7 @@ export function getWorkspaceAuth(c: Context): AuthContext {
 export const requireWorkspaceAuth: MiddlewareHandler<HonoAppEnv> = async (c,next) => {
   c.set("auth",c.get("auth") ?? await timedAuthenticate(c));
   const auth = getWorkspaceAuth(c);
-  c.set("requestMembership", {
+  c.set("requestMembership", c.get("requestMembership") ?? {
     workspaceId: auth.workspaceId,
     userId: auth.userId,
     accessClass: auth.accessClass ?? "member",

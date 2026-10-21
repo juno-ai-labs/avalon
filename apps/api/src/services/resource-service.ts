@@ -34,7 +34,7 @@ import {
 import { verifyAttachmentMimeType } from "./attachment-mime-verification";
 import { type ModelAttachmentSource, loadBrowserCompatibleImage } from "./attachment-model-content";
 import type { AccessContext } from './authorization-policy';
-import { createAccessContext, requireAuthorizedRead } from './authorization-service';
+import { createAccessContext, requireAuthorizedRead, ResourceReadContext } from './authorization-service';
 import { withAuthorizedConnection } from "./connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { listedResourceVisibilitySql } from './resource-listing';
@@ -113,23 +113,35 @@ export class ResourceService {
   private readonly env: Env;
   private readonly auth: AuthContext;
   private readonly access: AccessContext;
+  private readonly authorityEnv: Env;
 
   constructor(
     env: Env,
     auth: AuthContext,
     connectorRegistry?: ReturnType<typeof connectorRegistryForEnv>,
-    access?: AccessContext,
+    private readonly requestReads?: ResourceReadContext,
   ) {
+    this.authorityEnv = env;
     this.env = withWorkspaceRuntimeDatabase(env, auth.workspaceId);
     this.auth = auth;
     this.connectorRegistry = connectorRegistry;
-    this.access = access ?? createAccessContext(env, auth);
+    this.access = requestReads?.access ?? createAccessContext(env, auth);
   }
 
   private async authorizeRead(id: string): Promise<void> {
+    if (this.requestReads) {
+      await this.requestReads.read(id);
+      return;
+    }
     requireAuthorizedRead(await this.access.check({
       kind: 'resource', workspaceId: this.auth.workspaceId, resourceId: IdSchema.parse(id),
     }));
+  }
+
+  private readResource(id: string) {
+    // Non-HTTP callers can reuse a service for multiple operations; each starts
+    // a fresh admission. Only an explicitly request-scoped context is shared.
+    return (this.requestReads ?? new ResourceReadContext(this.authorityEnv, this.auth)).read(id);
   }
 
   async list(input: ListResourcesInput) {
@@ -337,9 +349,7 @@ export class ResourceService {
   }
 
   async get(id: string) {
-    await this.authorizeRead(id);
-    const row = await this.loadResource(id);
-    await this.authorizeRead(id);
+    const { resource: row } = await this.readResource(id);
     return this.toResource(row);
   }
 
@@ -349,9 +359,7 @@ export class ResourceService {
    * Channel's own attach gives, because a draft is reaped when it expires.
    */
   async getAttachable(id: string) {
-    await this.authorizeRead(id);
-    const row = await this.loadResource(id);
-    await this.authorizeRead(id);
+    const { resource: row } = await this.readResource(id);
     if (row.provider === "avalon_upload" && row.attachment_status !== "attached") {
       throw new ApiError(409, "attachment_draft_requires_message",
         "Send this upload with a message before attaching it as an existing resource");
@@ -403,11 +411,13 @@ export class ResourceService {
 
   /** Opening a search result repeats the same attachment authority checks. */
   async searchPreview(id: string, signal: AbortSignal): Promise<Response> {
-    const before = await this.loadSearchResource(id);
-    const response = await this.preview(id, signal);
+    const { resource: before } = await this.readResource(id);
+    const response = await this.loadPreview(before, signal);
     try {
-      const after = await this.loadSearchResource(id);
-      if (before.content_ref !== after.content_ref || before.content_sha256 !== after.content_sha256
+      // This is source-version validation, not another access decision.
+      const after = await this.env.DB.prepare(`SELECT content_ref, content_sha256, mime_type FROM resources
+        WHERE id = ? AND workspace_id = ?`).bind(id, this.auth.workspaceId).first<Record<string, unknown>>();
+      if (!after || before.content_ref !== after.content_ref || before.content_sha256 !== after.content_sha256
         || before.mime_type !== after.mime_type) {
         throw new ApiError(409, "search_source_changed", "This file changed. Search again to open its current contents.");
       }
@@ -418,41 +428,28 @@ export class ResourceService {
     }
   }
 
-  private async loadSearchResource(id: string): Promise<Record<string, unknown>> {
-    await this.authorizeRead(id);
-    const row = await this.loadResource(id);
-    await this.authorizeRead(id);
-    return row;
-  }
-
   async content(id: string): Promise<Response> {
-    await this.authorizeRead(id);
-    const resource = await this.loadResource(id);
+    const { resource } = await this.readResource(id);
     if (typeof resource.content_ref !== "string") throw new ApiError(404, "resource_content_unavailable", "Resource content has not been hydrated");
     const object = await this.env.PAYLOADS.get(resource.content_ref);
     if (!object) throw new ApiError(404, "resource_content_unavailable", "Stored resource content was not found");
-    await this.authorizeRead(id);
     return resourceObjectResponse(object);
   }
 
   async versions(id: string): Promise<ResourceRevision[]> {
     await this.authorizeRead(id);
-    await this.loadResource(id);
     const history = await (await this.workspaceDirectory()).listResourceVersions({
       workspaceId: this.auth.workspaceId,
       resourceId: id,
       version: null,
     });
-    await this.authorizeRead(id);
     return history.items.map(toResourceRevision);
   }
 
   async version(id: string, version: number): Promise<ResourceRevision> {
     await this.authorizeRead(id);
-    await this.loadResource(id);
     const row = await this.loadVersion(id, version);
     if (!row) throw new ApiError(404, "resource_version_not_found", "Resource version not found");
-    await this.authorizeRead(id);
     return toResourceRevision(row);
   }
 
@@ -462,7 +459,6 @@ export class ResourceService {
     representation: "original" | "model",
   ): Promise<Response> {
     await this.authorizeRead(id);
-    await this.loadResource(id);
     const row = await this.loadVersion(id, version);
     if (!row) throw new ApiError(404, "resource_version_not_found", "Resource version not found");
     const objectRef = representation === "model" ? row.model_content_ref : row.content_ref;
@@ -471,7 +467,6 @@ export class ResourceService {
     }
     const object = await this.env.PAYLOADS.get(objectRef);
     if (!object) throw new ApiError(404, "resource_version_content_unavailable", "Stored resource version content was not found");
-    await this.authorizeRead(id);
     return resourceObjectResponse(object);
   }
 
@@ -485,7 +480,6 @@ export class ResourceService {
     if(kind==='image'&&requiresBrowserImageNormalization(mime,row.title)) {
       const image=await loadBrowserCompatibleImage(this.env.PAYLOADS,{id,fileName:row.title,mimeType:mime,contentRef:row.content_ref,modelContentRef:row.model_content_ref,modelMimeType:row.model_mime_type,modelContentSha256:row.model_content_sha256,modelMetadataJson:row.model_metadata_json},{images:this.env.IMAGES,documentProcessor:this.env.DOCUMENT_PROCESSOR});
       if(!image)throw new ApiError(422,'resource_preview_unsupported','This image format cannot be previewed');
-      await this.authorizeRead(id);
       return resourceBytesResponse(image.bytes,image.mimeType,row.title);
     }
     const original=kind==='image'||kind==='audio'||kind==='markdown'||kind==='text'||mime.startsWith('text/');
@@ -493,13 +487,12 @@ export class ResourceService {
     if(!ref)throw new ApiError(404,'resource_version_content_unavailable','This preview is unavailable for the resource version');
     const object=await this.env.PAYLOADS.get(ref);
     if(!object)throw new ApiError(404,'resource_version_content_unavailable','Stored resource version content was not found');
-    await this.authorizeRead(id);
     return resourceObjectResponse(object,row.title);
   }
 
   /** Frozen HTML assets only: historical server modules are never executed. */
   async annotationSitePreview(id: string, version: number, pagePath: string): Promise<Response> {
-    await this.authorizeRead(id);
+    const { artifact: registry } = await this.readResource(id);
     const revision=await this.loadVersion(id,version);
     if(!revision||revision.mime_type!=='application/vnd.rally.site-manifest+json'||!revision.content_ref)throw new ApiError(404,'annotation_original_page_unavailable','The original page cannot be shown again');
     const original=await this.env.PAYLOADS.get(revision.content_ref);
@@ -511,14 +504,11 @@ export class ResourceService {
       throw parsed.error;
     }
     const manifest = parsed.data;
-    const registry = await this.env.DB.prepare('SELECT artifact_id FROM artifact_registry WHERE workspace_id = ? AND resource_id = ?')
-      .bind(this.auth.workspaceId,id).first<{artifact_id:string}>();
     if (!registry || registry.artifact_id !== manifest.artifactId) throw new ApiError(404,'artifact_not_found','The artifact is unavailable');
     const path = resolveAssetPath(new URL(pagePath,'https://artifact.invalid').pathname,new Set(manifest.assets.filter((asset) => asset.contentType.startsWith('text/html')).map((asset) => asset.path)));
     if (!path) throw new ApiError(404,'annotation_original_page_unavailable','The original page cannot be shown again');
     const object = await this.env.PAYLOADS.get(artifactAssetKey(manifest.artifactId,manifest.artifactVersion,path));
     if (!object) throw new ApiError(404,'annotation_original_page_unavailable','The original page cannot be shown again');
-    await this.authorizeRead(id);
     return new Response(object.body,{headers:{'content-type':'text/html; charset=utf-8','content-security-policy':"default-src 'none'",'cache-control':'private, no-store'}});
   }
 
@@ -532,19 +522,11 @@ export class ResourceService {
   }
 
   async preview(id: string, signal: AbortSignal): Promise<Response> {
-    await this.authorizeRead(id);
-    const response = await this.loadPreview(id, signal);
-    try {
-      await this.authorizeRead(id);
-      return response;
-    } catch (error) {
-      await response.body?.cancel();
-      throw error;
-    }
+    const { resource } = await this.readResource(id);
+    return this.loadPreview(resource, signal);
   }
 
-  private async loadPreview(id: string, signal: AbortSignal): Promise<Response> {
-    const resource = await this.loadResource(id);
+  private async loadPreview(resource: Record<string, unknown>, signal: AbortSignal): Promise<Response> {
     if (typeof resource.content_ref !== "string") throw new ApiError(404, "resource_content_unavailable", "Resource content has not been hydrated");
     const fileName = String(resource.title);
     const mimeType = resource.mime_type == null ? null : String(resource.mime_type);

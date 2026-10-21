@@ -17142,11 +17142,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     workspaceId: string; userId: string; resourceIds: string[];
     /** The reader's access class, which decides the Channels they read. */
     accessClass: "member" | "guest";
+    includeReadMetadata?: boolean;
   }) {
     await this.initialized;
     const request = z.strictObject({
       workspaceId: WorkspaceIdSchema, userId: UserIdSchema, resourceIds: z.array(IdSchema),
       accessClass: z.enum(["member", "guest"]),
+      includeReadMetadata: z.boolean().optional(),
     }).parse(input);
     const reader = { userId: request.userId, accessClass: request.accessClass };
     this.assertWorkspace(request.workspaceId);
@@ -17172,6 +17174,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // today, decided here because this object owns the Channel.
       const sharedThrough = placed.find((location) => location.parentKind === "space"
         && this.spaceStorage().reach(reader, location.parentId) !== null)?.parentId ?? null;
+      // These rows are already local to the authority deciding the resource.
+      // The caller discloses them only after composing the complete decision.
+      const readMetadata = request.includeReadMetadata ? {
+        placementAffinity: this.placementAffinity(),
+        resource: this.state.storage.sql.exec<Record<string, SqlStorageValue>>(`SELECT r.*,
+          c.connector_type AS connector_type,
+          EXISTS (SELECT 1 FROM resource_watches rw WHERE rw.resource_id = r.id
+            AND rw.workspace_id = r.workspace_id AND rw.enabled = 1) AS watch_enabled
+          FROM resources r LEFT JOIN connector_connections c ON c.id = r.connection_id
+          WHERE r.id = ? AND r.workspace_id = ?`, resourceId, request.workspaceId).one(),
+        artifact: this.state.storage.sql.exec<{
+          artifact_id: string; workstream_id: string; mode: string; stateful: number; hostname_stub: string | null;
+        }>(`SELECT artifact_id, workstream_id, mode, stateful, hostname_stub FROM artifact_registry
+          WHERE workspace_id = ? AND resource_id = ?`, request.workspaceId, resourceId).toArray()[0] ?? null,
+      } : null;
       return { resourceId, exists: true as const, validatedAt: Date.now(), revision: row.updated_at, owned, sharedThrough,
         connectionAllowed: !row.connection_id || Boolean(connection && connection.status !== 'disabled'
           && (connection.scope === 'workspace' || connection.owner_user_id === request.userId)),
@@ -17179,6 +17196,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         draftAllowed: !isDraftUpload(row) || owned,
         requiresAttachment: requiresAttachment(row, owned),
         locations: placed.filter((location) => location.parentKind !== "space"), projectionComplete: coverage.complete, discoveryAt,
+        readMetadata,
       };
     });
   }
