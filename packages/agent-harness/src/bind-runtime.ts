@@ -130,6 +130,7 @@ import {
   applyBindLoopTransition,
   BIND_SYSTEM_RENDERER_VERSION,
   hashBindLoop,
+  pendingBindToolBatch,
   projectBindLoopMessages,
   verifyBindProviderBoundary,
   type BindLoopMessage,
@@ -977,7 +978,6 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       || (resumeProjection.lastModelTurnIndex > 0 && (
         !lastReservation
         || lastReservation.modelTurnIndex !== resumeProjection.lastModelTurnIndex
-        || lastReservation.turnId !== `${input.loopId}:turn:${resumeProjection.lastModelTurnIndex}`
         || !["pending", "accepted", "failed", "stopped"].includes(lastReservation.status)
         || (lastReservation.transcriptSequence !== null
           && (!Number.isSafeInteger(lastReservation.transcriptSequence)
@@ -985,6 +985,15 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       ))
     )) {
       throw new Error("bind_loop_resume_reservation_invalid");
+    }
+    if (resumeProjection && lastReservation
+      && lastReservation.turnId !== `${input.loopId}:turn:${resumeProjection.lastModelTurnIndex}`) {
+      if (lastReservation.status !== "accepted"
+        || pendingBindToolBatch(resumeProjection) !== null
+        || await requiredPort("run_state_persistence_failed", "Historical assistant reservation validation failed",
+          () => input.validateHistoricalAssistantReservation?.(resumeProjection)) !== true) {
+        throw new Error("bind_loop_resume_reservation_invalid");
+      }
     }
     if (lastReservation?.status === "pending") {
       // The host owns canonical reservation recovery. It must atomically

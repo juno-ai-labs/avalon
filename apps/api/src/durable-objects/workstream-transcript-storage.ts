@@ -2881,6 +2881,90 @@ export class WorkstreamTranscriptStorage {
     return projection;
   }
 
+  /** Guard every recovery entry, including failure cleanup, before deriving receipt IDs. */
+  readResumableBindProjection(loopId: string, recoveringNextReservation = false): BindLoopProjectionState | null {
+    const projection = this.readBindProjection(loopId);
+    const reservation = projection?.lastAssistantReservation;
+    if (projection && reservation
+      && reservation.turnId !== `${loopId}:turn:${projection.lastModelTurnIndex}`
+      && !this.validateHistoricalAssistantReservation(projection, recoveringNextReservation)) {
+      throw new Error("bind_loop_resume_reservation_invalid");
+    }
+    return projection;
+  }
+
+  /**
+   * A relocated loop may keep immutable historical turn IDs. Admit only a
+   * completed local reservation, against the exact current head, before any
+   * recovery can derive receipt IDs in the new namespace. This is read-only:
+   * the next ordinary assistant reservation replaces the historical pointer.
+   */
+  validateHistoricalAssistantReservation(projection: BindLoopProjectionState, recoveringNextReservation = false): boolean {
+    const current = this.readBindProjection(projection.loopId);
+    const reservation = current?.lastAssistantReservation;
+    const supplied = projection.lastAssistantReservation;
+    if (!current || !reservation || !supplied
+      || current.generation !== projection.generation
+      || current.stateRevision !== projection.stateRevision
+      || current.lastModelTurnIndex !== projection.lastModelTurnIndex
+      || reservation.turnId !== supplied.turnId
+      || reservation.modelTurnIndex !== supplied.modelTurnIndex
+      || reservation.transcriptSequence !== supplied.transcriptSequence
+      || reservation.status !== supplied.status
+      || reservation.status !== "accepted"
+      || reservation.modelTurnIndex !== current.lastModelTurnIndex
+      || reservation.transcriptSequence === null
+      || reservation.turnId === `${current.loopId}:turn:${current.lastModelTurnIndex}`
+      || pendingBindToolBatch(current) !== null) return false;
+
+    // Host reservation precedes the Bind transition. After a crash in that
+    // gap, permit exactly the new namespace's next reserved turn, owned by the
+    // active execution. It has not reached streaming or provider I/O. The host
+    // will settle it before the harness's ordinary (no pending turn) proof.
+    const nextReservationClause = recoveringNextReservation
+      ? `AND EXISTS (
+           SELECT 1 FROM assistant_turn_reservations next
+            WHERE next.loop_id = l.loop_id
+              AND next.assistant_turn_sequence = r.assistant_turn_sequence + 1
+              AND next.turn_id = l.loop_id || ':turn:' || (r.assistant_turn_sequence + 1)
+              AND next.state = 'reserved' AND l.status = 'executing'
+              AND next.execution_id = l.active_execution_id
+              AND next.execution_epoch <= l.active_execution_epoch
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM assistant_turn_reservations
+            WHERE state IN ('reserved', 'streaming')
+              AND turn_id <> l.loop_id || ':turn:' || (r.assistant_turn_sequence + 1)
+         )`
+      : `AND NOT EXISTS (
+           SELECT 1 FROM assistant_turn_reservations WHERE state IN ('reserved', 'streaming')
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM assistant_turn_reservations
+            WHERE loop_id = l.loop_id AND assistant_turn_sequence = l.next_assistant_turn_sequence
+         )`;
+    return this.sql.exec<{ turn_id: string } & Record<string, SqlStorageValue>>(
+      `SELECT r.turn_id
+         FROM assistant_turn_reservations r
+         JOIN substream_loops l ON l.loop_id = r.loop_id
+         JOIN participant_transcript_turns t ON t.turn_id = r.materialized_turn_id
+        WHERE r.turn_id = ? AND r.loop_id = ?
+          AND r.assistant_turn_sequence = ? AND r.transcript_sequence = ?
+          AND r.state = 'materialized' AND r.outcome = 'accepted'
+          AND t.turn_id = r.turn_id AND t.transcript_sequence = r.transcript_sequence
+          AND t.actor = 'assistant'
+          AND l.bind_state_revision = ? AND l.next_assistant_turn_sequence = ?
+          ${nextReservationClause}
+          AND NOT EXISTS (
+            SELECT 1 FROM participant_transcript_turns
+             WHERE turn_id = l.loop_id || ':turn:' || (r.assistant_turn_sequence + 1)
+          )`,
+      reservation.turnId, current.loopId, current.lastModelTurnIndex,
+      reservation.transcriptSequence, current.stateRevision,
+      current.lastModelTurnIndex + (recoveringNextReservation ? 2 : 1),
+    ).toArray().length === 1;
+  }
+
   private openingRanges(
     snapshotId: string,
     snapshotThrough: number,
