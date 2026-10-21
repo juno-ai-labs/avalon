@@ -79,6 +79,19 @@ when a Rally window gains focus, since a background alert from another
 Organization sets that Organization's count. Foreground alerts leave `.badge`
 out of their presentation options, so they never replace it.
 
+An installed browser app (a Chrome or Edge app window, or a Home Screen app on
+iPhone and iPad) shows the same number through the Badging API. The Web Push
+payload carries it as `badge`, and `sw.js` sets it with `navigator.setAppBadge`
+(`clearAppBadge` at `0`) when the push arrives, unless a Rally tab is focused:
+the push may be for another Organization, and a Mac foreground alert leaves the
+dock badge alone too. While a tab runs, the browser bridge's
+`setDockBadgeCount` takes the count from `useDockBadge` the same way. The icon
+is one for every tab, so only the tab focused last writes it: focusing a tab
+(or bringing it back to visible) records it under `rally.app-badge-owner` in
+`localStorage` and puts its count back, as main does on the Mac. A tab still focused last keeps the icon current
+from the background. A plain tab has no icon, and browsers ignore the call
+there; Safari also requires notification permission.
+
 macOS shows a badge only while notifications, with badges, are allowed for
 Rally. Authorization requests `UNAuthorizationOptionBadge`, each permission read
 (also on window focus) reports `badgeSetting` as `notificationBadgeStatus`, and
@@ -398,9 +411,11 @@ signed-Mac delivery.
 `apns-transport.test.ts` cover encoding/signing, Apple responses, and the
 sandbox versus production host. The real
 workerd `push-delivery.test.ts` covers read RPC, receipts, revocation, retry,
-and that `aps.badge` is the reader's attention count. `workspace-attention.test.ts`
+and that `aps.badge` and the Web Push `badge` are the reader's attention count. `workspace-attention.test.ts`
 covers that count, Breakouts included, against the same directory projection,
-and `dock-badge.test.tsx` covers when the Mac sends its local count. Desktop push/link tests cover registration and routing; existing settings and
+`dock-badge.test.tsx` covers when the Mac sends its local count, and
+`platform.test.ts` covers the browser bridge setting and restoring the app
+icon badge, and leaving it to the tab focused last. Desktop push/link tests cover registration and routing; existing settings and
 release suites cover the integration. iOS XCTest covers payload parse and the
 PUT body. For Web Push, `web-push-transport.test.ts` reproduces RFC 8291's
 worked example, checks the VAPID token and maps push service answers, redirects
@@ -422,6 +437,27 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-10-21 — The installed browser app shows the badge
+
+**What changed:** Installed browser apps show the badge, from Web Push and from
+the tab focused last.
+
+**Why:** The Mac dock showed the attention count and an installed browser app
+showed nothing, though both are signed in to the same Organization. Reusing
+`useDockBadge` and its `complete` gate keeps one rule for when the client may
+write a count.
+
+**Considered and rejected:** Every tab writing its own count: the icon is shared, so a background
+tab in another Organization replaced the focused tab's count, and focus could
+not restore it because the focused tab never lost focus. Writing only from the
+focused tab: an installed app window in the background would then stop
+updating.
+
+**Consequences:** A change to the badge count changes the Mac, iPhone and
+browser icons together. A push from another Organization sets its own count, as
+on the Mac, until a Rally tab regains focus or becomes visible; a Home Screen
+app on iPhone and iPad returns from the background without a `focus` event.
 
 ### 2026-10-20 — Reply batches and conversation notification collapse
 
