@@ -43,7 +43,6 @@ import {
   createTextDeltaBatcher,
   memberSafeHarnessFailureMessage,
   renderScheduledWakeupMessage,
-  renderPersonalSystemPrompt,
   renderWorkstreamSystemPrompt,
   renderCompactionCheckpointContent,
   rememberAutomationPeopleSearchResult,
@@ -271,7 +270,6 @@ import type { MessageObjectPort } from "../durable-objects/workstream-message-pr
 import { transcriptLister } from "../runtime/message-projection";
 import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
 import type { MemoryDigestFact } from "../durable-objects/workspace-memory-facts-protocol";
-import { PERSONAL_SYSTEM_PROMPT_REASONS } from "../durable-objects/personal-system-prompt";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import {
@@ -2499,8 +2497,6 @@ export async function runWorkstreamHarness(
     /** Object-local authority for the one persistent loop of this substream. */
     persistentLoop?: {
       contextWindowTokensByModel(): Promise<Readonly<Record<string, number>>>;
-      /** This conversation's copy of a member's personal system prompt; empty for none. */
-      personalSystemPrompt?(userId: string): string;
       /** This conversation's memory digest copy for a principal (`digestPrincipalKey`); null for none. */
       memoryDigest?(principal: string): MemoryDigestFact[] | null;
       readSidekickSkills(): SidekickSkillSnapshot | null;
@@ -4680,51 +4676,16 @@ async function loadConnectorTriggerContext(
   };
 }
 
-/**
- * The rendered personal system prompt of the member whose own turn this is, or
- * the empty string.
- *
- * Only a run a person started for themselves carries it, so the reason is an
- * allowlist of their own acts (`PERSONAL_SYSTEM_PROMPT_REASONS`). Every other
- * reason runs as a user without that user acting (a digest, a wake-up an
- * earlier run scheduled, a connector trigger, an inbound email), and a Sidekick
- * run (`run_as_user_id`) or a background agent inherits a principal it was not
- * given by a message. The text is the conversation's own copy; see
- * docs/personal-system-prompt.md.
- */
-function personalSystemPromptFor(
-  input: WorkstreamWorkflowInput,
-  read: ((userId: string) => string) | undefined,
-): string {
-  if (!read || input.executionPrincipal.type !== "user" || !PERSONAL_SYSTEM_PROMPT_REASONS.has(input.reason)
-    || input.automationRun || input.backgroundAgent || input.parentKind === "automation") return "";
-  return renderPersonalSystemPrompt(read(input.executionPrincipal.userId));
-}
-
-/**
- * What the system message carries for the principal acting in this run: the
- * memory digest first, then the personal system prompt, each left out when
- * empty, so a run with neither changes no byte of the prefix.
- *
- * Both are read from the conversation object's own copies, synchronously; no
- * refresh happens here. Both travel as `principalSystemSection` because it is
- * rendered per request and never written to the transcript, and the compaction
- * summariser reads the system message without it, so one person's facts or
- * instructions cannot reach a later speaker through the shared summary. See
- * docs/agent-memory.md#the-digest and docs/personal-system-prompt.md.
- */
+/** The acting principal's memory digest, kept out of the shared summary. */
 function principalSystemSectionFor(
   input: WorkstreamWorkflowInput,
   copies: {
-    personalSystemPrompt?(userId: string): string;
     memoryDigest?(principal: string): MemoryDigestFact[] | null;
   } | undefined,
   now: number = Date.now(),
 ): string {
   const facts = copies?.memoryDigest?.(digestPrincipalKey(digestReaderFor(input))) ?? null;
-  const digest = facts ? renderMemoryDigestSection(facts, now) : "";
-  const personal = personalSystemPromptFor(input, copies?.personalSystemPrompt?.bind(copies));
-  return [digest, personal].filter((section) => section.length > 0).join("\n\n");
+  return facts ? renderMemoryDigestSection(facts, now) : "";
 }
 
 /**
@@ -8918,7 +8879,6 @@ async function recordToolAudit(
 }
 
 export const __integrationTesting = {
-  personalSystemPromptFor,
   principalSystemSectionFor,
   executeAuthorizedConnectorTool,
   assertFrozenConnectionAuthorized,

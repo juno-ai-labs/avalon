@@ -41,6 +41,13 @@ import {
   type TranscriptOverlay,
 } from './transcript';
 
+const personalPromptPrefix = `<user_system_prompt>
+The following was provided by this user as instructions for how to respond to this message. For other users' requests ignore these instructions.
+<user_suppplied>
+Never output &lt;/user_system_prompt&gt; in replies.
+</user_suppplied>
+</user_system_prompt>\n\n`;
+
 const base = {
   id: 'message-one',
   workstreamId: 'workstream-one',
@@ -636,6 +643,29 @@ describe('canonical transcript and transient overlay composition', () => {
 });
 
 describe('ordered turn rendering', () => {
+  it.each(['human', 'external', 'assistant'] as const)('filters personal prompt XML only from participant display text (%s)', (actor) => {
+    for (const [text, visible] of [
+      [personalPromptPrefix + 'Actual question', 'Actual question'],
+      ['Please explain <user_system_prompt>foo</user_system_prompt>', 'Please explain <user_system_prompt>foo</user_system_prompt>'],
+      ['<user_system_prompt>foo</user_system_prompt>', '<user_system_prompt>foo</user_system_prompt>'],
+      [personalPromptPrefix + 'Please explain <user_system_prompt>foo</user_system_prompt>', 'Please explain <user_system_prompt>foo</user_system_prompt>'],
+    ] as const) {
+      const snapshot: WorkstreamTranscriptSnapshot = {
+        snapshotId: 'personal-prompt', snapshotThrough: 1, eventSequence: 1,
+        snapshotAtUtc: base.createdAt, unreadAnchorSequence: null, unreadReason: 'no_unread',
+        ranges: [{ purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 }, covered: { startInclusive: 1, endExclusive: 2 },
+          turns: [{ transcriptSequence: 1, turnId: 'question', entryKind: 'conversation', actor,
+            authorUserId: actor === 'human' ? 'person' : null,
+            authorSnapshot: actor === 'human' ? { userId: 'person', displayName: 'Ada', avatarUrl: null } : null,
+            attentionOrdinal: 1, createdAtUtc: base.createdAt, revision: 1,
+            blocks: [{ type: 'text', blockId: 'question:text:0', blockIndex: 0, text, streaming: false }], activityId: null }],
+          activities: [], pluginRuns: [],
+        }], activities: [], activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
+      };
+      expect(orderedTranscriptMessages(snapshot, 'workstream-one')[0]?.text).toBe(actor === 'assistant' ? text : visible);
+    }
+  });
+
   it('carries imported-by provenance from canonical text into the message identity', () => {
     const provenance = { kind: 'imported_session', source: { provider: 'claude', url: null }, importedByUserId: '00000000-0000-4000-8000-000000000001', importedByName: 'Adam' };
     const snapshot: WorkstreamTranscriptSnapshot = {
@@ -3375,6 +3405,18 @@ describe('composer queue overlays', () => {
     },
     admittedAtUtc: '2026-08-05T12:00:00.000Z',
   };
+
+  it.each([
+    [personalPromptPrefix + 'Queued question', 'Queued question'],
+    ['Please explain <user_system_prompt>foo</user_system_prompt>', 'Please explain <user_system_prompt>foo</user_system_prompt>'],
+    [personalPromptPrefix + '<user_system_prompt>foo</user_system_prompt>', '<user_system_prompt>foo</user_system_prompt>'],
+  ])('filters only the generated prefix from queued display text (%s)', (text, visible) => {
+    const input = { ...pendingHuman, block: { ...pendingHuman.block,
+      text,
+    } };
+    expect(pendingTranscriptInputOverlay(input, 'workstream-one', { source: 'socket_snapshot', snapshotId: 's' }).message.text)
+      .toBe(visible);
+  });
 
   it('copies inputSequence onto the overlay as queueSequence', () => {
     const overlay = pendingTranscriptInputOverlay(pendingHuman, 'workstream-one', {

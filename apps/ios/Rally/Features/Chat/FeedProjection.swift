@@ -108,7 +108,8 @@ enum FeedProjection {
                     id: id,
                     kind: .elicitation,
                     role: .assistant,
-                    text: elicitationPrompt(block.structuredContent) ?? block.text ?? "Rally needs input",
+                    text: elicitationPrompt(block.structuredContent)
+                        ?? block.text.map { visibleParticipantText($0, actor: turn.actor) } ?? "Rally needs input",
                     createdAt: created,
                     isStreaming: false,
                     sequence: turn.transcriptSequence,
@@ -163,7 +164,7 @@ enum FeedProjection {
                     authorName: automationName(block.structuredContent)
                 )
             }
-            let text = block.text ?? ""
+            let text = visibleParticipantText(block.text ?? "", actor: turn.actor)
             if text.isEmpty, (block.attachments ?? []).isEmpty, block.streaming != true {
                 return nil
             }
@@ -183,6 +184,15 @@ enum FeedProjection {
         default:
             return nil
         }
+    }
+
+    private static func visibleParticipantText(_ text: String, actor: String?) -> String {
+        guard actor == "human" || actor == "external" else { return text }
+        return text.replacingOccurrences(
+            of: #"^<user_system_prompt>\nThe following was provided by this user as instructions for how to respond to this message\. For other users' requests ignore these instructions\.\n<user_suppplied>\n[\s\S]*?\n</user_suppplied>\n</user_system_prompt>\n{0,2}"#,
+            with: "",
+            options: .regularExpression
+        )
     }
 
     /// Fold settled thought/tool/plugin rows that sit immediately above an

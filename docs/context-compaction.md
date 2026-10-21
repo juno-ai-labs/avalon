@@ -66,9 +66,11 @@ On successive compactions it also identifies any earlier
 that must not be copied or summarized; Rally replaces it after the new summary.
 
 The summariser's system message is rendered without the run's
-`principalSystemSection` (a member's personal system prompt). The summary becomes
-the loop's shared checkpoint, and one member's private instructions must not
-reach runs that other participants start.
+`principalSystemSection` (the acting principal's memory digest). The summary
+becomes the loop's shared checkpoint, so private recalled facts stay out of it.
+Personal instructions are part of user-message history and are included like
+text the person typed, with XML scoping them to that speaker's requests
+([`personal-system-prompt.md`](personal-system-prompt.md)).
 
 An empty completion is a defect and is retried by the route plan. The
 compaction's own tokens are accounted as auxiliary spend rather than an agent
