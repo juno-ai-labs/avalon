@@ -102,6 +102,7 @@ import {
   ensureStorageAlarmNoLaterThan,
 } from "./scheduled-alarms";
 import { WorkstreamIdentityStorage } from "./workstream-identity-storage";
+import { enqueueSemanticRealtimeReference } from "./workstream-semantic-realtime-outbox";
 import { admitsOrganizationWide, spaceListedSql } from "./listing-rules";
 import { substreamLoopId, workspaceDOName } from "./names";
 import { ParticipantAuthorityTransferStorage } from "./participant-authority-transfer";
@@ -2877,7 +2878,18 @@ export class WorkstreamObjectProductService {
   }
 
   async participant(userId: string): Promise<WorkstreamDetail["participants"][number] | null> {
-    return (await this.participants()).find((entry) => entry.user.id === userId) ?? null;
+    const user = await this.env.DB.prepare(
+      `SELECT id, email, name, avatar_url, timezone, created_at FROM users WHERE id = ?`,
+    ).bind(userId).first<UserRow>();
+    // Hydrating the profile yields; read membership afterward so a concurrent
+    // removal or re-add cannot publish the roster we observed before that await.
+    const row = first(this.storage.sql.exec<{
+      participation_reason: WorkstreamDetail["participants"][number]["participationReason"];
+      added_at: number;
+    }>(`SELECT participation_reason, added_at FROM participants WHERE user_id = ? AND status = 'active'`, userId));
+    if (!row) return null;
+    if (!user) throw new Error("participant_user_missing");
+    return { user: userFromRow(user), participationReason: row.participation_reason, joinedAt: iso(row.added_at)! };
   }
 
   async authorizeParticipantAddition(auth: AuthContext, userId: string): Promise<void> {
@@ -5057,6 +5069,7 @@ export class WorkstreamObjectProductService {
             `UPDATE participants SET first_opened_at = ?, updated_at = ? WHERE user_id = ?`,
             now, now, auth.userId,
           );
+          enqueueSemanticRealtimeReference(this.storage.sql, { kind: "participant_changed", userId: auth.userId }, now);
         }
         const result = this.loops.completeInputPreparation({
           inputId: messageId,
@@ -5198,6 +5211,9 @@ export class WorkstreamObjectProductService {
           // Writing into a work stream is a stronger statement than opening it.
           auth.userId, auth.userId, now, now, now,
         );
+        if (!openedParticipant) {
+          enqueueSemanticRealtimeReference(sql, { kind: "participant_changed", userId: auth.userId }, now);
+        }
         for (const userId of confirmedParticipantUserIds) {
           if (this.isParticipant(userId)) continue;
           sql.exec(
