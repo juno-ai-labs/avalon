@@ -96,6 +96,7 @@ import { workstreamDetailQueryKey } from '../lib/workstreams-cache';
 import { orderedTranscriptQueryKey } from '../lib/use-workstream-socket';
 import { useUiStore } from '../lib/ui-store';
 import { WorkstreamScreen } from './workstream';
+import { ChannelPaneContextValue, type ChannelPaneContext } from '../lib/navigation-routes';
 import type { HarnessRunMetadata, HarnessStatus, WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import type * as CollaborationSessionModule from '../lib/collaboration-session';
 import type { ClientSession } from '@rally/contracts/client-session';
@@ -173,7 +174,7 @@ const liveVersion = {
 
 function NavigationProbe(): null { navigateInTest = useNavigate(); locationInTest = useLocation(); return null; }
 
-function renderScreen(seed?: (queryClient: QueryClient) => void, substreamId?: string, restored = false, initialPath = `/workstreams/${workstreamId}`): QueryClient {
+function renderScreen(seed?: (queryClient: QueryClient) => void, substreamId?: string, restored = false, initialPath = `/workstreams/${workstreamId}`, channelPane: ChannelPaneContext | null = null): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
@@ -185,12 +186,14 @@ function renderScreen(seed?: (queryClient: QueryClient) => void, substreamId?: s
           search: substreamId ? `?substream=${substreamId}` : '',
           state: restored ? { restoredBreakout: substreamId } : null }]}>
           <NavigationProbe />
+          <ChannelPaneContextValue.Provider value={channelPane}>
           <Routes>
             <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
             <Route element={<div>Parent channel</div>} path="/channels/:channelId" />
             <Route element={<WorkstreamScreen />} path="/channels/:channelId/threads/:id" />
             <Route element={<div>Settings</div>} path="/settings" />
           </Routes>
+          </ChannelPaneContextValue.Provider>
         </MemoryRouter>
       </QueryClientProvider>
     </Tooltip.Provider>,
@@ -1536,6 +1539,26 @@ describe('socket-first channel open', () => {
     expect(screen.queryByText('Ready to begin')).not.toBeInTheDocument();
     await act(async () => Promise.resolve());
     expect(screen.queryByText('Ready to begin')).not.toBeInTheDocument();
+  });
+
+  it.each(['channel route', 'standalone route'] as const)('ranks People using the %s rather than the first Thread placement', async (route) => {
+    const firstChannel = '00000000-0000-7000-8000-000000000673';
+    const currentChannel = '00000000-0000-7000-8000-000000000674';
+    session.current = {
+      user: { id: '00000000-0000-7000-8000-000000000671', name: 'Creator', email: 'creator@example.test' },
+      workspace: { id: '00000000-0000-7000-8000-000000000672', region: 'global', role: 'member' },
+    };
+    const detail = recoveryBoot({ spaceIds: [firstChannel, currentChannel] });
+    const pane: ChannelPaneContext | null = route === 'channel route' ? {
+      channelId: currentChannel, crumb: { key: currentChannel, title: 'Current Channel', icon: null, label: 'Channel menu' },
+      shifted: false, expanded: false, setExpanded: vi.fn(), setThreadUsesTwoPanes: vi.fn(),
+    } : null;
+    renderScreen((queryClient) => {
+      queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], detail);
+      queryClient.setQueryData(['ordered-transcript', workstreamId], detail.transcript);
+    }, undefined, false, pane ? `/channels/${currentChannel}/threads/${workstreamId}` : `/workstreams/${workstreamId}`, pane);
+    await titleMenu('Thread menu: Recovered channel', 'Add people');
+    await waitFor(() => expect(api.getPeopleRanking).toHaveBeenCalledWith(pane ? currentChannel : null, expect.anything()));
   });
 
   it('shows the error from the latest participant action', async () => {

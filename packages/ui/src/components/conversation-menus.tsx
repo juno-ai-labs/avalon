@@ -108,10 +108,8 @@ const MORE_VIEW: TitleMenuView = { key: 'more', label: 'More' };
 export interface TitleMenuPeople {
   candidates: readonly WorkspaceMember[];
   ranking?: PeopleRanking | undefined;
+  /** Warm optional ordering when the containing title menu opens. */
   onOpen?: (() => void) | undefined;
-  rankingLoading?: boolean | undefined;
-  rankingFailed?: boolean | undefined;
-  onRetryRanking?: (() => void) | undefined;
   /**
    * Addresses invited to the Organization that have not joined, lower case.
    * Listed after the members; adding one invites the address here through
@@ -205,12 +203,13 @@ function PeopleView({ members, noun, people, presentUserIds }: {
 }): React.JSX.Element {
   const [query, setQuery] = useState('');
   const [entryError, setEntryError] = useState<string | null>(null);
+  // A late refresh must never move an Add button under the reader's pointer.
+  const [ranking] = useState(people?.ranking);
   // One submission at a time: adds run in order, so a later roster never lands before an earlier one.
   const submitting = useRef(false);
   const invites = people?.invites;
   const onLoad = useRef(invites?.onLoad);
-  const onOpen = useRef(people?.onOpen);
-  useEffect(() => { onLoad.current?.(); onOpen.current?.(); }, []);
+  useEffect(() => { onLoad.current?.(); }, []);
   const needle = query.trim().toLocaleLowerCase();
   const present = new Set(presentUserIds);
   const inRoom = new Set(members.map((member) => member.id));
@@ -224,8 +223,6 @@ function PeopleView({ members, noun, people, presentUserIds }: {
   const invitedHere = new Set(invites?.pending ?? []);
   const inviteeSuggestions = invites ? (people?.invitees ?? []).filter((email) => !invitedHere.has(email)
     && (!needle || email.includes(needle))) : [];
-  const suggestions = addable;
-  const suggestedInvitees = inviteeSuggestions;
   const remaining = new Map(addable.map((member) => [member.id, member]));
   const ranked = (ids: readonly string[]): WorkspaceMember[] => {
     const selected: WorkspaceMember[] = [];
@@ -238,14 +235,14 @@ function PeopleView({ members, noun, people, presentUserIds }: {
     }
     return selected;
   };
-  const channelPeople = ranked(people?.ranking?.channel ?? []);
-  const organizationPeople = ranked(people?.ranking?.organization ?? []);
+  const channelPeople = ranked(ranking?.channel ?? []);
+  const organizationPeople = ranked(ranking?.organization ?? []);
   const alphabetical = [...remaining.values()].sort(compareAlphabeticalName);
   const orderedSuggestions: Array<WorkspaceMember | string> = [
     ...channelPeople,
     ...organizationPeople,
     ...alphabetical.filter((member) => member.accessClass !== 'guest'),
-    ...suggestedInvitees,
+    ...inviteeSuggestions,
     ...alphabetical.filter((member) => member.accessClass === 'guest'),
   ];
   // Search exposes all matches; only the idle Suggested list is capped.
@@ -273,9 +270,9 @@ function PeopleView({ members, noun, people, presentUserIds }: {
     if (!typedEmails) {
       // A name narrowed to one person adds them, as clicking Add would.
       // One row across both lists, or Enter would pick between rows the reader can see.
-      const single = suggestions.length + suggestedInvitees.length === 1;
-      const only = single ? suggestions[0] : undefined;
-      const onlyInvitee = single ? suggestedInvitees[0] : undefined;
+      const single = addable.length + inviteeSuggestions.length === 1;
+      const only = single ? addable[0] : undefined;
+      const onlyInvitee = single ? inviteeSuggestions[0] : undefined;
       if (only) void run(query, [only], []);
       else if (onlyInvitee) void run(query, [], [onlyInvitee]);
       else setEntryError(ADDRESS_FORMAT_MESSAGE);
@@ -365,11 +362,6 @@ function PeopleView({ members, noun, people, presentUserIds }: {
         </div>;
       })}
     </>}
-    {people?.rankingLoading && <p className="title-menu-empty" role="status">Finding frequent collaborators…</p>}
-    {people?.rankingFailed && <div className="title-menu-load-failed" role="alert">
-      <span>Frequent collaborators couldn’t be loaded.</span>
-      {people.onRetryRanking && <button className="title-menu-add" onClick={people.onRetryRanking} type="button">Try again</button>}
-    </div>}
     {people && visibleSuggestions.length > 0 && <>
       <div className="title-menu-section-heading">{needle ? 'Add to this ' + noun : 'Suggested'}</div>
       {visibleSuggestions.map((suggestion) => {
@@ -404,7 +396,7 @@ function PeopleView({ members, noun, people, presentUserIds }: {
         </div>;
       })}
     </>}
-    {people && needle && suggestions.length === 0 && suggestedInvitees.length === 0 && <p className="title-menu-empty">{typedEmails && invites
+    {people && needle && addable.length === 0 && inviteeSuggestions.length === 0 && <p className="title-menu-empty">{typedEmails && invites
       ? `Press Enter to invite ${tokens.length === 1 ? 'them' : 'everyone'} as ${tokens.length === 1 ? 'a guest' : 'guests'}.`
       : 'Nobody else matches.'}</p>}
   </>;

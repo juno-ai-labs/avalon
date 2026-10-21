@@ -1123,6 +1123,7 @@ describe('a Channel', () => {
     await screen.findByRole('menuitem', { name: 'Icon' });
     expect([...screen.getByRole('menu').querySelectorAll('[role^="menuitem"]')].map((item) => item.textContent?.trim()))
       .toEqual(['Icon', 'Pinned in my sidebar']);
+    expect(api.getPeopleRanking).not.toHaveBeenCalled();
   });
 
   it('offers its icon and colour in More, beside its settings', async () => {
