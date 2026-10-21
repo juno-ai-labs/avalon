@@ -78,6 +78,37 @@ describe('a title pill menu with levels', () => {
     expect(onResolve).toHaveBeenCalledWith({ substreamId: 'b1', title: 'Pricing' });
   });
 
+  it('reaches explained disabled actions with arrow keys without activating them', async () => {
+    const onMerge = vi.fn();
+    const onResolve = vi.fn();
+    renderChannelPill({ actions: {
+      merge: { label: 'Merge to GTM', disabled: true, disabledReason: 'This thread is already resolved.', onSelect: onMerge },
+      onResolve, resolveDisabled: true, resolveDisabledReason: 'This thread is already resolved.',
+    } });
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Thread menu: Launch' }), { key: 'ArrowDown' });
+    const more = await screen.findByRole('menuitem', { name: 'More' });
+    await waitFor(() => expect(more).toHaveFocus(), { timeout: 5000 });
+    fireEvent.keyDown(more, { key: 'ArrowDown' });
+    const merge = screen.getByRole('menuitem', { name: 'Merge to GTM' });
+    await waitFor(() => expect(merge).toHaveFocus(), { timeout: 5000 });
+    expect(merge).toHaveAttribute('aria-disabled', 'true');
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('This thread is already resolved.');
+    fireEvent.keyDown(merge, { key: 'Enter' });
+    expect(onMerge).not.toHaveBeenCalled();
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+
+    fireEvent.keyDown(merge, { key: 'ArrowDown' });
+    const resolve = screen.getByRole('menuitem', { name: 'Resolve Thread' });
+    await waitFor(() => expect(resolve).toHaveFocus(), { timeout: 5000 });
+    expect(resolve).toHaveAttribute('aria-disabled', 'true');
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('This thread is already resolved.');
+    fireEvent.keyDown(resolve, { key: ' ' });
+    expect(onResolve).not.toHaveBeenCalled();
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    fireEvent.keyDown(resolve, { key: 'Escape' });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Thread menu: Launch' })).toHaveFocus(), { timeout: 5000 });
+  });
+
   it('has no Merge row where nothing can merge', async () => {
     renderChannelPill();
     openMenu();
@@ -117,6 +148,10 @@ describe('a title pill menu with levels', () => {
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+
+    // Radix restores focus asynchronously after unmount. Reopening before that
+    // callback runs lets the old scope pull focus out of the newly opened menu.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Thread menu: Launch' })).toHaveFocus(), { timeout: 5000 });
 
     openMenu();
     expect(await screen.findByRole('menuitem', { name: /^People/u })).toBeInTheDocument();
@@ -512,6 +547,7 @@ describe('a title pill menu with levels', () => {
     expect(remove).toHaveClass('menu-item-danger');
     fireEvent.click(remove);
     expect(onRemove).toHaveBeenCalledWith(colleague);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Jordan actions' })).toHaveFocus(), { timeout: 5000 });
 
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Adam actions' }), { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Leave the thread' }));
