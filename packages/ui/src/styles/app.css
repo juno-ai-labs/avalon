@@ -896,6 +896,7 @@ pre {
 /* Failures from a preview must interrupt above its lightbox and menus too. */
 .dialog-overlay[data-error-notice-overlay] { z-index: 1006; }
 .dialog-content[role="alertdialog"] { z-index: 1007; }
+body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 
 @keyframes fade-in { from { opacity: 0; } }
 @keyframes dialog-in { from { opacity: 0; transform: translate(-50%, calc(-50% + 7px)) scale(0.985); } }

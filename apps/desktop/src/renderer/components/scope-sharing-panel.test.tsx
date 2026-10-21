@@ -70,6 +70,13 @@ it('keeps invalid addresses as authored validation without calling the API', asy
   fireEvent.click(screen.getByRole('button', { name: 'Share' }));
 
   expect(await screen.findByText('Enter valid email addresses, separated by spaces, commas, or semicolons.')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+  expect(await screen.findByRole('alertdialog')).toHaveTextContent('Enter valid email addresses, separated by spaces, commas, or semicolons.');
+  fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Email addresses' }), { target: { value: 'another-invalid-address' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+  expect(await screen.findByRole('alertdialog')).toHaveTextContent('Enter valid email addresses, separated by spaces, commas, or semicolons.');
   expect(create).not.toHaveBeenCalled();
   client.clear();
 });

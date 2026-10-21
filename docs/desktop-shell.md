@@ -332,6 +332,7 @@ moves focus to its close button; closing hands focus back to the opener, or
 to the visible menu button when the opener is gone (`useSheetOpener`). Opening
 anything from it closes it, as do Escape and widening past 640px; switching
 sections does not navigate, so the sheet stays open on the list just picked.
+An open menu, dialog or error popup takes Escape before the sheet does.
 Code that navigates and wants the sheet open afterwards sets
 `sheetAfterNavigation` instead of `sidebarOpen`: the sidebar's reset on mount
 and route change reads it and opens the sheet once.
