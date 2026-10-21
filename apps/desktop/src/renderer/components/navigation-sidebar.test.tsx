@@ -763,6 +763,30 @@ describe('the navigation sidebar', () => {
       expect(screen.getByRole('link', { name: /^Old unread/u })).not.toHaveClass('is-unread');
     });
 
+    it('releases the held slot when the open thread becomes resolved', async () => {
+      let cache!: QueryClient;
+      renderSidebar((queryClient) => { cache = queryClient; seed(queryClient); });
+      await waitFor(() => expect(names()).toEqual(['Fresh unread', 'Old unread', 'New read', 'Old read']));
+      fireEvent.click(screen.getByRole('link', { name: /^Old unread/u }));
+      cache.setQueryData(MY_THREADS_QUERY_KEY, {
+        pages: [{ nextCursor: null, pinned: [], items: items.map((row) => row.id === 'old' ? { ...row, resolved: true } : row) }],
+        pageParams: [null],
+      });
+      await waitFor(() => expect(names()).toEqual(['Fresh unread', 'New read', 'Old read', 'Old unread']));
+    });
+
+    it('keeps a held unresolved thread above the resolved group when that boundary moves', async () => {
+      let cache!: QueryClient;
+      renderSidebar((queryClient) => { cache = queryClient; seed(queryClient); });
+      await waitFor(() => expect(names()).toEqual(['Fresh unread', 'Old unread', 'New read', 'Old read']));
+      fireEvent.click(screen.getByRole('link', { name: /^Old read/u }));
+      cache.setQueryData(MY_THREADS_QUERY_KEY, {
+        pages: [{ nextCursor: null, pinned: [], items: items.map((row) => row.id === 'old-read' ? row : { ...row, resolved: true }) }],
+        pageParams: [null],
+      });
+      await waitFor(() => expect(names()).toEqual(['Old read', 'New read', 'Fresh unread', 'Old unread']));
+    });
+
     it('respects an explicit sort change while the thread is open', async () => {
       renderSidebar(seed);
       await waitFor(() => expect(names()).toEqual(['Fresh unread', 'Old unread', 'New read', 'Old read']));

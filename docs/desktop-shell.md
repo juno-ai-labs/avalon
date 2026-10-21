@@ -144,10 +144,11 @@ thread and breakout they take part in under **All threads**
 Needs attention orders unresolved threads needing attention first, other
 unresolved threads next, and resolved threads last, each group newest first.
 A resolved thread stays in the final group even when unread or open.
-Under Needs attention, opening an unresolved thread or Breakout holds its current position
-while its unread state clears; selecting it never grants attention priority.
-The hold stays above the resolved group. Other rows continue sorting relative to one another by attention and activity,
-so the held row can sit between unread rows. Opening another row releases the
+Under Needs attention, opening an unresolved thread or Breakout holds its
+current position while its unread state clears; selecting it never grants
+attention priority. The hold stays above the resolved group. Other rows continue
+sorting relative to one another by attention and activity, so the held row can
+sit between unread rows. Opening another row releases the
 previous one to its natural order, and changing the sort resets the hold. A
 Breakout's `substream` query identifies its held and highlighted row; the parent
 thread named in its pathname continues sorting normally.
@@ -598,6 +599,8 @@ The existing versioned breakout roster reconciles cached navigation copies;
 visibility tombstones reread authority rather than guessing whether archive or
 membership changed. Pin drop slots follow the visible rows while preserving
 hidden pins in the stored order.
+An open unresolved row keeps its held slot above the resolved group; resolving
+it releases that hold so completed work cannot remain above ongoing work.
 
 ### 2026-10-21 — Opening a thread holds its slot in Needs attention
 
