@@ -635,4 +635,8 @@ TypeScript ESLint infer two conflicting configuration roots.
 all ignored by Git and are not carried across. A new checkout needs the full
 sequence from [§1](#1-install-and-prepare) — including its own migrate and seed,
 because the D1 databases live under `.wrangler/state/`. Use distinct ports
-(`--port`) if two checkouts must serve at once.
+(`--port`) if two checkouts must serve at once. Give each concurrent Wrangler
+stack its own `WRANGLER_REGISTRY_PATH` as well, for example
+`WRANGLER_REGISTRY_PATH=/tmp/rally-my-worktree-registry pnpm dev:api:local`.
+Wrangler's default registry is global and resolves named local services across
+processes; separate listening ports alone do not isolate those bindings.

@@ -69,6 +69,14 @@ existing alarm mechanism. Retrying the same operation returns its recorded
 invitations; changing its input conflicts. Delivery retries use the same
 provider idempotency key and encrypted body.
 
+Participant grant commands issued by message admission carry
+`participationReason: "message"` through their durable receipt and projection.
+That projection starts unread after existing history and suppresses the added
+notice because the canonical message sends the more specific mention notice.
+Ordinary shares and participant additions retain their existing behavior; the
+conversation admission rules are in
+[`workstream-durable-object.md`](workstream-durable-object.md).
+
 ### Claiming
 
 **A share is claimed by signing in, and by nothing else.** The address the

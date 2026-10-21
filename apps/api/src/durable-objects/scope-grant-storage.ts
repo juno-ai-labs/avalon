@@ -168,7 +168,7 @@ export class ScopeGrantStorage {
     });
   }
 
-  private queueParticipantProjection(substreamId: string, userId: UserId, actorUserId: UserId, revision: number, now: number): void {
+  private queueParticipantProjection(substreamId: string, userId: UserId, actorUserId: UserId, revision: number, now: number, reason: "explicit" | "message" = "explicit"): void {
     const target = this.storage.sql.exec<{ transfer_id: string; audience: string }>(
       `SELECT target.transfer_id,child.audience FROM parent_participant_targets target
        JOIN parent_children child ON child.parent_id=target.parent_id AND child.substream_id=target.substream_id
@@ -181,7 +181,7 @@ export class ScopeGrantStorage {
     const active = grants.some((grant) => grant.active && grant.membershipIncarnation === incarnation &&
       (grant.target.kind === "workstream" ? inherits : grant.target.substreamId === substreamId));
     const delivery = ParticipantProjectionDeliverySchema.parse({ substreamId, projection: {
-      transferId: target.transfer_id, userId, revision, active, reason: "explicit", addedByUserId: actorUserId, changedAt: now,
+      transferId: target.transfer_id, userId, revision, active, reason, addedByUserId: actorUserId, changedAt: now,
     } });
     const alarms = new ScheduledAlarmStore(this.storage.sql);
     const prior = this.storage.sql.exec<{ revision: number }>(
@@ -313,7 +313,7 @@ export class ScopeGrantStorage {
                AND json_extract(grant_json,'$.membershipIncarnation') IS NOT ?))`,
           this.parentId, request.target.kind,request.target.kind,request.target.kind === "conversation" ? request.target.substreamId : "", request.userId, membershipIncarnation,
         ).toArray();
-        for (const target of targets) this.queueParticipantProjection(target.substream_id, request.userId, request.actorUserId, revision, now);
+        for (const target of targets) this.queueParticipantProjection(target.substream_id, request.userId, request.actorUserId, revision, now, request.participationReason);
       }
       this.storage.sql.exec(
         `INSERT INTO parent_grant_operations (parent_id, operation_id, request_json, result_json, created_at) VALUES (?, ?, ?, ?, ?)`,
