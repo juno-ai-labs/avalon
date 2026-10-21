@@ -35,10 +35,10 @@ interface PendingPreview {
 export class ResourcePreviewCache {
   private readonly pending = new Map<string, PendingPreview>();
 
-  load(scope: string, key: string, fetchPreview: FetchPreview, signal?: AbortSignal): Promise<Blob> {
+  load(scope: string, key: string, fetchPreview: FetchPreview, signal?: AbortSignal, version?: number): Promise<Blob> {
     signal?.throwIfAborted();
-    const epoch = localCacheEpoch();
-    const identity = JSON.stringify([scope, key, epoch]);
+    const epoch = localCacheEpoch(scope);
+    const identity = JSON.stringify([scope, key, epoch, version]);
     let request = this.pending.get(identity);
     if (!request) {
       const controller = new AbortController();
@@ -74,12 +74,12 @@ export class ResourcePreviewCache {
   private async read(scope: string, key: string, epoch: number, fetchPreview: FetchPreview, signal: AbortSignal): Promise<Blob> {
     const assertCurrent = (): void => {
       signal.throwIfAborted();
-      if (epoch !== localCacheEpoch()) throw new DOMException('The attachment session changed.', 'AbortError');
+      if (epoch !== localCacheEpoch(scope)) throw new DOMException('The attachment session changed.', 'AbortError');
     };
-    const generation = await localCacheGeneration();
+    const generation = await localCacheGeneration(scope);
     assertCurrent();
     const assertSharedCurrent = async (): Promise<void> => {
-      const currentGeneration = await localCacheGeneration();
+      const currentGeneration = await localCacheGeneration(scope);
       assertCurrent();
       if (generation !== currentGeneration) throw new DOMException('The attachment session changed.', 'AbortError');
     };

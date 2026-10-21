@@ -43,8 +43,8 @@ describe('local cache store', () => {
   });
 
   it('refuses a queued write after another renderer wipes the workspace', async () => {
-    const epoch = localCacheEpoch();
-    const generation = await localCacheGeneration();
+    const epoch = localCacheEpoch(global1);
+    const generation = await localCacheGeneration(global1);
     vi.resetModules();
     const otherRenderer = await import('./local-cache');
     try {
@@ -52,7 +52,7 @@ describe('local cache store', () => {
       await expect(notes.write(global1, 'late', { text: 'before the other tab signed out' }, undefined, epoch, generation))
         .resolves.toBe(false);
       expect(await notes.read(global1, 'late')).toBeNull();
-      const current = await localCacheGeneration();
+      const current = await localCacheGeneration(global1);
       await expect(notes.write(global1, 'current', { text: 'new session' }, undefined, epoch, current)).resolves.toBe(true);
       expect(await notes.read(global1, 'current')).toEqual({ text: 'new session' });
     } finally {

@@ -6,6 +6,8 @@ import type { DesktopSession } from '../../common/desktop';
 import type { CookieClientSession } from '@rally/contracts/client-session';
 import type { ApiError } from './api';
 import { RallyApi, mapWorkstreamSummary, mapResource, mapWorkstreamDetail, redactQuery } from './api';
+import { clearAllLocalCache } from './local-cache';
+import { refreshPoppedOutArtifacts } from './popped-out-artifacts';
 import { SOCKET_TICKET_REQUEST_TIMEOUT_MS } from './socket-ticket-request';
 
 const reportJavascriptError = vi.hoisted(() => vi.fn());
@@ -201,6 +203,49 @@ afterEach(() => {
 });
 
 describe('Rally API wire adapter', () => {
+  it('keeps overlapping detached-window refreshes on their observed resource revisions', async () => {
+    vi.stubGlobal('Blob', (await new Response('').blob()).constructor);
+    await clearAllLocalCache();
+    let finishOlder!: (response: Response) => void;
+    let firstArrived!: () => void;
+    let secondRead!: () => void;
+    const started = new Promise<void>((resolve) => { firstArrived = resolve; });
+    const joined = new Promise<void>((resolve) => { secondRead = resolve; });
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => { firstArrived(); return new Promise<Response>((resolve) => { finishOlder = resolve; }); })
+      .mockImplementationOnce(async () => new Response('Version three', { headers: { 'content-type': 'text/plain' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+    const updates: { version: number; content: number[] }[] = [];
+    const bridge = {
+      getPoppedOutArtifactVersions: async () => ({ [resourceId]: 1 }),
+      updatePoppedOutArtifact: async (update: { version: number; content?: Uint8Array }) => {
+        updates.push({ version: update.version, content: Array.from(update.content ?? []) });
+        return false;
+      },
+    };
+    let readers = 0;
+    const loadResourceContent = (id: string, signal?: AbortSignal, version?: number) => {
+      const result = api.getResourcePreviewContent(id, signal, version);
+      if (++readers === 2) secondRead();
+      return result;
+    };
+    const inFlight = new Set<string>();
+    const older = refreshPoppedOutArtifacts({ bridge, inFlight, loadResourceContent,
+      resources: [{ id: resourceId, currentVersion: 2, title: 'Image', mimeType: 'text/plain' }] });
+    await started;
+    const newer = refreshPoppedOutArtifacts({ bridge, inFlight, loadResourceContent,
+      resources: [{ id: resourceId, currentVersion: 3, title: 'Image', mimeType: 'text/plain' }] });
+    await joined;
+    finishOlder(new Response('Version two', { headers: { 'content-type': 'text/plain' } }));
+    await Promise.all([older, newer]);
+    expect(updates.sort((a, b) => a.version - b.version)).toEqual([
+      { version: 2, content: [86, 101, 114, 115, 105, 111, 110, 32, 116, 119, 111] },
+      { version: 3, content: [86, 101, 114, 115, 105, 111, 110, 32, 116, 104, 114, 101, 101] },
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it('coalesces in-flight favicon requests without extending a missing response lifetime', async () => {
     let releaseIcon: ((response: Response) => void) | undefined;
     const iconResponse = new Promise<Response>((resolve) => { releaseIcon = resolve; });

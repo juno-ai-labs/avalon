@@ -118,13 +118,16 @@ one `parse` refuses, is dropped on read and deleted: the cache holds nothing
 that cannot be fetched again, so a migration would be work spent on rows the
 next socket answer replaces anyway.
 
-For long-running image downloads across browser tabs, `localCacheGeneration`
-captures a shared wipe generation. Each wipe changes the metadata row in the
+For long-running image downloads across browser tabs, `localCacheGeneration(scope)`
+captures the shared global sign-out and scope-specific wipe generations.
+Organization wipes change only the leaving account's member/guest generations;
+sign-out changes the global generation. Each wipe changes its metadata in the
 same transaction as its deletion. A slice write can supply that generation;
 the comparison and put then share one transaction, so a queued save from another
-renderer cannot restore wiped bytes. The synchronous local epoch still fences
-each renderer's existing scheduled work. This uses the existing entries store
-without a schema upgrade; the metadata row has an empty scope outside user rows.
+renderer cannot restore wiped bytes. Image reads use `localCacheEpoch(scope)`
+for the same boundaries within one renderer, while other slices keep their
+existing global local-epoch behavior. This uses the existing entries store
+without a schema upgrade; metadata rows have an empty scope outside user rows.
 
 Three slices exist today, and the next surface that wants to paint before its
 answer arrives defines another:
@@ -619,7 +622,7 @@ scrolling.
 
 ### 2026-10-21 — Fence image saves across browser tabs
 
-**What changed:** Cache wipes advance a shared IndexedDB generation atomically
+**What changed:** Cache wipes advance shared global/scoped IndexedDB generations atomically
 with deletion; image saves supply that generation for comparison in their write
 transaction.
 
@@ -628,10 +631,12 @@ from restoring bytes after sign-out. Session broadcasts prompt asynchronous
 revalidation and cannot provide an atomic write fence.
 
 **Considered and rejected:** Relying on broadcast timing leaves the same race.
-A new database or schema migration is unnecessary for one metadata row.
+A global generation for Organization wipes interrupts valid downloads in other
+Organizations. A new database or schema migration is unnecessary for metadata rows.
 
 **Consequences:** Keep generation advancement in each wipe transaction and its
-comparison in the transaction that saves image bytes. Other slices retain their
+comparison in the transaction that saves image bytes. Organization wipes must
+fence only the leaving account's member/guest scopes. Other slices retain their
 existing local-epoch behavior.
 
 ### 2026-10-19 — Restore sidebar pins with their rows
