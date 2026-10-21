@@ -108,6 +108,9 @@ hours old.
 The People picker's frequency ranking also reads these existing human message
 and mention facts, applying current conversation access before aggregating.
 It stores no second history; this log's retention is its evidence window too.
+Its reads start from indexed authors, targets and participating Breakout
+conversations; migration 126 adds the partial human-message author index so
+unrelated Organization history does not require a scan.
 [`shared-ui.md`](shared-ui.md#people-picker-order) owns its grouping and scoring.
 
 The WorkspaceDO alarm drops events older than ninety days oldest-first in
