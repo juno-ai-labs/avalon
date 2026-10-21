@@ -125,6 +125,18 @@ function first<T>(cursor: SqlStorageCursor<T extends Record<string, SqlStorageVa
   return cursor.toArray()[0];
 }
 
+/** A source's merge notice records where its result went, without new unread content. */
+function isMergeNotice(input: ConversationTurnInput): boolean {
+  if (input.authorType !== "system" || input.messageType !== "system" || !input.structuredContentJson) return false;
+  try {
+    const content: unknown = JSON.parse(input.structuredContentJson);
+    return content !== null && typeof content === "object"
+      && "type" in content && content.type === "conversation_merged_into";
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Which message types a window is about, as the question its caller asks.
  *
@@ -480,15 +492,12 @@ export class WorkstreamMessageStorage {
    *
    * Tool cards do not come through here; they have their own operation, because
    * they are keyed by the invocation rather than by a client message id and are
-   * written more than once. So every message this appends takes an attention
-   * ordinal — the retired trigger's `CASE WHEN message_type = 'tool'` had one
-   * live arm and one that the tool path never reached, and splitting the two
-   * operations is what makes that visible rather than a branch nothing runs.
+   * written more than once. Messages take an attention ordinal except for a
+   * source's merge notice, which is informational for every reader.
    *
    * `messageType` is the retired vocabulary minus `tool`, so that split is a
    * type error at the call site rather than a sentence here. The body depends
-   * on it: `kind` is hardcoded `'text'`, an attention ordinal is always
-   * consumed, and the people clock always moves — a `'tool'` slipping through
+   * on it: `kind` is hardcoded `'text'` — a `'tool'` slipping through
    * would write a row the retired trigger would have branched away from.
    */
   async prepareMessage(input: MessageAppendInput): Promise<PreparedConversationTurn> {
@@ -522,7 +531,7 @@ export class WorkstreamMessageStorage {
       } & Record<string, SqlStorageValue>>(
         `SELECT next_sequence_number, next_attention_ordinal FROM workstream WHERE id = 1`,
       ).one();
-      const attention = root.next_attention_ordinal;
+      const attention = isMergeNotice(input) ? null : root.next_attention_ordinal;
       prepared.input.sequenceNumber = root.next_sequence_number;
       prepared.input.attentionOrdinal = attention;
       if (input.messageType === "tool" || input.messageType === "suggestion") {
@@ -547,7 +556,7 @@ export class WorkstreamMessageStorage {
         fact: prepared.fact,
         occurredAt: input.now,
       });
-      this.#advanceCounters(false, input.now);
+      this.#advanceCounters(attention !== null, input.now);
       return {
         outcome: "appended" as const,
         messageId: input.messageId,
@@ -565,7 +574,7 @@ export class WorkstreamMessageStorage {
    * was never a column: the view derived it as `next_attention_ordinal - 1`,
    * and its update trigger silently ignored every caller that assigned to it.
    */
-  #advanceCounters(isToolCard: boolean, now: number): void {
+  #advanceCounters(countsAsAttention: boolean, now: number): void {
     this.sql.exec(
       `UPDATE workstream
           SET next_sequence_number = next_sequence_number + 1,
@@ -574,7 +583,7 @@ export class WorkstreamMessageStorage {
                 THEN last_people_activity_at ELSE ?2 END,
               updated_at = ?2
         WHERE id = 1`,
-      isToolCard ? 0 : 1,
+      countsAsAttention ? 1 : 0,
       now,
     );
   }

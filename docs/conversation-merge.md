@@ -189,7 +189,9 @@ instead waits for the message to be the Channel's newest row, and the same
 brief light.
 
 A system row is UI state: it never enters the model's history and starts no
-run. It does count toward the source's unread, as any new row does. A merge
+run. A source merge notice has no attention ordinal and does not advance the
+unread waterline or people-activity clock for anyone, including the person who
+merged. Existing unread messages keep their unread state and anchor. A merge
 Rally makes mid-run gets its row the same way, and it draws where the merge
 happened: after the tool step, before Rally's reply.
 
@@ -383,6 +385,10 @@ admission's own insert flag. The body's limit is the send path's
 
 ## Testing
 
+- `apps/api/test-workers/message-authority.test.ts`, "source merge notices"
+  (workerd): visible, replay-safe notices preserve read and unread state for
+  the merger and other readers, keep existing unread anchors, and leave the
+  next ordinary message's attention ordinal available.
 - `apps/api/test-workers/conversation-resolution-migration.test.ts` (workerd):
   populated pre-resolution data upgrades with merged Threads and Breakouts
   resolved, including archived sources and removed destination merges retained
@@ -448,6 +454,23 @@ choice, made in review: a source that always says where its work went is worth
 more than keeping a private Channel's name hidden.
 
 ## Changelog
+
+### 2026-10-21 — Source merge notices do not create unread state
+
+**What changed:** The source's `conversation_merged_into` system row keeps its
+transcript position but takes no attention ordinal and does not move the
+people-activity clock.
+
+**Why:** A merge left an “Unread messages” divider above its own informational
+notice, marking the source unread for readers even though no new conversation
+content had arrived there.
+
+**Considered and rejected:** Advancing readers' seen cursors would also clear
+real unread messages. Hiding only the divider would leave unread badges set.
+
+**Consequences:** New source notices preserve every reader's unread state.
+Previously stored attention ordinals are retained; destination merge messages
+continue to carry the result as new content.
 
 ### 2026-10-20 — Resolve a conversation without merging
 
