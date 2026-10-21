@@ -2,11 +2,12 @@ import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { IdSchema } from '@rally/contracts';
 import { z } from 'zod';
 import { ResourceService } from '../services/resource-service';
+import { ResourceReadContext } from '../services/authorization-service';
 import { Hono } from 'hono';
 import { SearchRequestSchema, SearchResponseSchema } from '@rally/contracts/search';
 import type { HonoAppEnv } from '../env';
 import { zValidator } from '../middleware/validation';
-import { authenticate, getWorkspaceAuth, requireWorkspaceAuth } from '../middleware/auth';
+import { authenticate, getRequestMembership, getWorkspaceAuth, requireWorkspaceAuth } from '../middleware/auth';
 import { ApiError } from '../lib/api-error';
 import { searchWorkspacePage } from '../services/workspace-search-service';
 
@@ -42,15 +43,7 @@ searchRoutes.post('/', zValidator('json', SearchRequestSchema), async (c) => {
 
 searchRoutes.get('/resources/:id/preview', zValidator('param', z.strictObject({ id: IdSchema })), async (c) => {
   const auth = getWorkspaceAuth(c);
-  const response = await new ResourceService(c.env, auth).searchPreview(c.req.valid('param').id, c.req.raw.signal);
-  try {
-    const current = await authenticate(c);
-    if (!stillHolds(current, auth)) {
-      throw new ApiError(403, 'search_access_revoked', 'Workspace access has changed');
-    }
-    return response;
-  } catch (error) {
-    await response.body?.cancel();
-    throw error;
-  }
+  return new ResourceService(c.env, auth, undefined,
+    new ResourceReadContext(c.env, auth, getRequestMembership(c)))
+    .searchPreview(c.req.valid('param').id, c.req.raw.signal);
 });

@@ -141,7 +141,7 @@ describe('uploaded attachment drafts', () => {
     expect(get).not.toHaveBeenCalled();
   });
 
-  it('rechecks search preview ownership after loading bytes', async () => {
+  it('finishes an admitted search preview and refuses the next read after ownership changes', async () => {
     let revoke = () => {};
     const { database, env } = fixture({ async put() {}, async get() {
       revoke();
@@ -151,6 +151,8 @@ describe('uploaded attachment drafts', () => {
     await service.upload(new File(['private'], 'private.txt', { type: 'text/plain' }), undefined, draftId);
     revoke = () => { database.prepare('UPDATE resources SET uploaded_by_user_id = ? WHERE id = ?')
       .run('00000000-0000-7000-8000-000000000004', draftId); };
+    const admitted = await service.searchPreview(draftId, new AbortController().signal);
+    expect(await admitted.text()).toBe('private');
     await expect(service.searchPreview(draftId, new AbortController().signal)).rejects.toMatchObject({ status: 404 });
   });
 

@@ -20,13 +20,11 @@ import {
   ArtifactHostnameStubSchema,
   artifactOrigin,
   asArtifactId,
-  asUserId,
-  asWorkspaceId,
 } from "@rally/contracts";
 
 import { artifactHostDOName } from "../durable-objects/names";
 import type { AuthContext, Env, RequestMembershipObservation } from "../env";
-import { AuthorizationService, requireAuthorizedRead } from "./authorization-service";
+import { ResourceReadContext } from "./authorization-service";
 import { ApiError } from "../lib/api-error";
 import { ensureArtifactHostname } from "./artifact-hostname";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
@@ -52,16 +50,15 @@ export class ArtifactOpenService {
   /**
    * `artifact_registry` lives in **WorkspaceDO**, not regional D1.
    *
-   * Without this wrap every statement naming it falls through to D1, which has
-   * no such table, and every door into an artifact origin answers a 500 — the
-   * open endpoint, the Data view, the table page, and the error log alike.
-   * `users` is not a workspace-local table, so the display-name read still
-   * takes the regional fallthrough on the same handle.
+   * Admission returns its registry row with resource facts in one RPC. The
+   * lazy hostname migration still updates the registry through this facade;
+   * `users` stays regional for the concurrent display-name read.
    */
   constructor(
     env: Env,
     private readonly auth: AuthContext,
     private readonly requestMembership?: RequestMembershipObservation,
+    private readonly requestReads?: ResourceReadContext,
   ) {
     this.regionalEnv = env;
     this.env = withWorkspaceRuntimeDatabase(env, auth.workspaceId);
@@ -78,44 +75,26 @@ export class ArtifactOpenService {
   private async resolveAuthorized(resourceId: string) {
     const workspaceId = this.auth.workspaceId;
     if (!workspaceId) throw new ApiError(403, "workspace_required", "Choose a workspace before opening an artifact.");
-    const row = await this.env.DB.prepare(
-      `SELECT artifact_id, workstream_id, mode, stateful, hostname_stub FROM artifact_registry
-        WHERE workspace_id = ? AND resource_id = ?`,
-    ).bind(workspaceId, resourceId).first<{
-      artifact_id: string;
-      workstream_id: string;
-      mode: string;
-      stateful: number;
-      hostname_stub: string | null;
-    }>();
-    if (!row) throw new ApiError(404, "artifact_not_found", "That artifact does not exist here.");
-
-    const workspace = asWorkspaceId(workspaceId);
-    // Observe an auxiliary rejection immediately, but authorize first so a
-    // placement failure cannot reveal whether a concealed artifact exists.
-    const affinityResult = workspacePlacementAffinity(this.env, workspaceId).then(
-      (value) => ({ ok: true as const, value }),
-      (error: unknown) => ({ ok: false as const, error }),
-    );
-    const decisions = await new AuthorizationService(this.env, this.requestMembership).checkMany({
-      workspaceId: workspace, userId: asUserId(this.auth.userId), delegation: null,
-    }, [{ kind: "resource", workspaceId: workspace, resourceId }]);
-    const [decision] = decisions;
-    if (!decision || decision.status === "unavailable") {
-      if (decision) requireAuthorizedRead(decision);
-      throw new ApiError(503, "authorization_unavailable", "Authorization could not be established. Retry the request.");
-    }
-    if (decision.status !== "allowed") {
+    const metadata = await (this.requestReads ?? new ResourceReadContext(this.regionalEnv, this.auth, this.requestMembership))
+      .read(resourceId).catch((error: unknown) => {
+        if (error instanceof ApiError && error.status === 404) {
+          throw new ApiError(404, "artifact_not_found", "That artifact does not exist here.");
+        }
+        throw error;
+      });
+    const row = metadata.artifact;
+    if (!row) {
       throw new ApiError(404, "artifact_not_found", "That artifact does not exist here.");
     }
-    const affinity = await affinityResult;
-    if (!affinity.ok) throw affinity.error;
+    // The owner already knows its placement. Avoid a second cold D1 lookup
+    // through this service's runtime-database facade; retain legacy fallback.
+    const affinity = metadata.placementAffinity ?? await workspacePlacementAffinity(this.regionalEnv, workspaceId);
 
     const host = durableObjectStubForArtifact(
       this.env,
       this.env.ARTIFACT_HOSTS,
       artifactHostDOName(this.env.AVALON_REGION, asArtifactId(row.artifact_id)),
-      affinity.value,
+      affinity,
     );
     return { row, host };
   }

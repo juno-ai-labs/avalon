@@ -1,10 +1,12 @@
-import type { Env, IdentityAuthContext } from "../env";
+import type { Env, IdentityAuthContext, RequestMembershipObservation } from "../env";
 import { ApiError } from "../lib/api-error";
 import { asUserId } from "@rally/contracts";
 import { supportSessionLive } from "./support-access";
 
 /** One ordinary-session authority check, shared by bearer and browser transports. */
-export async function authenticateSession(env: Env, claims: Omit<IdentityAuthContext, "role">): Promise<IdentityAuthContext> {
+export async function authenticateSession(env: Env, claims: Omit<IdentityAuthContext, "role">,
+  observeMembership?: (membership: RequestMembershipObservation) => void,
+): Promise<IdentityAuthContext> {
   if (claims.region !== env.AVALON_REGION) {
     throw new ApiError(409, "region_mismatch", "The session belongs to a different data region");
   }
@@ -20,7 +22,7 @@ export async function authenticateSession(env: Env, claims: Omit<IdentityAuthCon
   // member, and the cost of the defence is nothing.
   const now = new Date().toISOString();
   const session = await env.DB.prepare(
-    `SELECT s.workspace_id, m.role, m.access_class, w.region AS workspace_region,
+    `SELECT s.workspace_id, m.role, m.access_class, m.incarnation, m.revision, w.region AS workspace_region,
             u.analytics_person_id, w.analytics_workspace_id, s.impersonator_user_id
      FROM sessions s
      LEFT JOIN users u ON u.id = s.user_id
@@ -40,6 +42,8 @@ export async function authenticateSession(env: Env, claims: Omit<IdentityAuthCon
       analytics_person_id: string | null;
       analytics_workspace_id: string | null;
       impersonator_user_id: string | null;
+      incarnation: string;
+      revision: number;
     }>();
   if (!session || session.workspace_id !== claims.workspaceId) {
     throw new ApiError(401, "session_revoked", "The session is no longer active");
@@ -53,6 +57,13 @@ export async function authenticateSession(env: Env, claims: Omit<IdentityAuthCon
   }
   if (session.workspace_id && (!(session.access_class === "guest" || session.role) || session.workspace_region !== env.AVALON_REGION)) {
     throw new ApiError(401, "session_revoked", "The session is no longer active");
+  }
+  if (claims.workspaceId && session.access_class) {
+    observeMembership?.({
+      workspaceId: claims.workspaceId, userId: claims.userId, accessClass: session.access_class, validatedAt: Date.now(),
+      relationship: { workspaceId: claims.workspaceId, userId: claims.userId, accessClass: session.access_class,
+        role: session.role, status: 'active', incarnation: session.incarnation, revision: session.revision },
+    });
   }
   return {
     ...claims,

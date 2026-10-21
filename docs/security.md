@@ -13,8 +13,11 @@ outside this document can break without their own tests failing.
 
 Ordinary member search and resource reads use the [authorization primitive](authorization.md):
 five-minute freshness is a design goal, not a permission lease or request timeout.
-Canonical permission checks share observations only within one batch; persisted grants are not
-reused. Queue-maintained attachment discovery can lag source changes, while a
+Canonical permission checks share observations within a batch; attachment and
+artifact reads additionally share one admission per exact resource within a
+request. The session query's membership proof supplies the current incarnation
+to migrated grant checks. No grant decision is retained across requests.
+Queue-maintained attachment discovery can lag source changes, while a
 positive result still requires its canonical grant. New requests pass session and
 workspace-membership middleware. This does not relax mutation checks, socket
 admission, or local socket visibility/revocation. Missing authority remains a
@@ -393,8 +396,10 @@ visibility. Identity-only sessions cannot enter either class of workspace route.
 metadata/content/version/preview reads also use workspace-relationship admission,
 then canonical resource authorization. A guest's non-owned resource must have an
 attachment in a granted migrated conversation; workspace-public legacy visibility
-does not substitute for that grant. Content is checked again after the storage
-read before bytes are returned. Upload and unsent-draft deletion use the same
+does not substitute for that grant. Admitted reads may finish after a concurrent
+revocation; the next request authenticates and authorizes afresh. Resource and
+artifact registry metadata travel with the owner facts and are disclosed only
+after admission. Upload and unsent-draft deletion use the same
 workspace relationship and ordinary ownership checks. Attaching an existing file
 requires both target mutation authority and canonical source read access; unsent
 uploads must use message admission so their reservation and publication are
