@@ -90,7 +90,7 @@ export function renderAnnotations(content: unknown): string {
   })].join('\n\n');
 }
 
-export const ArtifactPickerPinSchema = z.strictObject({ css: z.string().min(1), box, visibleText: z.string(), html: z.string(), pagePath: z.string(), replace: z.boolean(), point: z.strictObject({x:z.number().finite().nonnegative(),y:z.number().finite().nonnegative()}).optional(), screenshot: z.string().optional() });
+export const ArtifactPickerPinSchema = z.strictObject({ css: z.string().min(1), box, visibleText: z.string(), before: z.string().optional(), after: z.string().optional(), html: z.string(), pagePath: z.string(), replace: z.boolean(), point: z.strictObject({x:z.number().finite().nonnegative(),y:z.number().finite().nonnegative()}).optional(), screenshot: z.string().optional() });
 export type ArtifactPickerPin = z.infer<typeof ArtifactPickerPinSchema>;
 
 export const AnnotationCommentPinsSchema = z.array(z.strictObject({id:z.string(),annotation:AnnotationSchema}));

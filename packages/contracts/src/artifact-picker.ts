@@ -77,7 +77,7 @@ export const ARTIFACT_PICKER_SOURCE = String.raw`(function(report) {
     const height = Math.max(document.documentElement.scrollHeight,innerHeight);
     const x = Math.min(1,Math.max(0,(r.x+scrollX)/width));
     const y = Math.min(1,Math.max(0,(r.y+scrollY)/height));
-    report({ point:{x:Math.max(0,e.clientX),y:Math.max(0,e.clientY)}, css:path.join(' > '), box:{x,y,w:Math.max(0,Math.min(1-x,r.width/width)),h:Math.max(0,Math.min(1-y,r.height/height))},visibleText:selected || element.textContent || '',html:trim(element),pagePath:location.pathname+location.search,replace:e.detail>1 });
+    report({ point:{x:Math.max(0,e.clientX),y:Math.max(0,e.clientY)}, css:path.join(' > '), box:{x,y,w:Math.max(0,Math.min(1-x,r.width/width)),h:Math.max(0,Math.min(1-y,r.height/height))},visibleText:selected || element.textContent || '',html:trim(element),before:element.previousElementSibling?.textContent||'',after:element.nextElementSibling?.textContent||'',pagePath:location.pathname+location.search,replace:e.detail>1 });
   }
   function trim(element) { return ${ARTIFACT_ELEMENT_HTML_SOURCE}(element); }
   function double(e) { pin(e); }

@@ -2,8 +2,8 @@
 
 Annotations let a person point at part of a resource and send that selection,
 its surrounding context and a comment as an ordinary user message. The saved
-version and quote travel with the message. Unsent pins live only in the open
-composer; there is no annotation table or artifact comment thread.
+version and quote travel with the message. Confirmed unsent pins live in the device-local composer draft cache; there is no
+server annotation table or artifact comment thread. Unconfirmed selections are not cached.
 
 ## Where the code lives
 
@@ -107,6 +107,32 @@ Transfers require the registered original composer scope and an acknowledgment
 from it; closing the destination preserves pins in the pop-out on failure.
 Historical sites read frozen manifest assets without running the old worker.
 
+## Draft restoration and new revisions
+
+Confirmed comments restore into their originating conversation, including its
+breakout identity. The cache preserves original evidence and a separately resolved
+annotation. The provider checks restored selections, visible artifact revision
+changes, window focus, and submission against the latest resource revision.
+
+`annotation-resolution.ts` uses exact text and surrounding context, section/page/
+slide boundaries for changed text, exact cell tables and headers, or unique HTML
+content. Changed HTML requires a unique stable element ID plus both neighboring
+texts; positional selectors alone are insufficient. Image regions carry forward
+only when image bytes are unchanged. Whole-file comments retain resource identity.
+No model or approximate similarity threshold chooses a replacement target.
+
+Unresolved comments show their saved quote, explanation, Reattach and Retry.
+Reattach opens the current artifact and copies the existing comment into a new
+selection editor. Confirmation replaces its target; cancelling keeps the original.
+Missing or inaccessible artifacts remain in the draft. Rebased HTML discards stale
+screenshots rather than presenting an old capture as current evidence.
+
+The composer reports ready and retained comment counts. Only ready annotations
+and their image attachment IDs enter optimistic messages and requests. Ordinary
+text and valid comments can send while unresolved comments remain behind; an
+otherwise empty message with only unresolved comments cannot send. Acceptance
+clears only the submitted edit generations, so later edits survive.
+
 ## Invariants
 
 - Target readability and version existence are checked separately from draft
@@ -154,6 +180,8 @@ middle and labels the quote; the latter returns `annotations_too_large` with
 ## Testing
 
 Contracts cover admission, source policy, locators and escaped model guidance.
+`annotation-resolution.test.ts` covers moved, changed, ambiguous and missing
+selections, HTML identity, sheet headers and image identity.
 Renderer tests cover exact Markdown selection, growth, comments, removal and
 sheet serialization. API Node tests cover live and overheard projections;
 `test-workers/artifact-annotations.test.ts` covers canonical resource/version
@@ -167,6 +195,16 @@ ordinary uploaded fixtures. Prompt evaluations live under
 on the configured medium fallback model, separately from end-to-end tool edits.
 
 ## Changelog
+
+### 2026-10-20 — Restore comment drafts and reconcile artifact revisions
+
+Confirmed comments are cached with their original evidence and resolved against
+current revisions before sending. Ambiguous targets remain visibly repairable
+and never reach the model, while valid feedback can still send. Deterministic
+matching and explicit repair replace guessing a new target or silently sending
+stale feedback. Submission snapshots preserve newer edits and retained comments;
+detached windows share stable draft identities through their existing IPC boundary.
+
 
 ### 2026-10-19 — Confirm comments before adding composer pins
 
