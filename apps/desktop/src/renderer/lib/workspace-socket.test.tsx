@@ -6,17 +6,19 @@ import {
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
   WORKSPACE_SYNC_TOPICS,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
+  WorkstreamSchema,
 } from '@rally/contracts';
 import type { SpaceDirectory } from '@rally/contracts';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
-import { onlineManager, QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { onlineManager, QueryClient, QueryClientProvider, useQuery, type InfiniteData } from '@tanstack/react-query';
 import { act, render, screen } from '@testing-library/react';
 import { StrictMode, useEffect, type JSX, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { WorkstreamSummary } from './types';
-import { applyBreakoutAppearanceReceipt, type WorkstreamChildDirectory } from './channel-viewer-state';
+import type { SpaceConversationSummary, WorkstreamSummary } from './types';
+import { applyBreakoutAppearanceReceipt, reconcileThreadNavigationRows, type WorkstreamChildDirectory } from './channel-viewer-state';
+import { mapWorkstreamSummary } from './api';
 import { WorkspaceSocketProvider, useWorkspaceSocket } from './workspace-socket';
-import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
+import { holdCachedWorkstreamArchive, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import { conversationCacheKey, conversationSlice } from './conversation-cache';
 import { clearAllLocalCache } from './local-cache';
 import { LOCAL_CACHE_WRITE_COALESCE_MS } from './local-cache-mirror';
@@ -26,7 +28,7 @@ import { requestSocketTicket, SOCKET_TICKET_REQUEST_TIMEOUT_MS } from './socket-
 import { WORKSPACE_SOCKET_OPEN_TIMEOUT_MS } from '@rally/contracts/workspace-reach-watch';
 import { DIRECTORY_CACHE_KEY, workspaceDirectorySlice } from './workspace-directory-cache';
 import { useMergeChannels } from './use-merge-channels';
-import { SPACES_QUERY_KEY } from './sidebar-list-store';
+import { MY_THREADS_QUERY_KEY, SPACES_QUERY_KEY, type ThreadNavigationPage } from './sidebar-list-store';
 
 import type * as TelemetryModule from './telemetry';
 import type {
@@ -2719,6 +2721,69 @@ describe('a Channel\'s breakouts and background agents on the organization socke
     await act(async () => { await vi.advanceTimersByTimeAsync(10 * 60_000); });
     expect(children(queryClient)?.privateChildren).toEqual([child(kept)]);
     expect(queryClient.getQueryData(['workstream-background-agents', workstreamId])).toEqual({ [kept]: 1 });
+  });
+
+  it('updates cached breakout resolution and removes archived breakouts from every navigation page using accepted rosters', async () => {
+    const queryClient = new QueryClient();
+    const socket = await connect(queryClient);
+    const parent: SpaceConversationSummary = { ...mapWorkstreamSummary(WorkstreamSchema.parse(row())), kind: 'channel', breakoutOf: null };
+    const breakout: SpaceConversationSummary = {
+      ...parent, id: kept, kind: 'breakout', resolved: false,
+      breakoutOf: { workstreamId, substreamId: kept, title: parent.title },
+    };
+    queryClient.setQueryData(MY_THREADS_QUERY_KEY, {
+      pages: [{ items: [parent], pinned: [breakout], nextCursor: 'page-2' }, { items: [breakout], pinned: [], nextCursor: null }],
+      pageParams: [null, 'page-2'],
+    });
+    const navigation = () => queryClient.getQueryData<InfiniteData<ThreadNavigationPage>>(MY_THREADS_QUERY_KEY)!;
+    act(() => socket.message(stateFrame(5, { privateChildren: [child(kept)], privateChildrenWaterline: 1 })));
+    // Resolution moves the roster's waterline independently of Main's state version.
+    act(() => socket.message(stateFrame(5, { privateChildren: [child(kept, { resolved: true })], privateChildrenWaterline: 2 })));
+    expect(navigation().pages[0]?.pinned?.[0]?.resolved).toBe(true);
+    expect(navigation().pages[1]?.items[0]?.resolved).toBe(true);
+    expect(reconcileThreadNavigationRows(queryClient, [breakout])[0]?.resolved).toBe(true);
+    act(() => socket.message(stateFrame(6, { privateChildren: [], privateChildrenWaterline: 1 })));
+    expect(navigation().pages[1]?.items).toHaveLength(1);
+    act(() => socket.message(stateFrame(7, { privateChildren: [], privateChildrenWaterline: 3 })));
+    expect(navigation().pages.map((page) => page.items.map((item) => item.id))).toEqual([[workstreamId], []]);
+    expect(navigation().pages[0]?.pinned).toEqual([]);
+    // A REST page requested before the archive cannot restore its older child row.
+    expect(reconcileThreadNavigationRows(queryClient, [breakout])).toEqual([]);
+  });
+
+  it.each(['local archive', 'remote archive', 'membership loss'] as const)('reconciles navigation after a %s tombstone without treating every visibility loss as an archive', async (change) => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const parent: SpaceConversationSummary = { ...mapWorkstreamSummary(WorkstreamSchema.parse(row())), kind: 'channel', breakoutOf: null };
+    const breakout: SpaceConversationSummary = {
+      ...parent, id: kept, kind: 'breakout',
+      breakoutOf: { workstreamId, substreamId: kept, title: parent.title },
+    };
+    let authoritativeRows = [parent, breakout];
+    queryClient.setQueryData(MY_THREADS_QUERY_KEY, { pages: [{ items: authoritativeRows, pinned: authoritativeRows, nextCursor: null }], pageParams: [null] });
+    function Probe(): JSX.Element {
+      const navigation = useQuery({
+        queryKey: MY_THREADS_QUERY_KEY, staleTime: Infinity,
+        queryFn: async () => ({ pages: [{ items: authoritativeRows, pinned: authoritativeRows, nextCursor: null }], pageParams: [null] }),
+      });
+      return <output data-testid="navigation-rows">{navigation.data?.pages.flatMap((page) => page.items.map((item) => item.id)).join(',') || 'none'}</output>;
+    }
+    const socket = await connect(queryClient, null, <Probe />);
+    act(() => socket.message(stateFrame(5, { privateChildren: [child(kept)], privateChildrenWaterline: 1 })));
+    if (change === 'local archive') {
+      act(() => holdCachedWorkstreamArchive(queryClient, { ...parent, archivedAt: '2026-10-21T12:00:00.000Z' }));
+      expect(queryClient.getQueryData<InfiniteData<ThreadNavigationPage>>(MY_THREADS_QUERY_KEY)?.pages[0]?.items).toEqual([]);
+    }
+    authoritativeRows = change === 'membership loss' ? [breakout] : [];
+    act(() => socket.message(stateFrame(6, null)));
+    if (change === 'local archive') {
+      expect(queryClient.getQueryData<InfiniteData<ThreadNavigationPage>>(MY_THREADS_QUERY_KEY)?.pages[0]?.pinned).toEqual([]);
+    }
+    await vi.waitFor(() => expect(screen.getByTestId('navigation-rows').textContent).toBe(change === 'membership loss' ? kept : 'none'));
+    const navigation = queryClient.getQueryData<InfiniteData<ThreadNavigationPage>>(MY_THREADS_QUERY_KEY)!;
+    expect(navigation.pages[0]?.pinned?.map((item) => item.id)).toEqual(change === 'membership loss' ? [kept] : []);
+    act(() => socket.message(stateFrame(5, {})));
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.some((item) => item.id === workstreamId)).not.toBe(true);
+    expect(navigation.pages[0]?.items.some((item) => item.archivedAt)).toBe(false);
   });
 
   it('applies a pushed roster in waterline order and leaves it alone when a row does not say', async () => {
