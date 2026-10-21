@@ -26,6 +26,8 @@ a thread or a breakout opens, or who owns the right panel.
 | `packages/ui/src/components/breakout-marks.tsx` | `BreakoutMark`, `breakoutsByOrigin`, `orderBreakoutsForTicks`, `breakoutHasActivity`, `BreakoutTickBar`. |
 | `packages/ui/src/components/conversation-card.tsx` | `ConversationCard`: one thread or Breakout as a feed entry. The Channel feed draws its threads with it, and a thread's feed its Breakouts. |
 | `packages/ui/src/components/split-conversation.tsx` | `SplitConversationLayout`, `SplitConversationMode`, `clampBreakoutWidth`. |
+| `apps/desktop/src/renderer/lib/thread-lifecycle.ts` | Shared archive/resolve commands, confirmed archive receipts and thread-page reconciliation, and resolution refusal copy. |
+| `apps/desktop/src/renderer/components/archive-conversation-modal.tsx` | The shared thread and breakout archive confirmation. |
 | `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the section switcher (Pinned, Channels, Threads, Activity, Artifacts), the account menu under it, the phone row's More tab (`MoreSections`), and the lists with their Pinned sections, sort, and drag to reorder. |
 | `apps/desktop/src/renderer/components/rail-item.tsx` | `RailItem`: one tile of the section switcher, the account menu's trigger included. |
 | `apps/desktop/src/renderer/screens/channel.tsx` | The Channel screen: its pill and menu, the feed of threads, the composer, and `ChannelStack`, the first two panes of the stack ([`pane-stack.md`](pane-stack.md)). |
@@ -176,10 +178,9 @@ Right-click pins or unpins. Thread rows also offer **Resolve thread**, disabled
 when already resolved, and members get a danger-styled **Archive thread**.
 These actions target the clicked thread, including from Pinned, without opening
 it first.
-Archive uses the thread header’s confirmation copy and removes the confirmed
-archive from cached thread pages while its directory projection catches up;
-resolving or archiving a different thread leaves the open conversation in
-place. Breakout rows keep their pin controls. A row with a wake-up coming carries a clock whose
+Resolving or archiving a different thread leaves the open conversation in
+place. A failed resolve explains the refusal and can be dismissed. A row with
+a wake-up coming carries a clock whose
 tooltip says when and what. A thread Rally is still naming shows a shimmer in
 place of its title (`useNamingSkeleton`). Hovering a row for a second warms
 its thread's socket, and a plain click starts the open-latency measurement
@@ -219,6 +220,24 @@ A row in these lists that changes place (a pin, a new activity time, a
 re-sort, a restore) travels to its new slot rather than reappearing there.
 Each tab runs the list motion on the shared scroll box;
 [`list-motion.md`](list-motion.md) owns it.
+
+### Thread lifecycle actions
+
+The sidebar and thread header share `thread-lifecycle.ts` for archive and resolve
+commands, and `ArchiveConversationModal` for confirmation. An archive uses the
+existing directory cache's version decision before removing any sidebar row:
+a newer restore wins even when it arrived before the archive response. A
+session-local receipt survives tab changes and directory tombstones, so each
+later Threads page still excludes the archived thread and its Breakouts while
+the projection catches up. A newer active directory or list row releases the
+receipt; clearing the Organization's query cache clears the receipts too.
+
+A confirmed resolve patches the caches only if the owning conversation state
+has not changed during the request, so a newer reply can still reopen it.
+The sidebar's navigation guard advances for every route visit, including Back
+to an earlier history entry, and invalidates on section unmount. Completion
+can update shared caches after a section closes, but cannot redirect a later
+conversation or put an old error over it.
 
 ### The Channel screen
 
@@ -597,6 +616,20 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-21 — Share thread lifecycle reconciliation across menus
+
+**What changed:** The sidebar and title menus share archive/resolve commands,
+archive confirmation, and resolution refusal copy. Confirmed archive receipts
+reconcile every later thread-list read, and navigation completions are fenced
+by visits and unmounts.
+
+**Why:** Pruning one cached page let a later stale projection resurrect an
+archived thread, while unconditional pruning could hide a newer restore. The
+sidebar also outlived its navigation guard when its section closed. Keeping
+separate lifecycle implementations had already produced different errors and
+cache behavior between the menus. The directory's version ordering must keep
+winning over older command responses, without an extra backend read.
 
 ### 2026-10-21 — Resolved work sits below ongoing work
 
