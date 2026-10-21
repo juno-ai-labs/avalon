@@ -146,7 +146,7 @@ describe("Google inbox and draft workflows", () => {
     expect((await connector.executeTool("gmail.read_draft", { query: "subject:Proposal" }, context())).output).toMatchObject({ id: "draft-1", message: { textContent: "Hello" } });
   });
 
-  it.each(["gmail.create_draft", "gmail.send"])("composes HTML, BCC, signature and attachment bytes in %s", async (name) => {
+  it.each(["gmail.create_draft", "gmail.send"])("composes HTML, BCC and signature in %s", async (name) => {
     let mime = "";
     const connector = adapter(async (input, init) => {
       if (url(input).pathname.endsWith("/settings/sendAs")) return json({ sendAs: [{ isDefault: true, signature: "<b>Adam</b>" }] });
@@ -154,13 +154,9 @@ describe("Google inbox and draft workflows", () => {
       mime = Buffer.from(value.raw ?? value.message!.raw, "base64url").toString("utf8");
       return json({ id: "draft-1", message: { id: "123abc", threadId: "789def" } });
     });
-    await connector.executeTool(name, { to: ["recipient@example.com"], bcc: ["hidden@example.com"], subject: "Invoice", body: "Attached.", htmlBody: "<p>Attached.</p>", includeSignature: true, attachments: [{ filename: "résumé.pdf", mimeType: "application/pdf", content: "JVBERi0=" }] }, context());
+    await connector.executeTool(name, { to: ["recipient@example.com"], bcc: ["hidden@example.com"], subject: "Invoice", body: "Attached.", htmlBody: "<p>Attached.</p>", includeSignature: true }, context());
     expect(mime).toContain("Bcc: hidden@example.com\r\n");
-    expect(mime).toContain("multipart/mixed");
     expect(mime).toContain("multipart/alternative");
-    expect(mime).toContain("Content-Type: application/pdf");
-    expect(mime).toContain("filename*=UTF-8''r%C3%A9sum%C3%A9.pdf");
-    expect(mime).toContain("JVBERi0=");
     expect(mime).toContain(Buffer.from("<p>Attached.</p><br><br><b>Adam</b>").toString("base64"));
   });
 });

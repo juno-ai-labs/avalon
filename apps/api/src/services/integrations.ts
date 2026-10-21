@@ -5763,7 +5763,7 @@ function googleMailWorkedExamples(wirePrefix: string, granted: ReadonlySet<strin
     );
     if (granted.has("gmail.read")) {
       examples.push(
-        `Reply using the matching email — \`${wirePrefix}_gmail_${tool === "create_draft" ? "create_reply_draft" : "reply"} {"query": "from:dana@example.com subject:renewal after:2026/10/20 before:2026/10/22", "body": "Thank you, Dana."}\`. Replace the example query with the person's actual sender, subject and dates. Rally finds the message and resolves reply recipients, subject and threading internally; no IDs need to be copied.`,
+        `Reply to the selected email — \`${wirePrefix}_gmail_${tool === "create_draft" ? "create_reply_draft" : "reply"} {"messageId": "18f0a2c4d5e6f702", "body": "Thank you, Dana."}\`. Replace the example ID with a trusted search/read result. A query is also supported when it matches exactly one message; a multi-message conversation must be narrowed or selected by messageId. Rally resolves reply recipients, subject and threading internally.`,
       );
     }
   }
@@ -5927,7 +5927,7 @@ function connectorPluginPresentation(
     : "";
   const mailGuidance = hasMail
     ? [
-      ...(granted.has("gmail.draft") ? ["Gmail drafts can attach PDF resources: pass attachmentResourceIds at the root beside message, using IDs from list_resources. The host resolves original bytes under the run's current access; never provide file bytes or storage keys."] : []),
+      ...(granted.has("gmail.draft") ? ["Gmail drafts can attach PDF resources: pass attachmentResourceIds using IDs from list_resources. The host resolves original bytes under the run's current access; never provide file bytes or storage keys."] : []),
       "For newest, latest, recent, unread, sender, subject, or inbox questions, use the Gmail search tool first, then read the selected thread or message when its details are needed; do not substitute public web search for authorized mailbox search.",
       "Search with Gmail's operators, such as from:, to:, subject:, newer_than:, and has:attachment, rather than bare keywords; a search result already carries each hit's sender, recipients, subject, date, and RFC Message-ID, so read a message only when you need its body.",
       ...(granted.has("gmail.modify")
@@ -5942,7 +5942,7 @@ function connectorPluginPresentation(
           ...(granted.has("gmail.read")
             ? ["Reply tools take body and either an exact known messageId or a Gmail query. Rally finds the original email and resolves its recipient, subject and threading internally. Supply to only to override the reply recipient. Replying requires this connection's gmail.read capability. Use trusted IDs when already known; otherwise narrow a Gmail query until it identifies one message."]
             : []),
-          "Use htmlBody for HTML formatting, bcc for blind copies, attachments for files, and includeSignature to append the account signature (requires gmail.read). body is the plain-text alternative, so write it as plain text: ordinary sentences, blank lines between paragraphs, and \"-\" for a list. Markdown syntax such as #, **, or a [label](url) link reaches the recipient as those characters rather than as formatting.",
+          "Use htmlBody for HTML formatting, bcc for blind copies, draft attachmentResourceIds for PDF resources, and includeSignature to append the account signature (requires gmail.read). body is the plain-text alternative, so write it as plain text: ordinary sentences, blank lines between paragraphs, and \"-\" for a list. Markdown syntax such as #, **, or a [label](url) link reaches the recipient as those characters rather than as formatting.",
         ]
         : []),
     ]
@@ -6374,7 +6374,7 @@ async function executeConnectorToolOnConnection(
             ? { slackActionToken: input.slackSearchAuthorization.actionToken }
             : undefined,
         ),
-        ...(frozen.connectorType === "google" && toolName === "gmail.create_draft" ? {
+        ...(frozen.connectorType === "google" && ["gmail.create_draft", "gmail.create_reply_draft"].includes(toolName) ? {
           readAttachment: async (resourceId: string) => {
             await ownershipGuard?.();
             signal.throwIfAborted();

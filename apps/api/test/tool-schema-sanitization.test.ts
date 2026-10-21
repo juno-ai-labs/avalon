@@ -58,12 +58,14 @@ describe("tool schema sanitization", () => {
       const base = reply ? { query: "from:sender@example.com subject:Renewal after:2026/10/20", body: "Hello." } : { to: ["recipient@example.com"], subject: "A new conversation", body: "Hello." };
       return [
         { label: "minimal", args: base, accepted: true },
-        { label: "rich", args: { ...base, bcc: ["hidden@example.com"], cc: null, htmlBody: "<b>Hello</b>", includeSignature: true, attachments: [{ filename: "report.pdf", mimeType: "application/pdf", content: "JVBERi0=" }] }, accepted: true },
+        { label: "rich", args: { ...base, bcc: ["hidden@example.com"], cc: null, htmlBody: "<b>Hello</b>", includeSignature: true }, accepted: true },
         { label: "invalid BCC", args: { ...base, bcc: ["invalid"] }, accepted: false },
         { label: "invalid address", args: { ...base, to: ["invalid"] }, accepted: false },
         { label: "long body", args: { ...base, body: "a".repeat(500_001) }, accepted: false },
         { label: "old discriminated message", args: { message: { kind: reply ? "reply" : "new", ...base } }, accepted: false },
         ...["kind", "preview", "threadId", ...reply ? [] : ["messageId"], "inReplyTo", "references", "arbitrary"].map((field) => ({ label: `undeclared ${field}`, args: { ...base, [field]: field === "preview" ? true : "undeclared" }, accepted: false })),
+        ...[null, [], ["00000000-0000-4000-8000-000000000001"]].map((attachmentResourceIds) => ({ label: "resource attachments", args: { ...base, attachmentResourceIds }, accepted: name === "gmail.create_draft" || name === "gmail.create_reply_draft" })),
+        { label: "invalid resource ID", args: { ...base, attachmentResourceIds: ["not-an-id"] }, accepted: false },
         { label: "invalid attachment bytes", args: { ...base, attachments: [{ filename: "report.pdf", mimeType: "application/pdf", content: "not base64" }] }, accepted: false },
         { label: "undeclared attachment field", args: { ...base, attachments: [{ filename: "report.pdf", mimeType: "application/pdf", content: "JVBERi0=", preview: true }] }, accepted: false },
         ...(reply ? [{ label: "exact message ID", args: { body: "Hello.", messageId: "18f0a2c4d5e6f702" }, accepted: true }, { label: "both selectors", args: { ...base, messageId: "18f0a2c4d5e6f702" }, accepted: false, schemaAccepted: true }, { label: "no query", args: { body: "Hello." }, accepted: false, schemaAccepted: true }, { label: "reply subject override", args: { ...base, subject: "Unrelated subject" }, accepted: false }] : [{ label: "no recipients", args: { ...base, to: [] }, accepted: false }, { label: "query on new mail", args: { ...base, query: "subject:Renewal" }, accepted: false }]),
@@ -71,6 +73,7 @@ describe("tool schema sanitization", () => {
     };
     const mailWrites = adapter.agentPlugin.tools.filter((tool) => ["gmail.send", "gmail.create_draft", "gmail.reply", "gmail.create_reply_draft"].includes(tool.name));
     expect(mailWrites.map((tool) => tool.name)).toEqual(["gmail.create_draft", "gmail.send", "gmail.create_reply_draft", "gmail.reply"]);
+    const recurringTool = adapter.agentPlugin.tools.find((tool) => tool.name === "calendar.create_recurring_event")!;
     const requests: Array<{ tools: Array<{ function: { name: string; parameters: Record<string, unknown>; strict?: boolean } }> }> = [];
     const urls: string[] = [];
     const usesAzure = provider === "Azure";
@@ -104,7 +107,7 @@ describe("tool schema sanitization", () => {
       corePlugins: [{
         canonicalId: "rally:google", modelId: "rally_google", shortWireName: "google",
         description: "Google Mail", preload: true, explicit: false,
-        tools: mailWrites.map((definition) => ({
+        tools: [...mailWrites, recurringTool].map((definition) => ({
           definition,
           execute: async () => { throw new Error("This schema probe must never execute a mail tool"); },
         })),
@@ -118,7 +121,7 @@ describe("tool schema sanitization", () => {
       ? "https://schema-probe.openai.azure.com/openai/v1/chat/completions"
       : "https://openrouter.ai/api/v1/responses"]);
     expect(requests).toHaveLength(1);
-    // Zod's fromJSONSchema ignores maxProperties. A JSON Schema validator must
+    // Check the complete JSON Schema constraints with Ajv. A validator must
     // judge the actual payload, or a closure regression can pass unnoticed.
     const ajv = new Ajv2020({ strict: true, allErrors: true });
     addFormats(ajv);
@@ -138,6 +141,12 @@ describe("tool schema sanitization", () => {
       }
 
     }
+    const recurringWire = requests[0]!.tools.find((candidate) => candidate.function.name === "google_calendar_create_recurring_event")!.function.parameters;
+    const validateRecurring = ajv.compile(recurringWire);
+    const recurringArgs = { summary: "Review", start: "2026-10-21T09:00:00Z", end: "2026-10-21T10:00:00Z", timeZone: "UTC", repeat: { frequency: "weekly" } };
+    expect(validateRecurring(recurringArgs)).toBe(true);
+    expect(validateRecurring({ ...recurringArgs, repeat: { frequency: "weekly", preview: true } })).toBe(false);
+    expect(adapter.validateToolInput?.(recurringTool.name, { ...recurringArgs, repeat: { frequency: "weekly", preview: true } })).not.toBeNull();
   });
 
   it("walks every authored surface, including the conditional and hand-assembled ones", () => {

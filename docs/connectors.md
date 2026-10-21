@@ -531,7 +531,7 @@ Every Google tool parses its arguments with a strict schema, so an undeclared ke
   | New conversation | `gmail.create_draft` / `gmail.send`: `{ "to": ["dana@example.com"], "subject": "Renewal", "body": "Hello Dana." }` |
   | Reply | `gmail.create_reply_draft` / `gmail.reply`: `{ "messageId": "known-message-id", "body": "Thank you." }`, or a unique Gmail `query` instead of `messageId` |
 
-  Gmail drafts additionally accept `attachmentResourceIds` beside `message`,
+  Gmail drafts additionally accept `attachmentResourceIds` on new and reply drafts,
   containing PDF resource IDs from the conversation's resource tools. The host
   resolves current conversation visibility under the execution principal, reads
   the original stored file, verifies its hash and PDF type, and sends its bytes
@@ -540,7 +540,7 @@ Every Google tool parses its arguments with a strict schema, so an undeclared ke
   the draft; repeated IDs attach once. `gmail.send` does not accept this field.
 
   `cc` and `bcc` are optional; omitted, `null`, and `[]` mean none. Both paths
-  accept `htmlBody`, `attachments`, and `includeSignature`; signature lookup
+  accept `htmlBody` and `includeSignature`; signature lookup
   requires `gmail.read`. New messages require recipients. Replies derive the
   recipient from the original's Reply-To/From (original To for sent mail) unless `to` explicitly overrides
   it; this does not infer reply-all recipients. A reply has no caller-supplied
@@ -595,7 +595,7 @@ Every Google tool parses its arguments with a strict schema, so an undeclared ke
 
   A relative change carries each existing guest across whole rather than rebuilding them from an address, so `responseStatus`, `optional`, `displayName`, and a room's `resource` flag survive an addition; re-sending bare addresses would reset every RSVP and re-invite everyone. The read is uncapped and an `attendeesOmitted` response is refused rather than patched from, because `maxAttendees` returns only the participant past its cap rather than a prefix — a capped read is how a large event loses its guest list. Resolving a calendar by name needs the connection's calendar read capability, and says so rather than failing as an opaque provider error.
 
-  Attendee changes are stated relatively. Google's event PATCH replaces the whole `attendees` array, so `google_calendar_update_event` takes `addAttendeeEmails` and `removeAttendeeEmails`, which it applies to the event's current guest list after reading it, and `replaceAllAttendeeEmails` for the rare case of setting the list outright. The create-shaped `attendeeEmails` is deliberately absent from the update schema: reaching for it fails the strict parse instead of silently deleting everyone who was already invited. Actual event or attendee changes default to notifying guests; `sendUpdates` can select all, external-only, or no update emails. A no-op relative attendee change alone does not send notification mail. Recurring/all-day creation and Meet links are detailed in [Google workflows](google-workflows.md).
+  Attendee changes are stated relatively. Google's event PATCH replaces the whole `attendees` array, so `google_calendar_update_event` takes `addAttendeeEmails` and `removeAttendeeEmails`, which it applies to the event's current guest list after reading it, and `replaceAllAttendeeEmails` for the rare case of setting the list outright. The create-shaped `attendeeEmails` is deliberately absent from the update schema: reaching for it fails the strict parse instead of silently deleting everyone who was already invited. Guest membership changes default to notifying guests; ordinary event field edits notify only when `sendUpdates` explicitly selects all or external-only. `none` suppresses update emails. A no-op relative attendee change alone does not send notification mail. Recurring/all-day creation and Meet links are detailed in [Google workflows](google-workflows.md).
 - Drive: `google_drive_search`, `google_drive_get_metadata`, `google_drive_download`, and `google_drive_export`. Search matches a plain-text `query` against file **names and indexed contents** — it is not a Drive query expression, so an operator written into it is matched literally — and narrows through its own `fileType` (named as a person would: `document`, `spreadsheet`, `pdf`, …), `modifiedAfter`, and `orderBy` parameters rather than through query syntax. A name-only search made a request for what a document *says* come back empty, which the plugin message then licensed reporting as the content not existing.
 - Docs: `google_docs_read_document`, `google_docs_create_document`, `google_docs_append_text`, and `google_docs_replace_text`.
 - Sheets: `google_sheets_read_spreadsheet`, `google_sheets_read_values`, `google_sheets_create_spreadsheet`, `google_sheets_update_values`, and `google_sheets_append_values`.

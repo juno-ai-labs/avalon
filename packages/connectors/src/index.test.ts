@@ -2135,7 +2135,7 @@ describe("connectors", () => {
     ]);
   });
 
-  it("notifies guests about a renamed event even when an empty attendee addition changes nobody", async () => {
+  it("keeps field-only edits quiet when an empty attendee addition changes nobody", async () => {
     const methods: string[] = [];
     const fetcher: typeof fetch = async (input, init) => {
       methods.push(init?.method ?? "GET");
@@ -2156,7 +2156,7 @@ describe("connectors", () => {
       }
     );
     expect(methods).toEqual(["PATCH"]);
-    expect(requests[0]?.searchParams.get("sendUpdates")).toBe("all");
+    expect(requests[0]?.searchParams.get("sendUpdates")).toBeNull();
   });
 
   it("keeps the other hits when one message cannot be hydrated", async () => {
