@@ -2098,6 +2098,56 @@ describe("a member's message travels the whole pipeline", () => {
     }
   });
 
+  it("refreshes personal instructions on a room-only message before the next request", async () => {
+    const stub = agentStub();
+    const workspace = env.WORKSPACE_DOS.getByName(workspaceDOName("global", WORKSPACE_ID));
+    const copiedInstructions = () => runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{ text: string }>(
+        "SELECT text FROM personal_system_prompt_copies WHERE user_id = ?", USER_ID,
+      ).toArray()[0]?.text ?? null);
+    try {
+      await workspace.savePersonalSystemPrompt({
+        workspaceId: WORKSPACE_ID, userId: USER_ID, personalSystemPrompt: "Answer briefly.",
+      });
+      await installScriptedProvider(stub, [
+        [{ choices: [{ delta: { content: "first answer" }, finish_reason: "stop" }] }],
+        [{ choices: [{ delta: { content: "next answer" }, finish_reason: "stop" }] }],
+      ], { primaryModel: PERSONAL_PROMPT_MODEL, fallbackModels: [] });
+      const opened = await initializeWorkstream(stub, "please look into this", PERSONAL_PROMPT_MODEL, [OTHER_USER_ID], "opening_message");
+      expect(opened.status).toBe(200);
+      await externallySettledRun(stub, opened.body.harnessRunId as string);
+      await waitForLoopRelease(stub);
+      await expect.poll(copiedInstructions, { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 25 }).toBe("Answer briefly.");
+      await workspace.savePersonalSystemPrompt({
+        workspaceId: WORKSPACE_ID, userId: USER_ID, personalSystemPrompt: "",
+      });
+      const aside = await product(stub, { operation: "create_message", auth: AUTH, input: {
+        text: "sounds good", clientMessageId: "personal-prompt-aside", mentions: [],
+        confirmedParticipantUserIds: [], attachmentIds: [],
+      } });
+      expect(aside.status).toBe(200);
+      expect(await runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM runs").one().count)).toBe(1);
+      await expect.poll(copiedInstructions, { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 25 }).toBe("");
+      const question = await product(stub, { operation: "create_message", auth: AUTH, input: {
+        text: "please summarize what we agreed", clientMessageId: "personal-prompt-after-aside", mentions: [],
+        confirmedParticipantUserIds: [], attachmentIds: [],
+      } });
+      expect(question.status).toBe(200);
+      await settledRunForTrigger(stub, (question.body.turn as { turnId: string }).turnId);
+      await waitForLoopRelease(stub);
+      const request = (await capturedProviderRequests(stub)).filter((entry) => entry.url === "https://openrouter.ai/api/v1/responses").at(-1)!;
+      const users = (request.body.messages as Array<{ role: string; content: unknown }>).filter((message) => message.role === "user");
+      expect(String(users.at(-2)?.content)).toContain("<user_system_prompt>");
+      expect(String(users.at(-2)?.content)).toContain("Answer briefly.");
+      expect(String(users.at(-2)?.content)).toContain("sounds good");
+      expect(String(users.at(-1)?.content)).toContain("please summarize what we agreed");
+      expect(String(users.at(-1)?.content)).not.toContain("<user_system_prompt>");
+    } finally {
+      await restoreProviderFetch(stub);
+    }
+  });
+
   it("refreshes personal instructions at admission and keeps earlier message values in history", async () => {
     const stub = agentStub();
     const instructions = "Answer in French, and keep every reply under fifty words.";

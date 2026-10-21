@@ -4956,8 +4956,8 @@ export class WorkstreamObjectProductService {
       && this.loops.hasInputAhead(preparation.input_sequence);
     const now = preparation.created_at;
     const messageId = preparation.input_id;
-    const messageText = shouldInvoke ? this.withPersonalSystemPrompt(prepared.text, auth.userId,
-      input.forcedHarnessOrigin ?? (input.seed ? "demo_seed" : "human_message")) : prepared.text;
+    const messageText = this.withPersonalSystemPrompt(prepared.text, auth.userId,
+      input.forcedHarnessOrigin ?? (input.seed ? "demo_seed" : "human_message"));
     const transcriptMessage = await this.transcript.prepareParticipantMessage({
       turnId: messageId,
       actor: "human",
