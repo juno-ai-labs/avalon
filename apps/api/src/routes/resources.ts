@@ -188,7 +188,7 @@ resourceRoutes.get("/:id/versions/:version/model-content", zValidator("param", v
   return resourceReader(c).versionContent(param.id, param.version, "model");
 });
 resourceRoutes.get("/:id/preview", zValidator("param", idParam), async (c) =>
-  resourceReader(c).preview(c.req.valid("param").id, c.req.raw.signal),
+  resourceReader(c).preview(c.req.valid("param").id, c.req.raw.signal, c.req.header("if-none-match")),
 );
 resourceRoutes.delete("/:id", zValidator("param", idParam), async (c) => {
   await new ResourceService(c.env, getWorkspaceAuth(c)).deleteDraft(c.req.valid("param").id);
