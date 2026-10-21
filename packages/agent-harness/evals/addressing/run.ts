@@ -9,7 +9,7 @@ import {
   type AddressingEvaluationResult,
 } from "../../src/addressing-evaluation";
 import {
-  classifyAddressing,
+  classifyMessageAdmission,
   classifyAddressingWithModel,
   classifyAddressingWithTypeSafe,
   ADDRESSING_FALLBACK_MODEL,
@@ -20,6 +20,12 @@ import {
   TYPESAFE_ADDRESSING_TIMEOUT_MS,
   type StructuredModelDiagnostic,
 } from "../../src/index";
+import {
+  MESSAGE_CONTINUATION_CONFIDENCE_THRESHOLD,
+  MESSAGE_CONTINUATION_TIMEOUT_MS,
+  MESSAGE_CONTINUATION_FALLBACK_MODEL,
+  MESSAGE_CONTINUATION_FALLBACK_PROVIDER,
+} from "../../src/message-continuation";
 import { assertProtectedEvaluationPaths, writePrivateFile } from "./secure-paths";
 
 type EvaluationTarget = "openrouter" | "typesafe" | "cascade";
@@ -103,13 +109,13 @@ async function evaluateCase(
   let typesafeFailure = false;
   const onDiagnostic = (event: StructuredModelDiagnostic): void => {
     if (event.model) resolvedModels.add(`${event.provider ?? "openrouter"}:${event.model}`);
-    if ((event.provider ?? "openrouter") === "openrouter" && event.stage === "model_request") {
+    if (event.schemaName === "message_addressing" && (event.provider ?? "openrouter") === "openrouter" && event.stage === "model_request") {
       openRouterAttempted = true;
     }
-    if ((event.provider ?? "openrouter") === "openrouter" && event.stage === "complete") {
+    if (event.schemaName === "message_addressing" && (event.provider ?? "openrouter") === "openrouter" && event.stage === "complete") {
       openRouterTerminalSuccess = event.success;
     }
-    if (event.provider === "typesafe" && event.stage === "complete") {
+    if (event.provider === "typesafe" && event.schemaName === "message_addressing" && event.stage === "complete") {
       typesafeFailure = event.success === false;
       const answers = event.responsePayload?.answers;
       const addressing = typeof answers === "object" && answers !== null
@@ -129,22 +135,24 @@ async function evaluateCase(
       humanMentions: evaluationCase.input.humanMentions,
       addressesRally: evaluationCase.input.addressesRally,
       recentMessages: evaluationCase.input.recentMessages,
+      ...(evaluationCase.input.authorName === undefined ? {} : { authorName: evaluationCase.input.authorName }),
     };
+    const admission = target === "cascade" ? await classifyMessageAdmission({
+      ...common,
+      apiKey: keys.openRouter!,
+      typesafeApiKey: keys.typesafe!,
+      model,
+      fallbackModels: [],
+      onDiagnostic,
+    }) : undefined;
     const actual = target === "typesafe"
       ? await classifyAddressingWithTypeSafe({
           ...common,
           typesafeApiKey: keys.typesafe!,
           onDiagnostic,
         })
-      : target === "cascade"
-        ? await classifyAddressing({
-            ...common,
-            apiKey: keys.openRouter!,
-            typesafeApiKey: keys.typesafe!,
-            model,
-            fallbackModels: [],
-            onDiagnostic,
-          })
+      : admission
+        ? admission.classification
         : await classifyAddressingWithModel({
             ...common,
             apiKey: keys.openRouter!,
@@ -154,18 +162,20 @@ async function evaluateCase(
             ...(reasoningEffort ? { reasoningEffort } : {}),
           });
     const resultModel = target === "cascade" ? `typesafe/jev-latest -> ${model}` : model;
+    const continuationSelected = admission?.continuation !== undefined && admission.continuation.decision !== "use_addressing";
     return {
       caseId: evaluationCase.id,
       model: resultModel,
       expected: evaluationCase.expected,
       actual,
+      ...(admission?.continuation ? { continuation: admission.continuation } : {}),
       latencyMs: Math.round(performance.now() - startedAt),
       resolvedModels: [...resolvedModels],
       ...(target === "cascade" ? {
-        cascadeRoute: openRouterAttempted
+        cascadeRoute: continuationSelected ? "not_needed" as const : openRouterAttempted
           ? openRouterTerminalSuccess === false ? "terminal_heuristic" as const : "fallback" as const
           : "typesafe" as const,
-        ...(openRouterAttempted ? {
+        ...(!continuationSelected && openRouterAttempted ? {
           cascadeFallbackReason: typesafeFailure ? "typesafe_failure" as const : "low_confidence" as const,
         } : {}),
         ...(typesafeConfidence !== undefined ? { typesafeConfidence } : {}),
@@ -218,6 +228,8 @@ async function main(): Promise<void> {
   const sourceFingerprint = createHash("sha256");
   for (const sourceFile of [
     new URL("../../src/index.ts", import.meta.url),
+    new URL("../../src/message-continuation.ts", import.meta.url),
+    new URL("../../src/prompts/message-continuation.ts", import.meta.url),
     new URL("../../src/addressing-evaluation.ts", import.meta.url),
     new URL("./run.ts", import.meta.url),
   ]) {
@@ -238,6 +250,15 @@ async function main(): Promise<void> {
         confidenceThresholdExclusive: TYPESAFE_ADDRESSING_CONFIDENCE_THRESHOLD,
         timeoutMs: TYPESAFE_ADDRESSING_TIMEOUT_MS,
       },
+      continuation: {
+        model: TYPESAFE_ADDRESSING_MODEL,
+        confidenceThresholdExclusive: MESSAGE_CONTINUATION_CONFIDENCE_THRESHOLD,
+        timeoutMs: MESSAGE_CONTINUATION_TIMEOUT_MS,
+        fallbackModel: MESSAGE_CONTINUATION_FALLBACK_MODEL,
+        fallbackProvider: MESSAGE_CONTINUATION_FALLBACK_PROVIDER,
+        fallbackReasoningEffort: "low",
+        fallbackTimeoutMs: ADDRESSING_FALLBACK_TIMEOUT_MS,
+      },
       fallback: {
         model: ADDRESSING_FALLBACK_MODEL,
         provider: ADDRESSING_FALLBACK_PROVIDER,
@@ -255,6 +276,7 @@ async function main(): Promise<void> {
     }),
     ...(selected.target === "cascade" ? {
       cascadeRouting: {
+        notNeeded: results.filter((result) => result.cascadeRoute === "not_needed").length,
         typesafe: results.filter((result) => result.cascadeRoute === "typesafe").length,
         fallback: results.filter((result) => result.cascadeRoute === "fallback").length,
         terminalHeuristic: results.filter((result) => result.cascadeRoute === "terminal_heuristic").length,
