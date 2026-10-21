@@ -8062,6 +8062,8 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 /* The breadcrumb already names the level, so its section heading would say it twice. */
 .title-menu-view > .title-menu-sidekicks .workstream-context-section h2 { display: none; }
 .title-menu-view > * { animation: title-menu-enter 300ms cubic-bezier(.2, .8, .2, 1) both; }
+/* The filled entrance animation must retain a disabled row's muted opacity. */
+.title-menu-view > [data-disabled] { --title-menu-row-opacity: .42; }
 .title-menu-view[data-direction='out'] > * { animation-name: title-menu-return; }
 .title-menu-view > :nth-child(2) { animation-delay: 22ms; }
 .title-menu-view > :nth-child(3) { animation-delay: 44ms; }
@@ -8072,11 +8074,11 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .title-menu-view > :nth-child(n + 8) { animation-delay: 150ms; }
 @keyframes title-menu-enter {
   from { filter: blur(3px); opacity: 0; transform: translate3d(10px, 0, 0); }
-  to { filter: none; opacity: 1; transform: none; }
+  to { filter: none; opacity: var(--title-menu-row-opacity, 1); transform: none; }
 }
 @keyframes title-menu-return {
   from { filter: blur(3px); opacity: 0; transform: translate3d(-10px, 0, 0); }
-  to { filter: none; opacity: 1; transform: none; }
+  to { filter: none; opacity: var(--title-menu-row-opacity, 1); transform: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .title-menu-morph { transition: none; }
