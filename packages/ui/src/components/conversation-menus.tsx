@@ -567,6 +567,7 @@ export function ChannelMenu({
   pinned,
   presentUserIds,
   renderAge,
+  resourcesPending = false,
   sidekickFailure,
   sidekicks,
   workstream,
@@ -594,6 +595,8 @@ export function ChannelMenu({
   pinned?: { on: boolean; onChange: (next: boolean) => void } | undefined;
   presentUserIds: readonly string[];
   renderAge?: (breakout: BreakoutMark) => ReactNode;
+  /** Resources are not known until a conversation snapshot or rail answers. */
+  resourcesPending?: boolean;
   sidekickFailure?: SidekickSectionFailure | undefined;
   sidekicks?: SidekickRow[] | undefined;
   workstream: SidebarPresentation;
@@ -606,6 +609,7 @@ export function ChannelMenu({
     return <PeopleView members={workstream.participants} noun="thread" people={people} presentUserIds={presentUserIds} />;
   }
   if (nav.view?.key === 'artifacts') {
+    if (resourcesPending) return <p className="title-menu-empty">Loading artifacts…</p>;
     return artifacts.length > 0
       ? <ResourceList onOpen={onOpenArtifact} resources={artifacts} />
       : <p className="title-menu-empty">No artifacts yet.</p>;
@@ -641,7 +645,7 @@ export function ChannelMenu({
     <MergeRow actions={actions} />
     <ResolveRow actions={actions} noun="Thread" target={target} />
     <LevelRow icon={<IconUsers aria-hidden="true" size={17} stroke={1.7} />} label="People" meta={peopleMeta(workstream.participants.length, workstream.scope, participantsPending)} view={PEOPLE_VIEW} />
-    <LevelRow icon={<IconFiles aria-hidden="true" size={17} stroke={1.7} />} label="Artifacts" meta={artifacts.length} view={ARTIFACTS_VIEW} />
+    <LevelRow icon={<IconFiles aria-hidden="true" size={17} stroke={1.7} />} label="Artifacts" meta={resourcesPending ? undefined : artifacts.length} view={ARTIFACTS_VIEW} />
     <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={countMeta(sidekicks)} view={SIDEKICKS_VIEW} />
     <LevelRow icon={<IconCornerDownRight aria-hidden="true" size={17} stroke={1.7} />} label="Breakouts" meta={breakouts?.length} view={BREAKOUTS_VIEW} />
     <MemoryLevelRow memory={memory} />

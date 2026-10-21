@@ -946,6 +946,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         } : undefined}
         presentUserIds={context?.presentUserIds ?? []}
         renderAge={breakoutAge}
+        resourcesPending={detail?.resources === undefined && channelRail?.resources === undefined}
         sidekickFailure={context?.sidekickFailure}
         sidekicks={context ? context.sidekicks : railSidekicks}
         workstream={{
