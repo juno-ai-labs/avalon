@@ -66,6 +66,8 @@ active gallery file, including uploaded files available in the thread's Main.
 It is available when the thread has a Channel placement and the file is in Main;
 local previews and files available only in a Breakout have no such destination.
 The link opens the current resource, including when copied from an older version.
+The attachment and resource panels share the same link eligibility and action;
+an uploaded file keeps its **Copy link** action when opened in the resource panel.
 
 The desktop still registers `rallywithai://` and reads the older
 `rallywithai://workstreams/<uuid>` form. The public HTTPS page hands off through
