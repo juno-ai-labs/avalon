@@ -278,7 +278,9 @@ quote line, as the Channel's other readers will see it, and the audience line
 says the thread's name stays hidden. "Merge to thread" or "Merge to <first
 Channel>" is the second hover action on every settled text message, after
 **New breakout**, and a row in the title menu that names the target at its
-end (the Thread, or "Channel"). Either opens the response card,
+end (the Thread, or "Channel"). A resolved Thread keeps this title-menu row
+visible but disabled, with a tooltip explaining that the thread is already resolved.
+An enabled action opens the response card,
 `MergeResponseCard`, in the feed: under the turn the hover action or a
 suggestion named, or after the newest turn from the menu. It is the merge as
 the parent will draw it, `MergeMessage`'s layout made editable, under a tag
