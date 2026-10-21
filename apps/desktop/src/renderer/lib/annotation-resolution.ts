@@ -1,4 +1,4 @@
-import { annotationAllowedForResource, ANNOTATION_CONTEXT_CHARACTERS, type Annotation, type AnnotationLocator } from '@rally/contracts';
+import { artifactElementHtml, artifactElementContext, annotationAllowedForResource, ANNOTATION_CONTEXT_CHARACTERS, type Annotation, type AnnotationLocator } from '@rally/contracts';
 import { annotationCellRange, annotationRange, annotationSheets } from './annotation-cells';
 
 export type AnnotationResolution = { state: 'ready'; annotation: Annotation } | { state: 'needs-attention'; reason: string };
@@ -27,14 +27,6 @@ function sameSection(a: AnnotationLocator, b: AnnotationLocator): boolean {
   if ('page' in a && 'page' in b) return a.page === b.page;
   if ('slide' in a && 'slide' in b) return a.slide === b.slide;
   return false;
-}
-function elementHtml(element: Element): string {
-  const clone = element.cloneNode(true) as Element;
-  clone.querySelectorAll('script,style,[data-rally-picker]').forEach((node) => node.remove());
-  for (const node of [clone, ...clone.querySelectorAll('*')]) for (const attr of [...node.attributes]) {
-    if (attr.name.startsWith('on') || attr.name === 'd' || attr.value.trim().startsWith('data:')) node.removeAttribute(attr.name);
-  }
-  return clone.outerHTML.replace(/\s+/gu, ' ').trim();
 }
 function elementSelector(element: Element): string {
   const parts: string[] = [];
@@ -82,13 +74,12 @@ export function resolveAnnotationText(annotation: Annotation, text: string, vers
       const candidate = annotationCellRange(sheet, [row, column], [row + height, column + width]);
       if (candidate.table === annotation.content.exact) matches.push(candidate);
     }
-    const original = matches.find((match) => match.range === locator.range);
-    const match = original ?? (matches.length === 1 ? matches[0] : undefined);
+    const match = matches.length === 1 ? matches[0] : undefined;
     return match ? ready({ ...locator, range: match.range }, match.table) : missing();
   }
   if (locator.type === 'element') {
     const document = new DOMParser().parseFromString(text, 'text/html');
-    const matches = [...document.body.querySelectorAll('*')].filter((element) => elementHtml(element) === annotation.content.exact && (element.textContent ?? '').includes(locator.visibleText));
+    const matches = [...document.body.querySelectorAll('*')].filter((element) => artifactElementHtml(element) === annotation.content.exact && (element.textContent ?? '').includes(locator.visibleText));
     let match: Element | undefined;
     if (matches.length === 1) match = matches[0];
     if (!match && !matches.length) {
@@ -97,18 +88,18 @@ export function resolveAnnotationText(annotation: Annotation, text: string, vers
       const candidates = id ? [...document.querySelectorAll('[id]')].filter((element) => element.id === id) : [];
       const candidate = candidates.length === 1 ? candidates[0] : undefined;
       if (candidate && annotation.content.before && annotation.content.after
-        && candidate.previousElementSibling?.textContent === annotation.content.before
-        && candidate.nextElementSibling?.textContent === annotation.content.after) match = candidate;
+        && artifactElementContext(candidate.previousElementSibling, true, ANNOTATION_CONTEXT_CHARACTERS) === annotation.content.before
+        && artifactElementContext(candidate.nextElementSibling, false, ANNOTATION_CONTEXT_CHARACTERS) === annotation.content.after) match = candidate;
     }
     if (!match) return missing();
-    return ready({ ...locator, css: elementSelector(match), visibleText: match.textContent ?? '' }, elementHtml(match), match.previousElementSibling?.textContent ?? '', match.nextElementSibling?.textContent ?? '');
+    return ready({ ...locator, css: elementSelector(match), visibleText: match.textContent ?? '' }, artifactElementHtml(match), artifactElementContext(match.previousElementSibling, true, ANNOTATION_CONTEXT_CHARACTERS), artifactElementContext(match.nextElementSibling, false, ANNOTATION_CONTEXT_CHARACTERS));
   }
   return missing();
 }
 
 export interface AnnotationReader {
-  readResource: (id: string) => Promise<{ currentVersion: number; title?: string; mimeType?: string | null }>;
-  readResourceVersion: (id: string, version: number, signal: AbortSignal, annotation?: Annotation) => Promise<Blob>;
+  readResource: (id: string, refresh?: boolean) => Promise<{ currentVersion: number; title?: string; mimeType?: string | null }>;
+  readResourceVersion: (id: string, version: number, signal: AbortSignal, annotation?: Annotation, mimeType?: string | null) => Promise<Blob>;
 }
 export async function resolveAnnotation(annotation: Annotation, reader: AnnotationReader, signal: AbortSignal): Promise<AnnotationResolution> {
   try {
@@ -118,16 +109,17 @@ export async function resolveAnnotation(annotation: Annotation, reader: Annotati
     if (resource.title && resource.mimeType && resource.mimeType!=='application/vnd.rally.site-manifest+json' && !annotationAllowedForResource(annotation,{fileName:resource.title,mimeType:resource.mimeType})) return missing();
     if (resource.currentVersion === version) return { state: 'ready', annotation };
     if (locator.type === 'file') return { state: 'ready', annotation: { ...annotation, target: { ...annotation.target, version: resource.currentVersion } } };
-    const blob = await reader.readResourceVersion(resourceId, resource.currentVersion, signal, annotation);
+    const blob = await reader.readResourceVersion(resourceId, resource.currentVersion, signal, annotation, resource.mimeType);
     if (locator.type === 'region') {
-      const original = await reader.readResourceVersion(resourceId, version, signal, annotation);
+      const original = await reader.readResourceVersion(resourceId, version, signal, annotation, resource.mimeType);
       const [a, b] = await Promise.all([original.arrayBuffer(), blob.arrayBuffer()]);
       const bytes = new Uint8Array(b);
+      if (signal.aborted || (await reader.readResource(resourceId, true)).currentVersion !== resource.currentVersion) return missing();
       return a.byteLength === b.byteLength && new Uint8Array(a).every((byte, index) => byte === bytes[index])
         ? { state: 'ready', annotation: { ...annotation, target: { ...annotation.target, version: resource.currentVersion } } } : missing();
     }
     const result = resolveAnnotationText(annotation, await blob.text(), resource.currentVersion);
-    if (signal.aborted || (await reader.readResource(resourceId)).currentVersion !== resource.currentVersion) return {state:'needs-attention',reason:'The artifact changed while checking this comment. Retry to use its latest revision.'};
+    if (signal.aborted || (await reader.readResource(resourceId, true)).currentVersion !== resource.currentVersion) return {state:'needs-attention',reason:'The artifact changed while checking this comment. Retry to use its latest revision.'};
     if (result.state==='ready' && locator.type==='element' && result.annotation.content.imageAttachmentId) {
       const content={...result.annotation.content};
       delete content.imageAttachmentId;

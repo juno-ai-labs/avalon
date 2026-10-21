@@ -116,10 +116,13 @@ changes, window focus, and submission against the latest resource revision.
 
 `annotation-resolution.ts` uses exact text and surrounding context, section/page/
 slide boundaries for changed text, exact cell tables and headers, or unique HTML
-content. Changed HTML requires a unique stable element ID plus both neighboring
-texts; positional selectors alone are insufficient. Image regions carry forward
+content. Sheet matches must be unique even when the old coordinates still match.
+Changed HTML requires a unique stable element ID plus both neighboring
+texts (bounded to the shared context budget); positional selectors alone are insufficient. Image regions carry forward
 only when image bytes are unchanged. Whole-file comments retain resource identity.
 No model or approximate similarity threshold chooses a replacement target.
+HTML matching reads frozen static HTML; content created or changed by page scripts
+may require manual reattachment in the live site.
 
 Unresolved comments show their saved quote, explanation, Reattach and Retry.
 Reattach opens the current artifact and copies the existing comment into a new
@@ -131,7 +134,11 @@ The composer reports ready and retained comment counts. Only ready annotations
 and their image attachment IDs enter optimistic messages and requests. Ordinary
 text and valid comments can send while unresolved comments remain behind; an
 otherwise empty message with only unresolved comments cannot send. Acceptance
-clears only the submitted edit generations, so later edits survive.
+clears only the submitted edit generations, so later edits survive. Concurrent
+checks share in-flight work; a superseded submission follows the newer check.
+Resource and preview reads are shared across pins within each check. A changed
+revision is verified again after its bytes load, including image regions.
+Submission gates run against the resolved snapshot, before optimistic rendering.
 
 ## Invariants
 
@@ -203,7 +210,12 @@ current revisions before sending. Ambiguous targets remain visibly repairable
 and never reach the model, while valid feedback can still send. Deterministic
 matching and explicit repair replace guessing a new target or silently sending
 stale feedback. Submission snapshots preserve newer edits and retained comments;
-detached windows share stable draft identities through their existing IPC boundary.
+detached windows share stable draft identities and edit generations through their
+existing IPC boundary. Delayed transfers cannot overwrite later edits or recreate
+removed comments. Revision checking remains client-side so ambiguous feedback never
+reaches the model; shared reads reduce its cost without removing that guarantee.
+
+PR #1360.
 
 
 ### 2026-10-19 — Confirm comments before adding composer pins

@@ -70,7 +70,7 @@ export function ChannelScreen({ workspace }: { workspace: Workspace }): React.JS
   const { api } = useAppSession();
   const threadId = /^threads\/([^/]+)$/.exec(rest)?.[1] ?? null;
   const artifactId = /^artifacts\/([^/]+)$/.exec(rest)?.[1] ?? null;
-  return <AnnotationDraftProvider draftKey={`${newWorkstreamDraftKey(workspace.region, workspace.id)}:space:${channelId}`} scopeKey={`channel:${channelId}`} readResource={api ? (id) => api.getResource(id) : undefined} readResourceVersion={api ? (id,version,signal,annotation) => readAnnotationVersion(api,id,version,signal,annotation) : undefined} upload={api ? async (file) => (await api.uploadResource(file,crypto.randomUUID())).id : undefined}><ChannelStack artifactId={artifactId} channelId={channelId} threadId={threadId} workspace={workspace} /></AnnotationDraftProvider>;
+  return <AnnotationDraftProvider draftKey={`${newWorkstreamDraftKey(workspace.region, workspace.id)}:space:${channelId}`} scopeKey={`channel:${channelId}`} readResource={api ? (id) => api.getResource(id) : undefined} readResourceVersion={api ? (id,version,signal,annotation,mimeType) => readAnnotationVersion(api,id,version,signal,annotation,mimeType) : undefined} upload={api ? async (file) => (await api.uploadResource(file,crypto.randomUUID())).id : undefined}><ChannelStack artifactId={artifactId} channelId={channelId} threadId={threadId} workspace={workspace} /></AnnotationDraftProvider>;
 }
 
 /**

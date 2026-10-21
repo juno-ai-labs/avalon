@@ -2,7 +2,7 @@ import '../../../../../tests/isolated-region';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAllDrafts, clearWorkspaceDrafts, closeDraftCache, DRAFT_CACHE_TTL_MS, draftCacheEpoch, readAnnotationDrafts, writeAnnotationDraft } from './draft-cache';
-import { useAnnotationPins, type AnnotationPin } from './use-annotation-pins';
+import { useAnnotationPins, validateAnnotationSend, type AnnotationPin } from './use-annotation-pins';
 import type { Annotation } from '@rally/contracts';
 
 const key = 'workspace:global:workspace:workstream:thread';
@@ -12,7 +12,7 @@ const reader = { readResource: async () => ({ currentVersion: 1 }), readResource
 beforeEach(async () => { await clearAllDrafts(); });
 afterEach(() => { closeDraftCache(); });
 describe('annotation drafts', () => {
-  it('restores confirmed comments after unmount, including edits made before hydration', async () => {
+  it('restores a confirmed comment added before hydration and immediately unmounted', async () => {
     const first = renderHook(() => useAnnotationPins(key, reader));
     act(() => first.result.current.mutate(() => [pin()]));
     first.unmount();
@@ -119,4 +119,59 @@ describe('annotation drafts', () => {
     expect(await readAnnotationDrafts(key)).toEqual([]);
     expect((await readAnnotationDrafts(key.replace(':workspace:', ':other:'))).length).toBe(1);
   });
+});
+
+it('follows a superseding revision check during submission instead of dropping comments', async () => {
+  const reads: ((value: {currentVersion:number})=>void)[] = [];
+  const hook=renderHook(()=>useAnnotationPins(undefined,{...reader,readResource:()=>new Promise<{currentVersion:number}>((resolve)=>reads.push(resolve))}));
+  act(()=>hook.result.current.mutate(()=>[pin()]));
+  let sending!:Promise<AnnotationPin[]>;
+  let refresh!:Promise<AnnotationPin[]>;
+  act(()=>{sending=hook.result.current.prepareSend();refresh=hook.result.current.check(true);});
+  expect(reads).toHaveLength(2);
+  await act(async()=>{reads[0]!({currentVersion:1});reads[1]!({currentVersion:1});await refresh;});
+  expect((await sending).map((entry)=>entry.id)).toEqual(['pin']);
+});
+
+it('coalesces concurrent checks and shares revision reads across pins', async () => {
+  let finish!:(value:{currentVersion:number})=>void;
+  const readResource=vi.fn(()=>new Promise<{currentVersion:number}>((resolve)=>{finish=resolve;}));
+  const hook=renderHook(()=>useAnnotationPins(undefined,{...reader,readResource}));
+  act(()=>hook.result.current.mutate(()=>[pin('a'),pin('b')]));
+  let sending!:Promise<AnnotationPin[]>;
+  let refresh!:Promise<AnnotationPin[]>;
+  act(()=>{sending=hook.result.current.prepareSend();refresh=hook.result.current.check();});
+  expect(readResource).toHaveBeenCalledTimes(1);
+  await act(async()=>{finish({currentVersion:1});await refresh;});
+  expect((await sending).map((entry)=>entry.id)).toEqual(['a','b']);
+});
+
+it('retains resolved state and order for comment-only edits from another window', async () => {
+  const readResource=vi.fn(reader.readResource);
+  const first=renderHook(()=>useAnnotationPins(key,{...reader,readResource}));
+  const second=renderHook(()=>useAnnotationPins(key,{...reader,readResource}));
+  act(()=>first.result.current.mutate(()=>[pin('a'),pin('b')]));
+  await waitFor(()=>expect(second.result.current.pins.map((p)=>p.state)).toEqual(['ready','ready']));
+  readResource.mockClear();
+  act(()=>first.result.current.mutate((pins)=>pins.map((p)=>p.id==='a'?{...p,annotation:{...p.annotation,comment:'A newer comment'}}:p)));
+  await waitFor(()=>expect(second.result.current.pins[0]?.annotation.comment).toBe('A newer comment'));
+  expect(second.result.current.pins.map((p)=>p.id)).toEqual(['a','b']);
+  expect(readResource).not.toHaveBeenCalled();
+});
+
+it('drops stale screenshot bytes when an element reattaches to a new revision', async () => {
+  const html:Annotation={...annotation,target:{...annotation.target,locator:{type:'element',css:'button',visibleText:'Start',box:{x:0,y:0,w:1,h:1}}},content:{...annotation.content,exact:'<button>Start</button>',imageAttachmentId:'00000000-0000-7000-8000-000000000002'}};
+  const hook=renderHook(()=>useAnnotationPins(undefined,{readResource:async()=>({currentVersion:2}),readResourceVersion:async()=>new Blob(['<section><button>Start</button></section>'])}));
+  act(()=>hook.result.current.mutate(()=>[{...pin(),annotation:html,image:{bytes:new Uint8Array([1]).buffer,name:'old.png',type:'image/png'}}]));
+  let submitted:AnnotationPin[]=[];
+  await act(async()=>{submitted=await hook.result.current.prepareSend();});
+  expect(submitted[0]?.annotation.target.version).toBe(2);
+  expect(submitted[0]?.annotation.content.imageAttachmentId).toBeUndefined();
+  expect(submitted[0]?.image).toBeUndefined();
+});
+
+it('validates attachment counts and payloads on the resolved send snapshot',()=>{
+  const crop={...pin(),annotation:{...annotation,content:{...annotation.content,imageAttachmentId:'00000000-0000-7000-8000-000000000002'}}};
+  expect(()=>validateAnnotationSend([crop],10)).toThrow('Send no more than 10');
+  expect(()=>validateAnnotationSend([{...pin(),annotation:{...annotation,target:{...annotation.target,version:0}}}],0)).toThrow('target.version');
 });

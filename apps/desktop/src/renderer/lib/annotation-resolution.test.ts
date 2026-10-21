@@ -54,3 +54,25 @@ describe('annotation revision resolution', () => {
     expect(result).toMatchObject({ state: 'needs-attention', reason: 'The artifact could not be checked. Retry when it is available.' });
   });
 });
+
+it('requires manual repair when an identical sheet row is inserted at the old coordinates', () => {
+  const cells: Annotation = { ...annotation, target: { ...annotation.target, locator: { type: 'cells', sheet: 'Sheet1', range: 'A2:A2' } }, content: { ...annotation.content, exact: '| Status |\n| --- |\n| Ready |', source: 'converted' } };
+  expect(resolveAnnotationText(cells, 'Status\nReady\nReady', 2).state).toBe('needs-attention');
+});
+
+it('does not accept identical image bytes if a newer revision arrived while downloading', async () => {
+  const region: Annotation = { ...annotation, target: { ...annotation.target, locator: { type: 'region', x: 0, y: 0, w: 1, h: 1 } } };
+  let currentVersion = 2;
+  const result = await resolveAnnotation(region, {
+    readResource: async () => ({ currentVersion }),
+    readResourceVersion: async () => { currentVersion = 3; return new Blob(['same image']); },
+  }, new AbortController().signal);
+  expect(result.state).toBe('needs-attention');
+});
+
+it('bounds element context consistently when reattaching changed stable elements', () => {
+  const html: Annotation = { ...annotation, target: { ...annotation.target, locator: { type: 'element', css: '#start', visibleText: 'Start', box: { x: 0, y: 0, w: 1, h: 1 } } }, content: { ...annotation.content, exact: '<button id="start">Start</button>', before: 'B'.repeat(200), after: 'A'.repeat(200), source: 'rendered' } };
+  expect(resolveAnnotationText(html, `<p>${'B'.repeat(400)}</p><button id="start">Begin</button><main>${'A'.repeat(400)}<script>privateCode()</script></main>`, 2)).toMatchObject({state:'ready',annotation:{content:{before:'B'.repeat(200),after:'A'.repeat(200)}}});
+  const noContext = {...html,target:{...html.target,locator:{type:'element' as const,css:'#start',visibleText:'Begin',box:{x:0,y:0,w:1,h:1}}},content:{...html.content,exact:'<button id="start">Begin</button>'}};
+  expect(resolveAnnotationText(noContext, '<script>privateCode()</script><button id="start">Begin</button><style>body{color:red}</style>', 2)).toMatchObject({state:'ready',annotation:{content:{before:'',after:''}}});
+});

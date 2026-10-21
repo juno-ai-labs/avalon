@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Annotation } from '@rally/contracts';
+import { AnnotationsSchema, type Annotation } from '@rally/contracts';
+import { describeZodIssues } from '@rally/contracts/zod-diagnostics';
+import { MAX_ATTACHMENTS } from './attachment-limits';
 import { deleteAnnotationDraft, draftCacheEpoch, nextDraftSortKey, subscribeDraftClears, readAnnotationDrafts, writeAnnotationDraft, type CachedAnnotationDraft } from './draft-cache';
 import { resolveAnnotation, type AnnotationReader } from './annotation-resolution';
 
@@ -19,6 +21,13 @@ export interface AnnotationPin {
   repairOf?: string;
   imageUploaded?: boolean;
 }
+/** Validate the resolved snapshot, including comments that were still checking at click time. */
+export function validateAnnotationSend(pins: AnnotationPin[], attachmentCount: number): void {
+  const parsed = AnnotationsSchema.safeParse(pins.map((pin)=>pin.annotation));
+  if (!parsed.success) throw new Error(`Artifact comments could not be sent: ${describeZodIssues(parsed.error)}`);
+  const images = pins.filter((pin)=>pin.annotation.content.imageAttachmentId).length;
+  if (images + attachmentCount > MAX_ATTACHMENTS) throw new Error('Send no more than 10 images and attachments together.');
+}
 const listeners = new Set<(key: string) => void>();
 function notify(key: string): void { for (const listener of listeners) listener(key); }
 
@@ -34,8 +43,9 @@ export function useAnnotationPins(draftKey: string | undefined, reader: { readRe
   const channel = useRef<BroadcastChannel | null>(null);
   const scope = held.current;
   const publish = useCallback((next: AnnotationPin[]): void => {
-    scope.pins = next;
-    if (held.current === scope) render(next);
+    const ordered = [...next].sort((a,b)=>(a.sortKey??a.updatedAt??0)-(b.sortKey??b.updatedAt??0));
+    scope.pins = ordered;
+    if (held.current === scope) render(ordered);
   }, [scope]);
   const enqueue = useCallback((id: string, task: () => Promise<boolean>): void => {
     if (scope.disabled) return;
@@ -71,7 +81,7 @@ export function useAnnotationPins(draftKey: string | undefined, reader: { readRe
   }, [scope, cache, enqueue, publish]);
   const clearAccepted = useCallback((submitted: AnnotationPin[]): void => {
     const matches = (pin: AnnotationPin): boolean => submitted.some((sent) => sent.id === pin.id && sent.generation === pin.generation);
-    publish(scope.pins.filter((pin) => !matches(pin)));
+    publish(scope.pins.filter((pin) => !pin.pending && !matches(pin)));
     for (const pin of submitted) if (scope.key) enqueue(pin.id, () => deleteAnnotationDraft(scope.key!, pin.id, scope.epoch, pin.generation));
   }, [scope, enqueue, publish]);
 
@@ -86,6 +96,10 @@ export function useAnnotationPins(draftKey: string | undefined, reader: { readRe
         const restored = rows.filter((row) => (!resourceId || row.annotation.target.resourceId === resourceId) && !scope.dirty.has(row.id) && !scope.memoryOnly.has(row.id)).map((row): AnnotationPin => {
           const current = scope.pins.find((pin) => pin.id === row.id);
           if (current?.generation === row.generation) return current;
+          // An authored-text edit does not change the target or its resolved state.
+          if (current && JSON.stringify({ ...current.annotation, comment: '' }) === JSON.stringify({ ...row.annotation, comment: '' })) {
+            return { ...current, ...row };
+          }
           return { ...row, reveal: () => false, state: 'checking' };
         });
         publish([...restored, ...scope.pins.filter((pin) => pin.pending || scope.dirty.has(pin.id) || scope.memoryOnly.has(pin.id))]);
@@ -106,44 +120,82 @@ export function useAnnotationPins(draftKey: string | undefined, reader: { readRe
     else scope.epoch=draftCacheEpoch();
   }),[scope,publish]);
   const sequence = useRef(0);
-  const check = useCallback(async (): Promise<AnnotationPin[]> => {
-    const run = ++sequence.current;
-    if (scope.disabled) return [];
-    const captured = scope.pins.filter((pin) => !pin.pending);
-    const { reader: readers, upload: uploadFile } = options.current;
-    if (!readers.readResource || !readers.readResourceVersion) return captured.filter((pin)=>pin.state==='ready');
-    const controller = new AbortController();
-    const results = await Promise.all(captured.map(async (pin): Promise<AnnotationPin> => {
-      const resolved = await resolveAnnotation(pin.annotation, readers as AnnotationReader, controller.signal);
-      if (resolved.state !== 'ready') return { ...pin, state: resolved.state, reason: resolved.reason };
-      let annotation = resolved.annotation;
-      if (annotation.content.imageAttachmentId && !pin.imageUploaded && (!pin.image || !uploadFile)) return {...pin,state:'needs-attention',reason:'The saved comment image is unavailable. Reattach this comment to send it.'};
-      // Each restored crop has its bytes, so the normal upload route can recover a missing server draft.
-      if (!pin.imageUploaded && annotation.content.imageAttachmentId && pin.image && uploadFile) {
-        try {
-          const id = await uploadFile(new File([pin.image.bytes], pin.image.name, { type: pin.image.type }));
-          annotation = { ...annotation, content: { ...annotation.content, imageAttachmentId: id } };
-        } catch { return { ...pin, state: 'needs-attention', reason: 'The comment image could not be uploaded. Retry to send it.' }; }
-      }
-      return { ...pin, annotation, imageUploaded: true, state: 'ready', reason: undefined };
-    }));
-    if (held.current !== scope || run !== sequence.current || scope.epoch !== draftCacheEpoch()) return [];
-    const eligible: AnnotationPin[] = [];
-    publish(scope.pins.map((pin) => {
-      const result = results.find((entry) => entry.id === pin.id && entry.generation === pin.generation);
-      if (!result) return pin;
-      if (result.state === 'ready') eligible.push(result);
-      if (JSON.stringify(result.annotation) !== JSON.stringify(pin.annotation)) cache(result, pin.generation);
-      return result;
-    }));
-    return eligible;
+  const latestCheck = useRef<Promise<AnnotationPin[]>>(Promise.resolve([]));
+  const activeCheck = useRef<{ scope: typeof scope; signature: string; promise: Promise<AnnotationPin[]> } | null>(null);
+  const check = useCallback((force = false): Promise<AnnotationPin[]> => {
+    const signature = scope.pins.filter((pin)=>!pin.pending).map((pin)=>`${pin.id}:${pin.generation}`).join(',');
+    if (!force && activeCheck.current?.scope === scope && activeCheck.current.signature === signature) return activeCheck.current.promise;
+    const resolve = async (): Promise<AnnotationPin[]> => {
+      const run = ++sequence.current;
+      if (scope.disabled) return [];
+      const captured = scope.pins.filter((pin) => !pin.pending);
+      const { reader: readers, upload: uploadFile } = options.current;
+      if (!readers.readResource || !readers.readResourceVersion) return captured.filter((pin)=>pin.state==='ready');
+      const controller = new AbortController();
+      // Share metadata and preview reads across comments on the same resource/page.
+      const resources = new Map<string, ReturnType<AnnotationReader['readResource']>>();
+      const previews = new Map<string, Promise<Blob>>();
+      const sharedReader: AnnotationReader = {
+        readResource: (id, refresh = false) => {
+          const key = `${id}:${refresh}`;
+          if (!resources.has(key)) resources.set(key, readers.readResource!(id, refresh));
+          return resources.get(key)!;
+        },
+        readResourceVersion: (id, version, signal, annotation, mimeType) => {
+          const locator = annotation?.target.locator;
+          const key = JSON.stringify([id, version, locator?.type === 'element' ? locator.pagePath : null]);
+          if (!previews.has(key)) previews.set(key, readers.readResourceVersion!(id, version, signal, annotation, mimeType));
+          return previews.get(key)!;
+        },
+      };
+      const results = await Promise.all(captured.map(async (pin): Promise<AnnotationPin> => {
+        const resolved = await resolveAnnotation(pin.annotation, sharedReader, controller.signal);
+        if (resolved.state !== 'ready') return { ...pin, state: resolved.state, reason: resolved.reason };
+        let annotation = resolved.annotation;
+        if (annotation.content.imageAttachmentId && !pin.imageUploaded && (!pin.image || !uploadFile)) return {...pin,state:'needs-attention',reason:'The saved comment image is unavailable. Reattach this comment to send it.'};
+        // Each restored crop has its bytes, so the normal upload route can recover a missing server draft.
+        if (!pin.imageUploaded && annotation.content.imageAttachmentId && pin.image && uploadFile) {
+          try {
+            const id = await uploadFile(new File([pin.image.bytes], pin.image.name, { type: pin.image.type }));
+            annotation = { ...annotation, content: { ...annotation.content, imageAttachmentId: id } };
+          } catch { return { ...pin, state: 'needs-attention', reason: 'The comment image could not be uploaded. Retry to send it.' }; }
+        }
+        const result: AnnotationPin = { ...pin, annotation, imageUploaded: true, state: 'ready', reason: undefined };
+        if (!annotation.content.imageAttachmentId) delete result.image;
+        return result;
+      }));
+      if (held.current !== scope || scope.disabled || scope.epoch !== draftCacheEpoch()) return [];
+      // A newer revision check owns the result; submission follows it instead of
+      // interpreting cancellation as a successful empty annotation snapshot.
+      if (run !== sequence.current) return latestCheck.current;
+      const eligible: AnnotationPin[] = [];
+      publish(scope.pins.map((pin) => {
+        const result = results.find((entry) => entry.id === pin.id && entry.generation === pin.generation);
+        if (!result) return pin;
+        if (result.state === 'ready') eligible.push(result);
+        if (JSON.stringify(result.annotation) !== JSON.stringify(pin.annotation)) cache(result, pin.generation);
+        return result;
+      }));
+      return eligible;
+    };
+    const result = resolve();
+    latestCheck.current = result;
+    const active = { scope, signature, promise: result };
+    activeCheck.current = active;
+    void result.finally(()=>{ if(activeCheck.current===active)activeCheck.current=null; });
+    return result;
   }, [scope, publish, cache]);
   const checking = pins.filter((pin) => !pin.pending && pin.state === 'checking').map((pin)=>pin.generation).join(':');
   useEffect(() => { if (checking && reader.readResource && reader.readResourceVersion) void check(); }, [checking, check, Boolean(reader.readResource), Boolean(reader.readResourceVersion)]);
   useEffect(() => {
     const refresh = (): void => { void check(); };
     window.addEventListener('focus', refresh);
-    return () => { sequence.current += 1; window.removeEventListener('focus', refresh); };
+    return () => { window.removeEventListener('focus', refresh); };
   }, [check]);
-  return { pins, mutate, check, clearAccepted };
+  const prepareSend = useCallback(async (): Promise<AnnotationPin[]> => {
+    const result = await check();
+    if (held.current !== scope || scope.disabled || scope.epoch !== draftCacheEpoch()) throw new Error('The conversation changed before the comments could be sent.');
+    return result;
+  }, [check, scope]);
+  return { pins, mutate, check, prepareSend, clearAccepted };
 }
