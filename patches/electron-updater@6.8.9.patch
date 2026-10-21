@@ -1,0 +1,18 @@
+diff --git a/out/electronHttpExecutor.js b/out/electronHttpExecutor.js
+--- a/out/electronHttpExecutor.js
++++ b/out/electronHttpExecutor.js
+@@ -55,7 +55,13 @@ class ElectronHttpExecutor extends builder_util_runtime_1.HttpExecutor {
+             ...options,
+             session: this.cachedSession,
+         });
+-        request.on("response", callback);
++        request.on("response", response => {
++            // Electron forwards native failures to the request as well, but
++            // its IncomingMessage still needs an error listener when a
++            // consumer returns early (404/204) or pipes without owning errors.
++            response.on("error", () => {});
++            callback(response);
++        });
+         if (this.proxyLoginCallback != null) {
+             request.on("login", this.proxyLoginCallback);
+         }
