@@ -4894,7 +4894,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
      */
     lease?: AttemptLease,
   ): Promise<"recovered" | "ambiguous" | "waiting_for_input" | null> {
-    const projection = this.transcript.readBindProjection(input.loopId);
+    const projection = this.transcript.readResumableBindProjection(input.loopId);
     if (!projection) return null;
     const batch = pendingBindToolBatch(projection);
     if (!batch) return null;
@@ -5184,6 +5184,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const loop = this.loop.loop();
     const reservation = this.loop.activeReservation();
     if (!reservation) return null;
+    this.transcript.readResumableBindProjection(input.loopId, true);
     if (!execution || !loop
       || loop.loop_id !== input.loopId
       || loop.status !== "executing"
@@ -5301,6 +5302,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         });
       },
       projection: this.transcript.readBindProjection(input.loopId),
+      validateHistoricalAssistantReservation: (projection) => {
+        fence();
+        return this.transcript.validateHistoricalAssistantReservation(projection);
+      },
       modelIterationsUsed: this.loop.assistantTurnCountForExecution(execution.runId),
       // What the projection has considered, not the transcript's high-water
       // mark. A compaction checkpoint records this as the sequence it covers,

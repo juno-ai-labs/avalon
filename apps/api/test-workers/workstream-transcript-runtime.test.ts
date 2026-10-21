@@ -276,6 +276,26 @@ describe("work-stream transcript on workerd SQLite", () => {
       });
       if (!replacementClaim) throw new Error("replacement_loop_claim_missing");
       resident.activeLoopExecution = replacementClaim.execution;
+      // A relocated unfinished batch cannot use the new namespace to decide
+      // that an old receipt never ran. This guard also covers failure cleanup,
+      // which calls the same recovery method without entering the harness.
+      const originalHead = state.storage.sql.exec<{
+        state_revision: number; last_assistant_reservation_json: string;
+      }>(`SELECT state_revision, last_assistant_reservation_json FROM bind_loop_heads WHERE loop_id = ?`, LOOP_ID).one();
+      state.storage.sql.exec(
+        `UPDATE bind_loop_heads SET state_revision = state_revision + 1,
+          last_assistant_reservation_json = json_set(last_assistant_reservation_json, '$.turnId', 'old-loop:turn:1')
+          WHERE loop_id = ?`, LOOP_ID,
+      );
+      await expect(resident.recoverInterruptedToolBatch(
+        createTestEnv({ PAYLOADS: env.PAYLOADS }), replacementClaim.input, { attemptId, owner: attemptOwner },
+      )).rejects.toThrow("bind_loop_resume_reservation_invalid");
+      expect(bindLoopNonSystemMessages(new WorkstreamTranscriptStorage(state.storage).readBindProjection(LOOP_ID)!)
+        .map((message) => message.role)).toEqual(["user", "assistant"]);
+      state.storage.sql.exec(
+        `UPDATE bind_loop_heads SET state_revision = ?, last_assistant_reservation_json = ? WHERE loop_id = ?`,
+        originalHead.state_revision, originalHead.last_assistant_reservation_json, LOOP_ID,
+      );
       await expect(resident.recoverInterruptedToolBatch(
         createTestEnv({ PAYLOADS: env.PAYLOADS }),
         replacementClaim.input,

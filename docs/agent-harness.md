@@ -257,6 +257,18 @@ settles it; neither step invokes the provider, and either may be safely resumed
 after a crash.
 Stream and checkpoint events for participant loops carry that same sequence.
 
+A relocated conversation may retain the original IDs of completed historical
+turns. A differing last-reservation ID is accepted only for an accepted assistant
+with no unfinished tool batch and an affirmative
+`validateHistoricalAssistantReservation` host result. The host proves the exact
+head, local reservation/transcript relationship, and next-turn counters; an absent,
+false, or failing port stops the run. New reservations still require the current
+loop's ID format. The next normal reservation replaces the historical pointer
+without rewriting any old turn, payload, or receipt.
+If that new host reservation survives a crash before its Bind transition, the
+host first validates and settles the exact reserved current-loop turn; the
+harness never receives an exception permitting pending historical state.
+
 ### Addressing
 
 For subsequent messages that need addressing classification, a lightweight classifier returns `agent_action`, `human_only`, `both`, or `uncertain` with confidence and a terse rationale code. Explicit Rally/connector mentions and clear work requests invoke the harness. Social acknowledgement and human-only coordination can remain unanswered — including a message aimed at a teammate: the caller passes the display names of the people the message mentions (`humanMentions`, resolved from validated mention rows), and the prompt rules that a message telling or asking a mentioned person something is that person's to act on, even mid-task, unless it also asks Rally for work. The same signal gates the deterministic fast paths: an opening imperative short-circuits to `agent_action` only while the message mentions nobody, since "Please review the deck @Alex" hands the work to Alex, not to Rally. Uncertain messages invoke only when an active task or explicit tool context exists. The current message is preserved in full. Only the newest ten context messages are retained; older ones are omitted, and each retained message is bounded to 1,000 Unicode code points by keeping its opening and conclusion around a middle ellipsis. JEV receives that history in its state payload, and the model-independent OpenRouter prompt receives the same bytes: Terra uses that renderer when evaluated directly, while the hosted cascade uses it for the pinned DeepSeek fallback. The label is not exposed in the UI.
@@ -1483,6 +1495,25 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-10-20 — Resume verified completed history after a loop relocation
+
+**What changed:** The harness accepts a historical assistant-turn ID only after
+the durable host validates its completed local reservation. Pending reservations,
+unfinished tool batches, and unverified heads remain refused; newly allocated
+turns keep the current loop identity.
+
+**Why:** A manual breakout promotion copied the transcript and remapped its loop
+keys while preserving turn IDs. The strict resume-format check then stopped every
+new request before inference, despite a fully accepted historical turn.
+
+**Considered and rejected:** Removing the format check universally would permit
+unfinished tool recovery to look up receipts under the wrong loop. Rewriting only
+the head's turn ID would detach it from its canonical reservation and transcript.
+
+**Consequences:** Recovery preserves history and advances naturally on the next
+turn. Harness tests exercise continuation and refusals; the transcript storage
+suite verifies the host proof against the migrated SQLite schema.
 
 ### 2026-10-20 — Opening messages can establish a conversation without starting work
 
