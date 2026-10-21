@@ -226,8 +226,8 @@ export type HarnessFailureCode = z.infer<typeof HarnessFailureCodeSchema>;
  * end of the list. The "orders each vendor's models newest first" test holds
  * the half of this a machine can check — a family whose ids carry comparable
  * version numbers must not ascend — which is every family except the two whose
- * members share a version (`gpt-5.6-*`, `deepseek-v4-*`) and are ordered by
- * hand.
+ * members share a version (`claude-*-5.5`, `deepseek-v4.1-*`) and are ordered
+ * by hand.
  *
  * Nothing reads position 0. An earlier note here claimed the first entry was
  * what the selector showed before anything was chosen, and that has not been
@@ -246,19 +246,20 @@ export type HarnessFailureCode = z.infer<typeof HarnessFailureCodeSchema>;
  * See `docs/feature-flags.md` for how an override composes with the flags.
  */
 export const AGENT_MODEL_OVERRIDES = [
+  "x-ai/grok-4.7",
   "x-ai/grok-4.6",
   "x-ai/grok-4.5",
-  "x-ai/grok-4.3",
+  "google/gemini-4-argon",
   "google/gemini-3.8-flash",
   "google/gemini-3.7-flash",
-  "google/gemini-3.6-flash",
-  "google/gemini-3.5-flash",
-  "google/gemini-3-flash-preview",
+  "openai/gpt-6.1-sol",
+  "openai/gpt-6-luna",
   "openai/gpt-5.6-sol",
-  "openai/gpt-5.6-terra",
-  "openai/gpt-5.6-luna",
+  "anthropic/claude-opus-5.5",
+  "anthropic/claude-sonnet-5.5",
+  "deepseek/deepseek-v4.1-flash-1017",
+  "deepseek/deepseek-v4.1-flash",
   "deepseek/deepseek-v4-pro",
-  "deepseek/deepseek-v4-flash-0731",
 ] as const;
 export const AgentModelOverrideSchema = z.enum(AGENT_MODEL_OVERRIDES);
 export type AgentModelOverride = z.infer<typeof AgentModelOverrideSchema>;

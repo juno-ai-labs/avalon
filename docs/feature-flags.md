@@ -1068,6 +1068,31 @@ hiding the Notifications section.
 
 ## Changelog
 
+### 2026-10-21 — The pin list moves to each vendor's three newest models, and Anthropic joins it
+
+**What changed:** `AGENT_MODEL_OVERRIDES` now holds at most three models per
+vendor, newest first: Grok 4.7 / 4.6 / 4.5, Gemini 4 Argon / 3.8 Flash / 3.7
+Flash, GPT-6.1 Sol / GPT-6 Luna / GPT-5.6 Sol, Claude Opus 5.5 / Sonnet 5.5,
+and DeepSeek V4.1 Flash 1017 / V4.1 Flash / V4 Pro. Grok 4.3, Gemini 3.6 Flash,
+Gemini 3.5 Flash, Gemini 3 Flash Preview, GPT-5.6 Terra and GPT-5.6 Luna left
+the list. Ace keeps offering GPT-5.6 Terra and Grok 4.3 as fleet-route
+suggestions of its own.
+
+**Why:** The developer-mode selector had fallen one to two releases behind
+every vendor, so the newest model anyone could pin was GPT-5.6 Sol. A cap of
+three per vendor keeps the menu short enough to scan as the list is refreshed.
+
+**Considered and rejected:** Keeping every older entry and only adding the new
+ones. The menu would grow with each release, and the older models are rarely
+the ones a comparison wants.
+
+**Consequences:** Every new model routes through OpenRouter; only GPT-5.6 Sol,
+Grok 4.6 and DeepSeek V4 Pro on this list have Azure bindings. A Thread,
+Breakout or Sidekick pinned to a retired id falls back to the flag on its next
+run, because the API re-validates the stored value on read. Ace derives its
+suggestions from this list, so a model that is still a live fleet default must
+be kept in Ace's own extras when it leaves the pin list, as Terra is here.
+
 ### 2026-10-16 — The digest kill switch and its fail-open resolver are removed
 
 **What changed:** `digest-flags.ts` and the `digestsEnabled` client field are
