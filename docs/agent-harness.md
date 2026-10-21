@@ -228,7 +228,14 @@ and execution fences continue to protect the append. Ordinary string-valued
 host nudges retain protocol-only provenance.
 
 `completion_verification_decision` logs the mapped decision, confidence, model
-and failure kind. The shared classifier sink archives exact exchanges and
+and failure kind; this is a recommendation, not evidence that a prompt was
+committed. `agent_completion_reprompted` records a successful recovery-prompt
+commit in structured logs and regional product telemetry, with reason, choice,
+confidence, threshold, requested judge model, and opaque run/parent IDs. It uses
+a stable event ID per execution, emits nothing when a lifecycle gate or commit
+rejects recovery, and never blocks continuation on telemetry. Join its
+`harnessRunId` to `run_terminal` to follow outcomes; it does not prove provider
+delivery or successful recovery. The shared classifier sink archives exact exchanges and
 records usage as `completion_verification`. The
 [eval suite](../packages/agent-harness/evals/premature-stop/README.md) shares the
 production question and fallback mapping; its existing reports remain frozen.
@@ -1593,6 +1600,8 @@ reprompt. The nudge and its execution-scoped marker commit as one derived fact.
 Message-less Sidekick activations resolve their request from the versioned
 definition used by the acting model. Stop fences the nudge commit and next
 reservation; teammate lifecycle includes queued work and earlier delegations.
+Committed reprompts have a separate, deduplicated telemetry event so classifier
+recommendations cancelled by lifecycle gates do not inflate recovery counts.
 
 **Why:** A promise that work is underway was being accepted as the final answer.
 Missing unfinished work is more costly than an extra verification turn. The chosen
