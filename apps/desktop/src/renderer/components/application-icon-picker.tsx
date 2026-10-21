@@ -1,3 +1,4 @@
+import { ErrorNotice } from './primitives';
 import { settings } from '../settings/registry';
 import { SettingLabel } from '../settings/setting-label';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -131,14 +132,15 @@ export function ApplicationIconPicker(): React.JSX.Element {
           );
         })}
       </div>
-      <p aria-live="polite" className={error ? 'settings-app-icon-status is-error' : 'settings-app-icon-status'}>
-        {error ?? (iconState === null
+      {error && <ErrorNotice>{error}</ErrorNotice>}
+      <p aria-live="polite" className="settings-app-icon-status">
+        {iconState === null
           ? 'Loading icon preference…'
           : !iconState.supported
             ? 'Custom app icons are available in the macOS app.'
             : iconState.isAutomatic
               ? `Using ${selectedChoice.label.toLowerCase()} automatically with the system appearance.`
-              : `${selectedChoice.label} is selected.`)}
+              : `${selectedChoice.label} is selected.`}
       </p>
       {iconState && !iconState.isAutomatic && (
         <button

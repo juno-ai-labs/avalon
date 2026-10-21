@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { isBrowserConversationUrl } from '../lib/browser-conversation';
 import { desktopBridge } from '../lib/platform';
-import { Button, InlineError, Modal } from './primitives';
+import { Button, ErrorNotice, Modal } from './primitives';
 
 export interface ImportedSource {
   provider: 'chatgpt' | 'claude' | 'claude_code';
@@ -60,6 +60,6 @@ export function SessionImportUpdateDialog({ open, onClose, source, workstreamId 
     title="Import source updates"
   >
     <p>Read this conversation again in Rally’s browser and add what changed to this thread.</p>
-    {failure && <InlineError>{failure}</InlineError>}
+    {failure && <ErrorNotice>{failure}</ErrorNotice>}
   </Modal>;
 }

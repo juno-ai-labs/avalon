@@ -1,3 +1,4 @@
+import { ErrorNoticeProvider } from '@rally/ui/components/error-notice';
 import { AppErrorBoundary } from "@rally/ui/components/app-error-boundary";
 import { reportJavascriptError } from "../../desktop/src/renderer/lib/telemetry";
 import { installTheme, watchSystemAppearance } from '@rally/ui/lib/theme';
@@ -28,8 +29,8 @@ watchSystemAppearance();
 // remounts the shell: its caches hold what the old relationship could read.
 const root = document.getElementById("root");
 if (!root) throw new Error("Browser root is missing");
-createRoot(root).render(<AppErrorBoundary onError={(error) => reportJavascriptError(error, "react_boundary")}>
+createRoot(root).render(<ErrorNoticeProvider><AppErrorBoundary onError={(error) => reportJavascriptError(error, "react_boundary")}>
   {location.pathname === "/connections/complete"
     ? <ConnectionComplete />
     : <BrowserEntry renderCollaboration={(region, session, onSignOut, onRevalidate) => <BrowserCollaboration onSignOut={onSignOut} onRevalidate={onRevalidate} key={`${region}:${session.user.id}:${session.workspace?.id}:${session.workspace?.accessClass ?? "member"}`} region={region} session={session} />} />}
-</AppErrorBoundary>);
+</AppErrorBoundary></ErrorNoticeProvider>);

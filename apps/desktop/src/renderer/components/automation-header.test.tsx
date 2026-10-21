@@ -200,7 +200,8 @@ describe('AutomationHeader', () => {
     expect(handlers.onArchive).not.toHaveBeenCalled();
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Archive' }));
-    expect(await within(dialog).findByText('The automation is still finishing a run.')).toBeVisible();
+    expect(await screen.findByText('The automation is still finishing a run.')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(handlers.onArchive).toHaveBeenCalledOnce();
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Archive' }));

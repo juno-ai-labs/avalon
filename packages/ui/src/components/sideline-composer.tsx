@@ -1,3 +1,4 @@
+import { ErrorNotice } from './primitives';
 import {
   MESSAGE_MAX_CHARACTERS,
   MESSAGE_TOO_LONG_MESSAGE,
@@ -226,9 +227,7 @@ export function SidelineComposer(props: {
                   />
                 </label>
                 {messageTooLong && (
-                  <p className="sideline-field-message sideline-field-message-error">
-                    <strong>Message:</strong> {MESSAGE_TOO_LONG_MESSAGE}
-                  </p>
+                  <ErrorNotice>{MESSAGE_TOO_LONG_MESSAGE}</ErrorNotice>
                 )}
               </div>
               <div className="sideline-summary">

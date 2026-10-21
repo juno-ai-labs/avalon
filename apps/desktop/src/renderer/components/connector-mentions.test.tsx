@@ -182,6 +182,7 @@ describe('connector connection resolution', () => {
     render(<QueryClientProvider client={new QueryClient()}><ConnectorConnectionUpdateCard /></QueryClientProvider>);
     fireEvent.click(screen.getByRole('button', { name: 'Update Rally' }));
     expect(await screen.findByText('Unable to check for updates.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(screen.getByRole('button', { name: 'Update Rally' })).toBeEnabled();
   });
 

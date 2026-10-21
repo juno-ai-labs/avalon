@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 
 import { useNow } from '../lib/clock';
 import { formatDayLabel } from '../lib/format';
-import { Badge, Button, InlineError } from './primitives';
+import { Badge, Button, ErrorNotice } from './primitives';
 
 /** One remembered fact as a review list draws it: the `MemoryReview` contract's row. */
 export type MemoryMenuFact = MemoryReviewFact;
@@ -94,7 +94,7 @@ export function MemoryFactRows({ facts, onRemove, removals, renderSource }: Omit
             <Horizon fact={fact} now={now} />
             <span>from {renderSource(fact.source, memorySourceTitle(fact.source))}</span>
           </p>
-          {removal && !removal.pending && <InlineError>{removal.refusal}</InlineError>}
+          {removal && !removal.pending && <ErrorNotice>{removal.refusal}</ErrorNotice>}
         </div>
         {fact.removable && <Button
           aria-label={`Remove “${fact.text}”`}

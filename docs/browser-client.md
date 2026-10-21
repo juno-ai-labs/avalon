@@ -96,7 +96,7 @@ page, whose **Continue in browser** keeps the path and swaps the host
 Returning focus refreshes both the root session and the selected workspace
 relationship, even when the user ID is unchanged. The feed stays mounted while
 this check runs, preserving unsent drafts. A denied workspace selection unmounts
-collaboration; a transient request failure leaves the current view with an error.
+collaboration; a transient request failure leaves the current view and opens the shared OK error popup (see [shared UI](shared-ui.md#error-popups)).
 This is focus-time revalidation, not immediate cross-tab logout delivery or a
 replacement for server-side authorization on every operation.
 

@@ -1,3 +1,4 @@
+import { ErrorNotice } from './primitives';
 import type { Annotation } from '@rally/contracts';
 import { classifyAttachmentKind } from '@rally/contracts';
 import clsx from 'clsx';
@@ -142,6 +143,7 @@ export function PendingAttachmentTile({ actionsDisabled = false, attachment, onO
         : preparing ? <PreparingFileCard />
         : <RemoteFileAttachment attachment={record} loadContent={content} onOpen={onOpen} showDownload={false} />}
       {attachment.status === 'uploading' && !preparing && <ProgressRing progress={attachment.progress} />}
+      {attachment.status === 'failed' && <ErrorNotice>{record.fileName} couldn’t be uploaded. Try again.</ErrorNotice>}
       {attachment.status === 'failed' && (
         <button aria-label={`Retry ${record.fileName}`} className="attachment-retry" disabled={actionsDisabled} onClick={onRetry} title={attachment.error} type="button"><RefreshCcw size={14} /></button>
       )}
@@ -217,7 +219,7 @@ export function AttachmentAudio({ name, loadContent }: {
           <Play aria-hidden="true" size={16} /> {requested ? 'Loading audio…' : 'Play audio'}
         </button>
       )}
-      {error && <span role="alert">Audio unavailable. Try again.</span>}
+      {error && <ErrorNotice>Audio unavailable. Try again.</ErrorNotice>}
     </span>
   );
 }
@@ -295,7 +297,7 @@ function RemoteFileAttachment({ attachment, loadContent, onOpen, showDownload = 
         </button>
       )}
     </div>
-    {downloadError && <span role="alert">Download failed. Please try again.</span>}
+    {downloadError && <ErrorNotice>Download failed. Please try again.</ErrorNotice>}
     </div>
   );
 }

@@ -15,7 +15,6 @@ import clsx from 'clsx';
 import { personalColor, personalColorInk } from '../components/personal-avatar';
 import { MemberPresentationContext } from '../lib/member-presentation';
 import {
-  AlertTriangle,
   Ellipsis,
   FileText,
   FileUp,
@@ -138,7 +137,7 @@ import { AttachmentPanel } from '../components/attachment-panel';
 import type { AttachmentPreview } from '../components/attachments';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import { HumanMessageBody } from '../components/workstream-blocks';
-import { Avatar, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal } from '../components/primitives';
+import { Avatar, Badge, Button, EmptyState, IconButton, ErrorNotice, LoadingState, Modal } from '../components/primitives';
 import { ConversationAccessRequest } from '../components/conversation-access-request';
 import { useAccessRequests, useDecideAccessRequest } from '../lib/access-requests';
 import { CopyButton } from '../components/copy-button';
@@ -692,9 +691,9 @@ export function AddParticipantDialog({
       open={open}
       title="Add a participant"
     >
-      {failure ? <InlineError>{failureMessage ?? (failure === 'add'
+      {failure ? <ErrorNotice>{failureMessage ?? (failure === 'add'
         ? 'That participant couldn’t be added.'
-        : 'That participant couldn’t be removed.')}</InlineError> : null}
+        : 'That participant couldn’t be removed.')}</ErrorNotice> : null}
       {sharing}
       <div className="member-action-list">
         {listed.map((member) => {
@@ -795,7 +794,7 @@ export function RemoveParticipantDialog({ failure, member, noun, onCancel, onCon
       open={member !== undefined}
       title={self ? `Leave the ${noun}?` : `Remove ${member?.name ?? 'this person'} from the ${noun}?`}
     >
-      {failure ? <InlineError>{failure}</InlineError> : null}
+      {failure ? <ErrorNotice>{failure}</ErrorNotice> : null}
     </Modal>
   );
 }
@@ -876,9 +875,9 @@ export function AddResourceDialog({
           />
         </label>
         {incomplete && <div role="status">Some resources are unavailable. <Button onClick={onRetry}>Retry</Button></div>}
-        {failure ? <InlineError>{failure === 'load'
+        {failure ? <ErrorNotice>{failure === 'load'
           ? 'Resources couldn’t be loaded.'
-          : 'That resource couldn’t be added.'}</InlineError> : null}
+          : 'That resource couldn’t be added.'}</ErrorNotice> : null}
         {loading ? (
           <LoadingState label="Finding resources…" />
         ) : available.length === 0 ? (
@@ -943,9 +942,12 @@ export function WorkstreamErrorState({
         </DropdownMenu.Root>
       </div>
       <EmptyState
-        action={<Button onClick={onRetry}><RefreshCcw size={14} /> Try again</Button>}
-        description={description}
-        title={`${parentNoun === 'automation' ? 'Sidekick' : 'Thread'} could not be opened`}
+        action={<div className="empty-state-actions">
+          <ErrorNotice detailsLabel="Connection details" title={`${parentNoun === 'automation' ? 'Sidekick' : 'Thread'} could not be opened`}>{description}</ErrorNotice>
+          <Button onClick={onRetry}><RefreshCcw size={14} /> Try again</Button>
+        </div>}
+        description="Try opening it again."
+        title={parentNoun === 'automation' ? 'Sidekick' : 'Thread'}
       />
     </div>
   );
@@ -1036,12 +1038,14 @@ export function conversationReadAcknowledgement(input: {
 }
 
 export function RunFailureNotice({
+  automatic = true,
   code,
   message,
   requestId,
   retrying,
   onRetry,
 }: {
+  automatic?: boolean;
   code: string;
   message: string;
   requestId?: string;
@@ -1049,10 +1053,9 @@ export function RunFailureNotice({
   onRetry: () => void;
 }): React.JSX.Element {
   return (
-    <section aria-label="Run failed" className="run-failure-notice" role="alert">
-      <span aria-hidden="true" className="run-failure-icon"><AlertTriangle size={16} /></span>
+    <section aria-label="Run recovery" className="run-recovery">
+      <ErrorNotice automatic={automatic} detailsLabel="Run details" occurrence={requestId} title="Run failed">
       <div className="run-failure-copy">
-        <strong>Run failed</strong>
         <p>{message}</p>
         <code>{code}</code>
         {/* The id is shown beside its control rather than hidden behind a
@@ -1066,6 +1069,7 @@ export function RunFailureNotice({
           </div>
         ) : null}
       </div>
+      </ErrorNotice>
       <div className="run-failure-actions">
         <Button className="button-primary" disabled={retrying} onClick={onRetry}>
           {retrying ? <LoaderCircle aria-hidden="true" className="spin" size={13} /> : <RefreshCcw aria-hidden="true" size={13} />}
@@ -1710,6 +1714,14 @@ function ConversationSurfaceContent({
     orderedTranscript.data,
   );
   const routedDetail = payloadBelongsToRoute ? workstream.data : undefined;
+  // A stored failure is available through Run details. Only a run seen active
+  // in this conversation is a new interruption, including across cache updates.
+  const observedActiveRun = useRef<string | null>(null);
+  useEffect(() => {
+    if (routedDetail?.harnessStatus === 'running') {
+      observedActiveRun.current = routedDetail.latestHarnessRunId ?? routedDetail.latestHarnessRun?.id ?? null;
+    }
+  }, [routedDetail]);
   // Only a thread's Main merges into a Channel; nothing else asks.
   const eligibleMergeChannels = useMergeChannels(api, id,
     parentKind === 'workstream' && substreamId === '0' && !guest && routedDetail !== undefined);
@@ -3779,8 +3791,8 @@ function ConversationSurfaceContent({
               </Button>
             </div>
           )}
-          {olderMessagesError && <InlineError>{olderMessagesError}</InlineError>}
-          {otherHistoryError && <InlineError>{otherHistoryError}</InlineError>}
+          {olderMessagesError && <ErrorNotice>{olderMessagesError}</ErrorNotice>}
+          {otherHistoryError && <ErrorNotice>{otherHistoryError}</ErrorNotice>}
           {/* No starting context here: it is what the child's runs read, not a
               turn anybody said. `docs/substream-creation.md` has why. The
               origin card is the Channel's own messages, which people did say,
@@ -3847,6 +3859,7 @@ function ConversationSurfaceContent({
               && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...activityRow.timing} />}</ActivityPresence>
           {detail.harnessStatus === 'failed' && detail.latestHarnessRun?.status === 'failed' && (
             <RunFailureNotice
+              automatic={observedActiveRun.current === detail.latestHarnessRun.id}
               code={detail.latestHarnessRun.error?.code ?? 'harness_execution_failed'}
               message={latestRunFailureMessage}
               onRetry={() => retry.mutate()}

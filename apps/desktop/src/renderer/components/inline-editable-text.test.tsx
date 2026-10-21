@@ -94,7 +94,12 @@ describe('InlineEditableText', () => {
     expect(onSave).not.toHaveBeenCalled();
     expect(input).toHaveValue('J');
     expect(input).toHaveAttribute('aria-invalid', 'true');
-    expect(screen.getByRole('alert')).toHaveTextContent('Use 2 to 120 characters.');
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Use 2 to 120 characters.');
+    expect(input).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    expect(input).toHaveValue('J');
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Use 2 to 120 characters.');
   });
 
   it('returns focus to the name after Enter or Escape, but not after a click away', async () => {

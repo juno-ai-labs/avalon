@@ -278,6 +278,7 @@ describe('SessionGate identity-first ordering', () => {
     renderGate();
 
     expect(await screen.findByText('Regional service unavailable.')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     await vi.waitFor(() => expect(workstreamFeedOpenAttemptId(workstreamId)).toBeUndefined());
 
     sessionState.api.getWorkspace.mockResolvedValueOnce({
@@ -412,6 +413,7 @@ describe('SessionGate identity-first ordering', () => {
       sessionState.api.getWorkspace.mockRejectedValueOnce(new Error('Regional service unavailable.'));
       renderGate();
       expect(await screen.findByText('Regional service unavailable.')).toBeVisible();
+      fireEvent.click(screen.getByRole('button', { name: 'OK' }));
 
       fireEvent.keyDown(document.body, { key: 'Escape' });
 

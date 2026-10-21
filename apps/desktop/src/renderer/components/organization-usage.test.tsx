@@ -147,6 +147,7 @@ describe('Usage in Settings', () => {
     fireEvent.keyDown(screen.getByRole('option', { name: /Growth plan/ }), { key: 'Enter' });
 
     expect(await screen.findByText('The plan could not be changed. This action requires a workspace administrator')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(screen.getByRole('combobox', { name: 'Plan' })).toHaveTextContent('Starter plan');
   });
 

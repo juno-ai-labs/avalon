@@ -28,7 +28,7 @@ import { openMemorySource, useMemoryFacts } from '../components/memory-review';
 import { MarkdownBody, MessageActions } from '../components/workstream-blocks';
 import type { CitationContext } from '../components/markdown-citations';
 import { openLink } from '../lib/browser-rail-links';
-import { Avatar, Button, EmptyState, InlineError, LoadingState, Modal, RallyAvatar } from '../components/primitives';
+import { Avatar, Button, EmptyState, ErrorNotice, LoadingState, Modal, RallyAvatar } from '../components/primitives';
 import { RelativeTime } from '../components/relative-time';
 import { reportActivityEvent } from '../lib/activity-events';
 import { useAppSession } from '../lib/app-session';
@@ -519,18 +519,19 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
           a removal, an archive) cannot be continued against the next Channel. */}
       <ChannelHeader key={space.id} members={members.data ?? []} space={space} workspace={workspace} />
       <div className="channel-feed-pane">
-        {feed.isError && <InlineError>{isFetchNextPageError
+        {feed.isError && <ErrorNotice occurrence={feed.error}>{isFetchNextPageError
           ? 'Earlier messages couldn’t be loaded. Use Show earlier to retry.'
-          : 'The threads in this channel couldn’t be loaded.'}</InlineError>}
-        {statsUnavailable && <InlineError>
-          Your reading position couldn’t be loaded. <Button onClick={() => {
+          : 'The threads in this channel couldn’t be loaded.'}</ErrorNotice>}
+        {statsUnavailable && <>
+          <ErrorNotice occurrence={channelStats.error}>Your reading position couldn’t be loaded.</ErrorNotice>
+          <Button onClick={() => {
             anchoredChannel.current = null;
             openingRead.current = null;
             degradedOpening.current = false;
             setPositionedChannel(null);
             void channelStats.refetch();
           }}>Retry reading position</Button>
-        </InlineError>}
+        </>}
         <div
           className="channel-feed transcript-scroll"
           onScroll={(event) => {
@@ -1145,7 +1146,7 @@ function ChannelHeader({ members, space, workspace }: {
     <div className="channel-header">
       <TitlePillHeader current={level} trailing={importButton} />
     </div>
-    {failure && <InlineError>{failure}</InlineError>}
+    {failure && <ErrorNotice>{failure}</ErrorNotice>}
     <Modal
       footer={<>
         <Button onClick={() => setRenaming(null)}>Cancel</Button>

@@ -83,13 +83,15 @@ describe('AutomationScreen load failure', () => {
     shell.host = 'browser';
     getAutomation.mockRejectedValue(new Error('Sidekick not found'));
     renderScreen(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Close' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'OK' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(window.location.hash).toBe('#/');
   });
 
   it('leaves closing to the window in the Mac app', async () => {
     getAutomation.mockRejectedValue(new Error('Sidekick not found'));
     renderScreen(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    fireEvent.click(await screen.findByRole('button', { name: 'OK' }));
     expect(await screen.findByRole('button', { name: 'Try again' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Close' })).toBeNull();
   });

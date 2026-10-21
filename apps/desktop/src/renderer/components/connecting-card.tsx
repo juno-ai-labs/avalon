@@ -1,3 +1,4 @@
+import { ErrorNotice } from './primitives';
 import { AlertTriangle, LoaderCircle, WifiOff } from 'lucide-react';
 import clsx from 'clsx';
 import type { PropsWithChildren } from 'react';
@@ -66,8 +67,8 @@ export function ConnectingCard({ detail, error, name, onRetry, state, subject }:
             : <AlertTriangle size={14} />}
       </span>
       <span className="connecting-card-copy">
-        <span className="connecting-card-sentence">{sentence}</span>
-        {state === 'failed' && error && <small>{error}</small>}
+        <span className="connecting-card-sentence">{state === 'failed' ? <>Connect to {target}</> : sentence}</span>
+        {state === 'failed' && <ErrorNotice><p>{sentence}</p>{error && <p>{error}</p>}</ErrorNotice>}
         {detail && <small>{detail}</small>}
       </span>
       {state === 'failed' && onRetry && <Button onClick={onRetry}>Retry</Button>}
