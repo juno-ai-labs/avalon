@@ -19,7 +19,7 @@ const EvaluationReportSchema = z.object({
     latencyMs: z.number().nonnegative(),
     error: z.string().optional(),
     resolvedModels: z.array(z.string()).optional(),
-    cascadeRoute: z.enum(["typesafe", "fallback", "terminal_heuristic"]).optional(),
+    cascadeRoute: z.enum(["not_needed", "typesafe", "fallback", "terminal_heuristic"]).optional(),
     cascadeFallbackReason: z.enum(["low_confidence", "typesafe_failure"]).optional(),
     typesafeConfidence: z.number().min(0).max(1).optional(),
   })),
