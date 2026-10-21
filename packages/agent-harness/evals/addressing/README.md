@@ -90,8 +90,8 @@ frozen during this search, evaluated after the final candidate was selected.
 They are now consumed holdout cases and should be treated as regressions for
 future edits.
 
-`deferred-actions-2026-10-21.json` records the rejected initial prompt edit.
-`continuation-2026-10-21.json` records dedicated-classifier experiments and final
-live validation, separating accepted primary answers, fallback answers, and
-provider failures. Passing the dedicated question in isolation does not establish
+`continuation-2026-10-21.json` preserves a compact historical summary with
+configuration, corpus and source fingerprints, per-class results, and limitations.
+It separates the historical search from a rerun after review fixes to classifier
+concurrency, signal preservation, sender identity, and one mislabeled fixture. Passing the dedicated question in isolation does not establish
 correctness of the full admission decision.

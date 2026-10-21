@@ -359,27 +359,37 @@ A separate continuation classifier handles information supplied for earlier work
 `classifyMessageAdmission` composes it with ordinary addressing without changing
 the addressing prompt. It receives the same bounded history, separates human
 instructions from agent replies with sequence positions, and includes the current
-sender. The continuation Choice returns three operational decisions; a second
-Choice checks whether a human assigned the relevant work to Rally. Both questions
-share one request. A proposed wake-up with an unconfirmed or disputed assignment
-uses the focused fallback, rather than letting an unsolicited agent offer or a
-human-owned task create authority:
+sender. Supplied sender names identify contributors; a self-identification or
+relayed report cannot stand in for another person's own required reply. A distinct
+speaker list is derived from that metadata. The continuation Choice returns
+three operational decisions. Separate Choices
+check the human assignment and whether each required contributor has their own
+author-attributed turn. All three share one request. A proposed wake-up with
+unconfirmed assignment or contributor evidence uses the focused fallback, rather
+than letting an unsolicited agent offer, a relayed report, or a human-owned task
+create authority:
 
 - `resume_requested_work`: the newest message completes the prerequisites of an
-  unfinished human request to Rally. Admit it without invoking ordinary addressing.
+  unfinished human request to Rally. Use it instead of the ordinary addressing result.
 - `followup_without_rally_action`: information follows earlier work but Rally
   has no ready action. Keep Rally inactive even if ordinary addressing mistook a
-  partial input, human-owned task, or closed request for new work.
+  partial input, human-owned task, or closed request for new work. During an
+  active task or with connector addressing, keep ordinary addressing so
+  continuation cannot veto signals it does not see. Addressing Rally by name
+  alone does not make partial inputs ready.
 - `use_addressing`: a new request to Rally, including a revision, or a message
   unrelated to earlier work. Keep the ordinary addressing decision.
 
-This check runs first when history exists and TypeSafe is configured; only
-`use_addressing` reaches ordinary addressing. It uses the same
+When history exists and TypeSafe is configured, both classifiers start
+concurrently. Continuation selects which result to use, and cancels ordinary
+addressing when its result is unnecessary. It uses the same
 one-second primary deadline and strict confidence greater than `0.5` as addressing.
 Low confidence or failure uses a continuation-specific prompt on
 `openai/gpt-6.1-sol`, low reasoning, pinned to `openai` without provider/model
-fallback, within the existing 15-second fallback budget. If both stages fail,
-`use_addressing` preserves the original decision. Caller cancellation propagates.
+fallback, with its own 15-second deadline. Addressing has an independent
+15-second fallback deadline; they overlap instead of adding serially. A fallback
+answer at or below `0.5`, or failure of both stages, returns `use_addressing`
+to preserve the ordinary decision. Caller cancellation propagates.
 Each stage has schema name `message_continuation`; final outcome logs record its
 decision, confidence, and stage separately from ordinary addressing.
 
@@ -1622,14 +1632,6 @@ memory; different metadata replaces the entry. They contain no executor closures
 credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
-Continuation guards are covered by
-`packages/agent-harness/src/message-continuation.test.ts` and
-`apps/api/test/addressing-classifier-logging.test.ts`. The service test exercises
-both waking a human-only decision and suppressing an erroneous action decision,
-with provider HTTP doubled. `apps/api/test/addressing-history.test.ts` exercises
-the production history query against real object migrations. Synthetic scenarios
-and content-free live evidence live in `packages/agent-harness/evals/addressing/`.
-
 ## Changelog
 
 ### 2026-10-21 — Verify uncertain completion once before ending a turn
@@ -1660,7 +1662,10 @@ existing work, ambiguous writes or required input.
 turns. A dedicated JEV continuation decision, with sender identity, composes with
 ordinary addressing: ready follow-ups wake Rally; partial, human-owned, cancelled,
 superseded, and completed-work follow-ups leave it inactive; new requests retain
-ordinary addressing. Uncertain continuation decisions use a focused Sol fallback.
+ordinary addressing. Both classifiers start concurrently; uncertain continuation
+decisions use a focused Sol fallback and hand back to addressing if still unsure.
+Later admissions wait for earlier preparations to settle and classify against
+canonical text plus accepted queued text, preserving contributor order.
 
 **Why:** A requested report could look like human conversation even though its
 arrival made earlier work ready. Tool turns displaced that request from history,
@@ -1678,10 +1683,16 @@ lifecycle; this change uses the bounded transcript instead. The existing DeepSee
 fallback misclassified human-owned tasks in live evaluation, so continuation uses
 the separately evaluated Sol route.
 
-**Consequences:** Messages with history pay for a separate check. Ordinary
-addressing pins and input-admission machinery remain in place. There is no
-recovery beyond visible history. The evaluation report records rejected versions,
-provider failures, and full admission results separately from isolated JEV results.
+**Consequences:** Messages with history spend two overlapping checks, cancelling
+ordinary addressing when it is unnecessary. Concurrent human admissions wait on
+earlier preparations so two final reports cannot both miss each other; failed
+preparations contribute no text. Active-task and connector addressing signals
+remain with ordinary addressing. There is no recovery beyond the latest ten
+text turns. A compact evaluation summary preserves the historical results;
+review fixes changed composition and clarified sender identity, with corrected
+synthetic regressions evaluated again.
+
+PR: [#1376](https://github.com/juno-ai-labs/avalon/pull/1376).
 
 ### 2026-10-20 — Resume verified settled history after a loop relocation
 

@@ -10,6 +10,10 @@ export interface MessageContinuationInput {
 export function messageContinuationState(input: MessageContinuationInput) {
   const recent = limitAddressingRecentMessages(input.recentMessages);
   return {
+    contributor_speakers: [...new Set([
+      ...recent.flatMap((turn) => turn.authorType === "human" && turn.authorName ? [turn.authorName] : []),
+      ...(input.authorName ? [input.authorName] : []),
+    ])],
     human_turns: recent.flatMap((turn, sequence) => turn.authorType === "human"
       ? [{ sequence, authorName: turn.authorName, message: turn.message }] : []),
     agent_turns: recent.flatMap((turn, sequence) => turn.authorType === "agent"
@@ -24,7 +28,7 @@ Read human_turns and agent_turns in sequence order, followed by new_message. A h
 
 For an actual request to Rally, identify its remaining result and prerequisites. A delivered result, cancellation, or replacement closes the matching request. An unrelated exchange leaves it open. Repeating unchanged input after delivery does not reopen the work.
 
-Return decision=resume_requested_work only when new_message supplies the remaining prerequisites for unfinished work. Include the newest speaker when matching required contributors by authorName, first names, or initials. All required inputs must be present. Receiving a requested report satisfies a reporting condition even when it describes unfinished activities. A promise to send the report later does not satisfy that condition. If the instruction instead requires activities to finish, a progress report does not establish completion.
+Return decision=resume_requested_work only when new_message supplies the remaining prerequisites for unfinished work. Include the newest speaker when matching required contributors by authorName, first names, or initials. The supplied authorName identifies the speaker; self-identification or a relayed report in message text cannot replace another contributor's own reply. All required inputs must be present. Receiving a requested report satisfies a reporting condition even when it describes unfinished activities. A promise to send the report later does not satisfy that condition. If the instruction instead requires activities to finish, a progress report does not establish completion.
 
 Return decision=followup_without_rally_action when the new message supplies information for earlier work but Rally has no ready requested action: inputs are partial, the task belongs to a person, the instruction is quoted, the agent only volunteered, or the matching request is closed.
 

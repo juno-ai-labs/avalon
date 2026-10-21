@@ -517,6 +517,7 @@ export class WorkstreamObjectProductService {
     depth: number;
     claimedAt: number;
   }>();
+  private readonly inputPreparationWaiters = new Map<string, Set<() => void>>();
 
   constructor(
     private readonly storage: DurableObjectStorage,
@@ -720,6 +721,33 @@ export class WorkstreamObjectProductService {
     const claim = this.activeInputPreparations.get(inputId);
     if (!claim || claim.depth <= 1) this.activeInputPreparations.delete(inputId);
     else this.activeInputPreparations.set(inputId, { ...claim, depth: claim.depth - 1 });
+    this.releaseInputPreparationWaiters(inputId);
+  }
+
+  private releaseInputPreparationWaiters(inputId: string): void {
+    if (this.loops.inputPreparation(inputId)?.state !== "preparing") {
+      const waiters = this.inputPreparationWaiters.get(inputId);
+      this.inputPreparationWaiters.delete(inputId);
+      for (const resolve of waiters ?? []) resolve();
+    }
+  }
+
+  private async waitForEarlierInputPreparations(inputSequence: number): Promise<void> {
+    for (;;) {
+      const earlier = this.loops.oldestPreparingInput();
+      if (!earlier || earlier.input_sequence >= inputSequence) return;
+      if (!this.inputPreparationClaimIsLive(earlier.input_id, Date.now())) {
+        await this.resumeOldestInputPreparation();
+        continue;
+      }
+      // Recovery of a cancelled invocation settles the same durable mailbox row
+      // and releases these waiters through endInputPreparation as well.
+      await new Promise<void>((resolve) => {
+        const waiters = this.inputPreparationWaiters.get(earlier.input_id) ?? new Set();
+        waiters.add(resolve);
+        this.inputPreparationWaiters.set(earlier.input_id, waiters);
+      });
+    }
   }
 
   /**
@@ -998,6 +1026,9 @@ export class WorkstreamObjectProductService {
   }
 
   async resumeOldestInputPreparation(): Promise<"none" | "active" | "settled"> {
+    // An invocation may have committed and then been cancelled before its
+    // finally. The durable mailbox, rather than that invocation, releases waiters.
+    for (const inputId of this.inputPreparationWaiters.keys()) this.releaseInputPreparationWaiters(inputId);
     if (await this.recoverTerminalAttachmentReservation()) return "settled";
     const preparation = this.loops.oldestPreparingInput();
     if (!preparation) return "none";
@@ -1017,6 +1048,7 @@ export class WorkstreamObjectProductService {
         terminalCode: this.preparationFailureCode(error),
         now: Date.now(),
       });
+      this.releaseInputPreparationWaiters(preparation.input_id);
       return "settled";
     }
     try {
@@ -3935,18 +3967,27 @@ export class WorkstreamObjectProductService {
     }).then((routing) => routing.model);
   }
 
-  private async recentAddressingMessages(beforeTranscriptSequence: number): Promise<AddressingContextMessage[]> {
+  private async recentAddressingMessages(beforeTranscriptSequence: number, beforeInputSequence = 0): Promise<AddressingContextMessage[]> {
     const rows = this.storage.sql.exec<{
       author_type: "member" | "agent";
       author_user_id: string | null;
       content: string | null;
     }>(
-      `SELECT author_type, author_user_id, content FROM canonical_conversation_turn_details
-        WHERE substream_id = '0' AND sequence_number < ? AND message_type = 'text'
-          AND author_type IN ('member', 'agent')
-          AND trim(content, char(9, 10, 13, 32)) <> ''
-        ORDER BY sequence_number DESC LIMIT 10`,
+      `SELECT author_type, author_user_id, content FROM (
+         SELECT author_type, author_user_id, content, 0 AS source_order, sequence_number AS turn_order
+           FROM canonical_conversation_turn_details
+          WHERE substream_id = '0' AND sequence_number < ? AND message_type = 'text'
+            AND author_type IN ('member', 'agent')
+         UNION ALL
+         SELECT 'member' AS author_type,
+                author_user_id, json_extract(prepared_payload_json, '$.content') AS content,
+                1 AS source_order, input_sequence AS turn_order
+           FROM pending_loop_inputs
+          WHERE input_sequence < ? AND message_type = 'text' AND actor = 'human'
+       ) WHERE trim(content, char(9, 10, 13, 32)) <> ''
+        ORDER BY source_order DESC, turn_order DESC LIMIT 10`,
       beforeTranscriptSequence,
+      beforeInputSequence,
     ).toArray().reverse();
     const memberIds = [...new Set(rows.flatMap((row) =>
       row.author_type === "member" && row.author_user_id ? [row.author_user_id] : []))];
@@ -4924,6 +4965,7 @@ export class WorkstreamObjectProductService {
         defer: this.defer,
       });
     } else if (!shouldInvoke) {
+      await this.waitForEarlierInputPreparations(preparation.input_sequence);
       const activeTask = this.loops.loop()?.status === "executing";
       const classification = await classifyWorkstreamMessage(this.env, {
         workspaceId: auth.workspaceId,
@@ -4938,7 +4980,7 @@ export class WorkstreamObjectProductService {
           next_transcript_sequence: number;
         } & Record<string, SqlStorageValue>>(
           `SELECT next_transcript_sequence FROM transcript_counters WHERE id = 1`,
-        ).one().next_transcript_sequence)),
+        ).one().next_transcript_sequence), preparation.input_sequence),
         defer: this.defer,
       });
       shouldInvoke = classification.classification === "agent_action"

@@ -4,11 +4,13 @@ import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:tes
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { asSubstreamId, asUserId, asWorkspaceId } from "@rally/contracts";
 import type { AuthContext, Env } from "../src/env";
-import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
+import { conversationObjectName, substreamLoopId, workspaceDOName } from "../src/durable-objects/names";
 import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
 import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
 import { SubstreamCreationService } from "../src/services/substream-creation-service";
-import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
+import { admitFixturePendingInput, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
+import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-storage";
+import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
@@ -184,4 +186,75 @@ it.each(["slack", "opportunity"])("keeps explicit %s invocations out of opening 
   expect(created.harnessRunId).not.toBeNull();
   expect(calls).toBe(0);
   await reply(new WorkstreamObjectClient(creationEnv(), auth, created.workstream.id), created.workstream.id);
+});
+
+it("sees both required reports when the second arrives during the first classification", async () => {
+  const peerId = asUserId("00000000-0000-7000-8000-00000000ad74");
+  const peerSession = "00000000-0000-7000-8000-00000000ad75";
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO users (id, email, name, timezone, created_at) VALUES (?, 'ren@example.test', 'Ren', 'UTC', '2026-10-21T00:00:00.000Z')").bind(peerId),
+    env.DB.prepare("INSERT INTO workspace_members (workspace_id, user_id, status, role) VALUES (?, ?, 'active', 'member')").bind(workspaceId, peerId),
+    env.DB.prepare("INSERT INTO sessions (id, user_id, workspace_id, region, expires_at) VALUES (?, ?, ?, 'global', '2099-01-01T00:00:00Z')").bind(peerSession, peerId, workspaceId),
+  ]);
+  const created = await new WorkstreamObjectCreationService(creationEnv(), auth).createPrepared({
+    title: "Reports", clientMessageId: "reports-opening", participantUserIds: [peerId],
+  }, { messages: [{ role: "user", text: "Rally, after Member and Ren each send their report, summarize both." }] });
+  const client = new WorkstreamObjectClient(creationEnv(), auth, created.workstream.id);
+  const peer = new WorkstreamObjectClient(creationEnv(), { ...auth, userId: peerId, sessionId: peerSession }, created.workstream.id);
+  const previousFetch = globalThis.fetch;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const continuationInputs: { human_turns: { message: string }[]; new_message: { message: string } }[] = [];
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>(async (url, init) => {
+    if (String(url) !== "https://api.typesafe.ai/v1/systemone") return previousFetch(url, init);
+    const body = JSON.parse(String(init?.body));
+    if (body.questions?.addressing) return Response.json({ model: "jev-1.13.0", answers: { addressing: { type: "choice", choice: "people_only", confidence: 0.99 } } });
+    if (!body.questions?.continuation) return new Response("", { status: 503 });
+    continuationInputs.push(body.state);
+    if (body.state.new_message.message === "Member report: backup missing.") await gate;
+    const ready = body.state.new_message.message === "Ren report: launch blocked."
+      && body.state.human_turns.some((turn: { message: string }) => turn.message.includes("Member report: backup missing."));
+    return Response.json({ model: "jev-1.13.0", answers: {
+      assignment: { type: "choice", choice: "assigned_to_rally", confidence: 0.99 }, contributors: { type: "choice", choice: "contributors_present", confidence: 0.99 },
+      continuation: { type: "choice", choice: ready ? "resume_requested_work" : "followup_without_rally_action", confidence: 0.99 },
+    } });
+  }));
+  const message = { clientMessageId: "member-report", text: "Member report: backup missing.", mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] };
+  const first = client.createMessage(message);
+  let second: ReturnType<typeof peer.createMessage> | undefined;
+  try {
+    await expect.poll(() => continuationInputs.length).toBe(1);
+    second = peer.createMessage({ ...message, clientMessageId: "ren-report", text: "Ren report: launch blocked." });
+    await expect.poll(() => runInDurableObject(conversation(created.workstream.id), (_instance, state) =>
+      state.storage.sql.exec("SELECT COUNT(*) AS n FROM pending_loop_input_mailbox WHERE client_message_id IN ('member-report', 'ren-report')").one().n)).toBe(2);
+    release();
+    await Promise.all([first, second]);
+    expect(continuationInputs[1]!.human_turns.map((turn) => turn.message)).toContain("Member report: backup missing.");
+    await reply(client, created.workstream.id);
+  } finally {
+    release();
+    await Promise.allSettled([first, ...(second ? [second] : [])]);
+  }
+});
+
+it("bounds combined canonical and accepted queued context to ten nonblank text turns", async () => {
+  const created = await new WorkstreamObjectCreationService(creationEnv(), auth).createPrepared({
+    title: "Queued reports", clientMessageId: "queued-opening", participantUserIds: [],
+  }, { messages: [{ role: "user", text: "Earlier canonical text" }] });
+  const messages = await runInDurableObject(conversation(created.workstream.id), async (instance, state) => {
+    const loopId = substreamLoopId(created.workstream.id);
+    for (let index = 1; index <= 12; index++) {
+      await admitFixturePendingInput(state, { inputId: `queued-${index}`, text: `Report ${index}`, loopId });
+    }
+    await admitFixturePendingInput(state, { inputId: "blank-queued", text: " \t\r\n ", loopId });
+    const loops = new SubstreamLoopStorage(state.storage);
+    const failed = loops.reserveInputPreparation({ inputId: "failed-report", loopId, clientMessageId: "failed-report",
+      preparationKind: "human_message", envelopeJson: JSON.stringify({ input: { text: "Rejected report" } }), now: Date.now() });
+    loops.failInputPreparation({ inputId: failed.preparation.input_id, terminalCode: "invalid_workspace_member", now: Date.now() });
+    const current = await admitFixturePendingInput(state, { inputId: "current-report", text: "Current report", loopId });
+    const service = (instance as unknown as { product: WorkstreamObjectProductService }).product;
+    const before = Number(state.storage.sql.exec("SELECT next_transcript_sequence FROM transcript_counters WHERE id = 1").one().next_transcript_sequence);
+    return (await service["recentAddressingMessages"](before, current.input.input_sequence)).map((turn) => turn.message);
+  });
+  expect(messages).toEqual(["Report 3", "Report 4", "Report 5", "Report 6", "Report 7", "Report 8", "Report 9", "Report 10", "Report 11", "Report 12"]);
 });

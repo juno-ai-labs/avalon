@@ -103,13 +103,11 @@ async function evaluateCase(
 ): Promise<AddressingEvaluationResult> {
   const startedAt = performance.now();
   const resolvedModels = new Set<string>();
-  let addressingAttempted = false;
   let openRouterAttempted = false;
   let openRouterTerminalSuccess: boolean | undefined;
   let typesafeConfidence: number | undefined;
   let typesafeFailure = false;
   const onDiagnostic = (event: StructuredModelDiagnostic): void => {
-    if (event.schemaName === "message_addressing" && event.stage === "model_request") addressingAttempted = true;
     if (event.model) resolvedModels.add(`${event.provider ?? "openrouter"}:${event.model}`);
     if (event.schemaName === "message_addressing" && (event.provider ?? "openrouter") === "openrouter" && event.stage === "model_request") {
       openRouterAttempted = true;
@@ -164,6 +162,7 @@ async function evaluateCase(
             ...(reasoningEffort ? { reasoningEffort } : {}),
           });
     const resultModel = target === "cascade" ? `typesafe/jev-latest -> ${model}` : model;
+    const continuationSelected = admission?.continuation !== undefined && admission.continuation.decision !== "use_addressing";
     return {
       caseId: evaluationCase.id,
       model: resultModel,
@@ -173,10 +172,10 @@ async function evaluateCase(
       latencyMs: Math.round(performance.now() - startedAt),
       resolvedModels: [...resolvedModels],
       ...(target === "cascade" ? {
-        cascadeRoute: !addressingAttempted ? "not_needed" as const : openRouterAttempted
+        cascadeRoute: continuationSelected ? "not_needed" as const : openRouterAttempted
           ? openRouterTerminalSuccess === false ? "terminal_heuristic" as const : "fallback" as const
           : "typesafe" as const,
-        ...(openRouterAttempted ? {
+        ...(!continuationSelected && openRouterAttempted ? {
           cascadeFallbackReason: typesafeFailure ? "typesafe_failure" as const : "low_confidence" as const,
         } : {}),
         ...(typesafeConfidence !== undefined ? { typesafeConfidence } : {}),
