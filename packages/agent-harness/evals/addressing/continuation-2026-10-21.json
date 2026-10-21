@@ -1,0 +1,90 @@
+{
+  "generatedAt": "2026-10-21T20:56:51.966Z",
+  "status": "Evaluated PR candidate; deployment and production verification not performed.",
+  "configuration": {
+    "typesafe": {
+      "model": "jev-latest",
+      "confidenceThresholdExclusive": 0.5,
+      "timeoutMs": 1000
+    },
+    "continuation": {
+      "model": "jev-latest",
+      "confidenceThresholdExclusive": 0.5,
+      "timeoutMs": 1000,
+      "fallbackModel": "openai/gpt-6.1-sol",
+      "fallbackProvider": "openai",
+      "fallbackReasoningEffort": "low",
+      "fallbackTimeoutMs": 15000
+    },
+    "fallback": {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "provider": "wafer/fast",
+      "reasoningEffort": "low",
+      "providerFallbacks": false,
+      "timeoutMs": 15000
+    }
+  },
+  "reviewValidation": {
+    "cases": 103,
+    "wakeDecisionCorrect": 103,
+    "exactActorLabelsCorrect": 99,
+    "providerErrors": 0,
+    "byClassification": {
+      "agent_action": {
+        "support": 33,
+        "precision": 0.9166666666666666,
+        "recall": 1,
+        "f1": 0.9565217391304348
+      },
+      "human_only": {
+        "support": 62,
+        "precision": 0.9841269841269841,
+        "recall": 1,
+        "f1": 0.9919999999999999
+      },
+      "both": {
+        "support": 4,
+        "precision": 1,
+        "recall": 0.25,
+        "f1": 0.4
+      },
+      "uncertain": {
+        "support": 4,
+        "precision": 1,
+        "recall": 0.75,
+        "f1": 0.8571428571428571
+      }
+    },
+    "continuationStages": {
+      "primary": 62,
+      "no_history": 18,
+      "fallback": 23
+    },
+    "datasetSha256": "00ec83962a0d3a5b9a82c168eb589a603617c5c9674999d6e790ead1719c7795",
+    "sourceFingerprintSha256": "cb0a758529cd63eef6a3818b964ce0e068a36d2fd3165b797d9514542f4205d9",
+    "provenance": "91 synthetic development regressions plus 12 consumed synthetic holdout cases, including a corrected sender label and its negative counterpart. No private production data was replayed after review edits.",
+    "limitations": "This is a development regression result, not an unseen production accuracy estimate. Two-provider continuation failure still hands back to ordinary addressing; instructions outside the newest ten text turns remain unavailable."
+  },
+  "historicalEvidence": {
+    "regression": {
+      "cases": 99,
+      "reportedWakeDecisionCorrect": 99,
+      "exactActorLabelsCorrect": 95
+    },
+    "originalSetRepeated": {
+      "attempts": 63,
+      "reportedWakeDecisionCorrect": 63
+    },
+    "holdout": {
+      "cases": 12,
+      "reportedWakeDecisionCorrect": 12,
+      "consumed": true
+    },
+    "reportedThreadReplay": {
+      "attempts": 3,
+      "allResumed": true,
+      "fallbackRequired": true
+    },
+    "caveat": "These results predate review changes to concurrency, signal preservation, sender evidence and prompt state. The historical regression also contained one incorrect sender label, corrected in review; use reviewValidation for the current synthetic corpus. The private reported-thread replay required the focused fallback in all three final repeats and was not repeated after these edits."
+  }
+}

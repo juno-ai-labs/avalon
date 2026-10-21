@@ -68,3 +68,30 @@ to both the corpus SHA-256 and exact source-report SHA-256; the combination
 report rejects mismatched inputs. CLI output contains summaries only. Detailed
 reports remain in the protected scratch directory and are deleted with the raw
 corpus after the evaluation.
+
+
+## Deferred-request continuations
+
+`--target typesafe` exercises ordinary addressing alone. `--target cascade` now
+invokes `classifyMessageAdmission`, the production composition of ordinary
+addressing and a dedicated continuation classifier. Optional `input.authorName`
+is preserved for that decision. Reports retain ordinary `cascadeRoute` metadata
+(`not_needed` when continuation settles the message) and record `continuation` separately; source fingerprints include the new
+implementation and prompt. A continuation fallback is not an addressing fallback.
+
+`deferred-actions-cases.jsonl` and `deferred-actions-validation-cases.jsonl` are
+synthetic regressions for missing inputs, human ownership, unsolicited offers,
+cancellation, delivered results, and new parallel requests. The second corpus was
+used during the earlier prompt search and is a development regression set, not an
+untouched holdout. Production transcripts and renamings of them remain private.
+
+`continuation-holdout-cases.jsonl` contains the twelve fresh synthetic cases
+frozen during this search, evaluated after the final candidate was selected.
+They are now consumed holdout cases and should be treated as regressions for
+future edits.
+
+`continuation-2026-10-21.json` preserves a compact historical summary with
+configuration, corpus and source fingerprints, per-class results, and limitations.
+It separates the historical search from a rerun after review fixes to classifier
+concurrency, signal preservation, sender identity, and one mislabeled fixture. Passing the dedicated question in isolation does not establish
+correctness of the full admission decision.
