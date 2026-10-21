@@ -568,6 +568,17 @@ describe("environment guardrails", () => {
     });
   });
 
+  it('allows conditional image reads and exposes the preview validator to the renderer', async () => {
+    const response = await createApp().request('https://api.example.com/resources/00000000-0000-7000-8000-000000000001/preview', {
+      method: 'OPTIONS',
+      headers: { origin: 'app://rallywithai', 'access-control-request-method': 'GET',
+        'access-control-request-headers': 'authorization,if-none-match,x-rally-client-contract' },
+    }, createTestEnv({ ALLOWED_ORIGINS: 'app://rallywithai', AVALON_REGION: 'global', LOG_LEVEL: 'error' }));
+    expect(response.status).toBe(204);
+    expect(response.headers.get('access-control-allow-headers')?.toLowerCase()).toContain('if-none-match');
+    expect(response.headers.get('access-control-expose-headers')?.toLowerCase()).toContain('etag');
+  });
+
   it("allows the desktop upload and idempotency headers in CORS preflights", async () => {
     const response = await createApp().request(
       "https://api.example.com/automations/00000000-0000-7000-8000-000000000001/run",

@@ -4,14 +4,15 @@ Opening a Space, a Channel, or a Breakout paints from what the device last saw
 before the socket that owns it answers. The desktop keeps one IndexedDB
 database, `rally-local-cache`, holding the last first page of the workspace
 directory and the last canonical state of every conversation the reader opened
-or the socket pool warmed. On the next launch, or the next open of a room whose
+or the socket pool warmed. It also holds [attachment image bytes](attachment-preview-cache.md),
+which are validated against the API before reuse. On the next launch, or the next open of a room whose
 socket is still cold, the sidebar, the Channel screen, and the transcript are
 on screen immediately; a small floating card says the live connection is on its
 way, and the composer accepts a draft but does not send until it has arrived.
 
 Nothing in the cache is authoritative. A cached value is a *seed*: it paints,
-and that is all it does. The socket's first frame (or, for the one REST-backed
-slice, `usage`, the next answer) replaces it whatever its version numbers say, it never completes an opening, it never fences a snapshot,
+and that is all it does. The socket's first frame (or, for REST-backed state
+such as `usage`, the next answer) replaces it whatever its version numbers say, it never completes an opening, it never fences a snapshot,
 and it is never written back. Read this before changing what a screen paints
 before its socket answers, adding a surface that should, or touching the
 socket hooks' first frame.
