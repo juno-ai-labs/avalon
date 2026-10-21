@@ -1983,13 +1983,15 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       ...(onTurnWouldEnd || input.compaction
         ? {
             onTurnWouldEnd: async (assistantMessage: ProviderAssistantResult, cumulativeToolCalls: number) => {
+              // Compaction can await a model. Judge and re-read host lifecycle
+              // only after it settles, so Stop during compaction wins.
+              await compactTerminalTurn();
               const continuation = await onTurnWouldEnd?.({
                 assistantContent: typeof assistantMessage.content === "string" ? assistantMessage.content : "",
                 cumulativeToolCalls,
                 messages: fromOpenAiMessages(state.messages),
               });
               const nudge = typeof continuation === "string" ? continuation : continuation?.message;
-              await compactTerminalTurn();
               if (nudge?.trim()) {
                 signal.throwIfAborted();
                 if (!bindLoopProjection) throw new Error("bind_loop_not_initialized");

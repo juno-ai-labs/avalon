@@ -10,7 +10,9 @@ The implemented policy favors missed-work recall: **one verification reprompt
 when JEV is uncertain, unavailable, or indicates unfinished work**. Only an
 answer/result or blocker with confidence strictly above 0.70 accepts a stop.
 The model should finish outstanding work or briefly identify the delivered result.
-The always-verify policy remains a recall-first comparison control.
+The always-verify policy remains a recall-first comparison control. Frozen
+reports preserve the recommendation at each experiment; their earlier
+recommendations are superseded by the production policy above.
 
 The question is one four-way Choice: `announces_unfinished_work`,
 `answer_or_result`, `blocker_or_question`, or `unclear`. The original simulated

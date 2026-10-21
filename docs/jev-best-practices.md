@@ -304,8 +304,10 @@ blocker as a reason to stop caught 19/19 needed reprompts with 13 extra checks,
 compared with 18/19 and eight extras at 0.50. Always checking caused 106 extras.
 Lowering the original unfinished-label acceptance threshold could not catch the
 confidently wrong answer/result label. The sweep reuses inspected cases and has
-only one real positive; 0.70 is a next-test candidate, not calibrated completion
-probability or new production policy. See the suite's
+only one real positive. Production now adopts the baseline at 0.70 under the
+recall-first policy: uncertainty or judge failure triggers one verification
+turn. This is an operational threshold, not a calibrated probability of
+completion, and still needs validation on new thread families. See the suite's
 [confidence sweep](../packages/agent-harness/evals/premature-stop/README.md#confidence-sweep).
 
 For the optimized Rally Choice, mean confidence was 0.848 on correct cases and
