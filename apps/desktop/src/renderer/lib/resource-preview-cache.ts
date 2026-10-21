@@ -105,9 +105,8 @@ export class ResourcePreviewCache {
       // Retry this read once without the feature; never replay mutations.
       await assertSharedCurrent();
       response = await fetchCurrent(undefined);
-      // A genuine outage keeps the saved bytes for later validation. Once a
-      // plain read succeeds, discard the possibly unsupported validator.
-      await previews.remove(scope, key);
+      // Headers alone are not a successful replacement. Keep saved bytes until
+      // the body completes; the branches below then replace or remove the row.
     }
     assertCurrent();
     if (response.status === 304 && cached) {

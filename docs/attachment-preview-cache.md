@@ -32,8 +32,9 @@ request passes both canonical access checks and returns 304 without reading R2;
 a changed image replaces the saved bytes. Cold reads add no metadata request.
 Downloaded bytes display before their background save commits. A conditional
 network failure retries the read once without the header, allowing an older
-API's CORS policy to work. A successful plain read discards the old validator;
-an outage preserves the saved bytes for later validation.
+API's CORS policy to work. A completed plain read replaces or discards the old
+validator; an outage or interrupted body preserves the saved bytes for later
+validation.
 
 ## Invariants
 
