@@ -257,17 +257,18 @@ settles it; neither step invokes the provider, and either may be safely resumed
 after a crash.
 Stream and checkpoint events for participant loops carry that same sequence.
 
-A relocated conversation may retain the original IDs of completed historical
-turns. A differing last-reservation ID is accepted only for an accepted assistant
-with no unfinished tool batch and an affirmative
+A relocated conversation may retain the original IDs of settled historical
+turns. A differing last-reservation ID is accepted only for an accepted, failed,
+or stopped assistant reservation with no unfinished tool batch and an affirmative
 `validateHistoricalAssistantReservation` host result. The host proves the exact
 head, local reservation/transcript relationship, and next-turn counters; an absent,
 false, or failing port stops the run. New reservations still require the current
 loop's ID format. The next normal reservation replaces the historical pointer
 without rewriting any old turn, payload, or receipt.
-If that new host reservation survives a crash before its Bind transition, the
-host first validates and settles the exact reserved current-loop turn; the
-harness never receives an exception permitting pending historical state.
+Host recovery uses the original reservation turn ID to find tool receipts and
+elicitations before resuming the harness. The owning
+[durable-object document](workstream-durable-object.md) describes that proof and
+recovery path.
 
 ### Addressing
 
@@ -1496,24 +1497,20 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 ## Changelog
 
-### 2026-10-20 — Resume verified completed history after a loop relocation
+### 2026-10-20 — Resume verified settled history after a loop relocation
 
-**What changed:** The harness accepts a historical assistant-turn ID only after
-the durable host validates its completed local reservation. Pending reservations,
-unfinished tool batches, and unverified heads remain refused; newly allocated
-turns keep the current loop identity.
+**What changed:** Added host validation for historical accepted, failed, and
+stopped reservations. Pending reservations and unfinished tool batches still
+require host settlement before inference.
 
-**Why:** A manual breakout promotion copied the transcript and remapped its loop
-keys while preserving turn IDs. The strict resume-format check then stopped every
-new request before inference, despite a fully accepted historical turn.
+**Why:** A relocated conversation may retain historical turn IDs; the incident
+and host proof are described in [Workstream Durable Object](workstream-durable-object.md#changelog).
 
-**Considered and rejected:** Removing the format check universally would permit
-unfinished tool recovery to look up receipts under the wrong loop. Rewriting only
-the head's turn ID would detach it from its canonical reservation and transcript.
+**Considered and rejected:** Unconditional acceptance would bypass the host's
+proof that historical state is settled and consistent.
 
-**Consequences:** Recovery preserves history and advances naturally on the next
-turn. Harness tests exercise continuation and refusals; the transcript storage
-suite verifies the host proof against the migrated SQLite schema.
+**Consequences:** The harness preserves historical IDs and allocates the next
+turn under the current loop ID. Hosts without validation retain strict rejection.
 
 ### 2026-10-20 — Opening messages can establish a conversation without starting work
 

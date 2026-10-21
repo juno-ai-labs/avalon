@@ -1998,70 +1998,95 @@ describe("agent harness", () => {
     expect(pendingFetch).not.toHaveBeenCalled();
   });
 
-  it.each(["validated", "absent", "refused", "throws", "pending", "failed", "stopped", "unfinished tools"] as const)(
-    "resumes relocated history only with a completed reservation and host validation: %s", async (validation) => {
-      let projection: BindLoopProjectionState | null = null;
-      await runHarness({
-        ...runInput(vi.fn(async () => streamResponse([{
-          choices: [{ delta: { content: "Historical answer" }, finish_reason: "stop" }],
-        }])) as typeof fetch),
-        loopId: "original-loop",
-        onAssistantTurnReserved: () => ({ transcriptSequence: 10 }),
-        onBindLoopTransition: (transition) => { projection = applyBindLoopTransition(projection, transition); },
-      });
-      const original = projection as BindLoopProjectionState | null;
-      if (!original?.lastAssistantReservation) throw new Error("missing fixture reservation");
-      const relocated = applyBindLoopTransition({ ...original, loopId: "relocated-loop" }, {
-        kind: "protocol_user_appended", loopId: "relocated-loop", generation: original.generation,
-        stateRevision: original.stateRevision + 1, message: { role: "user", content: "Continue" },
-        provenance: { originKind: "derived", sourceKind: "participant_turn", sourceId: "next-input", sourceRevision: 1 },
-        activationInputId: "next-input",
-      });
-      if (validation === "pending" || validation === "failed" || validation === "stopped") {
-        relocated.lastAssistantReservation = { ...original.lastAssistantReservation, status: validation };
-      }
-      if (validation === "unfinished tools") {
-        relocated.nonSystemMessageTail = {
-          message: { role: "assistant", content: null, tool_calls: [{
-            id: "unfinished", type: "function", function: { name: "write", arguments: "{}" },
-          }] },
-          previous: original.nonSystemMessageTail,
-          length: (original.nonSystemMessageTail?.length ?? 0) + 1,
-        };
-      }
-      const validate = vi.fn(() => {
-        if (validation === "throws") throw new Error("storage unavailable");
-        return validation !== "refused";
-      });
+  function relocatedHarnessProjection(status: "accepted" | "failed" | "stopped" = "accepted") {
+    let projection = applyBindLoopTransition(null, {
+      kind: "state_initialized", loopId: "original-loop", generation: 1, stateRevision: 1,
+      systemProjection: { revision: 1, rendererVersion: "test-v1", inputHash: "system",
+        message: { role: "system", content: "System" } },
+      nonSystemMessages: [{ role: "user", content: "Question" }],
+      nonSystemMessageOrigins: [{ originKind: "derived", sourceKind: "participant_turn",
+        sourceId: "question", sourceRevision: 1 }],
+    });
+    projection = applyBindLoopTransition(projection, {
+      kind: "assistant_reserved", loopId: "original-loop", generation: 1, stateRevision: 2,
+      turnId: "original-loop:turn:1", modelTurnIndex: 1, transcriptSequence: 10,
+    });
+    projection = applyBindLoopTransition(projection, status === "accepted" ? {
+      kind: "assistant_accepted", loopId: "original-loop", generation: 1, stateRevision: 3,
+      turnId: "original-loop:turn:1", modelTurnIndex: 1, transcriptSequence: 10,
+      message: { role: "assistant", content: "Historical answer" },
+    } : {
+      kind: "assistant_reservation_settled", loopId: "original-loop", generation: 1, stateRevision: 3,
+      turnId: "original-loop:turn:1", modelTurnIndex: 1, transcriptSequence: 10, outcome: status,
+    });
+    return applyBindLoopTransition({ ...projection, loopId: "relocated-loop" }, {
+      kind: "protocol_user_appended", loopId: "relocated-loop", generation: 1, stateRevision: 4,
+      message: { role: "user", content: "Continue" },
+      provenance: { originKind: "derived", sourceKind: "participant_turn", sourceId: "next-input", sourceRevision: 1 },
+      activationInputId: "next-input",
+    });
+  }
+
+  it.each(["accepted", "failed", "stopped"] as const)(
+    "resumes verified historical %s turns in the current namespace", async (status) => {
+      const projection = relocatedHarnessProjection(status);
       const fetcher = vi.fn(async () => streamResponse([{
         choices: [{ delta: { content: "Continued" }, finish_reason: "stop" }],
       }])) as typeof fetch;
+      const validate = vi.fn(() => true);
       const transitions: BindLoopTransition[] = [];
       const result = await runHarness({
         ...runInput(fetcher), loopId: "relocated-loop", harnessRunId: "execution-2",
-        bindLoopProjection: relocated,
-        ...(validation === "absent" ? {} : { validateHistoricalAssistantReservation: validate }),
+        bindLoopProjection: projection, validateHistoricalAssistantReservation: validate,
         onAssistantTurnReserved: (turn) => {
           expect(turn.turnId).toBe("relocated-loop:turn:2");
           return { transcriptSequence: 12 };
         },
         onBindLoopTransition: (transition) => { transitions.push(transition); },
       });
-      if (validation === "validated") {
-        expect(result, JSON.stringify(result.failure)).toMatchObject({ status: "completed", content: "Continued" });
-        expect(fetcher).toHaveBeenCalledTimes(1);
-        expect(transitions).toContainEqual(expect.objectContaining({
-          kind: "assistant_accepted", turnId: "relocated-loop:turn:2", modelTurnIndex: 2,
-        }));
-        expect(original.lastAssistantReservation.turnId).toBe("original-loop:turn:1");
-      } else {
-        expect(result).toMatchObject({ status: "failed", failure: {
-          code: validation === "throws" ? "run_state_persistence_failed" : "harness_execution_failed",
-        } });
-        expect(fetcher).not.toHaveBeenCalled();
-        expect(transitions).toEqual([]);
+      expect(result, JSON.stringify(result.failure)).toMatchObject({ status: "completed", content: "Continued" });
+      expect(validate).toHaveBeenCalledTimes(1);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(transitions).toContainEqual(expect.objectContaining({
+        kind: "assistant_accepted", turnId: "relocated-loop:turn:2", modelTurnIndex: 2,
+      }));
+      expect(projection.lastAssistantReservation!.turnId).toBe("original-loop:turn:1");
+    },
+  );
+
+  it.each(["absent", "refused", "throws", "pending", "unfinished tools"] as const)(
+    "refuses unverified or unfinished historical state: %s", async (validation) => {
+      const projection = relocatedHarnessProjection();
+      if (validation === "pending") {
+        projection.lastAssistantReservation = { ...projection.lastAssistantReservation!, status: "pending" };
       }
-      if (["pending", "failed", "stopped", "unfinished tools"].includes(validation)) expect(validate).not.toHaveBeenCalled();
+      if (validation === "unfinished tools") {
+        projection.nonSystemMessageTail = {
+          message: { role: "assistant", content: null, tool_calls: [{
+            id: "unfinished", type: "function", function: { name: "write", arguments: "{}" },
+          }] },
+          previous: projection.nonSystemMessageTail,
+          length: (projection.nonSystemMessageTail?.length ?? 0) + 1,
+        };
+      }
+      const validate = vi.fn(() => {
+        if (validation === "throws") throw new Error("storage unavailable");
+        return validation !== "refused";
+      });
+      const fetcher = vi.fn(async () => streamResponse([])) as typeof fetch;
+      const transitions: BindLoopTransition[] = [];
+      const result = await runHarness({
+        ...runInput(fetcher), loopId: "relocated-loop", harnessRunId: "execution-2",
+        bindLoopProjection: projection,
+        ...(validation === "absent" ? {} : { validateHistoricalAssistantReservation: validate }),
+        onBindLoopTransition: (transition) => { transitions.push(transition); },
+      });
+      expect(result).toMatchObject({ status: "failed", failure: {
+        code: validation === "throws" ? "run_state_persistence_failed" : "harness_execution_failed",
+      } });
+      expect(fetcher).not.toHaveBeenCalled();
+      expect(transitions).toEqual([]);
+      if (["pending", "unfinished tools"].includes(validation)) expect(validate).not.toHaveBeenCalled();
     },
   );
 
