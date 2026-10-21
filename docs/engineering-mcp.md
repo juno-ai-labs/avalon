@@ -162,9 +162,12 @@ General and their Personal Channel, including when a retry resumes seating.
 The MCP adapter writes no membership rows of its own.
 
 `create_channel` takes `orgId`, `name`, and `participantUserIds`, always including
-the creator. It calls the same SpaceService creation and audience update as
+the creator. SpaceService creation applies those initial participants through
+the same audience update as
 `POST /spaces` and the audience route. It starts Organization-wide with the
-normal automatic icon choice and a blue mark. The ordinary audience gate decides who can
+normal automatic icon choice and a blue mark. Icon selection starts after the
+initial audience update, using its revision so creation does not invalidate the
+generated icon write. The ordinary audience gate decides who can
 be seated; merely being an active guest does not bypass it.
 
 `create_thread` takes `orgId`, `channelId`, and `prompt`. It uses the same
