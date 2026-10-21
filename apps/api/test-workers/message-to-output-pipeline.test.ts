@@ -3643,11 +3643,11 @@ describe("a member's message travels the whole pipeline", () => {
       try {
         await installScriptedProvider(child,[
           [{ choices:[{ delta:{ tool_calls:[{ index:0,id:"guest-sidekick-plugin",type:"function",
-            function:{ name:"load_plugin",arguments:JSON.stringify({ pluginId:"rally_sidekicks" }) } }] },finish_reason:"tool_calls" }] }],
+            function:{ name:"load_plugin",arguments:JSON.stringify({ pluginId:"rally_skill_recommendations" }) } }] },finish_reason:"tool_calls" }] }],
           [{ choices:[{ delta:{ tool_calls:[{ index:0,id:"guest-sidekick-list",type:"function",
-            function:{ name:"sidekick_sidekicks_list",arguments:"{}" } }] },finish_reason:"tool_calls" }] }],
+            function:{ name:"list_skill_recommendations",arguments:"{}" } }] },finish_reason:"tool_calls" }] }],
           [{ choices:[{ delta:{ tool_calls:[{ index:0,id:"guest-load-sidekick",type:"function",
-            function:{ name:"load_skill",arguments:JSON.stringify({ name:"sidekick-workstream-helper" }) } }] },finish_reason:"tool_calls" }] }],
+            function:{ name:"load_skill",arguments:JSON.stringify({ name:"skill-workstream-helper" }) } }] },finish_reason:"tool_calls" }] }],
           [{ choices:[{ delta:{ content:"I will use short sentences." },finish_reason:"stop" }] }],
         ],{ primaryModel:"guest-sidekick/primary",fallbackModels:[] });
         const parentCalls: { check?: () => void; restore?: () => void } = {};
@@ -3682,8 +3682,8 @@ describe("a member's message travels the whole pipeline", () => {
         expect(catalogResults.length).toBeGreaterThan(0);
         for (const result of catalogResults) {
           expect(JSON.parse(result.content ?? "null")).toMatchObject({ success: true, data: {
-            workspaceSidekicks: [{ sidekickId: recommendedSidekick.automationId,
-              canAttach: false, attached: true }],
+            skills: [{ skillId: recommendedSidekick.automationId,
+              canRecommend: false, recommended: true }],
           } });
         }
         await waitForLoopRelease(child);

@@ -641,7 +641,11 @@ OpenRouter credentials and model context are server-only. The harness receives
 only context authorized for the execution principal. Tool calls are proposals:
 Rally validates the name, schema, principal, capability, limits, and idempotency
 state before execution. Reasoning fields are ignored; private chain-of-thought is
-neither persisted nor broadcast.
+neither persisted nor broadcast. Google plugin-view identity changes can replay
+an earlier receipt only when its reconstructed surface hash and the same
+connection, operation, capability, mode, retry policy and input hash match;
+[the harness](agent-harness.md#durable-receipts-and-terminal-state) owns that
+compatibility mechanism.
 
 Attachment filenames, MIME declarations, extracted text, converter output, and
 errors are untrusted model data. Server-verified MIME determines attachment kind;

@@ -9227,10 +9227,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }).parse(input);
     this.assertWorkspace(request.workspaceId);
     const candidates = this.state.storage.sql.exec<AutomationDirectoryRow & {
-      author_user_id: string; run_as_user_id: string | null; owning_substream_id: string; workspace_id: string;
+      author_user_id: string; run_as_user_id: string | null; owning_substream_id: string; workspace_id: string; last_run_at: number | null;
     }>(
-      `SELECT * FROM automation_directory WHERE workspace_id = ? AND lifecycle <> 'deleted'
-       ORDER BY title COLLATE NOCASE, automation_id`, request.workspaceId,
+      `SELECT directory.*,
+              (SELECT MAX(created_at) FROM sidekick_runs WHERE sidekick_id = directory.automation_id) AS last_run_at
+         FROM automation_directory directory WHERE workspace_id = ? AND lifecycle <> 'deleted'
+        ORDER BY title COLLATE NOCASE, automation_id`, request.workspaceId,
     ).toArray();
     // The management read rule (`sidekickReaderAllows`), the same one the
     // detail screen applies: a guest is not listed Organization-scope

@@ -5,6 +5,14 @@ import {
 } from './connector-connection-card';
 
 describe('connection card display compatibility', () => {
+  it('keeps historical Drive cards actionable under the canonical id', () => {
+    const toolEvent = { name: 'show_connector_connection', status: 'completed',
+      input: { connectorId: 'google-drive-workspace', scope: 'personal' } };
+    expect(connectorConnectionCardDisplayInputFromToolEvent(toolEvent))
+      .toEqual({ connectorId: 'google-drive', scope: 'personal' });
+    expect(isUnrecognizedConnectorConnectionCard({ toolEvent })).toBe(false);
+  });
+
   it('recognizes future connectors from completed input and output under both wire names', () => {
     for (const name of ['show_connector_connection', 'core_show_connector_connection']) {
       for (const facts of [

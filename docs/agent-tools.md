@@ -155,8 +155,9 @@ read. It lists only connectors whose adapter implements `probeResourceAccess`;
 the probe and the retry it pairs with are in
 [`connectors.md`](connectors.md#2026-10-15-a-connection-that-cannot-reach-a-resource-hands-the-call-to-one-that-can).
 
-The catalog id `google-drive-workspace` names Google Workspace, the product,
-and its description says so; it is not a scope.
+The catalog id `google-drive` covers Google Drive, Docs and Sheets in either
+scope. Saved connection cards using the retired `google-drive-workspace` id
+normalize to `google-drive` when read; new tool requests use only `google-drive`.
 
 The model-facing flow is deliberately literal:
 
