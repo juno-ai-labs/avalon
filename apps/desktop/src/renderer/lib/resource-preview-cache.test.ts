@@ -223,6 +223,35 @@ describe('resource image preview cache', () => {
     }
   });
 
+  it.each([false, true])('keeps unrelated Organization downloads alive during a wipe (other renderer: %s)', async (separateRenderer) => {
+    const otherScope = localCacheScope('alice', 'global', 'other-organization');
+    const cache = new ResourcePreviewCache();
+    const finish = new Map<string, (response: Response) => void>();
+    let bothStarted!: () => void;
+    const started = new Promise<void>((resolve) => { bothStarted = resolve; });
+    const fetchPreview = (name: string) => () => new Promise<Response>((resolve) => {
+      finish.set(name, resolve);
+      if (finish.size === 2) bothStarted();
+    });
+    const kept = cache.load(scope, key, fetchPreview('kept'));
+    const removed = cache.load(otherScope, key, fetchPreview('removed'));
+    const keptResult = expect(kept.then((blob) => blob.text())).resolves.toBe('kept image');
+    const removedResult = expect(removed).rejects.toMatchObject({ name: 'AbortError' });
+    await started;
+    if (separateRenderer) vi.resetModules();
+    const wipingRenderer = separateRenderer ? await import('./local-cache') : { clearWorkspaceLocalCache, closeLocalCache: () => undefined };
+    try {
+      await wipingRenderer.clearWorkspaceLocalCache('alice', 'global', 'other-organization');
+      finish.get('kept')!(image('kept image'));
+      finish.get('removed')!(image('removed image'));
+      await Promise.all([keptResult, removedResult]);
+      expect(await savedImages.entries(scope)).toEqual([{ key, subject: key }]);
+      expect(await savedImages.entries(otherScope)).toEqual([]);
+    } finally {
+      wipingRenderer.closeLocalCache();
+    }
+  });
+
   it('isolates accounts, access classes, origins and workspace wipes', async () => {
     const cache = new ResourcePreviewCache();
     await cache.load(scope, key, async () => image());
