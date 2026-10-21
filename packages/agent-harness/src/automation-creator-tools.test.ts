@@ -1,5 +1,5 @@
 import { AutomationSetEvaluatorRulesInputV1Schema } from "@rally/contracts";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { z } from "zod";
 
 import {
@@ -81,15 +81,10 @@ describe("the automations plugin", () => {
     expect(plugin.systemMessage).toContain("read an attached Doc");
   });
 
-  it("attaches and detaches workspace Sidekicks through the host", async () => {
-    const state = host();
-    const setAttached = vi.fn(async () => ({ items: [] }));
-    state.attachmentPort = { setAttached };
-    const tools = createAutomationsPlugin(state).tools;
-    const sidekickId = "00000000-0000-7000-8000-000000000111";
-    await toolNamed(tools, "attach").execute({ sidekickId }, toolContext);
-    await toolNamed(tools, "detach").execute({ sidekickId }, toolContext);
-    expect(setAttached.mock.calls).toEqual([[sidekickId, true], [sidekickId, false]]);
+  it("keeps recommendation mutations out of the authoring tools", () => {
+    const names = createAutomationsPlugin(host()).tools.map((tool) => tool.definition.name);
+    expect(names).not.toContain("attach");
+    expect(names).not.toContain("detach");
   });
   it("rebuilds researched people and resources from replayed search output", () => {
     const people = new Set<string>();

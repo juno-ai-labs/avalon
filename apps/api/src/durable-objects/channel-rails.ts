@@ -101,7 +101,7 @@ export function owningThreads(
 
 /** A directory row as a summary; an appearance that no longer parses is left out and reported. */
 export function automationSummary(
-  row: AutomationDirectoryRow,
+  row: AutomationDirectoryRow & { last_run_at?: number | null },
   report: InvalidAppearanceReport,
   owningThread: AutomationOwningThread | null = null,
 ): AutomationSummary {
@@ -118,7 +118,7 @@ export function automationSummary(
     owningThread,
     status: row.lifecycle,
     nextRunAt: row.next_run_at === null ? null : new Date(row.next_run_at).toISOString(),
-    lastRunAt: null,
+    lastRunAt: row.last_run_at == null ? null : new Date(row.last_run_at).toISOString(),
     updatedAt: new Date(row.projected_at).toISOString(),
   };
 }

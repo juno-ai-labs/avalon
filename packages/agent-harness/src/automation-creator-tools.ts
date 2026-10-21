@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 import {
-  IdSchema,
   AutomationSetEvaluatorRulesModelInputV1Schema,
   automationActivitySourcePluginIds,
   automationDraftAcceptanceBlocker,
@@ -71,9 +70,6 @@ export interface AutomationCreatorToolHost {
   /** The automations this conversation may edit, each with its current definition. */
   automationDirectoryPort?: {
     listAutomations(): Promise<unknown>;
-  };
-  attachmentPort?: {
-    setAttached(sidekickId: string, attached: boolean): Promise<unknown>;
   };
   draftMutationPort?: {
     /**
@@ -261,26 +257,6 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
         };
       },
     },
-    ...(["attach", "detach"] as const).filter(() => input.attachmentPort !== undefined).map((operation): HarnessTool => ({
-      definition: {
-        name: operation,
-        description: `${operation === "attach" ? "Attach" : "Detach"} a workspace Sidekick ${operation === "attach" ? "as a recommendation for" : "from"} this workstream. Use an ID returned by sidekick_sidekicks_list.`,
-        capability: `rally.sidekick.${operation}`,
-        mode: "write",
-        idempotency: "record_before_execute",
-        inputSchema: { type: "object", additionalProperties: false, properties: { sidekickId: { type: "string" } }, required: ["sidekickId"] },
-      },
-      serial: true,
-      validateInput: (raw) => {
-        const parsed = z.strictObject({ sidekickId: IdSchema }).safeParse(raw);
-        return parsed.success ? null : parsed.error;
-      },
-      execute: async (raw) => {
-        const { sidekickId } = z.strictObject({ sidekickId: IdSchema }).parse(raw);
-        const result = await input.attachmentPort!.setAttached(sidekickId, operation === "attach");
-        return { output: { result, note: "Recommendations apply to future executions. Call load_skill to use the skill in this execution." }, summary: `${operation === "attach" ? "Attached" : "Detached"} workstream Sidekick` };
-      },
-    })),
     {
       definition: creatorDefinition("submit_draft"),
       serial: true,

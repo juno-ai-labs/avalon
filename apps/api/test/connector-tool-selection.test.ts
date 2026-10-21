@@ -10,6 +10,7 @@ import { slackTools, notionTools, granolaTools } from "@rally/connectors";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ToolDefinition } from "@rally/contracts";
 import historicalGoogleTools from "./fixtures/google-tools-before-workflows.json";
+import combinedGoogleReceipts from "./fixtures/google-combined-receipts.json";
 
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
@@ -1568,6 +1569,48 @@ describe("connector tools selected for harness runs", () => {
       preload: true,
       explicit: true,
     });
+  });
+
+  // Captured with the pre-split combined projection and its original surface.
+  // Hashes are fixture data, not derived from the policy being checked.
+  it.each(combinedGoogleReceipts)("replays a pre-split Google $mode receipt without relaxing its fences", async (receipt) => {
+    const database = new ToolSelectionDatabase([connection(OWNER_CONNECTION_ID, "personal", USER_ID,
+      [...GOOGLE_WORKSPACE_CAPABILITIES, ...GOOGLE_MAIL_CALENDAR_CAPABILITIES])]);
+    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const pluginId = `connection:${OWNER_CONNECTION_ID}:drive`;
+    const policy = __integrationTesting.resolveHarnessToolReceiptPolicy({ pluginId,
+      canonicalToolName: receipt.canonicalToolName, capability: receipt.capability,
+      mode: receipt.mode as "read" | "write", idempotency: receipt.idempotency as "safe" | "record_before_execute" }, selected);
+    expect(__integrationTesting.storedToolPolicyMatches(JSON.stringify(receipt), policy)).toBe(true);
+    for (const changed of [
+      { pluginId: `connection:${WORKSPACE_CONNECTION_ID}` }, { connectionId: WORKSPACE_CONNECTION_ID },
+      { toolSurfaceHash: "changed-surface" }, { canonicalToolName: "drive.download" }, { capability: "gmail.read" },
+      { mode: receipt.mode === "read" ? "write" : "read" },
+      { idempotency: receipt.idempotency === "safe" ? "record_before_execute" : "safe" },
+    ]) expect(__integrationTesting.storedToolPolicyMatches(JSON.stringify({ ...receipt, ...changed }), policy)).toBe(false);
+    expect(__integrationTesting.compatiblePriorReceiptPlans({ ...receipt, pluginId,
+      toolSurfaceHash: policy.toolSurfaceHash, inputHash: "same-input" }, policy))
+      .toContainEqual({ ...receipt, inputHash: "same-input" });
+  });
+
+  it.each([
+    { saved: "plugin_google_mail_calendar", removed: "plugin_google_drive", retained: GOOGLE_MAIL_CALENDAR_CAPABILITIES },
+    { saved: "plugin_google_drive", removed: "plugin_google_mail_calendar", retained: GOOGLE_WORKSPACE_CAPABILITIES },
+  ])("preloads saved $saved after the other Google bundle is removed", async ({ saved, removed, retained }) => {
+    const row = connection(OWNER_CONNECTION_ID, "personal", USER_ID, [...GOOGLE_WORKSPACE_CAPABILITIES, ...GOOGLE_MAIL_CALENDAR_CAPABILITIES]);
+    const database = new ToolSelectionDatabase([row]);
+    database.defaultPluginIds = [saved];
+    const before = await __integrationTesting.loadHarnessTools(env(database), automationRunInput());
+    expect(before.plugins.filter((plugin) => plugin.connectorType === "google" && plugin.preload).map((plugin) => plugin.modelId))
+      .toEqual([saved]);
+    row.granted_scopes_json = JSON.stringify(retained);
+    const after = await __integrationTesting.loadHarnessTools(env(database), automationRunInput());
+    expect(after.plugins.filter((plugin) => plugin.connectorType === "google").map((plugin) => ({
+      modelId: plugin.modelId, preload: plugin.preload, explicit: plugin.explicit,
+    }))).toEqual([{ modelId: "plugin_google", preload: true, explicit: true }]);
+    database.defaultPluginIds = [removed];
+    const denied = await __integrationTesting.loadHarnessTools(env(database), automationRunInput());
+    expect(denied.plugins.filter((plugin) => plugin.connectorType === "google").map((plugin) => plugin.preload)).toEqual([false]);
   });
 
   it("uses automation plugin defaults as preload hints without narrowing granted tools", async () => {
