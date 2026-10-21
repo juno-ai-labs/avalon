@@ -3,8 +3,11 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 
-const updaterRequire = createRequire(process.argv[2]);
-const { ElectronHttpExecutor } = updaterRequire(process.argv[2]);
+// Electron retains Chromium switches in argv on Linux. The runner appends the
+// executor path after the fixture, so it is always the final argument.
+const executorPath = process.argv.at(-1);
+const updaterRequire = createRequire(executorPath);
+const { ElectronHttpExecutor } = updaterRequire(executorPath);
 const { CancellationToken } = updaterRequire('builder-util-runtime');
 // Observe actual process escapes without letting Electron open its modal error
 // box. Either kind of escape fails this native test.
