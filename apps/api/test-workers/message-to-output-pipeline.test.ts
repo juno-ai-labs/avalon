@@ -4484,6 +4484,73 @@ describe("a member's message travels the whole pipeline", () => {
     }
   });
 
+  it("replays the canonical receipt when promotion removes the mailbox before reservation resumes", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await settledRun(stub, opened.body.harnessRunId as string);
+    const { socket } = await openSubscribedSocket(stub, crypto.randomUUID());
+    const collected = collectSocketFrames(socket);
+    const clientMessageId = "pipeline-promoted-replay";
+    const held = await runInDurableObject(stub, (instance) => {
+      const service = (instance as unknown as { product: WorkstreamObjectProductService }).product;
+      const original = holdFirstWorkspaceRead(service as unknown as { env: Env });
+      const replay = { entered: false, open: false };
+      const target = service as unknown as {
+        reserveInputPreparation: (...args: unknown[]) => Promise<unknown>;
+      };
+      const reserve = target.reserveInputPreparation.bind(target);
+      let reservations = 0;
+      target.reserveInputPreparation = async (...args) => {
+        const reservation = await reserve(...args);
+        reservations += 1;
+        if (reservations === 2) {
+          // Hold only the replay's continuation after its real reservation has
+          // reused the preparing row. The original and its real activation can
+          // now finish and remove that row before this continuation resumes.
+          replay.entered = true;
+          while (!replay.open) await scheduler.wait(10);
+        }
+        return reservation;
+      };
+      return { original, replay };
+    });
+    const command = {
+      type: "create_message", operationId: crypto.randomUUID(),
+      payload: { text: "one canonical turn across the replay interleave", clientMessageId,
+        mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] },
+    };
+    const outcomes = () => collected.frames.filter((frame) => frame.clientMessageId === clientMessageId
+      && ["client_command_succeeded", "client_command_failed"].includes(frame.type));
+    try {
+      socket.send(JSON.stringify(command));
+      await expect.poll(() => runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec("SELECT state FROM pending_loop_input_mailbox WHERE client_message_id = ?",
+          clientMessageId).toArray()[0]?.state), { timeout: 5_000 }).toBe("preparing");
+      socket.send(JSON.stringify(command));
+      await expect.poll(() => held.replay.entered, { timeout: 5_000 }).toBe(true);
+      held.original.open = true;
+      await expect.poll(() => outcomes().length, { timeout: 5_000 }).toBe(1);
+      await expect.poll(() => runInDurableObject(stub, (_instance, state) => ({
+        canonical: state.storage.sql.exec("SELECT COUNT(*) AS count FROM participant_transcript_turns WHERE client_message_id = ?",
+          clientMessageId).one().count,
+        mailbox: state.storage.sql.exec("SELECT COUNT(*) AS count FROM pending_loop_input_mailbox WHERE client_message_id = ?",
+          clientMessageId).one().count,
+      })), { timeout: 5_000 }).toEqual({ canonical: 1, mailbox: 0 });
+      held.replay.open = true;
+      await expect.poll(() => outcomes().length, { timeout: 5_000 }).toBe(2);
+      expect(outcomes()).toMatchObject([
+        { type: "client_command_succeeded" },
+        { type: "client_command_succeeded", deliveryState: "canonical" },
+      ]);
+      expect(outcomes()[0]!.turn).toEqual(outcomes()[1]!.turn);
+    } finally {
+      held.original.open = true;
+      held.replay.open = true;
+      collected.stop();
+      socket.close(1000, "done");
+    }
+  });
+
   it("admits an idempotent message on the authenticated room socket across hibernation", async () => {
     const stub = agentStub();
     const opened = await initializeWorkstream(stub, "first message");
