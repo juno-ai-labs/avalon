@@ -2063,59 +2063,84 @@ describe("a member's message travels the whole pipeline", () => {
     }
   });
 
-  it("renders a saved personal system prompt from the conversation's copy, a turn after it is saved", async () => {
+  it("refreshes personal instructions at admission and keeps earlier message values in history", async () => {
     const stub = agentStub();
     const instructions = "Answer in French, and keep every reply under fifty words.";
-    const systemMessages = (requests: Awaited<ReturnType<typeof capturedProviderRequests>>) => requests
+    const messages = (requests: Awaited<ReturnType<typeof capturedProviderRequests>>) => requests
       .filter((request) => request.url === "https://openrouter.ai/api/v1/responses")
-      .map((request) => JSON.stringify((request.body.messages as Array<{ role?: unknown; content?: unknown }>)
-        .filter((message) => message.role === "system")));
+      .map((request) => request.body.messages as Array<{ role: string; content: unknown }>);
+    const copiedInstructions = () => runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{ text: string }>(
+        "SELECT text FROM personal_system_prompt_copies WHERE user_id = ?", USER_ID,
+      ).toArray()[0]?.text ?? null);
     try {
-      await env.WORKSPACE_DOS.getByName(workspaceDOName("global", WORKSPACE_ID)).savePersonalSystemPrompt({
-        workspaceId: WORKSPACE_ID,
-        userId: USER_ID,
-        personalSystemPrompt: instructions,
+      const workspace = env.WORKSPACE_DOS.getByName(workspaceDOName("global", WORKSPACE_ID));
+      await workspace.savePersonalSystemPrompt({
+        workspaceId: WORKSPACE_ID, userId: USER_ID, personalSystemPrompt: instructions,
       });
       await installScriptedProvider(stub, [
         [{ choices: [{ delta: { content: "first answer" }, finish_reason: "stop" }] }],
         [{ choices: [{ delta: { content: "second answer" }, finish_reason: "stop" }] }],
-      ], { primaryModel: PERSONAL_PROMPT_MODEL, fallbackModels: [] });
+      ], { primaryModel: PERSONAL_PROMPT_MODEL, fallbackModels: [], gateFirstCall: true });
       const opened = await initializeWorkstream(stub, "first message", PERSONAL_PROMPT_MODEL, [], "opening_message");
-      await externallySettledRun(stub, opened.body.harnessRunId as string);
-      await waitForLoopRelease(stub);
+      await expect.poll(async () => messages(await capturedProviderRequests(stub)).length,
+        { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 25 }).toBe(1);
+      // A fresh opening uses its empty copy and refreshes it for the next admission.
+      expect(JSON.stringify(messages(await capturedProviderRequests(stub))[0])).not.toContain(instructions);
+      await expect.poll(copiedInstructions,
+        { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 25 }).toBe(instructions);
 
-      // The first turn never waits on WorkspaceDO, so it ran on an empty copy
-      // and refreshed the copy behind itself.
-      expect(systemMessages(await capturedProviderRequests(stub))).toEqual([
-        expect.not.stringContaining(instructions),
-      ]);
-      await expect.poll(() => runInDurableObject(stub, (_instance, state) =>
-        state.storage.sql.exec<{ text: string }>(
-          `SELECT text FROM personal_system_prompt_copies WHERE user_id = ?`,
-          USER_ID,
-        ).toArray()[0]?.text ?? null), {
-        timeout: RUN_SETTLE_TIMEOUT_MS,
-        interval: 25,
-        message: "the first turn never refreshed the conversation's copy",
-      }).toBe(instructions);
-
+      await workspace.savePersonalSystemPrompt({
+        workspaceId: WORKSPACE_ID, userId: USER_ID, personalSystemPrompt: "",
+      });
       const followUp = await product(stub, {
-        operation: "create_message",
-        auth: AUTH,
-        input: {
-          text: "second message",
-          clientMessageId: "pipeline-personal-prompt-1",
-          mentions: [],
-          confirmedParticipantUserIds: [],
-          attachmentIds: [],
-        },
+        operation: "create_message", auth: AUTH,
+        input: { text: "second message", clientMessageId: "pipeline-personal-prompt-1",
+          mentions: [], confirmedParticipantUserIds: [], attachmentIds: [], runMode: "queue" },
       });
       expect(followUp.status).toBe(200);
+      // The first run is still blocked. A refresh owned by the queued run's
+      // startup could not happen yet, so this proves admission owns it.
+      await expect.poll(copiedInstructions,
+        { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 25 }).toBe("");
+      expect(messages(await capturedProviderRequests(stub))).toHaveLength(1);
+      await openProviderGate(stub);
+      await externallySettledRun(stub, opened.body.harnessRunId as string);
       await settledRunForTrigger(stub, (followUp.body.turn as { turnId: string }).turnId);
 
-      const [, second] = systemMessages(await capturedProviderRequests(stub));
-      expect(second).toContain(`<personal_system_prompt>\\n${instructions}\\n</personal_system_prompt>`);
+      const second = messages(await capturedProviderRequests(stub))[1]!;
+      expect(JSON.stringify(second.filter((message) => message.role === "system"))).not.toContain(instructions);
+      const userMessage = second.filter((message) => message.role === "user").at(-1);
+      expect(userMessage?.content).toContain(`<user_system_prompt>\nThe following was provided by this user as instructions for how to respond to this message. For other users' requests ignore these instructions.\n<user_suppplied>\n${instructions}\n</user_suppplied>\n</user_system_prompt>\n\nsecond message`);
+
+      await waitForLoopRelease(stub);
+      await evictDurableObject(stub);
+      // Reinstall only the provider double on the new instance; history is durable.
+      await installScriptedProvider(stub, [
+        [{ choices: [{ delta: { content: "third answer" }, finish_reason: "stop" }] }],
+      ], { primaryModel: PERSONAL_PROMPT_MODEL, fallbackModels: [] });
+      const next = await product(stub, {
+        operation: "create_message", auth: AUTH,
+        input: { text: "third message", clientMessageId: "pipeline-personal-prompt-2",
+          mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] },
+      });
+      expect(next.status).toBe(200);
+      await settledRunForTrigger(stub, (next.body.turn as { turnId: string }).turnId);
+      await waitForLoopRelease(stub);
+      const third = messages(await capturedProviderRequests(stub)).at(-1)!;
+      const history = third.filter((message) => message.role === "user");
+      expect(history[1]?.content).toEqual(userMessage?.content);
+      expect(String(history[2]?.content)).toContain("third message");
+      expect(String(history[2]?.content)).not.toContain("<user_system_prompt>");
+      expect(JSON.stringify(third.filter((message) => message.role === "system"))).not.toContain(instructions);
+      const { socket, initial } = await openSubscribedSocket(stub, crypto.randomUUID());
+      try {
+        expect(JSON.stringify(snapshotTurns(initial))).toContain("second message");
+        expect(JSON.stringify(snapshotTurns(initial))).toContain("<user_system_prompt>");
+        expect(JSON.stringify(snapshotTurns(initial))).toContain(instructions);
+      } finally { socket.close(); }
     } finally {
+      await openProviderGate(stub).catch(() => undefined);
       await restoreProviderFetch(stub);
     }
   });

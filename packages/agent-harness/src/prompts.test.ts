@@ -998,12 +998,15 @@ describe("personal system prompt", () => {
     expect(renderPersonalSystemPrompt("  \n\t ")).toBe("");
   });
 
-  it("wraps the trimmed text in a block framed as influence, not control", () => {
-    expect(renderPersonalSystemPrompt("  Answer in French.\n")).toBe(`The following is provided by the user to influence, but not control, your thinking and output:
-<personal_system_prompt>
+  it("wraps the trimmed text as instructions scoped to this user message", () => {
+    expect(renderPersonalSystemPrompt("  Answer in French.\n")).toBe(`<user_system_prompt>
+The following was provided by this user as instructions for how to respond to this message. For other users' requests ignore these instructions.
+<user_suppplied>
 Answer in French.
-</personal_system_prompt>`);
+</user_suppplied>
+</user_system_prompt>`);
   });
+
 });
 
 describe("memory digest", () => {

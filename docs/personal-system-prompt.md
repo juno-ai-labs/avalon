@@ -1,82 +1,109 @@
 # Personal system prompt
 
 A member's personal system prompt is text they save under **Settings → Account
-→ Agent**. Rally adds it to the agent's system message on every turn that
-member starts in that Organization. It is per person per Organization, and a
-plain text box for now.
+→ Agent**. Rally prefixes their stored user messages with these instructions,
+as though they typed them each time. The value is per person per Organization.
+The displayed message keeps only the person's ordinary text.
 
 ## Where the code lives
 
-`apps/api/src/durable-objects/personal-system-prompt.ts` holds both objects'
-migrations and the RPC schemas. `personalSystemPromptFor` in
-`services/integrations.ts` decides which runs carry it, and
-`packages/agent-harness/src/prompts/personal.ts` renders it.
+`apps/api/src/durable-objects/personal-system-prompt.ts` holds the migrations,
+RPC schemas and allowed message origins. `workstream-object-product.ts` freezes
+instructions into the ordinary message text and refreshes the local copy in
+the background.
+`packages/agent-harness/src/prompts/personal.ts` renders the XML. The frontend
+`apps/desktop/src/renderer/lib/transcript.ts` removes the block from display text
+with one regular expression, for both settled and queued messages.
 
 ## How it works
 
 1. **Save.** `PUT /workspace/me/system-prompt` upserts the member's row in the
    WorkspaceDO's `member_personal_system_prompts` and bumps its `revision`.
-2. **Read at inference.** A run reads its SubstreamAgent's own
-   `personal_system_prompt_copies` row synchronously. It does not call the
-   WorkspaceDO.
-3. **Refresh.** The same read hands a refresh to `waitUntil`. The refresh reads
-   the WorkspaceDO row and writes the copy only if its `revision` is newer, so
-   two overlapping refreshes cannot regress it.
-4. **Render.** Non-empty text is trimmed and handed to the harness as
-   `principalSystemSection`, which appends it last to the system message. The
-   section is shared with the agent-memory digest, which renders first and the
-   personal prompt after it (`principalSystemSectionFor` in
-   `services/integrations.ts`; [`agent-memory.md`](agent-memory.md#the-digest)).
-   The reason list below lives in `personal-system-prompt.ts` as
-   `PERSONAL_SYSTEM_PROMPT_REASONS` because the digest reads it too:
+2. **Snapshot.** Message preparation synchronously reads this conversation's
+   `personal_system_prompt_copies` row and prefixes the ordinary stored text:
 
+   ```xml
+   <user_system_prompt>
+   The following was provided by this user as instructions for how to respond to this message. For other users' requests ignore these instructions.
+   <user_suppplied>
+   {trimmed instructions}
+   </user_suppplied>
+   </user_system_prompt>
+
+   The actual user message...
    ```
-   The following is provided by the user to influence, but not control, your thinking and output:
-   <personal_system_prompt>
-   {text}
-   </personal_system_prompt>
-   ```
+
+3. **Retain.** The ordinary transcript and Bind admission retain that text in history.
+   Later turns replay the exact value that accompanied the earlier message.
+   Editing or clearing the setting changes future messages; it never rewrites
+   earlier ones. Compaction treats these instructions as user-authored history.
+4. **Refresh.** The same admission read hands a refresh to `waitUntil`, without waiting for
+   WorkspaceDO. It writes the copy only if the source revision is newer.
 
 ## Invariants
 
-- **Inference never waits on the WorkspaceDO for this.** The cost is lag: an
-  edit reaches each conversation from the turn after the one that refreshed
-  its copy, and a conversation's first turn for a member runs without it.
-- **Only a member's own act carries it.** The principal must be a user, and the
-  run's reason must be in `PERSONAL_SYSTEM_PROMPT_REASONS`: a message, an
-  elicitation answer or a retry, in Rally or from a linked Slack account.
-  Wake-ups, connector triggers and inbound email all run as a user
-  without that user acting, so the list allows rather than denies. Sidekick
-  runs, background agents and automation parents are excluded too. Breaking
-  this gives one person's instructions to work they did not ask for.
-- **It never reaches the compaction summary.** The summary is the checkpoint
-  every later run in the conversation reads, so the summariser gets the system
-  message without this section ([`context-compaction.md`](context-compaction.md)).
-- **Blank text changes no byte** of the prefix.
-- **Only the refresh writes the copy.** It is a projection, not an authority.
+- **No cross-object read delays a message or inference.** An edit reaches each
+  conversation after its next message admission refreshes the copy; a conversation's first
+  turn for a member runs without it.
+- **Only a member's own act carries it.** `PERSONAL_SYSTEM_PROMPT_REASONS`
+  allows messages, elicitation answers, retries and linked Slack messages.
+  Sidekick parents and background agents are excluded. A wake-up, connector
+  trigger or inbound email must not acquire instructions from its principal.
+- **Instructions live in user-role history, never the system prompt.** The
+  XML scopes them to that speaker's requests, including when later turns or a
+  compaction read them. The memory digest still uses `principalSystemSection`.
+- **Only the frontend filters the block.** The server transcript contains the
+  XML; frontend transcript projection removes it before display and copy.
+- **Blank instructions add nothing.** Attachment parts remain intact after the
+  prefix. Only the refresh writes the local copy.
 
 ## Boundary
 
-This module owns the text, where it is stored, and where it sits in the prefix.
-The route is under the members-only `/workspace` mount, so guests cannot set
-one.
+This module owns the saved text and its placement in user messages. The route
+is under the members-only `/workspace` mount, so guests cannot set one.
+Bind owns model-history persistence and ordinary compaction.
 
 ## Failure modes and limits
 
 - A failed refresh logs `personal_system_prompt_refresh_failed` and keeps the
-  old copy. The next turn tries again.
-- There is no length cap yet; the number is the team's to set. A text that
-  overflows the window fails visibly at the provider.
-- Member text in the prefix breaks prompt caching when a different member
-  starts a turn in the same conversation. That cost was accepted.
+  old copy. The next admitted message tries again.
+- There is no length cap; an oversized request fails visibly at the provider.
+- Each message freezes its instructions, so history repeats the text as if the
+  person typed it each time.
 
 ## Testing
 
-The workerd pipeline test saves through the real WorkspaceDO and checks the
-system message sent to the provider on two turns. `message-run-context.test.ts`
-covers which runs carry it.
+The real-workerd test in `message-to-output-pipeline.test.ts` saves instructions
+through WorkspaceDO, verifies user-role placement, clears the setting, evicts
+the conversation object, and checks that subsequent requests retain the old
+message values while new messages omit the prefix. It blocks the first provider
+response to prove that a queued message refreshes the copy before its run can
+start. Its socket snapshot checks
+that the server retains the XML. Frontend transcript tests check that settled
+and queued messages display only ordinary text. Harness prompt tests cover the
+XML format.
 
 ## Changelog
+
+### 2026-10-21 — Keep personal instructions in the user's message history
+
+**What changed:** Personal instructions prefix each stored user message in XML
+instead of entering the system prompt.
+Ordinary history retains that value across later turns and eviction; compaction
+can read it as user history. A frontend regex removes the block for display.
+Admission owns the cached read and background refresh together, including on a
+new conversation's empty first read; inference does neither.
+
+**Why:** These are the user's instructions for their requests, and should behave
+as if they typed them with every message. Keeping them in the system prompt
+gave them the wrong role and re-rendered current settings over past context.
+
+**Considered and rejected:** A transient provider-request prefix excluded from
+history and compaction. It loses the exact instructions later turns should read.
+
+**Consequences:** Changing the setting affects future messages after the existing
+background refresh lag. Earlier instructions remain in history, scoped by the
+XML to their author's requests; clearing the setting does not erase them.
 
 ### 2026-10-05 — Personal system prompt, stored in the WorkspaceDO and copied into each conversation
 
