@@ -141,9 +141,12 @@ Organization-wide.
 thread and breakout they take part in under **All threads**
 (`GET /navigation/threads`), ordered **Recent** (default), **A–Z** or
 **Needs attention** (`rally.sidebar-thread-sort`).
-Under Needs attention, opening a thread or Breakout holds its current position
+Needs attention orders unresolved threads needing attention first, other
+unresolved threads next, and resolved threads last, each group newest first.
+A resolved thread stays in the final group even when unread or open.
+Under Needs attention, opening an unresolved thread or Breakout holds its current position
 while its unread state clears; selecting it never grants attention priority.
-Other rows continue sorting relative to one another by attention and activity,
+The hold stays above the resolved group. Other rows continue sorting relative to one another by attention and activity,
 so the held row can sit between unread rows. Opening another row releases the
 previous one to its natural order, and changing the sort resets the hold. A
 Breakout's `substream` query identifies its held and highlighted row; the parent
@@ -160,6 +163,11 @@ and Channel badges carry their names as tooltips. A row is unread
 messages, mentions the person, or was never opened, the three the Threads
 count is made of; what the run is doing is the thread's own header's to show.
 A row the socket holds is drawn from the socket, so its dot moves live.
+Resolved threads and breakouts use Activity's read-row treatment: 30% opacity,
+restored on hover or keyboard focus and at full opacity when the person asks
+for more contrast. This applies in All threads and both Pinned lists.
+Archived rows are omitted, including pinned rows and breakouts of a thread
+the socket marks archived; a pin does not keep an archived conversation visible.
 Right-click pins or unpins. A row with a wake-up coming carries a clock whose
 tooltip says when and what. A thread Rally is still naming shows a shimmer in
 place of its title (`useNamingSkeleton`). Hovering a row for a second warms

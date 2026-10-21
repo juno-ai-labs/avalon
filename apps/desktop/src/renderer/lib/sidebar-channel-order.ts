@@ -35,8 +35,9 @@ export function workstreamHasActivityForViewer(workstream: WorkstreamSummary): b
 export function compareChannels(sort: SidebarChannelSort): WorkstreamComparator {
   if (sort === 'alphabetical') return compareAlphabeticalTitle;
   if (sort === 'recent') return compareRecentChannels;
-  // Every bold row first, then the rest, each half in Recent order.
-  const needsYou = (workstream: WorkstreamSummary): number => Number(workstreamHasActivityForViewer(workstream));
+  // Unresolved rows needing attention, other unresolved rows, then resolved
+  // rows, each group in Recent order. Selection never promotes a resolved row.
+  const needsYou = (workstream: WorkstreamSummary): number => workstream.resolved ? -1 : Number(workstreamHasActivityForViewer(workstream));
   return (left, right) => needsYou(right) - needsYou(left) || compareRecentChannels(left, right);
 }
 
