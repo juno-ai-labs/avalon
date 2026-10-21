@@ -699,7 +699,8 @@ interval leaves immediately; subsequent batches are at least 100 ms apart,
 combining queued samples into messages within the shared 256,000-character frame
 bound. A full batch holds roughly four seconds of PCM, so delayed audio catches
 up at about 40 times real time without resampling or dropping samples. The
-cadence batches transport work; the proxy has no message-count rate limit.
+cadence batches transport work independently of the audio sample rate, using a
+monotonic clock so system-clock adjustments cannot postpone queued audio.
 Azure's [audio-buffer API](https://learn.microsoft.com/en-us/azure/foundry-classic/openai/realtime-audio-reference-ga#input_audio_bufferappend)
 accepts buffered bytes; Rally disables server VAD and commits explicitly.
 Faster transport preserves the audio signal, though equivalent model accuracy
@@ -799,8 +800,9 @@ selection and message protocol.
 
 **What changed:** The proxy no longer disconnects on the 31st message in a
 one-second window. One sender batches startup, live, and final PCM in order,
-within the existing frame-size bound and 100 ms transport cadence. The existing
-4 MiB byte budget now accounts for queued payloads as well as WebSocket bytes;
+within the existing frame-size bound, using monotonic time for the existing
+100 ms transport cadence. The existing 4 MiB byte budget now accounts for queued
+payloads as well as WebSocket bytes;
 Stop and segment commits drain accepted audio before committing, within the
 existing finalization deadline. Editing or explicitly sending acknowledges a
 failed recording's notice without losing its recovered text.
@@ -817,8 +819,7 @@ bypassed batching and made commit ordering depend on when a chunk arrived.
 Queued PCM must keep its samples and order under steady or delayed delivery, and
 no commit may overtake accepted audio. A failed recording must never submit its
 partial transcript automatically; the recovered draft remains available and
-message-delivery errors stay owned by the host. The real-workerd burst test was
-observed to fail with the removed counter restored.
+message-delivery errors stay owned by the host.
 
 ### 2026-10-20 — Group mention candidates by conversation membership
 

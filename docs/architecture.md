@@ -187,8 +187,7 @@ without a second Google sign-in.
   than the query string; Cloudflare consumes its JTI, reserves a workspace-owned
   session, opens the authenticated Azure WebSocket, and admits only size-bounded
   audio-buffer events from the client. Valid audio remains valid under delayed
-  or burst delivery; this bridge has no message-count
-  rate or recording-duration limit. Raw microphone audio and transcripts are not
+  or burst delivery. Raw microphone audio and transcripts are not
   persisted by the bridge. The ordered sender and its byte budget are documented
   in [conversation surfaces](conversation-surfaces.md#dictation-capture-and-connection-startup).
 - Every API operation resolves a session, workspace, role, execution principal,
