@@ -43,13 +43,6 @@ loser's session. There is no mutable active-workspace field. Selecting workspace
 A leaves a tab using B unchanged. Child expiry cannot exceed the identity
 session's expiry.
 
-The ordinary session query also observes the membership incarnation and revision.
-For attachment and artifact reads, authentication passes that server-owned proof
-to resource admission; migrated conversation grants reuse it without another D1
-lookup. The proof lasts for one request and is never accepted from token claims
-or HTTP input. See [authorization](authorization.md) for the read and revocation
-contract.
-
 `POST /browser/workspace/create` creates an organization; see
 [browser client](browser-client.md#creating-an-organization).
 

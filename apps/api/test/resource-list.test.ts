@@ -2,7 +2,6 @@ import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import type { AuthContext } from "../src/env";
-import { ResourceReadContext } from "../src/services/authorization-service";
 import { ResourceService } from "../src/services/resource-service";
 import { unlistedResourceMetadata } from "../src/services/resource-listing";
 import { createTestD1Database, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
@@ -43,13 +42,9 @@ describe("resource listing", () => {
       AVALON_REGION: 'global',
       WORKSPACE_DOS: testWorkspaceObjectBinding(workspace.instance, ['executeRuntimeSql', 'authorizationResourceFacts']),
     });
-    const reads = new ResourceReadContext(env, auth, {
-        workspaceId,
-        userId,
-        accessClass: 'member',
-        validatedAt: Date.now(),
-      });
-    const service = new ResourceService(env, auth, undefined, reads);
+    const service = new ResourceService(env, auth, undefined, {
+      workspaceId, userId, accessClass: 'member', validatedAt: Date.now(),
+    });
 
     await expect(service.get(firstResourceId)).resolves.toMatchObject({ id: firstResourceId });
     expect(membershipReads).toBe(0);

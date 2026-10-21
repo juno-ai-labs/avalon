@@ -1,3 +1,4 @@
+import { RESOURCE_READ_PROJECTION_SQL } from '../services/resource-read-projection';
 import { WorkspaceConversationView, WORKSPACE_CONVERSATION_VIEW_MIGRATION } from "./workspace-conversation-view";
 import { ConversationViewProjectionSchema } from "./conversation-view-projection";
 import { CONNECTOR_EVENT_PEOPLE_MIGRATION, writeConnectorEventPeople, readConnectorEventPeople, copyConnectorEventPeople } from "./connector-event-people";
@@ -17178,11 +17179,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // The caller discloses them only after composing the complete decision.
       const readMetadata = request.includeReadMetadata ? {
         placementAffinity: this.placementAffinity(),
-        resource: this.state.storage.sql.exec<Record<string, SqlStorageValue>>(`SELECT r.*,
-          c.connector_type AS connector_type,
-          EXISTS (SELECT 1 FROM resource_watches rw WHERE rw.resource_id = r.id
-            AND rw.workspace_id = r.workspace_id AND rw.enabled = 1) AS watch_enabled
-          FROM resources r LEFT JOIN connector_connections c ON c.id = r.connection_id
+        resource: this.state.storage.sql.exec<Record<string, SqlStorageValue>>(`${RESOURCE_READ_PROJECTION_SQL}
           WHERE r.id = ? AND r.workspace_id = ?`, resourceId, request.workspaceId).one(),
         artifact: this.state.storage.sql.exec<{
           artifact_id: string; workstream_id: string; mode: string; stateful: number; hostname_stub: string | null;

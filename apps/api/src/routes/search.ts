@@ -2,7 +2,6 @@ import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { IdSchema } from '@rally/contracts';
 import { z } from 'zod';
 import { ResourceService } from '../services/resource-service';
-import { ResourceReadContext } from '../services/authorization-service';
 import { Hono } from 'hono';
 import { SearchRequestSchema, SearchResponseSchema } from '@rally/contracts/search';
 import type { HonoAppEnv } from '../env';
@@ -44,6 +43,6 @@ searchRoutes.post('/', zValidator('json', SearchRequestSchema), async (c) => {
 searchRoutes.get('/resources/:id/preview', zValidator('param', z.strictObject({ id: IdSchema })), async (c) => {
   const auth = getWorkspaceAuth(c);
   return new ResourceService(c.env, auth, undefined,
-    new ResourceReadContext(c.env, auth, getRequestMembership(c)))
+    getRequestMembership(c))
     .searchPreview(c.req.valid('param').id, c.req.raw.signal);
 });
