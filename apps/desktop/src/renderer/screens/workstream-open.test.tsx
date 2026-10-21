@@ -1049,6 +1049,31 @@ describe('socket-first channel open', () => {
     expect(api.setSubstreamArchived).not.toHaveBeenCalled();
   });
 
+  it.each(['0', '00000000-0000-7000-8000-000000000660'])('keeps Resolve visible but disabled for resolved conversation %s', async (childId) => {
+    const parent = recoveryBoot();
+    const child = recoveryBoot({ title: 'Private child' });
+    renderScreen((cache) => {
+      cache.setQueryData(['workstream', workstreamId], parent);
+      cache.setQueryData(['ordered-transcript', workstreamId], parent.transcript);
+      setCachedWorkstreams(cache, [{ ...parent, resolved: childId === '0' }]);
+      cache.setQueryData(['workstream-children', workstreamId], { privateChildren: [{
+        substreamId: childId, title: child.title, resolved: true,
+        createdByUserId: null, createdAt: child.createdAt, updatedAt: child.createdAt,
+      }] });
+      cache.setQueryData(['substream-workstream', workstreamId, childId], child);
+      cache.setQueryData(['substream-ordered-transcript', workstreamId, childId], child.transcript);
+    }, childId);
+    fireEvent.pointerDown(await screen.findByRole('button', {
+      name: childId === '0' ? 'Thread menu: Recovered channel' : 'Breakout menu: Private child',
+    }), { button: 0, ctrlKey: false });
+    const resolve = await screen.findByRole('menuitem', { name: childId === '0' ? 'Resolve Thread' : 'Resolve Breakout' });
+    expect(resolve).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(resolve);
+    expect(api.resolveConversation).not.toHaveBeenCalled();
+    expect(locationInTest.pathname).toBe(`/workstreams/${workstreamId}`);
+    expect(locationInTest.search).toBe(`?substream=${childId}`);
+  });
+
   it.each(['unmount', 'channel change'])('ignores a late resolution after %s', async (change) => {
     const channelA = '00000000-0000-7000-8000-000000000663';
     const channelB = '00000000-0000-7000-8000-000000000664';

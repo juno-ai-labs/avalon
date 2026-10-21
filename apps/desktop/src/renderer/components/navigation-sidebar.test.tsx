@@ -1343,8 +1343,18 @@ describe('the navigation sidebar', () => {
       expect(screen.getByRole('link', { name: /Q4 plan/u, hidden: true })).toBeInTheDocument();
     });
 
+    it('keeps Resolve thread visible but disabled when the thread is resolved', async () => {
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [thread(plan.id, plan.title, { resolved: true })], pinned: [] });
+      renderSidebar(seedThreads);
+      fireEvent.contextMenu(await screen.findByRole('link', { name: /Q4 plan/u }));
+      const resolve = await screen.findByRole('menuitem', { name: 'Resolve thread' });
+      expect(resolve).toHaveAttribute('aria-disabled', 'true');
+      fireEvent.click(resolve);
+      expect(api.resolveConversation).not.toHaveBeenCalled();
+      expect(screen.getByRole('menuitem', { name: 'Archive thread' })).not.toHaveAttribute('aria-disabled', 'true');
+    });
+
     it.each([
-      ['resolved', { resolved: true }, ['Pin', 'Archive thread']],
       ['pending', { pending: true as const }, ['Pin']],
       ['breakout', { kind: 'breakout' as const, breakoutOf: { workstreamId: 'parent', substreamId: '0', title: 'Parent' } }, ['Pin']],
     ])('offers appropriate actions for a %s row', async (_state, overrides, labels) => {

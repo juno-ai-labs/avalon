@@ -172,9 +172,10 @@ A confirmed local thread archive removes its navigation rows before the socket
 evicts the temporary archive marker. Visibility tombstones refresh the list:
 membership loss alone does not imply that its breakouts were archived.
 Once the list loads, pins without a renderable row do not count or take a slot.
-Right-click pins or unpins. Thread rows also offer **Resolve thread** while
-unresolved, and members get a danger-styled **Archive thread**. These actions
-target the clicked thread, including from Pinned, without opening it first.
+Right-click pins or unpins. Thread rows also offer **Resolve thread**, disabled
+when already resolved, and members get a danger-styled **Archive thread**.
+These actions target the clicked thread, including from Pinned, without opening
+it first.
 Archive uses the thread header’s confirmation copy and removes the confirmed
 archive from cached thread pages while its directory projection catches up;
 resolving or archiving a different thread leaves the open conversation in
@@ -343,7 +344,8 @@ returns to its Thread, and a Thread to the Channel it was opened from (or its
 first visible Channel). A Breakout-only reader stays in the resolved Breakout
 when Main is inaccessible. Failed writes and results arriving after navigation
 or unmount never redirect. Members and guests can resolve within their admitted
-conversation scope; archived conversations offer no Resolve action.
+conversation scope. Resolved conversations keep the Resolve item visible but
+disabled; archived conversations offer no Resolve action.
 
 Each menu has a root and levels. The root is a row of action tiles (Add people,
 Rename, Copy link, More), under a header on a Breakout, and one row each for People,
