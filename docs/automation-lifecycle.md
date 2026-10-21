@@ -1112,6 +1112,8 @@ pause, deletion and run-as checks. Delegated workers use their normal inherited
 authority and stop checks. The workerd continuation suite covers worker startup
 and follow-up input beneath authoring and run conversations.
 
+Pull request: [#1386](https://github.com/juno-ai-labs/avalon/pull/1386).
+
 ### 2026-10-19 — Authoring checks connected alternatives before declaring a missing capability
 
 **What changed:** Sidekick authoring and polling guidance explicitly compose
