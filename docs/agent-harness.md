@@ -349,11 +349,43 @@ recovery path.
 
 ### Addressing
 
-For subsequent messages that need addressing classification, a lightweight classifier returns `agent_action`, `human_only`, `both`, or `uncertain` with confidence and a terse rationale code. Explicit Rally/connector mentions and clear work requests invoke the harness. Social acknowledgement and human-only coordination can remain unanswered — including a message aimed at a teammate: the caller passes the display names of the people the message mentions (`humanMentions`, resolved from validated mention rows), and the prompt rules that a message telling or asking a mentioned person something is that person's to act on, even mid-task, unless it also asks Rally for work. The same signal gates the deterministic fast paths: an opening imperative short-circuits to `agent_action` only while the message mentions nobody, since "Please review the deck @Alex" hands the work to Alex, not to Rally. Uncertain messages invoke only when an active task or explicit tool context exists. The current message is preserved in full. Only the newest ten context messages are retained; older ones are omitted, and each retained message is bounded to 1,000 Unicode code points by keeping its opening and conclusion around a middle ellipsis. JEV receives that history in its state payload, and the model-independent OpenRouter prompt receives the same bytes: Terra uses that renderer when evaluated directly, while the hosted cascade uses it for the pinned DeepSeek fallback. The label is not exposed in the UI.
+For subsequent messages that need addressing classification, a lightweight classifier returns `agent_action`, `human_only`, `both`, or `uncertain` with confidence and a terse rationale code. Explicit Rally/connector mentions and clear work requests invoke the harness. Social acknowledgement and human-only coordination can remain unanswered — including a message aimed at a teammate: the caller passes the display names of the people the message mentions (`humanMentions`, resolved from validated mention rows), and the prompt rules that a message telling or asking a mentioned person something is that person's to act on, even mid-task, unless it also asks Rally for work. The same signal gates the deterministic fast paths: an opening imperative short-circuits to `agent_action` only while the message mentions nobody, since "Please review the deck @Alex" hands the work to Alex, not to Rally. Uncertain messages invoke only when an active task or explicit tool context exists. The current message is preserved in full. Only the newest ten context messages with nonblank text are retained; empty and whitespace-only tool turns are excluded before selecting those ten. Older messages are omitted, and each retained message is bounded to 1,000 Unicode code points by keeping its opening and conclusion around a middle ellipsis. JEV receives that history in its state payload, and the model-independent OpenRouter prompt receives the same bytes: Terra uses that renderer when evaluated directly, while the hosted cascade uses it for the pinned DeepSeek fallback. The label is not exposed in the UI.
 
 A message that invokes nothing is still a turn the model reads. The conversation object appends every such human or external text turn to the loop's projection at the next text admission, in transcript order, ahead of the input that follows it — rendered with a header saying it was said to the room, not to Rally, and naming its author, so the model reads it as context rather than as a request ([`workstream-durable-object.md`](workstream-durable-object.md)). An elicitation answer carries no such fill; the turns said while the question was open wait for the next text input.
 
 A demo seed action is the one message the classifier never sees. It carries a `seed` ([`demo-workspaces.md`](demo-workspaces.md#seeding-a-demo-from-a-pack)) whose `assistant` turn says whether the line starts a run — present means yes, `null` means no — and the object takes that answer over the room's size and the message's attachments alike. The pack is the authority on which of its lines address Rally, and seeding a scripted conversation cannot wait on a live model's guess about each one. The field reaches the object only over its internal RPC; the message route has none.
+
+A separate continuation classifier handles information supplied for earlier work.
+`classifyMessageAdmission` composes it with ordinary addressing without changing
+the addressing prompt. It receives the same bounded history, separates human
+instructions from agent replies with sequence positions, and includes the current
+sender. The continuation Choice returns three operational decisions; a second
+Choice checks whether a human assigned the relevant work to Rally. Both questions
+share one request. A proposed wake-up with an unconfirmed or disputed assignment
+uses the focused fallback, rather than letting an unsolicited agent offer or a
+human-owned task create authority:
+
+- `resume_requested_work`: the newest message completes the prerequisites of an
+  unfinished human request to Rally. Admit it without invoking ordinary addressing.
+- `followup_without_rally_action`: information follows earlier work but Rally
+  has no ready action. Keep Rally inactive even if ordinary addressing mistook a
+  partial input, human-owned task, or closed request for new work.
+- `use_addressing`: a new request to Rally, including a revision, or a message
+  unrelated to earlier work. Keep the ordinary addressing decision.
+
+This check runs first when history exists and TypeSafe is configured; only
+`use_addressing` reaches ordinary addressing. It uses the same
+one-second primary deadline and strict confidence greater than `0.5` as addressing.
+Low confidence or failure uses a continuation-specific prompt on
+`openai/gpt-6.1-sol`, low reasoning, pinned to `openai` without provider/model
+fallback, within the existing 15-second fallback budget. If both stages fail,
+`use_addressing` preserves the original decision. Caller cancellation propagates.
+Each stage has schema name `message_continuation`; final outcome logs record its
+decision, confidence, and stage separately from ordinary addressing.
+
+This is bounded conversation classification. An instruction outside the latest
+ten text turns cannot be recovered. The full agent decides how to perform admitted
+work; there is no new wait registration, alarm, or task lifecycle.
 
 ### Naming
 
@@ -1590,6 +1622,14 @@ memory; different metadata replaces the entry. They contain no executor closures
 credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
+Continuation guards are covered by
+`packages/agent-harness/src/message-continuation.test.ts` and
+`apps/api/test/addressing-classifier-logging.test.ts`. The service test exercises
+both waking a human-only decision and suppressing an erroneous action decision,
+with provider HTTP doubled. `apps/api/test/addressing-history.test.ts` exercises
+the production history query against real object migrations. Synthetic scenarios
+and content-free live evidence live in `packages/agent-harness/evals/addressing/`.
+
 ## Changelog
 
 ### 2026-10-21 — Verify uncertain completion once before ending a turn
@@ -1613,6 +1653,35 @@ confidently misclassified promises. An in-memory recovery flag resets after
 eviction, and checking current transcript text loses the marker on compaction.
 The host preserves lifecycle exclusions; the judge cannot override cancellation,
 existing work, ambiguous writes or required input.
+
+### 2026-10-21 — Classify deferred-request continuations separately
+
+**What changed:** History excludes blank tool turns before selecting ten text
+turns. A dedicated JEV continuation decision, with sender identity, composes with
+ordinary addressing: ready follow-ups wake Rally; partial, human-owned, cancelled,
+superseded, and completed-work follow-ups leave it inactive; new requests retain
+ordinary addressing. Uncertain continuation decisions use a focused Sol fallback.
+
+**Why:** A requested report could look like human conversation even though its
+arrival made earlier work ready. Tool turns displaced that request from history,
+but restoring it did not fix the actor classifier's status-report boundary.
+Extending that prompt introduced false invocations on human-owned and completed
+work. A separate continuation decision preserves ordinary addressing and corrects
+false invocations on informational follow-ups.
+
+**Considered and rejected:** Overloading addressing with ownership, prerequisites,
+and closure checks made unrelated routing regress. A binary continuation result
+could add missing wake-ups but could not suppress existing false ones without
+also suppressing new requests; the third decision hands new requests back to
+addressing. Durable pending-wait state would require a new registration and
+lifecycle; this change uses the bounded transcript instead. The existing DeepSeek
+fallback misclassified human-owned tasks in live evaluation, so continuation uses
+the separately evaluated Sol route.
+
+**Consequences:** Messages with history pay for a separate check. Ordinary
+addressing pins and input-admission machinery remain in place. There is no
+recovery beyond visible history. The evaluation report records rejected versions,
+provider failures, and full admission results separately from isolated JEV results.
 
 ### 2026-10-20 — Resume verified settled history after a loop relocation
 

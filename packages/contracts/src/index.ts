@@ -3875,6 +3875,7 @@ export const AddressingClassificationSchema = z.object({
     "rally_reference",
     "active_task",
     "elicitation_answer",
+    "deferred_request",
     "human_coordination",
     "social_acknowledgement",
     "insufficient_signal"
