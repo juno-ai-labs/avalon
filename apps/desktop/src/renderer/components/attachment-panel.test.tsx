@@ -26,8 +26,8 @@ describe('AttachmentPanel', () => {
   beforeEach(() => {
     copyText.mockReset().mockResolvedValue(undefined);
     vi.stubGlobal('URL', class extends URL {
-      static createObjectURL = vi.fn(() => 'blob:panel-image');
-      static revokeObjectURL = vi.fn();
+      static override createObjectURL = vi.fn(() => 'blob:panel-image');
+      static override revokeObjectURL = vi.fn();
     });
   });
 
