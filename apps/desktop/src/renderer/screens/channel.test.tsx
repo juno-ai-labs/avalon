@@ -23,6 +23,7 @@ const api = vi.hoisted(() => ({
   getResourceVersions: vi.fn(async (): Promise<ResourceVersion[]> => []),
   getResourceVersionContent: vi.fn(async () => new Blob(['The first model.'], { type: 'text/markdown' })),
   getWorkspaceMembers: vi.fn(async () => []),
+  getPeopleRanking: vi.fn(async () => ({ channel: [], organization: [] })),
   getWorkspaceInvitees: vi.fn(async () => []),
   archiveSpace: vi.fn(),
   updateSpacePresentation: vi.fn(),

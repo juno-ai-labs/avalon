@@ -17,6 +17,7 @@ const api = vi.hoisted(() => ({
   removeSubstreamParticipant: vi.fn(),
   clientFeatureFlags: vi.fn(),
   getWorkspaceMembers: vi.fn(),
+  getPeopleRanking: vi.fn(async () => ({ channel: [], organization: [] })),
   getConnections: vi.fn(),
   listScopeInvitations: vi.fn(),
   getScopeSharingOptions: vi.fn(),

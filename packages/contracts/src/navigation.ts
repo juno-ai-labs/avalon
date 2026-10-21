@@ -3,6 +3,13 @@ import { z } from "zod";
 import { IdSchema, WorkstreamIdSchema } from "./identifiers";
 import { WorkstreamAppearanceSchema } from "./workstream-appearance";
 
+/** People ordered by Rally reply/mention frequency; the picker filters its roster before taking five. */
+export const PeopleRankingSchema = z.strictObject({
+  channel: z.array(IdSchema),
+  organization: z.array(IdSchema),
+});
+export type PeopleRanking = z.infer<typeof PeopleRankingSchema>;
+
 /**
  * What a person can pin: a thread (storage `workstream`), a Channel (storage
  * `space`) or a breakout (storage `substream`). One list per kind, each in the
