@@ -197,40 +197,37 @@ describe("realtime transcription proxy", () => {
     expect(database.activeSessions()).toBe(0);
   });
 
-  it("closes both sockets and releases the lease when the frame-rate policy is exceeded", async () => {
-    // Only Date is faked: the limiter's window must not advance between the
-    // upgrade and the 31st frame, while releaseAndReport's retry setTimeout
-    // has to stay real for `await Promise.all(deferred)` to settle.
+  it("keeps an admitted session open through a catch-up burst and forwards its commit", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
-    const database = new TranscriptionAdmissions();
+    const admissions = new TranscriptionAdmissions();
     const upstream = new FakeSocket();
     const { pairs } = installSocketRuntime(upstream);
     const deferred: Promise<void>[] = [];
-    const environment = env(database);
+    const environment = env(admissions);
     const ticket = await issueTranscriptionSocketTicket(environment, auth);
-
-    await new RealtimeTranscriptionService(
-      environment,
-      (promise) => deferred.push(promise),
-    ).upgrade(ticket, request());
+    await new RealtimeTranscriptionService(environment, (promise) => { deferred.push(promise); })
+      .upgrade(ticket, request());
     const server = pairs[0]!.server;
-    for (let index = 0; index < 31; index += 1) {
-      server.emit("message", {
-        data: JSON.stringify({ type: "input_audio_buffer.append", audio: "AQID" }),
-      });
+    try {
+      for (let index = 0; index < 40; index += 1) {
+        server.emit("message", { data: JSON.stringify({
+          type: "input_audio_buffer.append", audio: Buffer.from([index, 0]).toString("base64"),
+        }) });
+      }
+      server.emit("message", { data: JSON.stringify({ type: "input_audio_buffer.commit" }) });
+      expect(upstream.sent.slice(1).map((raw) => JSON.parse(raw))).toEqual([
+        ...Array.from({ length: 40 }, (_, index) => ({
+          type: "input_audio_buffer.append", audio: Buffer.from([index, 0]).toString("base64"),
+        })),
+        { type: "input_audio_buffer.commit" },
+      ]);
+      expect(server.closes).toEqual([]);
+      expect(upstream.closes).toEqual([]);
+      expect(admissions.activeSessions()).toBe(1);
+    } finally {
+      server.emit("close", { code: 1000, reason: "Test complete" });
+      await Promise.all(deferred);
     }
-    await Promise.all(deferred);
-
-    expect(server.sent.map((message) => JSON.parse(message))).toContainEqual({
-      type: "error",
-      error: {
-        code: "dictation_frame_rate_limit",
-        message: "Dictation audio arrived too quickly.",
-      },
-    });
-    expect(server.closes).toContainEqual({ code: 1008, reason: "Dictation audio arrived too quickly." });
-    expect(upstream.closes).toContainEqual({ code: 1008, reason: "Dictation audio arrived too quickly." });
-    expect(database.activeSessions()).toBe(0);
   });
 
   it("renews the session lease on a timer while the socket is open, with no frames on it", async () => {

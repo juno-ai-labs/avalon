@@ -26,7 +26,6 @@ import {
 
 import {
   TRANSCRIPTION_MAX_FRAME_CHARACTERS as MAX_CLIENT_FRAME_CHARACTERS,
-  TRANSCRIPTION_MAX_FRAMES_PER_SECOND as MAX_CLIENT_FRAMES_PER_SECOND,
 } from "@rally/contracts/realtime-transcription";
 import { runtimeDeferral } from "../lib/defer";
 import { emitInferenceUsage } from "./usage-metering";
@@ -154,6 +153,28 @@ function sendJson(socket: WebSocket, payload: unknown): void {
 
 function stringMessage(data: string | ArrayBuffer | Blob): string | null {
   return typeof data === "string" ? data : null;
+}
+
+/** Wire the ordered audio-buffer transport after admission and socket acceptance. */
+export function forwardTranscriptionAudio(server: WebSocket, upstream: WebSocket): void {
+  server.addEventListener("message", (event) => {
+    const parsed = parseTranscriptionClientEvent(stringMessage(event.data));
+    if (!parsed) {
+      try {
+        if (isUnknownSocketEvent(JSON.parse(stringMessage(event.data) ?? ""), transcriptionClientEventTypes)) return;
+      } catch { /* Malformed JSON keeps the existing error response. */ }
+      sendJson(server, {
+        type: "error",
+        error: { code: "invalid_event", message: "Only realtime audio-buffer events are accepted." },
+      });
+      return;
+    }
+    sendJson(upstream, parsed);
+  });
+  upstream.addEventListener("message", (event) => {
+    if (server.readyState !== WebSocket.OPEN || typeof event.data !== "string") return;
+    try { server.send(event.data); } catch { /* The desktop closed before the provider frame arrived. */ }
+  });
 }
 
 /** The WorkspaceDO that owns this workspace's dictation admission state. */
@@ -335,8 +356,6 @@ export class RealtimeTranscriptionService {
 
       upstream.accept({ allowHalfOpen: true });
       server.accept({ allowHalfOpen: true });
-      let frameWindowStartedAt = Date.now();
-      let frameCount = 0;
       leaseTimer = setInterval(() => {
         if (server.readyState !== WebSocket.OPEN) {
           stopLeaseRenewal();
@@ -352,42 +371,7 @@ export class RealtimeTranscriptionService {
         try { this.defer(renewal); } catch { void renewal; }
       }, SESSION_LEASE_REFRESH_MS);
 
-      const terminateForPolicy = (code: string, message: string): void => {
-        sendJson(server, { type: "error", error: { code, message } });
-        closeSocket(server, 1008, message);
-        closeSocket(upstream, 1008, message);
-        deferRelease();
-      };
-
-      server.addEventListener("message", (event) => {
-        const now = Date.now();
-        if (now - frameWindowStartedAt >= 1_000) {
-          frameWindowStartedAt = now;
-          frameCount = 0;
-        }
-        frameCount += 1;
-        if (frameCount > MAX_CLIENT_FRAMES_PER_SECOND) {
-          terminateForPolicy("dictation_frame_rate_limit", "Dictation audio arrived too quickly.");
-          return;
-        }
-
-        const parsed = parseTranscriptionClientEvent(stringMessage(event.data));
-        if (!parsed) {
-          try {
-            if (isUnknownSocketEvent(JSON.parse(stringMessage(event.data) ?? ""), transcriptionClientEventTypes)) return;
-          } catch { /* Malformed JSON keeps the existing error response. */ }
-          sendJson(server, {
-            type: "error",
-            error: { code: "invalid_event", message: "Only realtime audio-buffer events are accepted." },
-          });
-          return;
-        }
-        sendJson(upstream, parsed);
-      });
-      upstream.addEventListener("message", (event) => {
-        if (server.readyState !== WebSocket.OPEN || typeof event.data !== "string") return;
-        try { server.send(event.data); } catch { /* The desktop closed before the provider frame arrived. */ }
-      });
+      forwardTranscriptionAudio(server, upstream);
       server.addEventListener("close", (event) => {
         closeSocket(upstream, event.code || 1000, event.reason || "Client closed");
         deferRelease();
@@ -424,7 +408,6 @@ export class RealtimeTranscriptionService {
 export const __realtimeTranscriptionTesting = {
   base64DecodedByteLength,
   limits: {
-    maxClientFramesPerSecond: MAX_CLIENT_FRAMES_PER_SECOND,
     maxConcurrentUserSessions: MAX_CONCURRENT_USER_TRANSCRIPTION_SESSIONS,
     maxConcurrentWorkspaceSessions: MAX_CONCURRENT_WORKSPACE_TRANSCRIPTION_SESSIONS,
     sessionLeaseRefreshMs: SESSION_LEASE_REFRESH_MS,
