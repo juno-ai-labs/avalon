@@ -961,7 +961,15 @@ receipt together. If the loop is already executing, the input stays pending;
 an eligible steer is promoted at the safe step into that same activation. The
 same `client_message_id` is checked against both canonical and pending authority,
 so an ambiguous-response retry returns the same future turn ID without
-admitting another input or loop.
+admitting another input or loop. This includes a send repeated while its mailbox
+row is still preparing: the original author's logical request is compared using
+the same hash as the final receipt, excluding per-attempt telemetry and the
+server's merge-title snapshot. The first recovery envelope is retained. A retry
+joins the live preparation through its existing settlement waiters, then reads
+the canonical or pending receipt; it does not classify or reserve attachments a
+second time. Different content or authors under the same client message ID are
+still an idempotency conflict. Cancellation recovery can resume an unclaimed
+preparation from its original envelope, and settlement releases its waiters.
 
 Every public message-admission response contains only the accepted `turn`
 identity and a truthful `deliveryState` of `canonical` or `pending`. A replay
@@ -1555,6 +1563,13 @@ projection changes only, not token cadence.
 
 ## Testing
 
+`test-workers/message-to-output-pipeline.test.ts` also holds a socket send during
+preparation, repeats it under the same or a new operation ID, and verifies two
+successful private receipts for one accepted turn and one durable admission.
+An altered payload is refused with an idempotency conflict while the original
+remains held. The wait hook stages the interleave; real socket frames and
+workerd SQLite rows are the outcome assertions.
+
 `test-workers/message-to-output-pipeline.test.ts` checks that a public Channel
 reader becomes a participant while their accepted message remains queued behind
 a held run, that an open socket receives `participant_added`, and that replay
@@ -1891,6 +1906,24 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-10-21 — Join repeated sends while admission is preparing
+
+**What changed:** Human-message preparation uses the final admission receipt's
+logical request identity and joins a live preparation before replaying its
+accepted result.
+
+**Why:** A same-socket resend arrived during classification with a different
+receive timestamp. Raw envelope equality rejected it before the original send
+succeeded, restoring the draft and showing a false failure beside a saved turn.
+
+**Considered and rejected:** Ignoring only the timestamp still permits duplicate
+classification and attachment preparation. A second in-memory promise registry
+would duplicate the mailbox's existing waiter and cancellation-recovery lifecycle.
+
+**Consequences:** The first durable recovery envelope remains authoritative;
+changed content and authors still conflict, transport metadata cannot change
+request identity, and retries must re-read accepted state after settlement.
 
 ### 2026-10-21 — Classify replies against settled preceding admissions
 

@@ -292,6 +292,25 @@ export type InitializeWorkstreamObjectInput = z.infer<typeof InitializeWorkstrea
 export type InitializeWorkstreamObjectRequest = z.input<typeof InitializeWorkstreamObjectInputSchema>;
 
 export type WorkstreamObjectCreateMessageInput = z.infer<typeof WorkstreamObjectCreateMessageInputSchema>;
+
+const HumanMessagePreparationEnvelopeSchema = z.object({
+  auth: z.object({ userId: z.string().uuid() }),
+  input: WorkstreamObjectCreateMessageInputSchema,
+});
+
+/** One logical request identity for preparing, pending, and canonical replays. */
+function messageAdmissionRequestHash(authorUserId: string, input: WorkstreamObjectCreateMessageInput): string {
+  const receiptInput = { ...input };
+  delete receiptInput.telemetryOperationId;
+  delete receiptInput.telemetryRequestReceivedAt;
+  delete receiptInput.telemetryJourney;
+  // The merge title is a server snapshot and may change between attempts.
+  if (receiptInput.merge) {
+    receiptInput.merge = { ...receiptInput.merge, mergedFrom: { ...receiptInput.merge.mergedFrom, title: "" } };
+  }
+  return workstreamImportHash({ command: "create_message", authorUserId, input: receiptInput });
+}
+
 export type WorkstreamObjectUpdateInput = z.infer<typeof UpdateWorkstreamRequestSchema>;
 export type WorkstreamObjectAcknowledgeReadInput = z.infer<typeof AcknowledgeWorkstreamReadRequestSchema>;
 export type WorkstreamObjectAnswerElicitationInput = z.infer<typeof AnswerElicitationRequestSchema>;
@@ -742,12 +761,17 @@ export class WorkstreamObjectProductService {
       }
       // Recovery of a cancelled invocation settles the same durable mailbox row
       // and releases these waiters through endInputPreparation as well.
-      await new Promise<void>((resolve) => {
-        const waiters = this.inputPreparationWaiters.get(earlier.input_id) ?? new Set();
-        waiters.add(resolve);
-        this.inputPreparationWaiters.set(earlier.input_id, waiters);
-      });
+      await this.waitForInputPreparation(earlier.input_id);
     }
+  }
+
+  private waitForInputPreparation(inputId: string): Promise<void> {
+    if (this.loops.inputPreparation(inputId)?.state !== "preparing") return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const waiters = this.inputPreparationWaiters.get(inputId) ?? new Set();
+      waiters.add(resolve);
+      this.inputPreparationWaiters.set(inputId, waiters);
+    });
   }
 
   /**
@@ -838,12 +862,29 @@ export class WorkstreamObjectProductService {
       this.storage,
       input.now + SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS,
     );
+    let envelopeJson = JSON.stringify(input.envelope);
+    // Read after the alarm await: another attempt can reserve while it yields.
+    // Retain the first recovery envelope, but compare logical message identity,
+    // not per-attempt telemetry or the session used to reconnect.
+    const existing = this.loops.inputPreparationByClientMessageId(input.clientMessageId);
+    if (input.preparationKind === "human_message"
+      && existing?.preparation_kind === "human_message" && existing.state === "preparing") {
+      const originalEnvelopeJson = existing.envelope_json ?? "null";
+      const original = HumanMessagePreparationEnvelopeSchema.parse(JSON.parse(originalEnvelopeJson));
+      const replay = HumanMessagePreparationEnvelopeSchema.parse(input.envelope);
+      if (messageAdmissionRequestHash(original.auth.userId, original.input)
+        !== messageAdmissionRequestHash(replay.auth.userId, replay.input)) {
+        throw new ApiError(409, "substream_message_idempotency_conflict",
+          "This client message id was already used for another message");
+      }
+      envelopeJson = originalEnvelopeJson;
+    }
     return this.loops.reserveInputPreparation({
       inputId: input.inputId,
       loopId: loop.loop_id,
       clientMessageId: input.clientMessageId,
       preparationKind: input.preparationKind,
-      envelopeJson: JSON.stringify(input.envelope),
+      envelopeJson,
       now: input.now,
     }).preparation;
   }
@@ -4796,20 +4837,7 @@ export class WorkstreamObjectProductService {
       && auth.principal !== "resource_authorization") {
       throw new ApiError(403, "resource_authorization_message_id_reserved", "This message ID is reserved for connector authorization");
     }
-    const receiptInput = { ...input };
-    delete receiptInput.telemetryOperationId;
-    delete receiptInput.telemetryRequestReceivedAt;
-    delete receiptInput.telemetryJourney;
-    // A merge's Breakout title is the server's snapshot, not the caller's
-    // words: a rename between a lost response and its retry must still replay.
-    if (receiptInput.merge) {
-      receiptInput.merge = { ...receiptInput.merge, mergedFrom: { ...receiptInput.merge.mergedFrom, title: "" } };
-    }
-    const requestHash = workstreamImportHash({
-      command: "create_message",
-      authorUserId: auth.userId,
-      input: receiptInput,
-    });
+    const requestHash = messageAdmissionRequestHash(auth.userId, input);
     const authorizedRoot = () => reauthorizeWorkspaceMembership
       ? this.authorize(auth)
       : Promise.resolve(this.locallyAuthorizedRoot(auth));
@@ -4840,7 +4868,7 @@ export class WorkstreamObjectProductService {
       return this.pendingMessageResult(existingPending, false);
     }
     const reservationNow = Date.now();
-    const preparation = await this.reserveInputPreparation({
+    const reservation = await this.reserveInputPreparation({
       root: localRoot,
       inputId: uuidV7(reservationNow),
       clientMessageId: input.clientMessageId,
@@ -4848,6 +4876,18 @@ export class WorkstreamObjectProductService {
       envelope: { auth, input },
       now: reservationNow,
     });
+    // Reservation yields: its owner may already have settled by this continuation.
+    const preparation = this.loops.inputPreparation(reservation.input_id);
+    if (!preparation) throw new Error("pending_input_preparation_not_found");
+    if (preparation.state === "ready" || preparation.state === "discarded"
+      || this.inputPreparationClaimIsLive(preparation.input_id, Date.now())) {
+      // Only the live owner prepares/classifies this input. Settlement (including
+      // cancellation recovery) releases the existing waiters; replay then reads
+      // the canonical/pending receipt and never repeats the admission effects.
+      await authorizedRoot();
+      await this.waitForInputPreparation(preparation.input_id);
+      return this.createMessageWithAuthority(auth, input, reauthorizeWorkspaceMembership);
+    }
     const sent: { value?: Omit<MessageSentObservation, "messageId"> } = {};
     const result = await this.runInputPreparation<WorkstreamObjectCreateMessageResult>(preparation, async () => {
     const root = await authorizedRoot();
