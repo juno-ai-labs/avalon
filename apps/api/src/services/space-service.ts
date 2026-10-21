@@ -516,9 +516,11 @@ export class SpaceService {
    *
    * A request with no icon is reserved under the catalog's neutral mark and
    * handed to {@link chooseIcon}, off the caller's clock when `defer` is given.
+   * Initial participants use the ordinary audience mutation before that pass
+   * captures its revision, so creation does not invalidate its own icon write.
    */
   async create(
-    input: CreateSpaceRequest,
+    input: CreateSpaceRequest & { participantUserIds?: UserId[] },
     spaceId?: SpaceId,
     defer?: (work: Promise<void>) => void,
   ): Promise<SpaceSummary> {
@@ -529,9 +531,10 @@ export class SpaceService {
     const id = spaceId ?? asSpaceId(uuidV7());
     await this.throughSpaceAuthority(id, input.name, "provision", () =>
       claimParentAnchor(this.env, this.auth.workspaceId, id, "space"));
+    const { participantUserIds, ...creation } = input;
     const reservation = WorkspaceSpaceReserveResultSchema.parse(await workspace.reserveSpace({
       ...actor,
-      space: { ...input, iconKey: input.iconKey ?? DEFAULT_WORKSTREAM_ICON_KEY },
+      space: { ...creation, iconKey: input.iconKey ?? DEFAULT_WORKSTREAM_ICON_KEY },
       spaceId: id,
     }));
     if (!reservation.ok) throw spaceRefusal(reservation.code, input.name, reservation.unreachableUserIds, reservation.blockedWorkstreamIds);
@@ -543,11 +546,14 @@ export class SpaceService {
       || reserved.colorKey !== input.colorKey || reserved.reach === "through_channel")) {
       throw new ApiError(409, "space_revision_conflict", "The creation identity already names a different channel");
     }
+    const space = participantUserIds === undefined ? reserved
+      : await this.updateAudience(id, { scope: input.scope, participantUserIds });
+    if (!space) throw new ApiError(409, "created_channel_unavailable", "The created Channel is unavailable");
     if (input.iconKey === undefined && reservation.created) {
-      const choosing = this.chooseIcon(reserved);
+      const choosing = this.chooseIcon(space);
       if (defer) defer(choosing); else await choosing;
     }
-    return reserved;
+    return space;
   }
 
   /**

@@ -154,6 +154,10 @@ revision, and the generated icon stands down rather than undo any of them. The
 new icon reaches clients by the ordinary Space snapshot over the workspace
 socket.
 
+The service's optional initial `participantUserIds` uses the existing audience
+mutation before scheduling icon selection. That creation-time audience change
+is included in the captured revision; later user edits still fence the pass.
+
 Only a newly reserved Space gets a pass; a replay of a stable creation id does
 not, and skips the icon in its "same Space?" comparison, because the first
 attempt's pass may already have written one. The desktop sidebar's **New
@@ -2016,11 +2020,14 @@ member is still unseated.
 **What changed:** SpaceService exposes the socket's active Channel directory.
 The existing conversation-page entryway accepts a kind and an optional all-visible
 mode, filtering within the authoritative query before paging. App callers retain
-the attention-only default.
+the attention-only default. Creation accepts initial participants through the
+ordinary audience update before starting icon selection with the updated revision.
 
 **Why:** Engineers need a selected user's complete Channel/Thread/Breakout
 hierarchy through MCP. The attention dashboard omits settled, read conversations,
 and filtering a mixed page in an adapter would produce short or skipped pages.
+Applying initial participants after starting icon selection would invalidate
+creation's own revision fence and discard the generated icon.
 
 **Considered and rejected:** New directory SQL or custom guest rules in MCP.
 Reusing the app's readers preserves personal ordering, visibility and cursors.
