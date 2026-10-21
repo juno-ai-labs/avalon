@@ -1,10 +1,29 @@
 import { RegionSchema } from "@rally/contracts/regions";
-import { asArtifactId, asSubstreamId, asWorkspaceId } from "@rally/contracts";
+import { asArtifactId, asSubstreamId, asWorkspaceId, SpaceDirectorySchema, SpaceChannelPageSchema, type SpaceDirectory, type SpaceChannelPage } from "@rally/contracts";
 import {
   ArtifactInspectionInputSchema,
   ArtifactSqlInspectionInputSchema,
   D1SqlInspectionInputSchema,
+  SendEngineeringMessageInputSchema,
+  SendEngineeringMessageResultSchema,
+  ReadEngineeringChannelInputSchema,
+  ReadEngineeringConversationInputSchema,
+  EngineeringTextResultSchema,
+  ListEngineeringUserChannelsInputSchema,
+  ListEngineeringUserConversationsInputSchema,
+  type SendEngineeringMessageResult,
+  type EngineeringTextResult,
+  CreateEngineeringOrgInputSchema,
+  CreateEngineeringOrgResultSchema,
+  CreateEngineeringChannelInputSchema,
+  CreateEngineeringChannelResultSchema,
+  CreateEngineeringThreadInputSchema,
+  CreateEngineeringThreadResultSchema,
+  type CreateEngineeringOrgResult,
+  type CreateEngineeringChannelResult,
+  type CreateEngineeringThreadResult,
   EngineeringArtifactListLookupSchema,
+  EngineeringOperatorSchema,
   EngineeringArtifactTargetLookupSchema,
   EngineeringD1SqlResultSchema,
   EngineeringSidekickListLookupSchema,
@@ -66,7 +85,11 @@ import {
   workspacePlacementAffinity,
 } from "./lib/durable-object-namespace";
 import { parseRpcInput } from "./lib/rpc-contracts";
+import { ApiError } from "./lib/api-error";
 import { WORKSTREAM_DO_SERVING_CONTRACT_VERSION } from "./services/workstream-authority";
+import { createEngineeringOrg, createEngineeringChannel, createEngineeringThread } from "./services/engineering-creation";
+import { sendEngineeringMessage, readEngineeringChannel, readEngineeringConversation, listEngineeringUserChannels, listEngineeringUserConversations } from "./services/engineering-messages";
+import { auditedEngineeringWrite } from "./services/engineering-audit";
 
 const WorkspaceInventoryRowSchema = z.strictObject({
   id: z.string(),
@@ -226,6 +249,88 @@ async function resolveInspectionArtifactRoute(
  */
 export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
   implements EngineeringInspectionRpcBinding {
+  async listUserChannels(input: unknown): Promise<SpaceDirectory> {
+    return this.productOperation("listUserChannels", async () => SpaceDirectorySchema.parse(
+      await listEngineeringUserChannels(this.env, ListEngineeringUserChannelsInputSchema.parse(input)),
+    ));
+  }
+
+  async listUserConversations(input: unknown): Promise<SpaceChannelPage> {
+    return this.productOperation("listUserConversations", async () => SpaceChannelPageSchema.parse(
+      await listEngineeringUserConversations(this.env, ListEngineeringUserConversationsInputSchema.parse(input)),
+    ));
+  }
+  async sendMessage(input: unknown, operator: unknown): Promise<SendEngineeringMessageResult> {
+    return this.productOperation("sendMessage", async () => {
+      const request = SendEngineeringMessageInputSchema.parse(input);
+      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
+        action: "send_message", orgId: request.orgId, representedUserId: request.userId,
+        operationId: request.operationId, threadId: request.threadId,
+        ...(request.breakoutId === undefined ? {} : { breakoutId: request.breakoutId }),
+      }, async () => SendEngineeringMessageResultSchema.parse(await sendEngineeringMessage(this.env, request)),
+      (result) => ({ turnId: result.receipt.turn.turnId, deliveryState: result.receipt.deliveryState }));
+    });
+  }
+
+  async readChannel(input: unknown): Promise<EngineeringTextResult> {
+    return this.productOperation("readChannel", async () => EngineeringTextResultSchema.parse(
+      await readEngineeringChannel(this.env, ReadEngineeringChannelInputSchema.parse(input)),
+    ));
+  }
+
+  async readConversation(input: unknown): Promise<EngineeringTextResult> {
+    return this.productOperation("readConversation", async () => EngineeringTextResultSchema.parse(
+      await readEngineeringConversation(this.env, ReadEngineeringConversationInputSchema.parse(input)),
+    ));
+  }
+  private async productOperation<T>(name: string, run: () => Promise<T>): Promise<T> {
+    try {
+      return await run();
+    } catch (error) {
+      // RPC strips ZodError issues and ApiError properties. Preserve the reason
+      // as a diagnostic code, without putting names, prompts or emails in logs.
+      const schemaCode = zodDiagnosticCode(error, name);
+      if (schemaCode) throw new Error(schemaCode, { cause: error });
+      if (error instanceof ApiError) throw new Error(`engineering_operation_failed:${error.code}`, { cause: error });
+      throw error;
+    }
+  }
+
+  async createOrg(input: unknown, operator: unknown): Promise<CreateEngineeringOrgResult> {
+    return this.productOperation("createOrg", async () => {
+      const request = CreateEngineeringOrgInputSchema.parse(input);
+      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
+        action: "create_org", orgId: request.operationId, representedUserId: request.creatorUserId,
+        operationId: request.operationId,
+      }, async () => CreateEngineeringOrgResultSchema.parse(await createEngineeringOrg(this.env, request)),
+      (result) => ({ orgId: result.orgId }));
+    });
+  }
+
+  async createChannel(input: unknown, operator: unknown): Promise<CreateEngineeringChannelResult> {
+    return this.productOperation("createChannel", async () => {
+      const request = CreateEngineeringChannelInputSchema.parse(input);
+      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
+        action: "create_channel", orgId: request.orgId, representedUserId: request.creatorUserId,
+        operationId: request.operationId,
+      }, async () => CreateEngineeringChannelResultSchema.parse(
+        await createEngineeringChannel(this.env, request, (work) => this.ctx.waitUntil(work))),
+      (result) => ({ channelId: result.channelId }));
+    });
+  }
+
+  async createThread(input: unknown, operator: unknown): Promise<CreateEngineeringThreadResult> {
+    return this.productOperation("createThread", async () => {
+      const request = CreateEngineeringThreadInputSchema.parse(input);
+      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
+        action: "create_thread", orgId: request.orgId, representedUserId: request.creatorUserId,
+        operationId: request.operationId, threadId: request.operationId,
+      }, async () => CreateEngineeringThreadResultSchema.parse(
+        await createEngineeringThread(this.env, request, (work) => this.ctx.waitUntil(work))),
+      (result) => ({ threadId: result.threadId, turnId: result.turnId, harnessRunId: result.harnessRunId }));
+    });
+  }
+
   async listWorkspaces(input: Record<string, never>): Promise<ListEngineeringWorkspacesResult> {
     parseRpcInput(ListEngineeringWorkspacesInputSchema, input, "listWorkspaces");
     const result = await this.env.DB.prepare(

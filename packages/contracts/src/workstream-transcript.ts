@@ -234,6 +234,23 @@ export const TranscriptRangeResultSchema = z.object({
   pluginRuns: z.array(TranscriptPluginRunSchema).default([]),
 });
 
+/** Set by the team on 2026-10-21, matching the desktop's hydration page size. */
+export const DEFAULT_TRANSCRIPT_READ_TURNS = 20;
+
+/** Worker-side text access to the same range reader used by socket hydration. */
+export const ReadTranscriptRequestSchema = z.strictObject({
+  afterSequence: z.number().int().nonnegative().default(0),
+  throughSequence: z.number().int().nonnegative().optional(),
+  limit: z.number().int().positive().optional(),
+});
+export type ReadTranscriptRequest = z.infer<typeof ReadTranscriptRequestSchema>;
+export const ReadTranscriptResultSchema = z.strictObject({
+  title: z.string(),
+  text: z.string(),
+  throughSequence: z.number().int().nonnegative(),
+  nextAfterSequence: z.number().int().nonnegative().nullable(),
+});
+
 /**
  * A participant input accepted by the substream-owned loop but not yet
  * delivered at a safe execution boundary. It deliberately has no transcript

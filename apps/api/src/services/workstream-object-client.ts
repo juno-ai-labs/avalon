@@ -34,6 +34,7 @@ import type {
 import { z } from "zod";
 
 import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
+import { ReadTranscriptResultSchema, type ReadTranscriptRequest } from "@rally/contracts";
 
 import { conversationObjectName } from "../durable-objects/names";
 import type {
@@ -273,6 +274,11 @@ export class WorkstreamObjectClient {
     return z.object({ title: z.string(), turns: z.array(TranscriptTurnSchema) }).parse(
       await this.request({ operation: "search_turns", turnIds }),
     );
+  }
+
+  /** Canonical participant history without opening the feed or acknowledging read state. */
+  async readTranscript(input: ReadTranscriptRequest) {
+    return ReadTranscriptResultSchema.parse(await this.request({ operation: "read_transcript", input }));
   }
 
   async readResourceAuthorizationRecovery(toolCallId: string) {

@@ -63,6 +63,7 @@ import {
 import { isUnrecognizedConnectorConnectionCard } from '../lib/connector-connection-card';
 import { markdownLineKinds } from '@rally/contracts/markdown-code';
 import { normalizeModelMarkdown, normalizeModelText } from '@rally/contracts/model-markdown';
+import { elicitationAnswerLabel } from '@rally/contracts/text';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import type { ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -2504,16 +2505,6 @@ function WorkAccordionBlock({ disclosure, message }: {
       )}
     </div>
   );
-}
-
-function elicitationAnswerLabel(elicitation: ElicitationData): string {
-  const answer = elicitation.answer;
-  if (answer == null) return 'Skipped';
-  const values = Array.isArray(answer) ? answer : [String(answer)];
-  const labels = values.map((value) => elicitation.options?.find((option) => option.value === value)?.label ?? value);
-  // The labels come from the same model call as the question, so they take the
-  // same plain-text repair the question does.
-  return normalizeModelText(labels.join(', '));
 }
 
 export function ElicitationPanel({
