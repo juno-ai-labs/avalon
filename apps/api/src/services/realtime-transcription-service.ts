@@ -26,7 +26,6 @@ import {
 
 import {
   TRANSCRIPTION_MAX_FRAME_CHARACTERS as MAX_CLIENT_FRAME_CHARACTERS,
-  TRANSCRIPTION_MAX_FRAMES_PER_SECOND as MAX_CLIENT_FRAMES_PER_SECOND,
 } from "@rally/contracts/realtime-transcription";
 import { runtimeDeferral } from "../lib/defer";
 import { emitInferenceUsage } from "./usage-metering";
@@ -335,8 +334,6 @@ export class RealtimeTranscriptionService {
 
       upstream.accept({ allowHalfOpen: true });
       server.accept({ allowHalfOpen: true });
-      let frameWindowStartedAt = Date.now();
-      let frameCount = 0;
       leaseTimer = setInterval(() => {
         if (server.readyState !== WebSocket.OPEN) {
           stopLeaseRenewal();
@@ -352,25 +349,7 @@ export class RealtimeTranscriptionService {
         try { this.defer(renewal); } catch { void renewal; }
       }, SESSION_LEASE_REFRESH_MS);
 
-      const terminateForPolicy = (code: string, message: string): void => {
-        sendJson(server, { type: "error", error: { code, message } });
-        closeSocket(server, 1008, message);
-        closeSocket(upstream, 1008, message);
-        deferRelease();
-      };
-
       server.addEventListener("message", (event) => {
-        const now = Date.now();
-        if (now - frameWindowStartedAt >= 1_000) {
-          frameWindowStartedAt = now;
-          frameCount = 0;
-        }
-        frameCount += 1;
-        if (frameCount > MAX_CLIENT_FRAMES_PER_SECOND) {
-          terminateForPolicy("dictation_frame_rate_limit", "Dictation audio arrived too quickly.");
-          return;
-        }
-
         const parsed = parseTranscriptionClientEvent(stringMessage(event.data));
         if (!parsed) {
           try {
@@ -424,7 +403,6 @@ export class RealtimeTranscriptionService {
 export const __realtimeTranscriptionTesting = {
   base64DecodedByteLength,
   limits: {
-    maxClientFramesPerSecond: MAX_CLIENT_FRAMES_PER_SECOND,
     maxConcurrentUserSessions: MAX_CONCURRENT_USER_TRANSCRIPTION_SESSIONS,
     maxConcurrentWorkspaceSessions: MAX_CONCURRENT_WORKSPACE_TRANSCRIPTION_SESSIONS,
     sessionLeaseRefreshMs: SESSION_LEASE_REFRESH_MS,

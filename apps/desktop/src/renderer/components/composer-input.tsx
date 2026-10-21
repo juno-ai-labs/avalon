@@ -540,6 +540,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
       return;
     }
     if (submitDisabled) return;
+    dictation.clearError();
     await onSubmit();
   };
 
@@ -702,6 +703,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
             onCompositionStart={() => setComposing(true)}
             onChange={(event) => {
               if (dictation.state === 'transcribing' || dictation.state === 'finalizing') stopDictation();
+              dictation.clearError();
               onValueChange(event.target.value);
               resizeTextarea(event.target.value);
             }}
