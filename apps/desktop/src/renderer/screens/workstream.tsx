@@ -849,7 +849,9 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       if (routeRef.current.id === parentId && routeRef.current.visit === visit) setSubstreamPending(false);
     }
   };
-  const threadResolved = row?.resolved ?? directoryEntry?.conversations.find((item) => item.substreamId === '0')?.resolved;
+  const threadResolved = row?.resolved
+    ?? directoryEntry?.conversations.find((item) => item.substreamId === '0')?.resolved
+    ?? parent.data?.resolved;
   const threadArchived = Boolean(parent.data?.archivedAt || row?.archivedAt || directoryEntry?.archived);
   const breakoutResolved = railChildren?.find((child) => child.substreamId === openBreakoutId)?.resolved;
   const breakoutArchived = Boolean(openChild.data?.archivedAt
@@ -858,6 +860,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     merge: threadMerge ? {
       label: mergeLabel(threadMerge),
       target: threadMerge.kind === 'channel' && threadMerge.channels.length > 1 ? `${threadMerge.channels.length} Channels` : 'Channel',
+      disabled: Boolean(threadResolved),
       disabledReason: threadResolved ? 'This thread is already resolved.' : undefined,
       onSelect: () => setMergeRequest({ substreamId: '0', nonce: Date.now() }),
     } : undefined,
