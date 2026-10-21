@@ -1178,7 +1178,7 @@ function ThreadsSection({ guest, motion, scroll }: { guest: boolean; motion?: ()
       revealPin(row.id, next);
       pin(pinKind(row), row.id, next, row.breakoutOf?.workstreamId, row);
     }}
-    onResolve={row.kind === 'channel' && !row.resolved && !row.archivedAt && !row.pending ? () => { void actOnThread(row, 'resolve'); } : undefined}
+    onResolve={row.kind === 'channel' && !row.archivedAt && !row.pending ? () => { void actOnThread(row, 'resolve'); } : undefined}
     onArchive={row.kind === 'channel' && !guest && !row.archivedAt && !row.pending ? () => { setActionError(null); setArchiveTarget(row); } : undefined}
     actionPending={actionPending}
     pinned={pinned.has(row.id)}
@@ -1357,7 +1357,7 @@ function ThreadRow({ active, actionPending, drag, ghost, href, moves, onArchive,
           {pinned ? 'Unpin' : 'Pin'}
         </ContextMenu.Item>
         <PinMoveItems moves={moves} />
-        {onResolve && <ContextMenu.Item className="menu-item" disabled={actionPending} onSelect={onResolve}>
+        {onResolve && <ContextMenu.Item className="menu-item" disabled={actionPending || Boolean(row.resolved)} onSelect={onResolve}>
           <IconCheck aria-hidden="true" size={15} stroke={1.8} />
           Resolve thread
         </ContextMenu.Item>}
