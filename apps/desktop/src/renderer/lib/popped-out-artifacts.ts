@@ -8,7 +8,7 @@ import type { DesktopRestorableArtifactWindow } from '../../common/desktop';
 export async function restorePoppedOutArtifacts(input: {
   bridge: Pick<RallyDesktopBridge, 'getRestorableArtifactWindows' | 'popOutArtifact' | 'forgetRestorableArtifactWindow'>;
   getResourceVersions: (resourceId: string) => Promise<{ version: number; title: string; mimeType: string | null }[]>;
-  loadResourceContent: (resourceId: string, signal?: AbortSignal) => Promise<Blob>;
+  loadResourceContent: (resourceId: string, signal?: AbortSignal, version?: number) => Promise<Blob>;
   openSiteArtifact: (resourceId: string) => Promise<{ artifactId: string; openUrl: string; canonicalUrl?: string; mode?: 'static' | 'active'; stateful?: boolean }>;
   signal: AbortSignal;
 }): Promise<void> {
@@ -30,7 +30,7 @@ export async function restorePoppedOutArtifacts(input: {
           ...(access.stateful !== undefined ? { stateful: access.stateful, canonicalUrl: access.canonicalUrl, mode: access.mode } : {}),
         });
       } else {
-        const content = await readResourcePreview(input.loadResourceContent, saved.resourceId,
+        const content = await readResourcePreview((id, signal) => input.loadResourceContent(id, signal, version), saved.resourceId,
           input.signal, MAX_RESOURCE_PREVIEW_WAIT_MS);
         const bytes = new Uint8Array(await content.arrayBuffer());
         if (input.signal.aborted) return;
@@ -54,7 +54,7 @@ export interface RefreshPoppedOutArtifactsInput {
     'getPoppedOutArtifactVersions' | 'updatePoppedOutArtifact'
   >;
   inFlight: Set<string>;
-  loadResourceContent: (resourceId: string, signal?: AbortSignal) => Promise<Blob>;
+  loadResourceContent: (resourceId: string, signal?: AbortSignal, version?: number) => Promise<Blob>;
   openSiteArtifact?: (resourceId: string) => Promise<{
     artifactId: string;
     openUrl: string;
@@ -109,7 +109,7 @@ export async function refreshPoppedOutArtifacts({
         return;
       }
       const content = await readResourcePreview(
-        loadResourceContent,
+        (id, signal) => loadResourceContent(id, signal, resource.currentVersion),
         resource.id,
         signal,
         MAX_RESOURCE_PREVIEW_WAIT_MS,

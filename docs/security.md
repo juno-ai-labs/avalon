@@ -31,6 +31,14 @@ content; excerpts, titles and archive state are served from the index within the
 projection's staleness window rather than reloaded from their owners.
 The operation-level and pagination contracts are detailed in [authorization](authorization.md).
 
+[Attachment image caching](attachment-preview-cache.md) stores account- and
+Organization-scoped bytes on the device. A new read validates the current
+resource revision and canonical access before reusing them; HTTP 304 uses the
+same once-per-request admission as a full preview. Sign-out and Organization removal use the existing
+local-cache wipes, with a shared storage generation fencing image saves in
+other browser tabs. A 403/404 response removes the saved image bytes. Persisted
+bytes never serve as a permission lease.
+
 ## Sidekick authoring and loading
 
 Conversational publication resolves the current workspace membership role and

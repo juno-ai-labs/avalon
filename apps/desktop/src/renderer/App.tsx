@@ -310,7 +310,7 @@ function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX
     void restorePoppedOutArtifacts({
       bridge: desktopBridge(),
       getResourceVersions: (id) => api.getResourceVersions(id),
-      loadResourceContent: (id, signal) => api.getResourcePreviewContent(id, signal),
+      loadResourceContent: (id, signal, version) => api.getResourcePreviewContent(id, signal, version),
       openSiteArtifact: (id) => api.openArtifact(id),
       signal: controller.signal,
     }).catch(() => undefined);
@@ -337,7 +337,7 @@ function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX
     void refreshPoppedOutArtifacts({
       bridge: desktopBridge(),
       inFlight: session.inFlight,
-      loadResourceContent: (id, signal) => api.getResourcePreviewContent(id, signal),
+      loadResourceContent: (id, signal, version) => api.getResourcePreviewContent(id, signal, version),
       openSiteArtifact: (id) => api.openArtifact(id),
       resources,
       signal: session.controller.signal,

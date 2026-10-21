@@ -502,12 +502,12 @@ export class ResourceService {
     return history.items[0] ?? null;
   }
 
-  async preview(id: string, signal: AbortSignal): Promise<Response> {
+  async preview(id: string, signal: AbortSignal, ifNoneMatch?: string): Promise<Response> {
     const { resource } = await this.readResource(id);
-    return this.loadPreview(resource, signal);
+    return this.loadPreview(resource, signal, ifNoneMatch);
   }
 
-  private async loadPreview(resource: Record<string, unknown>, signal: AbortSignal): Promise<Response> {
+  private async loadPreview(resource: Record<string, unknown>, signal: AbortSignal, ifNoneMatch?: string): Promise<Response> {
     if (typeof resource.content_ref !== "string") throw new ApiError(404, "resource_content_unavailable", "Resource content has not been hydrated");
     const fileName = String(resource.title);
     const mimeType = resource.mime_type == null ? null : String(resource.mime_type);
@@ -537,9 +537,19 @@ export class ResourceService {
         }
         return resourceBytesResponse(normalized.bytes, normalized.mimeType, fileName);
       }
+      // The revision covers presentation metadata too; the digest names the
+      // original bytes. Compare before R2 only after preview() has admitted
+      // this request using the current canonical resource metadata.
+      const etag = typeof resource.content_sha256 === 'string'
+        ? `"image-preview-v1:${Number(resource.current_version ?? 1)}:${resource.content_sha256}"` : undefined;
+      if (etag && ifNoneMatch?.split(',').some((candidate) => candidate.trim().replace(/^W\//u, '') === etag)) {
+        return new Response(null, { status: 304, headers: { etag, 'cache-control': 'private, no-store' } });
+      }
       const object = await this.env.PAYLOADS.get(resource.content_ref);
       if (!object) throw new ApiError(404, "resource_content_unavailable", "Stored resource content was not found");
-      return resourceObjectResponse(object, fileName);
+      const response = resourceObjectResponse(object, fileName);
+      if (etag) response.headers.set('etag', etag);
+      return response;
     }
     if (kind === "audio" || kind === "markdown" || kind === "text" || normalizedMimeType.startsWith("text/")) {
       const object = await this.env.PAYLOADS.get(resource.content_ref);

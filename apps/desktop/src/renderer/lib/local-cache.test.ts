@@ -1,11 +1,12 @@
 import "../../../../../tests/isolated-region";
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearAllLocalCache,
   clearWorkspaceLocalCache,
   closeLocalCache,
   defineLocalCacheSlice,
   localCacheEpoch,
+  localCacheGeneration,
   localCacheScope,
 } from './local-cache';
 
@@ -39,6 +40,24 @@ describe('local cache store', () => {
 
     expect(await notes.read(global1, 'a')).toEqual({ text: 'kept' });
     expect(await notes.read(eu1, 'a')).toBeNull();
+  });
+
+  it('refuses a queued write after another renderer wipes the workspace', async () => {
+    const epoch = localCacheEpoch(global1);
+    const generation = await localCacheGeneration(global1);
+    vi.resetModules();
+    const otherRenderer = await import('./local-cache');
+    try {
+      await otherRenderer.clearWorkspaceLocalCache(USER, 'global', '00000000-0000-7000-8000-000000000001');
+      await expect(notes.write(global1, 'late', { text: 'before the other tab signed out' }, undefined, epoch, generation))
+        .resolves.toBe(false);
+      expect(await notes.read(global1, 'late')).toBeNull();
+      const current = await localCacheGeneration(global1);
+      await expect(notes.write(global1, 'current', { text: 'new session' }, undefined, epoch, current)).resolves.toBe(true);
+      expect(await notes.read(global1, 'current')).toEqual({ text: 'new session' });
+    } finally {
+      otherRenderer.closeLocalCache();
+    }
   });
 
   it('drops a row written under another version of the slice, and removes it', async () => {

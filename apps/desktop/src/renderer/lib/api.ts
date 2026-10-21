@@ -133,6 +133,8 @@ import { OrganizationUsageSchema, type OrganizationUsage, type PlanId } from '@r
 import type { ZodType } from 'zod';
 import { z } from 'zod';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
+import { localCacheScope } from './local-cache';
+import { ResourcePreviewCache } from './resource-preview-cache';
 import { isCookieSession, type CookieClientSession } from '@rally/contracts/client-session';
 import { logDebug } from '../../common/logger';
 import { isSocketTicketRequestTimeoutError, requestSocketTicket } from './socket-ticket-request';
@@ -633,6 +635,7 @@ export class RallyApi {
   private readonly networkTickets = new WeakMap<SocketTicket, NetworkTicketObservation>();
   private readonly pendingRunKeys = new Map<string, string>();
   private readonly faviconRequests = new Map<string, Promise<Blob | null>>();
+  private readonly resourcePreviews = new ResourcePreviewCache();
 
   private renewCredential: (() => Promise<DesktopSession>) | null = null;
   private renewalInFlight: Promise<string | null> | null = null;
@@ -2107,13 +2110,24 @@ export class RallyApi {
     return response.blob();
   }
 
-  async getResourcePreviewContent(id: string, signal?: AbortSignal): Promise<Blob> {
-    const response = await this.execute(`/resources/${encodeURIComponent(id)}/preview`, {
-      method: 'GET',
-      ...(signal ? { signal } : {}),
-    });
-    if (!response.ok) return this.throwResponseError(response);
-    return response.blob();
+  /** Observed versions separate pending refreshes; this endpoint still reads the current head. */
+  async getResourcePreviewContent(id: string, signal?: AbortSignal, version?: number): Promise<Blob> {
+    const path = `/resources/${encodeURIComponent(id)}/preview`;
+    const fetchPreview = async (etag?: string, loadSignal?: AbortSignal): Promise<Response> => {
+      const response = await this.execute(path, {
+        method: 'GET',
+        ...(etag ? { headers: { 'If-None-Match': etag } } : {}),
+        ...(loadSignal ? { signal: loadSignal } : {}),
+      });
+      if (!response.ok && response.status !== 304) return this.throwResponseError(response);
+      return response;
+    };
+    const session = this.session;
+    if (!session?.workspace) return (await fetchPreview(undefined, signal)).blob();
+    return this.resourcePreviews.load(
+      localCacheScope(session.user.id, session.workspace.region, session.workspace.id, session.workspace.accessClass),
+      `${this.baseUrl}${path}`, fetchPreview, signal, version,
+    );
   }
 
   getFavicon(hostname: string): Promise<Blob | null> {
