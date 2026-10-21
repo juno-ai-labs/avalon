@@ -27,9 +27,11 @@ import {
 import { z } from "zod";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { HttpsUrlSchema } from "@rally/contracts/url-schemas";
-import { CalendarSelectionFields, MailQuerySchema, selectCalendarEvent, selectMail } from "./google-selectors";
+import { CalendarSelectionFields, MailQuerySchema, selectCalendarEvent, selectMail, validateMailTarget, validateCalendarTarget } from "./google-selectors";
 import { googleToolInputSchema } from "./google-tool-schema";
 import { GoogleRepeatSchema, googleRecurrenceRule } from "./google-recurrence";
+import { replyMailboxes } from "./google-mail-address";
+import { GoogleTimeZoneSchema } from "./google-time";
 import { serializeRichEmail } from "./google-mail-mime";
 import { googleWorkflowTools, googleWorkflowSchemas, executeGoogleWorkflow } from "./google-workflows";
 import {
@@ -628,12 +630,6 @@ const emailContentFields = {
   cc: z.array(z.string().email()).nullish().describe("Copied recipients, as full email addresses. Omit or send null for none. They see each other and the primary recipients."),
   bcc: z.array(z.string().email()).nullish().describe("Blind-copy recipients. Omit or send null for none. Other recipients cannot see these addresses."),
   htmlBody: z.string().nullish().describe("Optional HTML alternative to body, using HTML tags rather than Markdown. Omit or send null for plain text only."),
-  attachments: z.array(z.strictObject({
-    filename: z.string().min(1).refine((name) => !/[\r\n]/u.test(name), "filename must not contain a line break").describe("Attachment filename shown to recipients, for example invoice.pdf."),
-    contentId: z.string().regex(/^[A-Za-z0-9._-]+$/u).optional().describe("Optional inline attachment ID, for example logo. Reference it as cid:logo in htmlBody. Omit for a downloadable file attachment."),
-    mimeType: z.string().regex(/^[a-zA-Z0-9!#$&^_.+-]+\/[a-zA-Z0-9!#$&^_.+-]+$/u).describe("IANA media type, for example application/pdf."),
-    content: z.string().regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u).describe("File bytes encoded as standard base64, copied from a file tool result; never invent file content."),
-  })).nullish().describe("Files to attach. Omit, null, or [] means no attachments."),
   includeSignature: z.boolean().nullish().describe("Append the connected account's default Gmail signature. Omit or null means false. Requires gmail.read to read the signature."),
   body: z.string().max(500_000).describe("The message body, delivered as plain text exactly as written. Write plain text, not Markdown."),
 };
@@ -658,12 +654,14 @@ const GmailDraftArgsSchema = EmailNewArgsSchema.extend({
   attachmentResourceIds: z.array(IdSchema).nullish().describe("PDF resource IDs copied from list_resources or conversation attachments. Rally reads the authorized originals; never supply file bytes or storage keys."),
 });
 const gmailDraftToolInputSchema = googleToolInputSchema(GmailDraftArgsSchema);
-const EmailReplyArgsSchema = z.strictObject({
+const EmailReplyFields = {
   ...emailContentFields,
   to: z.array(z.string().email()).min(1).nullish().describe("Optional explicit reply recipients. Omit or null to reply to the selected message's Reply-To/From, or original To for sent mail, resolved by the connector. This does not reply-all."),
   query: MailQuerySchema.optional(),
   messageId: z.string().min(1).optional().describe("Exact known Gmail message ID. Use this or query, not both. The connector reads its reply recipient, subject and threading headers."),
-}).superRefine(validateMailSelection);
+};
+const EmailReplyArgsSchema = z.strictObject(EmailReplyFields).superRefine(validateMailTarget);
+const GmailReplyDraftArgsSchema = z.strictObject({ ...EmailReplyFields, attachmentResourceIds: GmailDraftArgsSchema.shape.attachmentResourceIds }).superRefine(validateMailTarget);
 const emailToolInputSchema = googleToolInputSchema(EmailNewArgsSchema);
 const emailReplyInputSchema = googleToolInputSchema(EmailReplyArgsSchema);
 
@@ -727,6 +725,108 @@ function calendarAvailabilityError(
 ) {
   return { reason, ...calendarAvailabilityErrorGuidance[kind] };
 }
+
+const CalendarSchedulingFields = {
+  addGoogleMeetUrl: z.boolean().optional().describe("Generate a new Google Meet conference. Omit for false; cannot be combined with googleMeetUrl."),
+  googleMeetUrl: HttpsUrlSchema.refine((value) => { const url = new URL(value); return url.protocol === "https:" && url.hostname === "meet.google.com"; }, "googleMeetUrl must be an https://meet.google.com URL").optional().describe("An existing HTTPS Meet URL to append to event notes. Preserves other notes; does not create or copy a Google conference. Omit to leave unchanged."),
+  sendUpdates: z.enum(["all", "externalOnly", "none"]).optional().describe("Update emails: all guests, externalOnly, or none. Creation defaults to all; updates notify for guest changes unless explicitly overridden."),
+};
+const CalendarTimeSchema = z.union([z.string().datetime({ offset: true }), z.string().date()]);
+function validateCalendarScheduling(value: { start?: string | undefined; end?: string | undefined; allDay?: boolean | undefined; timeZone?: string | undefined; addGoogleMeetUrl?: boolean | undefined; googleMeetUrl?: string | undefined }, ctx: z.RefinementCtx) {
+  if (value.addGoogleMeetUrl && value.googleMeetUrl) ctx.addIssue({ code: "custom", path: ["googleMeetUrl"], message: "Use either addGoogleMeetUrl or googleMeetUrl, not both" });
+  if (value.allDay && (!value.start || !value.end)) ctx.addIssue({ code: "custom", path: [value.start ? "end" : "start"], message: "Supply both start and end dates for an all-day event; end is exclusive" });
+  for (const key of ["start", "end"] as const) {
+    const time = value[key];
+    if (time && /^\d{4}-\d{2}-\d{2}$/u.test(time) !== (value.allDay === true)) ctx.addIssue({ code: "custom", path: [key], message: "start and end must both use YYYY-MM-DD dates or both use RFC 3339 timestamps with offsets" });
+  }
+}
+const CalendarCreationCalendarIdSchema = z.string().min(1).optional().describe("Calendar ID, primary or unambiguous name. Omit for the configured calendar.");
+const CalendarReadArgsSchema = z.strictObject({ calendarId: CalendarCreationCalendarIdSchema, eventId: z.string().min(1).optional().describe("Exact known event ID. Use this or date/title/startTime, not both."), date: CalendarSelectionFields.date.optional(), title: CalendarSelectionFields.title, startTime: CalendarSelectionFields.startTime }).superRefine(validateCalendarTarget);
+const GmailReadMessageArgsSchema = z.strictObject({ query: MailQuerySchema.optional(), messageId: z.string().min(1).max(500).optional() }).superRefine(validateMailTarget);
+const GmailReadThreadArgsSchema = z.strictObject({ query: MailQuerySchema.optional(), threadId: z.string().min(1).max(500).optional() }).superRefine(validateMailTarget);
+const CalendarCreationFields = {
+  calendarId: z.string().min(1).max(1_024).optional().describe("Calendar ID, primary, or an unambiguous name from list_calendars. Omit for the configured calendar."),
+  summary: z.string().min(1).max(1_000).describe("Event title shown on the calendar, for example Design review."),
+  description: z.string().max(20_000).optional().describe("Event notes, agenda and links. Omit to preserve current notes on updates."),
+  location: z.string().max(2_000).optional().describe("Room, address or meeting link as free text; this does not book a room."),
+  timeZone: GoogleTimeZoneSchema.max(100).optional().describe("IANA timezone, for example America/Los_Angeles. Required for recurring events; otherwise omit to use the calendar zone."),
+  attendeeEmails: z.array(z.string().email()).max(50).default([]).describe("Verified attendee email addresses to invite. Omit for no guests."),
+  addGoogleMeetUrl: CalendarSchedulingFields.addGoogleMeetUrl,
+  googleMeetUrl: CalendarSchedulingFields.googleMeetUrl,
+  sendUpdates: CalendarSchedulingFields.sendUpdates,
+};
+function calendarCreationSchema(kind: "timed" | "all_day" | "recurring") {
+  return z.strictObject({
+    ...CalendarCreationFields,
+    start: (kind === "all_day" ? z.string().date() : kind === "recurring" ? CalendarTimeSchema : z.string().datetime({ offset: true })).describe("First occurrence start: RFC3339 with offset for timed events, YYYY-MM-DD for all-day events."),
+    end: (kind === "all_day" ? z.string().date() : kind === "recurring" ? CalendarTimeSchema : z.string().datetime({ offset: true })).describe("Exclusive end, after start and in the same format. A one-day October 21 event ends 2026-10-22."),
+    ...(kind === "recurring" ? { repeat: GoogleRepeatSchema.describe("Repeat schedule in calendar terms; Rally builds RRULE internally.") } : {}),
+  }).superRefine((value, ctx) => {
+    if (Date.parse(value.end) <= Date.parse(value.start)) ctx.addIssue({ code: "custom", path: ["end"], message: "end must be after start" });
+    validateCalendarScheduling({ ...value, allDay: /^\d{4}-\d{2}-\d{2}$/u.test(value.start) }, ctx);
+    if (kind === "recurring" && !value.timeZone) ctx.addIssue({ code: "custom", path: ["timeZone"], message: "A recurring event requires an explicit IANA timeZone to preserve its local time across daylight-saving changes" });
+  });
+}
+const CalendarEventCreateArgsSchema = calendarCreationSchema("timed");
+const CalendarAllDayCreateArgsSchema = calendarCreationSchema("all_day");
+const CalendarRecurringCreateArgsSchema = calendarCreationSchema("recurring");
+
+const CalendarAttendeeChangeEmailsSchema = z.array(z.string().email()).max(50)
+  .transform((emails) => emails.length === 0 ? undefined : emails)
+  .optional();
+
+/**
+ * Updating an event states which attendees change, never the resulting list.
+ *
+ * Google's PATCH replaces `attendees` wholesale, so a single `attendeeEmails`
+ * array made "add Katherine to the Tuesday call" silently remove everyone else
+ * and mail them about it. `attendeeEmails` is therefore absent from this schema
+ * rather than reinterpreted: a caller reaching for the create-shaped parameter
+ * gets a strict-parse error naming the three that exist, instead of a
+ * successful call that deletes the guest list.
+ */
+const CalendarEventUpdateArgsSchema = z.strictObject({
+  ...CalendarSchedulingFields,
+  calendarId: z.string().min(1).max(1_024).optional().describe("Calendar ID, primary, or an unambiguous name from list_calendars. Omit for the configured calendar."),
+  eventId: z.string().min(1).max(1_024).optional().describe("Exact known event ID. Use this or date/title/startTime, not both."),
+  date: CalendarSelectionFields.date.optional(),
+  title: CalendarSelectionFields.title,
+  startTime: CalendarSelectionFields.startTime,
+  summary: z.string().min(1).max(1_000).optional().describe("New event title; omit to keep the current title. Use title to select an existing meeting."),
+  description: z.string().max(20_000).optional().describe("Event notes, agenda and links. Omit to preserve current notes on updates."),
+  location: z.string().max(2_000).optional().describe("Room, address or meeting link as free text; this does not book a room."),
+  start: CalendarTimeSchema.optional().describe("New start as RFC3339 with offset or all-day YYYY-MM-DD. Omit to keep current start."),
+  end: CalendarTimeSchema.optional().describe("New exclusive end, later than start and in the same form. Omit to keep current end."),
+  timeZone: GoogleTimeZoneSchema.max(100).optional().describe("IANA timezone, for example America/Los_Angeles. Required for recurring events; otherwise omit to use the calendar zone."),
+  addAttendeeEmails: CalendarAttendeeChangeEmailsSchema.describe("Addresses to add while preserving everyone already invited. Empty array means no change."),
+  removeAttendeeEmails: CalendarAttendeeChangeEmailsSchema.describe("Addresses to remove, preserving every other guest. Empty array means no change."),
+  replaceAllAttendeeEmails: CalendarAttendeeChangeEmailsSchema.describe("Complete replacement guest list; omitted people are removed. Do not combine with add/remove. Empty array means no change; remove guests by naming them instead.")
+}).superRefine((value, context) => {
+  validateCalendarScheduling({ ...value, allDay: value.start || value.end ? /^\d{4}-\d{2}-\d{2}$/u.test(value.start ?? value.end!) : undefined }, context);
+  validateCalendarTarget(value, context);
+  if (Object.entries(value).every(([key, field]) => field === undefined || ["eventId", "calendarId", "date", "title", "startTime", "sendUpdates"].includes(key))) {
+    context.addIssue({ code: "custom", message: "Choose at least one event field to update" });
+  }
+  if (
+    value.replaceAllAttendeeEmails
+    && (value.addAttendeeEmails || value.removeAttendeeEmails)
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "Use replaceAllAttendeeEmails alone, or use addAttendeeEmails and removeAttendeeEmails together",
+      path: ["replaceAllAttendeeEmails"]
+    });
+  }
+  if ((value.start && !value.end) || (!value.start && value.end)) {
+    context.addIssue({ code: "custom", message: "Update event start and end together", path: ["end"] });
+  }
+  if (value.timeZone && (!value.start || !value.end)) {
+    context.addIssue({ code: "custom", message: "Update the event start and end when changing its time zone", path: ["timeZone"] });
+  }
+  if (value.start && value.end && Date.parse(value.end) <= Date.parse(value.start)) {
+    context.addIssue({ code: "custom", message: "Calendar event end must be after its start", path: ["end"] });
+  }
+});
 
 export const googleTools: ToolDefinition[] = [
   ...googleWorkflowTools,
@@ -830,7 +930,7 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "gmail.create_draft",
-    description: "Create a draft for a new email conversation. Supply recipients, subject and body directly. Use gmail.create_reply_draft to draft a reply to an existing email. Returns an openable address; nothing is sent.",
+    description: "Create a draft for a new email conversation. Supply recipients, subject and body directly. Attach authorized PDF resources using attachmentResourceIds. Use gmail.create_reply_draft to draft a reply to an existing email. Returns an openable address; nothing is sent.",
     capability: "gmail.draft",
     mode: "write",
     idempotency: "record_before_execute",
@@ -847,7 +947,7 @@ export const googleTools: ToolDefinition[] = [
   {
     name: "gmail.create_reply_draft",
     description: "Draft a reply to the email identified by an exact known messageId or unique Gmail query. The connector finds the message and resolves recipients, subject and threading internally. Multiple matches require a narrower query. Supply to only to override reply recipients. Nothing is sent.",
-    capability: "gmail.draft", mode: "write", idempotency: "record_before_execute", inputSchema: emailReplyInputSchema,
+    capability: "gmail.draft", mode: "write", idempotency: "record_before_execute", inputSchema: googleToolInputSchema(GmailReplyDraftArgsSchema),
   },
   {
     name: "gmail.reply",
@@ -919,22 +1019,7 @@ export const googleTools: ToolDefinition[] = [
     capability: "calendar.read",
     mode: "read",
     idempotency: "safe",
-    inputSchema: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        date: { type: "string", format: "date", description: "Local meeting date, YYYY-MM-DD, when eventId is unknown. The connector requires a unique date/title/startTime match. Use this selection or a known eventId, not both." },
-        title: { type: "string", minLength: 1, description: "Exact meeting title. Omit when date and startTime identify one meeting." },
-        startTime: { type: "string", pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d$", description: "Local start HH:mm, for example 09:00. Omit to match any start on date." },
-        calendarId: { type: "string", minLength: 1, description: "Calendar ID, \"primary\", or a calendar's name, which is resolved against this account's calendars. Defaults to the connection's configured calendar." },
-        eventId: {
-          type: "string",
-          minLength: 1,
-          description: "The event's own id, as calendar.list_events returns it in each occurrence's `id`. It is not the calendar's id and not the title.",
-        }
-      },
-
-    }
+    inputSchema: googleToolInputSchema(CalendarReadArgsSchema)
   },
   calendarCreationTool("calendar.create_event", "timed"),
   calendarCreationTool("calendar.create_all_day_event", "all_day"),
@@ -945,7 +1030,7 @@ export const googleTools: ToolDefinition[] = [
     capability: "calendar.write",
     mode: "write",
     idempotency: "record_before_execute",
-    inputSchema: calendarEventWriteInputSchema(true)
+    inputSchema: googleToolInputSchema(CalendarEventUpdateArgsSchema)
   },
   {
     name: "drive.search",
@@ -1236,88 +1321,15 @@ export const GoogleAgentPluginDescriptor = defineConnectorAgentPlugin({
     GoogleFileWriteAuthorizationGuidance,
     "Resolve an unknown recipient address with gmail.find_contacts before addressing a message, read the connected account's own address with gmail.read_profile rather than inferring it, and prefer gmail.search with its operators over a bare keyword query.",
     "A Gmail search result already carries each hit's sender, recipients, subject, and date; read a message only when you need its body. Use gmail.send/create_draft for new mail and gmail.reply/create_reply_draft for replies. Use an exact known messageId when available; otherwise select the original email by Gmail query. Reply tools resolve recipients, subject and threading internally.",
-    "A draft or message body is plain text; use htmlBody for HTML formatting and attachments for files. Plain-text Markdown characters such as #, **, and [label](url) reach the recipient as those characters instead of as formatting.",
+    "A draft or message body is plain text; use htmlBody for HTML formatting and draft attachmentResourceIds for PDF resources. Plain-text Markdown characters such as #, **, and [label](url) reach the recipient as those characters instead of as formatting.",
     "Keep personal and workspace authorization boundaries intact and do not claim a mutation succeeded unless its tool result confirms success.",
   ].join(" "),
   tools: googleTools,
 });
 
 function calendarCreationTool(name: string, kind: "timed" | "all_day" | "recurring"): ToolDefinition {
-  const inputSchema = calendarEventWriteInputSchema(false);
-  const properties = inputSchema.properties as Record<string, Record<string, unknown>>;
-  if (kind === "timed") {
-    properties.start = { type: "string", format: "date-time", description: "Start as RFC 3339 with an offset, for example 2026-10-21T09:00:00-07:00. Use create_all_day_event for date-only events." };
-    properties.end = { type: "string", format: "date-time", description: "End as RFC 3339 with an offset, later than start, for example 2026-10-21T10:00:00-07:00." };
-  } else if (kind === "all_day") {
-    properties.start = { type: "string", format: "date", description: "First local date, YYYY-MM-DD, for example 2026-10-21. This tool always creates an all-day event." };
-    properties.end = { type: "string", format: "date", description: "Exclusive ending local date, YYYY-MM-DD. For a one-day event on October 21 use 2026-10-22." };
-  } else if (kind === "recurring") {
-    properties.repeat = z.toJSONSchema(GoogleRepeatSchema, { io: "input" });
-    properties.repeat.description = "The meeting schedule in calendar terms. The connector builds Google recurrence rules; do not supply RRULE strings.";
-    inputSchema.required = ["summary", "start", "end", "repeat", "timeZone"];
-    properties.start!.description = "First occurrence start: RFC 3339 with an offset for a timed series, or YYYY-MM-DD for an all-day series. End must use the same form. The connector determines all-day behavior from the date form.";
-    properties.end!.description = "First occurrence end, using the same date or timestamp form as start. Date-only ends are exclusive.";
-  }
+  const inputSchema = googleToolInputSchema(kind === "timed" ? CalendarEventCreateArgsSchema : kind === "all_day" ? CalendarAllDayCreateArgsSchema : CalendarRecurringCreateArgsSchema);
   return { name, description: kind === "timed" ? "Create a single timed calendar event. For all-day events use create_all_day_event; for a recurring series use create_recurring_event. Guests receive invitations by default." : kind === "all_day" ? "Create a single all-day calendar event using local dates and an exclusive end date. Use create_recurring_event for a repeating all-day series. Guests receive invitations by default." : "Create a recurring calendar series from a repeat schedule (daily, weekly, monthly or yearly) and an explicit IANA timeZone. The connector builds Google recurrence rules. The connector creates the first occurrence and recurrence in one write. Date-only start/end create an all-day series; timestamps create a timed series. Guests receive invitations by default.", capability: "calendar.write", mode: "write", idempotency: "record_before_execute", inputSchema };
-}
-
-function calendarEventWriteInputSchema(includeEventId: boolean): Record<string, unknown> {
-  const properties: Record<string, unknown> = {
-    addGoogleMeetUrl: { type: "boolean", description: "Generate a new Google Meet conference link. Omit for false. Cannot be combined with googleMeetUrl." },
-    googleMeetUrl: { type: "string", format: "uri", description: "Existing https://meet.google.com URL to attach as this event's conference. Omit to leave conferencing unchanged; cannot be combined with addGoogleMeetUrl." },
-    sendUpdates: { type: "string", enum: ["all", "externalOnly", "none"], description: "Who receives event update email. Omit for all guests. Explicit none suppresses requested notifications." },
-    calendarId: { type: "string", minLength: 1, description: "Calendar ID, \"primary\", or a calendar's name, which is resolved against this account's calendars. Defaults to the connection's configured calendar." },
-    summary: { type: "string", minLength: 1, maxLength: 1000, description: "The event's title, as it appears in the calendar grid, for example \"Design review\"." },
-    description: { type: "string", maxLength: 20000, description: "The event's notes body, as plain text. Agendas, links, and context belong here rather than in the title." },
-    location: { type: "string", maxLength: 2000, description: "Where it happens, as free text: a room name, a street address, or a meeting URL. It is a label, so this does not book a room or create a video call." },
-    start: { type: "string", minLength: 1, description: "When it starts, as an RFC 3339 timestamp that includes an offset, for example 2026-08-11T09:00:00-07:00. Call the current-time tool rather than guessing the offset. Date-only YYYY-MM-DD values select all-day behavior; end must use the same form." },
-    end: { type: "string", minLength: 1, description: "When it ends, as an RFC 3339 timestamp that includes an offset, for example 2026-08-11T10:00:00-07:00. It must be after the start. For date-only start, use the exclusive ending YYYY-MM-DD date." },
-    timeZone: {
-      type: "string",
-      minLength: 1,
-      maxLength: 100,
-      description: includeEventId
-        ? "Re-anchor the event to this IANA zone, for example America/Los_Angeles. It cannot be sent on its own: a zone change is refused unless `start` and `end` are sent with it, so send all three. Omitting it leaves the event in the zone it already has."
-        : "The IANA zone the event is anchored in, for example America/Los_Angeles. Defaults to the calendar's own zone. It decides what the event reads as after a daylight-saving change; it does not shift the offsets already written into start and end.",
-    },
-    attendeeEmails: {
-      type: "array",
-      items: { type: "string", format: "email" },
-      maxItems: 50,
-      description: "Guests to invite, as full email addresses, for example [\"dana@example.com\"]. Each one is emailed a real invitation, so take every address from a tool result rather than composing it. Defaults to none, which creates the event with no guests."
-    }
-  };
-  if (includeEventId) {
-    properties.date = { type: "string", format: "date", description: "Local date of the meeting to edit when eventId is unknown. The connector resolves date/title/startTime internally. Use these or a known eventId, never both." };
-    properties.title = { type: "string", minLength: 1, description: "Exact current meeting title to select. Omit when date/startTime suffice. Use summary to set the new title." };
-    properties.startTime = { type: "string", pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d$", description: "Current local start HH:mm used to select the meeting. Omit for any start on date. Use start/end to reschedule it." };
-    properties.eventId = { type: "string", minLength: 1, description: "The event's own id, not a calendar id." };
-    delete properties.attendeeEmails;
-    properties.addAttendeeEmails = {
-      type: "array",
-      items: { type: "string", format: "email" },
-      maxItems: 50,
-      description: "Addresses to add to the event's current guest list. Everyone already invited stays. An empty array is treated as omitted."
-    };
-    properties.removeAttendeeEmails = {
-      type: "array",
-      items: { type: "string", format: "email" },
-      maxItems: 50,
-      description: "Addresses to remove from the event's current guest list. An empty array is treated as omitted."
-    };
-    properties.replaceAllAttendeeEmails = {
-      type: "array",
-      items: { type: "string", format: "email" },
-      maxItems: 50,
-      description: "The event's complete guest list after the update. Anyone omitted is removed. Cannot be combined with nonempty addAttendeeEmails or removeAttendeeEmails. An empty array is treated as omitted; to remove every guest, list their addresses in removeAttendeeEmails."
-    };
-  }
-  return {
-    type: "object",
-    additionalProperties: false,
-    properties,
-    required: includeEventId ? [] : ["summary", "start", "end"]
-  };
 }
 
 function sheetValuesWriteInputSchema(append: boolean): Record<string, unknown> {
@@ -1372,115 +1384,7 @@ const RfcMessageIdSchema = z.string().min(3).refine(
   "Message-ID must fit on one email header continuation line"
 );
 
-const CalendarSchedulingFields = {
-  addGoogleMeetUrl: z.boolean().optional(),
-  googleMeetUrl: HttpsUrlSchema.refine((value) => { const url = new URL(value); return url.protocol === "https:" && url.hostname === "meet.google.com"; }, "googleMeetUrl must be an https://meet.google.com URL").optional(),
-  sendUpdates: z.enum(["all", "externalOnly", "none"]).optional(),
-};
-const CalendarTimeSchema = z.union([z.string().datetime({ offset: true }), z.string().date()]);
-function validateCalendarScheduling(value: { start?: string | undefined; end?: string | undefined; allDay?: boolean | undefined; timeZone?: string | undefined; addGoogleMeetUrl?: boolean | undefined; googleMeetUrl?: string | undefined }, ctx: z.RefinementCtx) {
-  if (value.addGoogleMeetUrl && value.googleMeetUrl) ctx.addIssue({ code: "custom", path: ["googleMeetUrl"], message: "Use either addGoogleMeetUrl or googleMeetUrl, not both" });
-  if (value.allDay && (!value.start || !value.end)) ctx.addIssue({ code: "custom", path: [value.start ? "end" : "start"], message: "Supply both start and end dates for an all-day event; end is exclusive" });
-  for (const key of ["start", "end"] as const) {
-    const time = value[key];
-    if (time && /^\d{4}-\d{2}-\d{2}$/u.test(time) !== (value.allDay === true)) ctx.addIssue({ code: "custom", path: [key], message: "start and end must both use YYYY-MM-DD dates or both use RFC 3339 timestamps with offsets" });
-  }
-  if (value.timeZone) try { new Intl.DateTimeFormat("en", { timeZone: value.timeZone }); } catch { ctx.addIssue({ code: "custom", path: ["timeZone"], message: "timeZone must be an IANA time zone" }); }
-}
-function validateCalendarSelection(value: { eventId?: string | undefined; date?: string | undefined; title?: string | undefined; startTime?: string | undefined }, ctx: z.RefinementCtx) {
-  if (!value.eventId && !value.date) ctx.addIssue({ code: "custom", path: ["date"], message: "Identify the meeting with date, optional title and local startTime; eventId is only needed if already known" });
-  if (value.eventId && (value.date || value.title || value.startTime)) ctx.addIssue({ code: "custom", path: ["eventId"], message: "Use date/title/startTime or a known eventId, not both" });
-}
-const CalendarReadArgsSchema = z.strictObject({ calendarId: z.string().min(1).optional(), eventId: z.string().min(1).optional(), date: CalendarSelectionFields.date.optional(), title: CalendarSelectionFields.title, startTime: CalendarSelectionFields.startTime }).superRefine(validateCalendarSelection);
-function validateMailSelection(value: { query?: string | undefined; messageId?: string | undefined; threadId?: string | undefined }, ctx: z.RefinementCtx) {
-  const id = value.messageId ?? value.threadId;
-  if (Boolean(id) === Boolean(value.query)) ctx.addIssue({ code: "custom", path: ["query"], message: "Use a Gmail query to find the email internally, or an ID only if already known; never send both" });
-}
-const GmailReadMessageArgsSchema = z.strictObject({ query: MailQuerySchema.optional(), messageId: z.string().min(1).max(500).optional() }).superRefine(validateMailSelection);
-const GmailReadThreadArgsSchema = z.strictObject({ query: MailQuerySchema.optional(), threadId: z.string().min(1).max(500).optional() }).superRefine(validateMailSelection);
-const CalendarCreationFields = {
-  calendarId: z.string().min(1).max(1_024).optional(),
-  summary: z.string().min(1).max(1_000),
-  description: z.string().max(20_000).optional(),
-  location: z.string().max(2_000).optional(),
-  timeZone: z.string().min(1).max(100).optional(),
-  attendeeEmails: z.array(z.string().email()).max(50).default([]),
-  addGoogleMeetUrl: CalendarSchedulingFields.addGoogleMeetUrl,
-  googleMeetUrl: CalendarSchedulingFields.googleMeetUrl,
-  sendUpdates: CalendarSchedulingFields.sendUpdates,
-};
-function calendarCreationSchema(kind: "timed" | "all_day" | "recurring") {
-  return z.strictObject({
-    ...CalendarCreationFields,
-    start: kind === "all_day" ? z.string().date() : kind === "recurring" ? CalendarTimeSchema : z.string().datetime({ offset: true }),
-    end: kind === "all_day" ? z.string().date() : kind === "recurring" ? CalendarTimeSchema : z.string().datetime({ offset: true }),
-    ...(kind === "recurring" ? { repeat: GoogleRepeatSchema } : {}),
-  }).superRefine((value, ctx) => {
-    if (Date.parse(value.end) <= Date.parse(value.start)) ctx.addIssue({ code: "custom", path: ["end"], message: "end must be after start" });
-    validateCalendarScheduling({ ...value, allDay: /^\d{4}-\d{2}-\d{2}$/u.test(value.start) }, ctx);
-    if (kind === "recurring" && !value.timeZone) ctx.addIssue({ code: "custom", path: ["timeZone"], message: "A recurring event requires an explicit IANA timeZone to preserve its local time across daylight-saving changes" });
-  });
-}
-const CalendarEventCreateArgsSchema = calendarCreationSchema("timed");
-const CalendarAllDayCreateArgsSchema = calendarCreationSchema("all_day");
-const CalendarRecurringCreateArgsSchema = calendarCreationSchema("recurring");
 
-const CalendarAttendeeChangeEmailsSchema = z.array(z.string().email()).max(50)
-  .transform((emails) => emails.length === 0 ? undefined : emails)
-  .optional();
-
-/**
- * Updating an event states which attendees change, never the resulting list.
- *
- * Google's PATCH replaces `attendees` wholesale, so a single `attendeeEmails`
- * array made "add Katherine to the Tuesday call" silently remove everyone else
- * and mail them about it. `attendeeEmails` is therefore absent from this schema
- * rather than reinterpreted: a caller reaching for the create-shaped parameter
- * gets a strict-parse error naming the three that exist, instead of a
- * successful call that deletes the guest list.
- */
-const CalendarEventUpdateArgsSchema = z.strictObject({
-  ...CalendarSchedulingFields,
-  calendarId: z.string().min(1).max(1_024).optional(),
-  eventId: z.string().min(1).max(1_024).optional(),
-  date: CalendarSelectionFields.date.optional(),
-  title: CalendarSelectionFields.title,
-  startTime: CalendarSelectionFields.startTime,
-  summary: z.string().min(1).max(1_000).optional(),
-  description: z.string().max(20_000).optional(),
-  location: z.string().max(2_000).optional(),
-  start: CalendarTimeSchema.optional(),
-  end: CalendarTimeSchema.optional(),
-  timeZone: z.string().min(1).max(100).optional(),
-  addAttendeeEmails: CalendarAttendeeChangeEmailsSchema,
-  removeAttendeeEmails: CalendarAttendeeChangeEmailsSchema,
-  replaceAllAttendeeEmails: CalendarAttendeeChangeEmailsSchema
-}).superRefine((value, context) => {
-  validateCalendarScheduling({ ...value, allDay: value.start || value.end ? /^\d{4}-\d{2}-\d{2}$/u.test(value.start ?? value.end!) : undefined }, context);
-  validateCalendarSelection(value, context);
-  if (Object.keys(value).every((key) => ["eventId", "calendarId", "date", "title", "startTime", "sendUpdates"].includes(key))) {
-    context.addIssue({ code: "custom", message: "Choose at least one event field to update" });
-  }
-  if (
-    value.replaceAllAttendeeEmails
-    && (value.addAttendeeEmails || value.removeAttendeeEmails)
-  ) {
-    context.addIssue({
-      code: "custom",
-      message: "Use replaceAllAttendeeEmails alone, or use addAttendeeEmails and removeAttendeeEmails together",
-      path: ["replaceAllAttendeeEmails"]
-    });
-  }
-  if ((value.start && !value.end) || (!value.start && value.end)) {
-    context.addIssue({ code: "custom", message: "Update event start and end together", path: ["end"] });
-  }
-  if (value.timeZone && (!value.start || !value.end)) {
-    context.addIssue({ code: "custom", message: "Update the event start and end when changing its time zone", path: ["timeZone"] });
-  }
-  if (value.start && value.end && Date.parse(value.end) <= Date.parse(value.start)) {
-    context.addIssue({ code: "custom", message: "Calendar event end must be after its start", path: ["end"] });
-  }
-});
 
 const SheetCellValueSchema = z.union([z.string().max(50_000), z.number().finite(), z.boolean(), z.null()]);
 const SheetValuesSchema = z.array(z.array(SheetCellValueSchema).max(1_000)).max(1_000).superRefine((rows, context) => {
@@ -1983,7 +1887,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         if (htmlBody !== undefined) htmlBody += `<br><br>${signature}`;
       }
     }
-    const content = { to: message.to ?? [], cc: message.cc ?? [], bcc: message.bcc ?? [], body, htmlBody, attachments: message.attachments ?? [] };
+    const content = { to: message.to ?? [], cc: message.cc ?? [], bcc: message.bcc ?? [], body, htmlBody, attachments: [] };
     if (message.kind === "new") return { ...content, subject: message.subject, references: [] };
 
     // Sending does not itself grant permission to read the mailbox. Fetch only
@@ -2008,7 +1912,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       const sender = Array.isArray(original.labelIds) && original.labelIds.includes("SENT")
         ? gmailHeader(original, "To") ?? ""
         : gmailHeader(original, "Reply-To") ?? gmailHeader(original, "From") ?? "";
-      content.to = splitAddressHeader(sender).map((address) => address.email).filter((address) => z.string().email().safeParse(address).success);
+      content.to = replyMailboxes(sender, targetField);
       if (!content.to.length) throw new ConnectorError("invalid_payload", `${targetField}: the selected message has no usable reply address. Supply explicit to recipients or choose another email.`, { field: targetField, reason: "reply_address_unavailable" });
     }
     const threadId = readString(original, "threadId");
@@ -2809,7 +2713,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
     validateToolInput(name, rawArgs) {
       const schema = googleWorkflowSchemas[name] ?? (name === "calendar.query_availability" ? CalendarAvailabilityArgsSchema : name === "calendar.read_event" ? CalendarReadArgsSchema : name === "gmail.read_message" ? GmailReadMessageArgsSchema : name === "gmail.read_thread" ? GmailReadThreadArgsSchema : name === "gmail.create_draft" ? GmailDraftArgsSchema : name === "gmail.send"
         ? EmailNewArgsSchema
-        : ["gmail.create_reply_draft", "gmail.reply"].includes(name)
+        : name === "gmail.create_reply_draft" ? GmailReplyDraftArgsSchema : name === "gmail.reply"
           ? EmailReplyArgsSchema
           : name === "calendar.create_all_day_event"
             ? CalendarAllDayCreateArgsSchema
@@ -2831,9 +2735,10 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       if (!tool || !context.connection.grantedScopes.includes(tool.capability)) {
         throw connectorCapabilityRefused("Google", tool?.capability ?? name, googleTools, context.connection.grantedScopes);
       }
+      const selectionDependencies = { api, readJson: (response: Response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES) };
       const workflow = await executeGoogleWorkflow(name, rawArgs, context, {
-        api,
-        readJson: (response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES),
+        ...selectionDependencies,
+        mapMailDetails: (drafts, mapper) => mapWithConcurrency(drafts, GOOGLE_TOOL_HEADER_CONCURRENCY, mapper),
         resolveCalendarId: (calendarId) => resolveGoogleCalendarId(context, calendarId),
         sanitizeEvent: sanitizeCalendarEvent,
         sanitizeMessage: (message) => sanitizeGmailMessageForTool(message, GOOGLE_TOOL_TEXT_BYTES),
@@ -2948,7 +2853,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       }
       if (name === "gmail.read_thread") {
         const selected = GmailReadThreadArgsSchema.parse(rawArgs);
-        const args = { threadId: selected.query ? await selectMail(selected.query, "thread", context, { api, readJson: (response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES) }) : z.string().parse(selected.threadId) };
+        const args = { threadId: selected.query ? await selectMail(selected.query, "thread", context, selectionDependencies) : z.string().parse(selected.threadId) };
         const url = new URL(
           `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(args.threadId)}`
         );
@@ -2973,7 +2878,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       }
       if (name === "gmail.read_message") {
         const selected = GmailReadMessageArgsSchema.parse(rawArgs);
-        const args = { messageId: selected.query ? await selectMail(selected.query, "message", context, { api, readJson: (response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES) }) : z.string().parse(selected.messageId) };
+        const args = { messageId: selected.query ? await selectMail(selected.query, "message", context, selectionDependencies) : z.string().parse(selected.messageId) };
         const url = new URL(
           `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(args.messageId)}`
         );
@@ -2999,14 +2904,20 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       if (["gmail.create_draft", "gmail.send", "gmail.create_reply_draft", "gmail.reply"].includes(name)) {
         const replying = name === "gmail.create_reply_draft" || name === "gmail.reply";
         let args: EmailToSerialize;
+        let resourceIds: string[];
         if (replying) {
           assertGoogleCapability(context.connection, "gmail.read");
-          const input = EmailReplyArgsSchema.parse(rawArgs);
-          const messageId = input.messageId ?? await selectMail(input.query!, "message", context, { api, readJson: (response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES) });
+          const draft = name === "gmail.create_reply_draft" ? GmailReplyDraftArgsSchema.parse(rawArgs) : undefined;
+          const input = draft ?? EmailReplyArgsSchema.parse(rawArgs);
+          resourceIds = draft?.attachmentResourceIds ?? [];
+          const messageId = input.messageId ?? await selectMail(input.query!, "message", context, selectionDependencies);
           args = await resolveGmailEmail({ ...input, kind: "reply", messageId }, context);
-        } else args = await resolveGmailEmail({ ...(name === "gmail.create_draft" ? GmailDraftArgsSchema : EmailNewArgsSchema).parse(rawArgs), kind: "new" }, context);
+        } else {
+          const draft = name === "gmail.create_draft" ? GmailDraftArgsSchema.parse(rawArgs) : undefined;
+          resourceIds = draft?.attachmentResourceIds ?? [];
+          args = await resolveGmailEmail({ ...draft ?? EmailNewArgsSchema.parse(rawArgs), kind: "new" }, context);
+        }
         const attachments = [];
-        const resourceIds = (rawArgs as { attachmentResourceIds?: string[] }).attachmentResourceIds ?? [];
         for (const resourceId of new Set(resourceIds)) {
           if (!context.readAttachment) throw new ConnectorError("unsupported_capability", "attachmentResourceIds: this execution host cannot read resource attachments", { field: "attachmentResourceIds" });
           const attachment = await context.readAttachment(resourceId);
@@ -3124,7 +3035,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       }
       if (name === "calendar.list_events") {
         const args = z.strictObject({
-            calendarId: z.string().min(1).max(1_024).optional(),
+            calendarId: z.string().min(1).max(1_024).optional().describe("Calendar ID, primary, or an unambiguous name from list_calendars. Omit for the configured calendar."),
             timeMin: z.string().datetime({ offset: true }),
             timeMax: z.string().datetime({ offset: true }),
             query: z.string().min(1).max(2_000).optional(),
@@ -3166,7 +3077,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       if (name === "calendar.read_event") {
         const selection = CalendarReadArgsSchema.parse(rawArgs);
         const calendarId = await resolveGoogleCalendarId(context, selection.calendarId);
-        const selectedId = selection.eventId ?? await selectCalendarEvent({ date: selection.date!, title: selection.title, startTime: selection.startTime }, calendarId, context, { api, readJson: (response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES) });
+        const selectedId = selection.eventId ?? await selectCalendarEvent({ date: selection.date!, title: selection.title, startTime: selection.startTime }, calendarId, context, selectionDependencies);
         const args = { eventId: selectedId };
         assertGoogleIdFamily(args.eventId);
         const url = new URL(
@@ -3199,7 +3110,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`
         );
         url.searchParams.set("sendUpdates", args.sendUpdates ?? "all");
-        if (args.addGoogleMeetUrl || args.googleMeetUrl) url.searchParams.set("conferenceDataVersion", "1");
+        if (args.addGoogleMeetUrl) url.searchParams.set("conferenceDataVersion", "1");
         const event = calendarEventWriteBody(args);
         const payload = await api(context.connection, url.toString(), {
           method: "POST",
@@ -3217,14 +3128,19 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         const selected = CalendarEventUpdateArgsSchema.parse(rawArgs);
         const calendarId = await resolveGoogleCalendarId(context, selected.calendarId);
         if (!selected.eventId) assertGoogleCapability(context.connection, "calendar.read");
-        const args = { ...selected, allDay: selected.start ? /^\d{4}-\d{2}-\d{2}$/u.test(selected.start) : undefined, eventId: selected.eventId ?? await selectCalendarEvent({ date: selected.date!, title: selected.title, startTime: selected.startTime }, calendarId, context, { api, readJson: (response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES) }) };
+        const args = { ...selected, allDay: selected.start ? /^\d{4}-\d{2}-\d{2}$/u.test(selected.start) : undefined, eventId: selected.eventId ?? await selectCalendarEvent({ date: selected.date!, title: selected.title, startTime: selected.startTime }, calendarId, context, selectionDependencies) };
         assertGoogleIdFamily(args.eventId);
         const url = new URL(
           `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(args.eventId)}`
         );
-        const editsEventFields = Object.entries(args).some(([key, value]) => value !== undefined && !(key === "addGoogleMeetUrl" && value === false) && !["eventId", "calendarId", "date", "title", "startTime", "sendUpdates", "addAttendeeEmails", "removeAttendeeEmails", "replaceAllAttendeeEmails"].includes(key));
-        if (args.sendUpdates !== undefined || editsEventFields) url.searchParams.set("sendUpdates", args.sendUpdates ?? "all");
-        if (args.addGoogleMeetUrl || args.googleMeetUrl) url.searchParams.set("conferenceDataVersion", "1");
+        if (args.sendUpdates !== undefined) url.searchParams.set("sendUpdates", args.sendUpdates);
+        if (args.addGoogleMeetUrl) url.searchParams.set("conferenceDataVersion", "1");
+        if (args.googleMeetUrl && args.description === undefined) {
+          assertGoogleCapability(context.connection, "calendar.read");
+          const current = await api(context.connection, url.toString(), { signal: context.signal })
+            .then((response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES));
+          args.description = readString(current, "description") ?? "";
+        }
         // A relative attendee change is resolved against the event's current
         // guest list before it is sent, because Calendar's PATCH replaces the
         // whole array: sending only the additions is what deletes the rest.
@@ -4507,6 +4423,7 @@ function sanitizeGmailMessageForTool(
     from: truncateNullable(gmailHeader(message, "From"), 500),
     to: truncateNullable(gmailHeader(message, "To"), 1000),
     cc: truncateNullable(gmailHeader(message, "Cc"), 1000),
+    bcc: truncateNullable(gmailHeader(message, "Bcc"), 1000),
     subject: truncateNullable(gmailHeader(message, "Subject"), 1000),
     date: truncateNullable(gmailHeader(message, "Date"), 500),
     messageIdHeader: truncateNullable(gmailHeader(message, "Message-ID"), 1_000),
@@ -4650,7 +4567,7 @@ function calendarEventWriteBody(args: {
 }): Record<string, unknown> {
   return {
     ...(args.summary !== undefined ? { summary: args.summary } : {}),
-    ...(args.description !== undefined ? { description: args.description } : {}),
+    ...(args.description !== undefined || args.googleMeetUrl ? { description: [args.description, args.googleMeetUrl].filter(Boolean).join("\n\n") } : {}),
     ...(args.location !== undefined ? { location: args.location } : {}),
     ...(args.start !== undefined
       ? { start: args.allDay ? { date: args.start } : { dateTime: args.start, ...(args.timeZone ? { timeZone: args.timeZone } : {}) } }
@@ -4660,7 +4577,6 @@ function calendarEventWriteBody(args: {
       : {}),
     ...(args.recurrenceData !== undefined ? { recurrence: args.recurrenceData } : {}),
     ...(args.addGoogleMeetUrl ? { conferenceData: { createRequest: { requestId: crypto.randomUUID(), conferenceSolutionKey: { type: "hangoutsMeet" } } } } : {}),
-    ...(args.googleMeetUrl ? { conferenceData: { entryPoints: [{ entryPointType: "video", uri: args.googleMeetUrl }], conferenceSolution: { key: { type: "hangoutsMeet" }, name: "Google Meet" } } } : {}),
     ...(args.attendeeEmails !== undefined
       ? { attendees: args.attendeeEmails.map((email) => ({ email })) }
       : {})
@@ -5974,7 +5890,7 @@ function serializeEmail(input: EmailToSerialize, attachments: Array<{ fileName: 
     'Content-Type: text/plain; charset="UTF-8"',
     "Content-Transfer-Encoding: 8bit"
   ];
-  if (attachments.length) input = { ...input, attachments: [...input.attachments ?? [], ...attachments.map((attachment) => ({ fileName: attachment.fileName, mimeType: attachment.mimeType, content: bytesToBase64(attachment.bytes) }))] };
+  if (attachments.length) input = { ...input, attachments: [...input.attachments ?? [], ...attachments.map((attachment) => ({ filename: attachment.fileName, mimeType: attachment.mimeType, content: bytesToBase64(attachment.bytes) }))] };
   if (input.htmlBody !== undefined || input.attachments?.length) {
     return serializeRichEmail(headers.slice(0, -2), input);
   }

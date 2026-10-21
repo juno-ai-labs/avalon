@@ -1,10 +1,12 @@
 import { z } from "zod";
+import { LocalClockSchema, calendarDayBoundary } from "./google-time";
+export { calendarDayBoundary } from "./google-time";
 import { ConnectorError, type ConnectorConnectionContext, type ConnectorToolContext } from "./types";
 
 export const CalendarSelectionFields = {
   date: z.string().date().describe("Local calendar date of the meeting, YYYY-MM-DD, for example 2026-10-21. The connector resolves the calendar's time zone and event ID."),
   title: z.string().min(1).optional().describe("Exact meeting title, case-insensitive. Omit when date and startTime already identify one meeting. Multiple matches are refused before writing."),
-  startTime: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/u).optional().describe("Local meeting start in HH:mm, for example 09:00. Omit to match any start time on date; use this to distinguish repeated meetings."),
+  startTime: LocalClockSchema.optional().describe("Local meeting start in HH:mm, for example 09:00. Omit to match any start time on date; use this to distinguish repeated meetings."),
 };
 export const MailQuerySchema = z.string().min(1).describe("Gmail search expression that identifies the email, for example from:alex@example.com subject:standup newer_than:7d. Uses Gmail search syntax, not a natural-language request. The connector requires a unique match; otherwise narrow the query or use an exact known ID.");
 export interface GoogleSelectionDependencies {
@@ -13,10 +15,11 @@ export interface GoogleSelectionDependencies {
 }
 const object = (value: unknown): Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const rows = (value: unknown): Record<string, unknown>[] => Array.isArray(value) ? value.map(object) : [];
-export async function selectMail(query: string, kind: "message" | "thread" | "draft", context: ConnectorToolContext, deps: GoogleSelectionDependencies): Promise<string> {
+export async function selectMail(query: string, kind: "message" | "thread" | "draft", context: ConnectorToolContext, deps: GoogleSelectionDependencies, options: { includeSpamTrash?: boolean } = {}): Promise<string> {
   const collection = `${kind}s`;
   const url = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/${collection}`);
   url.searchParams.set("q", query);
+  if (options.includeSpamTrash) url.searchParams.set("includeSpamTrash", "true");
   // Two records distinguish a unique match from ambiguity; this is a
   // cardinality witness, not a caller-visible result or defensive limit.
   url.searchParams.set("maxResults", "2");
@@ -27,17 +30,6 @@ export async function selectMail(query: string, kind: "message" | "thread" | "dr
   return matches[0]!.id as string;
 }
 
-/** Resolve a local calendar day without asking the model to calculate an offset. */
-export function calendarDayBoundary(date: string, timeZone: string): string {
-  const desired = Date.parse(`${date}T00:00:00Z`);
-  const format = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
-  const localEpoch = (instant: number) => {
-    const p = Object.fromEntries(format.formatToParts(instant).map((part) => [part.type, part.value]));
-    return Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), Number(p.hour), Number(p.minute), Number(p.second));
-  };
-  const first = desired - (localEpoch(desired) - desired);
-  return new Date(first - (localEpoch(first) - desired)).toISOString();
-}
 export async function selectCalendarEvent(selection: { date: string; title?: string | undefined; startTime?: string | undefined }, calendarId: string, context: ConnectorToolContext, deps: GoogleSelectionDependencies): Promise<string> {
   const settings = await deps.readJson(await deps.api(context.connection, `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}`, { signal: context.signal }));
   if (typeof settings.timeZone !== "string") throw new ConnectorError("provider_error", "date: Google did not return the calendar time zone, so the local meeting date cannot be resolved.", { field: "date", reason: "calendar_timezone_unavailable" });

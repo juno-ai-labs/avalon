@@ -11,6 +11,8 @@ mutations, draft composition, or availability suggestions.
 | File | Responsibility |
 | --- | --- |
 | `packages/connectors/src/google-workflows.ts` | Semantic action tools and shared provider operations. |
+| `packages/connectors/src/google-time.ts` | Shared local wall-time and calendar-day boundaries, including midnight DST gaps. |
+| `packages/connectors/src/google-mail-address.ts` | Parse automatic reply mailboxes without treating display names or comments as addresses. |
 | `packages/connectors/src/google-selectors.ts` | Exact-ID alternatives, unique Gmail queries and structured local-date selection. |
 | `packages/connectors/src/google-availability.ts` | Intersect requested local hours with common calendar availability. |
 | `packages/connectors/src/google-recurrence.ts` | Translate calendar repeat schedules to Google recurrence rules. |
@@ -39,7 +41,7 @@ read/update tools accept the same alternatives. `calendarId` accepts an ID,
 
 Gmail actions accept the corresponding known `messageId`, `threadId`, or
 `draftId`, or a `query` using Gmail operators. Queries require a unique match
-before proceeding. This is a deterministic provider search, not interpretation
+before proceeding. Reply queries must match one message, even within one conversation; use the exact message ID from search when several match. This is a deterministic provider search, not interpretation
 of a natural-language request. IDs remain in outputs for follow-up operations.
 
 ### Cancellation and RSVP
@@ -48,7 +50,7 @@ of a natural-language request. IDs remain in outputs for follow-up operations.
 `calendar.cancel_recurring_series` cancels its entire series. RSVP has matching
 `calendar.respond_to_event` and `calendar.respond_to_recurring_series` tools.
 These actions are separate so a model does not have to interpret a scope switch
-before a consequential write.
+before a consequential write. This is the requested product design for medium models, not a measured claim of model accuracy. The larger public surface intentionally composes shared private primitives; it is not evidence to expose provider operation enums.
 
 Series actions follow `recurringEventId` to the master internally; single-event
 actions refuse a master rather than changing all its instances. A series action
@@ -73,11 +75,10 @@ count. The connector builds the RRULE. Recurrence requires an explicit IANA
 `timeZone` so daylight-saving transitions preserve the intended local time.
 
 `addGoogleMeetUrl` requests a new Google Meet conference. `googleMeetUrl`
-attaches an existing HTTPS Meet URL; using both is invalid. Provider conference
+appends an existing HTTPS Meet URL to event notes, preserving existing notes on updates; using both is invalid. A supplied URL is not synthesized into Google conference data. Provider conference
 generation can be pending: `conferenceStatus` and `conferenceUrl` report what
 Google actually returned. A success receipt does not promise a conference URL
-already exists. Updates default to notifying guests about actual event field
-changes, while a no-op relative guest change does not mail them.
+already exists. Updates preserve the existing notification policy: guest membership changes notify guests, and ordinary field edits notify only when `sendUpdates` is explicit. No-op relative guest changes do not mail them.
 
 ### Availability
 
@@ -99,7 +100,7 @@ Inbox actions have distinct semantic tools: `gmail.archive`, `move_to_inbox`,
 `mark_read`, `mark_unread`, `star`, `unstar`, `mark_important`, `unmark_important`,
 `mark_spam`, `unmark_spam`, `trash`, and `restore_from_trash`. Each accepts an
 exact known `threadId` or a unique Gmail query. Restore and unmark Spam add the
-corresponding folder search internally. Exact IDs bypass search.
+corresponding folder search internally and explicitly include Spam/Trash in provider searches. Exact IDs bypass search.
 
 `gmail.label` and `gmail.remove_label` apply custom label names or known IDs to
 the selected conversation, resolving names and refusing ambiguity internally.
@@ -122,7 +123,10 @@ calendar scopes.
 
 `gmail.list_drafts` returns draft and message IDs separately, metadata and an
 openable address. `gmail.read_draft` retrieves bounded body text and attachment
-metadata using a known draft ID or unique query. Lists use the existing opaque
+metadata using a known draft ID or unique query. Both outputs include BCC.
+Detail reads reuse the existing Gmail header concurrency budget. A vanished
+draft is marked `unavailable` without losing the other rows; authorization
+failures still fail the operation. Lists use the existing opaque
 continuation mechanism and echo their applied query.
 
 `gmail.create_draft` and `gmail.send` create new conversations with flat `to`,
@@ -132,12 +136,12 @@ resolve subject, ancestry and Reply-To/From recipients internally (the original 
 overrides the reply recipient; this is not automatic reply-all. There is no
 public new/reply kind switch or caller-supplied threading state.
 
-Both draft and send accept optional `bcc`, `htmlBody`, `attachments`, and
-`includeSignature`. `body` is the plain text alternative; HTML is explicit.
-Attachments carry standard base64 bytes, MIME type and filename. Reply subject
+Both draft and send accept optional `bcc`, `htmlBody`, and
+`includeSignature`. New and reply drafts accept `attachmentResourceIds`: the host reads authorized original PDF resources and the adapter builds MIME internally. No model-supplied file bytes are accepted. `body` is the plain text alternative; HTML is explicit.
+The host supplies attachment bytes, MIME type and filename after verifying current resource visibility; duplicate references attach once. Reply subject
 and ancestry come from the original message on the same account. Signature
 lookup requires `gmail.read` and reads the default send-as signature; it does
-not infer a signature from correspondence.
+not infer a signature from correspondence. Google explicitly permits `sendAs.list` under the existing `gmail.modify` scope; no settings scope is requested ([official reference](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.settings.sendAs/list#authorization-scopes)). Automatic replies parse mailbox syntax and preserve dot-atom addresses, including apostrophes; unsupported syntax refuses before writing and asks for explicit recipients.
 
 MIME contains a plain/HTML alternative when requested, wrapped in multipart/mixed
 when files are attached. Base64 lines follow RFC 2045; filenames use RFC 2231
@@ -181,9 +185,9 @@ credential renewal, principal checks, capability intersection, receipts, and
 continuation handles; see [connectors](connectors.md) and
 [agent tools](agent-tools.md). It does not adopt Google's preview MCP transport
 or expose fuzzy calendar search, advanced reminders, guest permissions,
-visibility controls or special event types. Attachment download and platform
-file-to-MIME resolution are outside this module; composition takes supplied
-base64 bytes.
+visibility controls or special event types. Broader resource formats and
+attachment download are outside this module. PDF resource-to-MIME resolution
+uses the existing authorized host path; direct-send attachments remain deferred.
 
 ## Failure modes and limits
 
@@ -273,7 +277,7 @@ finding, which were absent from these live MCP catalogs.
 
 Remaining work beyond these workflows includes: broad event search,
 advanced event configuration, message-level mailbox actions, broader recurrence
-editing and attachment download/platform-file resolution. Conversational inbox
+editing, attachment download, non-PDF attachments and direct-send attachments. Conversational inbox
 actions do not claim message-level parity with Google's catalog. A future
 message-level action should be a distinct semantic tool rather than a target
 kind switch on today's conversation action.
@@ -306,4 +310,6 @@ provider token is broader would break Rally's independent frozen-grant boundary.
 `gmail.modify`; Refresh expands only the complete Mail + Calendar preset at
 explicit reauthorization, preserving narrower custom grants. Future recurring operations must preserve the occurrence/series
 distinction and exact-ID alternatives. New mail options must retain unknown-key
-rejection through the provider schema sanitizer.
+rejection through the provider schema sanitizer. Calendar schemas derive from the same Zod inputs, including nested repeat closure. Shared timezone conversion handles missing midnight without shifting event selectors or recurrence ends into the preceding date. Local preferred windows merge across adjacent weekdays before checking duration, while excluded hours and weekends remain gaps. Authorized PDF references compose with HTML through one MIME path; model byte-copying is not a supported attachment interface.
+
+PR: [#1369](https://github.com/juno-ai-labs/avalon/pull/1369).

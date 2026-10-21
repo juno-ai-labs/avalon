@@ -1,3 +1,4 @@
+import { zonedInstant } from "./google-time";
 import { ConnectorError } from "./types";
 
 interface AvailabilityRequest {
@@ -31,22 +32,10 @@ export function suggestCalendarTimes(args: AvailabilityRequest, timeZone: string
   const format = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
   const parts = (instant: number) => Object.fromEntries(format.formatToParts(instant).map((part) => [part.type, part.value]));
   const first = parts(begin);
-  const last = parts(finish);
+  const last = parts(finish - 1);
   let day = Date.UTC(Number(first.year), Number(first.month) - 1, Number(first.day));
   const lastDay = Date.UTC(Number(last.year), Number(last.month) - 1, Number(last.day));
-  function localInstant(date: number, clock: string): number {
-    const [hour, minute] = clock.split(":").map(Number);
-    const desired = date + hour! * 3_600_000 + minute! * 60_000;
-    const initial = parts(desired);
-    const offset = Date.UTC(Number(initial.year), Number(initial.month) - 1, Number(initial.day), Number(initial.hour), Number(initial.minute), Number(initial.second)) - desired;
-    const candidate = desired - offset;
-    const corrected = parts(candidate);
-    const correction = Date.UTC(Number(corrected.year), Number(corrected.month) - 1, Number(corrected.day), Number(corrected.hour), Number(corrected.minute)) - desired;
-    const resolved = candidate - correction;
-    const check = parts(resolved);
-    if (Date.UTC(Number(check.year), Number(check.month) - 1, Number(check.day), Number(check.hour), Number(check.minute)) !== desired) throw new ConnectorError("invalid_payload", "preferences: a selected local hour does not exist during a daylight-saving transition. Choose hours outside the clock-change gap.", { field: "preferences", reason: "nonexistent_local_hour" });
-    return resolved;
-  }
+  const localInstant = (date: number, clock: string) => zonedInstant(new Date(date).toISOString().slice(0, 10), clock, timeZone);
   const windows: Array<[number, number]> = [];
   while (day <= lastDay) {
     const weekday = new Date(day).getUTCDay();
@@ -61,5 +50,12 @@ export function suggestCalendarTimes(args: AvailabilityRequest, timeZone: string
     }
     day += 86_400_000;
   }
-  return output(windows);
+  const merged: Array<[number, number]> = [];
+  windows.sort((a, b) => a[0] - b[0]);
+  for (const [start, end] of windows) {
+    const previous = merged.at(-1);
+    if (previous && start <= previous[1]) previous[1] = Math.max(previous[1], end);
+    else merged.push([start, end]);
+  }
+  return output(merged);
 }
