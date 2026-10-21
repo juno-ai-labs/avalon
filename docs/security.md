@@ -118,7 +118,7 @@ same as desktop.
   Archive, pinning and navigation-link coordinates derive their thread from
   that record's Main annotation scope and owning surface eligibility; the server
   still authorizes each route.
-  Read/content/version/site-data operations cannot name another resource or an
+  Read/content/version/site-data and frozen-page preview operations cannot name another resource or an
   arbitrary API path. Credentials stay in main, which checks session ownership, including the opening region,
   again after asynchronous work and uses fresh site access for external opens.
 - App-window navigation and popup creation are denied by default; Rally's own

@@ -148,6 +148,9 @@ export function SiteResourceDetail({
 }: SiteResourceDetailProps): React.JSX.Element {
   const annotationDraft = useAnnotationDraft();
   const [picking, setPicking] = React.useState(false);
+  const retryAnnotations=annotationDraft?.retry;
+  React.useEffect(()=>{retryAnnotations?.();},[resourceId,version,retryAnnotations]);
+  React.useEffect(()=>{if(annotationDraft?.repairing&&annotationDraft.pins.some((pin)=>pin.id===annotationDraft.repairing&&pin.annotation.target.resourceId===resourceId))setPicking(true);},[annotationDraft?.repairing,resourceId]);
   const pickingRef = React.useRef(false);
   const [editingPin, setEditingPin] = React.useState<string | null>(null);
   const [commentAnchor,setCommentAnchor]=React.useState({x:12,y:60});
@@ -421,7 +424,7 @@ export function SiteResourceDetail({
     }
     if (!pickingRef.current) return;
     const id = annotationDraft.add(buildAnnotation({ target: { resourceId, version, locator: { type: 'element', pagePath: pin.pagePath, css: pin.css, box: pin.box, visibleText: pin.visibleText } },
-      content: { exact: pin.html, source: 'rendered', before: '', after: '', truncated: false, ...(imageAttachmentId ? { imageAttachmentId } : {}) }, comment: '' }), title, () => {if(!paneRef.current?.isConnected)return false;paneRef.current.scrollIntoView({block:'center'});setEditingPin(id);return true;}, pin.replace ? lastPin.current : undefined, true);
+      content: { exact: pin.html, source: 'rendered', before: pin.before??'', after: pin.after??'', truncated: false, ...(imageAttachmentId ? { imageAttachmentId } : {}) }, comment: '' }), title, () => {if(!paneRef.current?.isConnected)return false;paneRef.current.scrollIntoView({block:'center'});setEditingPin(id);return true;}, pin.replace ? lastPin.current : undefined, true);
     const pane=paneRef.current?.getBoundingClientRect();
     if(pane)setCommentAnchor({x:Math.max(12,Math.min(pane.x+(pin.point?.x??12),window.innerWidth-320)),y:Math.max(12,Math.min(pane.y+(pin.point?.y??12)+12,window.innerHeight-190))});
     lastPin.current = id; setEditingPin(id);

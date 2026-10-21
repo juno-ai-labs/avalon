@@ -1,3 +1,4 @@
+import { annotationDraftKeyForScope } from '../common/draft-keys';
 import { createElectronFetch } from '@rally/electron-network';
 import { artifactWindowActionRequest, artifactWindowSessionMatches } from './artifact-window-actions';
 import { ARTIFACT_COMMENTS_SOURCE, AnnotationCommentPinsSchema, AnnotationCommentActionSchema, ARTIFACT_PICKER_SOURCE, ArtifactPickerPinSchema, AnnotationSchema } from "@rally/contracts";
@@ -4417,7 +4418,11 @@ function registerIpc(): void {
   ipcMain.handle('artifact:read-window', (event) => {
     assertArtifactRenderer(event);
     const window = BrowserWindow.fromWebContents(event.sender)!;
-    return poppedOutArtifacts.get(window)?.request ?? null;
+    const record = poppedOutArtifacts.get(window);
+    if (!record) return null;
+    const scope = record.request.annotationScope;
+    const annotationDraftKey = scope ? annotationDraftKeyForScope(record.region, record.workspaceId, scope) : undefined;
+    return { ...record.request, ...(annotationDraftKey ? { annotationDraftKey } : {}) };
   });
   ipcMain.handle('artifact:register-composer', (event, scope: unknown, active: unknown) => {
     assertTrustedIpcSender(event);
@@ -4438,7 +4443,7 @@ function registerIpc(): void {
     const window = BrowserWindow.fromWebContents(event.sender)!;
     const source = poppedOutArtifacts.get(window);
     if (!source?.owner || source.owner.isDestroyed() || !source.request.annotationScope || !annotationComposerScopes.get(source.owner)?.has(source.request.annotationScope)) return false;
-    const pins = z.array(z.strictObject({ annotation: AnnotationSchema, image: z.instanceof(Uint8Array).optional() })).parse(raw);
+    const pins = z.array(z.strictObject({ id: z.string().uuid().optional(), generation: z.string().uuid().optional(), annotation: AnnotationSchema, image: z.instanceof(Uint8Array).optional() })).parse(raw);
     // A newer preview can arrive while older pins are still in this draft.
     // Keep resource confinement; admission validates each pin's saved version.
     if (pins.some((pin) => pin.annotation.target.resourceId !== source.resourceId)) return false;

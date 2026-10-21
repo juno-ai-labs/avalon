@@ -32,9 +32,15 @@ export function ArtifactWindow(): React.JSX.Element {
     const refresh = (): void => { void window.rally?.readArtifactWindow?.().then(setPreview); };
     refresh(); return window.rally?.onArtifactWindowUpdated?.(refresh);
   }, []);
-  return <Tooltip.Provider><AnnotationDraftProvider upload={async (file) => { const id = crypto.randomUUID(); files.current.set(id,file); return id; }}>
-    {preview && <ArtifactWindowContent preview={preview} files={files.current} />}
-  </AnnotationDraftProvider></Tooltip.Provider>;
+  return <Tooltip.Provider>{preview && <AnnotationDraftProvider draftKey={preview.annotationDraftKey} resourceId={preview.resourceId}
+    readResource={async()=>ResourceSchema.parse(await command({type:'read'}))}
+    readResourceVersion={async(_id,version,_signal,annotation)=>{
+      const action:ArtifactWindowAction=preview.kind==='site'&&annotation?.target.locator.type==='element'?{type:'site-preview',version,pagePath:annotation.target.locator.pagePath??'/'}:{type:'content',version};
+      const value=z.object({content:z.instanceof(Uint8Array),mimeType:z.string()}).parse(await command(action));
+      return new Blob([Uint8Array.from(value.content)],{type:value.mimeType});
+    }} upload={async (file) => { const id = crypto.randomUUID(); files.current.set(id,file); return id; }}>
+    <ArtifactWindowContent preview={preview} files={files.current} />
+  </AnnotationDraftProvider>}</Tooltip.Provider>;
 }
 export function ArtifactWindowContent({preview: request,files}: {preview:DesktopArtifactWindowRequest;files:Map<string,File>}): React.JSX.Element {
   const [selected, setSelected] = useState<DesktopArtifactWindowRequest | null>(null);
@@ -77,6 +83,20 @@ export function ArtifactWindowContent({preview: request,files}: {preview:Desktop
     return new Blob([Uint8Array.from(value.content)], { type: value.mimeType });
   };
   const draft = useAnnotationDraft();
+  const setPreviewOpener=draft?.setPreviewOpener;
+  useEffect(()=>{
+    setPreviewOpener?.(()=>{
+      void command({type:'read'}).then(async(value)=>{
+        const current=ResourceSchema.parse(value);
+        if(request.kind==='site'){setSelected({...request,version:current.currentVersion});return;}
+        const blob=await loadContent(false,current.currentVersion);
+        setSelected({...request,version:current.currentVersion,content:new Uint8Array(await blob.arrayBuffer()),mimeType:blob.type});
+      }).catch(()=>setError('The current artifact could not be opened. Retry when it is available.'));
+    });
+    return()=>setPreviewOpener?.(null);
+  },[setPreviewOpener,request]);
+  const retry=draft?.retry;
+  useEffect(()=>{retry?.();},[request.version,retry]);
   const [src,setSrc] = useState<string>();
   const [sending,setSending] = useState(false);
   useEffect(() => {
@@ -88,12 +108,14 @@ export function ArtifactWindowContent({preview: request,files}: {preview:Desktop
     if (!draft || sending) return;
     setSending(true); setError(undefined);
     try {
-      const pins = await Promise.all(draft.pins.map(async (pin) => {
+      const submitted = await draft.prepareSend();
+      if(!submitted.length)throw new Error('Reattach a comment before adding it to the message.');
+      const pins = await Promise.all(submitted.map(async (pin) => {
         const image = pin.annotation.content.imageAttachmentId ? files.get(pin.annotation.content.imageAttachmentId) : undefined;
-        return { annotation:pin.annotation,...(image ? {image:new Uint8Array(await image.arrayBuffer())} : {}) };
+        return { id:pin.id, ...(request.annotationDraftKey && pin.generation ? {generation:pin.generation} : {}), annotation:pin.annotation,...(pin.annotation.content.imageAttachmentId && pin.image ? {image:new Uint8Array(pin.image.bytes)} : image ? {image:new Uint8Array(await image.arrayBuffer())} : {}) };
       }));
       if (!await window.rally?.returnArtifactAnnotations?.(pins)) throw new Error('Open the original conversation to add these pins.');
-      draft.clear(draft.pins.map((p)=>p.id));
+      if (!request.annotationDraftKey) draft.clearAccepted(submitted);
     } catch(e) { setError(e instanceof Error?e.message:'The pins could not be added.'); }
     finally {setSending(false);}
   };
@@ -124,11 +146,11 @@ export function ArtifactWindowContent({preview: request,files}: {preview:Desktop
         }).catch((error: unknown) => setError(actionFailure(error, 'The version could not be opened.')));
       }}
     >
-    {selected && <p className="attachment-lightbox-superseded attachment-panel-superseded" role="status">Version {selected.version} · not current <button onClick={() => setSelected(null)} type="button">Return to current</button></p>}
+    {selected && selected.version!==resource?.currentVersion && <p className="attachment-lightbox-superseded attachment-panel-superseded" role="status">Version {selected.version} · not current <button onClick={() => setSelected(null)} type="button">Return to current</button></p>}
     {preview.kind==='generated' ? <div className="artifact-annotation-window-body">{preview.mimeType.startsWith('audio/') ? <audio controls src={src} aria-label={preview.title} /> : preview.mimeType.startsWith('video/') ? <video controls src={src} aria-label={preview.title} /> : <AnnotationSurface resourceId={preview.resourceId} version={preview.version} name={preview.title} mimeType={preview.sourceMimeType ?? preview.mimeType} src={src} text={preview.mimeType.startsWith('image/')?undefined:new TextDecoder().decode(preview.content)} />}</div>
       : <ArtifactSiteWindow preview={preview} />}
     </InspectorRail>
-    <footer><AnnotationChips />{error && <p role="alert">{error}</p>}<button disabled={!preview.annotationScope||!draft?.pins.length||draft.uploading||sending} onClick={()=>void send()} type="button">{sending?'Adding pins…':'Add pins to message'}</button></footer>
+    <footer><AnnotationChips />{error && <p role="alert">{error}</p>}<button disabled={!preview.annotationScope||!draft?.readyPins.length||draft.uploading||sending} onClick={()=>void send()} type="button">{sending?'Adding pins…':'Add pins to message'}</button></footer>
   </main>;
 }
 
