@@ -2350,6 +2350,7 @@ export class HostedParent {
     return ScopeGrantMutationResultSchema.parse(useCurrentRevision
       ? store.mutateCurrent(ParticipantGrantMutationSchema.parse({ operationId: request.operationId,
         actorUserId: request.actorUserId, userId: request.userId, target: request.target, active: request.active,
+        ...(request.participationReason ? { participationReason: request.participationReason } : {}),
       }), recipient?.incarnation ?? null)
       : store.mutate(request, recipient?.incarnation ?? null));
   }

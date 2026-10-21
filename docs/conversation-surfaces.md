@@ -139,6 +139,10 @@ a double-stacked control.
 
 ## Contract
 
+The composer confirms mentions that expand access: nonparticipants in personal
+conversations, and nonparticipating guests even in Organization-visible ones.
+Organization members in an Organization-visible conversation need no prompt.
+
 The shared composer mention picker keeps Rally first, then groups people into
 **Participants**, **Org members**, and **Guests**. Participation takes precedence
 over guest access; pending Organization invitees appear under Org members until
