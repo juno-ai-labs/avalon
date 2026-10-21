@@ -10,6 +10,7 @@ import {
 import type { Pipeline } from "cloudflare:pipelines";
 import { z } from "zod";
 import type { Region, UserId, WorkspaceId } from "@rally/contracts";
+import type { WorkspaceRelationship } from "@rally/contracts/scope-grants";
 import type { RegionalIdentityBridgeRpcBinding } from "./services/platform-onboarding-service";
 import type { GitHubRegionalBridgeRpcBinding, GlobalGitHubRouterRpcBinding } from "./services/github-routing-service";
 import type { GlobalWorkstreamEmailRouterRpcBinding } from "./services/workstream-email-routing-service";
@@ -365,6 +366,8 @@ export interface RequestMembershipObservation {
   userId: UserId;
   accessClass: "member" | "guest";
   validatedAt: number;
+  /** Canonical incarnation and revision from the same session query. */
+  relationship?: WorkspaceRelationship;
 }
 
 export interface AppVariables {

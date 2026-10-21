@@ -85,10 +85,25 @@ export class AuthorizationService {
     const byKey = new Map(unique.map((resource, index) => [authorizationSnapshotKey(subject, resource), decisions[index]!]));
     return resources.map((resource) => byKey.get(authorizationSnapshotKey(subject, resource))!);
   }
+
+  /** Admission and the data it admits share one owner observation and RPC. */
+  async readResource(subject: AuthorizationSubject, resourceId: string): Promise<ResourceReadMetadata> {
+    const batch = new AuthorizationBatch(this.env, this.requestMembership, true);
+    requireAuthorizedRead(await new AccessContext(subject, batch).check({
+      kind: 'resource', workspaceId: subject.workspaceId, resourceId,
+    }));
+    const metadata = batch.readMetadata.get(resourceId);
+    if (!metadata) throw new Error('authorization_resource_read_metadata_missing');
+    return metadata;
+  }
 }
+
+export type ResourceReadMetadata = NonNullable<Extract<Awaited<ReturnType<WorkspaceDO['authorizationResourceFacts']>>[number],
+  { exists: true }>['readMetadata']>;
 
 /** Owner observations, including settled reads, live for exactly one batch. */
 class AuthorizationBatch {
+  readonly readMetadata = new Map<string, ResourceReadMetadata>();
   private readonly parents = new Map<string, Promise<Awaited<ReturnType<WorkspaceDO['readAuthorizationFacts']>>>>();
   private readonly automations = new Map<string, Promise<ReturnType<HostedSidekick['readAuthorizationFacts']>>>();
   private readonly automationViewers = new Map<string, Promise<Awaited<ReturnType<HostedSidekick['authorizeViewer']>> & { validatedAt: number }>>();
@@ -96,10 +111,12 @@ class AuthorizationBatch {
   private readonly attachments = new Map<string, Promise<ReturnType<WorkstreamResourceStorage['readAuthorizationFacts']>>>();
   private readonly memberships = new Map<string, Promise<{ active: boolean; guest: boolean; validatedAt: number }>>();
   private guest = false;
+  private relationship: RequestMembershipObservation['relationship'];
   private readonly parentScopes = new Map<string, Set<string>>();
   constructor(
     private readonly env: Env,
     private readonly requestMembership: RequestMembershipObservation | null,
+    private readonly includeReadMetadata = false,
   ) {}
 
   async checkMany(subject: AuthorizationSubject, resources: readonly AuthorizationResource[]): Promise<AuthorizationDecision[]> {
@@ -130,12 +147,22 @@ class AuthorizationBatch {
           return { active: Boolean(row), guest: row?.access_class === "guest", validatedAt: Date.now() };
         });
     this.guest = membership.guest;
+    const observed = this.requestMembership?.relationship;
+    if (this.requestMembership?.workspaceId === subject.workspaceId && this.requestMembership.userId === subject.userId
+      && observed?.workspaceId === subject.workspaceId && observed.userId === subject.userId
+      && observed.accessClass === (membership.guest ? 'guest' : 'member') && observed.status === 'active') {
+      this.relationship = observed;
+    }
     const membershipEvidence = { owner: `workspace:${subject.workspaceId}/member:${subject.userId}`,
       revision: membership.active ? (membership.guest ? 'guest:active' : 'member:active') : 'inactive', validatedAt: membership.validatedAt };
     const resourceIds = requested.flatMap((entry) => entry.resource.kind === 'resource' ? [entry.resource.resourceId] : []);
     const facts = membership.active && resourceIds.length
       ? atBatchReceipt(await workspace.authorizationResourceFacts({ workspaceId: subject.workspaceId, userId: subject.userId, resourceIds,
-        accessClass: membership.guest ? 'guest' : 'member' })) : [];
+        accessClass: membership.guest ? 'guest' : 'member',
+        ...(this.includeReadMetadata ? { includeReadMetadata: true } : {}) })) : [];
+    for (const value of facts) {
+      if (value.exists && value.readMetadata) this.readMetadata.set(value.resourceId, value.readMetadata);
+    }
     const factsById = new Map(facts.map((value) => [value.resourceId, value]));
     // Gather the whole batch before reading an owner, including attachment locations.
     const addScope = (parentId: string, substreamId: string) => {
@@ -177,7 +204,9 @@ class AuthorizationBatch {
 
   private async conversation(subject: AuthorizationSubject, resource: Extract<AuthorizationResource, { kind: 'conversation' }>): Promise<AuthorizationDecision> {
     if (!subject.userId) return { status: 'denied', reason: 'outside_delegation', evidence: [] };
-    const request = { workspaceId: subject.workspaceId, parentId: resource.parentId, userId: subject.userId, substreamIds: [...(this.parentScopes.get(resource.parentId) ?? [resource.substreamId])].map(asSubstreamId) };
+    const request = { workspaceId: subject.workspaceId, parentId: resource.parentId, userId: subject.userId,
+      substreamIds: [...(this.parentScopes.get(resource.parentId) ?? [resource.substreamId])].map(asSubstreamId),
+      ...(this.relationship ? { relationship: this.relationship } : {}) };
     const workstream = await ownerEvidence(this.parents, JSON.stringify([subject, resource.parentId]), async () => {
       // Through the one dispatch point, so the namespace a parent kind resolves
       // to is decided in exactly one place in the tree.
