@@ -146,7 +146,7 @@ function handledElsewhere(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   return target.isContentEditable
     || ['INPUT', 'TEXTAREA'].includes(target.tagName)
-    || target.closest('[role="dialog"]') !== null;
+    || target.closest('[role="dialog"], [role="alertdialog"]') !== null;
 }
 
 /**

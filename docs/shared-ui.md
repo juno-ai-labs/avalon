@@ -50,6 +50,9 @@ The popup owns the tooltip context for copy controls carried from a failure,
 focuses OK and returns focus to the interrupted control when it still exists.
 OK is its only visible close control; Escape also dismisses it. A failure inside
 an existing dialog opens above it and keeps the underlying form intact.
+Window paste handlers and the phone sheet's Escape handler treat alert dialogs
+as owning their input, just like other dialogs. Tooltip portals render above
+the popup so copy controls keep their labels visible.
 
 Use `AcknowledgedErrorDialog` when the caller already owns explicit notice and
 acknowledgement state. Existing native deep-link error windows also say OK.
@@ -234,6 +237,10 @@ attempts when identical failure copy stays mounted. The retired inline primitive
 and recognisable inline alert markup are lint errors; adding another banner is
 not an alternative presentation path. Historical failures open their details
 on demand so navigating or scrolling does not replay old interruptions.
+The alert-dialog role also participates in existing paste and Escape guards;
+otherwise an acknowledged interruption could upload into a hidden draft or
+dismiss the navigation sheet underneath it. Copy tooltips share the popup's
+stacking tier, above its overlay.
 
 ### 2026-10-21 — People start with frequent collaborators
 
