@@ -12,6 +12,7 @@ server annotation table or artifact comment thread. Unconfirmed selections are n
 | `packages/contracts/src/artifact-annotations.ts` | Shared locators, builder, admission rules and model projection. |
 | `packages/contracts/src/artifact-picker.ts` | HTML inspector, restoration and the Tabler pointer-collaboration cursor, shared by all HTML transports. |
 | `apps/desktop/src/renderer/components/annotation-surface.tsx` | Text, converted document, image and opaque HTML selection. |
+| `apps/desktop/src/renderer/components/image-viewport.tsx` | Two-axis image scrolling, sizing and zoom shared by annotated and ordinary previews. |
 | `apps/desktop/src/renderer/lib/annotation-source.ts` | Parser source positions and reversible rendered/source range mapping. |
 | `apps/desktop/src/renderer/components/annotation-sheet.tsx` | Cell, range, row, column and sheet selection. |
 | `apps/desktop/src/renderer/components/artifact-annotations.tsx` | Transient composer pins, chips and feed excerpts. |
@@ -56,6 +57,20 @@ table with headers. Image regions upload PNG crops; the original image remains
 a separate model source. The shared model projection escapes resource data,
 labels exact/converted/rendered content, and requires a fresh read for truncated
 selections and reconciliation before editing an older version.
+
+Image panels initially fit the image's width without enlarging small images;
+tall images scroll vertically. Zoom in/out, the percentage button (100%), and
+Fit sit outside the image's scroll viewport. Overflow scrolls on both axes.
+Double-clicking or double-tapping an image toggles between 100% and Fit; zooming
+in keeps the tapped image point under the pointer. Comment mode keeps these
+gestures for selecting image regions instead. Touch scrolling and pinch zoom
+remain native; double-tap zoom applies to the image rather than the page.
+The focusable viewport supports native arrow-key scrolling; gallery arrow-key
+navigation applies outside that viewport.
+Lightboxes initially fit the whole image, and their full-size toggle selects
+100%. Image regions use the image's layout dimensions at every zoom, so crops
+and highlights retain their normalized coordinates. These controls are shared
+by desktop and browser previews, including images without annotation metadata.
 
 Target checks reuse ordinary resource-sharing rules, including personal-connection
 ownership, and run once per distinct resource/version before participant changes.
@@ -190,7 +205,11 @@ Contracts cover admission, source policy, locators and escaped model guidance.
 `annotation-resolution.test.ts` covers moved, changed, ambiguous and missing
 selections, HTML identity, sheet headers and image identity.
 Renderer tests cover exact Markdown selection, growth, comments, removal and
-sheet serialization. API Node tests cover live and overheard projections;
+sheet serialization. Attachment panel tests preserve gallery keyboard navigation
+outside the image viewport while leaving viewport keys available for scrolling.
+Image scroll bounds, Fit, double-click/tap focal zoom, gallery resets and region
+alignment are verified in real Electron and browser windows; jsdom has no layout.
+API Node tests cover live and overheard projections;
 `test-workers/artifact-annotations.test.ts` covers canonical resource/version
 reads and durable turn storage. The workerd target/version and canonical-storage tests have production mutation
 proofs. No serving-Worker injection is shipped.
@@ -202,6 +221,23 @@ ordinary uploaded fixtures. Prompt evaluations live under
 on the configured medium fallback model, separately from end-to-end tool edits.
 
 ## Changelog
+
+### 2026-10-21 — Image previews own a scroll viewport
+
+**What changed:** Annotated and ordinary images share a two-axis scroll viewport
+and zoom controls, including double-click/tap to toggle 100% and Fit. Region
+overlays scale with the image's actual layout box.
+
+**Why:** Tall images in expanded panels overflowed a centered flex container,
+leaving content outside the reachable scroll area. Width constraints also
+prevented inspecting wide images at their original resolution.
+
+**Considered and rejected:** Scaling with a CSS transform leaves the original
+layout box in place, which makes scroll bounds and annotation overlays diverge.
+
+**Consequences:** Image sizing must change layout dimensions. The scroll origin
+must remain reachable when an image exceeds either viewport dimension, and zoom
+controls must remain outside that scrolling content.
 
 ### 2026-10-20 — Restore comment drafts and reconcile artifact revisions
 
