@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { LoaderCircle } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { RallyDesktopBridge } from '../../common/desktop';
-import { RallyMark, Button, ConnectorMark, InlineError } from '../components/primitives';
+import { RallyMark, Button, ConnectorMark, ErrorNotice } from '../components/primitives';
 import { CreateOrganizationCard } from './create-organization';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
@@ -112,7 +112,7 @@ export function SignInScreen(): React.JSX.Element {
           </Button>
         )}
 
-        {(error ?? deepLinkError) && <InlineError>{error ?? deepLinkError}</InlineError>}
+        {(error ?? deepLinkError) && <ErrorNotice>{error ?? deepLinkError}</ErrorNotice>}
       </section>
     </main>
   );
@@ -207,7 +207,7 @@ export function InvitationOnboarding({
             </article>
           ))}
         </div>
-        {error && <InlineError>{error}</InlineError>}
+        {error && <ErrorNotice>{error}</ErrorNotice>}
         <button className="text-button onboarding-signout" onClick={() => void signOut()} type="button">Sign out</button>
       </section>
     </main>

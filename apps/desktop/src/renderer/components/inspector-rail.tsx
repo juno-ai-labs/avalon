@@ -24,7 +24,7 @@ import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { ResourceIcon } from './markdown-citations';
 import { CopyButton, CopyStatus, copyStateLabel } from './copy-button';
 import { useCopy } from '../lib/use-copy';
-import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, Modal } from './primitives';
+import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, ErrorNotice, Modal } from './primitives';
 import { SiteResourceDetail, type SiteResourceDetailProps } from './site-resource-detail';
 import { RailSurface } from './rail-surface';
 import { RelativeTime } from './relative-time';
@@ -508,7 +508,7 @@ function ResourceVersionItems({
 
   let body: React.ReactNode;
   if (failed) {
-    body = <DropdownMenu.Item className="menu-item" disabled>Resource history couldn’t be loaded.</DropdownMenu.Item>;
+    body = <ErrorNotice automatic={false} detailsLabel="History details">Resource history couldn’t be loaded.</ErrorNotice>;
   } else if (versions === undefined) {
     body = (
       <DropdownMenu.Item className="menu-item" disabled>
@@ -998,17 +998,17 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
       </>}
       <DetailHeaderActionsHost onActions={setDetailActions}>
       <div className="rail-scroll">
-        {downloadFailed && <div className="rail-inline-error"><InlineError>
+        {downloadFailed && <ErrorNotice>
           Download failed. Please try again.
-        </InlineError></div>}
-        {popOutFailed && <div className="rail-inline-error"><InlineError>
+        </ErrorNotice>}
+        {popOutFailed && <ErrorNotice>
           The artifact couldn’t be opened in a new window.
-        </InlineError></div>}
+        </ErrorNotice>}
         <CopyStatus state={copyLinkState} visible={copyLinkState !== 'failed'} />
-        {copyLinkState === 'failed' && <InlineError>The link couldn’t be copied.</InlineError>}
-        {props.failure && <div className="rail-inline-error"><InlineError>
+        {copyLinkState === 'failed' && <ErrorNotice>The link couldn’t be copied.</ErrorNotice>}
+        {props.failure && <ErrorNotice>
           {inspectorRailFailureCopy[props.failure]}
-        </InlineError></div>}
+        </ErrorNotice>}
         {inspector ? (
           props.children ?? <InspectorDetail
             artifactEditable={Boolean(props.onRenameResource)}
@@ -1044,7 +1044,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         open={Boolean(archiveTarget)}
         title="Archive this resource?"
       >
-        {archiveFailed ? <InlineError>The resource couldn’t be archived.</InlineError> : null}
+        {archiveFailed ? <ErrorNotice>The resource couldn’t be archived.</ErrorNotice> : null}
       </Modal>
       <Modal
         footer={(
@@ -1065,7 +1065,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         open={Boolean(renameTarget)}
         title="Rename artifact"
       >
-        {renameFailed ? <InlineError>The artifact couldn’t be renamed.</InlineError> : null}
+        {renameFailed ? <ErrorNotice>The artifact couldn’t be renamed.</ErrorNotice> : null}
         <form onSubmit={(event) => { event.preventDefault(); void submitRename(); }}>
           <label className="form-field">
             <span>Title</span>

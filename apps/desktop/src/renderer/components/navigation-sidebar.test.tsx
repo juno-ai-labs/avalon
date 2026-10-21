@@ -412,6 +412,22 @@ describe('the navigation sidebar', () => {
     expect(toggle).toHaveFocus();
   });
 
+  it('dismisses an error with Escape without closing the phone sheet underneath', async () => {
+    api.setPinned.mockRejectedValue(new ApiError('limit', 409, 'pin_limit_reached'));
+    renderSidebar((client) => client.setQueryData(SPACES_QUERY_KEY, { waterline: 1, items: [channel('outbound', 'Outbound')] }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Outbound/u }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+    const error = await screen.findByRole('alertdialog');
+
+    fireEvent.keyDown(within(error).getByRole('button', { name: 'OK' }), { key: 'Escape' });
+
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Close navigation' })).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveAttribute('aria-expanded', 'false');
+  });
+
   describe('at phone width, as a row of tabs', () => {
     const phoneWidth = (matches: boolean): void => {
       vi.stubGlobal('matchMedia', (query: string) => ({
@@ -1406,8 +1422,8 @@ describe('the navigation sidebar', () => {
       renderSidebar(seedThreads);
       fireEvent.contextMenu(await screen.findByRole('link', { name: /Q4 plan/u }));
       fireEvent.click(screen.getByRole('menuitem', { name: 'Resolve thread' }));
-      expect(await screen.findByText(copy)).toBeInTheDocument();
-      fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+      expect(await screen.findByRole('alertdialog')).toHaveTextContent(copy);
+      fireEvent.click(screen.getByRole('button', { name: 'OK' }));
       expect(screen.queryByText(copy)).not.toBeInTheDocument();
     });
 

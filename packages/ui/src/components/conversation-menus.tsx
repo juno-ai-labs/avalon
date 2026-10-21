@@ -1,3 +1,4 @@
+import { ErrorNotice } from './primitives';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import {
   IconArchive,
@@ -204,7 +205,7 @@ function PeopleView({ members, noun, people, presentUserIds }: {
   presentUserIds: readonly string[];
 }): React.JSX.Element {
   const [query, setQuery] = useState('');
-  const [entryError, setEntryError] = useState<string | null>(null);
+  const [entryError, setEntryError] = useState<{ message: string } | null>(null);
   // A late refresh must never move an Add button under the reader's pointer.
   const [ranking] = useState(people?.ranking);
   // One submission at a time: adds run in order, so a later roster never lands before an earlier one.
@@ -277,34 +278,34 @@ function PeopleView({ members, noun, people, presentUserIds }: {
       const onlyInvitee = single ? inviteeSuggestions[0] : undefined;
       if (only) void run(query, [only], []);
       else if (onlyInvitee) void run(query, [], [onlyInvitee]);
-      else setEntryError(ADDRESS_FORMAT_MESSAGE);
+      else setEntryError({ message: ADDRESS_FORMAT_MESSAGE });
       return;
     }
     // Who is already invited decides who is invited again, so it has to be known first.
     if (invites && invites.pending === undefined) {
-      setEntryError(invites.loadFailed ? 'Invitations couldn’t be loaded. Try again.' : 'Invitations are still loading. Try again in a moment.');
+      setEntryError({ message: invites.loadFailed ? 'Invitations couldn’t be loaded. Try again.' : 'Invitations are still loading. Try again in a moment.' });
       return;
     }
     const here = new Set([...members.flatMap((member) => member.email ? [member.email.toLocaleLowerCase()] : []), ...invites?.pending ?? []]);
     const { adds, inactive, strangers } = resolveTypedAddresses(tokens, people.candidates, here);
     if (inactive.length > 0) {
-      setEntryError(inactiveAccountsMessage(inactive));
+      setEntryError({ message: inactiveAccountsMessage(inactive) });
       return;
     }
     if (strangers.length > 0 && !invites) {
-      setEntryError(MEMBERS_ONLY_MESSAGE);
+      setEntryError({ message: MEMBERS_ONLY_MESSAGE });
       return;
     }
     void run(query, adds, strangers);
   };
-  const error = entryError ?? people?.error;
+  const error = entryError?.message ?? people?.error;
   return <>
     {people && <TitleMenuSearch className="title-menu-people-search" label="Add someone by name or email" onChange={change} onEnter={submit} value={query} />}
-    {error && <p className="title-menu-error" role="alert">{error}</p>}
-    {invites?.loadFailed && <div className="title-menu-load-failed" role="alert">
-      <span>Invitations waiting to sign in couldn’t be loaded.</span>
+    {error && <ErrorNotice occurrence={entryError ?? undefined}>{error}</ErrorNotice>}
+    {invites?.loadFailed && <>
+      <ErrorNotice automatic={false} detailsLabel="Invitation details">Invitations waiting to sign in couldn’t be loaded.</ErrorNotice>
       {invites.onRetryLoad && <button className="title-menu-add" onClick={invites.onRetryLoad} type="button">Try again</button>}
-    </div>}
+    </>}
     {!needle && members.map((member) => <div className="title-menu-person" key={member.id}>
       <Avatar member={member} size="medium" />
       <span className="title-menu-person-copy">
@@ -429,7 +430,7 @@ function MemoryView({ memory, noun }: {
   return <div className="title-menu-memory">
     {facts === undefined
       ? failure
-        ? <p className="title-menu-error" role="alert">{failure}</p>
+        ? <ErrorNotice automatic={false} detailsLabel="Memory details">{failure}</ErrorNotice>
         : <p className="title-menu-empty">Loading what Rally remembers…</p>
       : facts.length === 0
         ? <p className="title-menu-empty">Rally has not remembered anything about this {noun} yet.</p>

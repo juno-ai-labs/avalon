@@ -326,6 +326,7 @@ describe('a Channel', () => {
       })]));
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
       await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+      fireEvent.click(screen.getByRole('button', { name: 'OK' }));
       expect(screen.getByRole('list', { name: 'Outbound feed' })).toHaveAttribute('aria-busy', 'false');
       expect(api.getChannelFeed).toHaveBeenCalledTimes(2);
       expect(api.acknowledgeChannelRead).not.toHaveBeenCalled();
@@ -340,6 +341,7 @@ describe('a Channel', () => {
       api.getChannelStats.mockRejectedValue(new Error('offline'));
       api.getChannelFeed.mockResolvedValue(numberedFeed([10, 9, 8, 7, 6, 5, 4, 3, 2, 1]));
       const { container } = renderChannel('/channels/outbound', (client) => client.removeQueries({ queryKey: CHANNEL_STATS_QUERY_KEY }));
+      fireEvent.click(await screen.findByRole('button', { name: 'OK' }));
       await screen.findByRole('button', { name: 'Retry reading position' });
       await waitFor(() => expect(screen.getByRole('list', { name: 'Outbound feed' })).toHaveAttribute('aria-busy', 'false'));
       api.getChannelStats.mockResolvedValue([outboundStats({ latestAttentionSequenceNumber: 10, readThroughSequenceNumber: 6, firstUnreadSequenceNumber: 7 })]);
@@ -476,6 +478,7 @@ describe('a Channel', () => {
       await screen.findByText(/^Channels in Rally act as places to gather related work\./);
       feed.scrollTop = 0;
       fireEvent.scroll(feed);
+      fireEvent.click(await screen.findByRole('button', { name: 'OK' }));
       fireEvent.click(screen.getByRole('link', { name: 'Outbound Channel' }));
       await waitFor(() => expect(feed.scrollTop).toBe(1_500));
     });
@@ -1191,6 +1194,7 @@ describe('a Channel', () => {
     fireEvent.click(screen.getByRole('link', { name: 'to growth', hidden: true }));
 
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Leave the channel?' })).toBeNull());
+    fireEvent.click(await screen.findByRole('button', { name: 'OK' }));
     expect(screen.getByRole('button', { name: 'Channel menu: Growth' })).toBeInTheDocument();
     expect(api.updateSpaceAudience).not.toHaveBeenCalled();
   });

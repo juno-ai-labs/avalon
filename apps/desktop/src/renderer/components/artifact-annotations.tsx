@@ -1,3 +1,4 @@
+import { ErrorNotice } from './primitives';
 import { isComposingKeyEvent } from '@rally/ui/lib/ime';
 import { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo, type CSSProperties, type ReactNode } from 'react';
 import { AnnotatedMessageContentSchema, type Annotation } from '@rally/contracts';
@@ -124,7 +125,7 @@ export function AnnotationChips(): React.JSX.Element | null {
     <button className="annotation-chip-quote" onClick={() => { setEditing(draft.reveal(pin)?null:pin.id); }} type="button"><span className="annotation-number">{i + 1}</span><span><q>{annotationQuote(pin.annotation, pin.name)}</q>{pin.annotation.comment && <small>{pin.annotation.comment}</small>}</span></button>
     <button aria-label={`Remove pin ${i + 1}`} onClick={() => draft.remove(pin.id)} type="button">×</button>
     {pin.state==='checking' && <small role="status">Checking selection…</small>}
-    {pin.state==='needs-attention' && <div role="alert"><small>{pin.reason}</small><button type="button" onClick={()=>draft.repair(pin)}>Reattach</button><button type="button" onClick={draft.retry}>Retry</button></div>}
+    {pin.state==='needs-attention' && <div><ErrorNotice>{pin.reason}</ErrorNotice><button type="button" onClick={()=>draft.repair(pin)}>Reattach</button><button type="button" onClick={draft.retry}>Retry</button></div>}
     {editing===pin.id && <textarea autoFocus aria-label={`Comment on pin ${i+1}`} placeholder="Ask Rally to change this…" value={pin.annotation.comment} onChange={(e)=>draft.comment(pin.id,e.target.value)} onKeyDown={(e)=>{if(isComposingKeyEvent(e.nativeEvent))return;if((e.key==='Enter'&&!e.shiftKey)||e.key==='Escape'){e.preventDefault();e.stopPropagation();setEditing(null);}}} />}
   </div>)}</div>;
 }

@@ -163,6 +163,7 @@ describe('Sidekick recommendation picker', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Guide' }));
 
     expect(await screen.findByText('That Sidekick couldn’t be added.')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Close dialog' }));

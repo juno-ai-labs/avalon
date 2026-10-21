@@ -327,9 +327,12 @@ describe('socket-first channel open', () => {
     expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
     expect(report.mock.calls.filter(([event]) => event.kind === 'workstream_action_completed')).toHaveLength(0);
     if (action === 'make_public') {
-      fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+      fireEvent.click(screen.getByRole('button', { name: 'OK' }));
       await mainMenu(label);
-    } else fireEvent.click(screen.getByRole('button', { name: action === 'rename' ? 'Rename' : 'Archive' }));
+    } else {
+      fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+      fireEvent.click(screen.getByRole('button', { name: action === 'rename' ? 'Rename' : 'Archive' }));
+    }
     await waitFor(() => expect(report).toHaveBeenCalledWith(expect.objectContaining({
       kind: 'workstream_action_completed', workstreamId, action, origin: 'ad_hoc', pinned: false,
     })));
@@ -352,7 +355,7 @@ describe('socket-first channel open', () => {
     fireEvent.click(toggle);
     await screen.findByText('An organization-wide channel still makes this thread public. Remove it from that channel first.');
     expect(api.setWorkstreamScope).toHaveBeenLastCalledWith(workstreamId, 'personal');
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     await mainMenu(['More', 'Public to organization']);
     await waitFor(() => expect(report).toHaveBeenCalledWith(expect.objectContaining({
       kind: 'workstream_action_completed', workstreamId, action: 'make_private', visibility: 'private',
@@ -562,7 +565,10 @@ describe('socket-first channel open', () => {
       cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
     });
     await waitFor(() => expect(loadTranscriptRange).toHaveBeenCalledOnce());
-    if (!advances) expect(await screen.findByRole('button', { name: 'Retry loading earlier messages' })).toBeInTheDocument();
+    if (!advances) {
+      fireEvent.click(await screen.findByRole('button', { name: 'OK' }));
+      expect(await screen.findByRole('button', { name: 'Retry loading earlier messages' })).toBeInTheDocument();
+    }
     await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())); });
     expect(loadTranscriptRange).toHaveBeenCalledOnce();
     if (advances) expect(screen.queryByRole('button', { name: /earlier messages/ })).not.toBeInTheDocument();
@@ -590,6 +596,7 @@ describe('socket-first channel open', () => {
     expect(screen.queryByRole('button', { name: /earlier messages/i })).not.toBeInTheDocument();
     fireEvent.scroll(log);
     await waitFor(() => expect(loadTranscriptRange).toHaveBeenCalledOnce());
+    fireEvent.click(await screen.findByRole('button', { name: 'OK' }));
     const retry = await screen.findByRole('button', { name: 'Retry loading earlier messages' });
     fireEvent.scroll(log);
     expect(loadTranscriptRange).toHaveBeenCalledOnce();
@@ -738,6 +745,7 @@ describe('socket-first channel open', () => {
     fireEvent.change(composer, { target: { value: 'Look at the invoice' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
     await screen.findByText('The breakout couldn’t be created. Try again.');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
     expect(api.cancelSubstream).not.toHaveBeenCalled();
 
@@ -765,6 +773,7 @@ describe('socket-first channel open', () => {
     fireEvent.change(composer, { target: { value: 'Look at the invoice' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
     await screen.findByText('The breakout couldn’t be created. Try again.');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
 
     fireEvent.keyDown(await screen.findByRole('textbox', { name: 'What should this breakout work on?' }), { key: 'Enter' });
@@ -786,6 +795,7 @@ describe('socket-first channel open', () => {
     fireEvent.keyDown(composer, { key: 'Enter' });
 
     expect(await screen.findByText('The breakout couldn’t be created. Try again.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'What should this breakout work on?' }))
       .toHaveValue('Look at the invoice'));
@@ -1263,7 +1273,8 @@ describe('socket-first channel open', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Add and mention' }));
     if (refused) {
-      expect(await screen.findByText('The message couldn’t be sent. Try again.')).toBeInTheDocument();
+      expect(await screen.findByRole('alertdialog')).toHaveTextContent('The message couldn’t be sent. Try again.');
+      fireEvent.click(screen.getByRole('button', { name: 'OK' }));
       expect(screen.queryByText('Parent access required')).not.toBeInTheDocument();
       expect(createMessage).not.toHaveBeenCalled();
       expect(composer).toHaveValue('Please ask @New member to review.');
@@ -1619,6 +1630,7 @@ describe('socket-first channel open', () => {
     await titleMenu('Thread menu: Recovered channel', 'Add people');
     fireEvent.click(await screen.findByRole('button', { name: 'Add Jordan' }));
     expect(await screen.findByText('That person couldn’t be added.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(screen.queryByText('Adam cannot add Jordan')).not.toBeInTheDocument();
 
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Katherine actions' }), {
@@ -1770,6 +1782,7 @@ describe('socket-first channel open', () => {
     renderScreen();
 
     expect(await screen.findByText('Thread could not be opened')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
 
@@ -1792,7 +1805,8 @@ describe('socket-first channel open', () => {
     renderScreen();
 
     expect(await screen.findByText('Thread could not be opened')).toBeInTheDocument();
-    expect(screen.getByText('The live connection timed out after 3 attempts.')).toBeInTheDocument();
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('The live connection timed out after 3 attempts.');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
   });
 
   it('paints a remembered transcript with a connecting card and blocks sending until the live snapshot lands', async () => {

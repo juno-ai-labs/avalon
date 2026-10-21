@@ -1,6 +1,7 @@
 import type React from 'react';
-import { renderHook } from '@testing-library/react';
+import { cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ErrorNotice } from '@rally/ui/components/error-notice';
 import { isPastedText, LONG_PASTE_CHARACTERS } from './pasted-text';
 import { useFilePaste, useWindowFilePaste } from './use-file-paste';
 
@@ -230,7 +231,24 @@ function dispatchPaste(target: EventTarget, files: File[]): Event {
 }
 
 describe('useWindowFilePaste', () => {
-  afterEach(() => document.body.replaceChildren());
+  afterEach(() => { cleanup(); document.body.replaceChildren(); });
+
+  it('does not attach a screenshot pasted on an error popup OK button', async () => {
+    const onFiles = vi.fn();
+    function Host() {
+      useWindowFilePaste(onFiles);
+      return <ErrorNotice>The message couldn’t be sent.</ErrorNotice>;
+    }
+    render(<Host />);
+    const ok = screen.getByRole('button', { name: 'OK' });
+    await waitFor(() => expect(ok).toHaveFocus());
+    const files = [new File(['png'], 'image.png', { type: 'image/png' })];
+    dispatchPaste(ok, files);
+    expect(onFiles).not.toHaveBeenCalled();
+    fireEvent.click(ok);
+    dispatchPaste(document.body, files);
+    expect(onFiles).toHaveBeenCalledOnce();
+  });
 
   it('attaches a paste that lands outside any text surface', () => {
     const onFiles = vi.fn();

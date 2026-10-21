@@ -33,7 +33,7 @@ import {
 } from '../lib/connector-presentation';
 import type { PluginBrandMark } from '../lib/plugin-marks';
 import type { WorkstreamConnection } from '../lib/types';
-import { Button, ConnectorMark, InlineError } from './primitives';
+import { Button, ConnectorMark, ErrorNotice } from './primitives';
 
 const ConnectorConnectionsContext = createContext<readonly WorkstreamConnection[] | undefined>([]);
 
@@ -117,7 +117,7 @@ function ResolvedConnectorConnectionUpdateCard(): React.JSX.Element {
                 : desktop ? 'Update Rally' : 'Reload Rally'}
         </Button>
       </div>
-      {update.error ? <InlineError>{update.error.message}</InlineError> : null}
+      {update.error ? <ErrorNotice occurrence={update.error}>{update.error.message}</ErrorNotice> : null}
     </article>
   );
 }
@@ -239,11 +239,11 @@ export function ConnectorResourceAuthorizationCard({ request, latchedAuthorized 
           </Button>
         )}
       </div>
-      {!succeeded && status === 'denied' ? <InlineError>Authorization was not granted. Try again when you’re ready.</InlineError> : null}
-      {!succeeded && status === 'failed' ? <InlineError>Rally could not confirm the authorization. Try again.</InlineError> : null}
-      {!succeeded && !setup ? <InlineError>Open this thread in Rally desktop to authorize editing.</InlineError> : null}
-      {!succeeded && (personalOwnerRequired || connectionUnavailable) ? <InlineError>Only the owner of this connection can authorize editing.</InlineError> : null}
-      {!succeeded && mutation.error && status !== 'failed' ? <InlineError>Rally could not start authorization. Try again.</InlineError> : null}
+      {!succeeded && status === 'denied' ? <ErrorNotice automatic={false} detailsLabel="Authorization details">Authorization was not granted. Try again when you’re ready.</ErrorNotice> : null}
+      {!succeeded && status === 'failed' ? <ErrorNotice automatic={false} detailsLabel="Authorization details">Rally could not confirm the authorization. Try again.</ErrorNotice> : null}
+      {!succeeded && !setup ? <p>Open this thread in Rally desktop to authorize editing.</p> : null}
+      {!succeeded && (personalOwnerRequired || connectionUnavailable) ? <p>Only the owner of this connection can authorize editing.</p> : null}
+      {!succeeded && mutation.error && status !== 'failed' ? <ErrorNotice occurrence={mutation.error}>Rally could not start authorization. Try again.</ErrorNotice> : null}
     </article>
   );
 }
@@ -512,7 +512,7 @@ export function ConnectorConnectionCardView({
           )}
         </div>
       </div>
-      {error ? <InlineError>{error}</InlineError> : null}
+      {error ? <ErrorNotice>{error}</ErrorNotice> : null}
     </article>
   );
 }

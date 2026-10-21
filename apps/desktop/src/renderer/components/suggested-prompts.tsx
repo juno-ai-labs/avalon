@@ -1,3 +1,4 @@
+import { ErrorNotice } from './primitives';
 import {
   IconBrandGithub,
   IconBrandGoogle,
@@ -96,7 +97,7 @@ export function SuggestedPromptList({
           </div>
         );
       })}
-      {error && <p className="suggested-prompt-error">{error}</p>}
+      {error && <ErrorNotice>{error}</ErrorNotice>}
     </section>
   );
 }

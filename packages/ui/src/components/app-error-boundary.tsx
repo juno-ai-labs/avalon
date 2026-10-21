@@ -1,6 +1,5 @@
 import { Component, type ErrorInfo, type PropsWithChildren } from "react";
-import { AlertTriangle } from "lucide-react";
-import { Button } from "./primitives";
+import { Button, ErrorNotice, RallyMark } from "./primitives";
 
 export class AppErrorBoundary extends Component<PropsWithChildren<{ onError?: (error: Error, info: ErrorInfo) => void }>, { error: Error | null }> {
   override state: { error: Error | null } = { error: null };
@@ -18,10 +17,12 @@ export class AppErrorBoundary extends Component<PropsWithChildren<{ onError?: (e
       return (
         <main className="fatal-error-screen window-drag">
           <section className="fatal-error-card window-no-drag">
-            <AlertTriangle aria-hidden="true" size={22} />
-            <h1>Rally needs to reopen this view</h1>
-            <p>{this.state.error.message}</p>
-            <Button className="button-primary" onClick={() => window.location.reload()}>Reload Rally</Button>
+            <RallyMark />
+            <h1>Reopen this view</h1>
+            <div className="fatal-error-actions">
+              <ErrorNotice detailsLabel="View details" occurrence={this.state.error} title="Rally needs to reopen this view">{this.state.error.message}</ErrorNotice>
+              <Button className="button-primary" onClick={() => window.location.reload()}>Reload Rally</Button>
+            </div>
           </section>
         </main>
       );

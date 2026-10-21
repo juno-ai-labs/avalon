@@ -55,7 +55,7 @@ import { parseDesktopSettingsSection } from '../../common/settings';
 import type { DesktopSettingsSection } from '../../common/settings';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import { parseDesktopReleaseChannel, type DesktopReleaseChannel } from '../../common/release-channels';
-import { Avatar, Badge, Button, ConnectorMark, DropdownSelect, EmptyState, IconButton, InlineError, Modal, SegmentedControl, Tip } from '../components/primitives';
+import { Avatar, Badge, Button, ConnectorMark, DropdownSelect, EmptyState, IconButton, ErrorNotice, Modal, SegmentedControl, Tip } from '../components/primitives';
 import { connectorBrandMark, type PluginBrandMark } from '../lib/plugin-marks';
 import { ApplicationIconPicker } from '../components/application-icon-picker';
 import { ThemePicker } from '../components/theme-picker';
@@ -173,9 +173,9 @@ function BrowserNotificationsSetting({ api }: { api: RallyApi }): React.JSX.Elem
       {current === 'home-screen' && <p className="settings-section-copy">To get notifications on this device, tap Share, then Add to Home Screen. Open Rally from your Home Screen and turn this on there.</p>}
       {current === 'unavailable' && <p className="settings-section-copy">Browser notifications are not available yet.</p>}
       {current === 'denied' && <p className="settings-section-copy">Notifications are blocked for this site. Allow them in your browser's site settings, then turn this on.</p>}
-      {state.error && <InlineError>{state.error.message}</InlineError>}
+      {state.error && <ErrorNotice occurrence={state.error}>{state.error.message}</ErrorNotice>}
       {/* A browser's own subscribe() error names its internals, not anything the member can act on. */}
-      {update.error && <InlineError>{update.error instanceof ApiError ? update.error.message : 'Rally could not change notifications in this browser. Try again.'}</InlineError>}
+      {update.error && <ErrorNotice occurrence={update.error}>{update.error instanceof ApiError ? update.error.message : 'Rally could not change notifications in this browser. Try again.'}</ErrorNotice>}
     </section>
   );
 }
@@ -219,8 +219,8 @@ function PersonalSystemPromptSetting({ api, workspaceId }: { api: RallyApi; work
           Save
         </Button>
       </div>
-      {saved.error && <InlineError>{saved.error.message}</InlineError>}
-      {save.error && <InlineError>{save.error.message}</InlineError>}
+      {saved.error && <ErrorNotice occurrence={saved.error}>{saved.error.message}</ErrorNotice>}
+      {save.error && <ErrorNotice occurrence={save.error}>{save.error.message}</ErrorNotice>}
     </div>
   );
 }
@@ -257,7 +257,7 @@ function AgentWorkSetting({ api, workspaceId }: { api: RallyApi; workspaceId: st
         disabled={save.isPending}
         onChange={(event) => save.mutate({ showAgentWork: event.currentTarget.checked })}
         role="switch" />
-      {save.error && <InlineError>{save.error.message}</InlineError>}
+      {save.error && <ErrorNotice occurrence={save.error}>{save.error.message}</ErrorNotice>}
     </>
   );
 }
@@ -1551,7 +1551,7 @@ export function WorkspaceSettingsScreen({
                     />
                   </label>
                 </div>
-                {updateUserTimezone.error && <InlineError>{updateUserTimezone.error.message}</InlineError>}
+                {updateUserTimezone.error && <ErrorNotice occurrence={updateUserTimezone.error}>{updateUserTimezone.error.message}</ErrorNotice>}
                 {api && <>
                   <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Agent</h2></div>
                   <div className="settings-list-card">
@@ -1614,7 +1614,7 @@ export function WorkspaceSettingsScreen({
                       onOpen={() => void bridge.openNotificationSettings()} />
                   )}
                 </div>
-                {updatePushNotifications.error && <InlineError>{updatePushNotifications.error.message}</InlineError>}
+                {updatePushNotifications.error && <ErrorNotice occurrence={updatePushNotifications.error}>{updatePushNotifications.error.message}</ErrorNotice>}
               </section>
             )}
             {activeSection === 'notifications' && api && (
@@ -1671,8 +1671,8 @@ export function WorkspaceSettingsScreen({
                     workspaceId={workspace.id}
                   />
                 </div>
-                {renameWorkspace.error && <InlineError>{renameWorkspace.error.message}</InlineError>}
-                {updateWorkspaceTimezone.error && <InlineError>{updateWorkspaceTimezone.error.message}</InlineError>}
+                {renameWorkspace.error && <ErrorNotice occurrence={renameWorkspace.error}>{renameWorkspace.error.message}</ErrorNotice>}
+                {updateWorkspaceTimezone.error && <ErrorNotice occurrence={updateWorkspaceTimezone.error}>{updateWorkspaceTimezone.error.message}</ErrorNotice>}
                 {api && <MemoryReviewSection
                   emptyCopy="Rally has not remembered anything about the Organization yet."
                   forget={(factId) => api.forgetOrganizationMemory(factId)}
@@ -1685,7 +1685,7 @@ export function WorkspaceSettingsScreen({
                   <div><h2><SettingLabel setting={settings.members} /></h2><p>People with access to {workspace.name}.</p></div>
                   <span>{members.data?.length ?? 0}</span>
                 </div>
-                {members.error && <InlineError>{members.error.message}</InlineError>}
+                {members.error && <ErrorNotice occurrence={members.error}>{members.error.message}</ErrorNotice>}
                 <div className="settings-member-list settings-list-card">
                   {sortedMembers.map((member) => {
                     const isGuest = member.accessClass === 'guest';
@@ -1748,7 +1748,7 @@ export function WorkspaceSettingsScreen({
                     );
                   })}
                 </div>
-                {setMemberRole.error && <InlineError>{setMemberRole.error.message}</InlineError>}
+                {setMemberRole.error && <ErrorNotice occurrence={setMemberRole.error}>{setMemberRole.error.message}</ErrorNotice>}
 
                 <Modal open={suspension !== null} onOpenChange={(open) => { if (!open && !suspendMember.isPending) setSuspension(null); }}
                   title={`Suspend ${suspension?.name ?? 'this person'}?`}
@@ -1760,12 +1760,12 @@ export function WorkspaceSettingsScreen({
                     <Button disabled={suspendMember.isPending} onClick={() => setSuspension(null)}>Cancel</Button>
                     <Button className="button-danger" disabled={suspendMember.isPending} onClick={() => { if (suspension) suspendMember.mutate(suspension.id); }}>Suspend</Button>
                   </>}>
-                  {suspendMember.error && <InlineError>{suspendMember.error.message}</InlineError>}
+                  {suspendMember.error && <ErrorNotice occurrence={suspendMember.error}>{suspendMember.error.message}</ErrorNotice>}
                 </Modal>
 
                 <Modal open={promotion !== null} onOpenChange={(open) => { if (!open) setPromotion(null); }} title="Make guest a member"
                   description={`${promotion?.name ?? 'This guest'} will gain normal organization membership. Existing conversations and contributions stay with their account.`}>
-                  {promoteGuest.error && <InlineError>{promoteGuest.error.message}</InlineError>}
+                  {promoteGuest.error && <ErrorNotice occurrence={promoteGuest.error}>{promoteGuest.error.message}</ErrorNotice>}
                   <Button disabled={promoteGuest.isPending} onClick={() => setPromotion(null)}>Cancel</Button>
                   <Button disabled={promoteGuest.isPending} onClick={() => { if (promotion) promoteGuest.mutate(promotion); }}>Make member</Button>
                 </Modal>
@@ -1799,7 +1799,7 @@ export function WorkspaceSettingsScreen({
                         <SettingLabel setting={settings.inviteSend} />
                       </Button>
                     </form>
-                    {createInvitation.error && <InlineError>{createInvitation.error.message}</InlineError>}
+                    {createInvitation.error && <ErrorNotice occurrence={createInvitation.error}>{createInvitation.error.message}</ErrorNotice>}
                     {createdUrl && (
                       <div className="invite-link-result" role="status">
                         <div>
@@ -1809,7 +1809,7 @@ export function WorkspaceSettingsScreen({
                         <CopyButton label="Copy invite link" size={15} value={createdUrl} />
                       </div>
                     )}
-                    {revokeInvitation.error && <InlineError>{revokeInvitation.error.message}</InlineError>}
+                    {revokeInvitation.error && <ErrorNotice occurrence={revokeInvitation.error}>{revokeInvitation.error.message}</ErrorNotice>}
                     <div className="invitation-list settings-list-card">
                       {invitations.isLoading ? (
                         <div className="settings-loading"><LoaderCircle aria-hidden="true" className="spin" size={15} /> Loading invitations…</div>
@@ -1856,7 +1856,7 @@ export function WorkspaceSettingsScreen({
                     </Button>
                   </div>
                 </div>
-                {members.isError && <InlineError>Rally could not verify whether anyone else belongs to this workspace.</InlineError>}
+                {members.isError && <ErrorNotice occurrence={members.error}>Rally could not verify whether anyone else belongs to this workspace.</ErrorNotice>}
               </section>
             )}
 
@@ -1869,7 +1869,7 @@ export function WorkspaceSettingsScreen({
                 {terminalSettings.isLoading ? (
                   <div className="settings-loading"><LoaderCircle aria-hidden="true" className="spin" size={15} /> Loading Terminal policy…</div>
                 ) : terminalSettings.error ? (
-                  <InlineError>{terminalSettings.error.message}</InlineError>
+                  <ErrorNotice occurrence={terminalSettings.error}>{terminalSettings.error.message}</ErrorNotice>
                 ) : terminalSettings.data && (
                   <div className="terminal-network-card settings-list-card">
                     {terminalSettings.data.availability !== 'supported' && (
@@ -1923,7 +1923,7 @@ export function WorkspaceSettingsScreen({
                         Save network change
                       </Button>
                     </div>
-                    {saveTerminalPolicy.error && <InlineError>{saveTerminalPolicy.error.message}</InlineError>}
+                    {saveTerminalPolicy.error && <ErrorNotice occurrence={saveTerminalPolicy.error}>{saveTerminalPolicy.error.message}</ErrorNotice>}
                     <Modal
                       footer={(
                         <>
@@ -2331,7 +2331,7 @@ export function WorkspaceSettingsScreen({
                   </>
                 ) : null}
                 {(githubRepositorySettings.error || updateGitHubRepositorySettings.error) && (
-                  <InlineError>{githubRepositorySettings.error?.message ?? updateGitHubRepositorySettings.error?.message}</InlineError>
+                  <ErrorNotice occurrence={githubRepositorySettings.error}>{githubRepositorySettings.error?.message ?? updateGitHubRepositorySettings.error?.message}</ErrorNotice>
                 )}
                   </>
                 )}
@@ -2422,7 +2422,7 @@ export function WorkspaceSettingsScreen({
                   </>
                 ) : null}
                 {(customMcpSettings.error || updateCustomMcpToolPolicy.error) && (
-                  <InlineError>{customMcpSettings.error?.message ?? updateCustomMcpToolPolicy.error?.message}</InlineError>
+                  <ErrorNotice occurrence={customMcpSettings.error}>{customMcpSettings.error?.message ?? updateCustomMcpToolPolicy.error?.message}</ErrorNotice>
                 )}
                   </>
                 )}
@@ -2452,7 +2452,7 @@ export function WorkspaceSettingsScreen({
                   />
                 </div>
                 {(applicationSettingsLoadError || updateLockdownMode.error) && (
-                  <InlineError>{applicationSettingsLoadError ?? updateLockdownMode.error?.message}</InlineError>
+                  <ErrorNotice>{applicationSettingsLoadError ?? updateLockdownMode.error?.message}</ErrorNotice>
                 )}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Privacy & diagnostics</h2><p>Control product analytics and detailed crash reporting for your account.</p></div>
                 <div className="settings-list-card">
@@ -2478,7 +2478,7 @@ export function WorkspaceSettingsScreen({
                 {applicationSettings?.nativeCrashRestartRequired && (
                   <p className="settings-oauth-status" role="status">Crash upload has stopped for this launch. Restart Rally to remove local native crash dumps and apply the current setting.</p>
                 )}
-                {updateProductAnalytics.error && <InlineError>{updateProductAnalytics.error.message}</InlineError>}
+                {updateProductAnalytics.error && <ErrorNotice occurrence={updateProductAnalytics.error}>{updateProductAnalytics.error.message}</ErrorNotice>}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Appearance</h2><p>Make Rally feel at home on this Mac.</p></div>
                 <ThemePicker />
                 {isSettingAvailable(settings.menuBar, settingsContext) && (
@@ -2498,7 +2498,7 @@ export function WorkspaceSettingsScreen({
                         role="switch"
                       />
                     </div>
-                    {updateMenuBarEnabled.error && <InlineError>{updateMenuBarEnabled.error.message}</InlineError>}
+                    {updateMenuBarEnabled.error && <ErrorNotice occurrence={updateMenuBarEnabled.error}>{updateMenuBarEnabled.error.message}</ErrorNotice>}
                     {/* The write succeeded and the item still is not there —
                       * creating one can fail, and without this the switch reads
                       * on beside an empty menu bar with nothing said about it. */}
@@ -2507,9 +2507,9 @@ export function WorkspaceSettingsScreen({
                       && !applicationSettings.menuBarPresent
                       && !updateMenuBarEnabled.isPending
                       && (
-                        <InlineError>
+                        <ErrorNotice>
                           Rally could not add itself to the menu bar. Turn this off and on to try again, or restart Rally.
-                        </InlineError>
+                        </ErrorNotice>
                       )}
                   </>
                 )}
@@ -2536,7 +2536,7 @@ export function WorkspaceSettingsScreen({
                         />
                       </label>
                     </div>
-                    {updateReleaseChannel.error && <InlineError>{updateReleaseChannel.error.message}</InlineError>}
+                    {updateReleaseChannel.error && <ErrorNotice occurrence={updateReleaseChannel.error}>{updateReleaseChannel.error.message}</ErrorNotice>}
                   </>
                 )}
                 {isSettingAvailable(settings.login, settingsContext) && (
@@ -2557,7 +2557,7 @@ export function WorkspaceSettingsScreen({
                         role="switch"
                       />
                     </div>
-                    {updateLaunchAtLogin.error && <InlineError>{updateLaunchAtLogin.error.message}</InlineError>}
+                    {updateLaunchAtLogin.error && <ErrorNotice occurrence={updateLaunchAtLogin.error}>{updateLaunchAtLogin.error.message}</ErrorNotice>}
                   </>
                 )}
                 {/* The service decides whether this section exists at all, and
@@ -2579,7 +2579,7 @@ export function WorkspaceSettingsScreen({
                         role="switch"
                       />
                     </div>
-                    {updateDebugEnabled.error && <InlineError>{updateDebugEnabled.error.message}</InlineError>}
+                    {updateDebugEnabled.error && <ErrorNotice occurrence={updateDebugEnabled.error}>{updateDebugEnabled.error.message}</ErrorNotice>}
                   </>
                 )}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2><SettingLabel setting={settings.about} /></h2><p>Which release of Rally this Mac is running.</p></div>
@@ -2681,7 +2681,7 @@ export function WorkspaceSettingsScreen({
             </>
           )}
           {(createWebhookConnection.error || rotateWebhookSecret.error) && (
-            <InlineError>{createWebhookConnection.error?.message ?? rotateWebhookSecret.error?.message}</InlineError>
+            <ErrorNotice occurrence={createWebhookConnection.error}>{createWebhookConnection.error?.message ?? rotateWebhookSecret.error?.message}</ErrorNotice>
           )}
         </Modal>
         <Modal
@@ -2827,7 +2827,7 @@ export function WorkspaceSettingsScreen({
               <small>Changeable later. Read-only keeps just the tools the server marks read-only; either way every call asks first.</small>
             </label>
           )}
-          {connectCustomMcp.error && <InlineError>{connectCustomMcp.error.message}</InlineError>}
+          {connectCustomMcp.error && <ErrorNotice occurrence={connectCustomMcp.error}>{connectCustomMcp.error.message}</ErrorNotice>}
         </Modal>
         {api && ashbyWorkspaceOpen && <AshbyWorkspaceSetup api={api} attemptId={ashbySetupKey} onSuccess={() => setAshbySetupKey(crypto.randomUUID())} onClose={() => setAshbyWorkspaceOpen(false)} onRecovered={setInstallationTarget} />}
         {api && installationTarget && <ConnectorInstallationDetails api={api} connectionId={installationTarget} connectionEnabled={connections.data?.some((connection) => connection.id === installationTarget && connection.status !== 'disabled') ?? false} onClose={() => setInstallationTarget(null)} />}
@@ -2875,9 +2875,9 @@ export function WorkspaceSettingsScreen({
             provider="granola"
             value={granolaWorkspaceApiKey}
           />
-          {createGranolaWorkspaceConnection.error && <InlineError>{createGranolaWorkspaceConnection.error.message}</InlineError>}
+          {createGranolaWorkspaceConnection.error && <ErrorNotice occurrence={createGranolaWorkspaceConnection.error}>{createGranolaWorkspaceConnection.error.message}</ErrorNotice>}
           {granolaRecovery.isPending && <p role="status">Checking for an existing organization installation…</p>}
-          {granolaRecovery.error && <><InlineError>Existing installations could not be checked. Check again before retrying setup.</InlineError><Button disabled={granolaRecovery.isPending} onClick={() => granolaRecovery.mutate()}>Find existing installation</Button></>}
+          {granolaRecovery.error && <><ErrorNotice>Existing installations could not be checked. Check again before retrying setup.</ErrorNotice><Button disabled={granolaRecovery.isPending} onClick={() => granolaRecovery.mutate()}>Find existing installation</Button></>}
         </Modal>
         <Modal
           description="You’ll be sent to the provider to authorize this connection again."
@@ -2937,7 +2937,7 @@ export function WorkspaceSettingsScreen({
           open={leaveConfirmationOpen}
           title={leavingClosesWorkspace ? `Leave and close ${workspace.name}?` : `Leave ${workspace.name}?`}
         >
-          {departWorkspace.error && <InlineError>{departWorkspace.error.message}</InlineError>}
+          {departWorkspace.error && <ErrorNotice occurrence={departWorkspace.error}>{departWorkspace.error.message}</ErrorNotice>}
         </Modal>
         <Modal
           description={disconnectTarget?.scope === 'workspace'
@@ -2977,7 +2977,7 @@ export function WorkspaceSettingsScreen({
           open={Boolean(disconnectTarget)}
           title={`Delete ${disconnectTarget?.displayName ?? 'this connection'}?`}
         >
-          {disconnectConnection.error && <InlineError>{disconnectConnection.error.message}</InlineError>}
+          {disconnectConnection.error && <ErrorNotice occurrence={disconnectConnection.error}>{disconnectConnection.error.message}</ErrorNotice>}
         </Modal>
       </div>
     </div>

@@ -5,7 +5,7 @@ import { useNow } from '../lib/clock';
 import { formatDateTime } from '../lib/format';
 import { SettingCopy } from '../settings/setting-label';
 import { settings } from '../settings/registry';
-import { Button, InlineError } from './primitives';
+import { Button, ErrorNotice } from './primitives';
 
 const HOUR_MS = 60 * 60 * 1_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -74,6 +74,6 @@ export function SupportAccessSetting({ api, workspaceId, isAdmin, impersonating 
             </Button>}
       </span>
     </div>
-    {error && <InlineError>{error.message}</InlineError>}
+    {error && <ErrorNotice>{error.message}</ErrorNotice>}
   </>;
 }

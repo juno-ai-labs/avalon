@@ -72,7 +72,7 @@ export function DeepLinkErrorScreen(): React.JSX.Element {
             void bridge.dismissDeepLinkError(notice.id).catch(() => window.close());
           }}
         >
-          Continue
+          OK
         </Button>
       </div>
     </main>

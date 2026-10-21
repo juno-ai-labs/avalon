@@ -80,7 +80,7 @@ describe('the deep-link failure window', () => {
     render(<DeepLinkErrorScreen />);
     await screen.findByText('Rally received an invalid sign-in link.');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
 
     await waitFor(() => expect(state.dismissDeepLinkError).toHaveBeenCalledWith(1));
   });
@@ -95,7 +95,7 @@ describe('the deep-link failure window', () => {
 
     state.changed?.({ id: 5, message: 'Rally received an unexpected sign-in link.' });
     await screen.findByText('Rally received an unexpected sign-in link.');
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
 
     await waitFor(() => expect(state.dismissDeepLinkError).toHaveBeenCalledWith(5));
   });
@@ -109,7 +109,7 @@ describe('the deep-link failure window', () => {
     render(<DeepLinkErrorScreen />);
     await screen.findByText('Rally received an invalid sign-in link.');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
 
     await waitFor(() => expect(close).toHaveBeenCalledOnce());
     close.mockRestore();

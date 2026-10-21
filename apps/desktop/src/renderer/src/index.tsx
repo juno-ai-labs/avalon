@@ -1,3 +1,4 @@
+import { ErrorNoticeProvider } from '@rally/ui/components/error-notice';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from '../App';
@@ -13,6 +14,6 @@ installTheme();
 
 createRoot(root).render(
   <StrictMode>
-    <App />
+    <ErrorNoticeProvider><App /></ErrorNoticeProvider>
   </StrictMode>,
 );
