@@ -228,6 +228,38 @@ async function runState(runId: string): Promise<string | undefined> {
   return (await workspaceStub().sidekickReadRunState({ ...addressed(), runId }))?.state;
 }
 
+async function delegatedRunWorker() {
+  const runId = await completedRun();
+  const ownerInput = WorkstreamWorkflowInputSchema.parse(JSON.parse((await receipts(runId))[0]!.execution_context_json));
+  const owner = new AgentCommunicationService(TEST_ENV, ownerInput);
+  const context = {
+    workspaceId: WORKSPACE_ID,
+    workstreamId: AUTOMATION_ID,
+    harnessRunId: ownerInput.harnessRunId,
+    toolCallId: crypto.randomUUID(),
+    effectIntentId: crypto.randomUUID(),
+    executionPrincipal: ownerInput.executionPrincipal,
+    signal: new AbortController().signal,
+  };
+  const started = await owner.start({
+    name: "Run researcher",
+    description: "Check the delegated count",
+    message: "Check the activity count.",
+    attachmentIds: [],
+  }, context);
+  const workerId = agentAddressForId(started.agentId).substreamId;
+  const execution = await settledExecutionFor(workerId, workerId);
+  expect(execution.status).toBe("completed");
+  return {
+    runId,
+    workerId,
+    agentId: started.agentId,
+    owner,
+    context,
+    input: WorkstreamWorkflowInputSchema.parse(JSON.parse(execution.execution_context_json)),
+  };
+}
+
 async function product(stub: DurableObjectStub, body: unknown): Promise<{ status: number; body: Record<string, unknown> }> {
   const response = await stub.fetch("https://object.test/internal/product", {
     method: "POST",
@@ -354,6 +386,11 @@ describe("Sidekick run continuation", () => {
       backgroundAgent: true, executionPrincipal: { type: "user", userId: AUTHOR_ID },
     });
     expect(workerInput.automationRun).toBeUndefined();
+    if (origin === "run") {
+      expect(workerInput.automationDelegation).toMatchObject({ runId: ownerSubstreamId });
+    } else {
+      expect(workerInput.automationDelegation).toBeUndefined();
+    }
     expect(await refusals(workerId)).toEqual([]);
 
     const followUp = await owner.send({ agentId: started.agentId,
@@ -362,6 +399,86 @@ describe("Sidekick run continuation", () => {
     expect((await settledExecutionFor(workerId, followUp.messageId)).status).toBe("completed");
     expect(callThatSaw("Check the shared-conversation count too.")).toBeDefined();
     expect(await refusals(workerId)).toEqual([]);
+  });
+
+  it("refuses a run-rooted worker's queued input while paused and accepts a fresh assignment after resume", async () => {
+    await activeSidekick();
+    const worker = await delegatedRunWorker();
+    await workspaceStub().sidekickPause({ ...addressed(), actor: actor() });
+    const marker = "Do not execute this worker assignment while paused.";
+    const sent = await worker.owner.send({
+      agentId: worker.agentId,
+      message: marker,
+      attachmentIds: [],
+    }, { ...worker.context, effectIntentId: crypto.randomUUID() });
+    await expect.poll(() => refusals(worker.workerId), { timeout: RUN_SETTLE_TIMEOUT_MS }).toEqual([
+      { code: "sidekick_paused", turnId: sent.messageId },
+    ]);
+    expect(await receipts(worker.workerId)).toHaveLength(1);
+    expect(callThatSaw(marker)).toBeUndefined();
+
+    await workspaceStub().sidekickResume({ ...addressed(), actor: actor() });
+    const resumed = await worker.owner.send({
+      agentId: worker.agentId,
+      message: "Resume the delegated activity check.",
+      attachmentIds: [],
+    }, { ...worker.context, effectIntentId: crypto.randomUUID() });
+    expect((await settledExecutionFor(worker.workerId, resumed.messageId)).status).toBe("completed");
+  });
+
+  it.each(["pause", "pause_resume", "principal_changed", "run_not_found"] as const)(
+    "fences a worker's model and tool authority after %s",
+    async (revocation) => {
+      await activeSidekick();
+      const worker = await delegatedRunWorker();
+      await expect(__integrationTesting.assertRunAuthorityStillValid(TEST_ENV, worker.input)).resolves.toBeDefined();
+      if (revocation === "pause" || revocation === "pause_resume") {
+        await workspaceStub().sidekickPause({ ...addressed(), actor: actor() });
+        if (revocation === "pause_resume") {
+          await workspaceStub().sidekickResume({ ...addressed(), actor: actor() });
+        }
+      } else {
+        await runInDurableObject(workspaceStub(), (_instance, state) => {
+          if (revocation === "principal_changed") {
+            state.storage.sql.exec("UPDATE automation_directory SET run_as_user_id = ? WHERE automation_id = ?",
+              CLAIMANT_ID, AUTOMATION_ID);
+          } else {
+            state.storage.sql.exec("DELETE FROM sidekick_runs WHERE sidekick_id = ? AND run_id = ?",
+              AUTOMATION_ID, worker.runId);
+          }
+        });
+      }
+      await expect(__integrationTesting.assertRunAuthorityStillValid(TEST_ENV, worker.input))
+        .rejects.toThrow("This Sidekick delegation is no longer authorized");
+    },
+  );
+
+  it("keeps nested workers subject to the root Sidekick run's pause", async () => {
+    await activeSidekick();
+    const worker = await delegatedRunWorker();
+    const nestedOwner = new AgentCommunicationService(TEST_ENV, worker.input);
+    const nested = await nestedOwner.start({
+      name: "Nested activity researcher",
+      description: "Check a delegated detail",
+      message: "Check a shared-conversation detail.",
+      attachmentIds: [],
+    }, { ...worker.context, effectIntentId: crypto.randomUUID() });
+    const nestedId = agentAddressForId(nested.agentId).substreamId;
+    const execution = await settledExecutionFor(nestedId, nestedId);
+    expect(execution.status).toBe("completed");
+    expect(JSON.parse(execution.execution_context_json)).toMatchObject({
+      automationDelegation: { runId: worker.runId },
+    });
+    await workspaceStub().sidekickPause({ ...addressed(), actor: actor() });
+    const sent = await nestedOwner.send({
+      agentId: nested.agentId,
+      message: "Do not run nested work while paused.",
+      attachmentIds: [],
+    }, { ...worker.context, effectIntentId: crypto.randomUUID() });
+    await expect.poll(() => refusals(nestedId), { timeout: RUN_SETTLE_TIMEOUT_MS }).toEqual([
+      { code: "sidekick_paused", turnId: sent.messageId },
+    ]);
+    expect(await receipts(nestedId)).toHaveLength(1);
   });
 
   it("continues a completed run as its run-as user, with its instructions at the revision accepted now", async () => {
