@@ -1927,7 +1927,7 @@ function uncoveredRangeSegments(
   return segments;
 }
 
-function activitiesForTurns(
+export function activitiesForTurns(
   activities: readonly TranscriptActivity[],
   turns: readonly TranscriptTurn[],
 ): TranscriptActivity[] {

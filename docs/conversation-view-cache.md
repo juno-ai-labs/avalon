@@ -74,9 +74,20 @@ both return `view: null`. Responses stay within the existing realtime frame
 budget, dropping the oldest preview turns when necessary; an oversized single
 turn falls back to the normal socket opening.
 
-The renderer waits for disk hydration and requests a preview only if both feed
-caches are still empty, using `local_cache` as the existing read-only lineage.
-Resident disk, optimistic, and live data win. Dedicated Sidekick windows relay
+The renderer starts disk hydration and the workspace preview request together.
+Preview application waits for the disk read to settle so a quick response
+cannot suppress richer saved state. A preview can refresh a read-only seed
+when visible content advances, without rolling back or dropping projectable
+held turns. Freshness uses the shared display allowlist, since the disk also
+holds internal turns intentionally omitted by the projection. Equal-revision
+full turns, hidden turns, older ranges, active state, rendering metadata, detail
+fields, and inherited context survive that refresh. Resident live and
+optimistic data always win. Only missing or header-only previews retry using
+the existing Organization reconnect backoff while the
+conversation opens; the authoritative snapshot, terminal opening failure,
+access revocation, or unmount cancels pending requests and retries. This is a
+read retry over the same admitted socket, not another delivery channel.
+Dedicated Sidekick windows relay
 correlated requests, responses, and cancellations through the main window
 using the existing Organization-sync bridge; publisher changes retry pending
 requests. Each window still checks the Organization and conversation identity.
@@ -104,8 +115,11 @@ Each backfill delivery wakes a listed SubstreamAgent and arms any pending
 projection work seeded by migration 78. It does not re-mark delivered history.
 The parent remains claimed and later children wait until the current source
 has confirmed delivery of its pending rows to WorkspaceDO.
-A registered child whose source object no longer exists reports `missing` so
-it cannot hold the backfill lane indefinitely.
+A registered child whose source object is absent, preparing, quarantined, or
+has no active authority generation reports `missing`, so it cannot hold later
+children behind an undeliverable migration header. Projection publication and
+queued reads use the same authority fence. Pending rows are retained; activating
+the source through runtime bootstrap arms the ordinary projection lane again.
 The source drains pages through the delivery-confirmed path above.
 A repeated backfill is harmless.
 
@@ -162,16 +176,38 @@ retention policy or a different storage boundary is required.
   in workerd.
 - `apps/api/test-workers/conversation-view-projection.test.ts`: real source
   projection, plugin timing, deletion and generation fences, Queue publication,
-  and historical upgrades.
+  historical upgrades, and fenced-source backfill/activation recovery.
 - `apps/api/test-workers/thread-backfill.test.ts`: the Queue consumer keeps a
   backfill claimed until the source projection reaches WorkspaceDO.
 - `apps/api/test-workers/workspace-socket-fanout.test.ts`: cached reads over a
   real socket, private-child admission, and membership removal.
 - `apps/desktop/src/renderer/lib/conversation-cache.test.ts` and
   `workspace-socket.test.tsx`: read-only seeding, live-data precedence, existing
-  socket requests, and cancellation.
+  socket requests, cancellation, parallel hydration, seed refresh, and missing-preview retries.
+- `apps/desktop/src/renderer/lib/use-workstream-socket.test.tsx`: opening seed
+  acquisition, reconciliation, retry cancellation, and command gating.
 
 ## Changelog
+
+### 2026-10-21 — Refresh stale device seeds and settle fenced backfill sources
+
+A returning device's disk row used to prevent every workspace preview request,
+and a first request that missed the backfill was never repeated. Disk and
+workspace reads now start together, with preview application following disk
+hydration; newer visible content can refresh a read-only seed while preserving
+richer equal-revision turns, hidden and active state, older ranges, and inherited
+context. Freshness uses the shared display allowlist so internal turns cannot
+suppress valid updates. Misses retry with the Organization's
+existing reconnect backoff until attachment or cancellation. Unconditional
+replacement was rejected because Queue delivery can lag a device's own copy;
+only the live conversation may replace a seed without these display guards.
+
+The backfill also treated identity-only placeholders as deliverable. Their
+header projection failed the product authority fence forever and kept later
+children under the parent waiting. Source publication, projection reads, and
+backfill now agree on the existing authoritative-mode/generation predicate.
+The pending ledger is retained and runtime bootstrap arms it, so activation
+publishes without requiring an unrelated later write.
 
 ### 2026-10-20 — Preview conversations through the connected Organization
 
