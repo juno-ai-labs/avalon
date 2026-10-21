@@ -58,19 +58,17 @@ a separate model source. The shared model projection escapes resource data,
 labels exact/converted/rendered content, and requires a fresh read for truncated
 selections and reconciliation before editing an older version.
 
-Image panels initially fit the image's width without enlarging small images;
-tall images scroll vertically. Zoom in/out, the percentage button (100%), and
-Fit sit outside the image's scroll viewport. Overflow scrolls on both axes.
-Double-clicking or double-tapping an image toggles between 100% and Fit; zooming
-in keeps the tapped image point under the pointer. Comment mode keeps these
-gestures for selecting image regions instead. Touch scrolling and pinch zoom
-remain native; double-tap zoom applies to the image rather than the page.
-The focusable viewport supports native arrow-key scrolling; gallery arrow-key
-navigation applies outside that viewport.
-Lightboxes initially fit the whole image, and their full-size toggle selects
-100%. Image regions use the image's layout dimensions at every zoom, so crops
-and highlights retain their normalized coordinates. These controls are shared
-by desktop and browser previews, including images without annotation metadata.
+Image panels, lightboxes and annotated previews share `ImageViewport`. Its
+scroll bounds and region overlays use the image's layout dimensions rather than
+transforms; auto margins keep oversized content reachable from the scroll origin.
+Controls stay outside the scroller. Lightbox controls share one zoom state, and
+image comments observe the image box so zoom updates their anchors even without
+scrolling. Horizontal arrows navigate the gallery when the image fits and scroll
+when it overflows; blank image-stage clicks retain lightbox backdrop dismissal.
+The viewport reserves a stable scrollbar gutter so width fitting cannot oscillate
+with scrollbar visibility. Detached image hosts bound the viewport with flex
+layout, while unavailable saved-image quotes retain the host's ordinary scroller.
+Comment mode reserves image gestures for selection.
 
 Target checks reuse ordinary resource-sharing rules, including personal-connection
 ownership, and run once per distinct resource/version before participant changes.
@@ -206,7 +204,8 @@ Contracts cover admission, source policy, locators and escaped model guidance.
 selections, HTML identity, sheet headers and image identity.
 Renderer tests cover exact Markdown selection, growth, comments, removal and
 sheet serialization. Attachment panel tests preserve gallery keyboard navigation
-outside the image viewport while leaving viewport keys available for scrolling.
+when images fit while leaving overflowing viewport keys available for scrolling.
+Lightbox tests cover backdrop dismissal and synchronized zoom controls.
 Image scroll bounds, Fit, double-click/tap focal zoom, gallery resets and region
 alignment are verified in real Electron and browser windows; jsdom has no layout.
 API Node tests cover live and overheard projections;
@@ -226,7 +225,11 @@ on the configured medium fallback model, separately from end-to-end tool edits.
 
 **What changed:** Annotated and ordinary images share a two-axis scroll viewport
 and zoom controls, including double-click/tap to toggle 100% and Fit. Region
-overlays scale with the image's actual layout box.
+overlays scale with the image's actual layout box, and comment anchors observe
+that box. Lightbox controls share one zoom state; fit images retain gallery keys
+and backdrop dismissal. Toolbar zoom preserves the viewport centre.
+Detached hosts bound the image viewport, saved quotes remain scrollable on load
+failure, and a stable scrollbar gutter prevents width-fitting resize loops.
 
 **Why:** Tall images in expanded panels overflowed a centered flex container,
 leaving content outside the reachable scroll area. Width constraints also

@@ -1,6 +1,6 @@
 import { useAnnotationDraft } from './artifact-annotations';
 import { AnnotationSurface } from './annotation-surface';
-import { ImageViewport, type ImageSizing } from './image-viewport';
+import { ImageViewport, type ImageSizing, type ImageZoom, type ImageZoomState } from './image-viewport';
 import { classifyAttachmentKind, isHtmlResource } from '@rally/contracts';
 import * as Dialog from '@radix-ui/react-dialog';
 import { ChevronLeft, ChevronRight, Download, History, Info, LoaderCircle, Maximize2, Minimize2, X } from 'lucide-react';
@@ -186,16 +186,16 @@ export function useAttachmentView(preview: AttachmentPreview | null) {
 export type AttachmentView = ReturnType<typeof useAttachmentView>;
 
 /** The rendered content of the active preview, with its loading and error lines. */
-export function AttachmentViewBody({ view, imageSizing }: { view: AttachmentView; imageSizing?: ImageSizing | undefined }): React.JSX.Element | null {
+export function AttachmentViewBody({ view, imageSizing, imageZoom }: { view: AttachmentView; imageSizing?: ImageSizing | undefined; imageZoom?: ImageZoomState | undefined }): React.JSX.Element | null {
   const { active, mode, src, text, error, downloadError, loading } = view;
   if (!active || !mode) return null;
   if (active.resourceId && !loading && (!error || classifyAttachmentKind({fileName:active.name,mimeType:active.mimeType}) === 'other' || active.annotation) && mode !== 'audio' && mode !== 'video') {
-    return <>{downloadError && <div role="alert">{downloadError}</div>}<AnnotationSurface className={mode==='markdown'?'attachment-lightbox-document':mode==='text'?'attachment-lightbox-text':undefined} resourceId={active.resourceId} version={active.annotation?.target.version ?? view.version ?? 0} name={active.name} mimeType={active.mimeType} sizeBytes={active.sizeBytes} imageSizing={imageSizing} text={text} src={src} saved={active.annotation} loadSavedImage={active.loadAnnotationImage} preparePicking={view.prepareAnnotations} /></>;
+    return <>{downloadError && <div role="alert">{downloadError}</div>}<AnnotationSurface className={mode==='markdown'?'attachment-lightbox-document':mode==='text'?'attachment-lightbox-text':undefined} resourceId={active.resourceId} version={active.annotation?.target.version ?? view.version ?? 0} name={active.name} mimeType={active.mimeType} sizeBytes={active.sizeBytes} imageSizing={imageSizing} imageZoom={imageZoom} text={text} src={src} saved={active.annotation} loadSavedImage={active.loadAnnotationImage} preparePicking={view.prepareAnnotations} /></>;
   }
   return <>
     {loading && <div className="attachment-lightbox-status" role="status"><LoaderCircle aria-hidden="true" className="spin" size={20} /> Preparing preview…</div>}
     {(error || downloadError) && <div className="attachment-lightbox-status is-error" role="alert">{error ?? downloadError}</div>}
-    {mode === 'image' && src && <ImageViewport key={src} name={active.name} src={src} sizing={imageSizing} />}
+    {mode === 'image' && src && <ImageViewport key={src} name={active.name} src={src} sizing={imageSizing} zoomState={imageZoom} />}
     {mode === 'video' && src && <video aria-label={`Video: ${active.name}`} controls src={src} />}
     {mode === 'audio' && src && <audio aria-label={`Audio: ${active.name}`} controls src={src} />}
     {mode === 'html' && text !== undefined && <iframe sandbox="" srcDoc={isolatedHtml(text)} title={`Preview of ${active.name}`} />}
@@ -222,15 +222,18 @@ export function AttachmentLightbox({ preview, onClose }: {
   const view = useAttachmentView(preview);
   const { gallery, active, mode, src, error, step, isMedia } = view;
   const [expanded, setExpanded] = useState(false);
+  const [imageZoom, setImageZoom] = useState<ImageZoom>('fit');
+  const mediaExpanded = mode === 'image' ? imageZoom !== 'fit' : expanded;
 
   useEffect(() => {
     setExpanded(false);
+    setImageZoom('fit');
   }, [active]);
 
   useEffect(() => {
     if (!preview) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.target instanceof HTMLElement && event.target.closest('audio, video, input, textarea, .image-viewport-scroll')) return;
+      if (event.target instanceof HTMLElement && event.target.closest('audio, video, input, textarea')) return;
       if (gallery.length > 1 && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) event.preventDefault();
       if (gallery.length > 1 && event.key === 'ArrowLeft') step(-1);
       if (gallery.length > 1 && event.key === 'ArrowRight') step(1);
@@ -313,14 +316,14 @@ export function AttachmentLightbox({ preview, onClose }: {
                   <button aria-label="Resource details" className="attachment-media-details attachment-lightbox-action" onClick={active.onDetails} type="button"><Info size={18} /></button>
                 </Tip>
               )}
-              <Tip label={expanded ? 'Fit preview to window' : 'Show preview at full size'}>
+              <Tip label={mediaExpanded ? 'Fit preview to window' : 'Show preview at full size'}>
                 <button
-                  aria-label={expanded ? 'Fit preview to window' : 'Show preview at full size'}
+                  aria-label={mediaExpanded ? 'Fit preview to window' : 'Show preview at full size'}
                   className="attachment-media-expand"
-                  onClick={() => setExpanded((value) => !value)}
+                  onClick={() => mode === 'image' ? setImageZoom(mediaExpanded ? 'fit' : 'actual') : setExpanded((value) => !value)}
                   type="button"
                 >
-                  {expanded ? <Minimize2 size={19} /> : <Maximize2 size={19} />}
+                  {mediaExpanded ? <Minimize2 size={19} /> : <Maximize2 size={19} />}
                 </button>
               </Tip>
               {gallery.length > 1 && (
@@ -336,10 +339,10 @@ export function AttachmentLightbox({ preview, onClose }: {
             </>
           )}
           <div
-            className={`attachment-lightbox-content is-${mode}${expanded ? ' is-expanded' : ''}${gallery.length > 1 ? ' has-gallery' : ''}`}
-            onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+            className={`attachment-lightbox-content is-${mode}${mode === 'video' && expanded ? ' is-expanded' : ''}${gallery.length > 1 ? ' has-gallery' : ''}`}
+            onMouseDown={(event) => { if (event.target === event.currentTarget || (event.target instanceof Element && event.target.matches('.image-viewport-stage'))) onClose(); }}
           >
-            <AttachmentViewBody view={view} imageSizing={expanded ? 'actual' : 'fit'} />
+            <AttachmentViewBody view={view} imageSizing="fit" imageZoom={{value:imageZoom,onChange:setImageZoom}} />
           </div>
           {isMedia && gallery.length > 1 && <footer className="attachment-gallery-footer">
             <span className="attachment-gallery-caption" aria-live="polite">{active.name} · {view.activeIndex + 1} / {gallery.length}</span>
