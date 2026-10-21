@@ -116,6 +116,42 @@ fetch management choices. Canonical management denial hides the picker; unresolv
 creation and shows a loading row menu only for eligible rows. Attachment updates
 seed the selected cache and invalidate siblings without discarding the new seed.
 
+### People picker order
+
+The People level keeps the current participants and pending conversation
+invitations first, then requests to join. A single **Suggested** list shows at
+most five people total. Its ranking tiers are the top five collaborators in
+this Channel, the top five other collaborators in the Organization, remaining
+Members alphabetically, then Guests alphabetically. The tiers are internal
+ordering rules, not separate visible sections. Deduplication and eligibility
+filtering happen before taking the final five: current participants, inactive
+accounts and people who asked to join are excluded. Pending Organization
+invitees follow registered Members, with their Invited label. Search exposes
+all matching names and email addresses in that order, without the suggestion cap.
+
+`GET /navigation/people-ranking?channelId=…` returns ordered person ids, not
+another roster. `WorkspaceDO.peopleRanking` reads the existing retained Rally
+message activity through `workspace-people-ranking.ts`: human replies in a
+conversation the reader participates in, and @mentions in either direction.
+Each message counts once per other person, even when it also mentions them.
+Frequency wins, then latest interaction, then id. Main conversations use their
+event-time participant edges; breakout replies use their current participant
+projection because their activity deliberately retains only mention targets.
+The Channel score uses active thread placements in the Channel named by the
+route; a thread with no Channel context gets the Organization ranking alone.
+Copied merge messages, agents, connector activity and conversations the reader
+can no longer open do not contribute. Guests cannot read the Organization
+ranking. This adds no interaction ledger, backfill or retention policy; the
+existing activity retention bounds its evidence.
+
+The host's `usePeopleRanking` requests this optional read when People opens,
+with the person, Organization and Channel in its query key. A pending or failed read
+leaves the directory fallback available; the picker shows loading or retry copy.
+The component itself still knows nothing about fetching or authorization.
+The morphing menu frame does not shrink in its scroll container: a long
+search result list scrolls rather than clipping its final rows. Keyboard Tab scrolls
+the newly focused control into view.
+
 ## Invariants
 
 - Shared components import no application, IPC, authentication or transport code.
@@ -152,6 +188,18 @@ surfaces in Electron. The browser host in #825 adds Chrome verification; no seco
 component test runner is needed for the same implementations.
 
 ## Changelog
+
+### 2026-10-21 — People start with frequent collaborators
+
+The product asked for Channel collaborators, Organization collaborators,
+Members and Guests in that order; five alphabetical suggestions gave unrelated
+accounts the same prominence as teammates. The picker now shows five eligible
+people total, using those tiers to rank one Suggested list. Search remains
+available for everyone else.
+It reads existing human reply and mention facts rather than maintaining a
+second relationship ledger or introducing connector-derived scores. Keep the
+Channel context route-owned, filter access at read time, and deduplicate before
+applying the final five-person limit.
 
 ### 2026-10-20 — Breadcrumbs attach to the command pill
 

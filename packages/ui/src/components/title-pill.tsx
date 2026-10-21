@@ -106,6 +106,7 @@ export function TitleMenuMorph({ children }: { children: ReactNode }): React.JSX
         event.preventDefault();
         event.stopPropagation();
         next.focus({ preventScroll: true });
+        next.scrollIntoView({ block: 'nearest' });
       }}
       ref={inner}
     >

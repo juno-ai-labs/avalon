@@ -18,10 +18,10 @@ import {
   IconUsers,
   IconWorld,
 } from '@tabler/icons-react';
-import type { MemoryReviewSource } from '@rally/contracts';
+import type { MemoryReviewSource, PeopleRanking } from '@rally/contracts';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
-import { compareAlphabeticalTitle } from '../lib/alphabetical';
+import { compareAlphabeticalName, compareAlphabeticalTitle } from '../lib/alphabetical';
 import {
   ADDRESS_FORMAT_MESSAGE,
   areAddresses,
@@ -91,7 +91,7 @@ function ResolveRow({ actions, target, noun }: {
 /** How many Breakouts the Breakouts view lists before "Show N more". */
 const BREAKOUT_PREVIEW_ROWS = 6;
 
-/** How many people the People view suggests before a search narrows them. */
+/** Product policy: show five suggestions, ordered by interaction priority. */
 const PEOPLE_SUGGESTIONS = 5;
 
 const PEOPLE_VIEW: TitleMenuView = { key: 'people', label: 'People' };
@@ -107,9 +107,14 @@ const MORE_VIEW: TitleMenuView = { key: 'more', label: 'More' };
  */
 export interface TitleMenuPeople {
   candidates: readonly WorkspaceMember[];
+  ranking?: PeopleRanking | undefined;
+  onOpen?: (() => void) | undefined;
+  rankingLoading?: boolean | undefined;
+  rankingFailed?: boolean | undefined;
+  onRetryRanking?: (() => void) | undefined;
   /**
    * Addresses invited to the Organization that have not joined, lower case.
-   * Suggested after the members; adding one invites the address here through
+   * Listed after the members; adding one invites the address here through
    * `invites`, so they are in the room when they arrive.
    */
   invitees?: readonly string[] | undefined;
@@ -204,7 +209,8 @@ function PeopleView({ members, noun, people, presentUserIds }: {
   const submitting = useRef(false);
   const invites = people?.invites;
   const onLoad = useRef(invites?.onLoad);
-  useEffect(() => { onLoad.current?.(); }, []);
+  const onOpen = useRef(people?.onOpen);
+  useEffect(() => { onLoad.current?.(); onOpen.current?.(); }, []);
   const needle = query.trim().toLocaleLowerCase();
   const present = new Set(presentUserIds);
   const inRoom = new Set(members.map((member) => member.id));
@@ -218,8 +224,32 @@ function PeopleView({ members, noun, people, presentUserIds }: {
   const invitedHere = new Set(invites?.pending ?? []);
   const inviteeSuggestions = invites ? (people?.invitees ?? []).filter((email) => !invitedHere.has(email)
     && (!needle || email.includes(needle))) : [];
-  const suggestions = needle ? addable : addable.slice(0, PEOPLE_SUGGESTIONS);
-  const suggestedInvitees = needle ? inviteeSuggestions : inviteeSuggestions.slice(0, Math.max(0, PEOPLE_SUGGESTIONS - suggestions.length));
+  const suggestions = addable;
+  const suggestedInvitees = inviteeSuggestions;
+  const remaining = new Map(addable.map((member) => [member.id, member]));
+  const ranked = (ids: readonly string[]): WorkspaceMember[] => {
+    const selected: WorkspaceMember[] = [];
+    for (const id of ids) {
+      const member = remaining.get(id);
+      if (!member) continue;
+      selected.push(member);
+      remaining.delete(id);
+      if (selected.length === PEOPLE_SUGGESTIONS) break;
+    }
+    return selected;
+  };
+  const channelPeople = ranked(people?.ranking?.channel ?? []);
+  const organizationPeople = ranked(people?.ranking?.organization ?? []);
+  const alphabetical = [...remaining.values()].sort(compareAlphabeticalName);
+  const orderedSuggestions: Array<WorkspaceMember | string> = [
+    ...channelPeople,
+    ...organizationPeople,
+    ...alphabetical.filter((member) => member.accessClass !== 'guest'),
+    ...suggestedInvitees,
+    ...alphabetical.filter((member) => member.accessClass === 'guest'),
+  ];
+  // Search exposes all matches; only the idle Suggested list is capped.
+  const visibleSuggestions = needle ? orderedSuggestions : orderedSuggestions.slice(0, PEOPLE_SUGGESTIONS);
   const tokens = typedTokens(query);
   const typedEmails = areAddresses(tokens);
   const change = (value: string): void => { setQuery(value); setEntryError(null); };
@@ -335,36 +365,44 @@ function PeopleView({ members, noun, people, presentUserIds }: {
         </div>;
       })}
     </>}
-    {people && (suggestions.length > 0 || suggestedInvitees.length > 0) && <>
+    {people?.rankingLoading && <p className="title-menu-empty" role="status">Finding frequent collaborators…</p>}
+    {people?.rankingFailed && <div className="title-menu-load-failed" role="alert">
+      <span>Frequent collaborators couldn’t be loaded.</span>
+      {people.onRetryRanking && <button className="title-menu-add" onClick={people.onRetryRanking} type="button">Try again</button>}
+    </div>}
+    {people && visibleSuggestions.length > 0 && <>
       <div className="title-menu-section-heading">{needle ? 'Add to this ' + noun : 'Suggested'}</div>
-      {suggestions.map((member) => <div className="title-menu-person" key={member.id}>
-        <Avatar member={member} size="medium" />
-        <span className="title-menu-person-copy">
-          <span className="title-menu-person-name">{member.name}</span>
-          <span className="title-menu-person-detail">{member.email}</span>
-        </span>
-        <button
-          aria-label={`Add ${member.name}`}
-          className="title-menu-add"
-          disabled={people.adding}
-          onClick={() => { void people.onAdd(member).catch(() => undefined); }}
-          type="button"
-        >Add</button>
-      </div>)}
-      {suggestedInvitees.map((email) => <div className="title-menu-person is-invited" key={email}>
-        <Avatar member={{ id: email, name: email, email, timezone: 'UTC' }} size="medium" />
-        <span className="title-menu-person-copy">
-          <span className="title-menu-person-name">{email}</span>
-          <span className="title-menu-person-detail">Invited</span>
-        </span>
-        <button
-          aria-label={`Add ${email}`}
-          className="title-menu-add"
-          disabled={people.adding}
-          onClick={() => { if (!submitting.current) void run(query, [], [email]); }}
-          type="button"
-        >Add</button>
-      </div>)}
+      {visibleSuggestions.map((suggestion) => {
+        if (typeof suggestion === 'string') return <div className="title-menu-person is-invited" key={`invitee:${suggestion}`}>
+          <Avatar member={{ id: suggestion, name: suggestion, email: suggestion, timezone: 'UTC' }} size="medium" />
+          <span className="title-menu-person-copy">
+            <span className="title-menu-person-name">{suggestion}</span>
+            <span className="title-menu-person-detail">Invited</span>
+          </span>
+          <button
+            aria-label={`Add ${suggestion}`}
+            className="title-menu-add"
+            disabled={people.adding}
+            onClick={() => { if (!submitting.current) void run(query, [], [suggestion]); }}
+            type="button"
+          >Add</button>
+        </div>;
+        const member = suggestion;
+        return <div className="title-menu-person" key={member.id}>
+          <Avatar member={member} size="medium" />
+          <span className="title-menu-person-copy">
+            <span className="title-menu-person-name">{member.name}</span>
+            <span className="title-menu-person-detail">{member.email}</span>
+          </span>
+          <button
+            aria-label={`Add ${member.name}`}
+            className="title-menu-add"
+            disabled={people.adding}
+            onClick={() => { void people.onAdd(member).catch(() => undefined); }}
+            type="button"
+          >Add</button>
+        </div>;
+      })}
     </>}
     {people && needle && suggestions.length === 0 && suggestedInvitees.length === 0 && <p className="title-menu-empty">{typedEmails && invites
       ? `Press Enter to invite ${tokens.length === 1 ? 'them' : 'everyone'} as ${tokens.length === 1 ? 'a guest' : 'guests'}.`
