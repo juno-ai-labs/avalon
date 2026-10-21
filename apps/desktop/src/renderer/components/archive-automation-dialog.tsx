@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button, InlineError, Modal } from './primitives';
+import { Button, ErrorNotice, Modal } from './primitives';
 
 export interface ArchiveAutomationDialogProps {
   /** The Sidekick or draft under the question, or null when the dialog is closed. */
@@ -60,7 +60,7 @@ export function ArchiveAutomationDialog({ target, onClose, onConfirm }: ArchiveA
           </>
         )}
       </p>
-      {error && <InlineError>{error}</InlineError>}
+      {error && <ErrorNotice>{error}</ErrorNotice>}
     </Modal>
   );
 }

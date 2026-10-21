@@ -13,7 +13,7 @@ import { useMemberPreferences, useSaveMemberPreferences } from '../lib/use-membe
 import { settings, type SettingDefinition } from '../settings/registry';
 import { SettingCopy } from '../settings/setting-label';
 import { ChannelPicker, type ChannelOption } from './channel-picker';
-import { InlineError } from './primitives';
+import { ErrorNotice } from './primitives';
 
 const ICON_SIZE = 14;
 
@@ -118,7 +118,7 @@ export function NotificationChannelSettings({ api, workspaceId, connections, pus
         None selected means you won't be told, apart from Activity and your digest. Connected messaging apps
         that can reach you show up here.
       </p>
-      {save.error && <InlineError>{save.error.message}</InlineError>}
+      {save.error && <ErrorNotice occurrence={save.error}>{save.error.message}</ErrorNotice>}
     </section>
   );
 }
@@ -201,7 +201,7 @@ export function DailyDigestSettings({ api, connections, onEditTimezone }: {
     mutationFn: (draft: DigestDraft) => api.updateDigestSchedule(scheduleFromDraft(draft)),
     onSuccess: (saved) => queryClient.setQueryData(['digest-schedule'], saved),
   });
-  if (digest.error) return <InlineError>{digest.error.message}</InlineError>;
+  if (digest.error) return <ErrorNotice occurrence={digest.error}>{digest.error.message}</ErrorNotice>;
   if (!digest.data) return null;
   const saved = digest.data;
   // The draft being saved, so a second change builds on the first.
@@ -299,7 +299,7 @@ export function DailyDigestSettings({ api, connections, onEditTimezone }: {
           </span>
         </div>
       </div>
-      {save.error && <InlineError>{save.error.message}</InlineError>}
+      {save.error && <ErrorNotice occurrence={save.error}>{save.error.message}</ErrorNotice>}
     </section>
   );
 }

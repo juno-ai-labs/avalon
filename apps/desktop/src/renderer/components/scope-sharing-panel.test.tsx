@@ -37,6 +37,7 @@ it.each(['0', '00000000-0000-4000-8000-000000000003'])('shares only conversation
   });
   fireEvent.click(screen.getByRole('button', { name: 'Share' }));
   await screen.findByText('The conversation couldn’t be shared. Try again.');
+  fireEvent.click(screen.getByRole('button', { name: 'OK' }));
   expect(screen.queryByText(diagnostic)).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Share' }));
   await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
@@ -91,6 +92,7 @@ it('dismisses the share dialog once the invitation is created, and not before', 
 
   // A failed share leaves the dialog open so the retry keeps the typed batch.
   await screen.findByText('The conversation couldn’t be shared. Try again.');
+  fireEvent.click(screen.getByRole('button', { name: 'OK' }));
   expect(screen.getByRole('dialog', { name: 'Share conversation' })).toBeVisible();
 
   fireEvent.click(screen.getByRole('button', { name: 'Share' }));
@@ -178,6 +180,7 @@ it('says when the Guests waiting to sign in could not be loaded, and retries', a
   render(<QueryClientProvider client={client}><Tooltip.Provider><ScopeSharingPanel api={api}
     workspaceId={workspaceId} parentId={parentId} substreamId="0" /></Tooltip.Provider></QueryClientProvider>);
   expect(await screen.findByText('Guests waiting to sign in couldn’t be loaded.')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'OK' }));
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
   await waitFor(() => expect(screen.queryByText('Guests waiting to sign in couldn’t be loaded.')).toBeNull());
   expect(list).toHaveBeenCalledTimes(2);

@@ -1,5 +1,6 @@
-import { useId, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 
+import { ErrorNotice } from './primitives';
 import { isComposingKeyEvent } from '../lib/ime';
 
 /**
@@ -26,7 +27,6 @@ export function InlineEditableText({
   validate?: (next: string) => string | null;
   value: string;
 }): React.JSX.Element {
-  const reasonId = useId();
   const [draft, setDraft] = useState<string | null>(null);
   const [invalid, setInvalid] = useState<string | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
@@ -72,12 +72,13 @@ export function InlineEditableText({
     return (
       <span className="inline-editable-field">
         <input
-          aria-describedby={invalid ? reasonId : undefined}
           aria-invalid={invalid ? true : undefined}
           aria-label={ariaLabel}
           autoFocus
           className="inline-editable-input"
-          onBlur={() => close(false)}
+          onBlur={(event) => {
+            if (!(event.relatedTarget instanceof Element && event.relatedTarget.closest('[role="alertdialog"]'))) close(false);
+          }}
           onChange={(event) => {
             setDraft(event.target.value);
             setInvalid(null);
@@ -97,7 +98,7 @@ export function InlineEditableText({
           }}
           value={draft}
         />
-        {invalid && <small className="inline-editable-reason" id={reasonId} role="alert">{invalid}</small>}
+        {invalid && <ErrorNotice>{invalid}</ErrorNotice>}
       </span>
     );
   }

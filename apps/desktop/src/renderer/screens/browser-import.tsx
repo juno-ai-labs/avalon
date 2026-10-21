@@ -12,7 +12,7 @@ import {
   useEmbeddedBrowserPlacement,
   useEmbeddedBrowserShortcuts,
 } from '../components/embedded-browser-view';
-import { Button, DropdownSelect, IconButton, InlineError, Modal } from '../components/primitives';
+import { Button, DropdownSelect, IconButton, ErrorNotice, Modal } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
 import { browserConversation, conversationAt } from '../lib/browser-conversation';
 import {
@@ -275,7 +275,7 @@ export function BrowserImportWindow(): React.JSX.Element {
         {update ? 'Import updates' : 'Import'}
       </Button>
     </div>
-    {(failure ?? browserError) && <div className="browser-import-banner" role="alert">{failure ?? browserError}</div>}
+    {(failure ?? browserError) && <ErrorNotice>{failure ?? browserError}</ErrorNotice>}
     <main className="browser-import-page" ref={pageRef}>
       {run && mirror && <img alt="" className="browser-import-mirror" src={mirror} />}
       {starting && <section aria-labelledby={`${nameId}-start`} className="browser-import-start">
@@ -315,7 +315,7 @@ export function BrowserImportWindow(): React.JSX.Element {
       title={update ? 'Importing updates' : 'Importing conversation'}
     >
       <ImportSteps steps={steps} />
-      {copyFailed && <InlineError>The import id could not be copied.</InlineError>}
+      {copyFailed && <ErrorNotice>The import id could not be copied.</ErrorNotice>}
     </Modal>
     <Modal
       footer={<>
@@ -340,7 +340,7 @@ export function BrowserImportWindow(): React.JSX.Element {
           <span>{breakout ? 'Name of breakout' : 'Name of thread'}</span>
           <input autoFocus id={nameId} maxLength={180} onChange={(event) => { setName(event.target.value); renewRequest(); }} required value={name} />
         </label>
-        {!breakout && spaces.length === 0 && <InlineError>There is no channel to import into. Create one in Rally first.</InlineError>}
+        {!breakout && context !== null && spaces.length === 0 && <ErrorNotice>There is no channel to import into. Create one in Rally first.</ErrorNotice>}
       </form>
     </Modal>
   </div>;

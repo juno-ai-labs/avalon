@@ -1,3 +1,4 @@
+import { ErrorNotice } from '../components/primitives';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -72,10 +73,11 @@ function NewAutomationScreen(): React.JSX.Element {
     return (
       <div className="screen-error-state screen-with-titlebar">
         <div className="screen-drag-strip window-drag" />
+        <ErrorNotice title="Sidekick could not be created">{error}</ErrorNotice>
         <EmptyState
           action={<ErrorActions onRetry={() => { creation.current = null; setError(null); }} />}
-          description={error}
-          title="Sidekick could not be created"
+          description="Try creating your Sidekick again."
+          title="Sidekick"
         />
       </div>
     );
@@ -169,10 +171,11 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
     return (
       <div className="screen-error-state screen-with-titlebar">
         <div className="screen-drag-strip window-drag" />
+        <ErrorNotice title="Sidekick could not be opened">{automation.error.message}</ErrorNotice>
         <EmptyState
           action={<ErrorActions onRetry={() => void automation.refetch()} />}
-          description={automation.error.message}
-          title="Sidekick could not be opened"
+          description="Try opening your Sidekick again."
+          title="Sidekick"
         />
       </div>
     );

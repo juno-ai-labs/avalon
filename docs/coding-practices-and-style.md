@@ -62,6 +62,16 @@ renaming `error` to `caught` or `failure` cannot bypass the rule. Sidebar/rail
 filenames join that scope automatically; presentation modules with another name
 must be added to the registry and its scope test.
 
+## Errors require acknowledgement
+
+Desktop and browser operational errors use the shared `ErrorNotice` popup with
+an **OK** action. Inline error banners, paragraphs and DOM `role="alert"` are
+banned. `rally/no-inline-errors` rejects these known patterns in both hosts and
+shared UI, including the retired `InlineError` import. See
+[shared UI](shared-ui.md#error-popups) for queue, retry and focus behavior.
+Historical transcript/run status and loading indicators remain content; a new
+failed operation is reported over the surface rather than inserted into it.
+
 ## Construct Zod object modes directly
 
 In production source reachable from the API Worker, construct an object's

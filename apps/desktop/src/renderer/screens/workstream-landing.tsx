@@ -1,6 +1,6 @@
 import { Navigate, useLocation } from 'react-router-dom';
 
-import { EmptyState, InlineError, LoadingState } from '../components/primitives';
+import { EmptyState, ErrorNotice, LoadingState } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
 import { layoutKey, readLayout } from '../lib/desktop-layout';
 import { OPEN_EXPANDED, channelRoute } from '../lib/navigation-routes';
@@ -39,7 +39,7 @@ export function WorkstreamLandingScreen(): React.JSX.Element {
   const channels = active.data?.items;
   if (!channels) {
     if (state === 'unavailable' || sidebarConnect?.spacesLive === false) {
-      return <InlineError>Unable to connect to your organization. Check your connection and restart Rally to try again.</InlineError>;
+      return <ErrorNotice>Unable to connect to your organization. Check your connection and restart Rally to try again.</ErrorNotice>;
     }
     return <LoadingState label="Opening channels…" />;
   }

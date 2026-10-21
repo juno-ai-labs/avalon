@@ -1,3 +1,4 @@
+import { ErrorNotice } from './primitives';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import {
   IconArchive,
@@ -298,11 +299,11 @@ function PeopleView({ members, noun, people, presentUserIds }: {
   const error = entryError ?? people?.error;
   return <>
     {people && <TitleMenuSearch className="title-menu-people-search" label="Add someone by name or email" onChange={change} onEnter={submit} value={query} />}
-    {error && <p className="title-menu-error" role="alert">{error}</p>}
-    {invites?.loadFailed && <div className="title-menu-load-failed" role="alert">
-      <span>Invitations waiting to sign in couldn’t be loaded.</span>
+    {error && <ErrorNotice>{error}</ErrorNotice>}
+    {invites?.loadFailed && <>
+      <ErrorNotice>Invitations waiting to sign in couldn’t be loaded.</ErrorNotice>
       {invites.onRetryLoad && <button className="title-menu-add" onClick={invites.onRetryLoad} type="button">Try again</button>}
-    </div>}
+    </>}
     {!needle && members.map((member) => <div className="title-menu-person" key={member.id}>
       <Avatar member={member} size="medium" />
       <span className="title-menu-person-copy">
@@ -427,7 +428,7 @@ function MemoryView({ memory, noun }: {
   return <div className="title-menu-memory">
     {facts === undefined
       ? failure
-        ? <p className="title-menu-error" role="alert">{failure}</p>
+        ? <ErrorNotice>{failure}</ErrorNotice>
         : <p className="title-menu-empty">Loading what Rally remembers…</p>
       : facts.length === 0
         ? <p className="title-menu-empty">Rally has not remembered anything about this {noun} yet.</p>

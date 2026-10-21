@@ -4,7 +4,7 @@ import { clearAllLocalCache } from '../../desktop/src/renderer/lib/local-cache';
 import { iosStandalone } from '../../desktop/src/renderer/lib/home-screen';
 import { CreateOrganizationCard, type CreateOrganizationOperation } from '../../desktop/src/renderer/screens/create-organization';
 import { Building2, ChevronRight, KeyRound, LoaderCircle, Mail } from "lucide-react";
-import { ActivityCountBadge, Button, ConnectorMark, InlineError, RallyMark, activityCountLabel } from "@rally/ui/components/primitives";
+import { ActivityCountBadge, Button, ConnectorMark, ErrorNotice, RallyMark, activityCountLabel } from "@rally/ui/components/primitives";
 import { useCallback, useEffect, useRef, useState, type ReactNode, type FormEvent } from "react";
 import { z } from "zod";
 import { configuredRegions, ConfiguredRegionSchema, IDENTITY_REGION } from "@rally/contracts/regions";
@@ -440,7 +440,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
 
   if (!proof && destination && workspaceSession && session && workspaceSession.user.id === session.user.id && renderCollaboration) {
     return <div className="browser-shell">
-      {error && <div className="browser-shell-error"><InlineError>{error}</InlineError></div>}
+      {error && <ErrorNotice>{error}</ErrorNotice>}
       <div className="browser-conversation">{renderCollaboration(destination.region, workspaceSession, signOutStable, revalidate)}</div>
     </div>;
   }
@@ -494,7 +494,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
         </form>}
       </>}
       {/* A Google failure belongs to the signed-out screen it returned to, not to a later one. */}
-      {failure && <InlineError>{failure}</InlineError>}
+      {failure && <ErrorNotice>{failure}</ErrorNotice>}
     </section>
   </main>;
 }

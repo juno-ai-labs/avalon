@@ -2,7 +2,7 @@ import type { WorkstreamAppearance } from '@rally/contracts';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import { IconCarambola } from '@tabler/icons-react';
 import { AutomationGlyph } from './workstream-glyph';
-import { InlineError, Tip } from './primitives';
+import { ErrorNotice, Tip } from './primitives';
 import { SidebarHorizontalLine, SidebarRow } from './resizable-sidebar';
 import { SidebarNavigationRowContent } from './navigation';
 import { SidebarRefreshRow } from './sidebar-refresh-row';
@@ -69,7 +69,7 @@ export function SidekickSection({ items, failure, onOpen, onMenuOpen, onRefresh,
   }
   return <section aria-label="Sidekicks" className="workstream-context-section sidekick-section" data-layout-id={layoutId}><SidebarHorizontalLine /><h2>Sidekicks</h2>
     {failure === 'load' ? onRefresh && <SidebarRefreshRow onRefresh={onRefresh} />
-      : failure && <InlineError>{sidekickSectionFailureCopy[failure]}</InlineError>}
+      : failure && <ErrorNotice>{sidekickSectionFailureCopy[failure]}</ErrorNotice>}
     <ul className="sidekick-section-list">{items.map((item) => <ContextMenu.Root key={item.id} onOpenChange={(open) => { if (open) onMenuOpen?.(); }}><li data-layout-id={`sidekick:${item.id}`}>
       {/* The rail's own tooltip rather than the platform's, as the artifact
           rows above take it: a name this rail truncates — or hides outright

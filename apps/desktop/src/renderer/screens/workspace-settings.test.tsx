@@ -534,6 +534,7 @@ describe('Organization settings', () => {
           </QueryClientProvider>
         </Tooltip.Provider>,
       );
+      fireEvent.click(await screen.findByRole('button', { name: 'OK' }));
       expect(await screen.findByRole('heading', { level: 1, name: 'Account' })).toBeVisible();
       const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
       expect(within(navigation).getAllByRole('button').map((button) => button.textContent)).toEqual(['Account', 'Application']);
@@ -570,6 +571,10 @@ describe('Organization settings', () => {
   });
 
   it('saves one kind\'s channels for every device and leaves the other kinds alone', async () => {
+    api.getDigestSchedule.mockResolvedValue({
+      id: 'digest', enabled: true, days: [1], times: [540], timezone: 'Europe/London',
+      deliveryTargets: [], nextRunAt: null, lastDeliveredAt: null,
+    });
     api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({ pushNotificationsEnabled: true }));
     api.getMyPreferences.mockResolvedValue(DEFAULT_MEMBER_PREFERENCES);
     api.updateMyPreferences.mockImplementation(async () => ({ ...DEFAULT_MEMBER_PREFERENCES,
@@ -863,6 +868,7 @@ describe('Organization settings', () => {
     fireEvent.click(within(await screen.findByRole('dialog', undefined, { timeout: 10_000 })).getByRole('button', { name: 'Continue' }));
 
     expect(await screen.findByText(message, undefined, { timeout: 10_000 })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument(), { timeout: 10_000 });
     expect(fullInternet).toBeChecked();
     if (failing === 'preview') expect(api.applyTerminalNetworkPolicy).not.toHaveBeenCalled();
@@ -1812,15 +1818,16 @@ describe('Organization settings', () => {
     // Connect button and no reason for it. Typing is held back until the field
     // settles; a paste is a finished value, so it is judged at once.
     fireEvent.change(apiKeyInput, { target: { value: 'sk-live' } });
-    expect(within(dialog).queryByRole('alert')).toBeNull();
+    expect(within(dialog).queryByRole('alertdialog')).toBeNull();
     fireEvent.paste(apiKeyInput);
     fireEvent.change(apiKeyInput, { target: { value: 'sk-live-wrong-provider-key' } });
-    expect(within(dialog).getByRole('alert')).toHaveTextContent('Granola keys start with grn_');
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Granola keys start with grn_');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(within(dialog).getByRole('button', { name: 'Connect for organization' })).toBeDisabled();
 
     const apiKey = `grn_${'a'.repeat(24)}`;
     fireEvent.change(apiKeyInput, { target: { value: apiKey } });
-    expect(within(dialog).queryByRole('alert')).toBeNull();
+    expect(within(dialog).queryByRole('alertdialog')).toBeNull();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Connect for organization' }));
 
     await waitFor(() => expect(api.createGranolaWorkspaceConnection).toHaveBeenCalledWith(apiKey, expect.any(String)));
@@ -2394,7 +2401,8 @@ describe('Organization settings', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Delete Google · adam@example.com?' });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Continue' }));
 
-    expect(await within(dialog).findByText('The connection could not be deleted. Try again.')).toBeVisible();
+    expect(await screen.findByText('The connection could not be deleted. Try again.')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeEnabled();
     expect(within(dialog).getByRole('button', { name: 'Continue' })).toBeEnabled();
   });
@@ -2531,7 +2539,8 @@ describe('Organization settings', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Suspend' }));
     const dialog = await screen.findByRole('dialog', { name: 'Suspend Sam?' });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Suspend' }));
-    expect(await within(dialog).findByText('The workspace membership changed. Check it and try again.')).toBeVisible();
+    expect(await screen.findByText('The workspace membership changed. Check it and try again.')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     expect(screen.getAllByText('Sam').length).toBeGreaterThan(0);
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Suspend' }));

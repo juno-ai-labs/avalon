@@ -82,6 +82,7 @@ it('opens a guest in the shared shell without asking for anything a guest is ref
       return Response.json({ url: 'wss://api.rallywith.ai/socket/conversations/' + parent + '/' + substream, ticket: 'fixture-ticket' });
     }
     if (path.endsWith('/sidekicks') || path.endsWith('/recommended-sidekicks')) return Response.json({ items: [] });
+    if (path.endsWith('/navigation/threads')) return Response.json({ items: [], pinned: [], nextCursor: null });
     if (path.endsWith('/feature-flags')) return Response.json({ liveArtifactsEnabled: false });
     return Response.json({ error: { message: 'Unexpected request: ' + path } }, { status: 404 });
   };

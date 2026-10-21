@@ -1,6 +1,6 @@
 import { ConnectorApiKeyGuidanceCatalog, connectorApiKeyMismatch, type ConnectorApiKeyProvider } from '@rally/contracts';
 import { useState, type ReactNode } from 'react';
-import { Button, InlineError } from './primitives';
+import { Button, ErrorNotice } from './primitives';
 import { desktopBridge } from '../lib/platform';
 
 /**
@@ -77,7 +77,7 @@ export function ConnectorApiKeyField({ provider, value, onChange, disabled = fal
         />
         {help && <small>{help}</small>}
       </label>
-      {mismatch && <InlineError>{mismatch}</InlineError>}
+      {mismatch && <ErrorNotice>{mismatch}</ErrorNotice>}
     </>
   );
 }

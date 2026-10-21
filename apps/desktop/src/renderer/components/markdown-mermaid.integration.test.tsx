@@ -101,7 +101,7 @@ flowchart TD
 
     const { container } = render(<MarkdownMermaid code={source} fallback={<pre>{source}</pre>} />);
 
-    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
     expect(container.querySelector('pre')?.textContent).toBe(source);
     expect(screen.queryByRole('img')).toBeNull();
   });
@@ -113,7 +113,7 @@ flowchart TD
 
     const { container } = render(<MarkdownMermaid code={source} fallback={<pre>{source}</pre>} />);
 
-    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
     expect(container.querySelector('pre')?.textContent).toBe(source);
     expect(screen.queryByRole('img')).toBeNull();
   });
@@ -136,7 +136,7 @@ flowchart TD
 
     const { container } = render(<MarkdownMermaid code={source} fallback={<pre>{source}</pre>} />);
 
-    expect(await screen.findByRole('status')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
     expect(assignedSource).not.toHaveBeenCalled();
     expect(container.querySelector('pre')?.textContent).toBe(source);
     expect(screen.queryByRole('img')).toBeNull();

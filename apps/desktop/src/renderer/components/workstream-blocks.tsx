@@ -113,7 +113,7 @@ import {
 } from './markdown-citations';
 import { type AttachmentPreview, MessageAttachments } from './attachments';
 import { MergedIntoDivider, MergeMessage } from '@rally/ui/components/merge-message';
-import { Avatar, Button, ConnectorMark, InlineError, RallyAvatar, RallyMark, Tip, TipGroup } from './primitives';
+import { Avatar, Button, ConnectorMark, ErrorNotice, RallyAvatar, RallyMark, Tip, TipGroup } from './primitives';
 import { RelativeTime } from './relative-time';
 import { useSpeechPlayback } from './speech-playback';
 
@@ -1646,8 +1646,7 @@ export function MarkdownBody({
  * saved card cannot drift from what was on screen —
  * [`docs/message-export.md`](../../../../../docs/message-export.md) owns the rest.
  * A dismissed save dialog is not a failure and says nothing; a render or a write
- * that failed replaces the label until the pointer leaves, because unlike a
- * failed copy there is no other copy of the file to fall back on.
+ * that failed opens an acknowledged error popup.
  */
 function exportStatusMessage(saving: MessageExportFormat | null, failed: MessageExportFormat | null): string {
   const noun = (format: MessageExportFormat): string => (format === 'image' ? 'image' : 'PDF');
@@ -1867,7 +1866,6 @@ export function MessageActions({
         // been read by the time the pointer leaves, and a stale "Image failed"
         // sitting under a turn the next day reads as a broken feature rather than
         // as one attempt that did not work.
-        onPointerLeave={() => setFailed(null)}
       >
         {onStartSubstream && <StartSubstreamButton onStart={onStartSubstream} />}
         {hasText && onMerge && <MergeButton merge={onMerge} text={text} />}
@@ -1894,7 +1892,7 @@ export function MessageActions({
               {saving === 'image' ? <LoaderCircle aria-hidden="true" className="spin" size={12} /> : null}
               {saving !== 'image' && failed === 'image' ? <CircleAlert aria-hidden="true" size={12} /> : null}
               {saving !== 'image' && failed !== 'image' ? <ImageDown aria-hidden="true" size={12} /> : null}
-              {failed === 'image' ? 'Image failed' : 'Image'}
+              Image
             </MessageAction>
             <MessageAction
               aria-busy={saving === 'pdf' || undefined}
@@ -1905,14 +1903,15 @@ export function MessageActions({
               {saving === 'pdf' ? <LoaderCircle aria-hidden="true" className="spin" size={12} /> : null}
               {saving !== 'pdf' && failed === 'pdf' ? <CircleAlert aria-hidden="true" size={12} /> : null}
               {saving !== 'pdf' && failed !== 'pdf' ? <FileDown aria-hidden="true" size={12} /> : null}
-              {failed === 'pdf' ? 'PDF failed' : 'PDF'}
+              PDF
             </MessageAction>
             {/* Each button keeps a fixed accessible name so it stays findable, which
                 means neither the spinner nor the changed label announces anything on
                 its own. This is where the state is spoken. A disabled button takes no
                 pointer events either, so a save in flight is not a hover away — it is
                 only here. */}
-            <span className="sr-only" role="status">{exportStatusMessage(saving, failed)}</span>
+            <span className="sr-only" role="status">{exportStatusMessage(saving, null)}</span>
+            {failed && <ErrorNotice>{exportStatusMessage(null, failed)}</ErrorNotice>}
           </>
         )}
       </footer>
@@ -2162,7 +2161,7 @@ function DraftProposedCard({
         {/* Who will be able to see and change it, which cannot be changed after
             acceptance and is therefore the part worth reading before pressing. */}
         <p className="system-message-text"><small>{scope} can manage it.</small></p>
-        {failed && <p className="system-message-text">That Sidekick couldn’t be created. Try again.</p>}
+        {failed && <ErrorNotice>That Sidekick couldn’t be created. Try again.</ErrorNotice>}
         <div className="automation-draft-actions">
           {detail.ready ? (
             <button
@@ -2751,7 +2750,7 @@ export function ElicitationPanel({
       )}
       {!isAnswered && (
         <div className="elicitation-actions">
-          {error && <InlineError>{error}</InlineError>}
+          {error && <ErrorNotice>{error}</ErrorNotice>}
           <Button className="elicitation-skip" disabled={submitting} onClick={() => void skip()}>Skip</Button>
           <Button className="elicitation-submit" disabled={!canSubmit || submitting} onClick={() => void submit()}>
             {submitting ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : null}

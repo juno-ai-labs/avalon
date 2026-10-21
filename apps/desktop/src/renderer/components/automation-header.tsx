@@ -8,7 +8,7 @@ import { ArchiveAutomationDialog } from './archive-automation-dialog';
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
 import type { AutomationDetail, AutomationRun } from '../lib/types';
 import { statusLabel } from '../lib/format';
-import { Badge, Button, IconButton, InlineError, Modal, StatusDot } from './primitives';
+import { Badge, Button, IconButton, ErrorNotice, Modal, StatusDot } from './primitives';
 import { RelativeTime } from './relative-time';
 
 export type AutomationHeaderAction = 'pause' | 'resume' | 'archive' | 'run';
@@ -114,8 +114,8 @@ export function AutomationHeader({
             </div>
             <div className="automation-description">
               {description}
-              {error && <InlineError>{error}</InlineError>}
-              {copyFailed && <InlineError>The Sidekick link could not be copied.</InlineError>}
+              {error && <ErrorNotice>{error}</ErrorNotice>}
+              {copyFailed && <ErrorNotice>The Sidekick link could not be copied.</ErrorNotice>}
             </div>
           </div>
         </div>
@@ -181,7 +181,7 @@ export function AutomationHeader({
       </div>
       <Modal open={showRunHistory} onOpenChange={setShowRunHistory} title="Run history" description="Technical details for troubleshooting this Sidekick.">
           {runsError ? (
-            <p className="automation-runs-empty">Could not load runs</p>
+            <ErrorNotice>Could not load runs</ErrorNotice>
           ) : listedRuns.length === 0 ? (
             <p className="automation-runs-empty">No runs yet</p>
           ) : (
