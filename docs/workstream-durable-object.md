@@ -299,6 +299,23 @@ so that message is the one unread. The "you were added" signal stays on
 `participants.first_opened_at`. The opening message of a new conversation is the
 exception: people named at creation have no row and read it as unread.
 
+Sending a message in Main seats its author as a Channel participant when the
+message is admitted, including when the turn waits behind an active run. The
+legacy roster write and the pending input share one transaction, with a user
+directory effect for a newly seated author. A migrated roster still uses its
+existing self-join grant authority. Membership writes enqueue a
+`participant_changed` reference in the existing semantic realtime outbox in
+the same transaction, including parent-owned roster projections. The room
+hydrates the current participant and publishes `participant_added` (or
+`participant_removed` if removal overtook delivery). Publication failure keeps
+the reference for alarm-driven retry without failing the accepted send. Open
+participant lists update immediately when delivery is available. Posting inside
+a Breakout affects that conversation's roster only; it does not join its author
+to Main. A deferred predecessor also holds later outbox frames until its retry,
+preserving room sequence order.
+This admission-time change covers the author. Confirmed mentions in a queued
+legacy-roster message still join when its turn is promoted.
+
 Participant history is read through snapshot-fenced half-open ranges. Opening
 creates one fence and returns the first-unread conversation turn with up to five
 conversation turns on either side, plus the latest five conversation turns.
@@ -1530,6 +1547,15 @@ projection changes only, not token cadence.
 
 ## Testing
 
+`test-workers/message-to-output-pipeline.test.ts` checks that a public Channel
+reader becomes a participant while their accepted message remains queued behind
+a held run, that an open socket receives `participant_added`, and that replay
+keeps one participant row. It covers failed participant delivery, an unavailable
+canonical predecessor, recovery without another send, and membership changes
+interleaving with preparation. A large-roster case verifies that hydrating one
+participant does not bind the whole roster into a D1 query. The new message
+never reaches a provider.
+
 `test-workers/conversation-parent-contract.test.ts` upgrades a populated v12 parent
 and exercises recommendation RPCs through the shared service. The child-tool
 regression in `test-workers/automation-do.test.ts` proves shared recommendations
@@ -1858,6 +1884,23 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 
 ## Changelog
 
+### 2026-10-21 — Sending in a Channel joins at admission
+
+Queued human-message admission now seats a missing author and records their
+directory projection and semantic realtime reference in the same transaction as
+the accepted input. Parent-owned roster projections enqueue their membership
+changes through the same outbox. The room publishes the current participant to
+open sockets and retains failed delivery for alarm-driven retry. Previously the
+legacy roster waited for turn promotion, so somebody starting a thread could remain
+absent from the Channel's people list while another run held the queue. Waiting
+for execution or patching only the sender's client cache would leave that gap
+for other viewers. An event published only after admission could falsely fail a
+committed send or disappear behind a blocked canonical event, and checking
+membership before asynchronous preparation missed intervening removals. The
+transaction now decides whether to enqueue the event. Existing participant rows
+keep their attribution, replay does not add another seat, and Breakout messages
+do not join Main.
+
 ### 2026-10-21 — Accepted mentions seat recipients in Organization-visible conversations
 
 **What changed:** The shared human-message admission path includes accepted
@@ -1899,6 +1942,7 @@ writes and questions as never started.
 **Consequences:** No migration or production data rewrite is needed. Existing
 recovery settles interruptions using the original receipt identities, and the
 next ordinary reservation replaces the head pointer under the current loop.
+
 
 ### 2026-10-19 — Connector event people occupy ordered rows
 
