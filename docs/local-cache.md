@@ -5,7 +5,7 @@ before the socket that owns it answers. The desktop keeps one IndexedDB
 database, `rally-local-cache`, holding the last first page of the workspace
 directory and the last canonical state of every conversation the reader opened
 or the socket pool warmed. It also holds [attachment image bytes](attachment-preview-cache.md),
-which are validated against the API before reuse. On the next launch, or the next open of a room whose
+validated by the API before reuse. On the next launch, or the next open of a room whose
 socket is still cold, the sidebar, the Channel screen, and the transcript are
 on screen immediately; a small floating card says the live connection is on its
 way, and the composer accepts a draft but does not send until it has arrived.
@@ -117,6 +117,14 @@ changes in a way `parse` cannot absorb. A row written under another version, or
 one `parse` refuses, is dropped on read and deleted: the cache holds nothing
 that cannot be fetched again, so a migration would be work spent on rows the
 next socket answer replaces anyway.
+
+For long-running image downloads across browser tabs, `localCacheGeneration`
+captures a shared wipe generation. Each wipe changes the metadata row in the
+same transaction as its deletion. A slice write can supply that generation;
+the comparison and put then share one transaction, so a queued save from another
+renderer cannot restore wiped bytes. The synchronous local epoch still fences
+each renderer's existing scheduled work. This uses the existing entries store
+without a schema upgrade; the metadata row has an empty scope outside user rows.
 
 Three slices exist today, and the next surface that wants to paint before its
 answer arrives defines another:
@@ -410,7 +418,9 @@ The bound on this cache is membership, not a number or an age:
   its row and seeds nothing if a wipe moved it meanwhile, so a row on its way
   off the disk never paints.
 
-Nothing else evicts, and nothing expires.
+Conversation state has no other eviction or expiry. Attachment image validation
+also removes bytes on 403/404 and discards incompatible preview validators, as
+described in [attachment image caching](attachment-preview-cache.md).
 
 ## Invariants
 
@@ -606,6 +616,23 @@ is small. The cost that would grow is the persisted transcript, and
 scrolling.
 
 ## Changelog
+
+### 2026-10-21 — Fence image saves across browser tabs
+
+**What changed:** Cache wipes advance a shared IndexedDB generation atomically
+with deletion; image saves supply that generation for comparison in their write
+transaction.
+
+**Why:** A renderer-local epoch cannot stop an image download in another tab
+from restoring bytes after sign-out. Session broadcasts prompt asynchronous
+revalidation and cannot provide an atomic write fence.
+
+**Considered and rejected:** Relying on broadcast timing leaves the same race.
+A new database or schema migration is unnecessary for one metadata row.
+
+**Consequences:** Keep generation advancement in each wipe transaction and its
+comparison in the transaction that saves image bytes. Other slices retain their
+existing local-epoch behavior.
 
 ### 2026-10-19 — Restore sidebar pins with their rows
 
