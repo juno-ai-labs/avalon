@@ -186,7 +186,10 @@ not replay tools. Existing attachment grounding runs first. A grounded terminal
 boundary, fixed-purpose profile, seeded demo, or nonpersistent host bypasses
 this check. There is no second classifier to admit only action requests: the
 four-way baseline also recognizes answers, plans and acknowledgements, as in
-the eval corpus.
+the eval corpus. The classifier adds up to its one-second deadline to this
+terminal path, plus teammate lookup time. An unnecessary recovery spends one
+additional model turn and may produce a redundant completion confirmation;
+that cost is accepted to reduce missed unfinished work.
 
 The snapshot uses the exact triggering turn, including structured elicitation
 content, all user/assistant text in the current Bind projection, and current-
@@ -206,10 +209,14 @@ manual Sidekick runs would always consume recovery for falsely missing context.
 
 Authoritative lifecycle gates run before judging and again after it returns.
 Cancellation, required input, admitted/executing tools, ambiguous writes, an
-already-used recovery, or unknown execution state suppress verification. After
-a completed agent handoff, an executing teammate or unavailable teammate status
-also suppresses it: the existing message-delivery path owns the reply. This is
-conservative at team scope and can defer a check when another teammate is busy.
+already-used recovery, or unknown execution state suppress verification. Every
+eligible stop checks teammates, including work delegated in earlier executions.
+An executing teammate, admitted or preparing input, or unavailable teammate
+status suppresses verification: the existing message-delivery path owns the
+reply. This is conservative at team scope and can defer a check when another
+teammate is busy. Terminal compaction precedes the lifecycle check; the nudge
+commit checks Stop atomically after materializing its payload, and model-turn
+reservation checks Stop again before admitting another request.
 
 The nudge is a `protocol_user_appended` transition with derived provenance
 `completion_verification` and the execution ID. The same atomic commit stores
@@ -1450,6 +1457,9 @@ unavailability and cancellation), `packages/agent-harness/src/index.test.ts`
 The real workerd suites `workstream-transcript-runtime.test.ts` and
 `message-to-output-pipeline.test.ts` cover compaction/eviction and the complete
 production path for low confidence, unavailable judgment and accepted results.
+They also cover Stop during terminal compaction and nudge materialization,
+pending delegated inputs, and actual model-request delivery after eviction
+between the nudge commit and the next model call.
 Run them with `pnpm --filter @rally/api test:workers` and the respective paths;
 `-t 'completion verification'` scopes the added runtime cases.
 
@@ -1581,10 +1591,11 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 question with a 0.70 stop-acceptance threshold and one durable verification
 reprompt. The nudge and its execution-scoped marker commit as one derived fact.
 Message-less Sidekick activations resolve their request from the versioned
-definition used by the acting model.
+definition used by the acting model. Stop fences the nudge commit and next
+reservation; teammate lifecycle includes queued work and earlier delegations.
 
 **Why:** A promise that work is underway was being accepted as the final answer.
-The user prioritizes missed recovery over an extra model turn. The chosen
+Missing unfinished work is more costly than an extra verification turn. The chosen
 baseline caught all 19 eligible positives in the exploratory corpus; prompt
 variants increased confidence in a wrong answer and missed a recovery.
 

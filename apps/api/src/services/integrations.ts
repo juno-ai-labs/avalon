@@ -2849,6 +2849,12 @@ export async function runWorkstreamHarness(
   priorHintsPreparation.get();
   const stopController = new AbortController();
   const harnessSignal = combineAbortSignals(stopController.signal, liveness.signal);
+  const abortIfPersistentLoopStopped = () => {
+    if (runtime?.persistentLoop?.completionVerificationSnapshot().lifecycle === "cancelled") {
+      stopController.abort("stopped_by_user");
+      harnessSignal.throwIfAborted();
+    }
+  };
   const activeCredentialPluginIds = new Set<string>();
   // Inline child harnesses would create a second Bind loop inside this
   // substream's one persistent state machine. Keep the tool off the production
@@ -3356,10 +3362,10 @@ export async function runWorkstreamHarness(
         activationInputs,
         onActivationBoundary: (activation) =>
           runtime.persistentLoop!.commitActivationInputs(activation),
-        onAssistantTurnReserved: (turn) => runtime.persistentLoop!.reserveAssistantTurn({
-          ...turn,
-          streamId,
-        }),
+        onAssistantTurnReserved: (turn) => {
+          abortIfPersistentLoopStopped();
+          return runtime.persistentLoop!.reserveAssistantTurn({ ...turn, streamId });
+        },
         onStepSettled: (step) => runtime.persistentLoop!.settleStep(step),
         residentContext: {
           render: () => runtime.persistentLoop!.renderResidentContext(),
@@ -3383,9 +3389,14 @@ export async function runWorkstreamHarness(
           run_id: input.harnessRunId,
         });
       },
-      onBindLoopTransition: (transition) => {
+      onBindLoopTransition: async (transition) => {
         if (!runtime?.persistentLoop) throw new Error("substream_persistent_loop_required");
-        return runtime.persistentLoop.commitBindTransition(transition);
+        try {
+          await runtime.persistentLoop.commitBindTransition(transition);
+        } catch (error) {
+          abortIfPersistentLoopStopped();
+          throw error;
+        }
       },
       onBindProviderBoundary: (boundary) => orderedTranscript.recordProviderBoundary(boundary),
       onBindCompaction: async (commit) => {
@@ -3544,6 +3555,7 @@ export async function runWorkstreamHarness(
       // Fixed-purpose profiles and seeded demos have their own output contract.
       // A nonpersistent host cannot enforce a durable one-use recovery marker.
       if (!persistentLoop || profile || input.seed) return null;
+      abortIfPersistentLoopStopped();
       const sidekickDefinition = input.automationRun && !input.triggerMessageId
         ? await runDefinitionPreparation.get() : null;
       return completionVerificationNudge({
@@ -3572,11 +3584,11 @@ export async function runWorkstreamHarness(
         pendingDelegation: async () => {
           try {
             const { agents } = await new AgentCommunicationService(env, input).list();
-            return agents.some((agent) => agent.status === "executing");
+            return agents.some((agent) => agent.status === "executing" || agent.pendingWork);
           } catch (error) {
             harnessSignal.throwIfAborted();
-            // A committed handoff with unknown remote lifecycle is not a
-            // reason to start duplicate work. Its reply uses normal delivery.
+            // Unknown teammate lifecycle may conceal existing delegated
+            // work. Its reply uses normal message delivery.
             logStructuredEvent(env, "warn", "completion_verification_delegation_unresolved", {
               request_id: input.harnessRunId, workspace_id: input.workspaceId,
               reason: diagnosticErrorCode(error, "completion_verification_delegation_unavailable"),

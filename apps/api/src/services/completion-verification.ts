@@ -18,7 +18,7 @@ export async function completionVerificationNudge(input: {
   input.signal.throwIfAborted();
   const snapshot = input.snapshot();
   if (snapshot.lifecycle !== "ready") return null;
-  if (snapshot.handedOff && await input.pendingDelegation()) return null;
+  if (await input.pendingDelegation()) return null;
   input.signal.throwIfAborted();
   const context = completionConversationContext(input.messages);
   if (context.at(-1)?.role === "assistant" && context.at(-1)?.text === input.assistantContent) context.pop();

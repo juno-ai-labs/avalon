@@ -343,6 +343,14 @@ export class SubstreamLoopStorage {
     ).toArray();
   }
 
+  /** Includes admitted input not yet claimed, even while payload preparation hides it. */
+  hasPendingWork(): boolean {
+    return first(this.sql.exec<{ pending: number }>(
+      `SELECT EXISTS (SELECT 1 FROM pending_loop_inputs WHERE starts_run = 1)
+           OR EXISTS (SELECT 1 FROM pending_loop_input_mailbox WHERE state = 'preparing') AS pending`,
+    ))?.pending === 1;
+  }
+
   /**
    * Reassign promotion order among currently visible pending inputs.
    *
