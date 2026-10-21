@@ -11,10 +11,11 @@ The displayed message keeps only the person's ordinary text.
 RPC schemas and allowed message origins. `workstream-object-product.ts` freezes
 instructions into the ordinary message text and refreshes the local copy in
 the background.
-`packages/agent-harness/src/prompts/personal.ts` renders the XML.
-`packages/contracts/src/text.ts` owns `stripPersonalSystemPrompt`, shared by the
-desktop transcript (settled and queued messages), outbound message reduction,
-and Activity/mention effect producers before their excerpt limit.
+`packages/agent-harness/src/prompts/personal.ts` renders the XML from the
+envelope strings in `packages/contracts/src/text.ts`, which also owns
+`stripPersonalSystemPrompt`, shared by desktop transcript display (settled and
+queued messages), outbound message reduction, and Activity/mention effect
+producers before their excerpt limit.
 The iOS `FeedProjection` applies the same display rule.
 
 ## How it works
@@ -66,7 +67,8 @@ has refreshed since the first attempt.
   push, mention email, Slack delivery and conversation previews. Activity and
   mention effect producers remove it before truncation, so even long instructions
   cannot consume an excerpt or leave a partial envelope. Activity reads also
-  filter complete envelopes on older rows; the digest reads those same previews.
+  filter complete envelopes on older rows. Digest entries contain names, titles
+  and links.
   XML examples in the message body remain visible. Instruction text is
   XML-escaped so it cannot close the envelope.
 - **Blank instructions add nothing.** Attachment parts remain intact after the
@@ -95,7 +97,8 @@ effect as saving it in settings.
 
 `message-to-output-pipeline.test.ts` proves admission refresh, retry stability and
 durable user-role history. Desktop transcript and iOS feed tests cover display
-filtering; harness prompt tests cover XML formatting and escaping.
+filtering; harness prompt tests cover XML formatting, escaping and compatibility
+with the shared display filter.
 `citations.test.ts`, `mention-email.test.ts`, `slack-notification-service.test.ts`,
 `push-delivery.test.ts` and `activity-push.test.ts` cover notification reduction.
 The admission/history pipeline test uses instructions longer than the outbound
@@ -106,8 +109,9 @@ excerpt budget and checks that Activity receives the ordinary message.
 ### 2026-10-21 — Filter instructions at notification and preview boundaries
 
 **What changed:** The desktop's exact-envelope filter is shared with outbound
-plain-text reduction. Activity and mention effects strip it before truncating;
-stored transcript/model history retains it.
+plain-text reduction and uses the same envelope strings as the generator.
+Activity and mention effects share one excerpt function that strips before
+truncating; stored transcript/model history retains it.
 
 **Why:** Filtering only the transcript let the generated instructions appear in
 push, email, Slack and Activity instead of the person's actual message. Removing

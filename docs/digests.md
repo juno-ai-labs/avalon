@@ -260,18 +260,11 @@ rows one subject at a time, unread is no longer a run at the top of the feed,
 so the Unread chip can show a short page with more behind it; **Show more**
 reads the next. A server filter like `only=mentions` is the fix if that bites.
 
-**Message previews omit personal instructions.** Activity reads use the shared
-plain-text reducer, which removes the leading generated personal-system-prompt
-envelope before Markdown reduction. Message effect producers also remove it
-before the event body's excerpt limit, so long instructions cannot consume the
-preview. Push, email, Slack and digests read the same ordinary reply text.
-The transcript retains the original instructions; [personal system
-prompts](personal-system-prompt.md) owns this presentation boundary.
-
 **The sidebar flattens conversations.** `groupActivityItems` in the contracts
 package folds the loaded pages into one row per thread or breakout. The latest
-human reply supplies the preview, any unread event keeps the row unread, and an
-unread mention survives later AI completions. The row sorts at its latest event,
+human reply supplies the preview with generated personal instructions removed;
+any unread event keeps the row unread, and an unread mention survives later AI
+completions. The row sorts at its latest event,
 uses a stable conversation key, and shows the reply count and an @mention
 indicator. The Activity badge and macOS menu use the same grouping. Artifact
 updates and merges into Channels retain their own destinations so their read
