@@ -183,6 +183,7 @@ import {
 import { conversationObjectName, substreamLoopId } from "./names";
 import { WorkstreamObjectStore } from "./workstream-object-storage";
 import type { SequencedSemanticRealtimeReference } from "./workstream-semantic-realtime-outbox";
+import { enqueueSemanticRealtimeReference } from "./workstream-semantic-realtime-outbox";
 import { WorkstreamTerminalStorage } from "./workstream-terminal-storage";
 import { WorkstreamToolReceiptStorage } from "./workstream-tool-receipt-storage";
 import { WorkstreamDesktopActionStorage } from "./workstream-desktop-action-storage";
@@ -1587,7 +1588,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         "SELECT status FROM participants WHERE user_id=?", projection.userId,
       ).toArray()[0];
       const result = store.applyProjection(projection);
-      return { result, changed: result.status === "applied" && (prior?.status === "active") !== projection.active };
+      const changed = result.status === "applied" && (prior?.status === "active") !== projection.active;
+      if (changed) enqueueSemanticRealtimeReference(this.state.storage.sql, {
+        kind: "participant_changed", userId: projection.userId,
+      }, projection.changedAt);
+      return { result, changed };
     }, (_sql, outcome) => !outcome.changed ? [] : this.product.privateChildMembershipEffects({
       substreamId: request.substreamId, userId: projection.userId, actorUserId,
       actorName: names.actorName, recipientName: names.recipientName,
@@ -1611,6 +1616,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       }
       if (evicted) await this.broadcastPresence(request.workspaceId, request.parentId);
     }
+    await this.flushSemanticRealtimeOutboxBestEffort();
     return result.result;
   }
 
@@ -3665,11 +3671,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         const participant = await this.product.participant(request.userId);
         if (active) {
           if (!participant) throw new ApiError(409, "participant_change_superseded", "A later change removed this participant");
-          await this.publishLocalProductEvent(identity, { type: "participant_added", participant });
           return jsonResponse(participant);
         }
         if (participant) throw new ApiError(409, "participant_change_superseded", "This person still has access through a later share. Refresh and try again.");
-        await this.publishLocalProductEvent(identity, { type: "participant_removed", userId: request.userId });
         return jsonResponse({ ok: true });
       }
       if (request.operation === "set_appearance") {
@@ -6179,14 +6183,25 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
   }
 
-  private semanticRealtimeEvent(
+  private async semanticRealtimeEvent(
     pending: SequencedSemanticRealtimeReference,
-  ): ServerSocketEvent {
+  ): Promise<ServerSocketEvent> {
     const base = {
       sequence: pending.sequence,
       occurredAt: pending.occurredAtUtc,
     };
     switch (pending.reference.kind) {
+      case "participant_changed": {
+        const userId = pending.reference.userId;
+        const participant = await this.product.participant(userId);
+        // Profile hydration yields. Recheck local authority before publishing,
+        // including when a deferred join was overtaken by a removal.
+        if (!this.product.isParticipant(userId)) {
+          return ServerSocketEventSchema.parse({ ...base, type: "participant_removed", userId });
+        }
+        if (!participant) throw new Error("semantic_realtime_participant_missing");
+        return ServerSocketEventSchema.parse({ ...base, type: "participant_added", participant });
+      }
       case "elicitation_cancelled": {
         const elicitation = this.product.elicitationById(pending.reference.elicitationId);
         if (!elicitation) throw new Error("semantic_realtime_elicitation_missing");
@@ -6530,7 +6545,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const pending = this.objectStore.dueSemanticRealtime();
     for (const reference of pending) {
       try {
-        const event = this.semanticRealtimeEvent(reference);
+        const event = await this.semanticRealtimeEvent(reference);
         // Arm before attempting publication: a failed realtime delivery must
         // not hold back classification of the already committed merge.
         if (event.type === "transcript_turn_upserted" && event.turn.blocks.some((block) =>
