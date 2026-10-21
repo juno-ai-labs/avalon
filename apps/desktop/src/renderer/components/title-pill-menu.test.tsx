@@ -35,7 +35,7 @@ function openMenu(): void {
 }
 
 describe('a title pill menu with levels', () => {
-  it('opens at a root of actions and one row each for people, Sidekicks and Breakouts', async () => {
+  it('opens with Artifacts directly below People even when there are none', async () => {
     renderChannelPill();
     openMenu();
 
@@ -45,6 +45,10 @@ describe('a title pill menu with levels', () => {
     expect(screen.queryByRole('menuitem', { name: /^Channels/u })).not.toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: 'Add people' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: 'More' })).toBeInTheDocument();
+    const artifacts = screen.getByRole('menuitem', { name: /^Artifacts\s*0/u });
+    expect(artifacts.previousElementSibling).toHaveTextContent('People');
+    fireEvent.click(artifacts);
+    expect(await screen.findByText('No artifacts yet.')).toBeInTheDocument();
   });
 
   it('offers the thread’s Merge as a row named for its Channel, and only when given one', async () => {
@@ -173,20 +177,30 @@ describe('a title pill menu with levels', () => {
     expect(onChange).toHaveBeenCalledWith(true);
   });
 
-  it('lists a Channel’s other resources in More and opens one through the host', async () => {
+  it('opens artifacts from their own level and keeps other resources in More', async () => {
     const onOpenResource = vi.fn();
+    const onOpenArtifact = vi.fn();
     renderChannelPill({
       onOpenResource,
+      onOpenArtifact,
       workstream: { id: 'c1', title: 'Launch', scope: 'personal', participants: [member], resources: [
         { id: 'r1', title: 'Pricing sheet', resourceType: 'spreadsheet', direction: 'artifact', currentVersion: 1 },
         { id: 'r2', title: 'Launch brief', resourceType: 'document', direction: 'input', currentVersion: 3 },
       ] },
     });
     openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^Artifacts\s*1/u }));
+    expect(await screen.findByRole('button', { name: 'Thread menu: Launch, Artifacts' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /Launch brief/u })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('menuitem', { name: /Pricing sheet/u }));
+    expect(onOpenArtifact).toHaveBeenCalledWith('r1', expect.any(HTMLElement));
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
+    openMenu();
     fireEvent.click(await screen.findByRole('menuitem', { name: 'More' }));
 
-    expect(await screen.findByText('Artifacts')).toBeInTheDocument();
-    expect(screen.getByText('Resources')).toBeInTheDocument();
+    expect(await screen.findByText('Resources')).toBeInTheDocument();
+    expect(screen.queryByText('Artifacts')).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /Pricing sheet/u })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('menuitem', { name: /Launch brief/u }));
     expect(onOpenResource).toHaveBeenCalledWith('r2', expect.any(HTMLElement));
   });

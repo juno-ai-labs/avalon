@@ -367,8 +367,9 @@ conversation scope. Resolved conversations keep the Resolve item visible but
 disabled; archived conversations offer no Resolve action.
 
 Each menu has a root and levels. The root is a row of action tiles (Add people,
-Rename, Copy link, More), under a header on a Breakout, and one row each for People,
-Sidekicks, on a thread Breakouts and Channels, and Memory, with a count beside each. A row, or the
+Rename, Copy link, More), under a header on a Breakout, followed by People,
+Sidekicks and Memory rows. A thread also has Artifacts directly below People
+and Breakouts below Sidekicks. Counts sit beside each row. A row, or the
 Add people and More tiles, opens its level in place (`useTitleMenuNav`), and the
 pill becomes a breadcrumb, the title quietened and the level after it. The
 title, Escape or the left arrow step back to the root before anything closes,
@@ -394,11 +395,14 @@ from; reduced motion turns both off.
   disabled for the last participant; the host confirms in a Cancel/Continue
   dialog before it removes. A waiting invitation's dots menu offers **Cancel
   invite**. Sidekicks is the Sidekick section. Breakouts
-  is the list, newest activity first, filtered past six. More is **Icon and
+  is the list, newest activity first, filtered past six. **Artifacts** is a
+  permanent row directly below People, with the artifact count. Its level
+  lists the thread's artifacts and opens one in the existing artifact panel;
+  when empty it says **No artifacts yet.** More is **Icon and
   color** (the same choice as the pill's icon), **Pinned in
   my sidebar** (the sidebar's own pin action, lent through `useUiStore.pinChannel`),
   **Public to organization** (a switch both ways; a refusal to make it private
-  names what holds it public), Import updates, host extras, the thread's artifacts, and
+  names what holds it public), Import updates, host extras, other resources, and
   **Archive thread** last.
 - **Channel menu** (`ChannelContainerMenu`, on the Channel screen): tiles for
   Add people, Rename, Copy link (the Channel's `/s/` address) and More; People
