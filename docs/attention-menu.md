@@ -68,8 +68,8 @@ Rules that still hold:
 - **It counts only what the Threads list holds, and mentions.** Main counts
   when the reader takes part in it (`isParticipant` on the row; absent is
   counted, as before the field existed) or when it mentions them above their
-  read point: a mention in an Organization-wide thread does not seat the
-  person mentioned, and is still addressed to them. Breakouts come only from
+  read point. The mention arm also covers older mentions and Rally-authored
+  mentions, which do not themselves add participants. Breakouts come only from
   the reader's own Breakout list. `readerAttentionCount` applies the same
   rule on both arms.
 - **It covers the active Organization only.** Other Organizations' attention
