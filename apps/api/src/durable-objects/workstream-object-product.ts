@@ -3944,6 +3944,7 @@ export class WorkstreamObjectProductService {
       `SELECT author_type, author_user_id, content FROM canonical_conversation_turn_details
         WHERE substream_id = '0' AND sequence_number < ? AND message_type = 'text'
           AND author_type IN ('member', 'agent')
+          AND trim(content, char(9, 10, 13, 32)) <> ''
         ORDER BY sequence_number DESC LIMIT 10`,
       beforeTranscriptSequence,
     ).toArray().reverse();
@@ -4928,7 +4929,8 @@ export class WorkstreamObjectProductService {
         workspaceId: auth.workspaceId,
         workstreamId: root.workstream_key,
         userId: auth.userId,
-        message: annotationCommentText(input.text,input.annotations),
+        message: annotationCommentText(input.text, input.annotations),
+        authorName: people.get(auth.userId)?.name ?? null,
         activeTask,
         connectorMentions,
         humanMentions: mentionedPersonNames(prepared.mentions),

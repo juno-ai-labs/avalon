@@ -41,7 +41,7 @@ import {
   BUILT_IN_SKILLS,
   READING_GOOGLE_MEETING_NOTES_SKILL,
   RequestElicitationInputSchema,
-  classifyAddressing,
+  classifyMessageAdmission,
   canonicalToolInputHash,
   createTextDeltaBatcher,
   memberSafeHarnessFailureMessage,
@@ -1608,6 +1608,7 @@ export async function classifyWorkstreamMessage(
   env: Env,
   input: {
     message: string;
+    authorName?: string | null;
     activeTask: boolean;
     connectorMentions: string[];
     humanMentions: string[];
@@ -1630,8 +1631,13 @@ export async function classifyWorkstreamMessage(
     defer: input.defer,
   });
   let typesafeStatus: "not_attempted" | "success" | "failure" = "not_attempted";
+  let continuationPrimaryStatus: "not_attempted" | "success" | "failure" = "not_attempted";
   let openRouterStatus: "not_attempted" | "success" | "failure" = "not_attempted";
+  let continuation: Awaited<ReturnType<typeof classifyMessageAdmission>>["continuation"];
   const outcome = (): string => {
+    if (continuation?.decision === "followup_without_rally_action") return "continuation_inactive";
+    if (continuation?.decision === "resume_requested_work") return continuation.stage === "primary"
+      ? "continuation_accepted" : "continuation_fallback";
     if (typesafeStatus === "success") {
       if (openRouterStatus === "failure") return "typesafe_low_confidence_terminal_heuristic";
       return openRouterStatus === "success" ? "typesafe_low_confidence_fallback" : "typesafe_accepted";
@@ -1644,17 +1650,19 @@ export async function classifyWorkstreamMessage(
     return openRouterStatus === "not_attempted" ? "development_heuristic" : "openrouter_only";
   };
   const selectedProvider = (): "typesafe" | "openrouter" | "heuristic" => {
+    if (continuation && continuation.decision !== "use_addressing") return continuation.stage === "primary" ? "typesafe" : "openrouter";
     if (openRouterStatus === "failure") return "heuristic";
     if (openRouterStatus === "success") return "openrouter";
     return typesafeStatus === "not_attempted" ? "heuristic" : "typesafe";
   };
   try {
-    const classification = await classifyAddressing({
+    const decision = await classifyMessageAdmission({
       apiKey: env.OPENROUTER_API_KEY,
       ...(env.TYPESAFE_API_KEY ? { typesafeApiKey: env.TYPESAFE_API_KEY } : {}),
       model: ADDRESSING_FALLBACK_MODEL,
       fallbackModels: [],
       message: input.message,
+      authorName: input.authorName ?? null,
       activeTask: input.activeTask,
       connectorMentions: input.connectorMentions,
       humanMentions: input.humanMentions,
@@ -1676,6 +1684,13 @@ export async function classifyWorkstreamMessage(
       // bookkeeping above is addressing's own; the logging and archival half is
       // every classifier's, and lives in `classifier-diagnostics.ts`.
       onDiagnostic: (diagnostic) => {
+        if (diagnostic.schemaName === "message_continuation") {
+          if (diagnostic.provider === "typesafe" && diagnostic.stage === "complete") {
+            continuationPrimaryStatus = diagnostic.success ? "success" : "failure";
+          }
+          diagnostics.record(diagnostic);
+          return;
+        }
         const provider = diagnostic.provider ?? "openrouter";
         if (provider === "typesafe" && diagnostic.stage === "complete") {
           typesafeStatus = diagnostic.success ? "success" : "failure";
@@ -1689,6 +1704,8 @@ export async function classifyWorkstreamMessage(
         diagnostics.record(diagnostic);
       },
     });
+    const { classification } = decision;
+    continuation = decision.continuation;
     logStructuredEvent(env, "info", "addressing_classifier_outcome", {
       workspace_id: input.workspaceId,
       workstream_id: input.workstreamId,
@@ -1697,10 +1714,14 @@ export async function classifyWorkstreamMessage(
       outcome: outcome(),
       selected_provider: selectedProvider(),
       typesafe_status: typesafeStatus,
-      fallback_attempted: openRouterStatus !== "not_attempted",
+      fallback_attempted: openRouterStatus !== "not_attempted" || (continuation !== undefined && continuation.stage !== "primary"),
       classification: classification.classification,
       confidence: classification.confidence,
       rationale_code: classification.rationaleCode,
+      continuation_stage: continuation?.stage,
+      continuation_primary_status: continuationPrimaryStatus,
+      continuation_decision: continuation?.decision,
+      continuation_confidence: continuation?.confidence,
     });
     return classification;
   } catch (error) {
@@ -1712,7 +1733,7 @@ export async function classifyWorkstreamMessage(
       outcome: outcome(),
       selected_provider: selectedProvider(),
       typesafe_status: typesafeStatus,
-      fallback_attempted: openRouterStatus !== "not_attempted",
+      fallback_attempted: openRouterStatus !== "not_attempted" || (continuation !== undefined && continuation.stage !== "primary"),
       failure_kind: diagnosticErrorCode(error, "addressing_classifier_failed"),
     });
     throw error;

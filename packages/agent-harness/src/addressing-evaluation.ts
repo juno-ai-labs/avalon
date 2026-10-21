@@ -18,6 +18,7 @@ export const AddressingEvaluationCaseSchema = z.object({
   productionModel: z.string().min(1),
   input: z.object({
     message: z.string(),
+    authorName: z.string().nullable().optional(),
     activeTask: z.boolean(),
     connectorMentions: z.array(z.string()),
     humanMentions: z.array(z.string()),
@@ -37,7 +38,8 @@ export interface AddressingEvaluationResult {
   latencyMs: number;
   error?: string;
   resolvedModels?: string[];
-  cascadeRoute?: "typesafe" | "fallback" | "terminal_heuristic";
+  continuation?: { decision: "resume_requested_work" | "followup_without_rally_action" | "use_addressing"; confidence: number; stage: "primary" | "fallback" | "floor" };
+  cascadeRoute?: "not_needed" | "typesafe" | "fallback" | "terminal_heuristic";
   cascadeFallbackReason?: "low_confidence" | "typesafe_failure";
   typesafeConfidence?: number;
 }

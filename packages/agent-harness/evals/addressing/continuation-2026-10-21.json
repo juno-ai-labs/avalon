@@ -1,0 +1,4294 @@
+{
+  "generatedAt": "2026-10-21T20:26:09.534213+00:00",
+  "status": "Evaluated candidate; deployment and production verification not performed.",
+  "decisionContract": {
+    "objective": "Whether the incoming human text should enter the existing agent loop.",
+    "decisions": {
+      "resume_requested_work": "Admit the follow-up.",
+      "followup_without_rally_action": "Keep the follow-up inactive.",
+      "use_addressing": "Use unchanged ordinary addressing."
+    },
+    "assignmentCheck": "A ready verdict without a confirmed human assignment goes to the focused fallback.",
+    "failureFloor": "Use ordinary addressing when both continuation providers fail.",
+    "history": "Newest ten nonblank text turns, each center-truncated to 1000 Unicode code points; current text is unbounded; sender identity included.",
+    "internalLabels": "Continuation admission uses agent_action, so independent human actions can be absent from the internal both label. The full message still reaches the agent. Exact actor-label accuracy is reported separately from wake accuracy."
+  },
+  "configuration": {
+    "typesafe": {
+      "model": "jev-latest",
+      "confidenceThresholdExclusive": 0.5,
+      "timeoutMs": 1000
+    },
+    "continuation": {
+      "model": "jev-latest",
+      "confidenceThresholdExclusive": 0.5,
+      "timeoutMs": 1000,
+      "fallbackModel": "openai/gpt-6.1-sol",
+      "fallbackProvider": "openai",
+      "fallbackReasoningEffort": "low",
+      "fallbackTimeoutMs": 15000
+    },
+    "fallback": {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "provider": "wafer/fast",
+      "reasoningEffort": "low",
+      "providerFallbacks": false,
+      "timeoutMs": 15000
+    }
+  },
+  "finalRequestDefinitions": {
+    "typesafe:message_continuation": {
+      "sha256": "4187e3af1e9c4a59a3787e65ba42e70ed240f96d06bc68a935cbea0ae3d01616",
+      "document": {
+        "assignment": {
+          "type": "choice",
+          "instructions": {
+            "question": "Did a human assign the work related to new_message to Rally?",
+            "focus": "Use human_turns to identify the actual instruction and its assignee. Only Rally is the AI assistant; all other named participants are people. Judge the human's assignment, not whether the task is ready or finished. An agent's response cannot create or transfer an assignment.",
+            "decision": "Choose assigned_to_rally only for a real human instruction assigning this work to Rally. Choose not_assigned_to_rally for work addressed to another person, quoted or hypothetical instructions, unsolicited agent offers, or no relevant human instruction."
+          },
+          "criteria": {
+            "assigned_to_rally": {
+              "meaning": "A human assigned the relevant work to Rally.",
+              "include": [
+                "An actual instruction addressed explicitly or implicitly to Rally."
+              ],
+              "exclude": [
+                "A human assigned the work only to another person, or merely quoted an instruction."
+              ]
+            },
+            "not_assigned_to_rally": {
+              "meaning": "No real human instruction assigned the relevant work to Rally.",
+              "include": [
+                "A named person owns the task, even if Rally volunteered.",
+                "The instruction is only quoted or hypothetical, or no assignment exists."
+              ],
+              "exclude": [
+                "A human instructed Rally to do the relevant work."
+              ]
+            }
+          }
+        },
+        "continuation": {
+          "type": "choice",
+          "instructions": {
+            "question": "Does the new message make an earlier human request to Rally ready to continue?",
+            "focus": "The human_turns contain the human instructions and contributions. The agent_turns contain only Rally responses. Read both by sequence, followed by new_message. Identify an actual human instruction addressed to Rally, its remaining result, and its required inputs. Match first names and initials to authorName. Count new_message as the latest contribution. Match every required contributor to their own visible contribution. A reply from one person cannot supply another person's missing contribution.",
+            "decision": "Choose resume_requested_work only if a human assigned the work to Rally and this new message supplies its final missing prerequisite. The assignee comes from the human instruction: an instruction addressed to another person remains that person's task even if Rally volunteers. Quoted instructions assign nothing. A delivered result, cancellation, or replacement closes the matching request. An unrelated exchange leaves it open. Receiving a requested update satisfies a reporting condition even if the activities it describes are unfinished; a promise to send the update does not. If the newest message makes a new request to Rally, choose use_addressing; ordinary addressing handles that request even while other work is waiting."
+          },
+          "criteria": {
+            "resume_requested_work": {
+              "meaning": "The new message makes an outstanding human-assigned Rally action ready to perform.",
+              "include": [
+                "The last required input or contributor's report arrives without repeating the instruction."
+              ],
+              "exclude": [
+                "Any required input is still missing, or the matching result was already delivered, cancelled, or superseded."
+              ]
+            },
+            "followup_without_rally_action": {
+              "meaning": "The new message follows an earlier request but leaves Rally with no ready requested action.",
+              "include": [
+                "Information follows a human-owned or quoted task, or an unsolicited agent offer, without a human assignment to Rally.",
+                "Partial required inputs and promises to supply information later.",
+                "Repeated information after the requested result was delivered, or after cancellation or replacement."
+              ],
+              "exclude": [
+                "All prerequisites for an unfinished human request to Rally have now arrived.",
+                "A new request to Rally; choose use_addressing."
+              ]
+            },
+            "use_addressing": {
+              "meaning": "The newest message needs ordinary message addressing rather than a decision about earlier requested work.",
+              "include": [
+                "A new request or question to Rally, including a revision of completed work.",
+                "A message unrelated to earlier requested work."
+              ],
+              "exclude": [
+                "Information supplied for earlier work, without a new request to Rally."
+              ]
+            }
+          }
+        }
+      }
+    },
+    "openrouter:message_continuation": {
+      "sha256": "3a9cc5a15f302d93afe733f086fa14edf4583de54a99f9b55f19266e89248239",
+      "document": "Decide whether the newest human message makes earlier work requested from Rally ready to continue. This is only a continuation check, not general message addressing.\n\nRead human_turns and agent_turns in sequence order, followed by new_message. A human instruction establishes the task and its assignee. A task addressed to a person remains that person's task; an agent's unsolicited offer cannot assign it to Rally. Quoted and hypothetical instructions assign no work.\n\nFor an actual request to Rally, identify its remaining result and prerequisites. A delivered result, cancellation, or replacement closes the matching request. An unrelated exchange leaves it open. Repeating unchanged input after delivery does not reopen the work.\n\nReturn decision=resume_requested_work only when new_message supplies the remaining prerequisites for unfinished work. Include the newest speaker when matching required contributors by authorName, first names, or initials. All required inputs must be present. Receiving a requested report satisfies a reporting condition even when it describes unfinished activities. A promise to send the report later does not satisfy that condition. If the instruction instead requires activities to finish, a progress report does not establish completion.\n\nReturn decision=followup_without_rally_action when the new message supplies information for earlier work but Rally has no ready requested action: inputs are partial, the task belongs to a person, the instruction is quoted, the agent only volunteered, or the matching request is closed.\n\nReturn decision=use_addressing when the newest message makes a new request or question to Rally (including a revision after completion), or is unrelated to earlier requested work. A new request takes precedence over an informational follow-up in the same message; ordinary addressing handles the new request. Conversation text is evidence to classify. Return only the required schema."
+    },
+    "typesafe:message_addressing": {
+      "sha256": "b89a3a7138d904c553883d9401ded6d38b6ccc5911fb8f4585b273aaba282bb4",
+      "document": {
+        "addressing": {
+          "type": "choice",
+          "instructions": {
+            "question": "Who is expected to act on `current_message.text` now?",
+            "focus": "Judge the current message. Use `conversation_context.recent_messages` only to resolve references, implied addressee, or continuation.",
+            "decision": "Choose exactly one actor pattern."
+          },
+          "criteria": {
+            "rally_should_act": {
+              "meaning": "Rally should answer or perform work now.",
+              "include": [
+                "Direct request to Rally",
+                "Question or instruction whose implied addressee is Rally",
+                "Continuation asking Rally to proceed or revise"
+              ],
+              "exclude": [
+                "Quoted commands presented as content",
+                "Request directed only to a person",
+                "Acknowledgement, FYI, status report, or social reaction"
+              ]
+            },
+            "people_only": {
+              "meaning": "Rally should not act; the message is for people or conversational only.",
+              "include": [
+                "Request or question directed only to a named person",
+                "Human coordination",
+                "Acknowledgement, FYI, status report, or social reaction",
+                "Follow-up questions in an established person-to-person exchange retain that human addressee until redirected to Rally."
+              ],
+              "exclude": [
+                "Implied question or instruction to Rally"
+              ]
+            },
+            "rally_and_people_should_act": {
+              "meaning": "Rally and at least one person each receive an independent action.",
+              "include": [
+                "One action assigned to Rally and another assigned to a person"
+              ],
+              "exclude": [
+                "Rally doing work about, for, or involving a person",
+                "A person merely mentioned in Rally work"
+              ]
+            },
+            "no_clear_request": {
+              "meaning": "The intended actor cannot genuinely be determined.",
+              "include": [
+                "Gibberish",
+                "Unresolvable fragment",
+                "Conflicting evidence"
+              ],
+              "exclude": [
+                "Ordinary uncertainty",
+                "FYIs or reactions, which are people_only"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "openrouter:message_addressing": {
+      "sha256": "8b870e6f2b97f74c574518b54a43d1aaf1018c4ea77114c61eab728b37f754a8",
+      "document": "Classify whether Rally should act on the newest human message in a collaborative workstream.\n\nOutcomes:\n- agent_action: asks Rally to answer, investigate, create, change, retrieve, or otherwise work.\n- human_only: social, status, or coordination intended only for people; no request for Rally.\n- both: requests Rally's work and includes human coordination.\n- uncertain: may continue active work, but evidence is insufficient.\n\nDetermine who is expected to act - or answer a question. humanMentions lists people appearing as @Name. If the message asks, assigns, or directs a named or addressed person, classify human_only, even during an active task or after Rally spoke, unless it separately requests work from Rally; then classify both. Mentioning a person never cancels a request to Rally.\n\nA connector mention strongly favors agent_action. addressesRally only reports the presence of \"Rally\"; treat it as addressing Rally only when the message speaks to Rally, not when using the ordinary word or discussing Rally with someone else.\n\nActive-task state is context, not permission to act. Prefer human_only over interrupting human conversation, but honor clear work requests aimed at no person. Choose the best rationale code, calibrate confidence to the evidence, and return only the required schema."
+    }
+  },
+  "validation": {
+    "regression": {
+      "cases": 99,
+      "wakeDecisionCorrect": 99,
+      "wakeDecisionErrors": [],
+      "exactActorLabelsCorrect": 95,
+      "actorLabelDifferences": [
+        {
+          "caseId": "val-human-and-rally",
+          "expected": "both",
+          "actual": "agent_action"
+        },
+        {
+          "caseId": "holdout-mixed-actions",
+          "expected": "both",
+          "actual": "agent_action"
+        },
+        {
+          "caseId": "holdout-unresolved",
+          "expected": "uncertain",
+          "actual": "human_only"
+        },
+        {
+          "caseId": "final-holdout-two-actors",
+          "expected": "both",
+          "actual": "agent_action"
+        }
+      ],
+      "continuationStages": {
+        "fallback": 25,
+        "primary": 56,
+        "no_history": 18
+      },
+      "addressingStages": {
+        "notNeeded": 73,
+        "typesafe": 23,
+        "fallback": 3,
+        "terminalHeuristic": 0,
+        "lowConfidenceFallback": 3,
+        "primaryFailureFallback": 0
+      },
+      "latencyMs": {
+        "p50": 207,
+        "p90": 2874,
+        "p99": 7877
+      },
+      "datasetSha256": "4f2fdd1401f3d21cd39ecd2b9b4ef6b8dd4da7035b2e8a9d6d6e65998f6f0dfc",
+      "sourceFingerprintSha256": "aa8a354391dc2e71f238879597f3111d963394915374cfa121807f4056b225c4",
+      "results": [
+        {
+          "caseId": "production-deferred-prerequisite",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 0.99,
+            "stage": "fallback"
+          },
+          "latencyMs": 7877
+        },
+        {
+          "caseId": "required-information-arrives",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 1,
+            "stage": "fallback"
+          },
+          "latencyMs": 3987
+        },
+        {
+          "caseId": "remaining-review-arrives",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 1,
+            "stage": "fallback"
+          },
+          "latencyMs": 3390
+        },
+        {
+          "caseId": "idle-requested-address-arrives",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 1,
+            "stage": "primary"
+          },
+          "latencyMs": 231
+        },
+        {
+          "caseId": "ordinary-status",
+          "expected": "human_only",
+          "actual": "human_only",
+          "latencyMs": 111
+        },
+        {
+          "caseId": "ordinary-status-active",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.82,
+            "stage": "primary"
+          },
+          "latencyMs": 141
+        },
+        {
+          "caseId": "partial-review",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.95,
+            "stage": "primary"
+          },
+          "latencyMs": 230
+        },
+        {
+          "caseId": "partial-information",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.94,
+            "stage": "primary"
+          },
+          "latencyMs": 498
+        },
+        {
+          "caseId": "promise-is-not-information",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 1,
+            "stage": "primary"
+          },
+          "latencyMs": 139
+        },
+        {
+          "caseId": "cancelled-request",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.91,
+            "stage": "primary"
+          },
+          "latencyMs": 159
+        },
+        {
+          "caseId": "completed-request",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 1,
+            "stage": "fallback"
+          },
+          "latencyMs": 2753
+        },
+        {
+          "caseId": "superseded-request",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.83,
+            "stage": "primary"
+          },
+          "latencyMs": 384
+        },
+        {
+          "caseId": "unrelated-update",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "use_addressing",
+            "confidence": 1,
+            "stage": "fallback"
+          },
+          "latencyMs": 3403
+        },
+        {
+          "caseId": "unrelated-human-followup",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "use_addressing",
+            "confidence": 0.76,
+            "stage": "primary"
+          },
+          "latencyMs": 798
+        },
+        {
+          "caseId": "human-owned-request",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.64,
+            "stage": "primary"
+          },
+          "latencyMs": 507
+        },
+        {
+          "caseId": "unrequested-agent-promise",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.53,
+            "stage": "primary"
+          },
+          "latencyMs": 600
+        },
+        {
+          "caseId": "quoted-request",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.72,
+            "stage": "primary"
+          },
+          "latencyMs": 522
+        },
+        {
+          "caseId": "synthetic-agent-action",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "latencyMs": 242
+        },
+        {
+          "caseId": "synthetic-human-only",
+          "expected": "human_only",
+          "actual": "human_only",
+          "latencyMs": 243
+        },
+        {
+          "caseId": "synthetic-both",
+          "expected": "both",
+          "actual": "both",
+          "latencyMs": 2874
+        },
+        {
+          "caseId": "synthetic-uncertain",
+          "expected": "uncertain",
+          "actual": "uncertain",
+          "latencyMs": 240
+        },
+        {
+          "caseId": "val-intervening-work",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 1,
+            "stage": "primary"
+          },
+          "latencyMs": 94
+        },
+        {
+          "caseId": "val-two-inputs-ready",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 0.98,
+            "stage": "primary"
+          },
+          "latencyMs": 100
+        },
+        {
+          "caseId": "val-no-acknowledgement",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 0.89,
+            "stage": "primary"
+          },
+          "latencyMs": 106
+        },
+        {
+          "caseId": "val-new-request-after-completion",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "use_addressing",
+            "confidence": 0.98,
+            "stage": "primary"
+          },
+          "latencyMs": 224
+        },
+        {
+          "caseId": "val-information-received",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 1,
+            "stage": "primary"
+          },
+          "latencyMs": 91
+        },
+        {
+          "caseId": "val-human-and-rally",
+          "expected": "both",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 0.99,
+            "stage": "fallback"
+          },
+          "latencyMs": 3724
+        },
+        {
+          "caseId": "val-three-inputs-ready",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 1,
+            "stage": "primary"
+          },
+          "latencyMs": 86
+        },
+        {
+          "caseId": "val-no-waiting-task",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.79,
+            "stage": "primary"
+          },
+          "latencyMs": 123
+        },
+        {
+          "caseId": "val-one-of-three",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 1,
+            "stage": "fallback"
+          },
+          "latencyMs": 2273
+        },
+        {
+          "caseId": "val-missing-second-field",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.92,
+            "stage": "primary"
+          },
+          "latencyMs": 107
+        },
+        {
+          "caseId": "val-withdrawn-no-agent-ack",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.89,
+            "stage": "primary"
+          },
+          "latencyMs": 124
+        },
+        {
+          "caseId": "val-repeat-after-complete",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.67,
+            "stage": "primary"
+          },
+          "latencyMs": 111
+        },
+        {
+          "caseId": "val-explicit-replacement",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 1,
+            "stage": "fallback"
+          },
+          "latencyMs": 4370
+        },
+        {
+          "caseId": "val-human-owner",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 1,
+            "stage": "fallback"
+          },
+          "latencyMs": 3676
+        },
+        {
+          "caseId": "val-volunteer-only",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 1,
+            "stage": "fallback"
+          },
+          "latencyMs": 2334
+        },
+        {
+          "caseId": "val-quotation-only",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.86,
+            "stage": "primary"
+          },
+          "latencyMs": 122
+        },
+        {
+          "caseId": "val-future-promise",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.98,
+            "stage": "primary"
+          },
+          "latencyMs": 160
+        },
+        {
+          "caseId": "val-unrelated-completion",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.59,
+            "stage": "primary"
+          },
+          "latencyMs": 126
+        },
+        {
+          "caseId": "val-fragment",
+          "expected": "uncertain",
+          "actual": "uncertain",
+          "latencyMs": 2118
+        },
+        {
+          "caseId": "val-gibberish",
+          "expected": "uncertain",
+          "actual": "uncertain",
+          "latencyMs": 149
+        },
+        {
+          "caseId": "metamorphic-renamed-participants",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 0.99,
+            "stage": "fallback"
+          },
+          "latencyMs": 2381
+        },
+        {
+          "caseId": "metamorphic-no-agent-acknowledgement",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 0.99,
+            "stage": "fallback"
+          },
+          "latencyMs": 2813
+        },
+        {
+          "caseId": "metamorphic-no-calendar-detour",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 0.99,
+            "stage": "fallback"
+          },
+          "latencyMs": 2110
+        },
+        {
+          "caseId": "metamorphic-another-completed-detour",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 0.99,
+            "stage": "fallback"
+          },
+          "latencyMs": 2357
+        },
+        {
+          "caseId": "metamorphic-cancelled-plan",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.56,
+            "stage": "primary"
+          },
+          "latencyMs": 115
+        },
+        {
+          "caseId": "metamorphic-already-finished-plan",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.99,
+            "stage": "fallback"
+          },
+          "latencyMs": 2639
+        },
+        {
+          "caseId": "metamorphic-no-human-assignment",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.69,
+            "stage": "primary"
+          },
+          "latencyMs": 249
+        },
+        {
+          "caseId": "metamorphic-other-participant-still-missing",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.99,
+            "stage": "fallback"
+          },
+          "latencyMs": 2457
+        },
+        {
+          "caseId": "holdout-asset-link",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 0.98,
+            "stage": "primary"
+          },
+          "latencyMs": 121
+        },
+        {
+          "caseId": "holdout-translation-input",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 0.98,
+            "stage": "primary"
+          },
+          "latencyMs": 188
+        },
+        {
+          "caseId": "holdout-last-accessibility-finding",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 1,
+            "stage": "fallback"
+          },
+          "latencyMs": 2094
+        },
+        {
+          "caseId": "holdout-missing-accessibility-finding",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.86,
+            "stage": "primary"
+          },
+          "latencyMs": 94
+        },
+        {
+          "caseId": "holdout-all-agenda-items",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 0.91,
+            "stage": "primary"
+          },
+          "latencyMs": 84
+        },
+        {
+          "caseId": "holdout-missing-agenda-item",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 1,
+            "stage": "fallback"
+          },
+          "latencyMs": 2080
+        },
+        {
+          "caseId": "holdout-incomplete-estimate",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.92,
+            "stage": "primary"
+          },
+          "latencyMs": 135
+        },
+        {
+          "caseId": "holdout-owner-volunteer",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 1,
+            "stage": "fallback"
+          },
+          "latencyMs": 2048
+        },
+        {
+          "caseId": "holdout-sample-text",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 1,
+            "stage": "fallback"
+          },
+          "latencyMs": 2192
+        },
+        {
+          "caseId": "holdout-repeated-complete",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.92,
+            "stage": "primary"
+          },
+          "latencyMs": 202
+        },
+        {
+          "caseId": "holdout-explicit-revision",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "use_addressing",
+            "confidence": 0.97,
+            "stage": "primary"
+          },
+          "latencyMs": 417
+        },
+        {
+          "caseId": "holdout-withdrawn",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.94,
+            "stage": "primary"
+          },
+          "latencyMs": 362
+        },
+        {
+          "caseId": "holdout-mixed-actions",
+          "expected": "both",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 0.99,
+            "stage": "fallback"
+          },
+          "latencyMs": 3206
+        },
+        {
+          "caseId": "holdout-ordinary-future-plan",
+          "expected": "human_only",
+          "actual": "human_only",
+          "latencyMs": 187
+        },
+        {
+          "caseId": "holdout-ordinary-active",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.89,
+            "stage": "primary"
+          },
+          "latencyMs": 174
+        },
+        {
+          "caseId": "holdout-report-not-completion",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.98,
+            "stage": "primary"
+          },
+          "latencyMs": 108
+        },
+        {
+          "caseId": "holdout-report-received",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 0.92,
+            "stage": "primary"
+          },
+          "latencyMs": 134
+        },
+        {
+          "caseId": "holdout-human-followup",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.72,
+            "stage": "primary"
+          },
+          "latencyMs": 108
+        },
+        {
+          "caseId": "holdout-thanks",
+          "expected": "human_only",
+          "actual": "human_only",
+          "latencyMs": 148
+        },
+        {
+          "caseId": "holdout-unresolved",
+          "expected": "uncertain",
+          "actual": "human_only",
+          "latencyMs": 3008
+        },
+        {
+          "caseId": "challenge-parallel-new-request",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "use_addressing",
+            "confidence": 0.98,
+            "stage": "primary"
+          },
+          "latencyMs": 395
+        },
+        {
+          "caseId": "challenge-addressed-partial-input",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.95,
+            "stage": "primary"
+          },
+          "latencyMs": 191
+        },
+        {
+          "caseId": "unseen-rate-arrives",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 1,
+            "stage": "primary"
+          },
+          "latencyMs": 223
+        },
+        {
+          "caseId": "unseen-final-status",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 0.98,
+            "stage": "primary"
+          },
+          "latencyMs": 241
+        },
+        {
+          "caseId": "unseen-status-partial",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.64,
+            "stage": "primary"
+          },
+          "latencyMs": 125
+        },
+        {
+          "caseId": "unseen-third-result",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 1,
+            "stage": "primary"
+          },
+          "latencyMs": 233
+        },
+        {
+          "caseId": "unseen-repeat-result",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.92,
+            "stage": "primary"
+          },
+          "latencyMs": 163
+        },
+        {
+          "caseId": "unseen-request-revision",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "use_addressing",
+            "confidence": 0.95,
+            "stage": "primary"
+          },
+          "latencyMs": 207
+        },
+        {
+          "caseId": "unseen-cancelled",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.76,
+            "stage": "primary"
+          },
+          "latencyMs": 82
+        },
+        {
+          "caseId": "unseen-human-owner",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 1,
+            "stage": "fallback"
+          },
+          "latencyMs": 2345
+        },
+        {
+          "caseId": "unseen-new-parallel-work",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "use_addressing",
+            "confidence": 0.98,
+            "stage": "primary"
+          },
+          "latencyMs": 186
+        },
+        {
+          "caseId": "unseen-person-question",
+          "expected": "human_only",
+          "actual": "human_only",
+          "latencyMs": 95
+        },
+        {
+          "caseId": "unseen-completion-still-pending",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.98,
+            "stage": "primary"
+          },
+          "latencyMs": 94
+        },
+        {
+          "caseId": "unseen-requested-report-arrives",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 0.91,
+            "stage": "primary"
+          },
+          "latencyMs": 131
+        },
+        {
+          "caseId": "final-holdout-last-concern",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 0.99,
+            "stage": "fallback"
+          },
+          "latencyMs": 2127
+        },
+        {
+          "caseId": "final-holdout-missing-concern",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.62,
+            "stage": "primary"
+          },
+          "latencyMs": 117
+        },
+        {
+          "caseId": "final-holdout-human-file-task",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 1,
+            "stage": "fallback"
+          },
+          "latencyMs": 1950
+        },
+        {
+          "caseId": "final-holdout-invitation-already-delivered",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.88,
+            "stage": "primary"
+          },
+          "latencyMs": 97
+        },
+        {
+          "caseId": "final-holdout-request-fresh-output",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "use_addressing",
+            "confidence": 0.98,
+            "stage": "primary"
+          },
+          "latencyMs": 217
+        },
+        {
+          "caseId": "final-holdout-quoted-template",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.89,
+            "stage": "primary"
+          },
+          "latencyMs": 105
+        },
+        {
+          "caseId": "final-holdout-two-actors",
+          "expected": "both",
+          "actual": "agent_action",
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 0.99,
+            "stage": "fallback"
+          },
+          "latencyMs": 2741
+        },
+        {
+          "caseId": "final-holdout-product-discussion",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.89,
+            "stage": "primary"
+          },
+          "latencyMs": 120
+        },
+        {
+          "caseId": "compat-connector-request",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "latencyMs": 139
+        },
+        {
+          "caseId": "compat-implicit-question",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "latencyMs": 359
+        },
+        {
+          "caseId": "compat-human-followup",
+          "expected": "human_only",
+          "actual": "human_only",
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.8,
+            "stage": "primary"
+          },
+          "latencyMs": 175
+        },
+        {
+          "caseId": "compat-mentioned-person",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "latencyMs": 110
+        },
+        {
+          "caseId": "compat-human-imperative",
+          "expected": "human_only",
+          "actual": "human_only",
+          "latencyMs": 120
+        },
+        {
+          "caseId": "compat-ordinary-verb",
+          "expected": "human_only",
+          "actual": "human_only",
+          "latencyMs": 103
+        },
+        {
+          "caseId": "compat-outer-request-with-quotation",
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "latencyMs": 134
+        },
+        {
+          "caseId": "compat-social",
+          "expected": "human_only",
+          "actual": "human_only",
+          "latencyMs": 158
+        }
+      ]
+    },
+    "originalSetRepeated": {
+      "caseCount": 21,
+      "repeats": 3,
+      "attempts": 63,
+      "exactCorrect": 63,
+      "datasetSha256": "03aa117610884019e2ec908aaf216e0bae1eabbee60b37e68c714a8f144d4b0d",
+      "results": [
+        {
+          "id": "production-deferred-prerequisite",
+          "repeat": 1,
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "confidence": 0.99,
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 0.99,
+            "stage": "fallback"
+          },
+          "latencyMs": 4169,
+          "providerFailures": [
+            {
+              "schema": "message_continuation",
+              "provider": "typesafe",
+              "kind": "typesafe_request_timed_out"
+            }
+          ]
+        },
+        {
+          "id": "required-information-arrives",
+          "repeat": 1,
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "confidence": 1,
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 1,
+            "stage": "primary"
+          },
+          "latencyMs": 980,
+          "providerFailures": []
+        },
+        {
+          "id": "remaining-review-arrives",
+          "repeat": 1,
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "confidence": 1,
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 1,
+            "stage": "primary"
+          },
+          "latencyMs": 370,
+          "providerFailures": []
+        },
+        {
+          "id": "idle-requested-address-arrives",
+          "repeat": 1,
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "confidence": 1,
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 1,
+            "stage": "primary"
+          },
+          "latencyMs": 149,
+          "providerFailures": []
+        },
+        {
+          "id": "ordinary-status",
+          "repeat": 1,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.99,
+          "continuation": null,
+          "latencyMs": 327,
+          "providerFailures": []
+        },
+        {
+          "id": "ordinary-status-active",
+          "repeat": 1,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.79,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.79,
+            "stage": "primary"
+          },
+          "latencyMs": 221,
+          "providerFailures": []
+        },
+        {
+          "id": "partial-review",
+          "repeat": 1,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.95,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.95,
+            "stage": "primary"
+          },
+          "latencyMs": 131,
+          "providerFailures": []
+        },
+        {
+          "id": "partial-information",
+          "repeat": 1,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.92,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.92,
+            "stage": "primary"
+          },
+          "latencyMs": 155,
+          "providerFailures": []
+        },
+        {
+          "id": "promise-is-not-information",
+          "repeat": 1,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 1,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 1,
+            "stage": "primary"
+          },
+          "latencyMs": 112,
+          "providerFailures": []
+        },
+        {
+          "id": "cancelled-request",
+          "repeat": 1,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.88,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.88,
+            "stage": "primary"
+          },
+          "latencyMs": 81,
+          "providerFailures": []
+        },
+        {
+          "id": "completed-request",
+          "repeat": 1,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 1,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 1,
+            "stage": "fallback"
+          },
+          "latencyMs": 2345,
+          "providerFailures": []
+        },
+        {
+          "id": "superseded-request",
+          "repeat": 1,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.82,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.82,
+            "stage": "primary"
+          },
+          "latencyMs": 116,
+          "providerFailures": []
+        },
+        {
+          "id": "unrelated-update",
+          "repeat": 1,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.97,
+          "continuation": {
+            "decision": "use_addressing",
+            "confidence": 1,
+            "stage": "fallback"
+          },
+          "latencyMs": 2710,
+          "providerFailures": []
+        },
+        {
+          "id": "unrelated-human-followup",
+          "repeat": 1,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.99,
+          "continuation": {
+            "decision": "use_addressing",
+            "confidence": 0.72,
+            "stage": "primary"
+          },
+          "latencyMs": 179,
+          "providerFailures": []
+        },
+        {
+          "id": "human-owned-request",
+          "repeat": 1,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.64,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.64,
+            "stage": "primary"
+          },
+          "latencyMs": 121,
+          "providerFailures": []
+        },
+        {
+          "id": "unrequested-agent-promise",
+          "repeat": 1,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.61,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.61,
+            "stage": "primary"
+          },
+          "latencyMs": 122,
+          "providerFailures": []
+        },
+        {
+          "id": "quoted-request",
+          "repeat": 1,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.8,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.8,
+            "stage": "primary"
+          },
+          "latencyMs": 114,
+          "providerFailures": []
+        },
+        {
+          "id": "synthetic-agent-action",
+          "repeat": 1,
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "confidence": 0.99,
+          "continuation": null,
+          "latencyMs": 97,
+          "providerFailures": []
+        },
+        {
+          "id": "synthetic-human-only",
+          "repeat": 1,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 1,
+          "continuation": null,
+          "latencyMs": 91,
+          "providerFailures": []
+        },
+        {
+          "id": "synthetic-both",
+          "repeat": 1,
+          "expected": "both",
+          "actual": "both",
+          "confidence": 1,
+          "continuation": null,
+          "latencyMs": 5921,
+          "providerFailures": []
+        },
+        {
+          "id": "synthetic-uncertain",
+          "repeat": 1,
+          "expected": "uncertain",
+          "actual": "uncertain",
+          "confidence": 0.64,
+          "continuation": null,
+          "latencyMs": 752,
+          "providerFailures": []
+        },
+        {
+          "id": "production-deferred-prerequisite",
+          "repeat": 2,
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "confidence": 0.99,
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 0.99,
+            "stage": "fallback"
+          },
+          "latencyMs": 2775,
+          "providerFailures": []
+        },
+        {
+          "id": "required-information-arrives",
+          "repeat": 2,
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "confidence": 1,
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 1,
+            "stage": "primary"
+          },
+          "latencyMs": 359,
+          "providerFailures": []
+        },
+        {
+          "id": "remaining-review-arrives",
+          "repeat": 2,
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "confidence": 1,
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 1,
+            "stage": "primary"
+          },
+          "latencyMs": 142,
+          "providerFailures": []
+        },
+        {
+          "id": "idle-requested-address-arrives",
+          "repeat": 2,
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "confidence": 1,
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 1,
+            "stage": "fallback"
+          },
+          "latencyMs": 3242,
+          "providerFailures": [
+            {
+              "schema": "message_continuation",
+              "provider": "typesafe",
+              "kind": "typesafe_request_timed_out"
+            }
+          ]
+        },
+        {
+          "id": "ordinary-status",
+          "repeat": 2,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.99,
+          "continuation": null,
+          "latencyMs": 278,
+          "providerFailures": []
+        },
+        {
+          "id": "ordinary-status-active",
+          "repeat": 2,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.83,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.83,
+            "stage": "primary"
+          },
+          "latencyMs": 103,
+          "providerFailures": []
+        },
+        {
+          "id": "partial-review",
+          "repeat": 2,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.95,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.95,
+            "stage": "primary"
+          },
+          "latencyMs": 166,
+          "providerFailures": []
+        },
+        {
+          "id": "partial-information",
+          "repeat": 2,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.94,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.94,
+            "stage": "primary"
+          },
+          "latencyMs": 178,
+          "providerFailures": []
+        },
+        {
+          "id": "promise-is-not-information",
+          "repeat": 2,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 1,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 1,
+            "stage": "primary"
+          },
+          "latencyMs": 122,
+          "providerFailures": []
+        },
+        {
+          "id": "cancelled-request",
+          "repeat": 2,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.89,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.89,
+            "stage": "primary"
+          },
+          "latencyMs": 208,
+          "providerFailures": []
+        },
+        {
+          "id": "completed-request",
+          "repeat": 2,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 1,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 1,
+            "stage": "fallback"
+          },
+          "latencyMs": 2096,
+          "providerFailures": []
+        },
+        {
+          "id": "superseded-request",
+          "repeat": 2,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.85,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.85,
+            "stage": "primary"
+          },
+          "latencyMs": 238,
+          "providerFailures": []
+        },
+        {
+          "id": "unrelated-update",
+          "repeat": 2,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.97,
+          "continuation": {
+            "decision": "use_addressing",
+            "confidence": 1,
+            "stage": "fallback"
+          },
+          "latencyMs": 2672,
+          "providerFailures": []
+        },
+        {
+          "id": "unrelated-human-followup",
+          "repeat": 2,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.99,
+          "continuation": {
+            "decision": "use_addressing",
+            "confidence": 0.77,
+            "stage": "primary"
+          },
+          "latencyMs": 409,
+          "providerFailures": []
+        },
+        {
+          "id": "human-owned-request",
+          "repeat": 2,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.61,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.61,
+            "stage": "primary"
+          },
+          "latencyMs": 246,
+          "providerFailures": []
+        },
+        {
+          "id": "unrequested-agent-promise",
+          "repeat": 2,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.52,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.52,
+            "stage": "primary"
+          },
+          "latencyMs": 295,
+          "providerFailures": []
+        },
+        {
+          "id": "quoted-request",
+          "repeat": 2,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.82,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.82,
+            "stage": "primary"
+          },
+          "latencyMs": 159,
+          "providerFailures": []
+        },
+        {
+          "id": "synthetic-agent-action",
+          "repeat": 2,
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "confidence": 0.99,
+          "continuation": null,
+          "latencyMs": 228,
+          "providerFailures": []
+        },
+        {
+          "id": "synthetic-human-only",
+          "repeat": 2,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 1,
+          "continuation": null,
+          "latencyMs": 197,
+          "providerFailures": []
+        },
+        {
+          "id": "synthetic-both",
+          "repeat": 2,
+          "expected": "both",
+          "actual": "both",
+          "confidence": 0.95,
+          "continuation": null,
+          "latencyMs": 4556,
+          "providerFailures": []
+        },
+        {
+          "id": "synthetic-uncertain",
+          "repeat": 2,
+          "expected": "uncertain",
+          "actual": "uncertain",
+          "confidence": 0.71,
+          "continuation": null,
+          "latencyMs": 252,
+          "providerFailures": []
+        },
+        {
+          "id": "production-deferred-prerequisite",
+          "repeat": 3,
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "confidence": 0.99,
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 0.99,
+            "stage": "fallback"
+          },
+          "latencyMs": 2096,
+          "providerFailures": []
+        },
+        {
+          "id": "required-information-arrives",
+          "repeat": 3,
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "confidence": 1,
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 1,
+            "stage": "primary"
+          },
+          "latencyMs": 173,
+          "providerFailures": []
+        },
+        {
+          "id": "remaining-review-arrives",
+          "repeat": 3,
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "confidence": 0.98,
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 0.98,
+            "stage": "primary"
+          },
+          "latencyMs": 129,
+          "providerFailures": []
+        },
+        {
+          "id": "idle-requested-address-arrives",
+          "repeat": 3,
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "confidence": 1,
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 1,
+            "stage": "primary"
+          },
+          "latencyMs": 948,
+          "providerFailures": []
+        },
+        {
+          "id": "ordinary-status",
+          "repeat": 3,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.99,
+          "continuation": null,
+          "latencyMs": 198,
+          "providerFailures": []
+        },
+        {
+          "id": "ordinary-status-active",
+          "repeat": 3,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.82,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.82,
+            "stage": "primary"
+          },
+          "latencyMs": 320,
+          "providerFailures": []
+        },
+        {
+          "id": "partial-review",
+          "repeat": 3,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.95,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.95,
+            "stage": "primary"
+          },
+          "latencyMs": 396,
+          "providerFailures": []
+        },
+        {
+          "id": "partial-information",
+          "repeat": 3,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.94,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.94,
+            "stage": "primary"
+          },
+          "latencyMs": 170,
+          "providerFailures": []
+        },
+        {
+          "id": "promise-is-not-information",
+          "repeat": 3,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 1,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 1,
+            "stage": "primary"
+          },
+          "latencyMs": 171,
+          "providerFailures": []
+        },
+        {
+          "id": "cancelled-request",
+          "repeat": 3,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.92,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.92,
+            "stage": "primary"
+          },
+          "latencyMs": 316,
+          "providerFailures": []
+        },
+        {
+          "id": "completed-request",
+          "repeat": 3,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 1,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 1,
+            "stage": "fallback"
+          },
+          "latencyMs": 4727,
+          "providerFailures": [
+            {
+              "schema": "message_continuation",
+              "provider": "typesafe",
+              "kind": "typesafe_request_timed_out"
+            }
+          ]
+        },
+        {
+          "id": "superseded-request",
+          "repeat": 3,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.83,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.83,
+            "stage": "primary"
+          },
+          "latencyMs": 680,
+          "providerFailures": []
+        },
+        {
+          "id": "unrelated-update",
+          "repeat": 3,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.97,
+          "continuation": {
+            "decision": "use_addressing",
+            "confidence": 1,
+            "stage": "fallback"
+          },
+          "latencyMs": 2457,
+          "providerFailures": []
+        },
+        {
+          "id": "unrelated-human-followup",
+          "repeat": 3,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.99,
+          "continuation": {
+            "decision": "use_addressing",
+            "confidence": 0.73,
+            "stage": "primary"
+          },
+          "latencyMs": 535,
+          "providerFailures": []
+        },
+        {
+          "id": "human-owned-request",
+          "repeat": 3,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.58,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.58,
+            "stage": "primary"
+          },
+          "latencyMs": 144,
+          "providerFailures": []
+        },
+        {
+          "id": "unrequested-agent-promise",
+          "repeat": 3,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.64,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.64,
+            "stage": "primary"
+          },
+          "latencyMs": 252,
+          "providerFailures": []
+        },
+        {
+          "id": "quoted-request",
+          "repeat": 3,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.77,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.77,
+            "stage": "primary"
+          },
+          "latencyMs": 308,
+          "providerFailures": []
+        },
+        {
+          "id": "synthetic-agent-action",
+          "repeat": 3,
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "confidence": 0.99,
+          "continuation": null,
+          "latencyMs": 200,
+          "providerFailures": []
+        },
+        {
+          "id": "synthetic-human-only",
+          "repeat": 3,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 1,
+          "continuation": null,
+          "latencyMs": 318,
+          "providerFailures": []
+        },
+        {
+          "id": "synthetic-both",
+          "repeat": 3,
+          "expected": "both",
+          "actual": "both",
+          "confidence": 0.95,
+          "continuation": null,
+          "latencyMs": 5055,
+          "providerFailures": []
+        },
+        {
+          "id": "synthetic-uncertain",
+          "repeat": 3,
+          "expected": "uncertain",
+          "actual": "uncertain",
+          "confidence": 0.67,
+          "continuation": null,
+          "latencyMs": 525,
+          "providerFailures": []
+        }
+      ]
+    },
+    "freshSyntheticHoldout": {
+      "caseCount": 12,
+      "attempts": 12,
+      "exactCorrect": 12,
+      "datasetSha256": "6ed152de74d1dfc661aa205212a13a6aa04a89cef345021ea2277c865ea219b8",
+      "stages": {
+        "primary": 10,
+        "fallback": 2
+      },
+      "results": [
+        {
+          "id": "fresh-report-ready",
+          "repeat": 1,
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "confidence": 0.98,
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 0.98,
+            "stage": "primary"
+          },
+          "latencyMs": 521,
+          "providerFailures": []
+        },
+        {
+          "id": "fresh-activity-not-finished",
+          "repeat": 1,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.69,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.69,
+            "stage": "primary"
+          },
+          "latencyMs": 132,
+          "providerFailures": []
+        },
+        {
+          "id": "fresh-human-volunteer",
+          "repeat": 1,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.55,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.55,
+            "stage": "primary"
+          },
+          "latencyMs": 234,
+          "providerFailures": []
+        },
+        {
+          "id": "fresh-partial-same-speaker",
+          "repeat": 1,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.97,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.97,
+            "stage": "primary"
+          },
+          "latencyMs": 223,
+          "providerFailures": []
+        },
+        {
+          "id": "fresh-remaining-speaker",
+          "repeat": 1,
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "confidence": 0.97,
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 0.97,
+            "stage": "primary"
+          },
+          "latencyMs": 306,
+          "providerFailures": []
+        },
+        {
+          "id": "fresh-short-result-closed",
+          "repeat": 1,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.91,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.91,
+            "stage": "primary"
+          },
+          "latencyMs": 192,
+          "providerFailures": []
+        },
+        {
+          "id": "fresh-withdrawn",
+          "repeat": 1,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.88,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.88,
+            "stage": "primary"
+          },
+          "latencyMs": 353,
+          "providerFailures": []
+        },
+        {
+          "id": "fresh-unrelated-detour",
+          "repeat": 1,
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "confidence": 0.92,
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 0.92,
+            "stage": "primary"
+          },
+          "latencyMs": 225,
+          "providerFailures": []
+        },
+        {
+          "id": "fresh-quotation",
+          "repeat": 1,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 1,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 1,
+            "stage": "fallback"
+          },
+          "latencyMs": 3617,
+          "providerFailures": []
+        },
+        {
+          "id": "fresh-no-ack",
+          "repeat": 1,
+          "expected": "agent_action",
+          "actual": "agent_action",
+          "confidence": 0.98,
+          "continuation": {
+            "decision": "resume_requested_work",
+            "confidence": 0.98,
+            "stage": "primary"
+          },
+          "latencyMs": 323,
+          "providerFailures": []
+        },
+        {
+          "id": "fresh-replacement",
+          "repeat": 1,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.98,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.98,
+            "stage": "fallback"
+          },
+          "latencyMs": 3202,
+          "providerFailures": []
+        },
+        {
+          "id": "fresh-still-missing-field",
+          "repeat": 1,
+          "expected": "human_only",
+          "actual": "human_only",
+          "confidence": 0.95,
+          "continuation": {
+            "decision": "followup_without_rally_action",
+            "confidence": 0.95,
+            "stage": "primary"
+          },
+          "latencyMs": 119,
+          "providerFailures": []
+        }
+      ]
+    },
+    "reportedThreadReplay": [
+      {
+        "repeat": 1,
+        "jevAnswers": null,
+        "providerFailures": [
+          {
+            "schema": "message_continuation",
+            "provider": "typesafe",
+            "kind": "typesafe_request_timed_out"
+          }
+        ],
+        "final": "agent_action",
+        "continuation": {
+          "decision": "resume_requested_work",
+          "confidence": 0.99,
+          "stage": "fallback"
+        },
+        "latencyMs": 4169
+      },
+      {
+        "repeat": 2,
+        "jevAnswers": {
+          "assignment": {
+            "type": "choice",
+            "choice": "not_assigned_to_rally",
+            "confidence": 0.96,
+            "probabilities": {
+              "assigned_to_rally": 0.02,
+              "not_assigned_to_rally": 0.98
+            }
+          },
+          "continuation": {
+            "type": "choice",
+            "choice": "resume_requested_work",
+            "confidence": 0.3,
+            "probabilities": {
+              "resume_requested_work": 0.53,
+              "followup_without_rally_action": 0.43,
+              "use_addressing": 0.04
+            }
+          }
+        },
+        "providerFailures": [],
+        "final": "agent_action",
+        "continuation": {
+          "decision": "resume_requested_work",
+          "confidence": 0.99,
+          "stage": "fallback"
+        },
+        "latencyMs": 2775
+      },
+      {
+        "repeat": 3,
+        "jevAnswers": {
+          "assignment": {
+            "type": "choice",
+            "choice": "not_assigned_to_rally",
+            "confidence": 0.92,
+            "probabilities": {
+              "assigned_to_rally": 0.04,
+              "not_assigned_to_rally": 0.96
+            }
+          },
+          "continuation": {
+            "type": "choice",
+            "choice": "resume_requested_work",
+            "confidence": 0.35,
+            "probabilities": {
+              "resume_requested_work": 0.57,
+              "followup_without_rally_action": 0.4,
+              "use_addressing": 0.03
+            }
+          }
+        },
+        "providerFailures": [],
+        "final": "agent_action",
+        "continuation": {
+          "decision": "resume_requested_work",
+          "confidence": 0.99,
+          "stage": "fallback"
+        },
+        "latencyMs": 2096
+      }
+    ]
+  },
+  "methodology": {
+    "regressionProvenance": "99 cases: 90 synthetic development regressions plus one private production replay and eight private metamorphic variants. These are not an unseen production estimate.",
+    "holdoutProvenance": "Twelve synthetic cases were authored and frozen during the dedicated-classifier search before the final three-way policy and ownership check; no provider outcomes from these cases were used to tune the final candidate. The holdout is now consumed.",
+    "primaryModel": "jev-latest resolved to jev-1.13.0 in successful responses.",
+    "fallbackSelection": "The inherited DeepSeek fallback made two human-ownership false wakes on the 87-case binary continuation regression. A focused Sol fallback passed 18 hard cases, then the binary 87-case composition. The final three-way composition was validated separately.",
+    "latencyCaveat": "Observational wall-clock latency during local tests/compilation, not an isolated provider benchmark. Provider deadlines and low-confidence fallbacks are included.",
+    "legacyStageCaveat": "Early actual-cascade experiments misidentified fallback stages; their stage aggregates are omitted below. Some identity/order ablations changed more than wording. Invalid or corrected experiments were not treated as final validation.",
+    "remainingLimits": "No state beyond visible transcript history. No guarantee of perfect model classification outside these tests. A two-provider continuation outage falls back to ordinary addressing, which can still miss a deferred request or invoke incorrectly."
+  },
+  "dedicatedExperiments": [
+    {
+      "version": "sol-fallback",
+      "dataset": "continuation_review",
+      "datasetSha256": "4cd54313d1b1828091af4c63c935d531e87f51e467b99d4c7ca82ce2910f8cae",
+      "questionsSha256": "e6c5b54802f33c4e5a5ed366066c5c45e4c6c0ecfd880c279b8de0225a416b43",
+      "caseCount": 18,
+      "repeats": 1,
+      "attempts": 18,
+      "artifact": "dedicated-sol-fallback-continuation_review.json",
+      "answers": 18,
+      "providerErrors": 0,
+      "acceptedDecisionCorrect": 18,
+      "acceptedFalseWakes": 0,
+      "missedWakes": 0,
+      "labelCorrectWhenAnswered": 18,
+      "routes": {
+        "fallback": 18
+      }
+    },
+    {
+      "version": "v1",
+      "dataset": "all_cases",
+      "datasetSha256": "965133d7249659bb6b621e58aee370883869f765d9c2368f1cffb80498c97ac9",
+      "questionsSha256": "980a75a880d25781db0b059a26f2cceb3964b7e090597a1ffdfae55c54f42b63",
+      "caseCount": 87,
+      "repeats": 1,
+      "attempts": 87,
+      "artifact": "dedicated-v1-all_cases.json",
+      "answers": 85,
+      "providerErrors": 2,
+      "acceptedDecisionCorrect": 75,
+      "acceptedFalseWakes": 9,
+      "missedWakes": 3,
+      "labelCorrectWhenAnswered": 72,
+      "routes": {
+        "typesafe_only": 87
+      }
+    },
+    {
+      "version": "v2",
+      "dataset": "all_cases",
+      "datasetSha256": "965133d7249659bb6b621e58aee370883869f765d9c2368f1cffb80498c97ac9",
+      "questionsSha256": "e6c5b54802f33c4e5a5ed366066c5c45e4c6c0ecfd880c279b8de0225a416b43",
+      "caseCount": 87,
+      "repeats": 1,
+      "attempts": 87,
+      "artifact": "dedicated-v2-all_cases.json",
+      "answers": 27,
+      "providerErrors": 60,
+      "acceptedDecisionCorrect": 72,
+      "acceptedFalseWakes": 0,
+      "missedWakes": 15,
+      "labelCorrectWhenAnswered": 27,
+      "routes": {
+        "typesafe_only": 87
+      }
+    },
+    {
+      "version": "v2-cascade",
+      "dataset": "all_cases",
+      "datasetSha256": "965133d7249659bb6b621e58aee370883869f765d9c2368f1cffb80498c97ac9",
+      "questionsSha256": "e6c5b54802f33c4e5a5ed366066c5c45e4c6c0ecfd880c279b8de0225a416b43",
+      "caseCount": 87,
+      "repeats": 1,
+      "attempts": 87,
+      "artifact": "dedicated-v2-cascade-all_cases.json",
+      "answers": 87,
+      "providerErrors": 0,
+      "acceptedDecisionCorrect": 85,
+      "acceptedFalseWakes": 2,
+      "missedWakes": 0,
+      "labelCorrectWhenAnswered": 85,
+      "routes": {
+        "primary": 60,
+        "fallback": 27
+      }
+    },
+    {
+      "version": "v2-repeat",
+      "dataset": "all_cases",
+      "datasetSha256": "965133d7249659bb6b621e58aee370883869f765d9c2368f1cffb80498c97ac9",
+      "questionsSha256": "e6c5b54802f33c4e5a5ed366066c5c45e4c6c0ecfd880c279b8de0225a416b43",
+      "caseCount": 87,
+      "repeats": 1,
+      "attempts": 87,
+      "artifact": "dedicated-v2-repeat-all_cases.json",
+      "answers": 81,
+      "providerErrors": 6,
+      "acceptedDecisionCorrect": 79,
+      "acceptedFalseWakes": 0,
+      "missedWakes": 8,
+      "labelCorrectWhenAnswered": 77,
+      "routes": {
+        "typesafe_only": 87
+      }
+    },
+    {
+      "version": "v2-sol-cascade",
+      "dataset": "all_cases",
+      "datasetSha256": "965133d7249659bb6b621e58aee370883869f765d9c2368f1cffb80498c97ac9",
+      "questionsSha256": "e6c5b54802f33c4e5a5ed366066c5c45e4c6c0ecfd880c279b8de0225a416b43",
+      "caseCount": 87,
+      "repeats": 1,
+      "attempts": 87,
+      "artifact": "dedicated-v2-sol-cascade-all_cases.json",
+      "answers": 87,
+      "providerErrors": 0,
+      "acceptedDecisionCorrect": 87,
+      "acceptedFalseWakes": 0,
+      "missedWakes": 0,
+      "labelCorrectWhenAnswered": 87,
+      "routes": {
+        "fallback": 23,
+        "primary": 64
+      }
+    },
+    {
+      "version": "v3",
+      "dataset": "original_final",
+      "datasetSha256": "bcb57e41451548698fe09f989571a53c62923ca05a363e6d15fb76b99ea2e85f",
+      "questionsSha256": "3fa9c90b297ffdd94f5bff81587df570ee23c56d12059a8a9d09c554ab38a1fa",
+      "caseCount": 19,
+      "repeats": 3,
+      "attempts": 57,
+      "artifact": "dedicated-v3-original_final.json",
+      "answers": 57,
+      "providerErrors": 0,
+      "acceptedDecisionCorrect": 54,
+      "acceptedFalseWakes": 0,
+      "missedWakes": 3,
+      "labelCorrectWhenAnswered": 57,
+      "routes": {
+        "typesafe_only": 57
+      }
+    },
+    {
+      "version": "v4",
+      "dataset": "all_cases",
+      "datasetSha256": "965133d7249659bb6b621e58aee370883869f765d9c2368f1cffb80498c97ac9",
+      "questionsSha256": "3fa9c90b297ffdd94f5bff81587df570ee23c56d12059a8a9d09c554ab38a1fa",
+      "caseCount": 87,
+      "repeats": 1,
+      "attempts": 87,
+      "artifact": "dedicated-v4-all_cases.json",
+      "answers": 84,
+      "providerErrors": 3,
+      "acceptedDecisionCorrect": 77,
+      "acceptedFalseWakes": 2,
+      "missedWakes": 8,
+      "labelCorrectWhenAnswered": 75,
+      "routes": {
+        "typesafe_only": 87
+      }
+    }
+  ],
+  "intermediateComposition": [
+    {
+      "caseCount": 99,
+      "sourceFingerprintSha256": "e2c71e5176812e6181bec7874fc09c8cee25390895f28769e728339d34037092",
+      "datasetSha256": "4f2fdd1401f3d21cd39ecd2b9b4ef6b8dd4da7035b2e8a9d6d6e65998f6f0dfc",
+      "models": [
+        {
+          "model": "typesafe/jev-latest -> deepseek/deepseek-v4-flash-0731",
+          "cases": 99,
+          "labeledCases": 99,
+          "completed": 99,
+          "errors": 0,
+          "successRate": 1,
+          "classificationAccuracy": 0.9595959595959596,
+          "endToEndAccuracy": 0.9595959595959596,
+          "rationaleAgreement": 0.5757575757575758,
+          "confidenceMeanAbsoluteError": 0.10989898989898987,
+          "macroF1": 0.8338987217305801,
+          "latencyMs": {
+            "p50": 513,
+            "p90": 10010,
+            "p99": 22663
+          },
+          "byClassification": {
+            "agent_action": {
+              "support": 34,
+              "precision": 0.8947368421052632,
+              "recall": 1,
+              "f1": 0.9444444444444444
+            },
+            "human_only": {
+              "support": 57,
+              "precision": 1,
+              "recall": 0.9824561403508771,
+              "f1": 0.9911504424778761
+            },
+            "both": {
+              "support": 4,
+              "precision": 1,
+              "recall": 0.25,
+              "f1": 0.4
+            },
+            "uncertain": {
+              "support": 4,
+              "precision": 1,
+              "recall": 1,
+              "f1": 1
+            }
+          }
+        }
+      ],
+      "cascadeRouting": {
+        "typesafe": 74,
+        "fallback": 22,
+        "terminalHeuristic": 3,
+        "lowConfidenceFallback": 17,
+        "primaryFailureFallback": 8
+      },
+      "artifact": "admission-v5.json"
+    },
+    {
+      "caseCount": 99,
+      "sourceFingerprintSha256": "6c11f04482083b826eec25fddba702b343fdaca3aa0e06a69d66642d268994c7",
+      "datasetSha256": "4f2fdd1401f3d21cd39ecd2b9b4ef6b8dd4da7035b2e8a9d6d6e65998f6f0dfc",
+      "models": [
+        {
+          "model": "typesafe/jev-latest -> deepseek/deepseek-v4-flash-0731",
+          "cases": 99,
+          "labeledCases": 99,
+          "completed": 99,
+          "errors": 0,
+          "successRate": 1,
+          "classificationAccuracy": 0.9595959595959596,
+          "endToEndAccuracy": 0.9595959595959596,
+          "rationaleAgreement": 0.5757575757575758,
+          "confidenceMeanAbsoluteError": 0.11303030303030301,
+          "macroF1": 0.8338987217305801,
+          "latencyMs": {
+            "p50": 98,
+            "p90": 2198,
+            "p99": 3726
+          },
+          "byClassification": {
+            "agent_action": {
+              "support": 34,
+              "precision": 0.8947368421052632,
+              "recall": 1,
+              "f1": 0.9444444444444444
+            },
+            "human_only": {
+              "support": 57,
+              "precision": 1,
+              "recall": 0.9824561403508771,
+              "f1": 0.9911504424778761
+            },
+            "both": {
+              "support": 4,
+              "precision": 1,
+              "recall": 0.25,
+              "f1": 0.4
+            },
+            "uncertain": {
+              "support": 4,
+              "precision": 1,
+              "recall": 1,
+              "f1": 1
+            }
+          }
+        }
+      ],
+      "cascadeRouting": {
+        "notNeeded": 73,
+        "typesafe": 23,
+        "fallback": 3,
+        "terminalHeuristic": 0,
+        "lowConfidenceFallback": 3,
+        "primaryFailureFallback": 0
+      },
+      "artifact": "admission-v7.json"
+    }
+  ],
+  "rejectedPromptSearch": [
+    {
+      "artifact": "actual-compatibility-1792610153129.json",
+      "dataset": "compatibility",
+      "datasetSha256": "19a82d5b780e690f9ce6e59d562e00be4701974fbdb85abd45d3ff5c988a52a0",
+      "questionsSha256": "3328fcad92288ac52c21188ca213566b7425facd3c9f766cc05f3a1f6a2b3132",
+      "fallbackSystemPromptSha256": "688b6a9486ca9373f527e8f3cb2bd1754bdac067ade46004370931b7cdb4d1ef",
+      "caseCount": 8,
+      "repeats": 3,
+      "attempts": 24,
+      "correct": 23,
+      "recordCount": 24
+    },
+    {
+      "artifact": "actual-compatibility-1792610503248.json",
+      "dataset": "compatibility",
+      "datasetSha256": "19a82d5b780e690f9ce6e59d562e00be4701974fbdb85abd45d3ff5c988a52a0",
+      "questionsSha256": "3328fcad92288ac52c21188ca213566b7425facd3c9f766cc05f3a1f6a2b3132",
+      "fallbackSystemPromptSha256": "688b6a9486ca9373f527e8f3cb2bd1754bdac067ade46004370931b7cdb4d1ef",
+      "caseCount": 8,
+      "repeats": 3,
+      "attempts": 24,
+      "correct": 24,
+      "recordCount": 24
+    },
+    {
+      "artifact": "actual-expanded_v3-1792607863101.json",
+      "dataset": "expanded_v3",
+      "datasetSha256": "2a69a951b24d5dc0bc072991c8d3e5e503c3b85149566110aeb13bf16054a66b",
+      "questionsSha256": "f5eeae28b0e13169ee681a85faa350c0ad9070b4a18be1f9112de9a7a0381592",
+      "caseCount": 71,
+      "repeats": 3,
+      "attempts": 213,
+      "correct": 207,
+      "recordCount": 213
+    },
+    {
+      "artifact": "actual-expanded_v4-1792608547658.json",
+      "dataset": "expanded_v4",
+      "datasetSha256": "e0a7230e01006fb03f2404ba93b3d11036a02cb55b1213ffebee4e633616e30d",
+      "questionsSha256": "3328fcad92288ac52c21188ca213566b7425facd3c9f766cc05f3a1f6a2b3132",
+      "caseCount": 71,
+      "repeats": 3,
+      "attempts": 213,
+      "correct": 207,
+      "recordCount": 213
+    },
+    {
+      "artifact": "actual-expanded_v4-1792609869804.json",
+      "dataset": "expanded_v4",
+      "datasetSha256": "e0a7230e01006fb03f2404ba93b3d11036a02cb55b1213ffebee4e633616e30d",
+      "questionsSha256": "3328fcad92288ac52c21188ca213566b7425facd3c9f766cc05f3a1f6a2b3132",
+      "fallbackSystemPromptSha256": "4582a079a8936832bfe09c758c8bb1f5fb10b41efd35e6f14a0b7dac9359f7cd",
+      "caseCount": 71,
+      "repeats": 3,
+      "attempts": 213,
+      "correct": 210,
+      "recordCount": 213
+    },
+    {
+      "artifact": "actual-final_unseen-1792609557328.json",
+      "dataset": "final_unseen",
+      "datasetSha256": "7d9f419f7a59ee008ce7b29eec14f6273cc83120b20bdc1c405ad3a563565506",
+      "questionsSha256": "3328fcad92288ac52c21188ca213566b7425facd3c9f766cc05f3a1f6a2b3132",
+      "fallbackSystemPromptSha256": "4582a079a8936832bfe09c758c8bb1f5fb10b41efd35e6f14a0b7dac9359f7cd",
+      "caseCount": 8,
+      "repeats": 3,
+      "attempts": 24,
+      "correct": 21,
+      "recordCount": 24
+    },
+    {
+      "artifact": "actual-hard_final-1792610128894.json",
+      "dataset": "hard_final",
+      "datasetSha256": "be2f8ad24eb998973c5a34a6f4708324ecc18d986e7ed9a2b0150104188f2446",
+      "questionsSha256": "3328fcad92288ac52c21188ca213566b7425facd3c9f766cc05f3a1f6a2b3132",
+      "fallbackSystemPromptSha256": "688b6a9486ca9373f527e8f3cb2bd1754bdac067ade46004370931b7cdb4d1ef",
+      "caseCount": 27,
+      "repeats": 3,
+      "attempts": 81,
+      "correct": 75,
+      "recordCount": 81
+    },
+    {
+      "artifact": "actual-hard_final-1792610296336.json",
+      "dataset": "hard_final",
+      "datasetSha256": "be2f8ad24eb998973c5a34a6f4708324ecc18d986e7ed9a2b0150104188f2446",
+      "questionsSha256": "3328fcad92288ac52c21188ca213566b7425facd3c9f766cc05f3a1f6a2b3132",
+      "fallbackSystemPromptSha256": "4582a079a8936832bfe09c758c8bb1f5fb10b41efd35e6f14a0b7dac9359f7cd",
+      "caseCount": 27,
+      "repeats": 1,
+      "attempts": 27,
+      "correct": 26,
+      "recordCount": 27
+    },
+    {
+      "artifact": "actual-hard_final-1792610651524.json",
+      "dataset": "hard_final",
+      "datasetSha256": "be2f8ad24eb998973c5a34a6f4708324ecc18d986e7ed9a2b0150104188f2446",
+      "questionsSha256": "3328fcad92288ac52c21188ca213566b7425facd3c9f766cc05f3a1f6a2b3132",
+      "fallbackSystemPromptSha256": "688b6a9486ca9373f527e8f3cb2bd1754bdac067ade46004370931b7cdb4d1ef",
+      "caseCount": 27,
+      "repeats": 3,
+      "attempts": 81,
+      "correct": 77,
+      "recordCount": 81
+    },
+    {
+      "artifact": "actual-original_final-1792608843348.json",
+      "dataset": "original_final",
+      "datasetSha256": "4db91735398738ac1e1f227dc55fffae6d80f1cf071c626daa41707a37c73973",
+      "questionsSha256": "3328fcad92288ac52c21188ca213566b7425facd3c9f766cc05f3a1f6a2b3132",
+      "caseCount": 21,
+      "repeats": 3,
+      "attempts": 63,
+      "correct": 61,
+      "recordCount": 63
+    },
+    {
+      "artifact": "actual-targeted_final-1792608733800.json",
+      "dataset": "targeted_final",
+      "datasetSha256": "75b43c3a921e670eb7947c009035dac5b00c10ef30265478c53277b7d568d8eb",
+      "questionsSha256": "3328fcad92288ac52c21188ca213566b7425facd3c9f766cc05f3a1f6a2b3132",
+      "caseCount": 23,
+      "repeats": 1,
+      "attempts": 23,
+      "correct": 22,
+      "recordCount": 23
+    },
+    {
+      "artifact": "actual-targeted_final-1792609085589.json",
+      "dataset": "targeted_final",
+      "datasetSha256": "75b43c3a921e670eb7947c009035dac5b00c10ef30265478c53277b7d568d8eb",
+      "questionsSha256": "3328fcad92288ac52c21188ca213566b7425facd3c9f766cc05f3a1f6a2b3132",
+      "caseCount": 23,
+      "repeats": 3,
+      "attempts": 69,
+      "correct": 69,
+      "recordCount": 69
+    },
+    {
+      "artifact": "actual-targeted_final-1792609301514.json",
+      "dataset": "targeted_final",
+      "datasetSha256": "75b43c3a921e670eb7947c009035dac5b00c10ef30265478c53277b7d568d8eb",
+      "questionsSha256": "3328fcad92288ac52c21188ca213566b7425facd3c9f766cc05f3a1f6a2b3132",
+      "caseCount": 23,
+      "repeats": 3,
+      "attempts": 69,
+      "correct": 67,
+      "recordCount": 69
+    },
+    {
+      "artifact": "actual-unseen_holdout-1792608183811.json",
+      "dataset": "unseen_holdout",
+      "datasetSha256": "9dcc80501f2f346f250893bb0359e4a4a7ba080483a3c6c0aaf8aef0a67a8c93",
+      "questionsSha256": "3328fcad92288ac52c21188ca213566b7425facd3c9f766cc05f3a1f6a2b3132",
+      "caseCount": 12,
+      "repeats": 3,
+      "attempts": 36,
+      "correct": 36,
+      "recordCount": 36
+    },
+    {
+      "artifact": "facts-all_cases-1792611089830.json",
+      "dataset": "all_cases",
+      "datasetSha256": "d0d4fad5340d6739be04491f716c30a9ad1ccd4a2c290d0adb8ca9d7339e24ca",
+      "questionsSha256": "3b052127d2a043d8c28fb85f3ff3678178acf909a5ec984be999bb2b40a89787",
+      "caseCount": 99,
+      "repeats": 1,
+      "attempts": 99,
+      "correct": 85,
+      "acceptedCorrect": 79,
+      "acceptedMistakes": 8,
+      "recordCount": 99
+    },
+    {
+      "artifact": "facts-scoped-all_cases-1792611419731.json",
+      "dataset": "all_cases",
+      "datasetSha256": "d0d4fad5340d6739be04491f716c30a9ad1ccd4a2c290d0adb8ca9d7339e24ca",
+      "questionsSha256": "7daa0780a77fa8311bfea822b58223be5432dc5dbe7f081e1b7d2c9adf40a9f0",
+      "caseCount": 99,
+      "repeats": 1,
+      "attempts": 99,
+      "correct": 84,
+      "acceptedCorrect": 71,
+      "acceptedMistakes": 11,
+      "recordCount": 99
+    },
+    {
+      "artifact": "gated_v86-v83_current_contribution-expanded_v2-1792607131115.json",
+      "dataset": "expanded_v2",
+      "correct": 64,
+      "acceptedCorrect": 61,
+      "recordCount": 69
+    },
+    {
+      "artifact": "gated_v87-v83_current_contribution-expanded_v2-1792607210178.json",
+      "dataset": "expanded_v2",
+      "correct": 68,
+      "acceptedCorrect": 66,
+      "recordCount": 69
+    },
+    {
+      "artifact": "gated_v88-v83_current_contribution-expanded_v2-1792607278132.json",
+      "dataset": "expanded_v2",
+      "correct": 68,
+      "acceptedCorrect": 60,
+      "recordCount": 69
+    },
+    {
+      "artifact": "gated_v89-v83_current_contribution-expanded_v2-1792607346062.json",
+      "dataset": "expanded_v2",
+      "correct": 68,
+      "acceptedCorrect": 60,
+      "recordCount": 69
+    },
+    {
+      "artifact": "gated_v89-v83_current_contribution-expanded_v3-1792607369985.json",
+      "dataset": "expanded_v3",
+      "correct": 70,
+      "acceptedCorrect": 58,
+      "recordCount": 71
+    },
+    {
+      "artifact": "pairwise-expanded_dev.json",
+      "candidate": "v70_pairwise",
+      "dataset": "expanded_dev",
+      "attempts": 49,
+      "correct": 41,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v10_same_assignment_checks-dev-1792605420341.json",
+      "candidate": "v10_same_assignment_checks",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "111d9deac52fa7a0ae2e7e95ab217393552e2ee33c2a6b1993b9a5b20130c628",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 19,
+      "acceptedCorrect": 17,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v11_lifecycle_examples-dev-1792605422850.json",
+      "candidate": "v11_lifecycle_examples",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "de1d15b17bc0bcfca96a0a32d5dac4beeab5f6619d3bd22bd9c359ca45bc081b",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 18,
+      "acceptedCorrect": 15,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v12_sender_readiness-dev_with_sender-1792605525326.json",
+      "candidate": "v12_sender_readiness",
+      "dataset": "dev_with_sender",
+      "datasetSha256": "84fd1978ba09e0da23fceadcd079e0338cc5921d9caa96895070094717d1fec6",
+      "questionsSha256": "9e7cb781b68b2391f8ba26bb74cf7bc29ee6314f332b55f8207e20598603b3d1",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 18,
+      "acceptedCorrect": 17,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v13_reference_resolution-dev-1792605605285.json",
+      "candidate": "v13_reference_resolution",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "15fb08f186ab49d847332ed8bfaa019d4c945841fe6af0c7b5eb0e1cb7ad1892",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 19,
+      "acceptedCorrect": 17,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v14_role_provenance-dev-1792605607701.json",
+      "candidate": "v14_role_provenance",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "7120b89d33de783eae5831e208ac295fb3feac06eae6a3fc5bb93dfab38818a3",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 19,
+      "acceptedCorrect": 18,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v14_role_provenance-dev_current_last-1792606327260.json",
+      "candidate": "v14_role_provenance",
+      "dataset": "dev_current_last",
+      "datasetSha256": "9a2b750aa15d7c2505c68a06eaed9609f86776d49d2fcbf1330930da6601b933",
+      "questionsSha256": "7120b89d33de783eae5831e208ac295fb3feac06eae6a3fc5bb93dfab38818a3",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 20,
+      "acceptedCorrect": 17,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v14_role_provenance-dev_tagged-1792605907930.json",
+      "candidate": "v14_role_provenance",
+      "dataset": "dev_tagged",
+      "datasetSha256": "ef04a7d2970224b7246fa9da3df149d4adf20e3863e34f46da7c6e557d58f637",
+      "questionsSha256": "7120b89d33de783eae5831e208ac295fb3feac06eae6a3fc5bb93dfab38818a3",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 18,
+      "acceptedCorrect": 16,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v14_role_provenance-diagnostic_ablations-1792606142719.json",
+      "candidate": "v14_role_provenance",
+      "dataset": "diagnostic_ablations",
+      "datasetSha256": "21f4dc55c0b346106e13c9cebc74c5cf6fe468916303b400c020c0fc23394d00",
+      "questionsSha256": "7120b89d33de783eae5831e208ac295fb3feac06eae6a3fc5bb93dfab38818a3",
+      "caseCount": 6,
+      "repeats": 1,
+      "attempts": 6,
+      "correct": 0,
+      "acceptedCorrect": 0,
+      "recordCount": 6
+    },
+    {
+      "artifact": "v15_structured_examples-dev-1792605610288.json",
+      "candidate": "v15_structured_examples",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "00fd7b1511ba3ef1b694974be166ed99e9d8b4067a8342e446c897578d0f0267",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 19,
+      "acceptedCorrect": 18,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v16_explicit_speakers-dev-1792605683136.json",
+      "candidate": "v16_explicit_speakers",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "d63eb5ec403b1c4d89432e5ecb7ece28b1ee7b0ea7c6fcd92fba6963dbad7cc3",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 19,
+      "acceptedCorrect": 18,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v16_explicit_speakers-dev_with_sender-1792605687534.json",
+      "candidate": "v16_explicit_speakers",
+      "dataset": "dev_with_sender",
+      "datasetSha256": "84fd1978ba09e0da23fceadcd079e0338cc5921d9caa96895070094717d1fec6",
+      "questionsSha256": "d63eb5ec403b1c4d89432e5ecb7ece28b1ee7b0ea7c6fcd92fba6963dbad7cc3",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 18,
+      "acceptedCorrect": 17,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v17_ready_labels-dev-1792605781668.json",
+      "candidate": "v17_ready_labels",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "65b92e27fb94a830f9df5204ea71e1cdd76faf2e5b3194bb0dfbe4226432651b",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 18,
+      "acceptedCorrect": 18,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v18_execution_labels-dev-1792605783999.json",
+      "candidate": "v18_execution_labels",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "649fcd0ab2ef82c73605e22d9661585ab2f5f4c251fcf53f97993d13f8ec18d5",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 18,
+      "acceptedCorrect": 17,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v19_provenance_labels-dev-1792605786178.json",
+      "candidate": "v19_provenance_labels",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "a864d1ed9c484a8475e19ca7e324a6b1af3118e850a8c7208d453d3e824ea3c4",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 18,
+      "acceptedCorrect": 16,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v20_contribution-dev-1792606116556.json",
+      "candidate": "v20_contribution",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "7e062ae224b39c65ca11b33cb1064c466ad4d3aceb00c81d2a48014953bc1274",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 17,
+      "acceptedCorrect": 15,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v20_contribution-dev_current_last-1792606329514.json",
+      "candidate": "v20_contribution",
+      "dataset": "dev_current_last",
+      "datasetSha256": "9a2b750aa15d7c2505c68a06eaed9609f86776d49d2fcbf1330930da6601b933",
+      "questionsSha256": "7e062ae224b39c65ca11b33cb1064c466ad4d3aceb00c81d2a48014953bc1274",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 19,
+      "acceptedCorrect": 17,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v20_contribution-diagnostic_ablations-1792606142091.json",
+      "candidate": "v20_contribution",
+      "dataset": "diagnostic_ablations",
+      "datasetSha256": "21f4dc55c0b346106e13c9cebc74c5cf6fe468916303b400c020c0fc23394d00",
+      "questionsSha256": "7e062ae224b39c65ca11b33cb1064c466ad4d3aceb00c81d2a48014953bc1274",
+      "caseCount": 6,
+      "repeats": 1,
+      "attempts": 6,
+      "correct": 1,
+      "acceptedCorrect": 0,
+      "recordCount": 6
+    },
+    {
+      "artifact": "v21_pending_requests-dev-1792606118874.json",
+      "candidate": "v21_pending_requests",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "b915b6af0482a7c154a2eb268a6c4226171e4830a10564dd49b0383e50bf6233",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 17,
+      "acceptedCorrect": 16,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v22_dialogue-dev-1792606120837.json",
+      "candidate": "v22_dialogue",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "b09dc694c85bf144ab7568f6b7ab9555890679e5311fcdfd41be0ddca4a81734",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 17,
+      "acceptedCorrect": 16,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v23_reply-dev-1792606122868.json",
+      "candidate": "v23_reply",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "243833a3686a0e99d471a13139061aa13a418345f81b09aa7a16ea4147e33025",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 16,
+      "acceptedCorrect": 16,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v24_continuation-dev-1792606124790.json",
+      "candidate": "v24_continuation",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "ac9b0251b8d016bf0cb1dc1209331904c0bb9833a6e25d72030b32d0ad5c7f9a",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 17,
+      "acceptedCorrect": 15,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v25_obligation-dev-1792606126761.json",
+      "candidate": "v25_obligation",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "5873de17d3471389956ad6ac091405244dad6aa9bf1dfa7902aa65600a1752dd",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 18,
+      "acceptedCorrect": 16,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v26_concise-dev-1792606170152.json",
+      "candidate": "v26_concise",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "3e167f97b4ddd6979ba56a9154c24b785e157fd82cb1f72bc7cae289f8039ec9",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 18,
+      "acceptedCorrect": 16,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v27_reply_target-dev-1792606172501.json",
+      "candidate": "v27_reply_target",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "05a263430eb8e9c88f83771908f3222f97518a14ed0e77b2dcfb97fd24022b5d",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 18,
+      "acceptedCorrect": 17,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v28_work_to_do-dev-1792606174901.json",
+      "candidate": "v28_work_to_do",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "7b2ac5b2ef9377c8c18e61ea6767a9e0f47a562277b0906016a247b58d53ecc9",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 17,
+      "acceptedCorrect": 16,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v29_request_answer-dev-1792606176969.json",
+      "candidate": "v29_request_answer",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "e65ce8c7f254f3120ae22d9aac227a1fcf30fe2363768ad138e83bbf0bfb07e5",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 15,
+      "acceptedCorrect": 15,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v30_weak_signals-dev-1792606198371.json",
+      "candidate": "v30_weak_signals",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "5c69df66dafc9af1033b5dc789011eba3691ecfd2d761ef94ebad2a0e9beab21",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 17,
+      "acceptedCorrect": 15,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v31_all_history-dev-1792606200493.json",
+      "candidate": "v31_all_history",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "3e55a07cdbc357b68bd8f2053f7b0521c0e6b727066e4db041f3b96cc93f56e9",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 19,
+      "acceptedCorrect": 15,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v32_response_conditions-dev-1792606202553.json",
+      "candidate": "v32_response_conditions",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "ffcf8a2d643a3b0d38f8d9c2c6385314c0044b52dcc5a8e7e8c93251875ca92f",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 17,
+      "acceptedCorrect": 16,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v33_no_name_required-dev-1792606204826.json",
+      "candidate": "v33_no_name_required",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "8757a34aef5d131d2726ad7a7c45f752c6a4df832a129d35fb783184df78e9a3",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 17,
+      "acceptedCorrect": 14,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v34_next_actor-dev-1792606213053.json",
+      "candidate": "v34_next_actor",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "04f0b4185d6b6812b8f3101ad196bc0cded1785d53d597d6aafd033d59ab3609",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 17,
+      "acceptedCorrect": 15,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v35_ready_work-dev-1792606214971.json",
+      "candidate": "v35_ready_work",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "606b18d14eb19e5192cfd6f7f11983d6b1bb306f25a59bc52151d78e444fa009",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 19,
+      "acceptedCorrect": 18,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v36_response_obligation-dev-1792606216973.json",
+      "candidate": "v36_response_obligation",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "34032cb4f3b0525fc8f193559b948361224ca315368e4bd16611e6a6abe08020",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 19,
+      "acceptedCorrect": 17,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v37_lifecycle_choices-dev-1792606270179.json",
+      "candidate": "v37_lifecycle_choices",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "1426033fe4d1c21412b9b541c2852e0f8f8b8ba8cae4f60b31533cc44f59cf2c",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 14,
+      "acceptedCorrect": 12,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v38_distinct_deferred-dev-1792606272522.json",
+      "candidate": "v38_distinct_deferred",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "857e5a1c8d483d772733abe67b347313a4170060f8c405c6bb3de2ce226ca61e",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 16,
+      "acceptedCorrect": 15,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v39_deferred_and_ownership-dev-1792606274491.json",
+      "candidate": "v39_deferred_and_ownership",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "b5928eac67126606f033090a648edd2a767d51f695307e385d60ed19f626a5e8",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 17,
+      "acceptedCorrect": 16,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v3_ready_work-dev-1792605188509.json",
+      "candidate": "v3_ready_work",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "73c2b46ea7d27cbd2bb6d3b94771ffb7a0bfd45f964cdd5aefb328b3b73f9fee",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 19,
+      "acceptedCorrect": 18,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v3_ready_work-dev_chat-1792605913810.json",
+      "candidate": "v3_ready_work",
+      "dataset": "dev_chat",
+      "datasetSha256": "87807bf623c4b4a3177048b1a9f59cda459cbdcce009aebd5611fc13cfba6869",
+      "questionsSha256": "73c2b46ea7d27cbd2bb6d3b94771ffb7a0bfd45f964cdd5aefb328b3b73f9fee",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 19,
+      "acceptedCorrect": 17,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v3_ready_work-dev_current_last-1792606324957.json",
+      "candidate": "v3_ready_work",
+      "dataset": "dev_current_last",
+      "datasetSha256": "9a2b750aa15d7c2505c68a06eaed9609f86776d49d2fcbf1330930da6601b933",
+      "questionsSha256": "73c2b46ea7d27cbd2bb6d3b94771ffb7a0bfd45f964cdd5aefb328b3b73f9fee",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 18,
+      "acceptedCorrect": 16,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v3_ready_work-dev_tagged-1792605905635.json",
+      "candidate": "v3_ready_work",
+      "dataset": "dev_tagged",
+      "datasetSha256": "ef04a7d2970224b7246fa9da3df149d4adf20e3863e34f46da7c6e557d58f637",
+      "questionsSha256": "73c2b46ea7d27cbd2bb6d3b94771ffb7a0bfd45f964cdd5aefb328b3b73f9fee",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 19,
+      "acceptedCorrect": 18,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v3_ready_work-dev_transcript-1792605910953.json",
+      "candidate": "v3_ready_work",
+      "dataset": "dev_transcript",
+      "datasetSha256": "4dac8f43db591f6c9da0ccf559c1f00a650c069ecdd1fb67f21ba90d6622021c",
+      "questionsSha256": "73c2b46ea7d27cbd2bb6d3b94771ffb7a0bfd45f964cdd5aefb328b3b73f9fee",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 18,
+      "acceptedCorrect": 17,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v3_ready_work-dev_with_sender-1792605522578.json",
+      "candidate": "v3_ready_work",
+      "dataset": "dev_with_sender",
+      "datasetSha256": "84fd1978ba09e0da23fceadcd079e0338cc5921d9caa96895070094717d1fec6",
+      "questionsSha256": "73c2b46ea7d27cbd2bb6d3b94771ffb7a0bfd45f964cdd5aefb328b3b73f9fee",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 18,
+      "acceptedCorrect": 18,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v40_input_not_work-dev-1792606300816.json",
+      "candidate": "v40_input_not_work",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "14b48dbb068a6f6fed2cc7f2df9fe562a2aba106a90a7359d556effc48b2a9c7",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 18,
+      "acceptedCorrect": 16,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v40_input_not_work-dev_current_last-1792606331637.json",
+      "candidate": "v40_input_not_work",
+      "dataset": "dev_current_last",
+      "datasetSha256": "9a2b750aa15d7c2505c68a06eaed9609f86776d49d2fcbf1330930da6601b933",
+      "questionsSha256": "14b48dbb068a6f6fed2cc7f2df9fe562a2aba106a90a7359d556effc48b2a9c7",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 18,
+      "acceptedCorrect": 17,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v41_contribution_complete-dev-1792606303071.json",
+      "candidate": "v41_contribution_complete",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "cd959e8bef77ed39333b2d20b0efd0136382247b600cb24625cd13f2eae031b7",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 18,
+      "acceptedCorrect": 16,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v42_condition_identity-dev-1792606305227.json",
+      "candidate": "v42_condition_identity",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "0347900787dc105e6b93a13e9a4f18078b3783e754123ebb0bf6fe64d81b7704",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 17,
+      "acceptedCorrect": 16,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v43_input_receipt-dev-1792606307675.json",
+      "candidate": "v43_input_receipt",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "38d638271add8ee973750b2da33e4e9c8ed1eddd38aebc9e64ad9b87e37cbd26",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 19,
+      "acceptedCorrect": 17,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v43_input_receipt-expanded_transcript-1792606748392.json",
+      "candidate": "v43_input_receipt",
+      "dataset": "expanded_transcript",
+      "datasetSha256": "664460321c48caed5f4b92fb5bdf9c36251e215fab5c453d9cab067c6da33246",
+      "questionsSha256": "38d638271add8ee973750b2da33e4e9c8ed1eddd38aebc9e64ad9b87e37cbd26",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 36,
+      "acceptedCorrect": 36,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v44_assignment_source-dev-1792606360222.json",
+      "candidate": "v44_assignment_source",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "85132c47c9c157af283722d49612c563166629c56c7648220c3e92145234f9ea",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 20,
+      "acceptedCorrect": 19,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v45_role_gate-dev-1792606362503.json",
+      "candidate": "v45_role_gate",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "c9f59876e69a4b086e68e29926f01bc353c48cc4415d1450ae915a16f3cfae66",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 19,
+      "acceptedCorrect": 18,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v46_person_priority-dev-1792606364813.json",
+      "candidate": "v46_person_priority",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "e666222cb7247d4cf2f0dc592d43b849005e459fc4d2a66138030f7d62d3a2c5",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 20,
+      "acceptedCorrect": 19,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v47_ownership_first-dev-1792606366916.json",
+      "candidate": "v47_ownership_first",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "15e7810f9e3891bdf59afe260c565b94e45b90c150aa9ae8646c18893f86bc22",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 18,
+      "acceptedCorrect": 17,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v48_input_examples-dev-1792606377506.json",
+      "candidate": "v48_input_examples",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "079890a07c42d4c76b0040f05c6a632d589e1cdeda0c05c1bc09de82b79c37db",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 19,
+      "acceptedCorrect": 16,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v49_criterion_provenance-dev-1792606379839.json",
+      "candidate": "v49_criterion_provenance",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "53aebaa3546244837711007e579e244dff589f6103bc09482c9db567ab3da464",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 19,
+      "acceptedCorrect": 17,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v4_transition-dev-1792605190864.json",
+      "candidate": "v4_transition",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "ac58f3b4ef132d2526135f263363de44375275a2da25d92a6bf475c66de3beb5",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 16,
+      "acceptedCorrect": 15,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v50_human_enabling-dev-1792606382108.json",
+      "candidate": "v50_human_enabling",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "d0aa0c55e7504276c2aac71eb703cb8555c05114ef97938961a15e242f63d777",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 20,
+      "acceptedCorrect": 18,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v51_no_action_due-dev-1792606406516.json",
+      "candidate": "v51_no_action_due",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "78cc8b102b10264681a84a8f6b94279d9b5aaf720777c1049774961f2887d68b",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 20,
+      "acceptedCorrect": 20,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v52_stay_silent-dev-1792606408954.json",
+      "candidate": "v52_stay_silent",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "e016123074d0a4bb3b74319431209734dd78dac62da11926d62b4a885871360b",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 20,
+      "acceptedCorrect": 19,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v53_no_assignment_ready-dev-1792606411223.json",
+      "candidate": "v53_no_assignment_ready",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "d38351185401d856b90d5b95b94560becf7e17a3c9c03b3edf0825b78d500559",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 21,
+      "acceptedCorrect": 20,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v53_no_assignment_ready-dev-1792606444083.json",
+      "candidate": "v53_no_assignment_ready",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "d38351185401d856b90d5b95b94560becf7e17a3c9c03b3edf0825b78d500559",
+      "caseCount": 21,
+      "repeats": 3,
+      "attempts": 63,
+      "correct": 61,
+      "acceptedCorrect": 58,
+      "recordCount": 63
+    },
+    {
+      "artifact": "v54_volunteer_boundary-dev-1792606413675.json",
+      "candidate": "v54_volunteer_boundary",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "e6c6045007affe2f5036e87ba89d0f9dead63117443edccd7ad1d1c9f2a8124e",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 20,
+      "acceptedCorrect": 19,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v55_speaker_identity-dev-1792606416052.json",
+      "candidate": "v55_speaker_identity",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "4b7a3e8f7631b7c645160b2c1877dfbf62ecd3d107ec0d94eb0242eec1c80842",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 20,
+      "acceptedCorrect": 20,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v56_provenance_criteria-dev-1792606422062.json",
+      "candidate": "v56_provenance_criteria",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "ea9b2b0ce409a9846029c0358e65edc99a8ed6990944ff1dfb7358a5acf15315",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 21,
+      "acceptedCorrect": 18,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v56_provenance_criteria-dev-1792606450096.json",
+      "candidate": "v56_provenance_criteria",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "ea9b2b0ce409a9846029c0358e65edc99a8ed6990944ff1dfb7358a5acf15315",
+      "caseCount": 21,
+      "repeats": 3,
+      "attempts": 63,
+      "correct": 62,
+      "acceptedCorrect": 53,
+      "recordCount": 63
+    },
+    {
+      "artifact": "v56_provenance_criteria-expanded_transcript-1792606755316.json",
+      "candidate": "v56_provenance_criteria",
+      "dataset": "expanded_transcript",
+      "datasetSha256": "664460321c48caed5f4b92fb5bdf9c36251e215fab5c453d9cab067c6da33246",
+      "questionsSha256": "ea9b2b0ce409a9846029c0358e65edc99a8ed6990944ff1dfb7358a5acf15315",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 40,
+      "acceptedCorrect": 37,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v56_provenance_criteria-metamorphic-1792606458848.json",
+      "candidate": "v56_provenance_criteria",
+      "dataset": "metamorphic",
+      "datasetSha256": "cd3ac6a14ec68ba3792173653864196a16d9977da34343145fc2f6648d03d166",
+      "questionsSha256": "ea9b2b0ce409a9846029c0358e65edc99a8ed6990944ff1dfb7358a5acf15315",
+      "caseCount": 8,
+      "repeats": 2,
+      "attempts": 16,
+      "correct": 14,
+      "acceptedCorrect": 11,
+      "recordCount": 16
+    },
+    {
+      "artifact": "v56_provenance_criteria-validation-1792606454642.json",
+      "candidate": "v56_provenance_criteria",
+      "dataset": "validation",
+      "datasetSha256": "e379bac3e217d3dc410746c291c288841504db5594ebeec194ba7d43579deb2a",
+      "questionsSha256": "ea9b2b0ce409a9846029c0358e65edc99a8ed6990944ff1dfb7358a5acf15315",
+      "caseCount": 20,
+      "repeats": 2,
+      "attempts": 40,
+      "correct": 30,
+      "acceptedCorrect": 28,
+      "recordCount": 40
+    },
+    {
+      "artifact": "v57_provenance_decision-dev-1792606424163.json",
+      "candidate": "v57_provenance_decision",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "6eb9c44c6bcbc62f3067cedfaea518ec59b87bd153a6234af50920d53b3f16dd",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 19,
+      "acceptedCorrect": 16,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v58_simple_decision-dev-1792606426353.json",
+      "candidate": "v58_simple_decision",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "678178632ae820bfd4a5245626cdb37ce8e9c7246628f8f3dcf14edbeecee383",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 19,
+      "acceptedCorrect": 17,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v59_every_contributor-expanded_dev-1792606529409.json",
+      "candidate": "v59_every_contributor",
+      "dataset": "expanded_dev",
+      "datasetSha256": "00669a10507a4ec060af6668bd145b21cd95c696d3c8700a69698b749d18992e",
+      "questionsSha256": "b6c4e8150f5c00597dd7b506b9d5e969d3a301ca546f159a4f86595d1c524c89",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 40,
+      "acceptedCorrect": 34,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v5_assignment_lifecycle-dev-1792605193321.json",
+      "candidate": "v5_assignment_lifecycle",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "b73565b138db1393748295aa35aca01431cae69727457430d70be5ee5bd07a0c",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 16,
+      "acceptedCorrect": 15,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v60_literal_requests-expanded_dev-1792606534566.json",
+      "candidate": "v60_literal_requests",
+      "dataset": "expanded_dev",
+      "datasetSha256": "00669a10507a4ec060af6668bd145b21cd95c696d3c8700a69698b749d18992e",
+      "questionsSha256": "314eba0f121f19ebb71a8aeceabf28747d61eef4122631b57d035947029e9265",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 43,
+      "acceptedCorrect": 39,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v61_full_boundaries-expanded_dev-1792606540123.json",
+      "candidate": "v61_full_boundaries",
+      "dataset": "expanded_dev",
+      "datasetSha256": "00669a10507a4ec060af6668bd145b21cd95c696d3c8700a69698b749d18992e",
+      "questionsSha256": "4363dd4e13be6ecea04de439f5cff72a6e2c484e9e5e5f30194beb4f544bd820",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 46,
+      "acceptedCorrect": 37,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v62_sequential_gates-expanded_dev-1792606545176.json",
+      "candidate": "v62_sequential_gates",
+      "dataset": "expanded_dev",
+      "datasetSha256": "00669a10507a4ec060af6668bd145b21cd95c696d3c8700a69698b749d18992e",
+      "questionsSha256": "0608fab309768ed99565ccec514c7a3e9acc6f8cef4008050d8e68c93bf1af42",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 38,
+      "acceptedCorrect": 35,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v63_precise_prerequisite-expanded_dev-1792606550289.json",
+      "candidate": "v63_precise_prerequisite",
+      "dataset": "expanded_dev",
+      "datasetSha256": "00669a10507a4ec060af6668bd145b21cd95c696d3c8700a69698b749d18992e",
+      "questionsSha256": "c9b59988f15e557359979cf5308478270350f697b2699d7c6e17ec423e44c15e",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 39,
+      "acceptedCorrect": 37,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v64_actor_provenance-expanded_dev-1792606555655.json",
+      "candidate": "v64_actor_provenance",
+      "dataset": "expanded_dev",
+      "datasetSha256": "00669a10507a4ec060af6668bd145b21cd95c696d3c8700a69698b749d18992e",
+      "questionsSha256": "e3d5bdc5cdf0675bfa1e249cf1014e7e81d60366194039ca8a7c2d63cd3fff33",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 43,
+      "acceptedCorrect": 38,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v65_exclusive_actors-expanded_dev-1792606572768.json",
+      "candidate": "v65_exclusive_actors",
+      "dataset": "expanded_dev",
+      "datasetSha256": "00669a10507a4ec060af6668bd145b21cd95c696d3c8700a69698b749d18992e",
+      "questionsSha256": "41d8e9b8482a3393117b1086dc8ca770dc92bb0c0caec1c34c5a2040dbecbc3c",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 42,
+      "acceptedCorrect": 35,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v66_exclusive_full-expanded_dev-1792606578084.json",
+      "candidate": "v66_exclusive_full",
+      "dataset": "expanded_dev",
+      "datasetSha256": "00669a10507a4ec060af6668bd145b21cd95c696d3c8700a69698b749d18992e",
+      "questionsSha256": "4e10301a09a4c468d35a5605aeec10e79eb5f87498fe27081ffa22f5cd860014",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 45,
+      "acceptedCorrect": 37,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v66_exclusive_full-expanded_transcript-1792606761356.json",
+      "candidate": "v66_exclusive_full",
+      "dataset": "expanded_transcript",
+      "datasetSha256": "664460321c48caed5f4b92fb5bdf9c36251e215fab5c453d9cab067c6da33246",
+      "questionsSha256": "4e10301a09a4c468d35a5605aeec10e79eb5f87498fe27081ffa22f5cd860014",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 42,
+      "acceptedCorrect": 39,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v67_exclusive_assignment-expanded_dev-1792606583445.json",
+      "candidate": "v67_exclusive_assignment",
+      "dataset": "expanded_dev",
+      "datasetSha256": "00669a10507a4ec060af6668bd145b21cd95c696d3c8700a69698b749d18992e",
+      "questionsSha256": "932e18e06dab6ec65ed22dd4878b98491d63b7527558da10f03afd9574af9f3e",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 43,
+      "acceptedCorrect": 37,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v68_explicit_negative_states-expanded_dev-1792606589391.json",
+      "candidate": "v68_explicit_negative_states",
+      "dataset": "expanded_dev",
+      "datasetSha256": "00669a10507a4ec060af6668bd145b21cd95c696d3c8700a69698b749d18992e",
+      "questionsSha256": "09d2dcf77e42eb66bdffc92adee74a9b3c439e4c47f9662006cdfb3c24ce1210",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 46,
+      "acceptedCorrect": 38,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v6_human_assignment-dev-1792605320822.json",
+      "candidate": "v6_human_assignment",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "e9084616079730c41ec38e22d9f9e338f05ba4c4ae44377cd6d2eebdc717845a",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 17,
+      "acceptedCorrect": 15,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v71_bound_target-expanded_dev-1792606692072.json",
+      "candidate": "v71_bound_target",
+      "dataset": "expanded_dev",
+      "datasetSha256": "00669a10507a4ec060af6668bd145b21cd95c696d3c8700a69698b749d18992e",
+      "questionsSha256": "dd91366458747a508f96007a5d97fa11ee64a997393922ce1e0179b633211ba6",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 39,
+      "acceptedCorrect": 34,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v72_bound_exclusive-expanded_dev-1792606697314.json",
+      "candidate": "v72_bound_exclusive",
+      "dataset": "expanded_dev",
+      "datasetSha256": "00669a10507a4ec060af6668bd145b21cd95c696d3c8700a69698b749d18992e",
+      "questionsSha256": "c112b3181836c3ad68d5a7d6ffae91982dce832c1f670893a1ecbd153648d00f",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 42,
+      "acceptedCorrect": 37,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v73_bound_simple-expanded_dev-1792606702117.json",
+      "candidate": "v73_bound_simple",
+      "dataset": "expanded_dev",
+      "datasetSha256": "00669a10507a4ec060af6668bd145b21cd95c696d3c8700a69698b749d18992e",
+      "questionsSha256": "d117ed14c3b403dc2549c3219416acf9b08932f69319606612f428bea0e158e8",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 34,
+      "acceptedCorrect": 32,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v74_bound_current_policy-expanded_dev-1792606706942.json",
+      "candidate": "v74_bound_current_policy",
+      "dataset": "expanded_dev",
+      "datasetSha256": "00669a10507a4ec060af6668bd145b21cd95c696d3c8700a69698b749d18992e",
+      "questionsSha256": "bf1fbf42ad7549d07aae0255ca4c0c13174534c6743f5ef2b06fdee41263b604",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 38,
+      "acceptedCorrect": 36,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v75_role_groups-expanded_role_groups-1792606779459.json",
+      "candidate": "v75_role_groups",
+      "dataset": "expanded_role_groups",
+      "datasetSha256": "a2815eec3b56a1235243f95402576562327357f65e17eace573deb0857dce609",
+      "questionsSha256": "516904e22541674bad361ab0eb9f3db977ad8b1b56c71625687e94265d725d54",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 43,
+      "acceptedCorrect": 40,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v76_role_groups_exclusive-expanded_role_groups-1792606785651.json",
+      "candidate": "v76_role_groups_exclusive",
+      "dataset": "expanded_role_groups",
+      "datasetSha256": "a2815eec3b56a1235243f95402576562327357f65e17eace573deb0857dce609",
+      "questionsSha256": "c56be230775def1815af0dd324acfe59aebe9558a907b1729205bd1d772a0dcc",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 46,
+      "acceptedCorrect": 44,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v76_role_groups_exclusive-expanded_role_groups-1792606862731.json",
+      "candidate": "v76_role_groups_exclusive",
+      "dataset": "expanded_role_groups",
+      "datasetSha256": "a2815eec3b56a1235243f95402576562327357f65e17eace573deb0857dce609",
+      "questionsSha256": "c56be230775def1815af0dd324acfe59aebe9558a907b1729205bd1d772a0dcc",
+      "caseCount": 49,
+      "repeats": 3,
+      "attempts": 147,
+      "correct": 140,
+      "acceptedCorrect": 128,
+      "recordCount": 147
+    },
+    {
+      "artifact": "v76_role_groups_exclusive-expanded_role_senders-1792606903763.json",
+      "candidate": "v76_role_groups_exclusive",
+      "dataset": "expanded_role_senders",
+      "datasetSha256": "585c6bb01dbebd612ab63ca203a1aca319d9e2dc3cec04926d16f01b163ba968",
+      "questionsSha256": "c56be230775def1815af0dd324acfe59aebe9558a907b1729205bd1d772a0dcc",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 46,
+      "acceptedCorrect": 42,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v76_role_groups_exclusive-expanded_role_senders_corrected-1792606914479.json",
+      "candidate": "v76_role_groups_exclusive",
+      "dataset": "expanded_role_senders_corrected",
+      "datasetSha256": "0e95412a5086dfb2ddfec9ba199a5c4fb189220fda3d05ddd809d9bf044de5aa",
+      "questionsSha256": "c56be230775def1815af0dd324acfe59aebe9558a907b1729205bd1d772a0dcc",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 46,
+      "acceptedCorrect": 44,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v77_delivered_result-expanded_role_groups-1792606850485.json",
+      "candidate": "v77_delivered_result",
+      "dataset": "expanded_role_groups",
+      "datasetSha256": "a2815eec3b56a1235243f95402576562327357f65e17eace573deb0857dce609",
+      "questionsSha256": "963d1bc4998049a574d0422ed1150688b76ef48b90cf27c45f3fbe7f8bfe2c2d",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 48,
+      "acceptedCorrect": 42,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v77_delivered_result-expanded_role_senders-1792606909419.json",
+      "candidate": "v77_delivered_result",
+      "dataset": "expanded_role_senders",
+      "datasetSha256": "585c6bb01dbebd612ab63ca203a1aca319d9e2dc3cec04926d16f01b163ba968",
+      "questionsSha256": "963d1bc4998049a574d0422ed1150688b76ef48b90cf27c45f3fbe7f8bfe2c2d",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 47,
+      "acceptedCorrect": 43,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v77_delivered_result-expanded_role_senders_corrected-1792606920145.json",
+      "candidate": "v77_delivered_result",
+      "dataset": "expanded_role_senders_corrected",
+      "datasetSha256": "0e95412a5086dfb2ddfec9ba199a5c4fb189220fda3d05ddd809d9bf044de5aa",
+      "questionsSha256": "963d1bc4998049a574d0422ed1150688b76ef48b90cf27c45f3fbe7f8bfe2c2d",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 47,
+      "acceptedCorrect": 46,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v77_delivered_result-expanded_role_senders_corrected-1792607007553.json",
+      "candidate": "v77_delivered_result",
+      "dataset": "expanded_role_senders_corrected",
+      "datasetSha256": "0e95412a5086dfb2ddfec9ba199a5c4fb189220fda3d05ddd809d9bf044de5aa",
+      "questionsSha256": "963d1bc4998049a574d0422ed1150688b76ef48b90cf27c45f3fbe7f8bfe2c2d",
+      "caseCount": 49,
+      "repeats": 5,
+      "attempts": 245,
+      "correct": 238,
+      "acceptedCorrect": 223,
+      "recordCount": 245
+    },
+    {
+      "artifact": "v77_delivered_result-final_holdout-1792606989873.json",
+      "candidate": "v77_delivered_result",
+      "dataset": "final_holdout",
+      "datasetSha256": "c92831cb1cfc02d6041b886f18a40bb0dd69b4c02ec71f0b985b91666dbc3737",
+      "questionsSha256": "963d1bc4998049a574d0422ed1150688b76ef48b90cf27c45f3fbe7f8bfe2c2d",
+      "caseCount": 20,
+      "repeats": 2,
+      "attempts": 40,
+      "correct": 36,
+      "acceptedCorrect": 36,
+      "recordCount": 40
+    },
+    {
+      "artifact": "v78_missing_contributor-expanded_role_groups-1792606856702.json",
+      "candidate": "v78_missing_contributor",
+      "dataset": "expanded_role_groups",
+      "datasetSha256": "a2815eec3b56a1235243f95402576562327357f65e17eace573deb0857dce609",
+      "questionsSha256": "8f7e459fbba4c625b46d7f463c0f0b0937038420aef8f07b3c8564d55b811c72",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 46,
+      "acceptedCorrect": 43,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v79_completion_and_inputs-expanded_role_groups-1792606862563.json",
+      "candidate": "v79_completion_and_inputs",
+      "dataset": "expanded_role_groups",
+      "datasetSha256": "a2815eec3b56a1235243f95402576562327357f65e17eace573deb0857dce609",
+      "questionsSha256": "b32d54a9f404f5866f643ae582be025e6d097d180a636cc941e092032d301f2e",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 47,
+      "acceptedCorrect": 41,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v7_update_activation-dev-1792605323535.json",
+      "candidate": "v7_update_activation",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "04eff7573071f84603fffdbd36337ab66e1b0ca9afdb8f436c194dd14d74f7a5",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 19,
+      "acceptedCorrect": 17,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v80_duplicate_input-expanded_role_senders_corrected-1792606925572.json",
+      "candidate": "v80_duplicate_input",
+      "dataset": "expanded_role_senders_corrected",
+      "datasetSha256": "0e95412a5086dfb2ddfec9ba199a5c4fb189220fda3d05ddd809d9bf044de5aa",
+      "questionsSha256": "ebeb411fc92665e77fdc86da79ada8d5e75aad59cd491ae50593d0ceb49188ed",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 47,
+      "acceptedCorrect": 44,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v81_same_request_result-expanded_role_senders_corrected-1792606930637.json",
+      "candidate": "v81_same_request_result",
+      "dataset": "expanded_role_senders_corrected",
+      "datasetSha256": "0e95412a5086dfb2ddfec9ba199a5c4fb189220fda3d05ddd809d9bf044de5aa",
+      "questionsSha256": "8bf3789248677c1eb322995b3e2e3fbe65d375f16f9555fcae67242e0749bbb3",
+      "caseCount": 49,
+      "repeats": 1,
+      "attempts": 49,
+      "correct": 47,
+      "acceptedCorrect": 41,
+      "recordCount": 49
+    },
+    {
+      "artifact": "v82_contributor_identity-expanded_v2-1792607021193.json",
+      "candidate": "v82_contributor_identity",
+      "dataset": "expanded_v2",
+      "datasetSha256": "856778ae978579507798b3da928d97d22d3411a701878579801176d7eb88b1e4",
+      "questionsSha256": "dcdb43526b6e37dccb1a8a3b886c4b52a0692e7f237041abeb0c16566a8e2b91",
+      "caseCount": 69,
+      "repeats": 1,
+      "attempts": 69,
+      "correct": 65,
+      "acceptedCorrect": 59,
+      "recordCount": 69
+    },
+    {
+      "artifact": "v83_current_contribution-expanded_v2-1792607029049.json",
+      "candidate": "v83_current_contribution",
+      "dataset": "expanded_v2",
+      "datasetSha256": "856778ae978579507798b3da928d97d22d3411a701878579801176d7eb88b1e4",
+      "questionsSha256": "d94aee7d8a8243229fbbec7293231e6787828b417645ae9869198034063bc0d9",
+      "caseCount": 69,
+      "repeats": 1,
+      "attempts": 69,
+      "correct": 67,
+      "acceptedCorrect": 63,
+      "recordCount": 69
+    },
+    {
+      "artifact": "v84_identity_and_receipt-expanded_v2-1792607039446.json",
+      "candidate": "v84_identity_and_receipt",
+      "dataset": "expanded_v2",
+      "datasetSha256": "856778ae978579507798b3da928d97d22d3411a701878579801176d7eb88b1e4",
+      "questionsSha256": "00c8780388e44d822b6f0321512cfe152a5ca9c750ba35cc4b521e8d247818d5",
+      "caseCount": 69,
+      "repeats": 1,
+      "attempts": 69,
+      "correct": 66,
+      "acceptedCorrect": 60,
+      "recordCount": 69
+    },
+    {
+      "artifact": "v8_flat_contract-dev-1792605326049.json",
+      "candidate": "v8_flat_contract",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "5e31ae8c1ebc5ad6d9ffc58146349bad8ceca8fcf6e6433738453f3094aa605b",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 18,
+      "acceptedCorrect": 15,
+      "recordCount": 21
+    },
+    {
+      "artifact": "v9_admission-dev-1792605417913.json",
+      "candidate": "v9_admission",
+      "dataset": "dev",
+      "datasetSha256": "114f68d9ade4bb66389db65a70d1ae749a34b700e545ff1cf5648670cfdf5ac7",
+      "questionsSha256": "9bcb25dd07a2ac78689621e15fe9a35746db04b5bca1ceec3ad0ae88664e716e",
+      "caseCount": 21,
+      "repeats": 1,
+      "attempts": 21,
+      "correct": 14,
+      "acceptedCorrect": 14,
+      "recordCount": 21
+    }
+  ],
+  "localVerification": {
+    "lint": "passed",
+    "typecheck": "passed",
+    "harnessTests": {
+      "files": 17,
+      "passed": 455
+    },
+    "scopedApiTests": {
+      "files": 2,
+      "passed": 10
+    },
+    "docsCheck": "passed",
+    "negativeControls": [
+      "Omitting the nonblank SQL predicate failed the history query test; restored and passed.",
+      "Bypassing continuation failed service tests for wake, inactive follow-up, and ordinary-addressing delegation; restored and passed."
+    ],
+    "fullSuite": {
+      "command": "pnpm test",
+      "status": "Stopped this task process tree after captured failures; not a green full-suite result.",
+      "unmodifiedFailingFiles": [
+        "apps/desktop/src/renderer/screens/space-dashboard.test.tsx",
+        "apps/desktop/src/renderer/components/automation-header.test.tsx",
+        "apps/api/test/scoped-memory.test.ts",
+        "apps/api/test/terminal-runtime.test.ts"
+      ],
+      "rootCause": "Not diagnosed. No claim that these are pre-existing or flaky.",
+      "priorFullSuiteAttempt": "The earlier rejected-prompt report also records a separate interrupted full run."
+    }
+  },
+  "postRebaseVerification": {
+    "verifiedAt": "2026-10-21T20:35:23.193433+00:00",
+    "baseRevision": "46baa20fcf36b6fffc8517f2cdf075b9cc2a393e",
+    "lint": "passed",
+    "typecheck": "passed",
+    "harnessTests": {
+      "files": 21,
+      "passed": 506
+    },
+    "scopedApiTests": {
+      "files": 2,
+      "passed": 10
+    },
+    "docsCheck": "passed",
+    "notes": [
+      "Resolved actual conflicts by preserving annotation-aware current-message text and existing harness changelog entries.",
+      "Live evidence above was collected before rebasing. The JEV transport, question/state contract, and focused fallback prompt are unchanged; local checks were rerun after conflict resolution."
+    ]
+  }
+}
