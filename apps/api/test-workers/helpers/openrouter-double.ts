@@ -69,6 +69,8 @@ export type ProviderHandler = (call: ProviderCall) => ProviderReply | Promise<Pr
 export interface OpenRouterDouble {
   /** Every inference request the run made, in order. */
   readonly calls: readonly ProviderCall[];
+  /** Completion judgments are a separate provider boundary, not acting-model turns. */
+  readonly completionCalls: readonly Record<string, unknown>[];
 }
 
 /**
@@ -151,12 +153,14 @@ function jsonReply(
  */
 export function useOpenRouterDouble(handler: ProviderHandler): OpenRouterDouble {
   const calls: ProviderCall[] = [];
+  const completionCalls: Record<string, unknown>[] = [];
   const unexpected: string[] = [];
   const mutableEnv: { TYPESAFE_API_KEY?: string } = env;
   let originalTypesafeKey: string | undefined;
 
   beforeEach(() => {
     calls.length = 0;
+    completionCalls.length = 0;
     unexpected.length = 0;
     originalTypesafeKey = mutableEnv.TYPESAFE_API_KEY;
     mutableEnv.TYPESAFE_API_KEY = "openrouter-double-completion-key";
@@ -171,6 +175,7 @@ export function useOpenRouterDouble(handler: ProviderHandler): OpenRouterDouble 
         const body = JSON.parse(typeof init?.body === "string" ? init.body
           : input instanceof Request ? await input.clone().text() : "{}");
         if (!body.questions?.stopping) return Response.json({ error: "test_classifier_unavailable" }, { status: 503 });
+        completionCalls.push(body);
         return Response.json({ model: "jev-1.14.0",
           answers: { stopping: { type: "choice", choice: "answer_or_result", confidence: 0.99 } } });
       }
@@ -231,6 +236,9 @@ export function useOpenRouterDouble(handler: ProviderHandler): OpenRouterDouble 
   return {
     get calls() {
       return calls;
+    },
+    get completionCalls() {
+      return completionCalls;
     },
   };
 }
