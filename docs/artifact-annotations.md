@@ -12,6 +12,7 @@ server annotation table or artifact comment thread. Unconfirmed selections are n
 | `packages/contracts/src/artifact-annotations.ts` | Shared locators, builder, admission rules and model projection. |
 | `packages/contracts/src/artifact-picker.ts` | HTML inspector, restoration and the Tabler pointer-collaboration cursor, shared by all HTML transports. |
 | `apps/desktop/src/renderer/components/annotation-surface.tsx` | Text, converted document, image and opaque HTML selection. |
+| `apps/desktop/src/renderer/components/image-viewport.tsx` | Two-axis image scrolling, sizing and zoom shared by annotated and ordinary previews. |
 | `apps/desktop/src/renderer/lib/annotation-source.ts` | Parser source positions and reversible rendered/source range mapping. |
 | `apps/desktop/src/renderer/components/annotation-sheet.tsx` | Cell, range, row, column and sheet selection. |
 | `apps/desktop/src/renderer/components/artifact-annotations.tsx` | Transient composer pins, chips and feed excerpts. |
@@ -56,6 +57,18 @@ table with headers. Image regions upload PNG crops; the original image remains
 a separate model source. The shared model projection escapes resource data,
 labels exact/converted/rendered content, and requires a fresh read for truncated
 selections and reconciliation before editing an older version.
+
+Image panels, lightboxes and annotated previews share `ImageViewport`. Its
+scroll bounds and region overlays use the image's layout dimensions rather than
+transforms; auto margins keep oversized content reachable from the scroll origin.
+Controls stay outside the scroller. Lightbox controls share one zoom state, and
+image comments observe the image box so zoom updates their anchors even without
+scrolling. Horizontal arrows navigate the gallery when the image fits and scroll
+when it overflows; blank image-stage clicks retain lightbox backdrop dismissal.
+The viewport reserves a stable scrollbar gutter so width fitting cannot oscillate
+with scrollbar visibility. Detached image hosts bound the viewport with flex
+layout, while unavailable saved-image quotes retain the host's ordinary scroller.
+Comment mode reserves image gestures for selection.
 
 Target checks reuse ordinary resource-sharing rules, including personal-connection
 ownership, and run once per distinct resource/version before participant changes.
@@ -190,7 +203,12 @@ Contracts cover admission, source policy, locators and escaped model guidance.
 `annotation-resolution.test.ts` covers moved, changed, ambiguous and missing
 selections, HTML identity, sheet headers and image identity.
 Renderer tests cover exact Markdown selection, growth, comments, removal and
-sheet serialization. API Node tests cover live and overheard projections;
+sheet serialization. Attachment panel tests preserve gallery keyboard navigation
+when images fit while leaving overflowing viewport keys available for scrolling.
+Lightbox tests cover backdrop dismissal and synchronized zoom controls.
+Image scroll bounds, Fit, double-click/tap focal zoom, gallery resets and region
+alignment are verified in real Electron and browser windows; jsdom has no layout.
+API Node tests cover live and overheard projections;
 `test-workers/artifact-annotations.test.ts` covers canonical resource/version
 reads and durable turn storage. The workerd target/version and canonical-storage tests have production mutation
 proofs. No serving-Worker injection is shipped.
@@ -202,6 +220,29 @@ ordinary uploaded fixtures. Prompt evaluations live under
 on the configured medium fallback model, separately from end-to-end tool edits.
 
 ## Changelog
+
+### 2026-10-21 — Image previews own a scroll viewport
+
+**What changed:** Annotated and ordinary images share a two-axis scroll viewport
+and zoom controls, including double-click/tap to toggle 100% and Fit. Region
+overlays scale with the image's actual layout box, and comment anchors observe
+that box. Lightbox controls share one zoom state; fit images retain gallery keys
+and backdrop dismissal. Toolbar zoom preserves the viewport centre.
+Detached hosts bound the image viewport, saved quotes remain scrollable on load
+failure, and a stable scrollbar gutter prevents width-fitting resize loops.
+
+**Why:** Tall images in expanded panels overflowed a centered flex container,
+leaving content outside the reachable scroll area. Width constraints also
+prevented inspecting wide images at their original resolution.
+
+**Considered and rejected:** Scaling with a CSS transform leaves the original
+layout box in place, which makes scroll bounds and annotation overlays diverge.
+
+**Consequences:** Image sizing must change layout dimensions. The scroll origin
+must remain reachable when an image exceeds either viewport dimension, and zoom
+controls must remain outside that scrolling content.
+
+PR #1373.
 
 ### 2026-10-20 — Restore comment drafts and reconcile artifact revisions
 
