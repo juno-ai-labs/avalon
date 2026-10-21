@@ -107,7 +107,6 @@ import {
   recordHarnessRunObservation,
 } from "../observability/harness-run-observability";
 import { diagnosticErrorCode, logError, logInfo, logWarn } from "../observability/logger";
-import { PersonalSystemPromptRecordSchema } from "./personal-system-prompt";
 import type { MemoryDigestFact } from "./workspace-memory-facts-protocol";
 import { agentProfileFor, type AgentProfile } from "../services/agent-profiles";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
@@ -5241,7 +5240,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     };
     return {
       contextWindowTokensByModel: () => this.contextWindowTokensByModel(),
-      personalSystemPrompt: (userId) => this.personalSystemPromptCopy(input.workspaceId, userId),
       memoryDigest: (principal) => this.memoryDigestCopy(principal),
       assignSidekickSkillNames: (sources) => {
         fence();
@@ -6411,25 +6409,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * This conversation's copy of a member's personal system prompt, plus a
-   * refresh the run does not wait for. See docs/personal-system-prompt.md.
-   */
-  private personalSystemPromptCopy(workspaceId: string, userId: string): string {
-    const copy = this.state.storage.sql.exec<{ text: string }>(
-      `SELECT text FROM personal_system_prompt_copies WHERE user_id = ?`,
-      userId,
-    ).toArray()[0];
-    this.state.waitUntil(this.refreshPersonalSystemPromptCopy(workspaceId, userId).catch((error: unknown) => {
-      logWarn(this.env, "personal_system_prompt_refresh_failed", {
-        workspace_id: workspaceId,
-        substream_id: this.externalSubstreamId(),
-        reason: diagnosticErrorCode(error, "personal_system_prompt_refresh_failed"),
-      });
-    }));
-    return copy?.text ?? "";
-  }
-
-  /**
    * This conversation's memory digest copy for one principal, read
    * synchronously and never refreshed here: the settlement step, the sweep, a
    * forget, a Sidekick run's provisioning, and the copy-sync lane refresh it. An unreadable copy renders no
@@ -6448,24 +6427,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
   }
 
-  private async refreshPersonalSystemPromptCopy(workspaceId: string, userId: string): Promise<void> {
-    const workspace = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
-      workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId)));
-    const source = PersonalSystemPromptRecordSchema.parse(
-      await workspace.personalSystemPrompt({ workspaceId: asWorkspaceId(workspaceId), userId }));
-    // Two refreshes can overlap and resume in either order; the revision keeps
-    // a late, older answer from replacing a newer copy.
-    this.state.storage.sql.exec(
-      `INSERT INTO personal_system_prompt_copies (user_id, text, source_revision, copied_at) VALUES (?, ?, ?, ?)
-       ON CONFLICT (user_id) DO UPDATE SET text = excluded.text, source_revision = excluded.source_revision,
-         copied_at = excluded.copied_at
-       WHERE excluded.source_revision > personal_system_prompt_copies.source_revision`,
-      userId,
-      source.personalSystemPrompt,
-      source.revision,
-      Date.now(),
-    );
-  }
 
   /**
    * Deliver the outbound bindings this run child's sends committed, to the
