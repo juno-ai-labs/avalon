@@ -79,6 +79,15 @@ when a Rally window gains focus, since a background alert from another
 Organization sets that Organization's count. Foreground alerts leave `.badge`
 out of their presentation options, so they never replace it.
 
+An installed browser app (a Chrome or Edge app window, or a Home Screen app on
+iPhone and iPad) shows the same number through the Badging API. The Web Push
+payload carries it as `badge`, and `sw.js` sets it with `navigator.setAppBadge`
+(`clearAppBadge` at `0`) when the push arrives. While a tab runs, the browser
+bridge's `setDockBadgeCount` takes the count from `useDockBadge` the same way
+and puts it back when the tab regains focus, as main does on the Mac. A plain
+tab has no icon, and browsers ignore the call there; Safari also requires
+notification permission.
+
 macOS shows a badge only while notifications, with badges, are allowed for
 Rally. Authorization requests `UNAuthorizationOptionBadge`, each permission read
 (also on window focus) reports `badgeSetting` as `notificationBadgeStatus`, and
@@ -398,9 +407,11 @@ signed-Mac delivery.
 `apns-transport.test.ts` cover encoding/signing, Apple responses, and the
 sandbox versus production host. The real
 workerd `push-delivery.test.ts` covers read RPC, receipts, revocation, retry,
-and that `aps.badge` is the reader's attention count. `workspace-attention.test.ts`
+and that `aps.badge` and the Web Push `badge` are the reader's attention count. `workspace-attention.test.ts`
 covers that count, Breakouts included, against the same directory projection,
-and `dock-badge.test.tsx` covers when the Mac sends its local count. Desktop push/link tests cover registration and routing; existing settings and
+`dock-badge.test.tsx` covers when the Mac sends its local count, and
+`platform.test.ts` covers the browser bridge setting and restoring the app
+icon badge. Desktop push/link tests cover registration and routing; existing settings and
 release suites cover the integration. iOS XCTest covers payload parse and the
 PUT body. For Web Push, `web-push-transport.test.ts` reproduces RFC 8291's
 worked example, checks the VAPID token and maps push service answers, redirects
@@ -422,6 +433,26 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-10-21 — The installed browser app shows the badge
+
+**What changed:** The Web Push payload carries `badge`, the same
+`readerAttentionCount` APNs gets. The service worker sets it on the app icon
+when a push arrives, and the browser bridge sets it from the sidebar count while
+a tab runs and restores it on focus, through the Badging API.
+
+**Why:** The Mac dock showed the attention count and an installed browser app
+showed nothing, though both are signed in to the same Organization. Reusing
+`useDockBadge` and its `complete` gate keeps one rule for when the client may
+write a count.
+
+**Considered and rejected:** A separate browser hook: the shell already calls
+`setDockBadgeCount` on every host, so only the browser bridge's empty body had
+to change.
+
+**Consequences:** A change to the badge count changes the Mac, iPhone and
+browser icons together. A push from another Organization sets its own count, as
+on the Mac, until a Rally tab regains focus.
 
 ### 2026-10-20 — Reply batches and conversation notification collapse
 

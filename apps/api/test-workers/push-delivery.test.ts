@@ -115,7 +115,7 @@ it('rechecks access after queueing and defers a directory that is still catching
   expect(await deliverPush(pushEnv(), message(), send)).toBe(true);
   expect(send).not.toHaveBeenCalled();
 });
-it('sets the APNs badge to the conversations waiting for the reader, leaving out a needs-input run already read', async () => {
+it('sets the APNs and Web Push badge to the conversations waiting for the reader, leaving out a needs-input run already read', async () => {
   const needsInputId = asWorkstreamId('00000000-0000-7000-8000-00000000f105');
   const archivedId = asWorkstreamId('00000000-0000-7000-8000-00000000f106');
   await runInDurableObject(workspace(), (_instance, state) => {
@@ -155,6 +155,7 @@ it('sets the APNs badge to the conversations waiting for the reader, leaving out
   expect(await deliverPush(pushEnv(), message(), send)).toBe(true);
   expect(send).toHaveBeenCalledTimes(2);
   expect(payloads(send).map((payload) => JSON.parse(payload.apns).aps.badge)).toEqual([1, 1]);
+  expect(payloads(send).map((payload) => JSON.parse(payload.web).badge)).toEqual([1, 1]);
 });
 it('reduces person mention Markdown before sending an APNs alert', async () => {
   const intentId = 'mention:markdown';

@@ -193,3 +193,30 @@ describe('browser fallback single-platform identity boundary', () => {
       .rejects.toThrow('did not match this organization request');
   });
 });
+
+describe('browser app icon badge', () => {
+  const setAppBadge = vi.fn<(count?: number) => Promise<void>>(async () => undefined);
+  const clearAppBadge = vi.fn(async () => undefined);
+
+  beforeEach(() => {
+    delete window.rally;
+    Object.assign(navigator, { setAppBadge, clearAppBadge });
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(navigator, 'setAppBadge');
+    Reflect.deleteProperty(navigator, 'clearAppBadge');
+  });
+
+  it('sets the count, clears it at zero, and puts it back when the tab regains focus', async () => {
+    await desktopBridge().setDockBadgeCount(3);
+    expect(setAppBadge.mock.calls).toEqual([[3]]);
+
+    // A push for another Organization sets its own count while the tab is in the background.
+    window.dispatchEvent(new Event('focus'));
+    expect(setAppBadge.mock.calls).toEqual([[3], [3]]);
+
+    await desktopBridge().setDockBadgeCount(0);
+    expect(clearAppBadge).toHaveBeenCalledTimes(1);
+  });
+});
