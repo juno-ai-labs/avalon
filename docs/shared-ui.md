@@ -144,9 +144,22 @@ can no longer open do not contribute. Guests cannot read the Organization
 ranking. This adds no interaction ledger, backfill or retention policy; the
 existing activity retention bounds its evidence.
 
+Ranking starts with indexed candidate events: the reader's authored messages,
+their mention/participant targets, and replies in Breakouts they currently
+participate in. WorkspaceDO migration 126 adds the partial author index; the
+target and conversation indexes already exist. Access and placement joins run
+only for those candidates, materialized once before the three interaction
+directions are combined. Keep the unary `+` on the Breakout id comparison: it
+preserves the expression index's affinity so SQLite seeks both the Thread and
+Breakout rather than scanning the Thread's Main history. Unrelated Organization
+traffic must not increase this read's work; the workerd regression measures
+actual `rowsRead` before and after 10,000 unrelated replies.
+
 The host's `usePeopleRanking` requests this optional read when People opens,
 with the person, Organization and Channel in its query key. A pending or failed read
 leaves the directory fallback available; the picker shows loading or retry copy.
+Reopening keeps the last ranking available while refreshing, and shares an
+already running refresh instead of canceling and restarting it.
 The component itself still knows nothing about fetching or authorization.
 The morphing menu frame does not shrink in its scroll container: a long
 search result list scrolls rather than clipping its final rows. Keyboard Tab scrolls
@@ -191,15 +204,28 @@ component test runner is needed for the same implementations.
 
 ### 2026-10-21 — People start with frequent collaborators
 
-The product asked for Channel collaborators, Organization collaborators,
-Members and Guests in that order; five alphabetical suggestions gave unrelated
-accounts the same prominence as teammates. The picker now shows five eligible
-people total, using those tiers to rank one Suggested list. Search remains
-available for everyone else.
-It reads existing human reply and mention facts rather than maintaining a
-second relationship ledger or introducing connector-derived scores. Keep the
-Channel context route-owned, filter access at read time, and deduplicate before
-applying the final five-person limit.
+**What changed:** The picker shows five eligible people total, ranked by Channel
+collaborators, Organization collaborators, Members and Guests. Search exposes
+everyone else. Indexed candidate seeks read existing human reply and mention
+facts; reopening reuses any in-flight refresh and keeps the shortlist usable.
+
+**Why:** Five alphabetical suggestions gave unrelated accounts the same
+prominence as teammates. The first ranking query scanned all retained
+Organization activity: 10,000 unrelated replies increased its reads from 34 to
+60,034. Ranking must stay off the menu's opening path and exclude unrelated
+traffic from its read work.
+
+**Considered and rejected:** A second relationship ledger or a stale-result
+time window would add another state lifecycle. One partial author index and
+the existing target/conversation indexes keep the source facts authoritative.
+Connector activity does not contribute to the requested Rally-only ranking.
+
+**Consequences:** Keep Channel context route-owned, filter access at read time,
+and deduplicate before the final five-person limit. Preserve the indexed
+candidate seeks and expression affinity; the real-workerd read-cost regression
+must remain independent of unrelated Organization history.
+
+PR: #1367.
 
 ### 2026-10-20 — Breadcrumbs attach to the command pill
 
