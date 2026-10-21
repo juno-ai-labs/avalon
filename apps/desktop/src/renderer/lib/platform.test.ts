@@ -243,4 +243,14 @@ describe('browser app icon badge', () => {
     await desktopBridge().setDockBadgeCount(4);
     expect(setAppBadge.mock.calls).toEqual([[2], [4]]);
   });
+
+  it('takes the icon back when the tab becomes visible without a focus event', async () => {
+    vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+    localStorage.setItem('rally.app-badge-owner', 'another-tab');
+    await desktopBridge().setDockBadgeCount(6);
+    expect(setAppBadge).not.toHaveBeenCalled();
+
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(setAppBadge.mock.calls).toEqual([[6]]);
+  });
 });

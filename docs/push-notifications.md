@@ -87,8 +87,8 @@ the push may be for another Organization, and a Mac foreground alert leaves the
 dock badge alone too. While a tab runs, the browser bridge's
 `setDockBadgeCount` takes the count from `useDockBadge` the same way. The icon
 is one for every tab, so only the tab focused last writes it: focusing a tab
-records it under `rally.app-badge-owner` in `localStorage` and puts its count
-back, as main does on the Mac. A tab still focused last keeps the icon current
+(or bringing it back to visible) records it under `rally.app-badge-owner` in
+`localStorage` and puts its count back, as main does on the Mac. A tab still focused last keeps the icon current
 from the background. A plain tab has no icon, and browsers ignore the call
 there; Safari also requires notification permission.
 
@@ -440,19 +440,15 @@ signed-Mac APNs/universal-link acceptance is claimed.
 
 ### 2026-10-21 — The installed browser app shows the badge
 
-**What changed:** The Web Push payload carries `badge`, the same
-`readerAttentionCount` APNs gets. The service worker sets it on the app icon
-when a push arrives and no Rally tab is focused, and the browser bridge sets it
-from the sidebar count of the tab focused last, through the Badging API.
+**What changed:** Installed browser apps show the badge, from Web Push and from
+the tab focused last.
 
 **Why:** The Mac dock showed the attention count and an installed browser app
 showed nothing, though both are signed in to the same Organization. Reusing
 `useDockBadge` and its `complete` gate keeps one rule for when the client may
 write a count.
 
-**Considered and rejected:** A separate browser hook: the shell already calls
-`setDockBadgeCount` on every host, so only the browser bridge's empty body had
-to change. Every tab writing its own count: the icon is shared, so a background
+**Considered and rejected:** Every tab writing its own count: the icon is shared, so a background
 tab in another Organization replaced the focused tab's count, and focus could
 not restore it because the focused tab never lost focus. Writing only from the
 focused tab: an installed app window in the background would then stop
@@ -460,7 +456,8 @@ updating.
 
 **Consequences:** A change to the badge count changes the Mac, iPhone and
 browser icons together. A push from another Organization sets its own count, as
-on the Mac, until a Rally tab regains focus.
+on the Mac, until a Rally tab regains focus or becomes visible; a Home Screen
+app on iPhone and iPad returns from the background without a `focus` event.
 
 ### 2026-10-20 — Reply batches and conversation notification collapse
 
