@@ -13,10 +13,9 @@ outside this document can break without their own tests failing.
 
 Ordinary member search and resource reads use the [authorization primitive](authorization.md):
 five-minute freshness is a design goal, not a permission lease or request timeout.
-Canonical permission checks share observations within a batch; attachment and
-artifact reads additionally share one admission per exact resource within a
-request. The session query's membership proof supplies the current incarnation
-to migrated grant checks. No grant decision is retained across requests.
+Canonical permission checks share observations within a batch. Attachment and
+artifact reads authorize once per operation. The session query's membership
+proof supplies the current incarnation to migrated grant checks. No grant decision is retained across requests.
 Queue-maintained attachment discovery can lag source changes, while a
 positive result still requires its canonical grant. New requests pass session and
 workspace-membership middleware. This does not relax mutation checks, socket

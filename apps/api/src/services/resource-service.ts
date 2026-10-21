@@ -14,7 +14,7 @@ import {
 } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 import { workspaceDOName } from "../durable-objects/names";
-import type { AuthContext, Env } from "../env";
+import type { AuthContext, Env, RequestMembershipObservation } from "../env";
 import { numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import {
@@ -33,14 +33,15 @@ import {
 } from "./attachment-derivative-service";
 import { verifyAttachmentMimeType } from "./attachment-mime-verification";
 import { type ModelAttachmentSource, loadBrowserCompatibleImage } from "./attachment-model-content";
-import type { AccessContext } from './authorization-policy';
-import { createAccessContext, requireAuthorizedRead, ResourceReadContext } from './authorization-service';
+import { AccessContext } from './authorization-policy';
+import { AuthorizationService, requireAuthorizedRead } from './authorization-service';
 import { withAuthorizedConnection } from "./connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { listedResourceVisibilitySql } from './resource-listing';
 import { putStagedResourceObject, releaseStagedResourceObject } from "./resource-object-cleanup";
 import { preparePastedText } from "./pasted-text-service";
 import { allocateResourceSlugBesideCreation } from "./resource-slug";
+import { RESOURCE_READ_PROJECTION_SQL } from './resource-read-projection';
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
 
@@ -95,14 +96,7 @@ const UPLOAD_RESOURCE_VISIBILITY_SQL = `(r.provider != 'avalon_upload'
 
 const NOTE_RESOURCE_VISIBILITY_SQL = `(r.provider != 'avalon_note')`;
 
-const RESOURCE_WITH_WATCH_STATE_SQL = `SELECT r.*,
-    c.connector_type AS connector_type,
-    CASE WHEN EXISTS (
-      SELECT 1 FROM resource_watches rw
-       WHERE rw.resource_id = r.id AND rw.workspace_id = r.workspace_id AND rw.enabled = 1
-    ) THEN 1 ELSE 0 END AS watch_enabled
-  FROM resources r
-  LEFT JOIN connector_connections c ON c.id = r.connection_id
+const RESOURCE_WITH_WATCH_STATE_SQL = `${RESOURCE_READ_PROJECTION_SQL}
   WHERE r.id = ? AND r.workspace_id = ?
     AND (c.id IS NULL OR c.scope = 'workspace' OR c.owner_user_id = ?)
     AND ${UPLOAD_RESOURCE_VISIBILITY_SQL}
@@ -113,35 +107,31 @@ export class ResourceService {
   private readonly env: Env;
   private readonly auth: AuthContext;
   private readonly access: AccessContext;
-  private readonly authorityEnv: Env;
+  private readonly authorization: AuthorizationService;
 
   constructor(
     env: Env,
     auth: AuthContext,
     connectorRegistry?: ReturnType<typeof connectorRegistryForEnv>,
-    private readonly requestReads?: ResourceReadContext,
+    requestMembership?: RequestMembershipObservation,
   ) {
-    this.authorityEnv = env;
+    this.authorization = new AuthorizationService(env, requestMembership);
     this.env = withWorkspaceRuntimeDatabase(env, auth.workspaceId);
     this.auth = auth;
     this.connectorRegistry = connectorRegistry;
-    this.access = requestReads?.access ?? createAccessContext(env, auth);
+    this.access = new AccessContext(
+      { workspaceId: auth.workspaceId, userId: auth.userId, delegation: null }, this.authorization,
+    );
   }
 
   private async authorizeRead(id: string): Promise<void> {
-    if (this.requestReads) {
-      await this.requestReads.read(id);
-      return;
-    }
     requireAuthorizedRead(await this.access.check({
       kind: 'resource', workspaceId: this.auth.workspaceId, resourceId: IdSchema.parse(id),
     }));
   }
 
   private readResource(id: string) {
-    // Non-HTTP callers can reuse a service for multiple operations; each starts
-    // a fresh admission. Only an explicitly request-scoped context is shared.
-    return (this.requestReads ?? new ResourceReadContext(this.authorityEnv, this.auth)).read(id);
+    return this.authorization.readResource(this.access.subject, id);
   }
 
   async list(input: ListResourcesInput) {
@@ -181,16 +171,7 @@ export class ResourceService {
     }
 
     const result = await this.env.DB.prepare(
-      `SELECT r.*,
-        c.connector_type AS connector_type,
-        CASE WHEN EXISTS (
-          SELECT 1 FROM resource_watches rw
-          WHERE rw.resource_id = r.id
-            AND rw.workspace_id = r.workspace_id
-            AND rw.enabled = 1
-        ) THEN 1 ELSE 0 END AS watch_enabled
-       FROM resources r
-       LEFT JOIN connector_connections c ON c.id = r.connection_id
+      `${RESOURCE_READ_PROJECTION_SQL}
        WHERE ${filters.join(" AND ")}
        ORDER BY r.updated_at DESC, r.id DESC
        LIMIT ?`,
