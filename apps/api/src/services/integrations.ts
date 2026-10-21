@@ -1,3 +1,4 @@
+import { emitCompletionRepromptTelemetry, type CompletionRepromptObservation } from "../telemetry/completion-verification";
 import { connectorAuthorizationStatus } from "@rally/contracts";
 import { readConnectorResourceAttachment } from "./connector-resource-attachments";
 import { readCanvaReference } from "./canva-resource-access";
@@ -2847,6 +2848,7 @@ export async function runWorkstreamHarness(
     new Set(harnessTools.plugins.map((plugin) => plugin.canonicalId)),
   ));
   priorHintsPreparation.get();
+  let pendingCompletionReprompt: CompletionRepromptObservation | null = null;
   const stopController = new AbortController();
   const harnessSignal = combineAbortSignals(stopController.signal, liveness.signal);
   const abortIfPersistentLoopStopped = () => {
@@ -3393,6 +3395,11 @@ export async function runWorkstreamHarness(
         if (!runtime?.persistentLoop) throw new Error("substream_persistent_loop_required");
         try {
           await runtime.persistentLoop.commitBindTransition(transition);
+          if (transition.kind === "protocol_user_appended"
+            && transition.provenance.sourceKind === "completion_verification" && pendingCompletionReprompt) {
+            emitCompletionRepromptTelemetry(env, input, pendingCompletionReprompt);
+            pendingCompletionReprompt = null;
+          }
         } catch (error) {
           abortIfPersistentLoopStopped();
           throw error;
@@ -3609,6 +3616,7 @@ export async function runWorkstreamHarness(
               requestId: traceId, harnessRunId: input.harnessRunId,
               region: env.AVALON_REGION, environment: env.APP_ENV },
           });
+          pendingCompletionReprompt = { decision, contextStatus: state.context_status };
           logStructuredEvent(env, "info", "completion_verification_decision", {
             request_id: input.harnessRunId, workspace_id: input.workspaceId,
             reprompt: decision.reprompt, choice: decision.answer?.choice ?? null,

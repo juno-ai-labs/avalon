@@ -2155,15 +2155,26 @@ describe("a member's message travels the whole pipeline", () => {
     { name: "confident result", answer: { choice: "answer_or_result" as const, confidence: 0.95 }, verify: false },
   ])("completion verification handles $name in the production loop", async ({ answer, verify }) => {
     const stub = agentStub();
+    const logged = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const reprompts = () => logged.mock.calls.map(([entry]) => entry as Record<string, unknown>)
+      .filter((entry) => entry.event === "agent_completion_reprompted");
     try {
       await installScriptedProvider(stub, [
         [{ choices: [{ delta: { content: verify ? "I'm drafting the article now." : "Here is the article." }, finish_reason: "stop" }] }],
         ...(verify ? [[{ choices: [{ delta: { content: "Here is the completed article." }, finish_reason: "stop" }] }]] : []),
       ], { primaryModel: PERSONAL_PROMPT_MODEL, fallbackModels: [], completionAnswers: [answer] });
+      await runInDurableObject(stub, (instance) => {
+        const target = instance as unknown as { env: Env };
+        target.env = new Proxy(target.env, { get: (current, key, receiver) => key === "LOG_LEVEL" ? "info" : Reflect.get(current, key, receiver) });
+      });
       const opened = await initializeWorkstream(stub, "Write an article about launch planning.", PERSONAL_PROMPT_MODEL);
       expect(opened.status).toBe(200);
       const run = await externallySettledRun(stub, opened.body.harnessRunId as string);
       expect(run.status).toBe("completed");
+      expect(reprompts()).toHaveLength(verify ? 1 : 0);
+      if (verify) expect(reprompts()[0]).toMatchObject({ harnessRunId: run.run_id,
+        reason: answer === "unavailable" ? "judge_failure" : "low_confidence",
+        choice: answer === "unavailable" ? null : "answer_or_result", stopConfidenceThreshold: 0.7 });
       const requests = (await capturedProviderRequests(stub)).filter((request) => request.url.endsWith("/responses"));
       expect(requests).toHaveLength(verify ? 2 : 1);
       const judgments = await capturedCompletionRequests(stub);
@@ -2179,12 +2190,16 @@ describe("a member's message travels the whole pipeline", () => {
       expect(saved).toEqual({ markers: verify ? 1 : 0,
         final: verify ? "Here is the completed article." : "Here is the article." });
     } finally {
+      logged.mockRestore();
       await restoreProviderFetch(stub);
     }
   });
 
   it.each(["terminal compaction", "nudge materialization"] as const)("completion verification honors Stop during %s", async (boundary) => {
     const stub = agentStub();
+    const logged = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const reprompts = () => logged.mock.calls.map(([entry]) => entry as Record<string, unknown>)
+      .filter((entry) => entry.event === "agent_completion_reprompted");
     try {
       await installScriptedProvider(stub, [
         [{ choices: [{ delta: { content: "I'm drafting the article now." }, finish_reason: "stop" }],
@@ -2210,9 +2225,14 @@ describe("a member's message travels the whole pipeline", () => {
           return result;
         };
       });
+      await runInDurableObject(stub, (instance) => {
+        const target = instance as unknown as { env: Env };
+        target.env = new Proxy(target.env, { get: (current, key, receiver) => key === "LOG_LEVEL" ? "info" : Reflect.get(current, key, receiver) });
+      });
       const opened = await initializeWorkstream(stub, "Write an article about launch planning.", PERSONAL_PROMPT_MODEL);
       const run = await externallySettledRun(stub, opened.body.harnessRunId as string);
       expect(run.status).toBe("cancelled");
+      expect(reprompts()).toHaveLength(0);
       expect(await capturedCompletionRequests(stub)).toHaveLength(boundary === "terminal compaction" ? 0 : 1);
       expect((await capturedProviderRequests(stub)).filter((request) => request.url.endsWith("/responses")))
         .toHaveLength(boundary === "terminal compaction" ? 2 : 1);
@@ -2221,6 +2241,7 @@ describe("a member's message travels the whole pipeline", () => {
         run.run_id,
       ).one().n)).toBe(0);
     } finally {
+      logged.mockRestore();
       await restoreProviderFetch(stub);
     }
   });
