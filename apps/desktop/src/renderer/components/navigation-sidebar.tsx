@@ -8,6 +8,7 @@ import { resolveWorkstreamAppearance, WORKSTREAM_ICON_COMPONENTS } from '@rally/
 import { markColors } from '@rally/ui/lib/project-palette';
 import {
   IconArrowDown,
+  IconArchive,
   IconArrowUp,
   IconArrowsSort,
   IconCancel,
@@ -46,13 +47,14 @@ import { compareChannels } from '../lib/sidebar-channel-order';
 import { ACTIVITY_QUERY_KEY, CHANNEL_STATS_QUERY_KEY, MY_THREADS_QUERY_KEY, SPACES_QUERY_KEY } from '../lib/sidebar-list-store';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { latestPinWrite, reportThreadPin, useArtifactPinAction, useArtifactPins, useArtifactPinWrite, usePinAction, usePinFailure, usePinnedIds, usePins, usePinWrite, type PinnedThread } from '../lib/pins';
-import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation } from '../lib/telemetry';
+import { markSurfaceEntrypoint, markWorkstreamFeedOpenStarted, markWorkstreamNavigation, reportTelemetryProductIntent, telemetryVisibility } from '../lib/telemetry';
 import type { SpaceConversationSummary, Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
 import { useUiStore, type SidebarChannelSort, type SidebarSection } from '../lib/ui-store';
 import { useListMotion, useListMotionPass } from '../lib/use-list-motion';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
-import { openWorkstreamId } from '../lib/workstream-landing';
+import { openWorkstreamId, useOpenFirstWorkstream } from '../lib/workstream-landing';
+import { holdCachedWorkstreamArchive } from '../lib/workstreams-cache';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import { resourceKindLabel } from './markdown-citations';
 import { Avatar, Button, IconButton, InlineError, Modal, RallyAvatar, TitleSkeleton, Tip } from './primitives';
@@ -315,7 +317,7 @@ export function NavigationSidebar({
         <SidebarScroll className="navigation-panel-scroll" scrollRef={scroll}>
           {pinFailure && <InlineError>{pinFailure}</InlineError>}
           {section === 'pinned' && <PinnedPanel guest={guest} scroll={scroll} />}
-          {section === 'threads' && <ThreadsSection scroll={scroll} />}
+          {section === 'threads' && <ThreadsSection guest={guest} scroll={scroll} />}
           {section === 'artifacts' && <ArtifactsSection scroll={scroll} />}
           {section === 'channels' && <ChannelsSection scroll={scroll} />}
           {section === 'activity' && <ActivitySection
@@ -979,7 +981,7 @@ function PinnedPanel({ guest, scroll }: { guest: boolean; scroll: RefObject<HTML
   const motion = useListMotionPass(scroll);
   return <>
     {!guest && <ChannelsSection motion={motion} scroll={scroll} />}
-    <ThreadsSection motion={motion} scroll={scroll} />
+    <ThreadsSection guest={guest} motion={motion} scroll={scroll} />
     <ArtifactsSection motion={motion} scroll={scroll} />
   </>;
 }
@@ -1000,9 +1002,16 @@ function useSectionMotion(scroll: RefObject<HTMLElement | null>, shared: (() => 
  * thread the socket holds is drawn from the socket, so its dot moves live.
  */
 /** `motion` is the Pinned tab's shared list motion; given it, only the pinned rows are drawn. */
-function ThreadsSection({ motion, scroll }: { motion?: () => void; scroll: RefObject<HTMLElement | null> }): React.JSX.Element {
+function ThreadsSection({ guest, motion, scroll }: { guest: boolean; motion?: () => void; scroll: RefObject<HTMLElement | null> }): React.JSX.Element {
   const pinnedOnly = motion !== undefined;
   const { api } = useAppSession();
+  const queryClient = useQueryClient();
+  const openFirstWorkstream = useOpenFirstWorkstream();
+  const navigate = useNavigate();
+  const [archiveTarget, setArchiveTarget] = useState<SpaceConversationSummary | null>(null);
+  const [actionPending, setActionPending] = useState(false);
+  const actionLock = useRef(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const sort = useUiStore((state) => state.threadSort);
   const setSort = useUiStore((state) => state.setThreadSort);
   const live = useWorkstreamsQuery({ includeArchived: true });
@@ -1011,10 +1020,14 @@ function ThreadsSection({ motion, scroll }: { motion?: () => void; scroll: RefOb
   const pin = usePinAction(api);
   const openChannelId = useOpenChannelId();
   const openThreadId = useOpenThreadId();
-  const { search } = useLocation();
+  const location = useLocation();
   // A breakout's pathname names its parent; its own row is named by the query.
-  const breakoutId = new URLSearchParams(search).get('substream');
+  const breakoutId = new URLSearchParams(location.search).get('substream');
   const openRowId = openThreadId !== null && breakoutId && breakoutId !== '0' ? breakoutId : openThreadId;
+  const openThreadRef = useRef(openThreadId);
+  openThreadRef.current = openThreadId;
+  const visitRef = useRef(location.key);
+  visitRef.current = location.key;
   const list = useMyThreads();
   const liveById = useMemo(() => new Map((live.data ?? []).map((row) => [row.id, row])), [live.data]);
   const rows = useMemo(() => {
@@ -1109,6 +1122,45 @@ function ThreadsSection({ motion, scroll }: { motion?: () => void; scroll: RefOb
     }
     return threadRoute(row.id, homeChannelId(row.spaceIds, openChannelId));
   };
+  const actOnThread = async (row: SpaceConversationSummary, action: 'resolve' | 'archive'): Promise<void> => {
+    if (!api || actionLock.current) return;
+    actionLock.current = true;
+    const visit = visitRef.current;
+    setActionPending(true);
+    setActionError(null);
+    try {
+      if (action === 'archive') {
+        const archived = await api.archiveWorkstream(row.id);
+        holdCachedWorkstreamArchive(queryClient, archived);
+        // The directory projection can still serve the row just archived.
+        // Cancel its older read and remove the confirmed archive locally;
+        // the next directory push owns the eventual refresh.
+        await queryClient.cancelQueries({ queryKey: MY_THREADS_QUERY_KEY });
+        queryClient.setQueryData<InfiniteData<Awaited<ReturnType<typeof api.getMyThreads>>>>(MY_THREADS_QUERY_KEY, (current) => {
+          if (!current) return current;
+          const keep = (item: SpaceConversationSummary): boolean => item.id !== row.id && item.breakoutOf?.workstreamId !== row.id;
+          return { ...current, pages: current.pages.map((page) => ({ ...page, items: page.items.filter(keep), pinned: page.pinned.filter(keep) })) };
+        });
+        reportTelemetryProductIntent({
+          kind: 'workstream_action_completed', workstreamId: row.id, action: 'archive',
+          visibility: telemetryVisibility(archived.scope), origin: archived.systemKind ? 'system' : 'ad_hoc',
+          pinned: pinned.has(row.id),
+        });
+        setArchiveTarget(null);
+        if (visitRef.current === visit && openThreadRef.current === row.id) openFirstWorkstream([row.id], homeChannelId(row.spaceIds, openChannelId) ?? undefined);
+      } else {
+        await api.resolveConversation(row.id, '0');
+        const channelId = homeChannelId(row.spaceIds, openChannelId);
+        if (visitRef.current === visit && openThreadRef.current === row.id && channelId) void navigate(channelRoute(channelId));
+        void queryClient.invalidateQueries({ queryKey: MY_THREADS_QUERY_KEY });
+      }
+    } catch {
+      setActionError(`“${row.title}” couldn’t be ${action === 'archive' ? 'archived' : 'resolved'}. Try again.`);
+    } finally {
+      actionLock.current = false;
+      setActionPending(false);
+    }
+  };
   const renderRow = (
     row: SpaceConversationSummary,
     drag?: PinnedRowProps,
@@ -1126,6 +1178,9 @@ function ThreadsSection({ motion, scroll }: { motion?: () => void; scroll: RefOb
       revealPin(row.id, next);
       pin(pinKind(row), row.id, next, row.breakoutOf?.workstreamId, row);
     }}
+    onResolve={row.kind === 'channel' && !row.resolved && !row.archivedAt && !row.pending ? () => { void actOnThread(row, 'resolve'); } : undefined}
+    onArchive={row.kind === 'channel' && !guest && !row.archivedAt && !row.pending ? () => { setActionError(null); setArchiveTarget(row); } : undefined}
+    actionPending={actionPending}
     pinned={pinned.has(row.id)}
     position={position}
     row={row}
@@ -1169,6 +1224,19 @@ function ThreadsSection({ motion, scroll }: { motion?: () => void; scroll: RefOb
       {list.isError && <InlineError>Your threads couldn’t be loaded.</InlineError>}
     </section>}
     {pinnedOnly && list.isError && <InlineError>Your threads couldn’t be loaded.</InlineError>}
+    {actionError && !archiveTarget && <InlineError>{actionError}</InlineError>}
+    <Modal
+      open={archiveTarget !== null}
+      title="Archive thread"
+      onOpenChange={(open) => { if (!open && !actionPending) { setArchiveTarget(null); setActionError(null); } }}
+      footer={<>
+        <Button disabled={actionPending} onClick={() => { setArchiveTarget(null); setActionError(null); }}>Cancel</Button>
+        <Button className="button-danger" disabled={actionPending} onClick={() => { if (archiveTarget) void actOnThread(archiveTarget, 'archive'); }}>Archive</Button>
+      </>}
+    >
+      <p className="modal-copy"><strong>{archiveTarget?.title}</strong> leaves the sidebar for everyone in it, and stops accepting messages.</p>
+      {actionError && <InlineError>{actionError}</InlineError>}
+    </Modal>
   </>;
 }
 
@@ -1179,13 +1247,16 @@ function ThreadsSection({ motion, scroll }: { motion?: () => void; scroll: RefOb
  * (`docs/realtime-sockets.md`). A breakout opens beside its thread, so both
  * act on the thread.
  */
-function ThreadRow({ active, drag, ghost, href, moves, onPin, pinned, position, row, spaces }: {
+function ThreadRow({ active, actionPending, drag, ghost, href, moves, onArchive, onPin, onResolve, pinned, position, row, spaces }: {
   active: boolean;
+  actionPending: boolean;
   drag?: PinnedRowProps | undefined;
   ghost: boolean;
   href: string;
   moves?: PinMoves | undefined;
   onPin: (pinned: boolean) => void;
+  onResolve?: (() => void) | undefined;
+  onArchive?: (() => void) | undefined;
   pinned: boolean;
   position?: string | undefined;
   row: SpaceConversationSummary;
@@ -1286,6 +1357,17 @@ function ThreadRow({ active, drag, ghost, href, moves, onPin, pinned, position, 
           {pinned ? 'Unpin' : 'Pin'}
         </ContextMenu.Item>
         <PinMoveItems moves={moves} />
+        {onResolve && <ContextMenu.Item className="menu-item" disabled={actionPending} onSelect={onResolve}>
+          <IconCheck aria-hidden="true" size={15} stroke={1.8} />
+          Resolve thread
+        </ContextMenu.Item>}
+        {onArchive && <>
+          <ContextMenu.Separator className="menu-separator" />
+          <ContextMenu.Item className="menu-item menu-item-danger" disabled={actionPending} onSelect={onArchive}>
+            <IconArchive aria-hidden="true" size={15} stroke={1.8} />
+            Archive thread
+          </ContextMenu.Item>
+        </>}
       </ContextMenu.Content>
     </ContextMenu.Portal>
   </ContextMenu.Root>;
