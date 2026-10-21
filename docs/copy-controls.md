@@ -107,10 +107,14 @@ provider above it.
 | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/use-copy.test.tsx` | The hook: writes through the bridge or the clipboard it is handed, settles into `copied` or `failed` without rejecting, resolves an on-demand value, reports only on success, resets after the interval, and leaves no timer behind on unmount. |
 | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/copy-button.test.tsx` | The control: an icon named by its label with a tooltip, the outcome in its name, class and live region, the failed state's retry, and `CopyField`'s read-only and masked fields. |
 
-Artifact title menus use `useCopy` for their copy tile and keep a `CopyStatus`
-live region outside the menu so the outcome survives closing it. Artifact menus
-show that status visibly above the preview; other copy controls retain their
-screen-reader-only status because their outcome remains on the visible icon.
+Artifact and attachment title menus use `useCopy` for their copy tile and keep
+a `CopyStatus` live region outside the menu so the outcome survives closing it.
+Both show that status visibly above the preview; other copy controls retain
+their screen-reader-only status because their outcome remains on the visible icon.
+An attachment gallery keys its copy scope to the selected resource, so changing
+files clears the outcome and discards feedback from a write that finishes later.
+Attachment action tiles share the artifact menu's wrapping labels, including
+the longer failed-copy retry label.
 
 The surfaces' own tests — the inbound-webhook dialog, the invite link, the
 inspector rail, the run-failure notice, the site detail, the code block —

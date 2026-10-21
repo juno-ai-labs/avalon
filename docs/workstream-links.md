@@ -61,6 +61,14 @@ sits in ([`pane-stack.md`](pane-stack.md)).
 | **Deep link** | `rallywithai://workspace/<region>/<organization-base58>/spaces/<space-base58>/channels/<channel-base58>` | The canonical page's last hop; Breakout adds `/breakouts/<breakout-base58>`, Artifact `/artifacts/<artifact-base58>` |
 | **Legacy reader** | `/app/workspaces/.../workstreams/...`, `/app/workstreams/...`, or older deep links | Compatibility for already-shared links |
 
+An attachment panel's **Copy URL** tile uses the same `/a/` destination for the
+active gallery file, including uploaded files available in the thread's Main.
+It is available when the thread has a Channel placement and the file is in Main;
+local previews and files available only in a Breakout have no such destination.
+The link opens the current resource, including when copied from an older version.
+The attachment and resource panels share the same link eligibility and action;
+an uploaded file keeps its **Copy link** action when opened in the resource panel.
+
 The desktop still registers `rallywithai://` and reads the older
 `rallywithai://workstreams/<uuid>` form. The public HTTPS page hands off through
 the addressed Space/Channel deep link; the custom scheme stopped being what

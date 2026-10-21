@@ -3,12 +3,26 @@ import { useEffect, useState } from 'react';
 import { ResourceIcon } from '@rally/ui/components/resource-icon';
 import type { IconGroupAction } from '@rally/ui/components/icon-group';
 import { ActionTile, ActionTiles, TitleMenuHeader, TitlePillClose, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
-import { IconDownload, IconHistory, IconInfoCircle } from '@tabler/icons-react';
+import { IconDownload, IconHistory, IconInfoCircle, IconLink } from '@tabler/icons-react';
 import { ChevronLeft, ChevronRight, History } from 'lucide-react';
 import type { AttachmentPreview } from './attachments';
 import { AttachmentGalleryThumbnails, AttachmentViewBody, useAttachmentView } from './attachment-lightbox';
 import { IconButton } from './primitives';
 import { RailSurface } from './rail-surface';
+import { useCopy, type CopyState } from '../lib/use-copy';
+import { CopyStatus, copyStateLabel } from './copy-button';
+
+/** A gallery selection owns its feedback; unmounting also discards pending writes' outcomes. */
+function AttachmentCopyScope({ copyLink, children }: {
+  copyLink: (() => Promise<void>) | undefined;
+  children: (copy: () => Promise<void>, state: CopyState) => React.JSX.Element;
+}): React.JSX.Element {
+  const { copy, state } = useCopy({ value: '', copyText: async () => {
+    if (!copyLink) throw new Error('This attachment has no link');
+    await copyLink();
+  } });
+  return children(copy, state);
+}
 
 /**
  * An attachment, a file a citation names, or a prior version of a resource,
@@ -19,10 +33,12 @@ import { RailSurface } from './rail-surface';
  * stack's own Expand. The lightbox stays only for the surfaces that have no
  * panel of their own: search and the Channel composer.
  */
-export function AttachmentPanel({ ancestors, expandAction, preview, leaving = false, onClose, onResize, onShow, width }: {
+export function AttachmentPanel({ ancestors, expandAction, preview, leaving = false, onClose, onResize, onShow, resourceLink, width }: {
   preview: AttachmentPreview;
   /** The resource on screen, which a gallery changes as the reader steps through it. */
   onShow?: ((preview: AttachmentPreview, resourceId: string | null) => void) | undefined;
+  /** A stable Rally link for a stored attachment; local-only previews have none. */
+  resourceLink?: ((resourceId: string) => (() => Promise<void>) | undefined) | undefined;
   leaving?: boolean;
   onClose: () => void;
   /** Expand the panel over its conversation, or put it back. */
@@ -35,6 +51,7 @@ export function AttachmentPanel({ ancestors, expandAction, preview, leaving = fa
   const [detailActions,setDetailActions] = useState<readonly IconGroupAction[]>([]);
   const view = useAttachmentView(preview);
   const { gallery, active, mode, src, error, step } = view;
+  const copyLink = active?.resourceId ? resourceLink?.(active.resourceId) : undefined;
   const shownId = active?.resourceId ?? null;
   useEffect(() => {
     onShow?.(preview, shownId);
@@ -60,6 +77,7 @@ export function AttachmentPanel({ ancestors, expandAction, preview, leaving = fa
       resizeLabel="Resize attachment panel"
       width={width}
     >
+      <AttachmentCopyScope key={shownId ?? view.activeIndex} copyLink={copyLink}>{(copy, copyState) => <>
       <TitlePillHeader
         className="panel-title-header"
         current={{
@@ -69,8 +87,9 @@ export function AttachmentPanel({ ancestors, expandAction, preview, leaving = fa
           label: `Attachment menu: ${active.name}`,
           menu: <>
             <TitleMenuHeader eyebrow={preview.superseded ? preview.superseded.label : 'Attachment'} icon={icon} title={active.name} />
-            <ActionTiles>
+            <ActionTiles className="artifact-menu-tiles">
               <ActionTile disabled={Boolean(error) || !(src || active.loadContent)} icon={<IconDownload aria-hidden="true" size={20} stroke={1.6} />} label="Download" onSelect={view.download} />
+              {copyLink && <ActionTile icon={<IconLink aria-hidden="true" size={20} stroke={1.6} />} label={copyStateLabel(copyState, 'Copy URL')} onSelect={() => void copy()} />}
               {active.onDetails && <ActionTile icon={<IconInfoCircle aria-hidden="true" size={20} stroke={1.6} />} label="Details" onSelect={active.onDetails} />}
               {preview.superseded && <ActionTile icon={<IconHistory aria-hidden="true" size={20} stroke={1.6} />} label="Current" onSelect={preview.superseded.onReturnToCurrent} />}
             </ActionTiles>
@@ -84,6 +103,7 @@ export function AttachmentPanel({ ancestors, expandAction, preview, leaving = fa
         aria-busy={view.loading || undefined}
         className={`attachment-panel-body is-${mode}${many ? ' has-gallery' : ''}`}
       >
+        <CopyStatus state={copyState} visible />
         {preview.superseded && (
           <p className="attachment-lightbox-superseded attachment-panel-superseded" role="status">
             <History aria-hidden="true" size={14} /> {preview.superseded.label}
@@ -104,6 +124,7 @@ export function AttachmentPanel({ ancestors, expandAction, preview, leaving = fa
           </footer>
         )}
       </div>
+      </>}</AttachmentCopyScope>
     </RailSurface></DetailHeaderActionsHost>
   );
 }
