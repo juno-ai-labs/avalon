@@ -199,7 +199,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
   }, async () => {
     const binding = env[`${regionConfiguration(request.region).bindingPrefix}_INSPECTION`];
     if (!binding) throw new InspectionRefusal("regional_inspection_unavailable", "regional_inspection_unavailable");
-    return CreateEngineeringOrgResultSchema.parse(await binding.createOrg(request));
+    return CreateEngineeringOrgResultSchema.parse(await binding.createOrg(request, principal));
   }));
 
   async function organizationBinding(orgId: string) {
@@ -213,7 +213,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, (request) => tool(principal, "create_channel", {
     workspace_id: request.orgId, space_id: request.operationId, creator_user_id: request.creatorUserId,
-  }, async () => CreateEngineeringChannelResultSchema.parse(await (await organizationBinding(request.orgId)).createChannel(request))));
+  }, async () => CreateEngineeringChannelResultSchema.parse(await (await organizationBinding(request.orgId)).createChannel(request, principal))));
 
   server.registerTool("create_thread", {
     description: "Start a Rally Thread in channelId (a stored Space) in orgId, as creatorUserId, with prompt as its opening message. Starts the normal agent run, which may use connected tools. The creator must satisfy the app's ordinary Thread creation and Channel participation permissions. Private Channels keep the Thread private. Reuse operationId and the same arguments after an uncertain outcome; threadId is operationId.",
@@ -221,7 +221,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, (request) => tool(principal, "create_thread", {
     workspace_id: request.orgId, space_id: request.channelId, workstream_id: request.operationId, creator_user_id: request.creatorUserId,
-  }, async () => CreateEngineeringThreadResultSchema.parse(await (await organizationBinding(request.orgId)).createThread(request))));
+  }, async () => CreateEngineeringThreadResultSchema.parse(await (await organizationBinding(request.orgId)).createThread(request, principal))));
 
   server.registerTool("send_message", {
     description: "Send a message as userId to a Thread's Main or the named Breakout, through the same composer admission as the app. Enforces that user's access, uses normal addressing, queue/steer behavior, notifications and agent execution. Reuse operationId and the same arguments to retry an uncertain send.",
@@ -230,7 +230,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
   }, (request) => tool(principal, "send_message", {
     workspace_id: request.orgId, workstream_id: request.threadId, substream_id: request.breakoutId,
     user_id: request.userId, operation_id: request.operationId,
-  }, async () => SendEngineeringMessageResultSchema.parse(await (await organizationBinding(request.orgId)).sendMessage(request))));
+  }, async () => SendEngineeringMessageResultSchema.parse(await (await organizationBinding(request.orgId)).sendMessage(request, principal))));
 
   server.registerTool("read_channel", {
     description: "Read the Channel feed visible to userId as plain text, with messages and Thread cards in app order. The app's ordinary feed pagination applies; follow the returned cursor for older history. Does not read the contents of every Thread.",
@@ -242,7 +242,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
 
   const conversationReadSchema = ReadEngineeringConversationInputSchema.unwrap().omit({ breakoutId: true });
   server.registerTool("read_thread", {
-    description: "Read the Thread's participant-visible message text as userId through ordinary conversation authorization. Omits tools, thinking and internal agent messages. Reads all committed history unless limit is provided; follow the returned sequence fence to continue a page.",
+    description: "Read the Thread's participant-visible message text as userId through ordinary conversation authorization. Omits tools, thinking and internal agent messages. Returns 20 committed turns by default, or the requested limit; follow the returned sequence fence to continue a page.",
     inputSchema: conversationReadSchema.shape,
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, (request) => tool(principal, "read_thread", {

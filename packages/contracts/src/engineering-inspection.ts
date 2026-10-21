@@ -15,6 +15,14 @@ import { SpaceIdSchema, SpaceSummarySchema, type SpaceDirectory } from "./spaces
 import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
 import { ReadTranscriptRequestSchema } from "./workstream-transcript";
 
+/** Trusted Access identity supplied by the MCP Worker, never a tool argument. */
+export const EngineeringOperatorSchema = z.strictObject({
+  subject: z.string().min(1),
+  email: z.string().nullable(),
+  audience: z.string().min(1),
+});
+export type EngineeringOperator = z.infer<typeof EngineeringOperatorSchema>;
+
 const creationIdentity = {
   operationId: IdSchema.describe("A fresh UUID for this creation. Reuse it and the same arguments after an uncertain outcome."),
   creatorUserId: UserIdSchema.describe("Existing regional Rally user to create as. For an existing Organization, selects any active member or guest and enforces the app's permissions; no login session is minted."),
@@ -509,12 +517,12 @@ export type EngineeringD1SqlResult = z.infer<typeof EngineeringD1SqlResultSchema
 export interface EngineeringInspectionRpcBinding {
   listUserChannels(input: ListEngineeringUserChannelsInput): Promise<SpaceDirectory>;
   listUserConversations(input: ListEngineeringUserConversationsInput): Promise<SpaceChannelPage>;
-  sendMessage(input: SendEngineeringMessageInput): Promise<SendEngineeringMessageResult>;
+  sendMessage(input: SendEngineeringMessageInput, operator: EngineeringOperator): Promise<SendEngineeringMessageResult>;
   readChannel(input: ReadEngineeringChannelInput): Promise<EngineeringTextResult>;
   readConversation(input: ReadEngineeringConversationInput): Promise<EngineeringTextResult>;
-  createOrg(input: CreateEngineeringOrgInput): Promise<CreateEngineeringOrgResult>;
-  createChannel(input: CreateEngineeringChannelInput): Promise<CreateEngineeringChannelResult>;
-  createThread(input: CreateEngineeringThreadInput): Promise<CreateEngineeringThreadResult>;
+  createOrg(input: CreateEngineeringOrgInput, operator: EngineeringOperator): Promise<CreateEngineeringOrgResult>;
+  createChannel(input: CreateEngineeringChannelInput, operator: EngineeringOperator): Promise<CreateEngineeringChannelResult>;
+  createThread(input: CreateEngineeringThreadInput, operator: EngineeringOperator): Promise<CreateEngineeringThreadResult>;
   listWorkspaces(input: ListEngineeringWorkspacesInput): Promise<ListEngineeringWorkspacesResult>;
   searchOrganizations(input: SearchEngineeringOrganizationsInput): Promise<SearchEngineeringOrganizationsResult>;
   searchUsers(input: SearchEngineeringUsersInput): Promise<SearchEngineeringUsersResult>;

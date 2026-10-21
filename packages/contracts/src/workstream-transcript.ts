@@ -234,7 +234,10 @@ export const TranscriptRangeResultSchema = z.object({
   pluginRuns: z.array(TranscriptPluginRunSchema).default([]),
 });
 
-/** Worker-side access to the same range reader used by socket hydration. */
+/** Set by the team on 2026-10-21, matching the desktop's hydration page size. */
+export const DEFAULT_TRANSCRIPT_READ_TURNS = 20;
+
+/** Worker-side text access to the same range reader used by socket hydration. */
 export const ReadTranscriptRequestSchema = z.strictObject({
   afterSequence: z.number().int().nonnegative().default(0),
   throughSequence: z.number().int().nonnegative().optional(),
@@ -243,7 +246,7 @@ export const ReadTranscriptRequestSchema = z.strictObject({
 export type ReadTranscriptRequest = z.infer<typeof ReadTranscriptRequestSchema>;
 export const ReadTranscriptResultSchema = z.strictObject({
   title: z.string(),
-  range: TranscriptRangeResultSchema,
+  text: z.string(),
   throughSequence: z.number().int().nonnegative(),
   nextAfterSequence: z.number().int().nonnegative().nullable(),
 });
