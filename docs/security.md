@@ -23,7 +23,6 @@ admission, or local socket visibility/revocation. Missing authority remains a
 retryable failure for direct reads and explicit partial status for resource
 lists; member search omits the candidate and reports nothing, because its
 decisions are registered from the mutation side before the search needs them.
-
 Member search candidate pagination exposes matching-index continuation even when
 no candidate on a page is admitted. Repeated substring queries and correlation
 with known source IDs can reveal content matches; this API does not promise
@@ -36,7 +35,9 @@ The operation-level and pagination contracts are detailed in [authorization](aut
 Organization-scoped bytes on the device. A new read validates the current
 resource revision and canonical access before reusing them; HTTP 304 still runs
 both preview access checks. Sign-out and Organization removal use the existing
-local-cache wipes. Persisted bytes never serve as a permission lease.
+local-cache wipes, with a shared storage generation fencing image saves in
+other browser tabs. A 403/404 response removes the saved image bytes. Persisted
+bytes never serve as a permission lease.
 
 ## Sidekick authoring and loading
 

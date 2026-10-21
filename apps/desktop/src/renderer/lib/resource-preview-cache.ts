@@ -1,9 +1,14 @@
-import { defineLocalCacheSlice, localCacheEpoch } from './local-cache';
+import { defineLocalCacheSlice, localCacheEpoch, localCacheGeneration } from './local-cache';
 
 interface CachedPreview {
   etag: string;
   mimeType: string;
   bytes: ArrayBuffer;
+}
+
+/** Raw R2 ETags cannot be revalidated by the preview endpoint. */
+function isPreviewValidator(etag: unknown): etag is string {
+  return typeof etag === 'string' && etag.startsWith('"image-preview-v1:');
 }
 
 const previews = defineLocalCacheSlice<CachedPreview>({
@@ -12,7 +17,7 @@ const previews = defineLocalCacheSlice<CachedPreview>({
   parse(value) {
     if (!value || typeof value !== 'object') return null;
     const entry = value as Partial<CachedPreview>;
-    return typeof entry.etag === 'string' && typeof entry.mimeType === 'string'
+    return isPreviewValidator(entry.etag) && typeof entry.mimeType === 'string'
       && Object.prototype.toString.call(entry.bytes) === '[object ArrayBuffer]' ? entry as CachedPreview : null;
   },
 });
@@ -67,23 +72,62 @@ export class ResourcePreviewCache {
   }
 
   private async read(scope: string, key: string, epoch: number, fetchPreview: FetchPreview, signal: AbortSignal): Promise<Blob> {
+    const assertCurrent = (): void => {
+      signal.throwIfAborted();
+      if (epoch !== localCacheEpoch()) throw new DOMException('The attachment session changed.', 'AbortError');
+    };
+    const generation = await localCacheGeneration();
+    assertCurrent();
+    const assertSharedCurrent = async (): Promise<void> => {
+      const currentGeneration = await localCacheGeneration();
+      assertCurrent();
+      if (generation !== currentGeneration) throw new DOMException('The attachment session changed.', 'AbortError');
+    };
     const cached = await previews.read(scope, key);
-    signal.throwIfAborted();
-    if (epoch !== localCacheEpoch()) throw new DOMException('The attachment session changed.', 'AbortError');
-    const response = await fetchPreview(cached?.etag, signal);
-    signal.throwIfAborted();
-    if (epoch !== localCacheEpoch()) throw new DOMException('The attachment session changed.', 'AbortError');
-    if (response.status === 304 && cached) return new Blob([cached.bytes], { type: cached.mimeType });
+    assertCurrent();
+    const fetchCurrent = async (etag: string | undefined): Promise<Response> => {
+      try {
+        return await fetchPreview(etag, signal);
+      } catch (error: unknown) {
+        assertCurrent();
+        if (error instanceof Error && 'status' in error && (error.status === 403 || error.status === 404)) {
+          await previews.remove(scope, key);
+        }
+        throw error;
+      }
+    };
+    let response: Response;
+    try {
+      response = await fetchCurrent(cached?.etag);
+    } catch (error: unknown) {
+      if (!cached || !(error instanceof Error) || !('code' in error) || error.code !== 'network_error') throw error;
+      // A rolled-back API may reject If-None-Match in its CORS preflight.
+      // Retry this read once without the feature; never replay mutations.
+      await assertSharedCurrent();
+      response = await fetchCurrent(undefined);
+      // A genuine outage keeps the saved bytes for later validation. Once a
+      // plain read succeeds, discard the possibly unsupported validator.
+      await previews.remove(scope, key);
+    }
+    assertCurrent();
+    if (response.status === 304 && cached) {
+      await assertSharedCurrent();
+      return new Blob([cached.bytes], { type: cached.mimeType });
+    }
     const mimeType = response.headers.get('content-type') ?? '';
     const etag = response.headers.get('etag');
-    // Only the API's original-image path supplies a preview validator. Other
-    // formats keep their existing derivative/conversion lifecycle.
-    if (!etag || !mimeType.startsWith('image/')) return response.blob();
+    // Other R2-backed responses also expose ETags, but only this versioned
+    // preview validator supports a bodyless response on a subsequent read.
+    if (!isPreviewValidator(etag) || !mimeType.startsWith('image/')) {
+      const blob = await response.blob();
+      await assertSharedCurrent();
+      return blob;
+    }
     const bytes = await response.arrayBuffer();
-    signal.throwIfAborted();
-    if (epoch !== localCacheEpoch()) throw new DOMException('The attachment session changed.', 'AbortError');
-    await previews.write(scope, key, { etag, mimeType, bytes }, key, epoch);
-    if (epoch !== localCacheEpoch()) throw new DOMException('The attachment session changed.', 'AbortError');
+    await assertSharedCurrent();
+    // Persist in the background. The shared generation is checked atomically
+    // with the write, so another tab's wipe also fences this queued save.
+    void previews.write(scope, key, { etag, mimeType, bytes }, key, epoch, generation);
     return new Blob([bytes], { type: mimeType });
   }
 }

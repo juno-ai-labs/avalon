@@ -1,107 +1,94 @@
 # Attachment image preview cache
 
-Message thumbnails and the attachment viewer share one image download. Original
-image bytes persist on the device across navigation and application launches;
-each new load validates access and the image revision with the regional API
-before displaying those saved bytes. The mechanism is shared by Electron and
-the browser client.
+Message thumbnails and the viewer share image downloads on desktop and web.
+Original image bytes persist across app launches, with access and revision
+validation before reuse.
 
 ## Where the code lives
 
-| Path | Responsibility |
-| --- | --- |
-| `apps/desktop/src/renderer/lib/resource-preview-cache.ts` | Coalesces readers, owns cancellation, and stores image bytes and validators in the existing local cache. |
-| `apps/desktop/src/renderer/lib/api.ts` | Scopes cache reads to the account, regional Organization, access class and API URL; sends conditional preview requests. |
-| `apps/api/src/routes/resources.ts` | Passes the request's `If-None-Match` to the preview service. |
-| `apps/api/src/services/resource-service.ts` | Authorizes reads, compares the original image's revision and digest, and skips R2 on a matching validator. |
-| `apps/api/src/middleware/request-context.ts` | Admits conditional request headers and exposes the response ETag through CORS. |
+- `apps/desktop/src/renderer/lib/resource-preview-cache.ts`: pending readers,
+  cancellation and persisted bytes; `api.ts` supplies scopes and conditional requests.
+- `apps/api/src/routes/resources.ts` and `services/resource-service.ts`: the
+  conditional preview endpoint; `middleware/request-context.ts` owns its CORS headers.
 
 ## How it works
 
-`getResourcePreviewContent` uses one `ResourcePreviewCache` per API client.
-Concurrent reads for the same scoped URL and cache epoch share the same pending
-request. Each reader owns its cancellation; the underlying read is aborted only
-after every reader has left. Completed requests leave the pending map.
+Each API client coalesces concurrent reads for the same scoped URL and cache
+epoch. The last reader leaving aborts the request. A loaded thumbnail supplies
+its URL directly to the viewer; an unfinished thumbnail shares its pending load.
 
-The cache saves an image as an ArrayBuffer, MIME type and ETag in the
-`resource-image-preview` slice of `rally-local-cache`. Its scope comes from
-`localCacheScope`, so account, region, Organization and member/guest access stay
-separate. The key includes the API origin and resource URL. One current image
-replaces the previous bytes at that key. The existing sign-out and Organization
-removal wipes cover this slice too.
+The `resource-image-preview` slice stores ArrayBuffer bytes, MIME type and ETag
+in the existing local cache. Account, region, Organization and member/guest
+access scopes come from `localCacheScope`; the key includes the API URL.
+Existing sign-out and Organization-removal wipes cover this slice.
+Each wipe also changes a generation in IndexedDB. Image saves compare that
+generation in the write transaction, fencing downloads in other tabs too.
 
-A later read sends the saved ETag to the same authorized preview endpoint.
-For original browser-readable images with a content digest, the validator
-includes a representation identifier, the resource revision and that digest.
-A match returns HTTP 304 without reading R2 or sending image bytes. The client
-constructs a Blob from the saved bytes. A mismatch returns the current image and
-replaces the saved entry. Cold reads have no extra metadata request.
-
-The feed still passes its already loaded image URL directly to the viewer.
-When it opens before the thumbnail finishes, both readers use the shared load.
-Conversion-dependent image formats and other attachment types keep their
-existing preview lifecycle.
+Only image responses with an ETag beginning with `"image-preview-v1:` are saved.
+Raw R2 ETags cannot revalidate, so they are ignored and any previously saved
+rows using them are discarded. The server's preview validator names the
+representation, resource revision and source digest. A matching conditional
+request passes both canonical access checks and returns 304 without reading R2;
+a changed image replaces the saved bytes. Cold reads add no metadata request.
+Downloaded bytes display before their background save commits. A conditional
+network failure retries the read once without the header, allowing an older
+API's CORS policy to work. A successful plain read discards the old validator;
+an outage preserves the saved bytes for later validation.
 
 ## Invariants
 
-- Saved bytes are never an access grant. Both canonical preview access checks
-  still run on a 304; a rejected request never displays cached bytes. The cache
-  tests cover rejected validation and the service test covers revocation.
-- The ETag identifies both bytes and revision. A new digest or revision returns
-  an image body, preventing a stale preview. Service and cache tests cover this.
-- Canceling one reader cannot cancel another. Cache tests cover thumbnail
-  cancellation while a viewer remains and cancellation of the last reader.
-- A pre-wipe download cannot publish or return bytes after sign-out. The local
-  cache epoch fences persistence and delivery; cache tests cover an in-flight wipe.
+- Stored bytes grant no access: rejected validation must never display them.
+  Service and cache tests cover access refusal.
+- Only revalidatable images persist: otherwise every open downloads and rewrites
+  them. Cache tests cover raw R2 ETags, stale rows and revision changes.
+- Reader cancellation is independent. Streaming bodies recheck the local epoch
+  and shared generation before delivery; saves check both before writing.
+  Cache/store tests cover delayed bodies and separate renderer instances.
 
 ## Boundary
 
-This cache owns original image reuse, not resource authority, image resizing or
-document conversion. [Authorization](authorization.md) owns admission;
-[local cache](local-cache.md) owns IndexedDB and account/Organization wipes;
-[conversation surfaces](conversation-surfaces.md) owns preview presentation.
-HTTP responses retain `private, no-store`: the application stores scoped bytes
-explicitly rather than granting Chromium a reusable authenticated response.
+This module owns image reuse. [Local cache](local-cache.md) owns storage and
+wipes, [authorization](authorization.md) owns admission, and
+[conversation surfaces](conversation-surfaces.md) owns presentation. Conversion
+and other formats keep their existing lifecycle. Responses retain `private,
+no-store`; scoped application persistence owns the bytes.
 
 ## Failure modes and limits
 
-A failed validation fails the load, even if bytes remain on disk. There is no
-offline access fallback. Failed requests leave the pending map and can be retried.
-If IndexedDB is unavailable, full, or refuses a write, previews continue through
-the ordinary download path. Cache capacity follows the browser's storage quota;
-there is no application-defined time, size or item ceiling. Blob URLs belong to
-their mounted view and are revoked on cleanup; only bytes persist.
+Failed validation fails the load, without an offline fallback. Unavailable or
+full IndexedDB falls back to ordinary downloads. Blob URLs belong to their
+mounted views; only bytes persist. New loads still pay authorization latency,
+and cold thumbnails still download originals.
+Access refusal or resource deletion (403/404) removes the saved bytes; other
+server errors preserve them. Only a failed conditional network request gets the
+plain-read retry; uncached failures and aborted requests are not replayed.
 
-Cached opens still pay the access-validation round trip. A current thumbnail URL
-needs no new load. Cold thumbnails still fetch original images, so large images
-can take longer than a separately resized thumbnail would.
+Retention follows account/Organization wipes and the browser storage quota.
+There is no application retention ceiling; the PR hands the retention/eviction
+policy decision to the team rather than inventing a budget.
 
 ## Testing
 
-Run the desktop `resource-preview-cache.test.ts`, `api.test.ts`, and
-`attachments.test.tsx` files, and the API `resource-upload.test.ts` and
-`security-and-config.test.ts` files. The cache tests use fake-indexeddb and real
-ArrayBuffer cloning; they close and reopen the database to exercise persistence.
-The service tests use the actual WorkspaceDO schema and service over SQLite,
-with R2 represented by the existing typed fixture. A real Electron window check
-verifies rendering and persistent IndexedDB after restarting the process.
+Run desktop `resource-preview-cache.test.ts`, `api.test.ts` and
+`attachments.test.tsx`, plus API `resource-upload.test.ts` and
+`security-and-config.test.ts`. Cache tests reopen fake-indexeddb; service tests
+use the actual WorkspaceDO schema over SQLite with the existing R2 fixture.
+Real Electron window checks verify rendering and persistence after process restart.
 
 ## Changelog
 
 ### 2026-10-21 — Share and persist attachment image downloads
 
-**What changed:** Thumbnail and viewer reads share pending loads; scoped device
-storage retains images across launches and conditional preview requests reuse
-unchanged bytes without an R2 read.
+**What changed:** Shared pending loads and scoped persistent bytes use conditional
+preview validators to avoid repeat transfers and R2 reads.
 
-**Why:** Opening a thumbnail before it finished downloading started another
-full-image request. Navigation and relaunch discarded the downloaded image,
-and `no-store` prevented HTTP caching from rescuing the redundant transfer.
+**Why:** Opening before a thumbnail finished duplicated a full download;
+navigation and relaunch discarded the loaded image. Raw storage ETags must not
+enter this cache because the preview endpoint cannot return 304 for them.
 
-**Considered and rejected:** A separate metadata fetch adds another network
-round trip to cold previews. Reusing authenticated HTTP responses without
-validation could retain access after revocation or display an obsolete image.
+**Considered and rejected:** A separate metadata request slows cold opens.
+Reusing bytes without validation can retain obsolete content or revoked access.
 
-**Consequences:** Keep the canonical access checks on bodyless responses and
-include representation changes in the validator. This removes repeated image
-transfers; it does not remove authorization RPC latency from a new load.
+**Consequences:** Preserve canonical checks on 304 responses, shared wipe fencing
+and rollback to an API without conditional CORS support. Version the validator
+when the representation changes. Authorization latency remains.
