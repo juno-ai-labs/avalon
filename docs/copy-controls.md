@@ -111,6 +111,10 @@ Artifact and attachment title menus use `useCopy` for their copy tile and keep
 a `CopyStatus` live region outside the menu so the outcome survives closing it.
 Both show that status visibly above the preview; other copy controls retain
 their screen-reader-only status because their outcome remains on the visible icon.
+An attachment gallery keys its copy scope to the selected resource, so changing
+files clears the outcome and discards feedback from a write that finishes later.
+Attachment action tiles share the artifact menu's wrapping labels, including
+the longer failed-copy retry label.
 
 The surfaces' own tests — the inbound-webhook dialog, the invite link, the
 inspector rail, the run-failure notice, the site detail, the code block —
