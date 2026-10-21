@@ -127,7 +127,7 @@ describe('AttachmentPanel', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it('steps through a gallery with the arrow keys pressed inside the panel only', async () => {
+  it('steps the gallery when an image fits and reserves arrow keys when it overflows horizontally', async () => {
     const first = { name: 'first.png', mimeType: 'image/png', loadContent: vi.fn(async () => new Blob(['first'])) };
     const second = { name: 'second.png', mimeType: 'image/png', loadContent: vi.fn(async () => new Blob(['second'])) };
     renderPanel({ ...first, gallery: [first, second], galleryIndex: 0 });
@@ -137,9 +137,18 @@ describe('AttachmentPanel', () => {
     fireEvent.keyDown(document.body, { key: 'ArrowRight' });
     expect(screen.getByRole('img', { name: 'first.png' })).toBeVisible();
 
-    fireEvent.keyDown(screen.getByRole('img', { name: 'first.png' }), { key: 'ArrowRight' });
+    fireEvent.click(screen.getByRole('img', { name: 'first.png' }));
+    fireEvent.keyDown(screen.getByRole('region', { name: 'Image preview: first.png' }), { key: 'ArrowRight' });
     expect(await screen.findByRole('img', { name: 'second.png' })).toBeVisible();
     expect(screen.getByText('2 / 2')).toBeVisible();
+
+    // jsdom has no layout; supply the overflowing viewport's measured dimensions.
+    const viewport = screen.getByRole('region', { name: 'Image preview: second.png' });
+    Object.defineProperties(viewport, { clientWidth: { value: 300 }, scrollWidth: { value: 600 } });
+    expect(fireEvent.keyDown(viewport, { key: 'ArrowLeft' })).toBe(true);
+    expect(screen.getByRole('img', { name: 'second.png' })).toBeVisible();
+    fireEvent.keyDown(screen.getByRole('complementary', { name: 'Attachment: second.png' }), { key: 'ArrowLeft' });
+    expect(await screen.findByRole('img', { name: 'first.png' })).toBeVisible();
   });
 
   it('leaves the gallery alone when an arrow key is pressed in the panel\'s own menu', async () => {
