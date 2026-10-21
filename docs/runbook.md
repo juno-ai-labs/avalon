@@ -1198,6 +1198,11 @@ The first automatic check waits ten minutes after launch
 download stay out of startup; after that Rally checks every three hours. **Check
 for Updates…** and a channel change still check at once.
 
+The updater's native response errors are owned by the pinned
+[Electron network patch](electron-network.md), including responses rejected
+before their bodies are read. A sleep-time connection reset must remain an
+ordinary update request failure, without Electron's uncaught-exception dialog.
+
 A staged build does not stop the three-hourly check. Those checks run with
 `autoDownload` off so the staged version is not fetched and handed to Squirrel
 again; when the feed names a different (and so newer) version, Rally downloads
