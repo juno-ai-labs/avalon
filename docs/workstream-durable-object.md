@@ -270,16 +270,19 @@ operator RPCs. That object-local fail-closed guard and the one-time fleet
 transfer that satisfied it are historical deployment evidence, not a runtime
 read or repair path.
 
-An accepted person mention adds the recipient as a participant of that exact
-conversation, through the shared `create_message` path for every parent kind.
-Organization-visible conversations require no confirmation because the person
-already has read access; personal conversations retain the audience-expansion
-confirmation. Only mentions surviving canonical visible-range validation can
-seat somebody. The participant admission travels with a queued input or commits
-with a directly written message, starts the recipient's unread history at that
-message, and emits the specific mention notification without a duplicate
-participant-added notification. `participant-notification.test.ts` covers both
-message paths and rejected ranges on real workerd.
+Accepted person mentions seat their recipients in that conversation, including
+re-adding Organization members who previously left or were removed. Only
+Organization members bypass confirmation in Organization-visible conversations;
+guests without participation and people joining personal conversations require
+confirmation. Rejected mention ranges never seat anyone.
+
+Message admissions carry `participationReason: "message"` through grant receipts
+and participant projections. They leave earlier history read and emit only the
+mention notification. Ordinary participant additions keep their added notice.
+Narrowing to personal scope returns `conversation_message_pending` while a
+person mention is being prepared or its participant admission is queued; retry
+after that message becomes canonical. This durable mailbox check prevents scope
+changes from overtaking grants, including across recovery.
 
 A person seated in a conversation that already has history starts with their
 read waterline just below its latest attention ordinal, not at
@@ -1867,11 +1870,10 @@ not express their involvement in that conversation.
 for Organization-visible mentions would duplicate server-owned mention
 validation and make behavior depend on which client sent the message.
 
-**Consequences:** Personal conversations still require confirmation to expand
-their audience. Canonical mention validation, participant grant authority,
-queued-input epoch fences, unread initialization, and notification deduplication
-remain the common admission mechanism. This supersedes the no-seating behavior
-recorded in the 2026-08-25 opening-message entry.
+**Consequences:** Guests and personal conversations still require confirmation
+to expand access. Message-driven grant projections must preserve unread and
+notification semantics, and narrowing cannot overtake a pending mention. This
+supersedes the 2026-08-25 no-seating decision.
 
 Pull request: [#1364](https://github.com/juno-ai-labs/avalon/pull/1364).
 

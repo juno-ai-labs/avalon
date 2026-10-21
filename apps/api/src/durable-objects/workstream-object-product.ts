@@ -102,7 +102,7 @@ import {
   ensureStorageAlarmNoLaterThan,
 } from "./scheduled-alarms";
 import { WorkstreamIdentityStorage } from "./workstream-identity-storage";
-import { spaceListedSql } from "./listing-rules";
+import { admitsOrganizationWide, spaceListedSql } from "./listing-rules";
 import { substreamLoopId, workspaceDOName } from "./names";
 import { ParticipantAuthorityTransferStorage } from "./participant-authority-transfer";
 import { workstreamImportHash } from "./workstream-import-hash";
@@ -2116,6 +2116,18 @@ export class WorkstreamObjectProductService {
     const seatThroughGrants = joined && await this.migratedRosterSeat(auth);
     await this.objectStore.commitWithRegionalEffects(
       (sql) => {
+        // A mention's grants and canonical turn must precede narrowing. The
+        // durable mailbox also covers recovery and messages waiting in the loop.
+        if (input.scope === "personal" && this.root().scope === "workspace"
+          && (first(sql.exec(`SELECT 1 FROM pending_loop_input_mailbox
+               WHERE state = 'preparing' AND preparation_kind = 'human_message'
+                 AND EXISTS (SELECT 1 FROM json_each(envelope_json, '$.input.mentions')
+                   WHERE json_extract(value, '$.type') = 'person') LIMIT 1`))
+            || first(sql.exec(`SELECT 1 FROM pending_loop_inputs
+                 WHERE json_array_length(authorization_json, '$.confirmedParticipantUserIds') > 0 LIMIT 1`)))) {
+          throw new ApiError(409, "conversation_message_pending",
+            "Wait for the pending mention to finish before making this conversation private");
+        }
         if (joined && !seatThroughGrants) {
           sql.exec(
             `INSERT INTO participants
@@ -2947,7 +2959,7 @@ export class WorkstreamObjectProductService {
     const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, identity.workspaceId,
       workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspaceId)));
     for (const userId of missingUserIds) {
-      const request = { target, actorUserId: auth.userId, userId: asUserId(userId), active: true,
+      const request = { target, actorUserId: auth.userId, userId: asUserId(userId), active: true, participationReason: "message" as const,
         operationId: await stableUuid(["message-participant", target, auth.userId, clientMessageId, userId]) };
       const result = userId === auth.userId
         ? await parent.joinConversation(request)
@@ -3075,10 +3087,11 @@ export class WorkstreamObjectProductService {
     recipientName: string;
     active: boolean;
     now: number;
+    suppressNotification?: boolean;
   }): RegionalEffectCommand[] {
     const root = this.root();
     const viewer = { partitionKey: `user:${input.userId}`, effect: this.userEffect(root, input.userId) };
-    if (!input.active || input.userId === input.actorUserId) return [viewer];
+    if (!input.active || input.userId === input.actorUserId || input.suppressNotification) return [viewer];
     const epoch = first(this.storage.sql.exec<{ participant_epoch: number }>(
       `SELECT participant_epoch FROM participants WHERE user_id = ?`,
       input.userId,
@@ -4746,18 +4759,20 @@ export class WorkstreamObjectProductService {
       mention.type === "person" && mention.userId ? [mention.userId] : []))];
     const allMemberIds = [...new Set([auth.userId, ...requestedPersonIds, ...input.confirmedParticipantUserIds])];
     const people = new Map<string, MentionPerson>();
+    const accessClasses = new Map<string, "member" | "guest">();
     if (allMemberIds.length > 0) {
       const placeholders = allMemberIds.map(() => "?").join(",");
       const result = await this.env.DB.prepare(
-        `SELECT user.id, user.name, user.avatar_url
+        `SELECT user.id, user.name, user.avatar_url, member.access_class
            FROM workspace_members member JOIN users user ON user.id = member.user_id
           WHERE member.workspace_id = ? AND member.status = 'active'
             AND user.id IN (${placeholders})`,
       ).bind(auth.workspaceId, ...allMemberIds).all<{
-        id: string; name: string; avatar_url: string | null;
+        id: string; name: string; avatar_url: string | null; access_class: "member" | "guest";
       }>();
       for (const row of result.results ?? []) {
         people.set(row.id, { id: row.id, name: row.name, avatarUrl: row.avatar_url });
+        accessClasses.set(row.id, row.access_class);
       }
       if (people.size !== allMemberIds.length) {
         throw new ApiError(422, "invalid_workspace_member", "A mentioned person is not an active workspace member");
@@ -4766,13 +4781,12 @@ export class WorkstreamObjectProductService {
     const prepared = prepareMentionMarkdown(input.text, input.mentions, people);
     const personIds = [...new Set(prepared.mentions.flatMap((mention) =>
       mention.type === "person" && mention.userId ? [mention.userId] : []))];
-    // Every accepted person mention seats its recipient. Workspace-visible
-    // conversations already grant read access; personal conversations still
-    // require confirmation before enlarging their audience. Only canonical
-    // mentions can seat people, never raw IDs from a rejected range.
-    const confirmedParticipantUserIds = root.scope === "workspace"
-      ? personIds
-      : input.confirmedParticipantUserIds.filter((userId) => personIds.includes(userId));
+    // Only members already have Organization-wide read access. Guests and
+    // personal audiences still require confirmation to enlarge access; only
+    // canonical mentions, never raw IDs from rejected ranges, can seat people.
+    const confirmedParticipantUserIds = personIds.filter((userId) =>
+      input.confirmedParticipantUserIds.includes(userId)
+      || (root.scope === "workspace" && admitsOrganizationWide(accessClasses.get(userId)!)));
     if (root.scope === "personal" && confirmedParticipantUserIds.length > 0) {
       const currentAudience = this.readerAudience(root);
       if (currentAudience.scope !== "personal") throw new Error("personal_reader_audience_expected");
@@ -4783,7 +4797,7 @@ export class WorkstreamObjectProductService {
     }
     const unconfirmed = personIds.filter((userId) =>
       !this.isParticipant(userId) && !confirmedParticipantUserIds.includes(userId));
-    if (root.scope === "personal" && unconfirmed.length > 0) {
+    if (unconfirmed.length > 0) {
       throw new ApiError(409, "participant_confirmation_required", "Confirm before mentioning a nonparticipant", {
         people: unconfirmed.map((userId) => ({ userId, name: people.get(userId)?.name ?? "Workspace member" })),
       });
@@ -4792,6 +4806,9 @@ export class WorkstreamObjectProductService {
     // without reading identity/transfer state or contacting the grant owner.
     // Counted before anything seats them: once participant authority has
     // moved to the parent, preparation below projects them into the roster.
+    const participantCount = Number(first(this.storage.sql.exec<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM participants WHERE status = 'active'`,
+    ))?.count ?? 0);
     const participantAddedCount = new Set(confirmedParticipantUserIds.filter((userId) => !this.isParticipant(userId))).size;
     const missingParticipantUserIds = [...new Set([auth.userId, ...confirmedParticipantUserIds])]
       .filter((userId) => !this.isParticipant(userId));
@@ -4819,9 +4836,6 @@ export class WorkstreamObjectProductService {
       participantAddedCount,
     };
 
-    const participantCount = Number(first(this.storage.sql.exec<{ count: number }>(
-      `SELECT COUNT(*) AS count FROM participants WHERE status = 'active'`,
-    ))?.count ?? 0);
     const connectorMentions = prepared.mentions
       .flatMap((mention) => mention.type === "connector" && mention.connectorType
         ? [mention.connectorType] : []);

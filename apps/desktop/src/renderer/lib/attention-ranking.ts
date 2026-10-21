@@ -93,8 +93,8 @@ export interface AttentionItem {
 
 /**
  * Whether Main is the reader's and waits on them: they take part in it
- * (`WorkstreamSchema.isParticipant`), or it mentions them, since a mention in
- * an Organization-wide thread does not make them a participant.
+ * (`WorkstreamSchema.isParticipant`), or it mentions them. Older mentions and
+ * Rally-authored mentions can address a reader without seating them.
  */
 function mainIsViewers(workstream: AttentionChannel): boolean {
   return workstream.mainWithheld !== true
