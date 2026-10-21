@@ -278,7 +278,7 @@ export async function deliverPush(
   const { title, body } = content;
   const payload: PushPayloads = {
     apns: renderPushPayload({ title, body, threadKey: content.workstreamId, badge: attention.readerAttentionCount, data }),
-    web: renderWebPushPayload({ title, body, collapseId, data, maxBytes: WEB_PUSH_PAYLOAD_BYTES }),
+    web: renderWebPushPayload({ title, body, collapseId, data, badge: attention.readerAttentionCount, maxBytes: WEB_PUSH_PAYLOAD_BYTES }),
   };
   const row = { workspaceId: message.workspaceId, recipientUserId: message.recipientUserId, intentId: content.deliveryKey };
   const db = workspaceRegionalDatabase(env);

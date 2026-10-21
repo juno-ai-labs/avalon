@@ -36,10 +36,11 @@ export async function pushCollapseId(workspaceId: string, intentId: string): Pro
  * collapse id, the same one
  * APNs gets as `apns-collapse-id`: later notifications in that conversation
  * replace the preceding reply alert while mentions stay distinct. Delivery
- * receipts remain per intent.
+ * receipts remain per intent. `badge` is the APNs badge count, which the
+ * service worker puts on an installed app's icon.
  */
 export function renderWebPushPayload(input: {
-  title: string; body: string; collapseId: string; data: PushNotificationData; maxBytes: number;
+  title: string; body: string; collapseId: string; data: PushNotificationData; badge: number; maxBytes: number;
 }): string {
   const characters = Array.from(input.body);
   const title = Array.from(input.title);
@@ -48,6 +49,7 @@ export function renderWebPushPayload(input: {
     title: title.slice(0, titleLength).join("") + (titleLength < title.length ? "…" : ""),
     body: characters.slice(0, length).join("") + (length < characters.length ? "…" : ""),
     tag: input.collapseId,
+    badge: input.badge,
     rally: input.data,
   });
   // The body gives way first, then the title, as in the APNs alert.

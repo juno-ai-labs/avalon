@@ -1,7 +1,7 @@
 /* global self, URL */
-// Rally's service worker. It does one thing: show the Web Push notifications
-// the API sends a signed-in member, and open the conversation on a click. It
-// caches nothing and answers no requests.
+// Rally's service worker. It shows the Web Push notifications the API sends a
+// signed-in member, sets the app icon's badge to their count, and opens the
+// conversation on a click. It caches nothing and answers no requests.
 
 function readMessage(data) {
   try { return data ? data.json() : null; } catch { return null; }
@@ -34,16 +34,34 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
 });
 
+// The installed app's icon shows the push's count, as APNs sets the Mac and
+// iPhone badge. A browser without the Badging API, or a plain tab, skips it.
+// A focused Rally tab keeps its own count, as a Mac foreground alert leaves the
+// dock badge alone: the push may be for another Organization.
+async function setBadge(count) {
+  if (typeof count !== "number" || !("setAppBadge" in self.navigator)) return;
+  const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  if (windows.some((client) => client.focused)) return;
+  try {
+    await (count > 0 ? self.navigator.setAppBadge(count) : self.navigator.clearAppBadge());
+  } catch {
+    // The badge is a hint; the notification still shows.
+  }
+}
+
 self.addEventListener("push", (event) => {
   const message = readMessage(event.data);
   if (!message || typeof message.title !== "string") return;
-  event.waitUntil(self.registration.showNotification(message.title, {
-    body: typeof message.body === "string" ? message.body : "",
-    tag: typeof message.tag === "string" ? message.tag : undefined,
-    // Reply tags are reused after the server's batching/cooldown checks.
-    renotify: message.rally?.kind === "new_message" && typeof message.tag === "string" && message.tag.length > 0,
-    data: { url: localUrl(message.rally && message.rally.url), workspacePath: workspacePath(message.rally) },
-  }));
+  event.waitUntil(Promise.all([
+    self.registration.showNotification(message.title, {
+      body: typeof message.body === "string" ? message.body : "",
+      tag: typeof message.tag === "string" ? message.tag : undefined,
+      // Reply tags are reused after the server's batching/cooldown checks.
+      renotify: message.rally?.kind === "new_message" && typeof message.tag === "string" && message.tag.length > 0,
+      data: { url: localUrl(message.rally && message.rally.url), workspacePath: workspacePath(message.rally) },
+    }),
+    setBadge(message.badge),
+  ]));
 });
 
 self.addEventListener("notificationclick", (event) => {
