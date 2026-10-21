@@ -1,0 +1,2846 @@
+{
+  "createdAt": "2026-10-21T17:04:23.291Z",
+  "method": "Deterministic policy replay of saved JEV answers; no new inference or recovery execution.",
+  "preference": "Missed reprompts cost more than an extra verification turn. Use one verification per eligible activation.",
+  "limitations": [
+    "Cases and answers were already inspected; this is not a fresh holdout.",
+    "Zero missed reprompts under verify_once is true by construction for ready cases, not evidence of successful task completion.",
+    "The corpus does not label action-request admission separately; verify_once overhead includes eligible non-action replies.",
+    "Lifecycle flags are curated offline. The host still needs an authoritative one-use recovery marker and pending-job state."
+  ],
+  "sources": [
+    {
+      "model": "jev-1.14.0",
+      "corpusSha256": "a7b3b6b5f82ec454639be2bb02927ad73ea65909de9e394ba38592a8ad82ea57",
+      "questionsSha256": "fc03eb3b41d9c614411bb950d6c32fb91d762196f8e63feb04577d4a24a9e15e",
+      "reportSha256": "023ab1025dec5a9b53ed08a892b9c24bad7acf3b1e0281e4d1e42d4823d360ec"
+    },
+    {
+      "model": "jev-1.14.0",
+      "corpusSha256": "0a79d3a2b369267d31f98acd86aeaa007ed519398365ccc57239710101c520f0",
+      "questionsSha256": "fc03eb3b41d9c614411bb950d6c32fb91d762196f8e63feb04577d4a24a9e15e",
+      "reportSha256": "e6e83d342d61921b5154fdc1ebb57bb24b0bc1a72068d06a210f506cc9c7efcf"
+    }
+  ],
+  "policySourceSha256": "3b979985dca202838dded05276f26fd707960cb9c8d8e1a58b1ef14bdee2a4bb",
+  "verificationPrompt": "Before ending, review the latest user request and relevant earlier instructions against what you have actually delivered. If requested work remains and you can complete it with available tools, continue now and deliver it. Do not treat a plan or progress update as completion. Check existing artifacts and tool receipts before repeating any action. If already complete, briefly identify the delivered result. If blocked or waiting on existing work, state the specific dependency without starting duplicate work.",
+  "comparison": {
+    "strict": {
+      "cases": 180,
+      "needsContinuation": 19,
+      "totalReprompts": 18,
+      "caught": 17,
+      "missed": 2,
+      "extraVerificationTurns": 1,
+      "recall": 0.8947368421052632,
+      "bySuite": {
+        "real": {
+          "cases": 120,
+          "needsContinuation": 1,
+          "caught": 0,
+          "missed": 1,
+          "extraVerificationTurns": 1
+        },
+        "synthetic": {
+          "cases": 60,
+          "needsContinuation": 18,
+          "caught": 17,
+          "missed": 1,
+          "extraVerificationTurns": 0
+        }
+      },
+      "bySplit": {
+        "development": {
+          "cases": 85,
+          "needsContinuation": 8,
+          "caught": 7,
+          "missed": 1,
+          "extraVerificationTurns": 0
+        },
+        "holdout": {
+          "cases": 95,
+          "needsContinuation": 11,
+          "caught": 10,
+          "missed": 1,
+          "extraVerificationTurns": 1
+        }
+      }
+    },
+    "uncertainty_fallback": {
+      "cases": 180,
+      "needsContinuation": 19,
+      "totalReprompts": 26,
+      "caught": 18,
+      "missed": 1,
+      "extraVerificationTurns": 8,
+      "recall": 0.9473684210526315,
+      "bySuite": {
+        "real": {
+          "cases": 120,
+          "needsContinuation": 1,
+          "caught": 1,
+          "missed": 0,
+          "extraVerificationTurns": 4
+        },
+        "synthetic": {
+          "cases": 60,
+          "needsContinuation": 18,
+          "caught": 17,
+          "missed": 1,
+          "extraVerificationTurns": 4
+        }
+      },
+      "bySplit": {
+        "development": {
+          "cases": 85,
+          "needsContinuation": 8,
+          "caught": 8,
+          "missed": 0,
+          "extraVerificationTurns": 2
+        },
+        "holdout": {
+          "cases": 95,
+          "needsContinuation": 11,
+          "caught": 10,
+          "missed": 1,
+          "extraVerificationTurns": 6
+        }
+      }
+    },
+    "verify_once": {
+      "cases": 180,
+      "needsContinuation": 19,
+      "totalReprompts": 125,
+      "caught": 19,
+      "missed": 0,
+      "extraVerificationTurns": 106,
+      "recall": 1,
+      "bySuite": {
+        "real": {
+          "cases": 120,
+          "needsContinuation": 1,
+          "caught": 1,
+          "missed": 0,
+          "extraVerificationTurns": 79
+        },
+        "synthetic": {
+          "cases": 60,
+          "needsContinuation": 18,
+          "caught": 18,
+          "missed": 0,
+          "extraVerificationTurns": 27
+        }
+      },
+      "bySplit": {
+        "development": {
+          "cases": 85,
+          "needsContinuation": 8,
+          "caught": 8,
+          "missed": 0,
+          "extraVerificationTurns": 47
+        },
+        "holdout": {
+          "cases": 95,
+          "needsContinuation": 11,
+          "caught": 11,
+          "missed": 0,
+          "extraVerificationTurns": 59
+        }
+      }
+    }
+  },
+  "confidenceSweep": {
+    "semantics": "strict reprompts only unfinished_work above the threshold; uncertainty_fallback reprompts unfinished/unclear/unavailable/unresolved or confidence at or below the threshold. Lifecycle exclusions apply to all policies.",
+    "selection": "Exploratory 0.00–1.00 sweep in 0.05 increments over already observed answers. No production threshold change or new holdout claim.",
+    "rows": [
+      {
+        "threshold": 0,
+        "policies": {
+          "strict": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 19,
+            "caught": 18,
+            "missed": 1,
+            "extraVerificationTurns": 1,
+            "recall": 0.9473684210526315,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 1
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              }
+            }
+          },
+          "uncertainty_fallback": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 22,
+            "caught": 18,
+            "missed": 1,
+            "extraVerificationTurns": 4,
+            "recall": 0.9473684210526315,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 1
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 3
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 4
+              }
+            }
+          },
+          "verify_once": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 125,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 106,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 79
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 27
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 47
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 59
+              }
+            }
+          }
+        }
+      },
+      {
+        "threshold": 0.05,
+        "policies": {
+          "strict": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 19,
+            "caught": 18,
+            "missed": 1,
+            "extraVerificationTurns": 1,
+            "recall": 0.9473684210526315,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 1
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              }
+            }
+          },
+          "uncertainty_fallback": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 22,
+            "caught": 18,
+            "missed": 1,
+            "extraVerificationTurns": 4,
+            "recall": 0.9473684210526315,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 1
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 3
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 4
+              }
+            }
+          },
+          "verify_once": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 125,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 106,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 79
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 27
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 47
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 59
+              }
+            }
+          }
+        }
+      },
+      {
+        "threshold": 0.1,
+        "policies": {
+          "strict": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 19,
+            "caught": 18,
+            "missed": 1,
+            "extraVerificationTurns": 1,
+            "recall": 0.9473684210526315,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 1
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              }
+            }
+          },
+          "uncertainty_fallback": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 22,
+            "caught": 18,
+            "missed": 1,
+            "extraVerificationTurns": 4,
+            "recall": 0.9473684210526315,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 1
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 3
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 4
+              }
+            }
+          },
+          "verify_once": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 125,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 106,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 79
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 27
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 47
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 59
+              }
+            }
+          }
+        }
+      },
+      {
+        "threshold": 0.15,
+        "policies": {
+          "strict": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 19,
+            "caught": 18,
+            "missed": 1,
+            "extraVerificationTurns": 1,
+            "recall": 0.9473684210526315,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 1
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              }
+            }
+          },
+          "uncertainty_fallback": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 22,
+            "caught": 18,
+            "missed": 1,
+            "extraVerificationTurns": 4,
+            "recall": 0.9473684210526315,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 1
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 3
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 4
+              }
+            }
+          },
+          "verify_once": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 125,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 106,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 79
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 27
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 47
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 59
+              }
+            }
+          }
+        }
+      },
+      {
+        "threshold": 0.2,
+        "policies": {
+          "strict": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 19,
+            "caught": 18,
+            "missed": 1,
+            "extraVerificationTurns": 1,
+            "recall": 0.9473684210526315,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 1
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              }
+            }
+          },
+          "uncertainty_fallback": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 22,
+            "caught": 18,
+            "missed": 1,
+            "extraVerificationTurns": 4,
+            "recall": 0.9473684210526315,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 1
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 3
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 4
+              }
+            }
+          },
+          "verify_once": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 125,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 106,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 79
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 27
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 47
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 59
+              }
+            }
+          }
+        }
+      },
+      {
+        "threshold": 0.25,
+        "policies": {
+          "strict": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 19,
+            "caught": 18,
+            "missed": 1,
+            "extraVerificationTurns": 1,
+            "recall": 0.9473684210526315,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 1
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              }
+            }
+          },
+          "uncertainty_fallback": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 22,
+            "caught": 18,
+            "missed": 1,
+            "extraVerificationTurns": 4,
+            "recall": 0.9473684210526315,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 1
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 3
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 4
+              }
+            }
+          },
+          "verify_once": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 125,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 106,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 79
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 27
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 47
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 59
+              }
+            }
+          }
+        }
+      },
+      {
+        "threshold": 0.3,
+        "policies": {
+          "strict": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 19,
+            "caught": 18,
+            "missed": 1,
+            "extraVerificationTurns": 1,
+            "recall": 0.9473684210526315,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 1
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              }
+            }
+          },
+          "uncertainty_fallback": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 22,
+            "caught": 18,
+            "missed": 1,
+            "extraVerificationTurns": 4,
+            "recall": 0.9473684210526315,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 1
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 3
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 4
+              }
+            }
+          },
+          "verify_once": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 125,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 106,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 79
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 27
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 47
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 59
+              }
+            }
+          }
+        }
+      },
+      {
+        "threshold": 0.35,
+        "policies": {
+          "strict": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 18,
+            "caught": 17,
+            "missed": 2,
+            "extraVerificationTurns": 1,
+            "recall": 0.8947368421052632,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 0,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 7,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              }
+            }
+          },
+          "uncertainty_fallback": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 24,
+            "caught": 18,
+            "missed": 1,
+            "extraVerificationTurns": 6,
+            "recall": 0.9473684210526315,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 3
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 3
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 1
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 5
+              }
+            }
+          },
+          "verify_once": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 125,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 106,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 79
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 27
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 47
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 59
+              }
+            }
+          }
+        }
+      },
+      {
+        "threshold": 0.4,
+        "policies": {
+          "strict": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 18,
+            "caught": 17,
+            "missed": 2,
+            "extraVerificationTurns": 1,
+            "recall": 0.8947368421052632,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 0,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 7,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              }
+            }
+          },
+          "uncertainty_fallback": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 25,
+            "caught": 18,
+            "missed": 1,
+            "extraVerificationTurns": 7,
+            "recall": 0.9473684210526315,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 4
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 3
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 2
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 5
+              }
+            }
+          },
+          "verify_once": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 125,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 106,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 79
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 27
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 47
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 59
+              }
+            }
+          }
+        }
+      },
+      {
+        "threshold": 0.45,
+        "policies": {
+          "strict": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 18,
+            "caught": 17,
+            "missed": 2,
+            "extraVerificationTurns": 1,
+            "recall": 0.8947368421052632,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 0,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 7,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              }
+            }
+          },
+          "uncertainty_fallback": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 26,
+            "caught": 18,
+            "missed": 1,
+            "extraVerificationTurns": 8,
+            "recall": 0.9473684210526315,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 4
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 4
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 2
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 6
+              }
+            }
+          },
+          "verify_once": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 125,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 106,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 79
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 27
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 47
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 59
+              }
+            }
+          }
+        }
+      },
+      {
+        "threshold": 0.5,
+        "policies": {
+          "strict": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 18,
+            "caught": 17,
+            "missed": 2,
+            "extraVerificationTurns": 1,
+            "recall": 0.8947368421052632,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 0,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 7,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              }
+            }
+          },
+          "uncertainty_fallback": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 26,
+            "caught": 18,
+            "missed": 1,
+            "extraVerificationTurns": 8,
+            "recall": 0.9473684210526315,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 4
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 4
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 2
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 6
+              }
+            }
+          },
+          "verify_once": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 125,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 106,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 79
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 27
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 47
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 59
+              }
+            }
+          }
+        }
+      },
+      {
+        "threshold": 0.55,
+        "policies": {
+          "strict": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 18,
+            "caught": 17,
+            "missed": 2,
+            "extraVerificationTurns": 1,
+            "recall": 0.8947368421052632,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 0,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 7,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              }
+            }
+          },
+          "uncertainty_fallback": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 28,
+            "caught": 18,
+            "missed": 1,
+            "extraVerificationTurns": 10,
+            "recall": 0.9473684210526315,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 6
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 4
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 4
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 6
+              }
+            }
+          },
+          "verify_once": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 125,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 106,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 79
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 27
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 47
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 59
+              }
+            }
+          }
+        }
+      },
+      {
+        "threshold": 0.6,
+        "policies": {
+          "strict": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 18,
+            "caught": 17,
+            "missed": 2,
+            "extraVerificationTurns": 1,
+            "recall": 0.8947368421052632,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 0,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 7,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              }
+            }
+          },
+          "uncertainty_fallback": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 31,
+            "caught": 18,
+            "missed": 1,
+            "extraVerificationTurns": 13,
+            "recall": 0.9473684210526315,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 9
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 4
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 5
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 8
+              }
+            }
+          },
+          "verify_once": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 125,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 106,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 79
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 27
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 47
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 59
+              }
+            }
+          }
+        }
+      },
+      {
+        "threshold": 0.65,
+        "policies": {
+          "strict": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 18,
+            "caught": 17,
+            "missed": 2,
+            "extraVerificationTurns": 1,
+            "recall": 0.8947368421052632,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 0,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 7,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              }
+            }
+          },
+          "uncertainty_fallback": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 32,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 13,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 9
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 4
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 5
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 8
+              }
+            }
+          },
+          "verify_once": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 125,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 106,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 79
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 27
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 47
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 59
+              }
+            }
+          }
+        }
+      },
+      {
+        "threshold": 0.7,
+        "policies": {
+          "strict": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 18,
+            "caught": 17,
+            "missed": 2,
+            "extraVerificationTurns": 1,
+            "recall": 0.8947368421052632,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 0,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 7,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              }
+            }
+          },
+          "uncertainty_fallback": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 32,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 13,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 9
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 4
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 5
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 8
+              }
+            }
+          },
+          "verify_once": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 125,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 106,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 79
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 27
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 47
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 59
+              }
+            }
+          }
+        }
+      },
+      {
+        "threshold": 0.75,
+        "policies": {
+          "strict": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 18,
+            "caught": 17,
+            "missed": 2,
+            "extraVerificationTurns": 1,
+            "recall": 0.8947368421052632,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 0,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 7,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              }
+            }
+          },
+          "uncertainty_fallback": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 34,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 15,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 11
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 4
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 6
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 9
+              }
+            }
+          },
+          "verify_once": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 125,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 106,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 79
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 27
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 47
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 59
+              }
+            }
+          }
+        }
+      },
+      {
+        "threshold": 0.8,
+        "policies": {
+          "strict": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 18,
+            "caught": 17,
+            "missed": 2,
+            "extraVerificationTurns": 1,
+            "recall": 0.8947368421052632,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 0,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 7,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 1
+              }
+            }
+          },
+          "uncertainty_fallback": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 34,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 15,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 11
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 4
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 6
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 9
+              }
+            }
+          },
+          "verify_once": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 125,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 106,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 79
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 27
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 47
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 59
+              }
+            }
+          }
+        }
+      },
+      {
+        "threshold": 0.85,
+        "policies": {
+          "strict": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 17,
+            "caught": 17,
+            "missed": 2,
+            "extraVerificationTurns": 0,
+            "recall": 0.8947368421052632,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 0,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 7,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              }
+            }
+          },
+          "uncertainty_fallback": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 36,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 17,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 13
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 4
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 7
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 10
+              }
+            }
+          },
+          "verify_once": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 125,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 106,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 79
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 27
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 47
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 59
+              }
+            }
+          }
+        }
+      },
+      {
+        "threshold": 0.9,
+        "policies": {
+          "strict": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 17,
+            "caught": 17,
+            "missed": 2,
+            "extraVerificationTurns": 0,
+            "recall": 0.8947368421052632,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 0,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 7,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              }
+            }
+          },
+          "uncertainty_fallback": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 41,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 22,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 17
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 5
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 8
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 14
+              }
+            }
+          },
+          "verify_once": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 125,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 106,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 79
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 27
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 47
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 59
+              }
+            }
+          }
+        }
+      },
+      {
+        "threshold": 0.95,
+        "policies": {
+          "strict": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 17,
+            "caught": 17,
+            "missed": 2,
+            "extraVerificationTurns": 0,
+            "recall": 0.8947368421052632,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 0,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 17,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 7,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 10,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              }
+            }
+          },
+          "uncertainty_fallback": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 54,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 35,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 26
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 9
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 16
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 19
+              }
+            }
+          },
+          "verify_once": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 125,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 106,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 79
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 27
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 47
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 59
+              }
+            }
+          }
+        }
+      },
+      {
+        "threshold": 1,
+        "policies": {
+          "strict": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 0,
+            "caught": 0,
+            "missed": 19,
+            "extraVerificationTurns": 0,
+            "recall": 0,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 0,
+                "missed": 1,
+                "extraVerificationTurns": 0
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 0,
+                "missed": 18,
+                "extraVerificationTurns": 0
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 0,
+                "missed": 8,
+                "extraVerificationTurns": 0
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 0,
+                "missed": 11,
+                "extraVerificationTurns": 0
+              }
+            }
+          },
+          "uncertainty_fallback": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 125,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 106,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 79
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 27
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 47
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 59
+              }
+            }
+          },
+          "verify_once": {
+            "cases": 180,
+            "needsContinuation": 19,
+            "totalReprompts": 125,
+            "caught": 19,
+            "missed": 0,
+            "extraVerificationTurns": 106,
+            "recall": 1,
+            "bySuite": {
+              "real": {
+                "cases": 120,
+                "needsContinuation": 1,
+                "caught": 1,
+                "missed": 0,
+                "extraVerificationTurns": 79
+              },
+              "synthetic": {
+                "cases": 60,
+                "needsContinuation": 18,
+                "caught": 18,
+                "missed": 0,
+                "extraVerificationTurns": 27
+              }
+            },
+            "bySplit": {
+              "development": {
+                "cases": 85,
+                "needsContinuation": 8,
+                "caught": 8,
+                "missed": 0,
+                "extraVerificationTurns": 47
+              },
+              "holdout": {
+                "cases": 95,
+                "needsContinuation": 11,
+                "caught": 11,
+                "missed": 0,
+                "extraVerificationTurns": 59
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}

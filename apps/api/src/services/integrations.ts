@@ -5,6 +5,8 @@ import { readCanvaReference } from "./canva-resource-access";
 import type { OutboundExternalBinding } from "../durable-objects/external-binding-outbox";
 import { runtimeDeferral } from "../lib/defer";
 import { Preparation, ToolSurfacePreparations } from "./harness-preparation";
+import { completionVerificationNudge } from "./completion-verification";
+import type { CompletionVerificationSnapshot } from "../durable-objects/completion-verification-storage";
 import { AGENT_MESSAGE_CONTENT_KIND, ImportedMessageProvenanceSchema } from "@rally/contracts";
 import { agentCoordinationRoleGuidance } from './agent-communication-prompts';
 import { conversationParentStub, hostedParentStub } from "./conversation-parent-client";
@@ -48,6 +50,7 @@ import {
   rememberAutomationPeopleSearchResult,
   rememberAutomationResourceSearchResult,
   runHarness,
+  judgeCompletionStop,
   type AddressingContextMessage,
   type BindLoopProjectionState,
   type BindLoopTransition,
@@ -2496,6 +2499,7 @@ export async function runWorkstreamHarness(
     runtimeResourceAttacher?: WorkstreamRuntimeResourceAttacher;
     /** Object-local authority for the one persistent loop of this substream. */
     persistentLoop?: {
+      completionVerificationSnapshot(): CompletionVerificationSnapshot;
       contextWindowTokensByModel(): Promise<Readonly<Record<string, number>>>;
       /** This conversation's memory digest copy for a principal (`digestPrincipalKey`); null for none. */
       memoryDigest?(principal: string): MemoryDigestFact[] | null;
@@ -3529,14 +3533,66 @@ export async function runWorkstreamHarness(
       });
     },
     acceptEmptyCompletion: false,
-    onTurnWouldEnd: () => {
+    onTurnWouldEnd: async ({ assistantContent, messages }) => {
       // A tool-less boundary has already crossed Bind's acceptance boundary;
       // asking the model to restate it would create a second answer and spend
       // another turn without adding verified evidence.
       if (attachmentGrounding.consumeTerminalBoundaryApplied()) return null;
       const attachmentNudge = attachmentGrounding.nudge();
       if (attachmentNudge) return attachmentNudge;
-      return null;
+      const persistentLoop = runtime?.persistentLoop;
+      // Fixed-purpose profiles and seeded demos have their own output contract.
+      // A nonpersistent host cannot enforce a durable one-use recovery marker.
+      if (!persistentLoop || profile || input.seed) return null;
+      return completionVerificationNudge({
+        runId: input.harnessRunId, assistantContent, messages, signal: harnessSignal,
+        snapshot: () => {
+          const snapshot = persistentLoop.completionVerificationSnapshot();
+          const activation = activationInputs.find(({ message }) =>
+            message.provenance.sourceKind === "scheduled_wakeup" || message.provenance.sourceKind === "connector_activity");
+          if (!snapshot.trigger && activation && typeof activation.message.content === "string") {
+            snapshot.trigger = { id: activation.message.provenance.sourceId,
+              text: activation.message.content, origin: activation.message.provenance.sourceKind };
+          }
+          return snapshot;
+        },
+        pendingDelegation: async () => {
+          try {
+            const { agents } = await new AgentCommunicationService(env, input).list();
+            return agents.some((agent) => agent.status === "executing");
+          } catch (error) {
+            harnessSignal.throwIfAborted();
+            // A committed handoff with unknown remote lifecycle is not a
+            // reason to start duplicate work. Its reply uses normal delivery.
+            logStructuredEvent(env, "warn", "completion_verification_delegation_unresolved", {
+              request_id: input.harnessRunId, workspace_id: input.workspaceId,
+              reason: diagnosticErrorCode(error, "completion_verification_delegation_unavailable"),
+            });
+            return true;
+          }
+        },
+        judge: async (state) => {
+          const traceId = crypto.randomUUID();
+          const decision = await judgeCompletionStop({
+            apiKey: env.TYPESAFE_API_KEY, state, signal: harnessSignal,
+            onDiagnostic: createClassifierDiagnosticSink(env, {
+              role: "completion_verification", workspaceId: input.workspaceId,
+              workstreamId: input.parentId, traceId, defer: runtimeDeferral,
+            }).record,
+            traceContext: { source: "completion_verification", feature: "completion-verification",
+              workspaceId: input.workspaceId, workstreamId: input.parentId,
+              requestId: traceId, harnessRunId: input.harnessRunId,
+              region: env.AVALON_REGION, environment: env.APP_ENV },
+          });
+          logStructuredEvent(env, "info", "completion_verification_decision", {
+            request_id: input.harnessRunId, workspace_id: input.workspaceId,
+            reprompt: decision.reprompt, choice: decision.answer?.choice ?? null,
+            confidence: decision.answer?.confidence ?? null, model: decision.model,
+            failure_kind: decision.failureKind,
+          });
+          return decision;
+        },
+      });
     },
     beforeToolCall: async ({ pluginId, toolName }) => {
         const policy = toolPolicyForCall(pluginId, toolName, harnessTools);

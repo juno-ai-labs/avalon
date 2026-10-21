@@ -1,3 +1,4 @@
+import { readCompletionVerificationSnapshot } from "./completion-verification-storage";
 import { projectConversationView } from "@rally/contracts/conversation-view";
 import { ConversationViewDeliverySchema, ConversationViewJobSchema, ConversationViewProjectionSchema, completeConversationViewDelivery, nextConversationViewAt, publishConversationViews } from "./conversation-view-projection";
 import { zodDiagnosticCode, describeZodIssues } from "@rally/contracts/zod-diagnostics";
@@ -5239,6 +5240,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return loop;
     };
     return {
+      completionVerificationSnapshot: () => {
+        fence();
+        return readCompletionVerificationSnapshot(this.state.storage, execution.runId, input.triggerMessageId ?? null);
+      },
       contextWindowTokensByModel: () => this.contextWindowTokensByModel(),
       memoryDigest: (principal) => this.memoryDigestCopy(principal),
       assignSidekickSkillNames: (sources) => {
