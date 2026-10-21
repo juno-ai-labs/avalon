@@ -23,6 +23,7 @@ import {
   type CreateEngineeringChannelResult,
   type CreateEngineeringThreadResult,
   EngineeringArtifactListLookupSchema,
+  EngineeringOperatorSchema,
   EngineeringArtifactTargetLookupSchema,
   EngineeringD1SqlResultSchema,
   EngineeringSidekickListLookupSchema,
@@ -88,6 +89,7 @@ import { ApiError } from "./lib/api-error";
 import { WORKSTREAM_DO_SERVING_CONTRACT_VERSION } from "./services/workstream-authority";
 import { createEngineeringOrg, createEngineeringChannel, createEngineeringThread } from "./services/engineering-creation";
 import { sendEngineeringMessage, readEngineeringChannel, readEngineeringConversation, listEngineeringUserChannels, listEngineeringUserConversations } from "./services/engineering-messages";
+import { auditedEngineeringWrite } from "./services/engineering-audit";
 
 const WorkspaceInventoryRowSchema = z.strictObject({
   id: z.string(),
@@ -258,10 +260,16 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
       await listEngineeringUserConversations(this.env, ListEngineeringUserConversationsInputSchema.parse(input)),
     ));
   }
-  async sendMessage(input: unknown): Promise<SendEngineeringMessageResult> {
-    return this.productOperation("sendMessage", async () => SendEngineeringMessageResultSchema.parse(
-      await sendEngineeringMessage(this.env, SendEngineeringMessageInputSchema.parse(input)),
-    ));
+  async sendMessage(input: unknown, operator: unknown): Promise<SendEngineeringMessageResult> {
+    return this.productOperation("sendMessage", async () => {
+      const request = SendEngineeringMessageInputSchema.parse(input);
+      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
+        action: "send_message", orgId: request.orgId, representedUserId: request.userId,
+        operationId: request.operationId, threadId: request.threadId,
+        ...(request.breakoutId === undefined ? {} : { breakoutId: request.breakoutId }),
+      }, async () => SendEngineeringMessageResultSchema.parse(await sendEngineeringMessage(this.env, request)),
+      (result) => ({ turnId: result.receipt.turn.turnId, deliveryState: result.receipt.deliveryState }));
+    });
   }
 
   async readChannel(input: unknown): Promise<EngineeringTextResult> {
@@ -288,23 +296,39 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     }
   }
 
-  async createOrg(input: unknown): Promise<CreateEngineeringOrgResult> {
-    return this.productOperation("createOrg", async () => CreateEngineeringOrgResultSchema.parse(
-      await createEngineeringOrg(this.env, CreateEngineeringOrgInputSchema.parse(input)),
-    ));
+  async createOrg(input: unknown, operator: unknown): Promise<CreateEngineeringOrgResult> {
+    return this.productOperation("createOrg", async () => {
+      const request = CreateEngineeringOrgInputSchema.parse(input);
+      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
+        action: "create_org", orgId: request.operationId, representedUserId: request.creatorUserId,
+        operationId: request.operationId,
+      }, async () => CreateEngineeringOrgResultSchema.parse(await createEngineeringOrg(this.env, request)),
+      (result) => ({ orgId: result.orgId }));
+    });
   }
 
-  async createChannel(input: unknown): Promise<CreateEngineeringChannelResult> {
-    return this.productOperation("createChannel", async () => CreateEngineeringChannelResultSchema.parse(
-      await createEngineeringChannel(this.env, CreateEngineeringChannelInputSchema.parse(input), (work) => this.ctx.waitUntil(work)),
-    ));
+  async createChannel(input: unknown, operator: unknown): Promise<CreateEngineeringChannelResult> {
+    return this.productOperation("createChannel", async () => {
+      const request = CreateEngineeringChannelInputSchema.parse(input);
+      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
+        action: "create_channel", orgId: request.orgId, representedUserId: request.creatorUserId,
+        operationId: request.operationId,
+      }, async () => CreateEngineeringChannelResultSchema.parse(
+        await createEngineeringChannel(this.env, request, (work) => this.ctx.waitUntil(work))),
+      (result) => ({ channelId: result.channelId }));
+    });
   }
 
-  async createThread(input: unknown): Promise<CreateEngineeringThreadResult> {
-    return this.productOperation("createThread", async () => CreateEngineeringThreadResultSchema.parse(
-      await createEngineeringThread(this.env, CreateEngineeringThreadInputSchema.parse(input),
-        (work) => this.ctx.waitUntil(work)),
-    ));
+  async createThread(input: unknown, operator: unknown): Promise<CreateEngineeringThreadResult> {
+    return this.productOperation("createThread", async () => {
+      const request = CreateEngineeringThreadInputSchema.parse(input);
+      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
+        action: "create_thread", orgId: request.orgId, representedUserId: request.creatorUserId,
+        operationId: request.operationId, threadId: request.operationId,
+      }, async () => CreateEngineeringThreadResultSchema.parse(
+        await createEngineeringThread(this.env, request, (work) => this.ctx.waitUntil(work))),
+      (result) => ({ threadId: result.threadId, turnId: result.turnId, harnessRunId: result.harnessRunId }));
+    });
   }
 
   async listWorkspaces(input: Record<string, never>): Promise<ListEngineeringWorkspacesResult> {

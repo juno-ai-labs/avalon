@@ -1,6 +1,6 @@
 import { agentMessageNotice, annotationCommentText, ElicitationSchema, isAgentMessageContent, messageAnnotations } from "@rally/contracts";
 import { rewriteMessageAsPlainText } from "@rally/contracts/citations";
-import { visibleParticipantText } from "@rally/contracts/text";
+import { elicitationAnswerLabel, visibleParticipantText } from "@rally/contracts/text";
 import type { TranscriptTurn } from "@rally/contracts";
 
 /** Room-visible prose only, using the same hidden-prefix and mailbox rules as the feed. */
@@ -15,7 +15,7 @@ export function conversationAsText(turns: readonly TranscriptTurn[]): string {
         ? ElicitationSchema.safeParse(structured && "elicitation" in structured ? structured.elicitation : structured) : null;
       const prose = elicitation?.success ? [elicitation.data.prompt,
         ...elicitation.data.options.map((option) => `- ${option.label}${option.description ? `: ${option.description}` : ""}`),
-        ...(elicitation.data.answer === null ? [] : [`Answer: ${Array.isArray(elicitation.data.answer) ? elicitation.data.answer.join(", ") : elicitation.data.answer}`]),
+        ...(elicitation.data.answer === null ? [] : [`Answer: ${elicitationAnswerLabel(elicitation.data)}`]),
       ].join("\n") : visibleParticipantText(block.text, turn.actor);
       const body = rewriteMessageAsPlainText(annotationCommentText(prose, messageAnnotations(structured)));
       const attachments = (block.attachments ?? []).map((attachment) => `Attachment: ${attachment.fileName}`);

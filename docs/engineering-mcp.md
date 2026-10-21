@@ -21,8 +21,10 @@ available to Rally users by virtue of product membership.
 - `apps/api/src/services/engineering-creation.ts` adapts operator creation to
   regional onboarding, Channel audience changes and ordinary Thread creation.
 - `apps/api/src/services/engineering-messages.ts` adapts the ordinary composer,
-  Channel feed and transcript range reader; `engineering-conversation-text.ts`
+  Channel feed and transcript range reader; `conversation-text.ts`
   formats participant prose with shared display and plaintext helpers.
+- `apps/api/src/services/engineering-audit.ts` records content-free attempt and
+  result events in the existing independent audit database before/after writes.
 - `apps/api/src/durable-objects/internally-inspectable-durable-object.ts` owns
   the shared raw-SQL Durable Object RPC.
 - `apps/api/src/durable-objects/scheduled-alarms.ts` makes every scheduled
@@ -149,8 +151,11 @@ Creation takes a fresh UUID `operationId`, reused with the original arguments
 after an uncertain outcome. The entity's ID is that operation ID. Organization
 creation uses the onboarding journal, Channel creation uses the stable Space
 reservation, and Thread creation uses the ordinary creation receipt and message
-key. A failure can leave member seating or a Channel audience update unfinished;
-replay the original call to finish it. Reusing an ID with changed arguments is
+key. A transient failure can leave member seating or a Channel audience update
+unfinished; replay the original call to resume it. A refused audience leaves
+the Organization-wide Channel with its creator as its only participant. An
+unchanged retry cannot fix an invalid participant or permission refusal: repair
+the membership or audience, or archive the Channel. Reusing an ID with changed arguments is
 not a new creation; audience updates apply the requested participant set.
 
 `create_org` takes `region`, `name`, and `userIds`. The creator becomes its owner;
@@ -181,6 +186,21 @@ product services without a user login session. Authorities recheck the person's
 current relationship and permissions. It carries no extra product capability;
 operator calls retain the existing non-session exclusion from human-use metrics.
 
+Each write also carries the verified Access subject, audience and informational
+email as a separate, required RPC argument supplied by the MCP Worker. It is
+never part of a tool's caller-controlled arguments. The regional bridge writes
+an `engineering.<action>.attempt` event to `AUDIT_DB.audit_events` before product
+effects, then an `engineering.<action>.result` with the represented user,
+destination, operation ID and receipt identifiers. Transcript authors stay the
+selected product user, as on the existing impersonation path. No prompts,
+message bodies or transcript content enter these audit rows.
+
+An unavailable attempt audit prevents the write. A failed cross-authority call
+records `failed_or_uncertain` with its diagnostic code; it does not claim no
+effect committed. An admitted result means admission, not completed agent
+execution. If a result audit cannot be written, the durable attempt still
+correlates recovery using the original operation ID.
+
 ### Messages and text reads
 
 `send_message` takes `orgId`, `userId`, `threadId`, `text`, and a UUID
@@ -203,15 +223,17 @@ page size applies; a text footer supplies the cursor for older history.
 Conversation reads authorize the exact Thread or Breakout through
 ConversationService.client. A generic `read_transcript` product operation exposes
 the existing transcript range reader used by socket hydration. It does not boot
-the feed or acknowledge read state. The adapter formats committed participant
+the feed or acknowledge read state. The owning Durable Object formats committed participant
 prose with frozen author bylines and attachment names, including elicitation
-questions and annotation comments, while omitting tool payloads, thinking, internal mailbox messages,
+questions, selected option labels and annotation comments, while omitting tool payloads, thinking, internal mailbox messages,
 private personal-instruction prefixes and suggested prompts. Live pending-input
-and activity overlays are outside this committed-history read.
+and activity overlays are outside this committed-history read. Only that text
+and paging metadata cross the RPC boundary, not raw tool blocks or activities.
 
-Omit `limit` to read all committed turns. With a caller-chosen `limit`, the footer
+Omit `limit` for a 20-turn page, set by the team on 2026-10-21 to match the
+desktop hydration size. A caller may choose another `limit`. The footer
 supplies `afterSequence` and `throughSequence` to continue under the same append
-fence. No new default cutoff is imposed. A later call without the fence includes
+fence. A later call without the fence includes
 newer turns. Read and send both enforce the selected user's exact Breakout
 membership independently of their parent Thread access.
 
@@ -443,18 +465,15 @@ Access identity is never silently mapped to a product user.
 against real D1 and Durable Objects: initial membership and seating, stable-ID
 retries, Channel participants, private-Channel narrowing, opening-prompt
 persistence, member and guest sends with normal execution, author snapshots,
-ordinary guest creation refusals, exact Breakout access, history paging and
+ordinary guest creation refusals, exact Breakout access, default and fenced history paging and
 user-scoped lists after delivering the ordinary directory effects.
+Audit coverage reads operator and receipt attribution from the real audit
+database and refuses product writes when the attempt cannot be persisted.
 Only the external model provider is doubled. The text formatter's unit tests
 cover bylines, display text, attachments, elicitation, annotations and hidden
 internal content; the desktop transcript suite covers the extracted display helper.
 The MCP transport suite checks annotations, regional routing, ambiguous-target
-refusal, plain-text results and content-free auditing. Mutation checks drop the
-initial member list, route a Breakout send to Main, skip transcript history and
-drop the Channel feed in turn; each must fail its corresponding assertion.
-Listing checks also coerce a guest directory into member visibility, reinstate
-the attention filter for a complete listing, and remove the kind filter; the
-corresponding guest, settled-history and kind assertions must fail.
+refusal, plain-text results, trusted operator forwarding and content-free logging.
 `space-conversation-page.test.ts` covers the unchanged dashboard default,
 all-visible mode, per-kind pagination and independent child visibility.
 
@@ -582,6 +601,9 @@ creation batch; a generic product read exposes the existing transcript range
 reader. User-visible lists reuse the socket directory and the existing paged
 conversation query, with server-selected kind and attention filters applied
 before pagination. The selected member or guest keeps their normal permissions.
+Writes persist the Access operator and represented user in the independent
+audit database, and text reads format at their authority with a team-selected
+20-turn default page. Elicitation answers reuse the desktop label formatter.
 
 **Why:** Engineers need realistic product behavior through MCP, including
 identity, visibility, retries, placement, notifications and agent execution.
@@ -596,6 +618,8 @@ existing entryways and extend their inputs where a second caller needs them.
 with the same operation ID and original arguments. Reads return committed prose;
 Channel pagination and explicit conversation sequence fences remain visible.
 Product-use metrics continue excluding non-session operator actions.
+Audit attempts precede product effects; their operation IDs correlate uncertain
+outcomes. Text-only RPC responses avoid shipping hidden payloads across hops.
 
 ### 2026-10-19 — Read and write D1
 
