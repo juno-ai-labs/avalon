@@ -80,6 +80,21 @@ describe('resource image preview cache', () => {
     expect(await savedImages.entries(scope)).toEqual([]);
   });
 
+  it.each(['image/png', 'application/pdf'])('removes replaced image bytes when the new %s response is uncacheable', async (mimeType) => {
+    const cache = new ResourcePreviewCache();
+    await cache.load(scope, key, async () => image());
+    expect(await savedImages.entries(scope)).toEqual([{ key, subject: key }]);
+    const validators: (string | undefined)[] = [];
+    const fetchPreview = async (etag: string | undefined): Promise<Response> => {
+      validators.push(etag);
+      return new Response('replacement preview', { headers: { 'content-type': mimeType, etag: '"raw-storage-etag"' } });
+    };
+    expect(await (await cache.load(scope, key, fetchPreview)).text()).toBe('replacement preview');
+    expect(await savedImages.entries(scope)).toEqual([]);
+    expect(await (await cache.load(scope, key, fetchPreview)).text()).toBe('replacement preview');
+    expect(validators).toEqual(['"image-preview-v1:1:abc"', undefined]);
+  });
+
   it('replaces saved bytes when the server returns a newer image', async () => {
     const cache = new ResourcePreviewCache();
     await cache.load(scope, key, async () => image());

@@ -121,6 +121,9 @@ export class ResourcePreviewCache {
     if (!isPreviewValidator(etag) || !mimeType.startsWith('image/')) {
       const blob = await response.blob();
       await assertSharedCurrent();
+      // A successful replacement invalidates the old image even when its new
+      // representation cannot be saved. Keep storage work off the display path.
+      if (cached) void previews.remove(scope, key);
       return blob;
     }
     const bytes = await response.arrayBuffer();
