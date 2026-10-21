@@ -11,7 +11,7 @@ import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlit
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import { nextConversationViewAt, publishConversationViews } from "../src/durable-objects/conversation-view-projection";
 import { threadBackfillWork } from "../src/durable-objects/thread-backfill";
-import { seedCanonicalMessageRecord, seedParticipantMessage, seedWorkstreamRoot } from "./helpers/substream-fixture";
+import { boot, seedCanonicalMessageRecord, seedOpenWorkstreamAuthority, seedParticipantMessage, seedWorkstreamRoot } from "./helpers/substream-fixture";
 
 const workspaceId = asWorkspaceId("00000000-0000-7000-8000-00000000ca01");
 const parentId = asWorkstreamId("00000000-0000-7000-8000-00000000ca02");
@@ -91,6 +91,34 @@ it.each([
   expect(await stub.backfillConversationView({ ...job, turnId: '' })).toBe('queued');
   expect((await stub.conversationViewProjection({ ...job, turnId: 'awaiting-import' }))?.content?.turn.blocks[0])
     .toMatchObject({ text: 'Waiting for authority' });
+});
+
+it("publishes retained preview work when an identity-only source is bootstrapped", async () => {
+  await seedOpenWorkstreamAuthority(env.DB);
+  const stub = source();
+  // Finish constructor recovery before installing the fenced fixture.
+  await boot(stub);
+  await runInDurableObject(stub, async (_instance, state) => {
+    seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: parentId });
+    await seedParticipantMessage(state, { id: 'retained', sequence: 1, text: 'Ready after bootstrap' });
+    state.storage.sql.exec("UPDATE workstream SET authority_mode = 'preparing', authority_generation = 0 WHERE id = 1");
+    await state.storage.deleteAlarm();
+  });
+  expect(await stub.backfillConversationView({ ...job, turnId: '' })).toBe('missing');
+  const response = await stub.fetch('https://substream.test/internal/runtime-bootstrap', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ workspaceId, parentKind: 'workstream', parentId, generation: 1 }),
+  });
+  expect(await response.json()).toEqual({ ok: true });
+  expect(response.status).toBe(200);
+  // An overdue alarm can auto-fire before getAlarm(), which then reads null
+  // while the handler is running. Assert its durable Queue claim instead.
+  await expect.poll(() => runInDurableObject(stub, (_instance, state) =>
+    state.storage.sql.exec<{ turn_id: string }>(
+      'SELECT turn_id FROM conversation_view_changes WHERE in_flight_revision IS NOT NULL ORDER BY turn_id',
+    ).toArray()), { timeout: 10_000 }).toEqual([{ turn_id: '' }, { turn_id: 'retained' }]);
+  expect((await stub.conversationViewProjection({ ...job, turnId: 'retained' }))?.content?.turn.blocks[0])
+    .toMatchObject({ text: 'Ready after bootstrap' });
 });
 
 it("keeps deletion and generation fences and serves only compact opening rows", async () => {
