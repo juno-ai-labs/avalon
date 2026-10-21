@@ -538,8 +538,8 @@ export class ResourceService {
         return resourceBytesResponse(normalized.bytes, normalized.mimeType, fileName);
       }
       // The revision covers presentation metadata too; the digest names the
-      // original bytes. Validate before R2, but retain both canonical access
-      // checks in preview(), including for a bodyless response.
+      // original bytes. Compare before R2 only after preview() has admitted
+      // this request using the current canonical resource metadata.
       const etag = typeof resource.content_sha256 === 'string'
         ? `"image-preview-v1:${Number(resource.current_version ?? 1)}:${resource.content_sha256}"` : undefined;
       if (etag && ifNoneMatch?.split(',').some((candidate) => candidate.trim().replace(/^W\//u, '') === etag)) {
