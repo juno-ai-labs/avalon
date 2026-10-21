@@ -18,12 +18,8 @@ socket hooks' first frame.
 
 An open also requests the workspace's compact
 [conversation view projection](conversation-view-cache.md) alongside disk
-hydration on the already-connected Organization socket. A newer visible tail
-or turn revision can refresh a read-only disk seed while preserving older
-ranges, detail fields, and inherited context; older or incomplete projections
-cannot roll held turns back. Missing previews retry while attachment is pending.
-Both seeds use the same `local_cache` marker and write gates described here;
-previews never overwrite optimistic or live data or persist through the mirror.
+hydration; both use the read-only `local_cache` marker and write gates described
+here, with reconciliation and retries owned by the linked projection document.
 
 ## Where the code lives
 

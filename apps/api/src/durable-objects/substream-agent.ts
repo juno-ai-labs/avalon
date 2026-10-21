@@ -3309,6 +3309,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // compares the substream a request names against it, so a child
       // conversation must know its own id before its first port call.
       this.ensureSubstreamIdentity(parsed.data.substreamId ?? "0");
+      // Backfill may already have settled this placeholder as missing. Wake
+      // its retained ledger now, without waiting for a later product write.
+      const viewDueAt = nextConversationViewAt(this.state.storage.sql);
+      if (viewDueAt !== null) await this.ensureAlarmNoLaterThan(viewDueAt);
       return jsonResponse({ ok: true });
     } catch (error) {
       return jsonResponse({

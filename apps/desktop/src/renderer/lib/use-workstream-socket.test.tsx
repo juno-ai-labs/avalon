@@ -5179,12 +5179,13 @@ describe('useWorkstreamSocket over the local cache', () => {
     }, workstreamId);
   }
 
-  it('requests a workspace preview alongside disk hydration and refreshes the disk seed', async () => {
+  it.each(['disk', 'preview', 'stale-preview'] as const)('requests both seeds together and reconciles when %s arrives first', async (first) => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     previewContext.enabled = true;
     const workstreamId = '00000000-0000-7000-8000-0000000007a8';
     await remember(workstreamId, 'Remembered title');
     const cached = await conversationSlice.read(scope, conversationCacheKey(workstreamId, '0'));
+    cached!.detail.latestAttentionSequenceNumber = 7;
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     vi.spyOn(conversationSlice, 'read').mockImplementationOnce(async () => {
@@ -5199,20 +5200,59 @@ describe('useWorkstreamSocket over the local cache', () => {
     const rendered = renderHook(() => useWorkstreamSocket(api, workstreamId, true),
       { wrapper: createScopedWrapper(queryClient) });
     expect(previewContext.requestConversationView).toHaveBeenCalledTimes(1);
-    await act(async () => { release(); await gate; });
-    await vi.waitFor(() => expect(queryDetail(queryClient, workstreamId)?.title).toBe('Remembered title'));
+    if (first === 'disk') {
+      await act(async () => { release(); await gate; });
+      await vi.waitFor(() => expect(queryDetail(queryClient, workstreamId)?.title).toBe('Remembered title'));
+    }
     const receive = previewContext.requestConversationView.mock.calls[0]![2];
     const fresh = rememberedTranscript();
-    fresh.ranges[0]!.turns[0] = { ...transcriptTurn(3, 'Updated while this device was away'), revision: 2 };
-    act(() => receive({
+    fresh.ranges[0]!.turns[0] = { ...transcriptTurn(3, 'Updated while this device was away'), revision: first === 'stale-preview' ? 1 : 2 };
+    await act(async () => receive({
       type: 'workspace_conversation_view', requestId: '00000000-0000-7000-8000-0000000007a9',
       parentId: workstreamId, substreamId: asSubstreamId('0'),
       view: { header: { title: 'Fresh preview', titleStatus: 'settled', scope: 'workspace',
         harnessStatus: 'completed', createdAt: '2026-10-20T00:00:00.000Z', updatedAt: '2026-10-21T00:00:00.000Z' }, transcript: fresh },
     }));
-    expect(queryDetail(queryClient, workstreamId)?.title).toBe('Fresh preview');
+    if (first !== 'disk') {
+      // A quick eventual-consistency response cannot suppress the disk row.
+      expect(queryDetail(queryClient, workstreamId)).toBeUndefined();
+      await act(async () => { release(); await gate; });
+    }
+    await vi.waitFor(() => expect(queryDetail(queryClient, workstreamId)?.title).toBe(first === 'stale-preview' ? 'Remembered title' : 'Fresh preview'));
+    expect(queryDetail(queryClient, workstreamId)?.latestAttentionSequenceNumber).toBe(7);
     expect(queryClient.getQueryData(workstreamFeedSourceQueryKey(workstreamId))).toBe('local_cache');
     await expect(rendered.result.current.stopHarness()).rejects.toMatchObject({ code: 'workstream_feed_seeded' });
+    rendered.unmount();
+    queryClient.clear();
+  });
+
+  it.each([1, 2])('does not retry a populated preview at revision %s when disk is current', async (revision) => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    previewContext.enabled = true;
+    const workstreamId = '00000000-0000-7000-8000-0000000007ac';
+    const queryClient = new QueryClient();
+    const disk = rememberedTranscript();
+    disk.ranges[0]!.turns[0]!.revision = 2;
+    queryClient.setQueryData(['ordered-transcript', workstreamId], disk);
+    queryClient.setQueryData(workstreamFeedSourceQueryKey(workstreamId), 'local_cache');
+    const api = socketApiWith({ getSocketTicket: vi.fn(async () => ({
+      url: `wss://api.rally.test/workstreams/${workstreamId}`, ticket: 'socket-ticket',
+      protocols: socketTicketProtocols('socket-ticket'),
+    })) });
+    const rendered = renderHook(() => useWorkstreamSocket(api, workstreamId, true),
+      { wrapper: createWrapper(queryClient) });
+    const preview = rememberedTranscript();
+    preview.ranges[0]!.turns[0]!.revision = revision;
+    await act(async () => previewContext.requestConversationView.mock.calls[0]![2]({
+      type: 'workspace_conversation_view', requestId: '00000000-0000-7000-8000-0000000007ad',
+      parentId: workstreamId, substreamId: asSubstreamId('0'),
+      view: { header: { title: 'Current or older', titleStatus: 'settled', scope: 'workspace',
+        harnessStatus: 'completed', createdAt: '2026-10-20T00:00:00.000Z', updatedAt: '2026-10-21T00:00:00.000Z' }, transcript: preview },
+    }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    expect(previewContext.requestConversationView).toHaveBeenCalledTimes(1);
+    expect(queryClient.getQueryData(['ordered-transcript', workstreamId])).toBe(disk);
     rendered.unmount();
     queryClient.clear();
   });
