@@ -300,7 +300,7 @@ describe("addressing classifier logging", () => {
       return Response.json({
         model: "jev-1.13.0",
         answers: isContinuation
-          ? { continuation: { type: "choice", choice: resume ? "resume_requested_work" : "followup_without_rally_action", confidence: 0.9 }, assignment: { type: "choice", choice: "assigned_to_rally", confidence: 0.9 } }
+          ? { continuation: { type: "choice", choice: resume ? "resume_requested_work" : "followup_without_rally_action", confidence: 0.9 }, assignment: { type: "choice", choice: "assigned_to_rally", confidence: 0.9 }, contributors: { type: "choice", choice: "contributors_present", confidence: 0.9 } }
           : { addressing: { type: "choice", choice: resume ? "people_only" : "rally_should_act", confidence: 0.95 } },
       });
     }));
@@ -315,8 +315,8 @@ describe("addressing classifier logging", () => {
     expect(result).toMatchObject(resume
       ? { classification: "agent_action", confidence: 0.9, rationaleCode: "deferred_request" }
       : { classification: "human_only", confidence: 0.9, rationaleCode: "human_coordination" });
-    expect(requests).toHaveLength(1);
-    expect(requests[0]).toMatchObject({ state: { new_message: { authorName: "Ren" } } });
+    expect(requests).toHaveLength(2);
+    expect(requests.find((request) => "continuation" in (request.questions as Record<string, unknown>))).toMatchObject({ state: { new_message: { authorName: "Ren" } } });
     const outcomes = logged.mock.calls.map(([entry]) => entry as Record<string, unknown>);
     expect(outcomes).toEqual(expect.arrayContaining([expect.objectContaining({
       event: "addressing_classifier_outcome",
@@ -333,8 +333,8 @@ describe("addressing classifier logging", () => {
     const fetcher = vi.fn(async (_url, init) => {
       const body = JSON.parse(String(init?.body)) as { questions: Record<string, unknown> };
       return Response.json({ model: "jev-1.13.0", answers: "continuation" in body.questions ? {
-        continuation: { type: "choice", choice: "use_addressing", confidence: 0.9 },
-        assignment: { type: "choice", choice: "not_assigned_to_rally", confidence: 0.9 },
+        continuation: { type: "choice", choice: "followup_without_rally_action", confidence: 0.9 },
+        assignment: { type: "choice", choice: "not_assigned_to_rally", confidence: 0.9 }, contributors: { type: "choice", choice: "contributors_present", confidence: 0.9 },
       } : { addressing: { type: "choice", choice: "no_clear_request", confidence: 0.9 },
     } }); });
     vi.stubGlobal("fetch", fetcher);
