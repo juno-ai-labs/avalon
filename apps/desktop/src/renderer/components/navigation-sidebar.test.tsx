@@ -1422,8 +1422,8 @@ describe('the navigation sidebar', () => {
       renderSidebar(seedThreads);
       fireEvent.contextMenu(await screen.findByRole('link', { name: /Q4 plan/u }));
       fireEvent.click(screen.getByRole('menuitem', { name: 'Resolve thread' }));
-      expect(await screen.findByText(copy)).toBeInTheDocument();
-      fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+      expect(await screen.findByRole('alertdialog')).toHaveTextContent(copy);
+      fireEvent.click(screen.getByRole('button', { name: 'OK' }));
       expect(screen.queryByText(copy)).not.toBeInTheDocument();
     });
 
