@@ -3802,6 +3802,11 @@ export const WorkstreamWorkflowInputSchema = z.object({
    * its definition from the automation by revision when it starts.
    */
   automationRun: AutomationRunReferenceV1Schema.optional(),
+  /** Host-derived authority of a background worker's root Sidekick run; grants no run instructions or tools. */
+  automationDelegation: z.strictObject({
+    runId: IdSchema,
+    stopGeneration: z.number().int().nonnegative(),
+  }).optional(),
   /**
    * Set beside `automationRun` when input to a Sidekick run child continued
    * that run, rather than the Sidekick's schedule or trigger starting it.

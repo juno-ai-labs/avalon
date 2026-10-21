@@ -13,6 +13,7 @@ import { agentCoordinationRoleGuidance } from './agent-communication-prompts';
 import { conversationParentStub, hostedParentStub } from "./conversation-parent-client";
 import { AgentCommunicationService } from "./agent-communication-service";
 import { createAgentCommunicationPlugin } from "./agent-communication-plugin";
+import { continueSidekickRun } from "./sidekick-run-continuation";
 import { AgentMessageContentSchema, renderAgentMessage } from "./agent-message-content";
 import { ObjectPortError } from "../runtime/object-port";
 import { dynamicConnectorCapability, stableConnectionWireName, stableWireToolName, validateDynamicConnectorTools } from "./connector-tool-inventory";
@@ -6588,6 +6589,29 @@ async function readRunAuthority(
   let startedAt: number;
   if (!workstream || workstream.archived_at != null) {
     throw new ConnectorError("unauthorized", "Work stream is no longer active");
+  }
+
+  // Delegated work keeps its own instructions and principal, but cannot
+  // outlive the root Sidekick run's consent. Check again at every model/tool
+  // boundary, including after a pause followed by a resume.
+  if (input.automationDelegation) {
+    const delegation = input.automationDelegation;
+    if (!input.backgroundAgent || input.parentKind !== "automation") {
+      throw new ConnectorError("unauthorized", "Sidekick delegation requires a background worker");
+    }
+    startedAt = Date.now();
+    const live = await continueSidekickRun(env, {
+      region: input.region,
+      workspaceId: input.workspaceId,
+      automationId: input.parentId,
+      runId: delegation.runId,
+    });
+    recordOptionalTiming(onTiming, "automation", startedAt);
+    if (live.outcome !== "continue" || live.stopGeneration !== delegation.stopGeneration
+      || input.executionPrincipal.type !== "user" || live.executionPrincipal.type !== "user"
+      || live.executionPrincipal.userId !== input.executionPrincipal.userId) {
+      throw new ConnectorError("unauthorized", "This Sidekick delegation is no longer authorized");
+    }
   }
 
   if (guest && input.executionPrincipal.type === "user" && !input.automationRun) {
