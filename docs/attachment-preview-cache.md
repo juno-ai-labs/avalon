@@ -13,16 +13,22 @@ validation before reuse.
 
 ## How it works
 
-Each API client coalesces concurrent reads for the same scoped URL and cache
-epoch. The last reader leaving aborts the request. A loaded thumbnail supplies
+Each API client coalesces concurrent reads for the same scoped URL, cache
+epoch and observed resource version. Detached-window refreshes carry the version
+they are refreshing, so a newer head never joins an older head's pending read.
+The persisted key stays stable; version validation still comes from the server.
+The last reader leaving aborts the request. A loaded thumbnail supplies
 its URL directly to the viewer; an unfinished thumbnail shares its pending load.
 
 The `resource-image-preview` slice stores ArrayBuffer bytes, MIME type and ETag
 in the existing local cache. Account, region, Organization and member/guest
 access scopes come from `localCacheScope`; the key includes the API URL.
 Existing sign-out and Organization-removal wipes cover this slice.
-Each wipe also changes a generation in IndexedDB. Image saves compare that
-generation in the write transaction, fencing downloads in other tabs too.
+Sign-out changes a global generation in IndexedDB; Organization wipes change
+only that account's member/guest scope generations. Image saves compare the
+global and scope generations in the write transaction, fencing downloads in
+other tabs without interrupting unrelated Organizations. Local epochs follow
+the same scope boundaries for image reads.
 
 Only image responses with an ETag beginning with `"image-preview-v1:` are saved.
 Raw R2 ETags cannot revalidate, so they are ignored and any previously saved
@@ -93,5 +99,6 @@ enter this cache because the preview endpoint cannot return 304 for them.
 Reusing bytes without validation can retain obsolete content or revoked access.
 
 **Consequences:** Preserve canonical checks on 304 responses, shared wipe fencing
-and rollback to an API without conditional CORS support. Version the validator
+and rollback to an API without conditional CORS support. Keep wipe fences scoped
+and pending refreshes separate across observed revisions. Version the validator
 when the representation changes. Authorization latency remains.

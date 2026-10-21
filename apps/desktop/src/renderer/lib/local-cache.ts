@@ -23,6 +23,8 @@ const DATABASE_NAME = 'rally-local-cache';
 const DATABASE_VERSION = 2;
 const ENTRY_STORE = 'entries';
 const GENERATION_KEY = ['', 'generation', ''];
+const scopeEpochs = new Map<string, number>();
+let allScopesEpoch = 0;
 /** Every row of one kind about one subject, whatever scope it sits in. */
 const KIND_SUBJECT_INDEX = 'kindSubject';
 /** One row of one kind, whatever scope it sits in. */
@@ -69,7 +71,7 @@ export interface LocalCacheSlice<T> {
   /**
    * Returns whether the row landed. A write from before the last wipe is
    * dropped and reports false, so nothing in flight at sign-out can restore
-   * what the wipe removed. Supplying localCacheGeneration() also fences a wipe
+   * what the wipe removed. Supplying localCacheGeneration(scope) also fences a wipe
    * from another renderer, with the comparison inside the write transaction.
    */
   write(scope: string, key: string, value: T, subject?: string, atEpoch?: number, atGeneration?: string | null): Promise<boolean>;
@@ -89,8 +91,8 @@ export interface LocalCacheSlice<T> {
  * epoch on, so a coalesced write that was scheduled before sign-out cannot land
  * behind the clear. The same store, and the same race, as the draft cache.
  */
-export function localCacheEpoch(): number {
-  return store.epoch();
+export function localCacheEpoch(scope?: string): number {
+  return scope === undefined ? store.epoch() : Math.max(allScopesEpoch, scopeEpochs.get(scope) ?? 0);
 }
 
 /**
@@ -196,14 +198,21 @@ function generationOf(row: unknown): string | null {
   return typeof value === 'string' ? value : null;
 }
 
-/** Shared by same-origin tabs; writes compare this in their own transaction. */
-export function localCacheGeneration(): Promise<string | null> {
-  return withEntries('readonly', async (entries) =>
-    generationOf(await awaitRequest(entries.get(GENERATION_KEY))), null);
+async function generationForScope(entries: IDBObjectStore, scope: string): Promise<string> {
+  const [global, scoped] = await Promise.all([
+    awaitRequest(entries.get(GENERATION_KEY)),
+    awaitRequest(entries.get(['', 'generation', scope])),
+  ]);
+  return JSON.stringify([generationOf(global), generationOf(scoped)]);
 }
 
-function advanceGeneration(entries: IDBObjectStore): void {
-  entries.put({ scope: '', kind: 'generation', key: '', subject: '', version: 1,
+/** Global sign-out and this scope's wipe, shared by same-origin tabs. */
+export function localCacheGeneration(scope: string): Promise<string | null> {
+  return withEntries('readonly', (entries) => generationForScope(entries, scope), null);
+}
+
+function advanceGeneration(entries: IDBObjectStore, scope = ''): void {
+  entries.put({ scope: '', kind: 'generation', key: scope, subject: '', version: 1,
     updatedAt: Date.now(), value: crypto.randomUUID() } satisfies LocalCacheRow);
 }
 
@@ -236,11 +245,13 @@ export function defineLocalCacheSlice<T>(definition: LocalCacheSliceDefinition<T
       if (parsed === null) void remove(scope, key);
       return parsed;
     },
-    async write(scope, key, value, subject = key, atEpoch = store.epoch(), atGeneration) {
-      if (atEpoch !== store.epoch()) return false;
+    async write(scope, key, value, subject = key, atEpoch, atGeneration) {
+      const currentEpoch = (): number => localCacheEpoch(atGeneration === undefined ? undefined : scope);
+      const capturedEpoch = atEpoch ?? currentEpoch();
+      if (capturedEpoch !== currentEpoch()) return false;
       return withEntries('readwrite', async (store) => {
-        if (atGeneration !== undefined && generationOf(await awaitRequest(store.get(GENERATION_KEY))) !== atGeneration) return false;
-        if (atEpoch !== localCacheEpoch()) return false;
+        if (atGeneration !== undefined && await generationForScope(store, scope) !== atGeneration) return false;
+        if (capturedEpoch !== currentEpoch()) return false;
         store.put({ scope, kind, key, subject, version, updatedAt: Date.now(), value } satisfies LocalCacheRow);
         return true;
       }, false);
@@ -282,6 +293,8 @@ export function defineLocalCacheSlice<T>(definition: LocalCacheSliceDefinition<T
 /** Sign-out leaves nothing of any workspace on the device. */
 export async function clearAllLocalCache(): Promise<void> {
   store.advanceEpoch();
+  allScopesEpoch = store.epoch();
+  scopeEpochs.clear();
   await withEntries('readwrite', async (store) => {
     store.clear();
     advanceGeneration(store);
@@ -291,10 +304,12 @@ export async function clearAllLocalCache(): Promise<void> {
 /** An account leaving one workspace removes only the rows it wrote under that scope. */
 export async function clearWorkspaceLocalCache(userId: string, region: RallyRegion, workspaceId: string): Promise<void> {
   store.advanceEpoch();
+  const scopes = (['member', 'guest'] as const).map((accessClass) => localCacheScope(userId, region, workspaceId, accessClass));
+  for (const scope of scopes) scopeEpochs.set(scope, store.epoch());
   await withEntries('readwrite', async (store) => {
-    advanceGeneration(store);
-    for (const accessClass of ['member', 'guest'] as const) {
-      store.delete(prefixRange([localCacheScope(userId, region, workspaceId, accessClass)]));
+    for (const scope of scopes) {
+      advanceGeneration(store, scope);
+      store.delete(prefixRange([scope]));
     }
   }, undefined);
 }
@@ -305,4 +320,6 @@ export async function clearWorkspaceLocalCache(userId: string, region: RallyRegi
  */
 export function closeLocalCache(): void {
   store.close();
+  allScopesEpoch = 0;
+  scopeEpochs.clear();
 }

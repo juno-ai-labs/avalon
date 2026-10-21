@@ -143,7 +143,7 @@ describe('restoring detached artifact windows', () => {
       loadResourceContent,
       openSiteArtifact: vi.fn(), signal: new AbortController().signal,
     });
-    expect(loadResourceContent).toHaveBeenCalledWith('resource', expect.any(AbortSignal));
+    expect(loadResourceContent).toHaveBeenCalledWith('resource', expect.any(AbortSignal), 2);
     expect(popOutArtifact).toHaveBeenCalledWith(expect.objectContaining({
       restoreId: 'saved', version: 2, title: 'Current', content: new Uint8Array([99, 117, 114, 114, 101, 110, 116]),
     }));

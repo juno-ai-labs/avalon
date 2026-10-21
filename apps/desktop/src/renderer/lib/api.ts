@@ -2110,7 +2110,8 @@ export class RallyApi {
     return response.blob();
   }
 
-  async getResourcePreviewContent(id: string, signal?: AbortSignal): Promise<Blob> {
+  /** Observed versions separate pending refreshes; this endpoint still reads the current head. */
+  async getResourcePreviewContent(id: string, signal?: AbortSignal, version?: number): Promise<Blob> {
     const path = `/resources/${encodeURIComponent(id)}/preview`;
     const fetchPreview = async (etag?: string, loadSignal?: AbortSignal): Promise<Response> => {
       const response = await this.execute(path, {
@@ -2125,7 +2126,7 @@ export class RallyApi {
     if (!session?.workspace) return (await fetchPreview(undefined, signal)).blob();
     return this.resourcePreviews.load(
       localCacheScope(session.user.id, session.workspace.region, session.workspace.id, session.workspace.accessClass),
-      `${this.baseUrl}${path}`, fetchPreview, signal,
+      `${this.baseUrl}${path}`, fetchPreview, signal, version,
     );
   }
 
