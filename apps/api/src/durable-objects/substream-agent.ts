@@ -1604,6 +1604,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       substreamId: request.substreamId, userId: projection.userId, actorUserId,
       actorName: names.actorName, recipientName: names.recipientName,
       active: projection.active, now: projection.changedAt,
+      suppressNotification: projection.reason === "message",
     }));
     // Effect publication can yield. Consult the latest local receipt so an old
     // removal cannot disconnect a reader admitted by a newer projection.

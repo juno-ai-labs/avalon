@@ -511,6 +511,22 @@ describe('WorkstreamComposer mention confirmation', () => {
     },
   );
 
+  it('confirms a guest mention in an Organization-visible thread', async () => {
+    const onSend = vi.fn(async () => undefined);
+    renderComposer(onSend, false, undefined, workstream, [creator, { ...bob, accessClass: 'guest' }, cara]);
+    fireEvent.change(screen.getByLabelText('Message the thread'), {
+      target: { value: 'Please ask @Bob Builder and @Cara Chen to review.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    expect(await screen.findByRole('heading', { name: 'Add participant?' })).toBeVisible();
+    expect(screen.getByText('bob@example.com')).toBeVisible();
+    expect(onSend).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Add and mention' }));
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith(
+      'Please ask @Bob Builder and @Cara Chen to review.', [], ['user-2'], undefined,
+    ));
+  });
+
   it('does not block an organization-visible channel on participant status', async () => {
     const onSend = vi.fn(async () => undefined);
     renderComposer(onSend);

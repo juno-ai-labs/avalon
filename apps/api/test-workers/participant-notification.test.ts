@@ -39,7 +39,7 @@ import type { WorkstreamObjectProductService } from "../src/durable-objects/work
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import { processWorkstreamNotificationIntent } from "../src/services/conversation-effect-service";
 import { deliverChildEffects, pendingParentEffects } from "./helpers/conversation-effects";
-import { hostedParentStub } from "./helpers/hosted-parent";
+import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000006a1");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006a2");
@@ -979,10 +979,25 @@ describe("naming somebody when the work stream is created", () => {
   });
 });
 
-describe("confirming a nonparticipant mention on an existing work stream", () => {
-  it("persists a workspace-visible mention without seating or confirming the recipient", async () => {
+describe("mentioning a nonparticipant on an existing conversation", () => {
+  it.each([["queued", false], ["direct", false], ["queued", true], ["direct", true]] as const)("seats a workspace-visible mention recipient without confirmation (%s, transferred=%s)", async (mode, transferred) => {
     const stub = agentStub(WORKSPACE_VISIBLE_MENTION_ID);
     await provisionWorkstream(stub, WORKSPACE_VISIBLE_MENTION_ID, { scope: "workspace" });
+    await sendAndSettle(stub, {
+      clientMessageId: "workspace-history-before-mention",
+      seed: { packVersion: "test", actionId: "workspace-history", assistant: null },
+    });
+    if (transferred) {
+      await deliveredEffects(stub, WORKSPACE_VISIBLE_MENTION_ID);
+      const parent = hostedParentStub(env, WORKSPACE_ID);
+      await withHostedParent(parent, WORKSPACE_VISIBLE_MENTION_ID, (hosted) => {
+        hosted["registerChild"]("0", "main", null, Date.now());
+      });
+      expect((await parent.beginMainParticipantMigration({ workspaceId: WORKSPACE_ID, parentId: WORKSPACE_VISIBLE_MENTION_ID })).status).toBe("pending");
+      await withHostedParent(parent, WORKSPACE_VISIBLE_MENTION_ID, async (hosted) => {
+        await hosted["runMainParticipantMigration"]();
+      });
+    }
     const sent = await product(stub, {
       operation: "create_message",
       auth: AUTH,
@@ -998,16 +1013,20 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
         }],
         confirmedParticipantUserIds: [],
         attachmentIds: [],
+        ...(mode === "direct" ? {
+          seed: { packVersion: "test", actionId: "workspace-mention", assistant: null },
+        } : {}),
       },
     });
     expect(sent.status).toBe(200);
+    expect(sent.body.deliveryState).toBe(mode === "queued" ? "pending" : "canonical");
     await waitForCanonicalTurn(stub, (sent.body.turn as { turnId: string }).turnId);
 
     await runInDurableObject(stub, (_instance, state) => {
-      expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM participants WHERE user_id = ?`,
+      expect(state.storage.sql.exec<{ status: string; first_opened_at: number | null }>(
+        `SELECT status, first_opened_at FROM participants WHERE user_id = ?`,
         INVITEE_ID,
-      ).one().count).toBe(0);
+      ).one()).toMatchObject({ status: "active", first_opened_at: null });
       expect(state.storage.sql.exec<{ target_user_id: string }>(
         `SELECT target_user_id FROM participant_transcript_mentions WHERE turn_id = ?`,
         (sent.body.turn as { turnId: string }).turnId,
@@ -1018,6 +1037,106 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
       envelope.effect.kind === "mention_notification"
       && envelope.effect.recipientUserId === INVITEE_ID
     ))).toHaveLength(1);
+    expect(envelopes.filter((envelope) => (
+      envelope.effect.kind === "participant_notification"
+      && envelope.effect.recipientUserId === INVITEE_ID
+    ))).toHaveLength(0);
+    expect(await openedByInvitee(stub)).toMatchObject({
+      firstUnreadSequenceNumber: 2,
+      readThroughSequenceNumber: 1,
+    });
+  });
+
+  it("requires confirmation before a workspace-visible mention gives a guest access", async () => {
+    const stub = agentStub(WORKSPACE_VISIBLE_MENTION_ID);
+    await provisionWorkstream(stub, WORKSPACE_VISIBLE_MENTION_ID, { scope: "workspace" });
+    await env.DB.prepare("UPDATE workspace_members SET access_class = 'guest' WHERE user_id = ?").bind(INVITEE_ID).run();
+    const input = {
+      text: "Ask @Invitee to review", clientMessageId: "guest-mention",
+      mentions: [{ type: "person", userId: INVITEE_ID, connectorType: null, startOffset: 4, endOffset: 12 }],
+      confirmedParticipantUserIds: [], attachmentIds: [],
+      seed: { packVersion: "test", actionId: "guest-mention", assistant: null },
+    };
+    const rejected = await product(stub, { operation: "create_message", auth: AUTH, input });
+    expect(rejected.status).toBe(409);
+    expect(rejected.body).toMatchObject({ error: "participant_confirmation_required" });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec("SELECT user_id FROM participants WHERE user_id = ?", INVITEE_ID).toArray()).toEqual([]);
+    });
+    await sendAndSettle(stub, { ...input, clientMessageId: "confirmed-guest-mention", confirmedParticipantUserIds: [INVITEE_ID] });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ status: string }>("SELECT status FROM participants WHERE user_id = ?", INVITEE_ID).one().status).toBe("active");
+    });
+  });
+
+  it("re-seats a removed Organization member when they are tagged again", async () => {
+    const stub = agentStub(WORKSPACE_VISIBLE_MENTION_ID);
+    await provisionWorkstream(stub, WORKSPACE_VISIBLE_MENTION_ID, { scope: "workspace" });
+    await product(stub, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
+    expect((await product(stub, { operation: "remove_participant", auth: AUTH, userId: INVITEE_ID })).status).toBe(200);
+    await sendAndSettle(stub, {
+      clientMessageId: "re-seat-mention", text: "Ask @Invitee to review",
+      mentions: [{ type: "person", userId: INVITEE_ID, connectorType: null, startOffset: 4, endOffset: 12 }],
+      seed: { packVersion: "test", actionId: "re-seat", assistant: null },
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ status: string }>("SELECT status FROM participants WHERE user_id = ?", INVITEE_ID).one().status).toBe("active");
+    });
+  });
+
+  it.each(["preparing", "queued"] as const)("refuses narrowing visibility while a mention is %s", async (stage) => {
+    const stub = agentStub(WORKSPACE_VISIBLE_MENTION_ID);
+    await provisionWorkstream(stub, WORKSPACE_VISIBLE_MENTION_ID, { scope: "workspace" });
+    await sendAndSettle(stub, { clientMessageId: "scope-history", seed: { packVersion: "test", actionId: "scope-history", assistant: null } });
+    const input = { text: "Ask @Invitee to review", clientMessageId: "scope-mention",
+      mentions: [{ type: "person" as const, userId: INVITEE_ID, connectorType: null, startOffset: 4, endOffset: 12 }],
+      confirmedParticipantUserIds: [], attachmentIds: [] };
+    await runInDurableObject(stub, async (instance, state) => {
+      const service = (instance as unknown as { product: WorkstreamObjectProductService }).product;
+      let enter!: () => void;
+      let resume!: () => void;
+      const entered = new Promise<void>((resolve) => { enter = resolve; });
+      const release = new Promise<void>((resolve) => { resume = resolve; });
+      const originalEnv = service["env"];
+      if (stage === "preparing") Reflect.set(service, "env", new Proxy(originalEnv, {
+        get(target, property, receiver) {
+          if (property !== "DB") return Reflect.get(target, property, receiver);
+          return new Proxy(target.DB, { get(db, key) {
+            if (key !== "prepare") return Reflect.get(db, key, db);
+            return (sql: string) => {
+              const wrap = (statement: D1PreparedStatement): D1PreparedStatement => new Proxy(statement, { get(stmt, method) {
+                if (method === "bind") return (...values: unknown[]) => wrap(stmt.bind(...values));
+                if (method === "all" && sql.includes("SELECT user.id, user.name")) return async () => {
+                  enter();
+                  await release;
+                  return stmt.all();
+                };
+                const value = Reflect.get(stmt, method, stmt);
+                return typeof value === "function" ? value.bind(stmt) : value;
+              } });
+              return wrap(db.prepare(sql));
+            };
+          } });
+        },
+      }));
+      const sending = service.createMessage(AUTH, input);
+      try {
+        if (stage === "preparing") await entered;
+        else await sending;
+        await expect(service.update(AUTH, { scope: "personal" })).rejects.toMatchObject({ code: "conversation_message_pending" });
+        expect(state.storage.sql.exec<{ scope: string }>("SELECT scope FROM workstream WHERE id = 1").one().scope).toBe("workspace");
+      } finally {
+        resume();
+        await sending;
+        Reflect.set(service, "env", originalEnv);
+      }
+    });
+    // Replay through the real product boundary to activate and drain the
+    // admitted input. Do not leave its recovery alarm racing the next reset.
+    const sent = await product(stub, { operation: "create_message", auth: AUTH, input });
+    expect(sent.status).toBe(200);
+    await waitForCanonicalTurn(stub, (sent.body.turn as { turnId: string }).turnId);
+    expect((await product(stub, { operation: "update", auth: AUTH, input: { scope: "personal" } })).status).toBe(200);
   });
 
   it("seats the accepted target and emits only the specific mention notification", async () => {
@@ -1127,9 +1246,9 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
     });
   });
 
-  it("does not let confirmation seat the raw target of a rejected mention", async () => {
+  it.each(["personal", "workspace"] as const)("does not seat the raw target of a rejected mention (%s)", async (scope) => {
     const stub = agentStub(REJECTED_CONFIRMED_MENTION_ID);
-    await provisionWorkstream(stub, REJECTED_CONFIRMED_MENTION_ID);
+    await provisionWorkstream(stub, REJECTED_CONFIRMED_MENTION_ID, { scope });
     const sent = await product(stub, {
       operation: "create_message",
       auth: AUTH,

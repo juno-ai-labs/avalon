@@ -52,6 +52,8 @@ export const ScopeGrantMutationSchema = z.strictObject({
   active: z.boolean(),
   /** Zero asserts absence. Revoked rows retain a positive revision. */
   expectedRevision: z.number().int().nonnegative(),
+  /** Internal message admission: suppress added notices and start unread at the next message. */
+  participationReason: z.literal("message").optional(),
 });
 export type ScopeGrantMutation = z.infer<typeof ScopeGrantMutationSchema>;
 
@@ -225,7 +227,7 @@ export const ManagedScopeGrantsSchema = z.discriminatedUnion("status", [
   z.strictObject({ status: z.literal("ready"), grants: z.array(ManagedScopeGrantSchema) }),
   z.strictObject({ status: z.literal("denied"), reason: z.literal("sharing_required") }),
 ]);
-export const RevokeScopeGrantSchema = ScopeGrantMutationSchema.omit({ actorUserId: true, active: true });
+export const RevokeScopeGrantSchema = ScopeGrantMutationSchema.omit({ actorUserId: true, active: true, participationReason: true });
 
 /** Trusted connector ingress, never an end-user sharing command. */
 export const ConnectorParticipantAdmissionSchema = z.strictObject({

@@ -1,5 +1,6 @@
 import "../../../tests/isolated-region";
 import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { readFileSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -65,9 +66,11 @@ function productDatabase(room: SubstreamAgent): DatabaseSync {
 function seededDatabase(options: { openAuthority?: boolean } = {}): DatabaseSync {
   const database = preRetirementProductSqliteDatabase();
   databases.push(database);
+  // The legacy product fixture predates guest relationships. Admission reads
+  // current membership shape, so apply its real migration before seeding.
+  database.exec(readFileSync(new URL("../../../packages/db/migrations/0109_workspace_guest_relationships.sql", import.meta.url), "utf8"));
   database.exec(`
     ALTER TABLE workspaces ADD COLUMN abandoned_at TEXT;
-    ALTER TABLE workspace_members ADD COLUMN incarnation TEXT DEFAULT 'existing-member';
     ALTER TABLE sessions ADD COLUMN workspace_incarnation TEXT DEFAULT 'existing-member';
     ALTER TABLE sessions ADD COLUMN impersonator_user_id TEXT;
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
@@ -76,9 +79,9 @@ function seededDatabase(options: { openAuthority?: boolean } = {}): DatabaseSync
            ('${OUTSIDER}', 'g-3', 'three@example.com', 'Three', '${at}', '${at}');
     INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
     VALUES ('${WORKSPACE}', 'Avalon Studio', 'avalon-studio', 'global', '${PARTICIPANT}', '${at}', '${at}');
-    INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
-    VALUES ('${WORKSPACE}', '${PARTICIPANT}', 'owner', 'active', '${at}'),
-           ('${WORKSPACE}', '${MEMBER}', 'member', 'active', '${at}');
+    INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at, incarnation)
+    VALUES ('${WORKSPACE}', '${PARTICIPANT}', 'owner', 'active', '${at}', 'existing-member'),
+           ('${WORKSPACE}', '${MEMBER}', 'member', 'active', '${at}', 'existing-member');
     INSERT INTO sessions
       (id, user_id, workspace_id, region, refresh_token_hash, expires_at, created_at)
     VALUES ('${SESSION}', '${PARTICIPANT}', '${WORKSPACE}', 'global',
