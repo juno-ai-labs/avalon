@@ -8,6 +8,9 @@
     "./test-support/responses-stream": "./src/test-support/responses-stream.ts"
   },
   "scripts": {
+    "eval:premature-stop": "tsx evals/premature-stop/run.ts",
+    "eval:premature-stop:build": "tsx evals/premature-stop/build-cases.ts",
+    "eval:premature-stop:policies": "tsx evals/premature-stop/compare-policies.ts",
     "eval:addressing": "tsx evals/addressing/run.ts",
     "eval:addressing:providers": "tsx evals/addressing/benchmark-providers.ts",
     "eval:addressing:report": "tsx evals/addressing/build-combination-report.ts",

@@ -11,7 +11,10 @@ import {
   asWorkstreamId,
   type WorkstreamWorkflowInput,
 } from "@rally/contracts";
-import { bindLoopNonSystemMessages } from "@rally/agent-harness";
+import { runHarness, bindLoopNonSystemMessages } from "@rally/agent-harness";
+
+import { providerRequestView, responsesStreamResponse } from "@rally/agent-harness/test-support/responses-stream";
+import { completionVerificationNudge } from "../src/services/completion-verification";
 
 import type { Env } from "../src/env";
 import { conversationObjectName, substreamLoopId } from "../src/durable-objects/names";
@@ -19,6 +22,7 @@ import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-stor
 import { WorkstreamHarnessRunStorage } from "../src/durable-objects/workstream-harness-run-storage";
 import { WorkstreamToolReceiptStorage } from "../src/durable-objects/workstream-tool-receipt-storage";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
+import { readCompletionVerificationSnapshot } from "../src/durable-objects/completion-verification-storage";
 import { createTestEnv } from "../test/helpers/cloudflare-test";
 import { seedWorkstreamRoot } from "./helpers/substream-fixture";
 
@@ -34,6 +38,200 @@ interface TranscriptOperationExecutor {
 beforeEach(async () => reset());
 
 describe("work-stream transcript on workerd SQLite", () => {
+  it("keeps completion verification consumed across compaction and eviction", async () => {
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    const runId = "00000000-0000-7000-8000-0000000007f1";
+    await runInDurableObject(stub, async (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
+      const now = Date.now();
+      const transcript = new WorkstreamTranscriptStorage(state.storage);
+      const systemProjection = { revision: 1, rendererVersion: "workstream-system-v1", inputHash: "test",
+        message: { role: "system", content: "System" } };
+      await transcript.commitBindTransition({ kind: "state_initialized", loopId: LOOP_ID,
+        generation: 1, stateRevision: 1, systemProjection, nonSystemMessages: [], nonSystemMessageOrigins: [] });
+      const runs = new WorkstreamHarnessRunStorage(state.storage);
+      expect(runs.admitRun({ runId, origin: "member_message", executionPrincipalJson: JSON.stringify({ type: "user", userId: USER_ID }),
+        status: "running", startedAt: now, model: "test/model", triggerPartId: null,
+        parentRunId: null, expectedLatestRunId: null, now })).toEqual({ outcome: "admitted" });
+      state.storage.sql.exec(`UPDATE runs SET execution_context_json = '{}' WHERE run_id = ?`, runId);
+      const loop = new SubstreamLoopStorage(state.storage);
+      loop.ensureLoop({ loopId: LOOP_ID, bindStateRevision: 1, now });
+      loop.activateExecutionReceipt({ runId, loopId: LOOP_ID, executionEpoch: 1, leaseOwner: "test-owner",
+        leaseExpiresAt: now + 60_000, expectedLoopRevision: loop.loop()!.revision, expectedBindStateRevision: 1, now });
+      expect(readCompletionVerificationSnapshot(state.storage, runId, null).lifecycle).toBe("ready");
+      state.storage.sql.exec(`UPDATE runs SET cancellation_requested_at = ? WHERE run_id = ?`, now, runId);
+      expect(readCompletionVerificationSnapshot(state.storage, runId, null).lifecycle).toBe("cancelled");
+      state.storage.sql.exec(`UPDATE runs SET cancellation_requested_at = NULL WHERE run_id = ?`, runId);
+      state.storage.sql.exec(`INSERT INTO elicitation_requests
+        (elicitation_id, run_id, tool_call_id, prompt, response_type, options_json, minimum_selections, status, created_at)
+        VALUES ('question', ?, 'question-call', 'Which publication?', 'text', '[]', 0, 'pending', ?)`, runId, now);
+      expect(readCompletionVerificationSnapshot(state.storage, runId, null).lifecycle).toBe("input_required");
+      state.storage.sql.exec(`UPDATE elicitation_requests SET status = 'answered', answer_json = '"Blog"' WHERE elicitation_id = 'question'`);
+      state.storage.sql.exec(`INSERT INTO tool_effects
+        (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key, tool_name, mode,
+         request_hash, authority_revision, status, tool_call_id, input_json, output_summary, output_ref)
+        VALUES ('effect', ?, 1, 0, 'occurrence', 'publish_article', 'write', 'request', 'authority',
+          'executing', 'tool-1', '{}', NULL, NULL)`, runId);
+      expect(readCompletionVerificationSnapshot(state.storage, runId, null).lifecycle).toBe("background_pending");
+      state.storage.sql.exec(`UPDATE tool_effects SET status = 'ambiguous' WHERE effect_intent_id = 'effect'`);
+      expect(readCompletionVerificationSnapshot(state.storage, runId, null).lifecycle).toBe("ambiguous_write");
+      state.storage.sql.exec(`UPDATE tool_effects SET status = 'completed', output_summary = 'Published', output_ref = 'article-ref' WHERE effect_intent_id = 'effect'`);
+      expect(readCompletionVerificationSnapshot(state.storage, runId, null)).toMatchObject({ lifecycle: "ready",
+        receipts: [{ id: "tool-1", operation: "publish_article", status: "completed", summary: "Published", output_refs: ["article-ref"] }] });
+      await transcript.commitBindTransition({ kind: "protocol_user_appended", loopId: LOOP_ID,
+        generation: 1, stateRevision: 2, message: { role: "user", content: "Verify completion once." },
+        provenance: { originKind: "derived", sourceKind: "completion_verification", sourceId: runId, sourceRevision: null },
+        activationInputId: null });
+      expect(readCompletionVerificationSnapshot(state.storage, runId, null).lifecycle).toBe("recovery_used");
+      await transcript.commitBindTransition({ kind: "state_replaced", loopId: LOOP_ID,
+        generation: 1, nextGeneration: 2, stateRevision: 3, systemProjection,
+        nonSystemMessages: [{ role: "user", content: "Compacted conversation" }], compactionEventId: "completion-test-compaction" });
+      expect(bindLoopNonSystemMessages(transcript.readBindProjection(LOOP_ID)!)).toEqual([
+        { role: "user", content: "Compacted conversation" },
+      ]);
+    });
+    await evictDurableObject(stub);
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(readCompletionVerificationSnapshot(state.storage, runId, null).lifecycle).toBe("recovery_used");
+      expect(readCompletionVerificationSnapshot(state.storage, "another-execution", null).lifecycle).toBe("unknown");
+    });
+  });
+
+  it("delivers the committed completion verification prompt after eviction without a second recovery", async () => {
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    const runId = "00000000-0000-7000-8000-0000000007f2";
+    const requests: Array<Record<string, unknown>> = [];
+    let judgments = 0;
+    let interruptedAfterCommit = false;
+    await runInDurableObject(stub, async (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
+      const now = Date.now();
+      const transcript = new WorkstreamTranscriptStorage(state.storage);
+      await transcript.commitBindTransition({ kind: "state_initialized", loopId: LOOP_ID,
+        generation: 1, stateRevision: 1,
+        systemProjection: { revision: 1, rendererVersion: "workstream-system-v1", inputHash: "test",
+          message: { role: "system", content: "Be useful." } },
+        nonSystemMessages: [{ role: "user", content: "Write an article." }],
+        nonSystemMessageOrigins: [{ originKind: "derived", sourceKind: "participant_turn", sourceId: "request", sourceRevision: 1 }] });
+      const runs = new WorkstreamHarnessRunStorage(state.storage);
+      runs.admitRun({ runId, origin: "member_message", executionPrincipalJson: JSON.stringify({ type: "user", userId: USER_ID }),
+        status: "running", startedAt: now, model: "test/model", triggerPartId: null,
+        parentRunId: null, expectedLatestRunId: null, now });
+      state.storage.sql.exec(`UPDATE runs SET execution_context_json = ? WHERE run_id = ?`, JSON.stringify(
+        WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID, parentKind: "workstream",
+          parentId: WORKSTREAM_ID, substreamId: "0", loopId: LOOP_ID, harnessRunId: runId, triggerMessageId: null,
+          activityId: null, executionPrincipal: { type: "user", userId: USER_ID }, reason: "user_message" }),
+      ), runId);
+      const loop = new SubstreamLoopStorage(state.storage);
+      loop.ensureLoop({ loopId: LOOP_ID, bindStateRevision: 1, now });
+      loop.activateExecutionReceipt({ runId, loopId: LOOP_ID, executionEpoch: 1, leaseOwner: "restart-test",
+        leaseExpiresAt: now + 60_000, expectedLoopRevision: loop.loop()!.revision, expectedBindStateRevision: 1, now });
+    });
+    const execute = (interruptAfterCommit: boolean) => runInDurableObject(stub, async (instance, state) => {
+      const transcript = new WorkstreamTranscriptStorage(state.storage);
+      const loop = new SubstreamLoopStorage(state.storage);
+      let fence = { executionId: runId, executionEpoch: 1, leaseOwner: "restart-test" };
+      if (!interruptAfterCommit) {
+        await state.storage.deleteAlarm();
+        const host = instance as unknown as { claimPersistentLoopExecution(): Promise<{
+          execution: { runId: string; executionEpoch: number; leaseOwner: string };
+        } | null> };
+        const claim = await host.claimPersistentLoopExecution();
+        expect(claim).toMatchObject({ execution: { runId, executionEpoch: 2 } });
+        fence = { executionId: claim!.execution.runId, executionEpoch: claim!.execution.executionEpoch, leaseOwner: claim!.execution.leaseOwner };
+      }
+      return runHarness({
+        config: { apiKey: "test-key", primaryModel: "test/model", maxIterations: 4, maxToolCalls: 10,
+          maxWallClockMs: 120_000, toolTimeoutMs: 30_000, maxWebResults: 4,
+          fetch: async (_request, init) => {
+            requests.push(providerRequestView(JSON.parse(String(init?.body))));
+            return responsesStreamResponse([{ choices: [{ delta: { content: interruptAfterCommit
+              ? "I'm writing it now." : "Here is the completed article." }, finish_reason: "stop" }] }]);
+          } },
+        workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, loopId: LOOP_ID, harnessRunId: runId,
+        executionPrincipal: { type: "user", userId: USER_ID }, systemPrompt: "Be useful.",
+        messages: [], corePlugins: [], onEvent: () => {},
+        bindLoopProjection: transcript.readBindProjection(LOOP_ID)!,
+        modelIterationsUsed: loop.assistantTurnCountForExecution(runId),
+        onAssistantTurnReserved: ({ turnId, modelTurnIndex }) => {
+          const result = loop.reserveAssistantTurn({ ...fence, expectedLoopRevision: loop.loop()!.revision,
+            receiptRunId: runId, turnId, modelTurnIndex, streamId: "restart-stream", now: Date.now() });
+          return { transcriptSequence: result.reservation.transcript_sequence };
+        },
+        onBindLoopTransition: async (transition) => {
+          await transcript.commitBindTransition(transition, Date.now(), {
+            ...fence, expectedBindStateRevision: loop.loop()!.bind_state_revision,
+          });
+          // Simulate process loss at the exact durable boundary. No host
+          // terminalization runs: the same execution is resumed from SQLite.
+          if (interruptAfterCommit && transition.kind === "protocol_user_appended"
+            && transition.provenance.sourceKind === "completion_verification") {
+            interruptedAfterCommit = true;
+            throw new Error("injected_process_loss_after_nudge_commit");
+          }
+        },
+        onStepSettled: () => ({ transitions: [], stop: false }),
+        onTurnWouldEnd: ({ assistantContent, messages }) => completionVerificationNudge({
+          runId, assistantContent, messages, signal: new AbortController().signal,
+          snapshot: () => readCompletionVerificationSnapshot(state.storage, runId, null),
+          pendingDelegation: async () => false,
+          judge: async () => { judgments += 1; return { reprompt: true, answer: null, model: null, failureKind: "timeout" }; },
+        }),
+      });
+    });
+    const interrupted = await execute(true);
+    expect(interrupted, JSON.stringify(interrupted)).toMatchObject({ status: "failed" });
+    expect(interruptedAfterCommit, JSON.stringify(interrupted)).toBe(true);
+    expect(judgments).toBe(1);
+    expect(requests).toHaveLength(1);
+    await evictDurableObject(stub);
+    const resumed = await execute(false);
+    expect(resumed, JSON.stringify(resumed)).toMatchObject({ status: "completed", content: "Here is the completed article." });
+    expect(requests).toHaveLength(2);
+    expect(requests[1]!.messages).toEqual(expect.arrayContaining([
+      { role: "user", content: expect.stringContaining("Check existing artifacts and tool receipts before repeating any action.") },
+    ]));
+    expect(judgments).toBe(1);
+    expect(await runInDurableObject(stub, (_instance, state) => state.storage.sql.exec<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM transcript_facts WHERE source_kind = 'completion_verification' AND source_id = ?`, runId,
+    ).one().n)).toBe(1);
+  });
+
+  it("reports preparing and queued delegated input as pending work while the loop is idle", async () => {
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    await runInDurableObject(stub, (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
+      const loop = new SubstreamLoopStorage(state.storage);
+      loop.ensureLoop({ loopId: LOOP_ID, bindStateRevision: 0, now: Date.now() });
+    });
+    expect(await stub.agentRuntimeInfo()).toMatchObject({ status: "idle", pendingWork: false });
+    await runInDurableObject(stub, (_instance, state) => {
+      new SubstreamLoopStorage(state.storage).reserveInputPreparation({ inputId: "delegated-input", loopId: LOOP_ID,
+        clientMessageId: "delegated-input", preparationKind: "automation_activation", envelopeJson: "{}", now: Date.now() });
+    });
+    expect(await stub.agentRuntimeInfo()).toMatchObject({ status: "idle", pendingWork: true });
+    await runInDurableObject(stub, (_instance, state) => {
+      new SubstreamLoopStorage(state.storage).completeInputPreparation({
+        inputId: "delegated-input", preparedTurnId: "delegated-input", mode: "queue", actor: "system",
+        authorUserId: null, authorNameSnapshot: null, authorAvatarUrlSnapshot: null, clientMessageId: "delegated-input",
+        externalActorJson: null, messageType: "system", preparedPayloadId: "delegated-payload", preparedFactId: "delegated-fact",
+        preparedPayloadAudience: "shared", preparedPayloadMediaType: "application/json",
+        preparedPayloadJson: '{"role":"user","content":"Research this."}', preparedPayloadSha256: "0".repeat(64),
+        preparedPayloadByteLength: 42, bindPayloadJson: '{"role":"user","content":"Research this."}',
+        provenanceJson: JSON.stringify({ originKind: "derived", sourceKind: "agent_message", sourceId: "delegated-input", sourceRevision: 1 }),
+        authorizationJson: JSON.stringify({ executionPrincipal: { type: "user", userId: USER_ID }, reason: "agent_message" }),
+        attachmentsJson: "[]", mentionsJson: "[]", now: Date.now(),
+      });
+    });
+    expect(await stub.agentRuntimeInfo()).toMatchObject({ status: "idle", pendingWork: true });
+  });
+
   it("keeps transaction-local transcript mutations off the internal RPC boundary", async () => {
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),

@@ -181,8 +181,11 @@ model keeps working or finishes its turn, and that there is no tool to fetch
 it; a result is read at the moment the model decides its next step, where a
 description was skimmed, so the descriptions say only that the call returns
 at once. `list_agents` returns each teammate's `agentId`, name, description
-and execution status; the status says whether a teammate is still running
-without resuming it, and its reply is still the thing to wait for.
+and execution status, plus `pendingWork` for admitted inputs or preparation
+that has not yet started a loop. These fields let completion verification
+distinguish an idle worker from one with queued work without resuming it;
+its reply is still the thing to wait for. A stopped background agent reports
+no pending work until an explicit continuation resumes it.
 
 Background identity travels in the existing child common-state projection,
 with the agent's root conversation beside the flag. The conversation parent

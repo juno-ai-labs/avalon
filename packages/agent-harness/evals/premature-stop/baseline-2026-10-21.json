@@ -1,0 +1,1402 @@
+{
+  "evaluatedAt": "2026-10-21",
+  "scope": "Offline premature-stop classification and simulated continuation policy; no production hook enabled.",
+  "referenceLabels": "Codex-authored before each corpus was evaluated; not human-adjudicated. Four real fixtures corrected after the initial run, with original scores retained. No JEV prompt tuning.",
+  "sampling": {
+    "orgs": [
+      "Juno Labs",
+      "Forward Search"
+    ],
+    "inventoriedRecentThreads": 43,
+    "exportedConversationAliases": 65,
+    "initialUniqueRuns": 190,
+    "realCases": 120,
+    "realConversations": 61,
+    "realThreadFamilies": 40,
+    "realOrgCounts": {
+      "Juno Labs": 84,
+      "Forward Search": 36
+    },
+    "realKinds": {
+      "thread": 78,
+      "breakout": 42
+    },
+    "realRunDateRangeUTC": [
+      "2026-09-10",
+      "2026-10-21"
+    ],
+    "method": "Recent active non-digest threads, at most six latest completed runs per conversation. Selected 114 recent cases plus six older promise/failure cases. Excluded background-agent conversations; retained their delivered messages in parent runs. Purposeful coverage sample, not prevalence estimate."
+  },
+  "limitations": [
+    "Only one reference-positive real continuation case, in development; real holdout recall cannot be estimated.",
+    "The corrected real run reuses an already inspected holdout; it is not a new blind evaluation.",
+    "Real lifecycle flags and older context links are curated offline, not supplied by a shipped runtime extractor.",
+    "No execution recovery was performed: outcomes measure simulated nudges, not whether nudges finish tasks.",
+    "A claimed completed result is not audited for truth or requirement coverage by this narrow rubric.",
+    "Transport latency is from this cloud environment, not production Workers."
+  ],
+  "fixtureAudit": {
+    "correctedFixtures": 4,
+    "changes": [
+      "Two completed-dispatch/deferred-notification cases were missing known pending-background state.",
+      "One setup retry needed both pending-background state and the unfinished-work reference label.",
+      "One empty text column contained an explicit wait instruction in structured elicitation data."
+    ],
+    "evidenceChange": "Failed tool-effect code/message is now retained when the ordinary summary is null.",
+    "promptChanged": false
+  },
+  "recommendation": "Do not enable automatic recovery. Preserve deterministic lifecycle exclusions, adjudicate more real positives independently, and re-evaluate on new thread families. Threshold tuning alone cannot separate the observed low-confidence true positive from the high-confidence blocker false positive.",
+  "runs": {
+    "synthetic": {
+      "startedAt": "2026-10-21T03:04:07.193Z",
+      "finishedAt": "2026-10-21T03:04:15.841Z",
+      "model": "jev-1.14.0",
+      "resolvedModels": [
+        "jev-1.14.0"
+      ],
+      "timeoutMs": 1000,
+      "confidenceThreshold": 0.5,
+      "noRetries": true,
+      "corpusSha256": "0a79d3a2b369267d31f98acd86aeaa007ed519398365ccc57239710101c520f0",
+      "questionsSha256": "fc03eb3b41d9c614411bb950d6c32fb91d762196f8e63feb04577d4a24a9e15e",
+      "all": {
+        "count": 60,
+        "available": 60,
+        "unavailable": 0,
+        "labelCorrect": 58,
+        "labelAccuracyWhenAvailable": 0.9666666666666667,
+        "expectedLabels": {
+          "announces_unfinished_work": 23,
+          "answer_or_result": 24,
+          "blocker_or_question": 10,
+          "unclear": 3
+        },
+        "confusion": {
+          "announces_unfinished_work": {
+            "announces_unfinished_work": 22,
+            "answer_or_result": 1,
+            "blocker_or_question": 0,
+            "unclear": 0,
+            "unavailable": 0
+          },
+          "answer_or_result": {
+            "announces_unfinished_work": 0,
+            "answer_or_result": 24,
+            "blocker_or_question": 0,
+            "unclear": 0,
+            "unavailable": 0
+          },
+          "blocker_or_question": {
+            "announces_unfinished_work": 0,
+            "answer_or_result": 0,
+            "blocker_or_question": 10,
+            "unclear": 0,
+            "unavailable": 0
+          },
+          "unclear": {
+            "announces_unfinished_work": 1,
+            "answer_or_result": 0,
+            "blocker_or_question": 0,
+            "unclear": 2,
+            "unavailable": 0
+          }
+        },
+        "gate": {
+          "tp": 17,
+          "fp": 0,
+          "fn": 1,
+          "tn": 42,
+          "precision": 1,
+          "recall": 0.9444444444444444
+        },
+        "failures": {},
+        "latencyMs": {
+          "p50": 138.9397899999999,
+          "p95": 202.48153899999988
+        },
+        "inputTokens": {
+          "p50": 1125,
+          "p95": 1152
+        },
+        "stateBytes": {
+          "p50": 490,
+          "p95": 565
+        }
+      },
+      "bySplit": {
+        "development": {
+          "count": 27,
+          "available": 27,
+          "unavailable": 0,
+          "labelCorrect": 27,
+          "labelAccuracyWhenAvailable": 1,
+          "expectedLabels": {
+            "announces_unfinished_work": 9,
+            "answer_or_result": 14,
+            "blocker_or_question": 4,
+            "unclear": 0
+          },
+          "confusion": {
+            "announces_unfinished_work": {
+              "announces_unfinished_work": 9,
+              "answer_or_result": 0,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "answer_or_result": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 14,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "blocker_or_question": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 0,
+              "blocker_or_question": 4,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "unclear": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 0,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            }
+          },
+          "gate": {
+            "tp": 7,
+            "fp": 0,
+            "fn": 0,
+            "tn": 20,
+            "precision": 1,
+            "recall": 1
+          },
+          "failures": {},
+          "latencyMs": {
+            "p50": 151.11753700000008,
+            "p95": 214.99335899999994
+          },
+          "inputTokens": {
+            "p50": 1111,
+            "p95": 1150
+          },
+          "stateBytes": {
+            "p50": 478,
+            "p95": 548
+          }
+        },
+        "holdout": {
+          "count": 33,
+          "available": 33,
+          "unavailable": 0,
+          "labelCorrect": 31,
+          "labelAccuracyWhenAvailable": 0.9393939393939394,
+          "expectedLabels": {
+            "announces_unfinished_work": 14,
+            "answer_or_result": 10,
+            "blocker_or_question": 6,
+            "unclear": 3
+          },
+          "confusion": {
+            "announces_unfinished_work": {
+              "announces_unfinished_work": 13,
+              "answer_or_result": 1,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "answer_or_result": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 10,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "blocker_or_question": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 0,
+              "blocker_or_question": 6,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "unclear": {
+              "announces_unfinished_work": 1,
+              "answer_or_result": 0,
+              "blocker_or_question": 0,
+              "unclear": 2,
+              "unavailable": 0
+            }
+          },
+          "gate": {
+            "tp": 10,
+            "fp": 0,
+            "fn": 1,
+            "tn": 22,
+            "precision": 1,
+            "recall": 0.9090909090909091
+          },
+          "failures": {},
+          "latencyMs": {
+            "p50": 131.48127699999986,
+            "p95": 178.8318360000003
+          },
+          "inputTokens": {
+            "p50": 1134,
+            "p95": 1162
+          },
+          "stateBytes": {
+            "p50": 503,
+            "p95": 581
+          }
+        }
+      },
+      "byOrg": {
+        "synthetic": {
+          "count": 60,
+          "available": 60,
+          "unavailable": 0,
+          "labelCorrect": 58,
+          "labelAccuracyWhenAvailable": 0.9666666666666667,
+          "expectedLabels": {
+            "announces_unfinished_work": 23,
+            "answer_or_result": 24,
+            "blocker_or_question": 10,
+            "unclear": 3
+          },
+          "confusion": {
+            "announces_unfinished_work": {
+              "announces_unfinished_work": 22,
+              "answer_or_result": 1,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "answer_or_result": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 24,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "blocker_or_question": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 0,
+              "blocker_or_question": 10,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "unclear": {
+              "announces_unfinished_work": 1,
+              "answer_or_result": 0,
+              "blocker_or_question": 0,
+              "unclear": 2,
+              "unavailable": 0
+            }
+          },
+          "gate": {
+            "tp": 17,
+            "fp": 0,
+            "fn": 1,
+            "tn": 42,
+            "precision": 1,
+            "recall": 0.9444444444444444
+          },
+          "failures": {},
+          "latencyMs": {
+            "p50": 138.9397899999999,
+            "p95": 202.48153899999988
+          },
+          "inputTokens": {
+            "p50": 1125,
+            "p95": 1152
+          },
+          "stateBytes": {
+            "p50": 490,
+            "p95": 565
+          }
+        }
+      },
+      "byKind": {
+        "synthetic": {
+          "count": 60,
+          "available": 60,
+          "unavailable": 0,
+          "labelCorrect": 58,
+          "labelAccuracyWhenAvailable": 0.9666666666666667,
+          "expectedLabels": {
+            "announces_unfinished_work": 23,
+            "answer_or_result": 24,
+            "blocker_or_question": 10,
+            "unclear": 3
+          },
+          "confusion": {
+            "announces_unfinished_work": {
+              "announces_unfinished_work": 22,
+              "answer_or_result": 1,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "answer_or_result": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 24,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "blocker_or_question": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 0,
+              "blocker_or_question": 10,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "unclear": {
+              "announces_unfinished_work": 1,
+              "answer_or_result": 0,
+              "blocker_or_question": 0,
+              "unclear": 2,
+              "unavailable": 0
+            }
+          },
+          "gate": {
+            "tp": 17,
+            "fp": 0,
+            "fn": 1,
+            "tn": 42,
+            "precision": 1,
+            "recall": 0.9444444444444444
+          },
+          "failures": {},
+          "latencyMs": {
+            "p50": 138.9397899999999,
+            "p95": 202.48153899999988
+          },
+          "inputTokens": {
+            "p50": 1125,
+            "p95": 1152
+          },
+          "stateBytes": {
+            "p50": 490,
+            "p95": 565
+          }
+        }
+      },
+      "privateReportSha256": "e6e83d342d61921b5154fdc1ebb57bb24b0bc1a72068d06a210f506cc9c7efcf",
+      "gateErrors": [
+        {
+          "caseId": "synthetic-calendar-promise",
+          "split": "holdout",
+          "expectedNudge": true,
+          "actualNudge": false,
+          "choice": "answer_or_result",
+          "confidence": 0.63
+        }
+      ]
+    },
+    "real_initial": {
+      "startedAt": "2026-10-21T03:07:12.402Z",
+      "finishedAt": "2026-10-21T03:07:32.345Z",
+      "model": "jev-1.14.0",
+      "resolvedModels": [
+        "jev-1.14.0"
+      ],
+      "timeoutMs": 1000,
+      "confidenceThreshold": 0.5,
+      "noRetries": true,
+      "corpusSha256": "3214e72bddc6251218c1fbea9c824f64fa28cc8b93dd5e34b0042c127e294dd1",
+      "questionsSha256": "fc03eb3b41d9c614411bb950d6c32fb91d762196f8e63feb04577d4a24a9e15e",
+      "all": {
+        "count": 120,
+        "available": 120,
+        "unavailable": 0,
+        "labelCorrect": 112,
+        "labelAccuracyWhenAvailable": 0.9333333333333333,
+        "expectedLabels": {
+          "announces_unfinished_work": 18,
+          "answer_or_result": 77,
+          "blocker_or_question": 23,
+          "unclear": 2
+        },
+        "confusion": {
+          "announces_unfinished_work": {
+            "announces_unfinished_work": 17,
+            "answer_or_result": 1,
+            "blocker_or_question": 0,
+            "unclear": 0,
+            "unavailable": 0
+          },
+          "answer_or_result": {
+            "announces_unfinished_work": 3,
+            "answer_or_result": 74,
+            "blocker_or_question": 0,
+            "unclear": 0,
+            "unavailable": 0
+          },
+          "blocker_or_question": {
+            "announces_unfinished_work": 1,
+            "answer_or_result": 1,
+            "blocker_or_question": 21,
+            "unclear": 0,
+            "unavailable": 0
+          },
+          "unclear": {
+            "announces_unfinished_work": 0,
+            "answer_or_result": 1,
+            "blocker_or_question": 1,
+            "unclear": 0,
+            "unavailable": 0
+          }
+        },
+        "gate": {
+          "tp": 0,
+          "fp": 4,
+          "fn": 1,
+          "tn": 115,
+          "precision": 0,
+          "recall": 0
+        },
+        "failures": {},
+        "latencyMs": {
+          "p50": 157.9191980000005,
+          "p95": 246.64328999999998
+        },
+        "inputTokens": {
+          "p50": 1953,
+          "p95": 6840
+        },
+        "stateBytes": {
+          "p50": 2647,
+          "p95": 14123
+        }
+      },
+      "bySplit": {
+        "holdout": {
+          "count": 62,
+          "available": 62,
+          "unavailable": 0,
+          "labelCorrect": 59,
+          "labelAccuracyWhenAvailable": 0.9516129032258065,
+          "expectedLabels": {
+            "announces_unfinished_work": 6,
+            "answer_or_result": 43,
+            "blocker_or_question": 12,
+            "unclear": 1
+          },
+          "confusion": {
+            "announces_unfinished_work": {
+              "announces_unfinished_work": 6,
+              "answer_or_result": 0,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "answer_or_result": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 43,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "blocker_or_question": {
+              "announces_unfinished_work": 1,
+              "answer_or_result": 1,
+              "blocker_or_question": 10,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "unclear": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 1,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            }
+          },
+          "gate": {
+            "tp": 0,
+            "fp": 1,
+            "fn": 0,
+            "tn": 61,
+            "precision": 0,
+            "recall": null
+          },
+          "failures": {},
+          "latencyMs": {
+            "p50": 160.39172300000064,
+            "p95": 295.60114
+          },
+          "inputTokens": {
+            "p50": 2070,
+            "p95": 7689
+          },
+          "stateBytes": {
+            "p50": 2953,
+            "p95": 17448
+          }
+        },
+        "development": {
+          "count": 58,
+          "available": 58,
+          "unavailable": 0,
+          "labelCorrect": 53,
+          "labelAccuracyWhenAvailable": 0.9137931034482759,
+          "expectedLabels": {
+            "announces_unfinished_work": 12,
+            "answer_or_result": 34,
+            "blocker_or_question": 11,
+            "unclear": 1
+          },
+          "confusion": {
+            "announces_unfinished_work": {
+              "announces_unfinished_work": 11,
+              "answer_or_result": 1,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "answer_or_result": {
+              "announces_unfinished_work": 3,
+              "answer_or_result": 31,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "blocker_or_question": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 0,
+              "blocker_or_question": 11,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "unclear": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 0,
+              "blocker_or_question": 1,
+              "unclear": 0,
+              "unavailable": 0
+            }
+          },
+          "gate": {
+            "tp": 0,
+            "fp": 3,
+            "fn": 1,
+            "tn": 54,
+            "precision": 0,
+            "recall": 0
+          },
+          "failures": {},
+          "latencyMs": {
+            "p50": 152.02268399999957,
+            "p95": 217.38560900000084
+          },
+          "inputTokens": {
+            "p50": 1886,
+            "p95": 5708
+          },
+          "stateBytes": {
+            "p50": 2503,
+            "p95": 11692
+          }
+        }
+      },
+      "byOrg": {
+        "Juno Labs": {
+          "count": 84,
+          "available": 84,
+          "unavailable": 0,
+          "labelCorrect": 79,
+          "labelAccuracyWhenAvailable": 0.9404761904761905,
+          "expectedLabels": {
+            "announces_unfinished_work": 16,
+            "answer_or_result": 51,
+            "blocker_or_question": 15,
+            "unclear": 2
+          },
+          "confusion": {
+            "announces_unfinished_work": {
+              "announces_unfinished_work": 15,
+              "answer_or_result": 1,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "answer_or_result": {
+              "announces_unfinished_work": 2,
+              "answer_or_result": 49,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "blocker_or_question": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 0,
+              "blocker_or_question": 15,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "unclear": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 1,
+              "blocker_or_question": 1,
+              "unclear": 0,
+              "unavailable": 0
+            }
+          },
+          "gate": {
+            "tp": 0,
+            "fp": 2,
+            "fn": 1,
+            "tn": 81,
+            "precision": 0,
+            "recall": 0
+          },
+          "failures": {},
+          "latencyMs": {
+            "p50": 154.75356100000135,
+            "p95": 227.02956799999998
+          },
+          "inputTokens": {
+            "p50": 1751,
+            "p95": 4806
+          },
+          "stateBytes": {
+            "p50": 2444,
+            "p95": 11692
+          }
+        },
+        "Forward Search": {
+          "count": 36,
+          "available": 36,
+          "unavailable": 0,
+          "labelCorrect": 33,
+          "labelAccuracyWhenAvailable": 0.9166666666666666,
+          "expectedLabels": {
+            "announces_unfinished_work": 2,
+            "answer_or_result": 26,
+            "blocker_or_question": 8,
+            "unclear": 0
+          },
+          "confusion": {
+            "announces_unfinished_work": {
+              "announces_unfinished_work": 2,
+              "answer_or_result": 0,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "answer_or_result": {
+              "announces_unfinished_work": 1,
+              "answer_or_result": 25,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "blocker_or_question": {
+              "announces_unfinished_work": 1,
+              "answer_or_result": 1,
+              "blocker_or_question": 6,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "unclear": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 0,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            }
+          },
+          "gate": {
+            "tp": 0,
+            "fp": 2,
+            "fn": 0,
+            "tn": 34,
+            "precision": 0,
+            "recall": null
+          },
+          "failures": {},
+          "latencyMs": {
+            "p50": 161.81981599999926,
+            "p95": 267.28944799999954
+          },
+          "inputTokens": {
+            "p50": 2090,
+            "p95": 9987
+          },
+          "stateBytes": {
+            "p50": 3046,
+            "p95": 24034
+          }
+        }
+      },
+      "byKind": {
+        "thread": {
+          "count": 78,
+          "available": 78,
+          "unavailable": 0,
+          "labelCorrect": 74,
+          "labelAccuracyWhenAvailable": 0.9487179487179487,
+          "expectedLabels": {
+            "announces_unfinished_work": 10,
+            "answer_or_result": 49,
+            "blocker_or_question": 18,
+            "unclear": 1
+          },
+          "confusion": {
+            "announces_unfinished_work": {
+              "announces_unfinished_work": 9,
+              "answer_or_result": 1,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "answer_or_result": {
+              "announces_unfinished_work": 2,
+              "answer_or_result": 47,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "blocker_or_question": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 0,
+              "blocker_or_question": 18,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "unclear": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 1,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            }
+          },
+          "gate": {
+            "tp": 0,
+            "fp": 2,
+            "fn": 1,
+            "tn": 75,
+            "precision": 0,
+            "recall": 0
+          },
+          "failures": {},
+          "latencyMs": {
+            "p50": 158.64033200000085,
+            "p95": 299.9733780000006
+          },
+          "inputTokens": {
+            "p50": 1767,
+            "p95": 5708
+          },
+          "stateBytes": {
+            "p50": 2501,
+            "p95": 11692
+          }
+        },
+        "breakout": {
+          "count": 42,
+          "available": 42,
+          "unavailable": 0,
+          "labelCorrect": 38,
+          "labelAccuracyWhenAvailable": 0.9047619047619048,
+          "expectedLabels": {
+            "announces_unfinished_work": 8,
+            "answer_or_result": 28,
+            "blocker_or_question": 5,
+            "unclear": 1
+          },
+          "confusion": {
+            "announces_unfinished_work": {
+              "announces_unfinished_work": 8,
+              "answer_or_result": 0,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "answer_or_result": {
+              "announces_unfinished_work": 1,
+              "answer_or_result": 27,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "blocker_or_question": {
+              "announces_unfinished_work": 1,
+              "answer_or_result": 1,
+              "blocker_or_question": 3,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "unclear": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 0,
+              "blocker_or_question": 1,
+              "unclear": 0,
+              "unavailable": 0
+            }
+          },
+          "gate": {
+            "tp": 0,
+            "fp": 2,
+            "fn": 0,
+            "tn": 40,
+            "precision": 0,
+            "recall": null
+          },
+          "failures": {},
+          "latencyMs": {
+            "p50": 154.75356100000135,
+            "p95": 216.96272900000258
+          },
+          "inputTokens": {
+            "p50": 2216,
+            "p95": 7689
+          },
+          "stateBytes": {
+            "p50": 3427,
+            "p95": 24034
+          }
+        }
+      },
+      "privateReportSha256": "92a887d2eac776f899af8cb4e5f65b8d867b9fe092ac9353ca3a41f143774189",
+      "gateErrors": [
+        {
+          "caseId": "real-70a16bc8bc704988",
+          "split": "development",
+          "expectedNudge": false,
+          "actualNudge": true,
+          "choice": "announces_unfinished_work",
+          "confidence": 0.52
+        },
+        {
+          "caseId": "real-79d3ba9672f016f9",
+          "split": "development",
+          "expectedNudge": false,
+          "actualNudge": true,
+          "choice": "announces_unfinished_work",
+          "confidence": 0.88
+        },
+        {
+          "caseId": "real-5fa3eab152f33f9c",
+          "split": "development",
+          "expectedNudge": false,
+          "actualNudge": true,
+          "choice": "announces_unfinished_work",
+          "confidence": 0.72
+        },
+        {
+          "caseId": "real-2eb5648319d330eb",
+          "split": "development",
+          "expectedNudge": true,
+          "actualNudge": false,
+          "choice": "answer_or_result",
+          "confidence": 0.35
+        },
+        {
+          "caseId": "real-08f7acd9bbbd30dd",
+          "split": "holdout",
+          "expectedNudge": false,
+          "actualNudge": true,
+          "choice": "announces_unfinished_work",
+          "confidence": 0.79
+        }
+      ]
+    },
+    "real_corrected": {
+      "startedAt": "2026-10-21T03:10:12.040Z",
+      "finishedAt": "2026-10-21T03:10:28.501Z",
+      "model": "jev-1.14.0",
+      "resolvedModels": [
+        "jev-1.14.0"
+      ],
+      "timeoutMs": 1000,
+      "confidenceThreshold": 0.5,
+      "noRetries": true,
+      "corpusSha256": "a7b3b6b5f82ec454639be2bb02927ad73ea65909de9e394ba38592a8ad82ea57",
+      "questionsSha256": "fc03eb3b41d9c614411bb950d6c32fb91d762196f8e63feb04577d4a24a9e15e",
+      "all": {
+        "count": 120,
+        "available": 120,
+        "unavailable": 0,
+        "labelCorrect": 114,
+        "labelAccuracyWhenAvailable": 0.95,
+        "expectedLabels": {
+          "announces_unfinished_work": 19,
+          "answer_or_result": 77,
+          "blocker_or_question": 23,
+          "unclear": 1
+        },
+        "confusion": {
+          "announces_unfinished_work": {
+            "announces_unfinished_work": 19,
+            "answer_or_result": 0,
+            "blocker_or_question": 0,
+            "unclear": 0,
+            "unavailable": 0
+          },
+          "answer_or_result": {
+            "announces_unfinished_work": 2,
+            "answer_or_result": 75,
+            "blocker_or_question": 0,
+            "unclear": 0,
+            "unavailable": 0
+          },
+          "blocker_or_question": {
+            "announces_unfinished_work": 1,
+            "answer_or_result": 2,
+            "blocker_or_question": 20,
+            "unclear": 0,
+            "unavailable": 0
+          },
+          "unclear": {
+            "announces_unfinished_work": 0,
+            "answer_or_result": 0,
+            "blocker_or_question": 1,
+            "unclear": 0,
+            "unavailable": 0
+          }
+        },
+        "gate": {
+          "tp": 0,
+          "fp": 1,
+          "fn": 1,
+          "tn": 118,
+          "precision": 0,
+          "recall": 0
+        },
+        "failures": {},
+        "latencyMs": {
+          "p50": 133.4517890000002,
+          "p95": 182.86026700000002
+        },
+        "inputTokens": {
+          "p50": 1953,
+          "p95": 6840
+        },
+        "stateBytes": {
+          "p50": 2650,
+          "p95": 14123
+        }
+      },
+      "bySplit": {
+        "holdout": {
+          "count": 62,
+          "available": 62,
+          "unavailable": 0,
+          "labelCorrect": 59,
+          "labelAccuracyWhenAvailable": 0.9516129032258065,
+          "expectedLabels": {
+            "announces_unfinished_work": 6,
+            "answer_or_result": 44,
+            "blocker_or_question": 12,
+            "unclear": 0
+          },
+          "confusion": {
+            "announces_unfinished_work": {
+              "announces_unfinished_work": 6,
+              "answer_or_result": 0,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "answer_or_result": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 44,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "blocker_or_question": {
+              "announces_unfinished_work": 1,
+              "answer_or_result": 2,
+              "blocker_or_question": 9,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "unclear": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 0,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            }
+          },
+          "gate": {
+            "tp": 0,
+            "fp": 1,
+            "fn": 0,
+            "tn": 61,
+            "precision": 0,
+            "recall": null
+          },
+          "failures": {},
+          "latencyMs": {
+            "p50": 136.09166100000039,
+            "p95": 184.637966
+          },
+          "inputTokens": {
+            "p50": 2070,
+            "p95": 7845
+          },
+          "stateBytes": {
+            "p50": 2953,
+            "p95": 17782
+          }
+        },
+        "development": {
+          "count": 58,
+          "available": 58,
+          "unavailable": 0,
+          "labelCorrect": 55,
+          "labelAccuracyWhenAvailable": 0.9482758620689655,
+          "expectedLabels": {
+            "announces_unfinished_work": 13,
+            "answer_or_result": 33,
+            "blocker_or_question": 11,
+            "unclear": 1
+          },
+          "confusion": {
+            "announces_unfinished_work": {
+              "announces_unfinished_work": 13,
+              "answer_or_result": 0,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "answer_or_result": {
+              "announces_unfinished_work": 2,
+              "answer_or_result": 31,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "blocker_or_question": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 0,
+              "blocker_or_question": 11,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "unclear": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 0,
+              "blocker_or_question": 1,
+              "unclear": 0,
+              "unavailable": 0
+            }
+          },
+          "gate": {
+            "tp": 0,
+            "fp": 0,
+            "fn": 1,
+            "tn": 57,
+            "precision": null,
+            "recall": 0
+          },
+          "failures": {},
+          "latencyMs": {
+            "p50": 129.23857000000044,
+            "p95": 182.86026700000002
+          },
+          "inputTokens": {
+            "p50": 1886,
+            "p95": 5708
+          },
+          "stateBytes": {
+            "p50": 2504,
+            "p95": 11692
+          }
+        }
+      },
+      "byOrg": {
+        "Juno Labs": {
+          "count": 84,
+          "available": 84,
+          "unavailable": 0,
+          "labelCorrect": 80,
+          "labelAccuracyWhenAvailable": 0.9523809523809523,
+          "expectedLabels": {
+            "announces_unfinished_work": 16,
+            "answer_or_result": 52,
+            "blocker_or_question": 15,
+            "unclear": 1
+          },
+          "confusion": {
+            "announces_unfinished_work": {
+              "announces_unfinished_work": 16,
+              "answer_or_result": 0,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "answer_or_result": {
+              "announces_unfinished_work": 2,
+              "answer_or_result": 50,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "blocker_or_question": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 1,
+              "blocker_or_question": 14,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "unclear": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 0,
+              "blocker_or_question": 1,
+              "unclear": 0,
+              "unavailable": 0
+            }
+          },
+          "gate": {
+            "tp": 0,
+            "fp": 0,
+            "fn": 1,
+            "tn": 83,
+            "precision": null,
+            "recall": 0
+          },
+          "failures": {},
+          "latencyMs": {
+            "p50": 133.9873149999994,
+            "p95": 182.86026700000002
+          },
+          "inputTokens": {
+            "p50": 1751,
+            "p95": 4883
+          },
+          "stateBytes": {
+            "p50": 2444,
+            "p95": 11692
+          }
+        },
+        "Forward Search": {
+          "count": 36,
+          "available": 36,
+          "unavailable": 0,
+          "labelCorrect": 34,
+          "labelAccuracyWhenAvailable": 0.9444444444444444,
+          "expectedLabels": {
+            "announces_unfinished_work": 3,
+            "answer_or_result": 25,
+            "blocker_or_question": 8,
+            "unclear": 0
+          },
+          "confusion": {
+            "announces_unfinished_work": {
+              "announces_unfinished_work": 3,
+              "answer_or_result": 0,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "answer_or_result": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 25,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "blocker_or_question": {
+              "announces_unfinished_work": 1,
+              "answer_or_result": 1,
+              "blocker_or_question": 6,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "unclear": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 0,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            }
+          },
+          "gate": {
+            "tp": 0,
+            "fp": 1,
+            "fn": 0,
+            "tn": 35,
+            "precision": 0,
+            "recall": null
+          },
+          "failures": {},
+          "latencyMs": {
+            "p50": 129.17229399999997,
+            "p95": 206.20552300000054
+          },
+          "inputTokens": {
+            "p50": 2090,
+            "p95": 9987
+          },
+          "stateBytes": {
+            "p50": 3046,
+            "p95": 24034
+          }
+        }
+      },
+      "byKind": {
+        "thread": {
+          "count": 78,
+          "available": 78,
+          "unavailable": 0,
+          "labelCorrect": 76,
+          "labelAccuracyWhenAvailable": 0.9743589743589743,
+          "expectedLabels": {
+            "announces_unfinished_work": 11,
+            "answer_or_result": 49,
+            "blocker_or_question": 18,
+            "unclear": 0
+          },
+          "confusion": {
+            "announces_unfinished_work": {
+              "announces_unfinished_work": 11,
+              "answer_or_result": 0,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "answer_or_result": {
+              "announces_unfinished_work": 1,
+              "answer_or_result": 48,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "blocker_or_question": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 1,
+              "blocker_or_question": 17,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "unclear": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 0,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            }
+          },
+          "gate": {
+            "tp": 0,
+            "fp": 0,
+            "fn": 1,
+            "tn": 77,
+            "precision": null,
+            "recall": 0
+          },
+          "failures": {},
+          "latencyMs": {
+            "p50": 132.50586499999918,
+            "p95": 182.86026700000002
+          },
+          "inputTokens": {
+            "p50": 1814,
+            "p95": 5708
+          },
+          "stateBytes": {
+            "p50": 2501,
+            "p95": 11692
+          }
+        },
+        "breakout": {
+          "count": 42,
+          "available": 42,
+          "unavailable": 0,
+          "labelCorrect": 38,
+          "labelAccuracyWhenAvailable": 0.9047619047619048,
+          "expectedLabels": {
+            "announces_unfinished_work": 8,
+            "answer_or_result": 28,
+            "blocker_or_question": 5,
+            "unclear": 1
+          },
+          "confusion": {
+            "announces_unfinished_work": {
+              "announces_unfinished_work": 8,
+              "answer_or_result": 0,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "answer_or_result": {
+              "announces_unfinished_work": 1,
+              "answer_or_result": 27,
+              "blocker_or_question": 0,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "blocker_or_question": {
+              "announces_unfinished_work": 1,
+              "answer_or_result": 1,
+              "blocker_or_question": 3,
+              "unclear": 0,
+              "unavailable": 0
+            },
+            "unclear": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 0,
+              "blocker_or_question": 1,
+              "unclear": 0,
+              "unavailable": 0
+            }
+          },
+          "gate": {
+            "tp": 0,
+            "fp": 1,
+            "fn": 0,
+            "tn": 41,
+            "precision": 0,
+            "recall": null
+          },
+          "failures": {},
+          "latencyMs": {
+            "p50": 133.4517890000002,
+            "p95": 187.61228699999992
+          },
+          "inputTokens": {
+            "p50": 2216,
+            "p95": 7845
+          },
+          "stateBytes": {
+            "p50": 3427,
+            "p95": 24034
+          }
+        }
+      },
+      "implementationSha256": {
+        "evaluation.ts": "5744b79349a88d04bb489b225d0ec9b7503ddbcc9023a9927eea64ca01b1c94b",
+        "run.ts": "0d28719c86ebb1aea1156ecff8552a5dd14008a4f7a612c61087a2bf8ca205e4",
+        "build.ts": "4d15f355174bed188eafa2f9711a889ce80b583227bcde71847f278c61a71f42"
+      },
+      "privateReportSha256": "023ab1025dec5a9b53ed08a892b9c24bad7acf3b1e0281e4d1e42d4823d360ec",
+      "gateErrors": [
+        {
+          "caseId": "real-2eb5648319d330eb",
+          "split": "development",
+          "expectedNudge": true,
+          "actualNudge": false,
+          "choice": "announces_unfinished_work",
+          "confidence": 0.35
+        },
+        {
+          "caseId": "real-08f7acd9bbbd30dd",
+          "split": "holdout",
+          "expectedNudge": false,
+          "actualNudge": true,
+          "choice": "announces_unfinished_work",
+          "confidence": 0.81
+        }
+      ]
+    }
+  }
+}

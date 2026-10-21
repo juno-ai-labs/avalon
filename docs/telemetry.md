@@ -25,6 +25,7 @@ embedded in the renderer or a source of product truth.
 | `apps/api/src/routes/telemetry.ts` | Bounded bootstrap, anonymous/authenticated event, identity-link, preference, and crash-ingest routes. |
 | `apps/api/src/telemetry-delivery-worker.ts` | Global-only private Worker that owns telemetry destination adapters; PostHog is the first adapter. |
 | `apps/api/src/middleware/api-operation-telemetry.ts` | Content-free timing/outcome signals for an explicit API operation allowlist. |
+| `apps/api/src/telemetry/completion-verification.ts` | Committed completion-verification reprompts, bounded reasons and confidence, correlated to terminal run outcomes. |
 | `apps/api/src/telemetry/tool-usage.ts` | Content-free, durably admitted agent-tool usage for user-owned and personless workspace-owned runs. |
 | `apps/api/src/telemetry/workstream-creation.ts` | Server-authoritative, idempotent work-stream creation state and connector attribution across user, Slack, suggestion, and automation paths. |
 | `apps/api/src/telemetry/message-sent.ts` | `message_sent` for a message or elicitation answer a person sent from any client, recorded where the Channel object admits it, including a composer-created Channel's opening message in `initialize`. |
@@ -87,6 +88,25 @@ Queries and result contents are never event properties. `text-search.md` owns th
 pagination contract and p50/p90 acceptance targets.
 
 ### Contract and producers
+
+`agent_completion_reprompted` is produced only after the completion-verification
+prompt commits to the persistent model conversation. A classifier recommendation
+alone, including one later blocked by Stop, does not emit it. Filter this event
+in PostHog or the regional analytics lakehouse, break down by `reason` and
+`choice`, and join `harnessRunId` to `run_terminal` for subsequent outcomes.
+Reasons distinguish unfinished work, unclear judgment, low confidence, missing
+context, missing credentials, judge timeout, and other judge failures. Confidence,
+stop threshold, requested JEV version, and opaque parent/run/Sidekick IDs are the
+only additional properties; prompts, answers, and receipt contents are excluded.
+
+This is a normal-priority, unsampled product event with 13-month regional
+retention. User-owned runs respect product-analytics preferences; workspace-owned
+runs use the existing personless identity. Global delivery uses the existing
+PostHog destination; isolated-region routing is unchanged. Acceptance is deferred
+and best effort, with a stable run-derived event ID (namespace 3) for deduplication.
+It measures committed recovery admission, not provider delivery or task success;
+a crash before telemetry acceptance can lose the observation. Structured logs
+also record the commit, separately from `completion_verification_decision`.
 
 The importer's `desktop_action_phase` diagnostic joins an opaque UUIDv7 action
 ID to content-free renderer phases and elapsed milliseconds from receipt,
@@ -659,6 +679,12 @@ client/API skew, with flow correlation unavailable until the API is upgraded.
 Network failures and other errors are not retried. New funnels populate after rollout.
 
 ## Testing
+
+Completion reprompt coverage lives in `apps/api/test/completion-reprompt-telemetry.test.ts`
+(regional acceptance, ownership, deduplication, preferences, failure isolation and
+closed fields) and the completion-verification cases in
+`apps/api/test-workers/message-to-output-pipeline.test.ts` (commit boundary and
+Stop suppression).
 
 Run focused suites from their package directories:
 
@@ -2044,6 +2070,21 @@ PRD](PRDs/2026-08-12_regional-product-telemetry/prd.md).
 
 
 ## Changelog
+
+### 2026-10-21 — Count committed completion reprompts
+
+**What changed:** Added `agent_completion_reprompted` at the successful recovery
+prompt commit, using existing deferred regional product telemetry and a stable
+execution-derived event ID. It records bounded cause and confidence without
+conversation content.
+
+**Why:** Classifier recommendations can be suppressed by lifecycle changes or a
+failed commit, so counting `reprompt: true` decisions overstates actual recovery
+admission. The event can be joined to terminal runs without affecting execution.
+
+**Considered and rejected:** Emitting at judgment time confuses intent with
+committed input. A new telemetry outbox or synchronous acceptance would add
+execution coupling; the existing best-effort acceptance policy remains in force.
 
 ### 2026-10-20 — Own Electron network failures at their request boundary
 
