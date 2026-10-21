@@ -1873,6 +1873,8 @@ queued-input epoch fences, unread initialization, and notification deduplication
 remain the common admission mechanism. This supersedes the no-seating behavior
 recorded in the 2026-08-25 opening-message entry.
 
+Pull request: [#1364](https://github.com/juno-ai-labs/avalon/pull/1364).
+
 ### 2026-10-20 — Recover relocated history using immutable turn identities
 
 **What changed:** Historical accepted, failed, and stopped assistant reservations
