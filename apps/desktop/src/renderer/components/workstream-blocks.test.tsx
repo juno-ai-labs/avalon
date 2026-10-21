@@ -1411,7 +1411,8 @@ describe('MessageBlock markdown', () => {
 
     render(<MarkdownBody>{'```mermaid\nnot a diagram\n```'}</MarkdownBody>);
 
-    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    fireEvent.click(await screen.findByRole('button', { name: 'Diagram details' }));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
     expect(screen.getByText('not a diagram')).toBeVisible();
   });
 
@@ -1422,7 +1423,8 @@ describe('MessageBlock markdown', () => {
 
     render(<MarkdownBody>{'```mermaid\ngraph TD; A-->B\n```'}</MarkdownBody>);
 
-    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    fireEvent.click(await screen.findByRole('button', { name: 'Diagram details' }));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
     expect(getMermaidDiagram).toHaveBeenCalledTimes(parseCallBaseline);
     expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline);
   });
@@ -1434,7 +1436,8 @@ describe('MessageBlock markdown', () => {
 
     render(<MarkdownBody>{'```mermaid\ngraph TD; A-->B\n```'}</MarkdownBody>);
 
-    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    fireEvent.click(await screen.findByRole('button', { name: 'Diagram details' }));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
     expect(screen.queryByText('Unsafe graph')).toBeNull();
   });
 
@@ -1445,7 +1448,8 @@ describe('MessageBlock markdown', () => {
 
     render(<MarkdownBody>{'```mermaid\ngraph TD; A-->B\n```'}</MarkdownBody>);
 
-    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    fireEvent.click(await screen.findByRole('button', { name: 'Diagram details' }));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
     expect(screen.queryByText('Unsafe graph')).toBeNull();
   });
 
@@ -1457,7 +1461,8 @@ describe('MessageBlock markdown', () => {
 
     render(<MarkdownBody>{'```mermaid\nflowchart TD; A-->B\n```'}</MarkdownBody>);
 
-    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    fireEvent.click(await screen.findByRole('button', { name: 'Diagram details' }));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
     expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline);
   });
 
@@ -1469,7 +1474,8 @@ describe('MessageBlock markdown', () => {
 
     render(<MarkdownBody>{'```mermaid\nblock-beta\n  A["Review"]\n```'}</MarkdownBody>);
 
-    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    fireEvent.click(await screen.findByRole('button', { name: 'Diagram details' }));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
     expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline);
   });
 
@@ -1481,7 +1487,8 @@ describe('MessageBlock markdown', () => {
 
     render(<MarkdownBody>{`\`\`\`mermaid\n${source}\n\`\`\``}</MarkdownBody>);
 
-    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
+    fireEvent.click(await screen.findByRole('button', { name: 'Diagram details' }));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Couldn’t render diagram; showing source.');
     expect(mermaidRender).toHaveBeenCalledTimes(renderCallBaseline);
   });
 

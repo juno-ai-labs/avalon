@@ -239,11 +239,11 @@ export function ConnectorResourceAuthorizationCard({ request, latchedAuthorized 
           </Button>
         )}
       </div>
-      {!succeeded && status === 'denied' ? <ErrorNotice>Authorization was not granted. Try again when you’re ready.</ErrorNotice> : null}
-      {!succeeded && status === 'failed' ? <ErrorNotice>Rally could not confirm the authorization. Try again.</ErrorNotice> : null}
-      {!succeeded && !setup ? <ErrorNotice>Open this thread in Rally desktop to authorize editing.</ErrorNotice> : null}
-      {!succeeded && (personalOwnerRequired || connectionUnavailable) ? <ErrorNotice>Only the owner of this connection can authorize editing.</ErrorNotice> : null}
-      {!succeeded && mutation.error && status !== 'failed' ? <ErrorNotice>Rally could not start authorization. Try again.</ErrorNotice> : null}
+      {!succeeded && status === 'denied' ? <ErrorNotice automatic={false} detailsLabel="Authorization details">Authorization was not granted. Try again when you’re ready.</ErrorNotice> : null}
+      {!succeeded && status === 'failed' ? <ErrorNotice automatic={false} detailsLabel="Authorization details">Rally could not confirm the authorization. Try again.</ErrorNotice> : null}
+      {!succeeded && !setup ? <p>Open this thread in Rally desktop to authorize editing.</p> : null}
+      {!succeeded && (personalOwnerRequired || connectionUnavailable) ? <p>Only the owner of this connection can authorize editing.</p> : null}
+      {!succeeded && mutation.error && status !== 'failed' ? <ErrorNotice occurrence={mutation.error}>Rally could not start authorization. Try again.</ErrorNotice> : null}
     </article>
   );
 }

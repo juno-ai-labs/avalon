@@ -30,13 +30,16 @@ drawing a second design.
 
 The application error boundary is shared, with host-specific error reporting.
 
-### Error popups
+The collaboration adapter uses the existing API query defaults: no focus refresh
+unless a query opts in, and no retry for a rejected 4xx request.
+
+## Error popups
 
 Operational failures across Electron and browser are acknowledged popups with
 an **OK** button. Inline error messages and banners are banned. Declare
-`ErrorNotice` alongside the state that owns the failure; it occupies no layout
-space. `ErrorNoticeProvider` at each host root queues distinct failures, merges
-simultaneous identical copy, and keeps an error available after its menu closes.
+`ErrorNotice` alongside the state that owns the failure; by default it occupies
+no layout space. `ErrorNoticeProvider` at each host root queues distinct
+failures, merges simultaneous identical copy, and keeps an error available after its menu closes.
 Standalone component hosts can render `ErrorNotice` without a provider.
 
 Acknowledgement dismisses presentation only: drafts, failed mutations, and retry
@@ -44,21 +47,28 @@ controls remain owned by their original screen. A persistent query or mutation
 passes its error object as `occurrence` so another failed attempt with the same
 copy opens again. Ordinary rerenders do not reopen an acknowledged failure.
 The popup owns the tooltip context for copy controls carried from a failure,
-focuses OK and returns focus to the interrupted control when it still exists. OK is its only visible close control; Escape also dismisses it. A failure inside an
-existing dialog opens above it and keeps the underlying form intact.
+focuses OK and returns focus to the interrupted control when it still exists.
+OK is its only visible close control; Escape also dismisses it. A failure inside
+an existing dialog opens above it and keeps the underlying form intact.
 
 Use `AcknowledgedErrorDialog` when the caller already owns explicit notice and
 acknowledgement state. Existing native deep-link error windows also say OK.
 Loading indicators, unavailable capabilities, and historical run/tool status are
 not new error events. Keep recovery controls available after acknowledgement;
-do not turn stored transcript content into a stream of popups.
+do not turn stored transcript content into a stream of popups. Use
+`automatic={false}` with `detailsLabel` for stored diagram, run and connector
+failures and persistent menu read failures. Details remain in an OK popup,
+opened on demand; failure copy never returns inline. Full-screen recovery views
+also keep a Details action after acknowledgement. Explicit `occurrence` values
+are remembered by the window queue across source remounts, so reopening a
+surface does not replay an acknowledged event. Runs already failed when a
+conversation opens expose Run details; runs observed active open a notice when
+they fail.
 
 `rally/no-inline-errors` rejects the retired `InlineError` primitive, DOM alerts,
 and error-message styling in shared UI and both client source trees. It does
 not infer error semantics from arbitrary prose; reviews must also catch custom
 error copy without those markers.
-The collaboration adapter uses the existing API query defaults: no focus refresh
-unless a query opts in, and no retry for a rejected 4xx request.
 
 ## How it works
 
@@ -222,8 +232,8 @@ identical messages so one outage does not stack duplicate dialogs. Dismissing a
 notice does not clear mutation state or a draft. Callers must distinguish retry
 attempts when identical failure copy stays mounted. The retired inline primitive
 and recognisable inline alert markup are lint errors; adding another banner is
-not an alternative presentation path.
-
+not an alternative presentation path. Historical failures open their details
+on demand so navigating or scrolling does not replay old interruptions.
 
 ### 2026-10-21 — People start with frequent collaborators
 

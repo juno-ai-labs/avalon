@@ -74,7 +74,7 @@ export function AshbyWorkspaceSetup({ api, attemptId, onSuccess, onClose, onReco
   return <Modal open onOpenChange={(open) => { if (!open) onClose(); }} title="Connect Ashby for organization"
     description="One shared connection receives your Ashby organization's recruiting events automatically. Personal Ashby sign-in does not create webhooks."
     footer={<><Button onClick={onClose}>Cancel</Button><Button className="button-primary" disabled={!online || !connectorApiKeyAcceptable('ashby', apiKey) || setup.isPending || recovery.isPending || recovery.isError} onClick={() => setup.mutate()}>{setup.isPending ? 'Setting up…' : 'Connect for organization'}</Button></>}>
-    {!online && <ErrorNotice>Connection management is unavailable while offline.</ErrorNotice>}
+    {!online && <p role="status">Connect to the internet to manage this connection.</p>}
     <p>The button below opens the page that issues the key. Create one with Read API Keys (apiKeysRead) and Write API Keys (apiKeysWrite) permissions, then paste it here, never into a chat, thread or channel. The key stays encrypted in this organization's Rally region. Ashby processes requests and delivers organization events outside Rally's regional storage boundary.</p>
     <p>These events concern the organization, including recruiting records whose visibility may differ from a personal query. Rally manages event subscriptions automatically; choose the events you want to act on when creating automations.</p>
     <ConnectorApiKeyIssuingLink provider="ashby" variant="button" />
@@ -140,7 +140,7 @@ export function ConnectorInstallationDetails({ api, connectionId, connectionEnab
   const needsHelp = installation && ['action_required', 'failed', 'cleanup_pending'].includes(installation.state);
   return <Modal open onOpenChange={(open) => { if (!open) onClose(); }} title="Organization events" description="Rally manages event subscriptions for this connection."
     footer={<Button onClick={onClose}>Close</Button>}>
-    {!online && <ErrorNotice>Connection management is unavailable while offline. Saved status may be out of date.</ErrorNotice>}
+    {!online && <p role="status">Connect to the internet to manage this connection. Saved status may be out of date.</p>}
     {query.isPending && <p>Loading connection…</p>}
     {query.error && <ErrorNotice occurrence={query.error}>{query.error.message}</ErrorNotice>}
     {/* Four groups with more space between them than within one — status,
@@ -205,14 +205,14 @@ export function ConnectorInstallationDetails({ api, connectionId, connectionEnab
         </>}
         <details><summary>Subscription details</summary>
           <p>Configuration {installation.appliedVersion ?? 'not verified'} / {installation.desiredVersion}.</p>
-          {installation.error && <ErrorNotice>{installation.error}</ErrorNotice>}
+          {installation.error && <ErrorNotice automatic={false} detailsLabel="Installation details">{installation.error}</ErrorNotice>}
           {installation.registrations.map((registration) => <section className="settings-list-card" style={{ padding: '1rem', marginBlock: '0.75rem' }} key={registration.key}>
             <h3>{registration.events.map(eventLabel).join(', ')}</h3>
             <p>{registration.state.replaceAll('_', ' ')} · {registration.enabled === null ? 'Enabled state unknown' : registration.enabled ? 'Enabled' : 'Disabled'}</p>
             <p>Provider ID: {registration.providerId ?? 'Not confirmed'}</p>
             <p style={{ overflowWrap: 'anywhere' }}>Destination: {registration.destination}</p>
             <p>Last verified: {registration.verifiedAt ? new Date(registration.verifiedAt).toLocaleString() : 'Not verified'}. Signing key: {registration.rotation}.</p>
-            {registration.error && <ErrorNotice>{registration.error}</ErrorNotice>}
+            {registration.error && <ErrorNotice automatic={false} detailsLabel="Subscription details">{registration.error}</ErrorNotice>}
           </section>)}
         </details>
       </section>}

@@ -34,6 +34,35 @@ describe('ErrorNotice', () => {
     expect(screen.getByRole('alertdialog')).toHaveTextContent('Save failed.');
   });
 
+  it('remembers an acknowledged occurrence across remounts and can reopen its details', () => {
+    const failure = new Error('Save failed.');
+    const surface = (visible: boolean, occurrence = failure) => <ErrorNoticeProvider>
+      {visible && <ErrorNotice detailsLabel="Save details" occurrence={occurrence}>Save failed.</ErrorNotice>}
+    </ErrorNoticeProvider>;
+    const view = render(surface(true));
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    view.rerender(surface(false));
+    view.rerender(surface(true));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Save details' }));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Save failed.');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    view.rerender(surface(true, new Error('Save failed.')));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Save failed.');
+  });
+
+  it('keeps stored failures out of the queue until their details are requested', () => {
+    render(<ErrorNoticeProvider>
+      <ErrorNotice automatic={false} detailsLabel="Run details">A previous run failed.</ErrorNotice>
+    </ErrorNoticeProvider>);
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(screen.queryByText('A previous run failed.')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Run details' }));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('A previous run failed.');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  });
+
   it('preserves a parent dialog and draft and returns focus after acknowledgement', async () => {
     function Editor() {
       const [open, setOpen] = useState(true);

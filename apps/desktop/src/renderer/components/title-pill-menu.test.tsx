@@ -363,6 +363,9 @@ describe('a title pill menu with levels', () => {
     fireEvent.keyDown(search, { key: 'Enter' });
 
     expect(screen.getByRole('alertdialog')).toHaveTextContent('Enter email addresses separated by spaces, commas or semicolons.');
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    fireEvent.keyDown(search, { key: 'Enter' });
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Enter email addresses separated by spaces, commas or semicolons.');
     expect(onAdd).not.toHaveBeenCalled();
     expect(onInvite).not.toHaveBeenCalled();
   });
@@ -453,7 +456,9 @@ describe('a title pill menu with levels', () => {
     } });
     openMenu();
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Add people' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'OK' }));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Invitation details' }));
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     const search = await screen.findByRole('textbox', { name: 'Add someone by name or email' });
 
     fireEvent.change(search, { target: { value: 'guest@example.test' } });

@@ -86,7 +86,8 @@ function ServiceSetupState({
       <section className="service-setup-card window-no-drag">
         <span className="setup-icon"><Cable size={22} /></span>
         <p className="eyebrow">{isNetwork ? 'Service unavailable' : 'Setup required'}</p>
-        <ErrorNotice title={isNetwork ? 'Rally cannot reach this region' : 'The regional service is not ready'}>{error.message}</ErrorNotice>
+        <h1>Regional connection</h1>
+        <ErrorNotice detailsLabel="Connection details" occurrence={error} title={isNetwork ? 'Rally cannot reach this region' : 'The regional service is not ready'}>{error.message}</ErrorNotice>
         <dl>
           <div><dt>Region</dt><dd>{displayRegion}</dd></div>
           <div><dt>API endpoint</dt><dd className="mono">{targetApiBaseUrl ?? api?.baseUrl}</dd></div>
