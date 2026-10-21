@@ -130,6 +130,13 @@ export function transcriptOverlaysQueryKey(
     : ['substream-transcript-overlays', workstreamId, substreamId];
 }
 
+/** Personal instructions stay in history; only the frontend removes the XML block. */
+function visibleParticipantText(text: string, actor: string): string {
+  return actor === 'human' || actor === 'external'
+    ? text.replace(/<user_system_prompt>[\s\S]*?<\/user_system_prompt>\n{0,2}/gu, '')
+    : text;
+}
+
 type TextMessageInput = Omit<Message, 'messageType' | 'text'> & { text: string };
 type ToolEventMessageInput = Omit<Message, 'messageType' | 'toolEvent'> & { toolEvent: ToolEventData };
 type ElicitationMessageInput = Omit<Message, 'messageType' | 'elicitation'> & { elicitation: ElicitationData };
@@ -520,7 +527,7 @@ export function orderedTranscriptMessages(
             id: messageId,
             messageType,
             annotationContent: block.structuredContent ?? undefined,
-            text: block.text,
+            text: visibleParticipantText(block.text, turn.actor),
             streaming: block.streaming,
             ...(statusKind ? { statusEvent: { kind: statusKind, code: statusCode } } : {}),
             mentions: (block.mentions ?? []).map((mention) => {
@@ -1019,7 +1026,7 @@ export function pendingTranscriptInputOverlay(
         : input.block.messageType === 'system' ? 'system' : 'text',
       ...(elicitation ? { elicitation } : {}),
       annotationContent: input.block.structuredContent ?? undefined,
-      text: input.block.text,
+      text: visibleParticipantText(input.block.text, input.actor),
       mentions: input.block.mentions?.map((mention) => ({
         type: mention.type,
         ...(mention.userId ? { personId: mention.userId } : {}),

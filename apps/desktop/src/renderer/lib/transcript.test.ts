@@ -636,6 +636,24 @@ describe('canonical transcript and transient overlay composition', () => {
 });
 
 describe('ordered turn rendering', () => {
+  it.each(['human', 'external', 'assistant'] as const)('filters personal prompt XML only from participant display text (%s)', (actor) => {
+    const text = '<user_system_prompt>Use very short messages</user_system_prompt>\n\nActual question';
+    const snapshot: WorkstreamTranscriptSnapshot = {
+      snapshotId: 'personal-prompt', snapshotThrough: 1, eventSequence: 1,
+      snapshotAtUtc: base.createdAt, unreadAnchorSequence: null, unreadReason: 'no_unread',
+      ranges: [{ purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 }, covered: { startInclusive: 1, endExclusive: 2 },
+        turns: [{ transcriptSequence: 1, turnId: 'question', entryKind: 'conversation', actor,
+          authorUserId: actor === 'human' ? 'person' : null,
+          authorSnapshot: actor === 'human' ? { userId: 'person', displayName: 'Ada', avatarUrl: null } : null,
+          attentionOrdinal: 1, createdAtUtc: base.createdAt, revision: 1,
+          blocks: [{ type: 'text', blockId: 'question:text:0', blockIndex: 0, text, streaming: false }], activityId: null }],
+        activities: [], pluginRuns: [],
+      }], activities: [], activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
+    };
+    expect(orderedTranscriptMessages(snapshot, 'workstream-one')[0]?.text).toBe(actor === 'assistant' ? text : 'Actual question');
+    expect(snapshot.ranges[0]?.turns[0]?.blocks[0]).toMatchObject({ text });
+  });
+
   it('carries imported-by provenance from canonical text into the message identity', () => {
     const provenance = { kind: 'imported_session', source: { provider: 'claude', url: null }, importedByUserId: '00000000-0000-4000-8000-000000000001', importedByName: 'Adam' };
     const snapshot: WorkstreamTranscriptSnapshot = {
@@ -3375,6 +3393,15 @@ describe('composer queue overlays', () => {
     },
     admittedAtUtc: '2026-08-05T12:00:00.000Z',
   };
+
+  it('filters personal prompt XML from a queued user message without changing its history', () => {
+    const input = { ...pendingHuman, block: { ...pendingHuman.block,
+      text: '<user_system_prompt>Use very short messages</user_system_prompt>\n\nQueued question',
+    } };
+    expect(pendingTranscriptInputOverlay(input, 'workstream-one', { source: 'socket_snapshot', snapshotId: 's' }).message.text)
+      .toBe('Queued question');
+    expect(input.block.text).toContain('<user_system_prompt>');
+  });
 
   it('copies inputSequence onto the overlay as queueSequence', () => {
     const overlay = pendingTranscriptInputOverlay(pendingHuman, 'workstream-one', {
