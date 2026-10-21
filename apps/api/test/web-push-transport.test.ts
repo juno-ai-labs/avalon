@@ -126,7 +126,7 @@ describe("Web Push transport", () => {
 
   it("shortens the title as well as the body to fit the payload limit", () => {
     const data = { v: 1 as const, kind: "mention" as const, url: "https://app.example.test/c", workspaceId: "w", region: "global" as const };
-    const payload = renderWebPushPayload({ title: "T".repeat(5000), body: "B".repeat(5000), collapseId: "intent", data, maxBytes: 3993 });
+    const payload = renderWebPushPayload({ title: "T".repeat(5000), body: "B".repeat(5000), collapseId: "intent", data, badge: 1, maxBytes: 3993 });
     expect(new TextEncoder().encode(payload).byteLength).toBeLessThanOrEqual(3993);
     const parsed = JSON.parse(payload) as { title: string; body: string };
     expect(parsed.body).toBe("…");

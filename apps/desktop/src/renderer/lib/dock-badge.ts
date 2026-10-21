@@ -3,10 +3,10 @@ import { useEffect } from 'react';
 import { desktopBridge } from './platform';
 
 /**
- * Keeps the dock badge on the sidebar attention menu's count while the shell is
- * mounted, and clears it when the shell goes (sign-out, a switch of
- * Organization). APNs sets the same number while Rally is not running
- * (`docs/push-notifications.md`).
+ * Keeps the dock badge, or an installed browser app's icon badge, on the
+ * sidebar attention menu's count while the shell is mounted, and clears it when
+ * the shell goes (sign-out, a switch of Organization). APNs and Web Push set
+ * the same number while Rally is not running (`docs/push-notifications.md`).
  *
  * `complete` says the count is whole: every Channel and every Breakout list it
  * reads has loaded. A count from a half-loaded directory would lower the badge

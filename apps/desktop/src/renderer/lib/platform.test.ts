@@ -193,3 +193,64 @@ describe('browser fallback single-platform identity boundary', () => {
       .rejects.toThrow('did not match this organization request');
   });
 });
+
+describe('browser app icon badge', () => {
+  const setAppBadge = vi.fn<(count?: number) => Promise<void>>(async () => undefined);
+  const clearAppBadge = vi.fn(async () => undefined);
+
+  beforeEach(() => {
+    delete window.rally;
+    localStorage.clear();
+    setAppBadge.mockClear();
+    clearAppBadge.mockClear();
+    Object.assign(navigator, { setAppBadge, clearAppBadge });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    Reflect.deleteProperty(navigator, 'setAppBadge');
+    Reflect.deleteProperty(navigator, 'clearAppBadge');
+  });
+
+  it('sets the count, clears it at zero, and puts it back when the tab regains focus', async () => {
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    await desktopBridge().setDockBadgeCount(3);
+    expect(setAppBadge.mock.calls).toEqual([[3]]);
+
+    // A push for another Organization sets its own count while the tab is in the background.
+    window.dispatchEvent(new Event('focus'));
+    expect(setAppBadge.mock.calls).toEqual([[3], [3]]);
+
+    await desktopBridge().setDockBadgeCount(0);
+    expect(clearAppBadge).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves the icon to the tab focused last, until this one is focused', async () => {
+    const focused = vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+    localStorage.setItem('rally.app-badge-owner', 'another-tab');
+    await desktopBridge().setDockBadgeCount(5);
+    await desktopBridge().setDockBadgeCount(0);
+    expect(setAppBadge).not.toHaveBeenCalled();
+    expect(clearAppBadge).not.toHaveBeenCalled();
+
+    await desktopBridge().setDockBadgeCount(2);
+    focused.mockReturnValue(true);
+    window.dispatchEvent(new Event('focus'));
+    expect(setAppBadge.mock.calls).toEqual([[2]]);
+
+    // Still the last focused, it keeps the icon current while in the background.
+    focused.mockReturnValue(false);
+    await desktopBridge().setDockBadgeCount(4);
+    expect(setAppBadge.mock.calls).toEqual([[2], [4]]);
+  });
+
+  it('takes the icon back when the tab becomes visible without a focus event', async () => {
+    vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+    localStorage.setItem('rally.app-badge-owner', 'another-tab');
+    await desktopBridge().setDockBadgeCount(6);
+    expect(setAppBadge).not.toHaveBeenCalled();
+
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(setAppBadge.mock.calls).toEqual([[6]]);
+  });
+});
