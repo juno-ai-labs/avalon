@@ -1,18 +1,53 @@
 import type { PeopleRanking } from "@rally/contracts";
 import { breakoutListedSql, channelListedSql, mainOpenableSql, type Viewer } from "./listing-rules";
 
-/** Read existing human message/mention facts, never a second interaction ledger. See docs/shared-ui.md. */
+/** Seek the reader's own messages without visiting other authors' history. */
+export const WORKSPACE_PEOPLE_RANKING_MIGRATION: readonly string[] = [
+  `CREATE INDEX workspace_activity_people_actor_idx ON workspace_activity_events(actor_user_id, event_id)
+    WHERE event_type = 'workstream_message_created' AND subject_type = 'workstream'
+      AND actor_type = 'user' AND actor_user_id IS NOT NULL
+      AND json_extract(metadata_json, '$.mergedFrom') IS NULL`,
+];
+
+/**
+ * Read existing human message/mention facts, never a second interaction ledger.
+ * Candidate seeks precede access joins; materialize that result once for all
+ * three interaction directions. Unary + preserves the expression index's
+ * affinity on the Breakout id, as in the Activity feed. See docs/shared-ui.md.
+ */
 export function rankPeople(storage: DurableObjectStorage, viewer: Viewer, spaceId: string | null): PeopleRanking {
   const rows = storage.sql.exec<{
     user_id: string; interactions: number; latest: number; channel_interactions: number; channel_latest: number;
-  }>(`WITH messages AS (
+  }>(`WITH candidate_events AS (
+    SELECT event_id FROM workspace_activity_events INDEXED BY workspace_activity_people_actor_idx
+     WHERE actor_user_id = ?1 AND event_type = 'workstream_message_created' AND subject_type = 'workstream'
+       AND actor_type = 'user' AND actor_user_id IS NOT NULL
+       AND json_extract(metadata_json, '$.mergedFrom') IS NULL
+    UNION
+    SELECT event_id FROM workspace_activity_event_targets INDEXED BY workspace_activity_event_targets_user_idx
+     WHERE user_id = ?1 AND relation IN ('mentioned', 'participant')
+    UNION
+    SELECT event.event_id
+      FROM breakout_viewers participant INDEXED BY breakout_viewers_user_participant_idx
+      JOIN breakouts breakout ON breakout.workstream_id = participant.workstream_id
+        AND breakout.substream_id = participant.substream_id
+        AND breakout.authority_generation = participant.authority_generation AND breakout.archived_at IS NULL
+      CROSS JOIN workspace_activity_events event INDEXED BY workspace_activity_replies_conversation_idx
+     WHERE participant.user_id = ?1 AND participant.is_participant = 1
+       AND event.subject_id = participant.workstream_id
+       AND COALESCE(json_extract(event.metadata_json, '$.substreamId'), '0') = +participant.substream_id
+       AND event.event_type = 'workstream_message_created' AND event.subject_type = 'workstream'
+       AND event.actor_type = 'user' AND json_extract(event.metadata_json, '$.mergedFrom.breakoutId') IS NULL
+       AND json_extract(event.metadata_json, '$.mergedFrom') IS NULL
+  ), messages AS MATERIALIZED (
     SELECT event.event_id, event.actor_user_id, event.occurred_at, directory.workstream_id,
            breakout.substream_id, breakout.authority_generation AS breakout_generation,
            breakout_viewer.is_participant AS breakout_participant,
            EXISTS (SELECT 1 FROM space_channel_memberships placement
              WHERE placement.workstream_id = directory.workstream_id
                AND placement.space_id = ?2 AND placement.state = 'active') AS in_channel
-      FROM workspace_activity_events event
+      FROM candidate_events candidate
+      CROSS JOIN workspace_activity_events event ON event.event_id = candidate.event_id
       JOIN channels directory ON directory.workstream_id = event.subject_id
       LEFT JOIN channel_viewers viewer ON viewer.workstream_id = directory.workstream_id
         AND viewer.user_id = ?1 AND viewer.authority_generation = directory.authority_generation

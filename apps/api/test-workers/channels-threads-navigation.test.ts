@@ -16,7 +16,7 @@
  */
 import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   asSpaceId,
@@ -46,6 +46,7 @@ import { WorkspaceRegionalEffectApplyRequestSchema } from "../src/durable-object
 import { applyWorkstreamRegionalEnvelope } from "../src/durable-objects/workspace-regional-effect-storage";
 import { hostedParentStub } from "./helpers/hosted-parent";
 import { withSpaceStorage, placeMembership, removeMembership } from "./helpers/space-membership";
+import { rankPeople } from "../src/durable-objects/workspace-people-ranking";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000e100");
 const OWNER = asUserId("00000000-0000-7000-8000-00000000e101");
@@ -286,6 +287,40 @@ describe("People interaction ranking", () => {
       targets, metadata: { substreamId: options.substreamId ?? '0', ...options.metadata },
     });
   }
+
+  it("seeks a person's interactions without scanning unrelated Organization history", async () => {
+    const spaceId = await channelWithThreads();
+    await message(OPEN_THREAD, OWNER, [{ userId: MEMBER, relation: 'mentioned' }]);
+    await message(OPEN_THREAD, GUEST, [{ userId: OWNER, relation: 'mentioned' }]);
+    await publish(OPEN_THREAD, [breakoutEffect('Shared breakout'), viewerEffect(OWNER), viewerEffect(MEMBER)], BREAKOUT);
+    await message(OPEN_THREAD, MEMBER, [], { substreamId: BREAKOUT });
+    await runInDurableObject(workspace(), (_instance, state) => {
+      const reads = (): number => {
+        const spy = vi.spyOn(state.storage.sql, 'exec');
+        try {
+          expect(rankPeople(state.storage, { userId: OWNER, accessClass: 'member' }, spaceId)).toEqual({
+            channel: [MEMBER, GUEST], organization: [MEMBER, GUEST],
+          });
+          return (spy.mock.results[0]!.value as ReturnType<SqlStorage['exec']>).rowsRead;
+        } finally { spy.mockRestore(); }
+      };
+      const before = reads();
+      // Public replies between other people, with real target edges, must not
+      // make this person's read grow with the Organization's retained traffic.
+      state.storage.sql.exec(`WITH RECURSIVE numbers(n) AS
+        (SELECT 1 UNION ALL SELECT n + 1 FROM numbers WHERE n < 10000)
+        INSERT INTO workspace_activity_events (
+          event_id, event_type, subject_type, subject_id, actor_type, actor_user_id, actor_label, title, body,
+          audience_kind, audience_workstream_id, digestible, occurred_at, created_at, source_kind, dedupe_key, metadata_json
+        ) SELECT 'unrelated:' || n, 'workstream_message_created', 'workstream', ?, 'user', ?, 'Other', 'Other', '',
+          'workstream', ?, 0, 1, 1, 'workstream_message', 'unrelated:' || n, '{"substreamId":"0"}' FROM numbers`,
+      OPEN_THREAD, MEMBER, OPEN_THREAD);
+      state.storage.sql.exec(`INSERT INTO workspace_activity_event_targets (event_id, user_id, relation, created_at)
+        SELECT event_id, ?, 'mentioned', 1 FROM workspace_activity_events WHERE event_id LIKE 'unrelated:%'`, GUEST);
+      const after = reads();
+      expect(after).toBeLessThanOrEqual(before + 2);
+    });
+  });
 
   it("given replies and mentions, when ranking people, then Channel frequency and Organization frequency differ and each message counts once per person", async () => {
     const spaceId = await channelWithThreads();

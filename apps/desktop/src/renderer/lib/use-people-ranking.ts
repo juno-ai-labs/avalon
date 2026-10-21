@@ -12,7 +12,7 @@ export function usePeopleRanking(api: Pick<RallyApi, 'getPeopleRanking'> | null 
   });
   return {
     ranking: ranking.data,
-    onOpen: () => { setWanted(true); if (wanted) void ranking.refetch(); },
+    onOpen: () => { setWanted(true); if (wanted) void ranking.refetch({ cancelRefetch: false }); },
     rankingLoading: wanted && ranking.isPending && ranking.isFetching,
     rankingFailed: ranking.isError,
     onRetryRanking: () => { void ranking.refetch(); },
