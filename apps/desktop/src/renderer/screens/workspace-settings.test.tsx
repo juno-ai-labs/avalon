@@ -1425,7 +1425,7 @@ describe('Organization settings', () => {
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
       'google',
       'you',
-      ['gmail.read', 'gmail.draft', 'gmail.send', 'calendar.read', 'calendar.write'],
+      ['gmail.read', 'gmail.modify', 'gmail.draft', 'gmail.send', 'calendar.read', 'calendar.write'],
     ), { timeout: 10_000 });
 
     const driveCard = screen.getByText('Google Drive + Docs + Sheets').closest('article');

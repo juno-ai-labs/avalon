@@ -6,8 +6,10 @@ import type {
   WorkstreamWorkflowInput,
 } from "@rally/contracts";
 import { runHarness, type HarnessEvent } from "@rally/agent-harness";
-import { googleTools, slackTools, notionTools, granolaTools } from "@rally/connectors";
+import { slackTools, notionTools, granolaTools } from "@rally/connectors";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ToolDefinition } from "@rally/contracts";
+import historicalGoogleTools from "./fixtures/google-tools-before-workflows.json";
 
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
@@ -27,11 +29,11 @@ import {
 } from "./helpers/durable-authority";
 import { responsesStreamResponse } from "@rally/agent-harness/test-support/responses-stream";
 
-// Frozen from the real pre-cutover definitions at d7289cdbe, except Google:
-// adding draft attachment inputs intentionally changes its receipt digest, so
-// older receipts remain fenced. Input-schema prose participates in this hash.
+// Frozen pre-cutover definitions. Google uses a historical fixture because
+// new workflows and attachment inputs intentionally change the current receipt
+// digest; older receipts must remain fenced. Prose participates in the hash.
 it.each([
-  ["google", googleTools, "c1cdc3618c75ded8035ec4ab8b203604199eae5155fe29fbfffef1645d3e4a6d"],
+  ["google", historicalGoogleTools as ToolDefinition[], "ee3d58df9c6be517cf31c61c24ff0a9e48496b6985952f2b1fb233c9e17107f3"],
   ["slack", slackTools, "4252e614c1b846896edb924fd3210d89339b1536a81b22b19e8c5010baa27820"],
   ["notion", notionTools, "9df5f6fbfe14255d35486d5efb4f90545bdf2919cab5a4321a5b3c43014f3ef6"],
   ["granola", granolaTools, "68ee12b5c978b26d85e9d8893c0f9f5d3bdd5d6f42a1c4ef0f36654a6550c807"],
@@ -1348,6 +1350,8 @@ describe("connector tools selected for harness runs", () => {
       tools: mail!.tools,
     })).toEqual([]);
     expect(mail?.tools.map((tool) => tool.definition.name)).toEqual([
+      "calendar.cancel_event", "calendar.cancel_recurring_series", "calendar.respond_to_event", "calendar.respond_to_recurring_series", "calendar.suggest_time",
+      "gmail.list_labels", "gmail.list_drafts", "gmail.list_drafts_next", "gmail.read_draft",
       "gmail.read_profile",
       "gmail.search",
       "gmail.search_next",
@@ -1356,6 +1360,7 @@ describe("connector tools selected for harness runs", () => {
       "gmail.read_message",
       "gmail.create_draft",
       "gmail.send",
+      "gmail.create_reply_draft", "gmail.reply",
       "calendar.list_calendars",
       "calendar.list_calendars_next",
       "calendar.query_availability",
@@ -1363,6 +1368,7 @@ describe("connector tools selected for harness runs", () => {
       "calendar.list_events_next",
       "calendar.read_event",
       "calendar.create_event",
+      "calendar.create_all_day_event", "calendar.create_recurring_event",
       "calendar.update_event",
     ]);
     const availability = mail?.tools.find((tool) => tool.definition.name === "calendar.query_availability");
@@ -1448,7 +1454,7 @@ describe("connector tools selected for harness runs", () => {
   it.each([
     {
       capabilities: ["gmail.read", "gmail.draft", "gmail.send"],
-      expected: [["google_gmail_create_draft", "new"], ["google_gmail_create_draft", "reply"], ["google_gmail_send", "new"], ["google_gmail_send", "reply"]],
+      expected: [["google_gmail_create_draft", "new"], ["google_gmail_create_reply_draft", "reply"], ["google_gmail_send", "new"], ["google_gmail_reply", "reply"]],
     },
     { capabilities: ["gmail.send"], expected: [["google_gmail_send", "new"]] },
     { capabilities: ["gmail.draft"], expected: [["google_gmail_create_draft", "new"]] },
@@ -1458,14 +1464,14 @@ describe("connector tools selected for harness runs", () => {
     ]);
     const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
     const mail = selected.plugins.find((plugin) => plugin.canonicalId === `connection:${OWNER_CONNECTION_ID}`);
-    expect(mail?.systemMessage?.includes("To reply, pass message with kind=reply")).toBe(capabilities.includes("gmail.read"));
+    expect(mail?.systemMessage?.includes("Reply tools take body and either an exact known messageId or a Gmail query")).toBe(capabilities.includes("gmail.read"));
     const examples = workedExampleCalls(mail?.systemMessage ?? "")
-      .filter((call) => /google_gmail_(?:send|create_draft)$/u.test(call.wireName));
+      .filter((call) => /google_gmail_(?:send|create_draft|reply|create_reply_draft)$/u.test(call.wireName));
     expect(examples.map((call) => [call.wireName, call.arguments])).toMatchObject(
-      expected.map(([wireName, kind]) => [wireName, { message: { kind } }]),
+      expected.map(([wireName, intent]) => [wireName, intent === "reply" ? { messageId: "18f0a2c4d5e6f702", body: "Thank you, Dana." } : { to: ["dana@example.com"], subject: "Renewal", body: "Hello Dana." }]),
     );
     for (const call of examples) {
-      const name = call.wireName.endsWith("create_draft") ? "gmail.create_draft" : "gmail.send";
+      const name = call.wireName.replace("google_gmail_", "gmail.");
       const tool = mail?.tools.find((candidate) => candidate.definition.name === name);
       expect(tool?.validateInput?.(call.arguments)).toBeNull();
     }
