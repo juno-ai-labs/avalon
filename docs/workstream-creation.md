@@ -467,6 +467,10 @@ see
 
 ## Testing
 
+- `apps/api/test-workers/conversation-creation.test.ts` checks that a Channel
+  created with no requested participants still lists its creator in its boot
+  snapshot, alongside the provisional directory and viewer rows. Mutation proof
+  drops the creator from the initial roster.
 - `apps/api/test-workers/space-creation.test.ts` —
   `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/space-creation.test.ts`.
   On real workerd: the coordinator makes exactly one WorkspaceDO call once
