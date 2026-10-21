@@ -241,6 +241,24 @@ describe('realtime dictation transcript', () => {
     expect(meterLevel(1)).toBe(1);
   });
 
+  it('clears an acknowledged failure and still reports a later failed recording', async () => {
+    installMediaDevices(vi.fn(async () => mediaStream()));
+    const { result } = renderHook(() => useRealtimeDictation({
+      prefetchTranscriptionSocketTicket: vi.fn(),
+      getTranscriptionSocketTicket: async () => { throw new Error('Dictation is unavailable.'); },
+    }, vi.fn()));
+
+    await act(async () => result.current.start());
+    expect(result.current.error).toBe('Dictation is unavailable.');
+    act(() => result.current.clearError());
+    expect(result.current.error).toBeUndefined();
+    expect(result.current.state).toBe('idle');
+
+    await act(async () => result.current.start());
+    expect(result.current.error).toBe('Dictation is unavailable.');
+    expect(result.current.state).toBe('error');
+  });
+
   it('reports a meter level for each captured chunk and zero once capture pauses', async () => {
     installMediaDevices(vi.fn(async () => mediaStream()));
     const audio = installAudioGraph();
@@ -253,6 +271,8 @@ describe('realtime dictation transcript', () => {
 
     act(() => audio.emitAudio(new Uint8Array([1, 2]).buffer, 0.1));
     expect(onLevel.mock.lastCall?.[0]).toBeCloseTo(0.6);
+    act(() => result.current.clearError());
+    expect(result.current.state).toBe('listening');
     await act(async () => result.current.pause());
     expect(onLevel).toHaveBeenLastCalledWith(0);
     unmount();
@@ -311,6 +331,7 @@ describe('realtime dictation transcript', () => {
     })));
     await act(async () => start);
     act(() => audio.emitAudio(new Uint8Array([7, 8]).buffer));
+    await waitFor(() => expect(socket.send).toHaveBeenCalledTimes(2));
     expect(socket.send.mock.calls.map(([value]) => JSON.parse(String(value)).audio)).toEqual([
       btoa(String.fromCharCode(1, 2, 3, 4, 5, 6)), btoa(String.fromCharCode(7, 8)),
     ]);
@@ -392,6 +413,71 @@ describe('realtime dictation transcript', () => {
     })));
     await act(async () => stop);
     expect(result.current.state).toBe('idle');
+  });
+
+  it.each(['stop', 'commit'] as const)('drains a live audio burst before %s sends its commit', async (action) => {
+    vi.useFakeTimers();
+    installMediaDevices(vi.fn(async () => mediaStream()));
+    const audio = installAudioGraph({ flushBuffer: new Uint8Array([254, 255]).buffer });
+    const { result, unmount } = renderHook(() => useRealtimeDictation({
+      prefetchTranscriptionSocketTicket: vi.fn(),
+      getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/live-burst'),
+    }, vi.fn()));
+    let start!: Promise<void>;
+    await act(async () => { start = result.current.start(); });
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'session.updated' }) })));
+    await act(async () => start);
+    for (let index = 0; index < 40; index += 1) {
+      act(() => audio.emitAudio(new Uint8Array(4_800).fill(index).buffer));
+    }
+    let completion!: Promise<void | string>;
+    await act(async () => { completion = result.current[action](); });
+    expect(socket.send).toHaveBeenCalledTimes(1);
+    await act(async () => vi.advanceTimersByTimeAsync(100));
+    const events = socket.send.mock.calls.map(([raw]) => JSON.parse(String(raw)) as { type: string; audio?: string });
+    expect(events.map((event) => event.type)).toEqual([
+      'input_audio_buffer.append', 'input_audio_buffer.append', 'input_audio_buffer.commit',
+    ]);
+    expect(events.flatMap((event) => event.audio ? [...atob(event.audio)].map((byte) => byte.charCodeAt(0)) : []))
+      .toEqual([
+        ...Array.from({ length: 192_000 }, (_, index) => Math.floor(index / 4_800)),
+        ...(action === 'stop' ? [254, 255] : []),
+      ]);
+    act(() => socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ type: 'conversation.item.input_audio_transcription.completed', transcript: 'Complete.' }),
+    })));
+    await act(async () => completion);
+    expect(result.current.state).toBe(action === 'stop' ? 'idle' : 'listening');
+    unmount();
+  });
+
+  it('uses the existing finalization deadline when stopped audio cannot drain', async () => {
+    vi.useFakeTimers();
+    installMediaDevices(vi.fn(async () => mediaStream()));
+    const audio = installAudioGraph();
+    const { result } = renderHook(() => useRealtimeDictation({
+      prefetchTranscriptionSocketTicket: vi.fn(),
+      getTranscriptionSocketTicket: async () => socketTicket('wss://example.test/stalled-final-drain'),
+    }, vi.fn()));
+    let start!: Promise<void>;
+    await act(async () => { start = result.current.start(); });
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'session.updated' }) })));
+    await act(async () => start);
+    act(() => {
+      audio.emitAudio(new Uint8Array([1, 2]).buffer);
+      audio.emitAudio(new Uint8Array([3, 4]).buffer);
+    });
+    socket.bufferedAmount = 4 * 1_024 * 1_024;
+    let stop!: Promise<void>;
+    await act(async () => { stop = result.current.stop(); });
+    const rejection = expect(stop).rejects.toThrow('The network could not send the remaining recording audio.');
+    await act(async () => vi.advanceTimersByTimeAsync(60_000));
+    await rejection;
+    expect(result.current.state).toBe('error');
+    expect(socket.send.mock.calls.map(([raw]) => JSON.parse(String(raw)).type)).toEqual(['input_audio_buffer.append']);
+    expect(socket.readyState).toBe(FakeWebSocket.CLOSED);
   });
 
   it('rejects Stop and releases captured inputs if the provider closes during startup', async () => {
@@ -836,7 +922,7 @@ describe('realtime dictation transcript', () => {
     expect(result.current.state).toBe('listening');
 
     let commit!: Promise<string>;
-    act(() => { commit = result.current.commit(); });
+    await act(async () => { commit = result.current.commit(); });
     expect(FakeWebSocket.instances[0]!.send).toHaveBeenCalledWith(JSON.stringify({ type: 'input_audio_buffer.commit' }));
     const audioWhileCommitIsPending = new ArrayBuffer(4_800);
     act(() => audioGraph.emitAudio(audioWhileCommitIsPending));
