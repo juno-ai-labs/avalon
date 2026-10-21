@@ -15,6 +15,8 @@ import { NavigationSidebar } from './navigation-sidebar';
 
 const api = vi.hoisted(() => ({
   createSpace: vi.fn(),
+  resolveConversation: vi.fn(),
+  archiveWorkstream: vi.fn(),
   getMyThreads: vi.fn(),
   getActivity: vi.fn(),
   markActivitySeen: vi.fn(async () => undefined),
@@ -1286,6 +1288,78 @@ describe('the navigation sidebar', () => {
       api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [plan] });
       renderSidebar(seedThreads);
       expect(await screen.findByRole('link', { name: /Q4 plan/u })).toHaveAttribute('href', `/channels/outbound/threads/${plan.id}`);
+    });
+
+    it('resolves the right-clicked thread without leaving a different open thread', async () => {
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [plan], pinned: [] });
+      api.resolveConversation.mockResolvedValue(undefined);
+      renderSidebar(seedThreads, 0, { route: '/workstreams/another-thread' });
+      fireEvent.contextMenu(await screen.findByRole('link', { name: /Q4 plan/u }));
+      expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Pin', 'Resolve thread', 'Archive thread']);
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Resolve thread' }));
+      await waitFor(() => expect(api.resolveConversation).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000020', '0'));
+      expect(screen.getByTestId('location')).toHaveTextContent('/workstreams/another-thread');
+      expect(api.archiveWorkstream).not.toHaveBeenCalled();
+    });
+
+    it('returns to the Channel after resolving the open thread', async () => {
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [plan], pinned: [] });
+      api.resolveConversation.mockResolvedValue(undefined);
+      renderSidebar(seedThreads, 0, { route: `/channels/outbound/threads/${plan.id}` });
+      fireEvent.contextMenu(await screen.findByRole('link', { name: /Q4 plan/u }));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Resolve thread' }));
+      await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/channels/outbound'));
+    });
+
+    it('confirms archive against the clicked title and leaves a different open thread in place', async () => {
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [plan], pinned: [] });
+      api.archiveWorkstream.mockResolvedValue({ ...plan, archivedAt: '2026-10-21T12:00:00.000Z' });
+      renderSidebar(seedThreads, 0, { route: '/workstreams/another-thread' });
+      fireEvent.contextMenu(await screen.findByRole('link', { name: /Q4 plan/u }));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Archive thread' }));
+      const dialog = await screen.findByRole('dialog', { name: 'Archive thread' });
+      expect(dialog).toHaveTextContent('Q4 plan leaves the sidebar for everyone in it');
+      expect(api.archiveWorkstream).not.toHaveBeenCalled();
+      // The directory can still return its older projection after the write.
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Archive' }));
+      await waitFor(() => expect(api.archiveWorkstream).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000020'));
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      expect(screen.getByTestId('location')).toHaveTextContent('/workstreams/another-thread');
+      await waitFor(() => expect(screen.queryByRole('link', { name: /Q4 plan/u })).not.toBeInTheDocument());
+    });
+
+    it('can cancel archive and shows failures against the selected thread', async () => {
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [plan], pinned: [] });
+      api.archiveWorkstream.mockRejectedValue(new Error('offline'));
+      renderSidebar(seedThreads);
+      fireEvent.contextMenu(await screen.findByRole('link', { name: /Q4 plan/u }));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Archive thread' }));
+      fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Cancel' }));
+      expect(api.archiveWorkstream).not.toHaveBeenCalled();
+      fireEvent.contextMenu(screen.getByRole('link', { name: /Q4 plan/u }));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Archive thread' }));
+      fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Archive' }));
+      expect(await screen.findByText('“Q4 plan” couldn’t be archived. Try again.')).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /Q4 plan/u, hidden: true })).toBeInTheDocument();
+    });
+
+    it.each([
+      ['resolved', { resolved: true }, ['Pin', 'Archive thread']],
+      ['pending', { pending: true as const }, ['Pin']],
+      ['breakout', { kind: 'breakout' as const, breakoutOf: { workstreamId: 'parent', substreamId: '0', title: 'Parent' } }, ['Pin']],
+    ])('offers appropriate actions for a %s row', async (_state, overrides, labels) => {
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [thread(plan.id, plan.title, overrides)] });
+      renderSidebar(seedThreads);
+      const list = within(await screen.findByRole('region', { name: 'All threads' }));
+      fireEvent.contextMenu(await list.findByRole('link'));
+      expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(labels);
+    });
+
+    it('omits archive for guests', async () => {
+      api.getMyThreads.mockResolvedValue({ nextCursor: null, items: [plan], pinned: [] });
+      renderSidebar(seedThreads, 0, { person: { ...workspace, currentUser: { ...workspace.currentUser, accessClass: 'guest' } } });
+      fireEvent.contextMenu(await screen.findByRole('link', { name: /Q4 plan/u }));
+      expect(screen.queryByRole('menuitem', { name: 'Archive thread' })).not.toBeInTheDocument();
     });
 
     it('starts the open measurement on a plain click, and not for the open thread clicked again', async () => {

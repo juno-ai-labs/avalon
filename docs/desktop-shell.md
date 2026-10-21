@@ -172,7 +172,13 @@ A confirmed local thread archive removes its navigation rows before the socket
 evicts the temporary archive marker. Visibility tombstones refresh the list:
 membership loss alone does not imply that its breakouts were archived.
 Once the list loads, pins without a renderable row do not count or take a slot.
-Right-click pins or unpins. A row with a wake-up coming carries a clock whose
+Right-click pins or unpins. Thread rows also offer **Resolve thread** while
+unresolved, and members get a danger-styled **Archive thread**. These actions
+target the clicked thread, including from Pinned, without opening it first.
+Archive uses the thread header’s confirmation copy and removes the confirmed
+archive from cached thread pages while its directory projection catches up;
+resolving or archiving a different thread leaves the open conversation in
+place. Breakout rows keep their pin controls. A row with a wake-up coming carries a clock whose
 tooltip says when and what. A thread Rally is still naming shows a shimmer in
 place of its title (`useNamingSkeleton`). Hovering a row for a second warms
 its thread's socket, and a plain click starts the open-latency measurement
