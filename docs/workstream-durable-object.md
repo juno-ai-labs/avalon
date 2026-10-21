@@ -214,21 +214,23 @@ and provider-boundary verification are the deliberate full-history reads. The
 suffix chain is local to the object/harness call and is not exposed through the
 transcript RPC or JSON serialization.
 
-Before assistant or tool recovery, `readResumableBindProjection` checks a
-historical turn ID against the current loop. A relocated accepted turn may keep
-its old ID only when the exact head matches a materialized local reservation and
-assistant transcript turn, all tool results are settled, no reservation is still
-active, and the next model-turn counter and transcript slot are available.
-Before interrupted-assistant recovery only, the host also permits exactly the
-next turn reserved under the **current** loop ID by the same execution, at its
-current or an earlier epoch. It must still be `reserved`, with no streamed or
-materialized output and no other active reservation. This covers a crash between
-host reservation and the Bind transition; the ordinary recovery settles that
-turn before the harness runs. It does not admit a migrated unfinished turn.
-The harness repeats this proof through its host port before accepting the
-historical ID. Failure cleanup uses the same guarded read before deriving tool
-receipt IDs. This path writes nothing: the next ordinary reservation advances the
+Before resuming a historical last-reservation ID, the harness calls the local
+`validateHistoricalAssistantReservation` host port. It verifies the exact head,
+materialized reservation, matching transcript turn, settled tool results, lack
+of active reservations, and availability of the next model-turn counter and
+transcript slot. Accepted reservations match assistant transcript turns; failed
+and stopped reservations match materialized system status turns with an error
+outcome. Validation writes nothing: the next ordinary reservation advances the
 head using the current loop ID and leaves historical references intact.
+
+Host recovery precedes that proof. `pendingBindToolBatch` derives tool-receipt
+and elicitation coordinates from the immutable reservation turn ID, including
+after relocation. This lets ordinary recovery settle unfinished work from its
+actual receipts and preserve withheld human answers. Refusing recovery merely
+because the ID is historical would strand the loop in `executing`, since terminal
+release requires the batch to be settled. The existing interrupted-assistant
+settlement also handles a crash between host reservation and its Bind transition;
+no relocation-specific crash-recovery branch is needed.
 
 Terminal side effects use an exact internal turn lookup against
 `canonical_conversation_turn_details`. They do not page through recent messages
@@ -1840,30 +1842,26 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 
 ## Changelog
 
-### 2026-10-20 — Validate relocated history before recovery derives receipt IDs
+### 2026-10-20 — Recover relocated history using immutable turn identities
 
-**What changed:** Resume and failure-cleanup tool recovery validate historical
-assistant reservations against the owning object's current head, reservation,
-transcript, and loop counters. The harness receives the same local validation
-port. Only fully accepted, settled history can continue under a new loop ID.
+**What changed:** Historical accepted, failed, and stopped assistant reservations
+can resume after the owning object validates their current head, materialization,
+transcript relationship, and counters. Tool recovery looks up receipts and
+elicitations under the original reservation turn ID.
 
 **Why:** Engineering MCP's manual breakout promotion copied a completed turn
 under a new loop while preserving its historical turn ID. New requests failed
 the harness's format check even though the reservation and transcript agreed.
 
-**Considered and rejected:** Rewriting immutable historical references or merely
-changing the head's JSON. Unconditionally accepting mismatches also endangers
-unfinished tools: recovery derives their receipt IDs from the current loop.
+**Considered and rejected:** Rewriting only the head's JSON would detach it from
+its historical references. Unconditional acceptance would skip the relational
+proof. Rejecting unfinished historical batches would prevent terminal release;
+looking up their receipts under the new loop would incorrectly classify existing
+writes and questions as never started.
 
-**Consequences:** No migration or production data rewrite is needed. The next
-ordinary reservation replaces the pointer. The transcript-storage tests cover
-the relational proof and refusal cases against real migrations; harness tests
-cover provider execution only after validation and allocation in the new loop.
-The real-workerd transcript runtime test also proves that tool recovery rejects
-a relocated unfinished batch before synthesizing a missing tool result.
-The storage suite also covers interruption after the first new reservation and
-takeover at a newer execution epoch, while refusing streaming, foreign-execution,
-and future-epoch reservations.
+**Consequences:** No migration or production data rewrite is needed. Existing
+recovery settles interruptions using the original receipt identities, and the
+next ordinary reservation replaces the head pointer under the current loop.
 
 ### 2026-10-19 — Connector event people occupy ordered rows
 

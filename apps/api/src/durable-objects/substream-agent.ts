@@ -4894,7 +4894,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
      */
     lease?: AttemptLease,
   ): Promise<"recovered" | "ambiguous" | "waiting_for_input" | null> {
-    const projection = this.transcript.readResumableBindProjection(input.loopId);
+    const projection = this.transcript.readBindProjection(input.loopId);
     if (!projection) return null;
     const batch = pendingBindToolBatch(projection);
     if (!batch) return null;
@@ -5184,7 +5184,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const loop = this.loop.loop();
     const reservation = this.loop.activeReservation();
     if (!reservation) return null;
-    this.transcript.readResumableBindProjection(input.loopId, true);
     if (!execution || !loop
       || loop.loop_id !== input.loopId
       || loop.status !== "executing"
