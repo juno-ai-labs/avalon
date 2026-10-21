@@ -8,6 +8,7 @@ import {
   IconCornerDownRight,
   IconCornerUpLeft,
   IconDots,
+  IconFiles,
   IconHexagons,
   IconLink,
   IconPencil,
@@ -95,6 +96,7 @@ const BREAKOUT_PREVIEW_ROWS = 6;
 const PEOPLE_SUGGESTIONS = 5;
 
 const PEOPLE_VIEW: TitleMenuView = { key: 'people', label: 'People' };
+const ARTIFACTS_VIEW: TitleMenuView = { key: 'artifacts', label: 'Artifacts' };
 const SIDEKICKS_VIEW: TitleMenuView = { key: 'sidekicks', label: 'Sidekicks' };
 const BREAKOUTS_VIEW: TitleMenuView = { key: 'breakouts', label: 'Breakouts' };
 const MEMORY_VIEW: TitleMenuView = { key: 'memory', label: 'Memory' };
@@ -541,7 +543,7 @@ function peopleMeta(count: number, scope: 'personal' | 'workspace' | undefined, 
 /**
  * The Channel's title-pill menu. Its root is the things most often done to
  * it as tiles, and one row each for its people,
- * Sidekicks, Breakouts and Memory; each row and **More** opens a level in place,
+ * Artifacts, Sidekicks, Breakouts and Memory; each row and **More** opens a level in place,
  * which the pill names as a breadcrumb. It replaces the Channel sidebar, so
  * between its levels it carries all of that sidebar's sections.
  */
@@ -565,6 +567,7 @@ export function ChannelMenu({
   pinned,
   presentUserIds,
   renderAge,
+  resourcesPending = false,
   sidekickFailure,
   sidekicks,
   workstream,
@@ -592,6 +595,8 @@ export function ChannelMenu({
   pinned?: { on: boolean; onChange: (next: boolean) => void } | undefined;
   presentUserIds: readonly string[];
   renderAge?: (breakout: BreakoutMark) => ReactNode;
+  /** Resources are not known until a conversation snapshot or rail answers. */
+  resourcesPending?: boolean;
   sidekickFailure?: SidekickSectionFailure | undefined;
   sidekicks?: SidekickRow[] | undefined;
   workstream: SidebarPresentation;
@@ -602,6 +607,12 @@ export function ChannelMenu({
   const otherResources = workstream.resources.filter((resource) => resource.direction !== 'artifact');
   if (nav.view?.key === 'people') {
     return <PeopleView members={workstream.participants} noun="thread" people={people} presentUserIds={presentUserIds} />;
+  }
+  if (nav.view?.key === 'artifacts') {
+    if (resourcesPending) return <p className="title-menu-empty">Loading artifacts…</p>;
+    return artifacts.length > 0
+      ? <ResourceList onOpen={onOpenArtifact} resources={artifacts} />
+      : <p className="title-menu-empty">No artifacts yet.</p>;
   }
   if (nav.view?.key === 'sidekicks') {
     return <SidekicksView addSidekick={addSidekick} failure={sidekickFailure} items={sidekicks} onMenuOpen={onSidekickMenuOpen} onOpen={onOpenSidekick} onRefresh={onRefreshSidekicks} />;
@@ -617,7 +628,6 @@ export function ChannelMenu({
       <PublicSwitch actions={actions} />
       {onImportUpdates && <TitleMenuItem icon={<IconCloudDownload aria-hidden="true" size={16} stroke={1.8} />} onSelect={onImportUpdates}>Import updates</TitleMenuItem>}
       {extraActions}
-      <ResourceList label="Artifacts" onOpen={onOpenArtifact} resources={artifacts} />
       {onOpenResource && <ResourceList label="Resources" onOpen={onOpenResource} resources={otherResources} />}
       {actions?.onArchive && <>
         <TitleMenuSeparator />
@@ -635,6 +645,7 @@ export function ChannelMenu({
     <MergeRow actions={actions} />
     <ResolveRow actions={actions} noun="Thread" target={target} />
     <LevelRow icon={<IconUsers aria-hidden="true" size={17} stroke={1.7} />} label="People" meta={peopleMeta(workstream.participants.length, workstream.scope, participantsPending)} view={PEOPLE_VIEW} />
+    <LevelRow icon={<IconFiles aria-hidden="true" size={17} stroke={1.7} />} label="Artifacts" meta={resourcesPending ? undefined : artifacts.length} view={ARTIFACTS_VIEW} />
     <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={countMeta(sidekicks)} view={SIDEKICKS_VIEW} />
     <LevelRow icon={<IconCornerDownRight aria-hidden="true" size={17} stroke={1.7} />} label="Breakouts" meta={breakouts?.length} view={BREAKOUTS_VIEW} />
     <MemoryLevelRow memory={memory} />
@@ -807,15 +818,15 @@ export function BreakoutMenu({
   </>;
 }
 
-/** A headed list of a Channel's resources in **More**; nothing when there are none. */
+/** A conversation's resource rows, optionally headed; nothing when there are none. */
 function ResourceList({ label, onOpen, resources }: {
-  label: string;
+  label?: string;
   onOpen: ((id: string, returnFocus: HTMLElement) => void) | undefined;
   resources: SidebarPresentation['resources'];
 }): React.JSX.Element | null {
   if (resources.length === 0) return null;
   return <>
-    <div className="title-menu-section-heading">{label}</div>
+    {label && <div className="title-menu-section-heading">{label}</div>}
     {resources.map((resource) => <DropdownMenu.Item
       className="menu-item title-menu-item"
       disabled={!onOpen}

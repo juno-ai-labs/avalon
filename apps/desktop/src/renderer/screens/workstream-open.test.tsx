@@ -906,8 +906,8 @@ describe('socket-first channel open', () => {
 
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Thread menu: Recovered channel' }), { button: 0, ctrlKey: false });
     expect(await screen.findByRole('menuitem', { name: /^People\s*1/u })).toBeInTheDocument();
-    // The Channel's artifacts are in More, and they are the Channel's own.
-    fireEvent.click(screen.getByRole('menuitem', { name: 'More' }));
+    // The thread's Artifacts level keeps its own inventory above an open Breakout.
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Artifacts\s*1/u }));
     expect(await screen.findByRole('menuitem', { name: 'Parent artifact' })).toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: 'Child artifact' })).not.toBeInTheDocument();
     expect(retainedSocket).toHaveBeenCalledWith(api, workstreamId, true, 'workstream', '0');
