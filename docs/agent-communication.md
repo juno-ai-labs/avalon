@@ -225,20 +225,29 @@ list tells the agent to create one here with `scope=workstream` and send setup
 instructions to its authoring agent. A conversation acting for no thread instead
 receives guidance to set up from the intended thread.
 
+An explicitly named edit uses `find_sidekick`, an exact, case-insensitive name
+lookup over the same authorized directory and contact ownership rule. It can
+resolve personal and organization Sidekicks without adding them to setup
+candidates; another thread's Sidekick remains excluded. Multiple matches ask
+which target the person means, and no match reports the missing target rather
+than creating a replacement. The lookup grants no new mutation authority.
+
 Reusable procedures are discovered separately in the Skills catalog and loaded
 with `load_skill`; loading their instructions does not message an authoring
 agent. A Sidekick's own conversation acts for the thread that owns it. Setup
 discovery also returns current `status`, `nextRunAt`, and `lastRunAt`, so an agent
 can distinguish a saved draft, an active Sidekick, and a scheduled or previously
 executed run. A sent setup message or an old memory fact establishes none of
-these.
+these. The authorized directory reads `lastRunAt` from the latest admitted run,
+using the same timestamp semantics as Sidekick details; this is evidence of a
+recorded run, not successful completion.
 
 An access or ownership refusal carries structured recovery through the existing
 failure `reason`, `retryable`, and `available` fields. The rejected message was
 not delivered. For thread-local setup, the agent refreshes discovery and selects
 an editable, suitable Sidekick this thread owns, or creates one here. An
-explicit request to change a named Sidekick keeps that target and reports its
-refusal. A refused message is not evidence of a connector or scheduling blocker;
+explicit request to change a named Sidekick uses the name lookup and keeps
+that target; a refused or unavailable target is reported without replacement. A refused message is not evidence of a connector or scheduling blocker;
 only the authoring submission's actual refusal establishes an activation blocker.
 After verifying current state, the agent corrects or retracts superseded blocker
 or pending-status memory while preserving the user's preferences.
@@ -335,11 +344,14 @@ grant-only contact. Complete desktop behavior remains an implementation gate.
 ### 2026-10-21 — Setup discovery stays in its thread and recovers against current state
 
 **What changed:** Setup discovery returns only authorized candidates owned by
-this thread, with explicit creation guidance when empty. Reusable instructions
+this thread, with explicit creation guidance when empty. Named edits use a
+separate exact-name lookup for accessible personal and organization Sidekicks.
+Recovery detail lives in the result or refusal rather than repeating the full
+procedure in the always-loaded prompt. Reusable instructions
 stay in the separate Skills catalog, with skill terminology for names, loaded
 instructions and recommendation tools. Sidekick contact refusals give structured
 rediscovery and creation guidance. The directory returns lifecycle status and next/last run
-times, and the agents plugin requires those observations before claiming
+times (with last-run admission read from actual run records), and the agents plugin requires those observations before claiming
 activation or execution.
 
 **Why:** The ownership guard stopped a later update to a previously misselected

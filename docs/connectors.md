@@ -550,8 +550,20 @@ follow the granted polling streams: Gmail read, Calendar read, and Drive read
 Sidekick publication and principal rebinding resolve either view to the same
 connection row. Previously saved combined IDs remain binding aliases and preload
 both views; old combined activation hints expand the same way. These aliases are
-not catalog entries. Existing credentials, ownership, Organization/personal scope,
+not catalog entries. A retained bundle's suffixed binding and activation aliases
+also survive when reauthorization removes the other bundle; a removed bundle
+cannot preload the surviving family's tools. Default selection and stored
+activation hints translate only to currently granted views. Existing credentials,
+ownership, Organization/personal scope,
 and tool execution authorization retain their existing meaning.
+
+Completed receipts also retain verified identity compatibility across a split,
+merge to one granted family, or expansion from one family. The loader reconstructs
+prior single-family and combined tool surfaces under their original canonical
+IDs. Replay still requires the same connection, operation, capability, execution
+mode, retry policy, input hash and a matching surface hash; a bare ID alias never
+bypasses these checks. Single-family receipt labels retain a renamed account's
+name, and pre-split receipts can infer a family from their recorded capability.
 
 The current Google tools are:
 
@@ -1629,8 +1641,8 @@ Workspace-principal automation runs retain their separate lifecycle authority.
 
 **What changed:** Chat and Sidekick catalogs split a credential with mail/calendar
 and file grants into independently loadable plugins. Publication binds both IDs
-to the original credential, including old saved combined-ID aliases, while
-resource discovery and access checks select the matching bundle.
+to the original credential, including saved combined and surviving-bundle aliases
+across grant changes, while resource discovery and access checks select the matching bundle.
 
 **Why:** One credential previously produced a Google Workspace plugin that
 collapsed the two products and made their tool and connection choices ambiguous.

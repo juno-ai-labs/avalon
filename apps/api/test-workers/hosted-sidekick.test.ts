@@ -820,9 +820,11 @@ describe("a hosted Sidekick", () => {
   });
 
   it.each([
-    ["plugin_google_mail_calendar", "plugin_google_drive"],
-    ["plugin_google"],
-  ])("binds Google bundle IDs %j to their shared credential", async (...pluginIds) => {
+    { pluginIds: ["plugin_google_mail_calendar", "plugin_google_drive"], retained: ["gmail.read", "calendar.read", "drive.read", "docs.read", "sheets.read"] },
+    { pluginIds: ["plugin_google"], retained: ["gmail.read", "calendar.read", "drive.read", "docs.read", "sheets.read"] },
+    { pluginIds: ["plugin_google_mail_calendar"], retained: ["gmail.read", "calendar.read"] },
+    { pluginIds: ["plugin_google_drive"], retained: ["drive.read", "docs.read", "sheets.read"] },
+  ])("binds Google bundle IDs $pluginIds to their shared credential across grant changes", async ({ pluginIds, retained }) => {
     await runInDurableObject(workspaceStub(), (_instance, state) => {
       state.storage.sql.exec(
         `INSERT INTO connector_connections
@@ -836,10 +838,10 @@ describe("a hosted Sidekick", () => {
       );
     });
     await createDraft();
-    await submit({
-      ...DEFINITION,
+    const definition = { ...DEFINITION,
       recommendedPlugins: pluginIds.map((pluginId) => ({ pluginId, recommendedTools: [], reason: "Needed" })),
-    });
+    };
+    await submit(definition);
     const detail = await apply();
     expect(detail).toMatchObject({
       lifecycle: "active",
@@ -847,6 +849,14 @@ describe("a hosted Sidekick", () => {
     });
     expect(JSON.parse((await automationRow()).connector_bindings_json ?? "null"))
       .toEqual(Object.fromEntries(pluginIds.map((pluginId) => [pluginId, SLACK_CONNECTION_ID])));
+    await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec(
+      `UPDATE connector_connections SET granted_scopes_json = ? WHERE id = ?`, JSON.stringify(retained), SLACK_CONNECTION_ID,
+    ));
+    await workspaceStub().sidekickSaveDefinition({ ...addressed(), draft: definition, evaluatorRules: null,
+      submittedByRunId: null, actor: actor() });
+    expect(await workspaceStub().sidekickReadDetail({ ...addressed(), actor: actor() })).toMatchObject({
+      acceptedDefinitionRevision: 2, connectorBindings: Object.fromEntries(pluginIds.map((id) => [id, SLACK_CONNECTION_ID])),
+    });
     const replacementId = "00000000-0000-7000-8000-00000000ad06";
     await runInDurableObject(workspaceStub(), (_instance, state) => {
       state.storage.sql.exec(`UPDATE connector_connections SET status = 'disabled' WHERE id = ?`, SLACK_CONNECTION_ID);

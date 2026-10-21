@@ -280,28 +280,41 @@ export class AgentCommunicationService {
     return member?.access_class === "guest";
   }
 
-  /** Called by the host executor after Bind's per-command authority check, so membership is not read again. */
-  async sidekicks() {
-    if (this.input.executionPrincipal.type !== "user") return { sidekicks: [] };
+  /** Already-authorized directory plus the existing contact ownership rule. */
+  private async editableSidekicks() {
+    if (this.input.executionPrincipal.type !== "user") return [];
     const workspace = await this.workspace();
     const listed = await workspace.listSidekickDirectoryForAuthorizedMember({ workspaceId: this.input.workspaceId,
       userId: this.input.executionPrincipal.userId });
-    // Setup candidates, not the person's whole directory. Reuse the existing
-    // access filter and ownership rule; mutations still authorize themselves.
     const thread = await this.threadPreparation.get();
-    const sidekicks = listed.items
-      .filter((sidekick) => sidekickOwnership(sidekick.owningWorkstreamId, thread) === "this_thread")
-      // A Sidekick's own conversation does not message itself.
+    return listed.items
+      .filter((sidekick) => sidekickOwnership(sidekick.owningWorkstreamId, thread) !== "another_thread")
       .filter((sidekick) => !(this.input.parentKind === "automation" && sidekick.id === this.input.parentId))
       .map((sidekick) => ({
-          sidekickId: sidekick.id, name: sidekick.name, description: sidekick.description,
-          scope: sidekick.scope, ownedByThisWorkstream: true, canEdit: true,
-          status: sidekick.status, nextRunAt: sidekick.nextRunAt, lastRunAt: sidekick.lastRunAt,
-          agentId: agentIdForAddress({ parentKind: "automation", parentId: sidekick.id, substreamId: asSubstreamId("0") }),
+        sidekickId: sidekick.id, name: sidekick.name, description: sidekick.description,
+        scope: sidekick.scope, ownedByThisWorkstream: sidekickOwnership(sidekick.owningWorkstreamId, thread) === "this_thread",
+        canEdit: true, status: sidekick.status, nextRunAt: sidekick.nextRunAt, lastRunAt: sidekick.lastRunAt,
+        agentId: agentIdForAddress({ parentKind: "automation", parentId: sidekick.id, substreamId: asSubstreamId("0") }),
       }));
+  }
+
+  /** Setup never falls back to a personal, organization or foreign-thread Sidekick. */
+  async sidekicks() {
+    if (this.input.executionPrincipal.type !== "user") return { sidekicks: [] };
+    const sidekicks = (await this.editableSidekicks()).filter((sidekick) => sidekick.ownedByThisWorkstream);
+    const thread = await this.threadPreparation.get();
     return { sidekicks, ...(sidekicks.length ? {} : { next: thread === null
       ? "This conversation has no owning thread. Set up a thread-owned Sidekick from the intended thread."
       : "This thread has no editable Sidekicks. Create one here with create_sidekick (scope=workstream), then send setup instructions to its authoring agent." }) };
+  }
+
+  /** Resolve only the exact name the person requested; this is not setup discovery. */
+  async findSidekick(name: string) {
+    const requested = name.trim().toLowerCase();
+    const sidekicks = (await this.editableSidekicks()).filter((sidekick) => sidekick.name.trim().toLowerCase() === requested);
+    return { sidekicks, ...(sidekicks.length === 1 ? {} : { next: sidekicks.length
+      ? "Several editable Sidekicks have that exact name. Ask which one the person means before editing."
+      : "No editable Sidekick with that exact name is available here. Report that the named target could not be reached; do not silently create a replacement." }) };
   }
 
   /** The thread this conversation acts for: itself, or the thread that owns its Sidekick. */
@@ -407,7 +420,7 @@ class AgentCommunicationError extends Error {
       agent_destination_unavailable: "List teammates again and choose an available agentId. This recipient is unavailable.",
       agent_destination_mismatch: "Copy the exact agentId from creation or discovery. The supplied ID does not match the recipient.",
       sidekick_contact_forbidden: "Choose a Sidekick you can access. This Sidekick is unavailable to this execution.",
-      sidekick_owned_by_another_thread: "This Sidekick belongs to another thread, so only that thread can change it. The message was not delivered; refresh Sidekick discovery before recovering the task.",
+      sidekick_owned_by_another_thread: "This Sidekick belongs to another thread, so only that thread can change it. The message was not delivered.",
       sidekick_contact_user_unavailable: "Ask your coordinator to contact the Sidekick. This execution has no user identity for Sidekick access.",
       sidekick_author_unavailable: "Ask your coordinator to create the Sidekick. This execution has no user identity for creation.",
       sidekick_owning_workstream_unavailable: "Choose personal or workspace scope if appropriate. This conversation has no owning workstream.",
@@ -422,9 +435,9 @@ class AgentCommunicationError extends Error {
     this.name = "AgentCommunicationError";
     if (code === "sidekick_contact_forbidden" || code === "sidekick_owned_by_another_thread") {
       this.details = {
-        reason: "This message was not delivered. Refresh sidekicks_list. For setup in this thread, choose a suitable Sidekick with ownedByThisWorkstream=true and canEdit=true, or use create_sidekick with scope=workstream if none fits. If the user explicitly named this Sidekick, report its refusal instead of silently replacing it. This refusal does not establish a connector or scheduling blocker. Verify current status and nextRunAt before reporting activation.",
+        reason: "This message was not delivered. For setup here, refresh sidekicks_list. For an explicitly named target, use find_sidekick or report its refusal without replacing it. This refusal does not establish a connector or scheduling blocker.",
         retryable: false,
-        available: ["sidekicks_list", "create_sidekick"],
+        available: ["sidekicks_list", "find_sidekick", "create_sidekick"],
       };
     }
   }

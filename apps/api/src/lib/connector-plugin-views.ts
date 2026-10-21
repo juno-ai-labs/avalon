@@ -10,6 +10,15 @@ export interface ConnectorPluginView {
   googleBundle?: GooglePluginBundle;
 }
 
+function googleBundles(grantedScopes: readonly string[]) {
+  return [
+    { key: "mail_calendar" as const, prefixes: ConnectorConnectionCardCatalog["google-mail-calendar"].capabilityPrefixes },
+    { key: "drive" as const, prefixes: ConnectorConnectionCardCatalog["google-drive"].capabilityPrefixes },
+  ].map(({ key, prefixes }) => ({ key, grantedScopes: grantedScopes.filter((scope) =>
+    prefixes.some((prefix) => scope.startsWith(prefix))) }))
+    .filter((bundle) => bundle.grantedScopes.length > 0);
+}
+
 export function connectorPluginViews(
   connectorType: string,
   modelPluginId: string,
@@ -18,12 +27,7 @@ export function connectorPluginViews(
   if (connectorType !== "google") {
     return [{ modelPluginId, credentialModelPluginId: modelPluginId, grantedScopes: [...grantedScopes] }];
   }
-  const bundles = [
-    { key: "mail_calendar" as const, prefixes: ConnectorConnectionCardCatalog["google-mail-calendar"].capabilityPrefixes },
-    { key: "drive" as const, prefixes: ConnectorConnectionCardCatalog["google-drive"].capabilityPrefixes },
-  ].map(({ key, prefixes }) => ({ key, grantedScopes: grantedScopes.filter((scope) =>
-    prefixes.some((prefix) => scope.startsWith(prefix))) }))
-    .filter((bundle) => bundle.grantedScopes.length > 0);
+  const bundles = googleBundles(grantedScopes);
   return bundles.map(({ key, grantedScopes }) => ({
     modelPluginId: bundles.length > 1 ? `${modelPluginId}_${key}` : modelPluginId,
     credentialModelPluginId: modelPluginId,
@@ -36,14 +40,17 @@ export function connectorPluginCanonicalId(connectionId: string, googleBundle?: 
   return `connection:${connectionId}${googleBundle ? `:${googleBundle}` : ""}`;
 }
 
-/** Saved Sidekicks may still bind the credential's former combined ID. */
+/** Saved bindings retain both credential and bundle aliases as grants change. */
 export function connectorPluginBindingViews(
   connectorType: string,
   modelPluginId: string,
   grantedScopes: readonly string[],
 ): ConnectorPluginView[] {
-  const views = connectorPluginViews(connectorType, modelPluginId, grantedScopes);
-  return views.some((view) => view.googleBundle)
-    ? [...views, { modelPluginId, credentialModelPluginId: modelPluginId, grantedScopes: [...grantedScopes] }]
-    : views;
+  if (connectorType !== "google") return connectorPluginViews(connectorType, modelPluginId, grantedScopes);
+  const bundles = googleBundles(grantedScopes);
+  if (bundles.length === 0) return [];
+  return [...bundles.map(({ key, grantedScopes }) => ({
+    modelPluginId: `${modelPluginId}_${key}`, credentialModelPluginId: modelPluginId,
+    grantedScopes, googleBundle: key,
+  })), { modelPluginId, credentialModelPluginId: modelPluginId, grantedScopes: [...grantedScopes] }];
 }

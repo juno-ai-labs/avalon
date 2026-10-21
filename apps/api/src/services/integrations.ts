@@ -17,7 +17,7 @@ import { AgentMessageContentSchema, renderAgentMessage } from "./agent-message-c
 import { ObjectPortError } from "../runtime/object-port";
 import { dynamicConnectorCapability, stableConnectionWireName, stableWireToolName, validateDynamicConnectorTools } from "./connector-tool-inventory";
 import { ApiError } from "../lib/api-error";
-import { connectorPluginViews, connectorPluginCanonicalId, type GooglePluginBundle, type ConnectorPluginView } from "../lib/connector-plugin-views";
+import { connectorPluginViews, connectorPluginBindingViews, connectorPluginCanonicalId, type GooglePluginBundle, type ConnectorPluginView } from "../lib/connector-plugin-views";
 import { resolveSidekickSkills, sidekickSkillCatalog, sidekickSkillRef, recommendedSidekickRefs } from "./sidekick-skills";
 import type { SidekickSkillSnapshot } from "@rally/contracts";
 import { assertSafePublicUrl } from '../lib/public-web-url';
@@ -2901,9 +2901,21 @@ export async function runWorkstreamHarness(
   let streamStarted = false;
   let suppressCurrentStreamPreview = false;
   const harnessTools = await toolsPreparation.get();
+  // Translate stored credential/bundle IDs only to views still authorized by
+  // the current grants. A surviving bundle keeps its hints when the other is removed.
+  const activationTargets = new Map(harnessTools.plugins.map((plugin) => [plugin.canonicalId, new Set([plugin.canonicalId])]));
+  for (const frozen of harnessTools.frozenConnections.values()) {
+    for (const alias of connectorPluginBindingViews(frozen.connectorType,
+      frozen.credentialModelPluginId ?? frozen.modelPluginId, frozen.grantedScopes)) {
+      const id = connectorPluginCanonicalId(frozen.connectionId, alias.googleBundle);
+      const targets = activationTargets.get(id) ?? new Set<string>();
+      targets.add(frozen.pluginId);
+      activationTargets.set(id, targets);
+    }
+  }
   const priorHintsPreparation = new Preparation(() => loadAuthorizedActivationHints(
     createSchedulingObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
-    new Set(harnessTools.plugins.map((plugin) => plugin.canonicalId)),
+    new Set(activationTargets.keys()),
   ));
   priorHintsPreparation.get();
   let pendingCompletionReprompt: CompletionRepromptObservation | null = null;
@@ -3052,11 +3064,7 @@ export async function runWorkstreamHarness(
   const priorHints = await measureStartup("activation_hints_wait_ms", () => priorHintsPreparation.get());
   startupDurations.activation_hints_load_ms = priorHintsPreparation.elapsedMs ?? 0;
   const requestedActivations = [
-    ...priorHints.flatMap((pluginId) => {
-      const views = [...harnessTools.frozenConnections.values()].filter((frozen) =>
-        frozen.googleBundle && connectorPluginCanonicalId(frozen.connectionId) === pluginId);
-      return views.length > 0 ? views.map((view) => view.pluginId) : [pluginId];
-    }),
+    ...priorHints.flatMap((pluginId) => [...(activationTargets.get(pluginId) ?? [])]),
     ...harnessTools.plugins.filter((plugin) => plugin.preload).map((plugin) => plugin.canonicalId),
   ];
   let activationAuthorizationChecks = 0;
@@ -5366,6 +5374,7 @@ async function loadHarnessTools(
   pluginSurfaceHashes: Map<string, string>;
   legacyPluginSurfaceHashes: Map<string, string>;
   prePaginationSurfaceHashes: Map<string, string>;
+  compatiblePluginSurfaces: Map<string, CompatiblePluginSurface[]>;
   connectionByTool: Map<string, string>;
   idempotencyByTool: Map<string, "safe" | "provider_key" | "record_before_execute">;
   modeByTool: Map<string, "read" | "write">;
@@ -5485,6 +5494,8 @@ async function loadHarnessTools(
   const pluginSurfaceHashes = new Map<string, string>();
   const legacyPluginSurfaceHashes = new Map<string, string>();
   const prePaginationSurfaceHashes = new Map<string, string>();
+  const compatiblePluginSurfaces = new Map<string, CompatiblePluginSurface[]>();
+  const combinedGoogleTools = new Map<string, { pluginIds: string[]; definitions: ToolDefinition[]; tools: HarnessTool[] }>();
   const connectionByTool = new Map<string, string>();
   const idempotencyByTool = new Map<string, "safe" | "provider_key" | "record_before_execute">();
   const modeByTool = new Map<string, "read" | "write">(
@@ -5556,6 +5567,8 @@ async function loadHarnessTools(
     // tools this connection actually exposes; a second Google credential is
     // `google_2_…`, and an example naming the first one would not run.
     const shortWireName = stableConnectionWireName(row.credentialModelPluginId);
+    const defaultSelected = connectorPluginBindingViews(String(row.connector_type), row.credentialModelPluginId, grantedScopes)
+      .some((view) => defaultModelPluginIds.has(view.modelPluginId));
     const presentation = connectorPluginPresentation(String(row.connector_type), grantedScopes, shortWireName, {
       displayName: adapter.manifest.displayName,
       description: adapter.agentPlugin.description,
@@ -5658,6 +5671,12 @@ async function loadHarnessTools(
     for (const definition of staticDefinitions) {
       pluginTools.push(...addPluginTool(definition, true));
     }
+    if (frozen.googleBundle) {
+      const combined = combinedGoogleTools.get(connectionId) ?? { pluginIds: [], definitions: staticDefinitions, tools: [] };
+      combined.pluginIds.push(pluginId);
+      combined.tools.push(...pluginTools);
+      combinedGoogleTools.set(connectionId, combined);
+    }
     frozenConnections.set(pluginId, frozen);
     if (!dynamicCapability) {
       pluginSurfaceHashes.set(pluginId, await connectorToolSurfaceHash(pluginId, pluginTools));
@@ -5741,10 +5760,35 @@ async function loadHarnessTools(
       systemMessage: presentation.systemMessage,
       tools: pluginTools,
       ...(loadTools ? { loadTools } : {}),
-      preload: defaultModelPluginIds.has(modelPluginId) || defaultModelPluginIds.has(row.credentialModelPluginId) || attached.has(connectionId),
-      explicit: defaultModelPluginIds.has(modelPluginId) || defaultModelPluginIds.has(row.credentialModelPluginId) || attached.has(connectionId),
+      preload: defaultSelected || attached.has(connectionId),
+      explicit: defaultSelected || attached.has(connectionId),
     });
   }
+  // Verify former Google identities against their complete, unchanged tool
+  // surfaces. Identity aliases alone must never make a stale receipt replayable.
+  const rememberSurface = async (targets: string[], pluginId: string, tools: HarnessTool[]) => {
+    const [toolSurfaceHash, prePaginationSurfaceHash, legacyToolSurfaceHash] = await Promise.all([
+      connectorToolSurfaceHash(pluginId, tools),
+      connectorToolSurfaceHash(pluginId, priorPaginationTools(tools)),
+      connectorToolSurfaceHash(pluginId, tools, (name) => legacyConnectorCanonicalToolName("google", name) ?? name),
+    ]);
+    for (const target of targets) compatiblePluginSurfaces.set(target, [
+      ...(compatiblePluginSurfaces.get(target) ?? []), { pluginId, toolSurfaceHash, prePaginationSurfaceHash, legacyToolSurfaceHash },
+    ]);
+  };
+  await Promise.all([...frozenConnections.values()].filter((frozen) => frozen.connectorType === "google").flatMap((frozen) => {
+    const plugin = plugins.find((candidate) => candidate.canonicalId === frozen.pluginId)!;
+    return connectorPluginBindingViews("google", frozen.credentialModelPluginId ?? frozen.modelPluginId, frozen.grantedScopes)
+      .map((alias) => connectorPluginCanonicalId(frozen.connectionId, alias.googleBundle))
+      .filter((id) => id !== frozen.pluginId)
+      .map((id) => rememberSurface([frozen.pluginId], id, plugin.tools));
+  }));
+  await Promise.all([...combinedGoogleTools].map(([connectionId, combined]) => {
+    const order = new Map(combined.definitions.map((definition, index) => [definition.name, index]));
+    const rank = (tool: HarnessTool) => order.get(paginationSources.get(tool)?.definition.name ?? tool.definition.name)!;
+    const tools = combined.tools.sort((left, right) => rank(left) - rank(right));
+    return rememberSurface(combined.pluginIds, connectorPluginCanonicalId(connectionId), tools);
+  }));
   return {
     coreTools,
     corePlugins,
@@ -5764,6 +5808,7 @@ async function loadHarnessTools(
     pluginSurfaceHashes,
     legacyPluginSurfaceHashes,
     prePaginationSurfaceHashes,
+    compatiblePluginSurfaces,
     connectionByTool,
     idempotencyByTool,
     modeByTool,
@@ -5793,6 +5838,7 @@ function profileHarnessTools(corePlugins: HarnessPlugin[]): Awaited<ReturnType<t
     pluginSurfaceHashes: new Map(),
     legacyPluginSurfaceHashes: new Map(),
     prePaginationSurfaceHashes: new Map(),
+    compatiblePluginSurfaces: new Map(),
     connectionByTool: new Map(),
     idempotencyByTool: new Map(wired.map((tool) => [tool.wireName, tool.definition.idempotency])),
     modeByTool: new Map(wired.map((tool) => [tool.wireName, tool.definition.mode])),
@@ -7383,6 +7429,13 @@ export async function reenterInterruptedWriteForRecovery(
 
 type ToolPolicyIdentity = { pluginId: string } & HarnessToolPolicyIdentity;
 
+interface CompatiblePluginSurface {
+  pluginId: string;
+  toolSurfaceHash: string;
+  prePaginationSurfaceHash: string;
+  legacyToolSurfaceHash: string;
+}
+
 interface ResolvedToolReceiptPolicy {
   pluginId: string;
   definition: ToolDefinition;
@@ -7390,6 +7443,7 @@ interface ResolvedToolReceiptPolicy {
   toolSurfaceHash: string | null;
   /** Only unchanged operations may replay a pre-pagination plugin surface. */
   prePaginationSurfaceHash?: string | undefined;
+  priorPluginReceiptIdentities?: { pluginId: string; canonicalToolName: string; toolSurfaceHash: string }[];
   legacyReceiptIdentity: {
     canonicalToolName: string;
     toolSurfaceHash: string;
@@ -7449,6 +7503,13 @@ function resolveHarnessToolReceiptPolicy(
     pluginId: identity.pluginId,
     definition,
     connectionId: frozen.connectionId,
+    priorPluginReceiptIdentities: (harnessTools.compatiblePluginSurfaces.get(identity.pluginId) ?? []).flatMap((surface) => [
+      { pluginId: surface.pluginId, canonicalToolName: definition.name, toolSurfaceHash: surface.toolSurfaceHash },
+      ...(!definition.pagination ? [{ pluginId: surface.pluginId, canonicalToolName: definition.name,
+        toolSurfaceHash: surface.prePaginationSurfaceHash }] : []),
+      ...(legacyConnectorCanonicalToolName(frozen.connectorType, definition.name) ? [{ pluginId: surface.pluginId,
+        canonicalToolName: legacyConnectorCanonicalToolName(frozen.connectorType, definition.name)!, toolSurfaceHash: surface.legacyToolSurfaceHash }] : []),
+    ]),
     toolSurfaceHash: harnessTools.pluginSurfaceHashes.get(identity.pluginId) ?? null,
     ...(!definition.pagination ? { prePaginationSurfaceHash: harnessTools.prePaginationSurfaceHashes.get(identity.pluginId) } : {}),
     legacyReceiptIdentity: (() => {
@@ -7470,6 +7531,7 @@ function storedToolPolicyMatches(
 ): boolean {
   if (!executionPlanJson) return false;
   const plan = parseJson<Record<string, unknown> | null>(executionPlanJson, null);
+  if (!plan) return false;
   const currentIdentityMatches = plan?.canonicalToolName === expected.definition.name
     && (plan.toolSurfaceHash ?? null) === expected.toolSurfaceHash;
   const legacyIdentityMatches = Boolean(
@@ -7480,8 +7542,9 @@ function storedToolPolicyMatches(
   const prePaginationMatches = expected.prePaginationSurfaceHash !== undefined
     && plan?.canonicalToolName === expected.definition.name
     && plan.toolSurfaceHash === expected.prePaginationSurfaceHash;
-  return plan?.pluginId === expected.pluginId
-    && (currentIdentityMatches || legacyIdentityMatches || prePaginationMatches)
+  const priorPluginMatches = expected.priorPluginReceiptIdentities?.some((prior) => plan?.pluginId === prior.pluginId
+    && plan.canonicalToolName === prior.canonicalToolName && plan.toolSurfaceHash === prior.toolSurfaceHash) ?? false;
+  return ((plan.pluginId === expected.pluginId && (currentIdentityMatches || legacyIdentityMatches || prePaginationMatches)) || priorPluginMatches)
     && plan.capability === expected.definition.capability
     && plan.mode === expected.definition.mode
     && plan.idempotency === expected.definition.idempotency
@@ -7509,6 +7572,7 @@ function compatiblePriorReceiptPlans(
         toolSurfaceHash: expected.legacyReceiptIdentity.toolSurfaceHash,
       }]
     : [];
+  prior.push(...(expected.priorPluginReceiptIdentities ?? []).map((identity) => ({ ...currentPlan, ...identity })));
   if (expected.prePaginationSurfaceHash) prior.push({ ...currentPlan,
     canonicalToolName: expected.definition.name, toolSurfaceHash: expected.prePaginationSurfaceHash });
   return prior;
@@ -8796,19 +8860,19 @@ function toolInvocationOwningPlugin(row: Record<string, unknown>): AutomationPlu
     const plan = parseJson<{ pluginId?: string; capability?: string }>(row.execution_plan_json, {});
     const recordedBundle = (["mail_calendar", "drive"] as const).find((bundle) =>
       plan.pluginId === connectorPluginCanonicalId(connectionId, bundle));
-    const view = connectorPluginViews("google", pluginId.data,
-      parseJson<string[]>(row.owner_granted_scopes_json, []))
-      .find((candidate) => candidate.grantedScopes.includes(plan.capability ?? ""));
-    if (recordedBundle || view) {
-      const files = recordedBundle === "drive" || (!recordedBundle && view?.grantedScopes.some((scope) =>
-        /^(drive|docs|sheets)\./u.test(scope)));
-      const displayName = files ? "Google Drive + Docs + Sheets" : "Google Mail + Calendar";
+    const grants = parseJson<string[]>(row.owner_granted_scopes_json, []);
+    const inferred = connectorPluginBindingViews("google", pluginId.data, grants)
+      .find((candidate) => candidate.googleBundle && candidate.grantedScopes.includes(plan.capability ?? ""));
+    const bundle = recordedBundle ?? inferred?.googleBundle;
+    if (bundle) {
+      const split = recordedBundle !== undefined || connectorPluginViews("google", pluginId.data, grants).length > 1;
+      const familyName = bundle === "drive" ? "Google Drive + Docs + Sheets" : "Google Mail + Calendar";
       return {
-        pluginId: ModelPluginIdSchema.parse(recordedBundle ? `${pluginId.data}_${recordedBundle}` : view!.modelPluginId),
-        canonicalId: connectorPluginCanonicalId(connectionId, recordedBundle ?? view?.googleBundle),
+        pluginId: ModelPluginIdSchema.parse(split ? `${pluginId.data}_${bundle}` : pluginId.data),
+        canonicalId: connectorPluginCanonicalId(connectionId, split ? bundle : undefined),
         connectorType: "google",
-        displayName,
-        icon: connectorAutomationPluginIcon("google", displayName),
+        displayName: split ? familyName : String(row.owner_display_name ?? "").trim() || familyName,
+        icon: connectorAutomationPluginIcon("google", familyName),
       };
     }
   }
@@ -9043,6 +9107,7 @@ export const __integrationTesting = {
   resolveHarnessToolReceiptPolicy,
   reenterInterruptedWrite,
   storedToolPolicyMatches,
+  compatiblePriorReceiptPlans,
   eligibleConnectionCapabilityMap,
   persistInitialPluginActivations,
   recordCredentialPluginActivation,
