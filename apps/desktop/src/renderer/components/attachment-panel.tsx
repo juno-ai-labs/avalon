@@ -52,7 +52,7 @@ export function AttachmentPanel({ ancestors, expandAction, preview, leaving = fa
         // Scoped to the panel, unlike the lightbox's window listener: the
         // composer beside it owns the arrow keys everywhere else.
         if (!many || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
-        if (event.target instanceof HTMLElement && event.target.closest('audio, video, input, textarea')) return;
+        if (event.target instanceof HTMLElement && event.target.closest('audio, video, input, textarea, .image-viewport-scroll')) return;
         event.preventDefault();
         step(event.key === 'ArrowLeft' ? -1 : 1);
       }}
