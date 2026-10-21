@@ -1555,8 +1555,11 @@ export class HostedParent {
     if (!metadata) return { exists: false as const, validatedAt: Date.now() };
     this.assertParent(request.workspaceId, request.parentId);
     const migrated = request.substreamIds.filter((id) => this.participantMigrationPhase(id) !== null);
+    const observation = request.relationship;
     const relationship = migrated.length
-      ? await this.host.readRelationship(request.workspaceId, request.userId) : null;
+      ? observation?.workspaceId === request.workspaceId && observation.userId === request.userId
+        ? observation : await this.host.readRelationship(request.workspaceId, request.userId)
+      : null;
     const store = this.scopeGrants(request);
     const scopes = migrated.map((substreamId) => ({
       substreamId,

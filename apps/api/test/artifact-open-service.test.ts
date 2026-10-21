@@ -2,7 +2,7 @@ import { ARTIFACT_RESERVED_PREFIX, asUserId, asWorkspaceId } from "@rally/contra
 import { describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../src/lib/api-error";
-import { AuthorizationService } from "../src/services/authorization-service";
+import { AuthorizationService, type ResourceReadMetadata } from "../src/services/authorization-service";
 import { ArtifactOpenService } from "../src/services/artifact-open-service";
 import type { AuthContext, Env } from "../src/env";
 import {
@@ -20,7 +20,7 @@ const USER = "3f2504e0-4f89-41d3-9a0c-0305e82c3305";
 const HOSTNAME_STUB = "level-luminous-sequential-schrodinger";
 
 interface Fixture {
-  registryRow?: Record<string, unknown> | null;
+  registryRow?: ResourceReadMetadata["artifact"];
   canRead?: boolean;
   displayName?: string | null;
   profileError?: Error;
@@ -36,27 +36,18 @@ interface Fixture {
 function fixture(input: Fixture = {}) {
   const readProfile = vi.fn();
   const openForViewer = vi.fn(async () => ({ code: "c".repeat(64) }));
-  const checkAccess = vi.spyOn(AuthorizationService.prototype, "checkMany").mockResolvedValue([
-    input.canRead === false
-      ? { status: "denied", reason: "resource_not_shared", evidence: [] }
-      : { status: "allowed", evidence: [{ owner: "resource:test", revision: "1", validatedAt: 0 }] },
-  ]);
+  const metadata: ResourceReadMetadata = { resource: {}, placementAffinity: input.placementError ? null : 'wnam', artifact: input.registryRow === undefined
+    ? { artifact_id: ARTIFACT, workstream_id: WORKSTREAM, mode: "active", stateful: 1, hostname_stub: HOSTNAME_STUB }
+    : input.registryRow };
+  const checkAccess = vi.spyOn(AuthorizationService.prototype, "readResource").mockImplementation(async () => {
+    if (input.canRead === false) throw new ApiError(404, "resource_not_found", "Resource not found");
+    return metadata;
+  });
   const other = vi.fn(async (): Promise<unknown> => null);
   const database = createTestD1Database({
     prepare: (sql: string) => ({
       bind: () => ({
         first: async () => {
-          if (sql.includes("artifact_registry")) {
-            return input.registryRow === undefined
-              ? {
-                  artifact_id: ARTIFACT,
-                  workstream_id: WORKSTREAM,
-                  mode: "active",
-                  stateful: 1,
-                  hostname_stub: HOSTNAME_STUB,
-                }
-              : input.registryRow;
-          }
           if (sql.includes("FROM users")) {
             readProfile();
             if (input.profileError) throw input.profileError;
@@ -99,7 +90,7 @@ function fixture(input: Fixture = {}) {
     role: "member",
     analyticsWorkspaceId: null,
   };
-  return { service: new ArtifactOpenService(env, auth), openForViewer, checkAccess, readProfile };
+  return { service: new ArtifactOpenService(env, auth), openForViewer, checkAccess, readProfile, metadata };
 }
 
 async function refusal(run: () => Promise<unknown>): Promise<ApiError> {
@@ -152,12 +143,10 @@ describe("minting access to a live artifact", () => {
   });
 
   it("loads the viewer profile while canonical authorization is in flight", async () => {
-    const { service, checkAccess, readProfile } = fixture();
+    const { service, checkAccess, readProfile, metadata } = fixture();
     let releaseAuthorization: (() => void) | undefined;
-    checkAccess.mockImplementationOnce(async () => await new Promise<Awaited<ReturnType<AuthorizationService["checkMany"]>>>((resolve) => {
-      releaseAuthorization = () => resolve([
-        { status: "allowed", evidence: [{ owner: "resource:test", revision: "1", validatedAt: 0 }] },
-      ]);
+    checkAccess.mockImplementationOnce(async () => await new Promise<ResourceReadMetadata>((resolve) => {
+      releaseAuthorization = () => resolve(metadata);
     }));
 
     const opening = service.open(RESOURCE);
@@ -176,7 +165,7 @@ describe("who is refused, and how indistinguishably", () => {
     const { service, checkAccess } = fixture();
     await service.open(RESOURCE);
     expect(checkAccess).toHaveBeenCalledWith({ workspaceId: WORKSPACE, userId: USER, delegation: null },
-      [{ kind: "resource", workspaceId: WORKSPACE, resourceId: RESOURCE }]);
+      RESOURCE);
   });
 
   it("refuses, and mints nothing, when resource access is denied", async () => {

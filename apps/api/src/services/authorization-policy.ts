@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { IdSchema, SubstreamIdSchema, WorkspaceIdSchema, UserIdSchema } from '@rally/contracts';
+import { WorkspaceRelationshipSchema } from '@rally/contracts/scope-grants';
 
 export const AUTHORIZATION_POLICY_VERSION = 1;
 
@@ -25,6 +26,8 @@ export type AuthorizationSubject = z.infer<typeof AuthorizationSubjectSchema>;
 export const ConversationAuthorizationRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema, parentId: IdSchema, userId: UserIdSchema,
   substreamIds: z.array(SubstreamIdSchema),
+  /** Trusted internal admission proof; never populated from HTTP input. */
+  relationship: WorkspaceRelationshipSchema.optional(),
 });
 export type ConversationAuthorizationRequest = z.infer<typeof ConversationAuthorizationRequestSchema>;
 
