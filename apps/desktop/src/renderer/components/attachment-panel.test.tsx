@@ -1,17 +1,66 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AttachmentPanel } from './attachment-panel';
 import type { AttachmentPreview } from './attachments';
+import { copyArtifactLink } from '../lib/copy-workstream-link';
+
+const copyText = vi.hoisted(() => vi.fn<(text: string) => Promise<void>>(async () => undefined));
+vi.mock('../lib/platform', () => ({
+  desktopBridge: () => ({ copyText, getRuntimeConfig: async () => ({ webBaseUrl: 'https://rallywith.ai' }) }),
+}));
+
+const firstResourceId = '00000000-0000-7000-8000-000000000009';
+const secondResourceId = '00000000-0000-7000-8000-0000000000a9';
+const resourceLink = (resourceId: string) => () => copyArtifactLink(
+  { region: 'global', workspaceId: firstResourceId }, secondResourceId,
+  '019fec70-fba0-7b0e-9f7a-3dd1ef56520f', resourceId,
+);
 
 function renderPanel(preview: AttachmentPreview, onClose = vi.fn()) {
-  render(<Tooltip.Provider><AttachmentPanel onClose={onClose} onResize={vi.fn()} preview={preview} width={360} /></Tooltip.Provider>);
+  render(<Tooltip.Provider><AttachmentPanel onClose={onClose} onResize={vi.fn()} preview={preview} resourceLink={resourceLink} width={360} /></Tooltip.Provider>);
   return onClose;
 }
 
 describe('AttachmentPanel', () => {
   beforeEach(() => {
-    vi.stubGlobal('URL', { ...URL, createObjectURL: vi.fn(() => 'blob:panel-image'), revokeObjectURL: vi.fn() });
+    copyText.mockReset().mockResolvedValue(undefined);
+    vi.stubGlobal('URL', class extends URL {
+      static createObjectURL = vi.fn(() => 'blob:panel-image');
+      static revokeObjectURL = vi.fn();
+    });
+  });
+
+  it('copies the active gallery attachment URL and keeps feedback after the menu closes', async () => {
+    const first = { resourceId: firstResourceId, name: 'first.png', mimeType: 'image/png', src: 'https://example.test/first.png' };
+    const second = { resourceId: secondResourceId, name: 'second.png', mimeType: 'image/png', src: 'https://example.test/second.png' };
+    renderPanel({ ...first, gallery: [first, second] });
+    fireEvent.click(screen.getByRole('button', { name: 'Next attachment' }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Attachment menu: second.png' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy URL' }));
+    await waitFor(() => expect(copyText).toHaveBeenCalledWith('https://rallywith.ai/app/global/1111117Hxt1fAWDjN7Te/s/1111117Hxt1fAWDjN7WQ/c/CduMrko5vpzwph2okTVLJ/a/1111117Hxt1fAWDjN7WQ'));
+    expect(await screen.findByText('Copied.')).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: 'Download' })).toBeNull();
+  });
+
+  it('shows a failed copy and lets the attachment menu retry it', async () => {
+    copyText.mockRejectedValueOnce(new Error('clipboard unavailable'));
+    renderPanel({ resourceId: firstResourceId, name: 'first.png', mimeType: 'image/png', src: 'https://example.test/first.png' });
+    const openMenu = () => fireEvent.pointerDown(screen.getByRole('button', { name: 'Attachment menu: first.png' }), { button: 0, ctrlKey: false });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy URL' }));
+    expect(await screen.findByText('Copy failed. Try again.')).toBeVisible();
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy failed — click to retry' }));
+    expect(await screen.findByText('Copied.')).toBeVisible();
+    expect(copyText).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not offer a URL for a local preview', async () => {
+    renderPanel({ name: 'local.png', mimeType: 'image/png', src: 'blob:local-image' });
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Attachment menu: local.png' }), { button: 0, ctrlKey: false });
+    expect(await screen.findByRole('menuitem', { name: 'Download' })).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: 'Copy URL' })).toBeNull();
   });
 
   afterEach(() => {

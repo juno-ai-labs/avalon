@@ -3982,6 +3982,14 @@ function ConversationSurfaceContent({
         onResize={setRailWidth}
         onShow={reportGalleryShown}
         preview={panel.preview}
+        resourceLink={(resourceId) => {
+          const workspace = session?.workspace;
+          const spaceId = linkSpaceId ?? threadPlacements?.[0] ?? null;
+          // The existing attachment destination opens Main, so only name files
+          // available there, including uploads as well as generated artifacts.
+          if (!workspace || !spaceId || !pinnableResources?.some((resource) => resource.id === resourceId)) return undefined;
+          return () => copyArtifactLink({ region: workspace.region, workspaceId: workspace.id }, spaceId, id, resourceId);
+        }}
         width={railWidth}
       />}
 
