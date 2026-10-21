@@ -367,15 +367,17 @@ conversation scope. Resolved conversations keep the Resolve item visible but
 disabled; archived conversations offer no Resolve action.
 
 Each menu has a root and levels. The root is a row of action tiles (Add people,
-Rename, Copy link, More), under a header on a Breakout, and one row each for People,
-Sidekicks, on a thread Breakouts and Channels, and Memory, with a count beside each. A row, or the
+Rename, Copy link, More), under a header on a Breakout, followed by People,
+Sidekicks and Memory rows. A thread also has Artifacts directly below People
+and Breakouts below Sidekicks. Counts sit beside each row. A row, or the
 Add people and More tiles, opens its level in place (`useTitleMenuNav`), and the
 pill becomes a breadcrumb, the title quietened and the level after it. The
 title, Escape or the left arrow step back to the root before anything closes,
 and the menu always reopens at its root. `TitleMenuMorph` measures each level
 and travels the popout's width and height between them over 320ms while the
 level's rows arrive on a 22ms stagger, sliding in from the side the move came
-from; reduced motion turns both off.
+from; reduced motion turns both off. A level with no enabled controls keeps
+keyboard focus on its frame, so ArrowLeft and Escape still return to the root.
 
 - **Thread menu** (`ChannelMenu` in code): no header; the tiles come first. People is a search, the
   participants (members and guests), invitations still waiting, and
@@ -394,11 +396,14 @@ from; reduced motion turns both off.
   disabled for the last participant; the host confirms in a Cancel/Continue
   dialog before it removes. A waiting invitation's dots menu offers **Cancel
   invite**. Sidekicks is the Sidekick section. Breakouts
-  is the list, newest activity first, filtered past six. More is **Icon and
+  is the list, newest activity first, filtered past six. **Artifacts** lists
+  the thread's artifacts and opens one in the existing artifact panel. It says
+  **Loading artifacts…**, with no count, until a snapshot or rail answers;
+  an answered empty list says **No artifacts yet.** More is **Icon and
   color** (the same choice as the pill's icon), **Pinned in
   my sidebar** (the sidebar's own pin action, lent through `useUiStore.pinChannel`),
   **Public to organization** (a switch both ways; a refusal to make it private
-  names what holds it public), Import updates, host extras, the thread's artifacts, and
+  names what holds it public), Import updates, host extras, other resources, and
   **Archive thread** last.
 - **Channel menu** (`ChannelContainerMenu`, on the Channel screen): tiles for
   Add people, Rename, Copy link (the Channel's `/s/` address) and More; People
@@ -604,6 +609,7 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
 ## Testing
 
 - **Desktop component tests:** `components/navigation-sidebar.test.tsx`,
+  `components/title-pill-menu.test.tsx` (including keyboard focus and pending artifact inventory),
   `screens/channel.test.tsx`, `lib/navigation-routes.test.ts`, `components/message-feed.test.tsx`,
   `components/breakout-marks.test.tsx`, `lib/browser-rail-links.test.ts`. Run
   with `pnpm --filter @rally/desktop exec vitest run <path>`.
@@ -616,6 +622,23 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-10-21 — Keep artifacts directly discoverable in thread menus
+
+**What changed:** Artifacts is a permanent row below People, opening its own
+level instead of living in More. The row stays visible at zero; unknown
+inventory has no count and shows a loading state. Levels without enabled
+controls keep focus on their frame so keyboard navigation still works.
+
+**Why:** Artifacts belong alongside the conversation's people and Sidekicks.
+Hiding the row when empty would make that location change as artifacts arrive;
+reporting an unknown inventory as zero would confuse loading with absence.
+The existing resource rows and menu navigation are reused rather than adding
+another artifact browser.
+
+**Consequences:** Preserve the permanent row and distinguish unknown inventory
+from an answered empty list. Entering an enabled list still focuses its first
+item; empty and disabled levels must retain a keyboard route back.
 
 ### 2026-10-21 — Share thread lifecycle reconciliation across menus
 
