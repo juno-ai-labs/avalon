@@ -557,9 +557,20 @@ bound provider thread delivers as an external attributed message. A run keeps
 one identity and one history, and can complete more than once.
 
 1. `SubstreamAgent.claimPersistentLoopExecution` takes the next pending input.
-   When the object's parent kind is `automation` and its substream is not
-   `"0"`, it calls `WorkspaceDO.sidekickContinueRun(runId)` before building the loop
+   When the object's parent kind is `automation`, its substream is not
+   `"0"`, and it has no `background_agent` identity, it calls
+   `WorkspaceDO.sidekickContinueRun(runId)` before building the loop
    input (`continueSidekickRun` in `services/sidekick-run-continuation.ts`).
+   Delegated workers share the Sidekick parent but are not Sidekick runs.
+   A worker rooted in a run asks `sidekickContinueRun` about its persisted
+   `root_substream_id`, including through nested delegation. A refusal lands
+   the assignment without starting execution. Approval retains the worker's
+   inherited principal and records only `automationDelegation` (root run ID and
+   stop generation), without loading the run's instructions or tools. The normal
+   model/tool authority check revalidates that reference, the principal and the
+   stop generation, so a later pause, pause/resume, deletion or principal change
+   revokes an already activated worker. Authoring-rooted workers (`"0"`) keep the
+   ordinary background-agent path, as authoring itself is not paused.
 2. `continueRun` is a read with no side effects. It answers a refusal code, or
    the `automationRun` block and run-as `executionPrincipal` the scheduled
    start builds, with `definitionRevision` the Sidekick's **currently
@@ -925,7 +936,7 @@ substreams. Harness `skills.test.ts` proves recommendations do not load bodies.
 | Suite | Command | Covers |
 | --- | --- | --- |
 | `apps/api/test-workers/automation-do.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` in WorkspaceDO and deliberately absent from D1: draft, `submitDefinition`, and `apply` binding a workspace connection, reserving the address, and activating; a missing connection refused; a second ready revision re-applied on an active automation; pause stopping the in-flight run and clearing registrations, resume re-arming; delete tombstoning the row and leaving the sidebar; management refused to a member who is neither author nor principal; `runNow` idempotent on its key; `admitExternalEvent` idempotent and refused before the boundary; `admitInboundEmail` answering a retry from its receipt and refusing a stranger; the run provisioned as a child substream whose loop reads its definition by revision, with `runs.state` following the child's state through the effect leg. |
-| `apps/api/test-workers/sidekick-run-continuation.test.ts` | `pnpm --filter @rally/api test:workers` | Continuing a finished run as its run-as user; refusals while paused; a pause after a continuation's approval fencing its writes; and a run's loop acting while its row still reads `pending`, before provisioning reports it running. |
+| `apps/api/test-workers/sidekick-run-continuation.test.ts` | `pnpm --filter @rally/api test:workers` | Continuing a finished run as its run-as user; refusals while paused; a pause after a continuation's approval fencing its writes; a run's loop acting while its row still reads `pending`, before provisioning reports it running; and background workers beneath authoring or run conversations executing initial and follow-up assignments with inherited authority. |
 | `apps/api/test-workers/automation-post-result.test.ts` | `pnpm --filter @rally/api test:workers` | The result tool appending into the owning room's substream `0`, and refused for an archived room and a stale generation. |
 | `apps/api/test-workers/automation-directory.test.ts` | `pnpm --filter @rally/api test:workers` | `create` alone putting a draft row in the author's sidebar, a workspace row in everyone's, and a room's row only in `listWorkstreamAutomations`; and `setAppearance` — driven through the object's stub, the boundary `AutomationService` crosses — merging one field at a time, reaching both directory listings through the real effect legs, and refusing somebody who cannot manage the Sidekick; and `AutomationService.listSidekicks` listing each scope to exactly the members it did before while the object sends D1 no `workspace_members` read. |
 | `apps/desktop/src/renderer/screens/automation.test.tsx` | `pnpm --filter @rally/desktop test` | The profile's appearance saving: an older response losing to a newer Sidekick already in the cache, and its own response applied when nothing newer arrived. |
@@ -1085,6 +1096,34 @@ A missing connection or unshared notes document is an access requirement to
 report specifically, not evidence that the provider lacks the capability.
 
 ## Changelog
+
+### 2026-10-21 — Background workers under a Sidekick are not run continuations
+
+**What changed:** Input activation distinguishes delegated workers by their
+persisted `background_agent` identity. Run-rooted workers obtain approval against
+their root run and carry an authority-only delegation reference through every
+model/tool check. Authoring-rooted workers retain ordinary background activation.
+
+**Why:** The daily organization activity Sidekick delegated scans to eleven
+workers that never executed. Activation treated every non-main child under an
+automation parent as a Sidekick run, looked up each worker ID in `sidekick_runs`,
+and refused its assignment with `run_not_found`. The coordinator kept waiting
+for results while doing only its own scans.
+
+**Considered and rejected:** Continuing any child whose run lookup returns
+`run_not_found` would also activate genuine runs whose authority record is
+missing. The existing background identity distinguishes the two without relaxing
+the run check or adding another stored classification.
+
+**Consequences:** Real Sidekick runs still require continuation approval, including
+pause, deletion and run-as checks. Workers keep their own instructions and
+inherited principal; a run-rooted worker and its descendants also remain fenced
+by their root run's consent and stop generation. Skipping every Sidekick check
+for background workers would let paused runs continue through delegated work.
+The workerd suite covers startup and follow-up input beneath both origins,
+paused queued assignments, nested workers and revocation at model/tool boundaries.
+
+Pull request: [#1386](https://github.com/juno-ai-labs/avalon/pull/1386).
 
 ### 2026-10-19 — Authoring checks connected alternatives before declaring a missing capability
 
