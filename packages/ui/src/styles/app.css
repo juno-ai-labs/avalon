@@ -9282,3 +9282,8 @@ button.merged-into-label:hover { color: var(--av-sys-color-text-default); }
 .annotation-comment-kept { padding:12px 34px 12px 12px; }
 .annotation-comment-kept::before { content:""; position:absolute; top:12px; right:100%; width:12px; border-top:1px solid var(--av-sys-color-accent-base); }
 .annotation-comment .annotation-comment-text { display:block; padding:0; width:100%; text-align:left; white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; }
+
+.annotation-chip[data-state='needs-attention'] { flex-wrap:wrap; border-color:var(--av-sys-color-text-muted); }
+.annotation-chip > [role='alert'] { flex-basis:100%; padding:0 8px 8px; }
+.annotation-chip > [role='alert'] button { margin:6px 8px 0 0; color:inherit; background:transparent; border:1px solid var(--av-sys-color-border-default); border-radius:6px; padding:4px 8px; cursor:pointer; }
+.annotation-chips > [role='status'] { color:var(--av-sys-color-text-muted); font-size:12px; }
