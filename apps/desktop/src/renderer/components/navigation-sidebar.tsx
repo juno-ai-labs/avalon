@@ -35,6 +35,7 @@ import { Link, matchPath, useLocation, useNavigate } from 'react-router-dom';
 import type { AttentionItem } from '../lib/attention-items';
 import { useAppSession } from '../lib/app-session';
 import { useShellCapabilities } from '../lib/collaboration-session';
+import { reconcileThreadNavigationRows } from '../lib/channel-viewer-state';
 import { consumeDeepLinkWorkstreamNavigation, useDeepLinkWorkstreamNavigation } from '../lib/deep-link-navigation';
 import { desktopBridge } from '../lib/platform';
 import { formatDateTime, formatSidebarActivityTime, formatTime, readerMarkerStatus } from '../lib/format';
@@ -456,9 +457,17 @@ function useChannelsWithNews(enabled: boolean): { all: number; pinned: number } 
 /** This person's threads and breakouts (`GET /navigation/threads`): the Threads tab and the Pinned count share it. */
 function useMyThreads() {
   const { api } = useAppSession();
+  const queryClient = useQueryClient();
   return useInfiniteQuery({
     queryKey: MY_THREADS_QUERY_KEY,
-    queryFn: ({ pageParam, signal }) => api!.getMyThreads(pageParam, signal),
+    queryFn: async ({ pageParam, signal }) => {
+      const page = await api!.getMyThreads(pageParam, signal);
+      return {
+        ...page,
+        items: reconcileThreadNavigationRows(queryClient, page.items),
+        pinned: page.pinned ? reconcileThreadNavigationRows(queryClient, page.pinned) : [],
+      };
+    },
     initialPageParam: null as string | null,
     getNextPageParam: (page) => page.nextCursor,
     enabled: Boolean(api),
@@ -473,7 +482,7 @@ function useMyThreads() {
  */
 function useUnreadPinnedThreadCount(): number {
   const list = useMyThreads();
-  const live = useWorkstreamsQuery();
+  const live = useWorkstreamsQuery({ includeArchived: true });
   const threads = usePinnedIds('thread');
   const breakouts = usePinnedIds('breakout');
   return useMemo(() => {
@@ -484,7 +493,9 @@ function useUnreadPinnedThreadCount(): number {
     for (const page of list.data?.pages ?? []) for (const row of page.items) byId.set(row.id, row);
     return [...threads, ...breakouts].filter((id) => {
       const row = byId.get(id);
-      return row !== undefined && threadUnread(withLiveThread(row, liveById));
+      if (!row) return false;
+      const current = withLiveThread(row, liveById);
+      return !threadIsArchived(current, liveById) && threadUnread(current);
     }).length;
   }, [breakouts, list.data, live.data, threads]);
 }
@@ -648,15 +659,18 @@ function usePinDrop(pinnedIds: ReadonlySet<string>, orderOf: (kind: PinKind) => 
         if (!drop || drop.landed || !api) return;
         event.preventDefault();
         const index = drop.index ?? orderOf(drop.kind).length;
+        const nextId = orderOf(drop.kind).filter((id) => id !== drop.id)[index];
         setState({ ...drop, index, landed: true });
         let issued = 0;
         const pinned = api.setPinned(drop.kind, drop.id, true, drop.parentId).then((list) => {
           if (drop.kind === 'thread' && drop.thread) reportThreadPin(drop.thread, true);
           const order = list.filter((item) => item.kind === drop.kind).map((item) => item.id);
+          const others = order.filter((id) => id !== drop.id);
+          const target = nextId === undefined ? others.length : others.indexOf(nextId);
           // A newer pin write owns the order now.
-          return !order.includes(drop.id) || order.indexOf(drop.id) === index || issued !== latestPinWrite()
+          return !order.includes(drop.id) || target < 0 || order.indexOf(drop.id) === target || issued !== latestPinWrite()
             ? list
-            : api.reorderPins(drop.kind, moveWithin(order, drop.id, index));
+            : api.reorderPins(drop.kind, moveWithin(order, drop.id, target));
         });
         // A failure is reported by the write; the row goes back to its list.
         write(pinned);
@@ -917,6 +931,11 @@ function threadUnread(row: SpaceConversationSummary): boolean {
   return readerMarkerStatus(row) !== null;
 }
 
+/** An archived thread hides its breakouts too, including while the list refetches. */
+function threadIsArchived(row: SpaceConversationSummary, liveById: ReadonlyMap<string, WorkstreamSummary>): boolean {
+  return Boolean(row.archivedAt || (row.breakoutOf && liveById.get(row.breakoutOf.workstreamId)?.archivedAt));
+}
+
 function useSpaceMap(): Map<string, SpaceSummary> {
   const { active } = useSpaceDirectories();
   return useMemo(() => new Map((active.data?.items ?? []).map((space) => [space.id as string, space])), [active.data]);
@@ -986,7 +1005,7 @@ function ThreadsSection({ motion, scroll }: { motion?: () => void; scroll: RefOb
   const { api } = useAppSession();
   const sort = useUiStore((state) => state.threadSort);
   const setSort = useUiStore((state) => state.setThreadSort);
-  const live = useWorkstreamsQuery();
+  const live = useWorkstreamsQuery({ includeArchived: true });
   const spaces = useSpaceMap();
   const pins = usePins();
   const pin = usePinAction(api);
@@ -1013,25 +1032,33 @@ function ThreadsSection({ motion, scroll }: { motion?: () => void; scroll: RefOb
     ...(list.data?.pages[0]?.pinned ?? []).map((row): [string, SpaceConversationSummary] => [row.id, withLiveThread(row, liveById)]),
     ...rows.map((row): [string, SpaceConversationSummary] => [row.id, row]),
   ]), [list.data, liveById, rows]);
-  const threadPins = pins.filter((item) => item.kind === 'thread').map((item) => item.id);
-  const breakoutPins = pins.filter((item) => item.kind === 'breakout').map((item) => item.id);
+  const visiblePins = pins.filter((item) => {
+    const row = byId.get(item.id);
+    return row ? !threadIsArchived(row, liveById) : !list.isSuccess;
+  });
+  const threadPins = visiblePins.filter((item) => item.kind === 'thread').map((item) => item.id);
+  const breakoutPins = visiblePins.filter((item) => item.kind === 'breakout').map((item) => item.id);
   const threadDrag = usePinnedDrag('thread', threadPins);
   const breakoutDrag = usePinnedDrag('breakout', breakoutPins);
   const pinned = new Set([...threadPins, ...breakoutPins]);
   const pinDrop = usePinDrop(pinned, (kind) => (kind === 'breakout' ? breakoutPins : threadPins));
   const { drop } = pinDrop;
-  const unpinned = rows.filter((row) => !pinned.has(row.id) && !(drop?.landed && drop.id === row.id))
+  const visibleRows = rows.filter((row) => !threadIsArchived(row, liveById));
+  const unpinned = visibleRows.filter((row) => !pinned.has(row.id) && !(drop?.landed && drop.id === row.id))
     .sort(compareChannels(sort));
   // Opening reads a thread. Keep its last displayed slot while it is open,
   // rather than promoting every selection to the attention group. All other
   // rows still sort live, and an explicit sort change starts a fresh order.
   const previousOrder = useRef<{ sort: SidebarChannelSort; ids: string[] } | null>(null);
-  if (sort === 'needs_you' && previousOrder.current?.sort === sort && openRowId !== null) {
+  if (sort === 'needs_you' && previousOrder.current?.sort === sort && openRowId !== null
+    && !unpinned.find((row) => row.id === openRowId)?.resolved) {
     const heldIndex = previousOrder.current.ids.indexOf(openRowId);
     const currentIndex = unpinned.findIndex((row) => row.id === openRowId);
     if (heldIndex >= 0 && currentIndex >= 0 && heldIndex !== currentIndex) {
       const [held] = unpinned.splice(currentIndex, 1);
-      unpinned.splice(heldIndex, 0, held!);
+      // Keep every unresolved row above the resolved group if that boundary moved.
+      const resolvedIndex = unpinned.findIndex((row) => row.resolved);
+      unpinned.splice(resolvedIndex < 0 ? heldIndex : Math.min(heldIndex, resolvedIndex), 0, held!);
     }
   }
   useLayoutEffect(() => {
@@ -1109,7 +1136,8 @@ function ThreadsSection({ motion, scroll }: { motion?: () => void; scroll: RefOb
   const pinnedRows = (kind: PinKind, drag: ReturnType<typeof usePinnedDrag>, offset: number): ReactNode[] => withPinDrop(kind, drag.order, drop)
     .map((id) => {
       const row = byId.get(id);
-      if (!row) return null;
+      // A drag can retain its order or placeholder while the row is archived.
+      if (!row || threadIsArchived(row, liveById)) return null;
       if (id === drop?.id) return renderRow(row, undefined, undefined, !drop.landed);
       const index = drag.order.indexOf(id);
       return renderRow(row, drag.rowProps(id, index), drag.moves(id, index), false, pinnedPosition(offset + index, pinnedCount));
@@ -1131,12 +1159,12 @@ function ThreadsSection({ motion, scroll }: { motion?: () => void; scroll: RefOb
     </PinnedSection>
     {!pinnedOnly && <section aria-busy={list.isPending || undefined} aria-label="All threads" className="navigation-section">
       <SectionHeading motionKey="threads" trailing={<SortButton onChange={setSort} sort={sort} sorts={THREAD_SORTS} />}>All threads</SectionHeading>
-      {list.isPending && rows.length === 0 && <SidebarSkeletonRows count={6} hint />}
+      {list.isPending && visibleRows.length === 0 && <SidebarSkeletonRows count={6} hint />}
       {unpinned.map((row) => renderRow(
         row,
         row.pending ? undefined : pinDrop.sourceProps(pinKind(row), row.id, row.breakoutOf?.workstreamId, row),
       ))}
-      {list.isSuccess && rows.length === 0 && <p className="navigation-empty">Threads you start or are added to appear here.</p>}
+      {list.isSuccess && visibleRows.length === 0 && <p className="navigation-empty">Threads you start or are added to appear here.</p>}
       {list.hasNextPage && <button className="navigation-more" disabled={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()} type="button">Show more</button>}
       {list.isError && <InlineError>Your threads couldn’t be loaded.</InlineError>}
     </section>}
@@ -1205,7 +1233,7 @@ function ThreadRow({ active, drag, ghost, href, moves, onPin, pinned, position, 
       <Link
         aria-current={active ? 'page' : undefined}
         {...ghostProps(ghost)}
-        className={clsx('navigation-row navigation-thread-row', active && 'is-active', unread && 'is-unread', ghost && 'is-pin-ghost')}
+        className={clsx('navigation-row navigation-thread-row', active && 'is-active', unread && 'is-unread', row.resolved && 'is-resolved', ghost && 'is-pin-ghost')}
         // A thread still starting slides in, and out again if its start fails.
         data-motion-insert={row.pending ? '' : undefined}
         // A placeholder is not the row: the row is still in its list.

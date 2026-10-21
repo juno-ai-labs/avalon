@@ -456,6 +456,9 @@ pinned, nothing on screen said pinning existed.
 
 **Consequences:** A drop is two writes. The second is skipped when a newer pin
 write has started (`latestPinWrite`), so it cannot overwrite that write's order.
+The visible slot is translated through its next visible pin into the full
+returned order, or appended when there is no next pin. Hidden pin records
+therefore cannot shift the dropped row away from the slot the person chose.
 
 Shipped in [#1197](https://github.com/juno-ai-labs/avalon/pull/1197).
 

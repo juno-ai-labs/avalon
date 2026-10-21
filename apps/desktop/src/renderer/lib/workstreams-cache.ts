@@ -2,6 +2,7 @@ import type { QueryClient } from '@tanstack/react-query';
 import type { WorkstreamAppearance, WorkstreamAppearancePatch } from '@rally/contracts';
 import type { WorkstreamDetail, WorkstreamSummary } from './types';
 import { forgetConversation, forgetConversationParent } from './conversation-cache';
+import { removeArchivedThreadNavigation } from './sidebar-list-store';
 
 /** The one cache entry every work-stream list reader and writer shares. */
 export const WORKSTREAMS_QUERY_KEY = ['workstreams'] as const;
@@ -383,7 +384,10 @@ export function holdCachedWorkstreamArchive(
       ? { ...workstream, archivedAt: archived.archivedAt, updatedAt: archived.updatedAt }
       : workstream);
   });
-  if (archiveApplied) evictCachedWorkstreamContent(queryClient, archived.id);
+  if (archiveApplied) {
+    removeArchivedThreadNavigation(queryClient, archived.id);
+    evictCachedWorkstreamContent(queryClient, archived.id);
+  }
 }
 
 function evictCachedWorkstreamContent(
