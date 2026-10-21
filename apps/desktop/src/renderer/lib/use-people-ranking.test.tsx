@@ -6,7 +6,7 @@ import type { PeopleRanking } from '@rally/contracts';
 import { usePeopleRanking } from './use-people-ranking';
 
 describe('usePeopleRanking', () => {
-  it('waits for People to open, keeps the previous ranking usable, and shares an in-flight refresh across repeated opens', async () => {
+  it('waits for the title menu to open, keeps the previous ranking usable, and shares an in-flight refresh across repeated opens', async () => {
     const first: PeopleRanking = { channel: ['alice'], organization: ['alice'] };
     const next: PeopleRanking = { channel: ['bob'], organization: ['bob', 'alice'] };
     let finish!: (value: PeopleRanking) => void;
@@ -31,6 +31,21 @@ describe('usePeopleRanking', () => {
     expect(refreshSignal?.aborted).toBe(false);
     await act(async () => { finish(next); });
     await waitFor(() => expect(result.current.ranking).toEqual(next));
+    unmount();
+    client.clear();
+  });
+
+  it.each(['guest', 'missing API', 'missing user'] as const)('never fetches on repeated menu openings with %s eligibility', async (reason) => {
+    const getPeopleRanking = vi.fn(async () => ({ channel: [], organization: [] }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const Wrapper = ({ children }: PropsWithChildren) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+    const { result, unmount } = renderHook(() => usePeopleRanking(
+      reason === 'missing API' ? null : { getPeopleRanking }, 'org', reason === 'missing user' ? undefined : 'reader', 'channel', reason !== 'guest',
+    ), { wrapper: Wrapper });
+    await act(async () => { result.current.onOpen(); });
+    await act(async () => { result.current.onOpen(); });
+    expect(getPeopleRanking).not.toHaveBeenCalled();
+    expect(result.current.ranking).toBeUndefined();
     unmount();
     client.clear();
   });

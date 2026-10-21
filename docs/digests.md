@@ -103,15 +103,29 @@ delete and a reused one would appear beneath a cursor that has already passed.
 on `occurred_at` — a connector poll inserts events whose provider timestamp is
 hours old.
 
-#### Retention
+#### People interaction ranking
 
-The People picker's frequency ranking also reads these existing human message
-and mention facts, applying current conversation access before aggregating.
-It stores no second history; this log's retention is its evidence window too.
-Its reads start from indexed authors, targets and participating Breakout
-conversations; migration 126 adds the partial human-message author index so
-unrelated Organization history does not require a scan.
-[`shared-ui.md`](shared-ui.md#people-picker-order) owns its grouping and scoring.
+The People picker reads retained human replies and @mentions in either
+direction, filtered by current conversation access. Each event counts once per
+other person; frequency wins, then recency, then id. Main replies use event-time
+participant targets, so replies in a joined Thread count even if the reader did
+not post. Breakout replies use current participants because their events retain
+only mention targets. Merged copies, agents and connector activity do not count.
+
+`workspace-people-ranking.ts` seeks the reader's authored events, directed
+mention/participant targets and participating Breakout replies before applying
+access and active-placement checks. Migration 126 adds the partial author
+index; existing target and conversation indexes supply the other seeks. Access
+joins are materialized once. The unary `+` on the Breakout id comparison keeps
+SQLite's expression index seek on both Thread and Breakout; the workerd
+regression checks that 10,000 unrelated replies do not increase the read cost.
+
+Guests cannot read ranking. Channel scores use the route's active Channel
+placements; standalone Threads get Organization ranking only. This log's
+retention also bounds ranking evidence. The [shared picker](shared-ui.md#people-picker-order)
+owns eligibility, the five-suggestion display and menu ordering stability.
+
+#### Retention
 
 The WorkspaceDO alarm drops events older than ninety days oldest-first in
 bounded batches and lets the cascade take their targets. The oldest retained

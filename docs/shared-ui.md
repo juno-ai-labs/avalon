@@ -129,41 +129,17 @@ accounts and people who asked to join are excluded. Pending Organization
 invitees follow registered Members, with their Invited label. Search exposes
 all matching names and email addresses in that order, without the suggestion cap.
 
-`GET /navigation/people-ranking?channelId=…` returns ordered person ids, not
-another roster. `WorkspaceDO.peopleRanking` reads the existing retained Rally
-message activity through `workspace-people-ranking.ts`: human replies in a
-conversation the reader participates in, and @mentions in either direction.
-Each message counts once per other person, even when it also mentions them.
-Frequency wins, then latest interaction, then id. Main conversations use their
-event-time participant edges; breakout replies use their current participant
-projection because their activity deliberately retains only mention targets.
-The Channel score uses active thread placements in the Channel named by the
-route; a thread with no Channel context gets the Organization ranking alone.
-Copied merge messages, agents, connector activity and conversations the reader
-can no longer open do not contribute. Guests cannot read the Organization
-ranking. This adds no interaction ledger, backfill or retention policy; the
-existing activity retention bounds its evidence.
+`GET /navigation/people-ranking?channelId=…` returns ordered person ids from
+`workspace-people-ranking.ts`; [the activity log](digests.md#people-interaction-ranking)
+owns the scoring and indexed read. Thread ranking uses the route's Channel
+pane context; standalone Threads use Organization ranking alone.
 
-Ranking starts with indexed candidate events: the reader's authored messages,
-their mention/participant targets, and replies in Breakouts they currently
-participate in. WorkspaceDO migration 126 adds the partial author index; the
-target and conversation indexes already exist. Access and placement joins run
-only for those candidates, materialized once before the three interaction
-directions are combined. Keep the unary `+` on the Breakout id comparison: it
-preserves the expression index's affinity so SQLite seeks both the Thread and
-Breakout rather than scanning the Thread's Main history. Unrelated Organization
-traffic must not increase this read's work; the workerd regression measures
-actual `rowsRead` before and after 10,000 unrelated replies.
-
-The host's `usePeopleRanking` requests this optional read when People opens,
-with the person, Organization and Channel in its query key. A pending or failed read
-leaves the directory fallback available; the picker shows loading or retry copy.
-Reopening keeps the last ranking available while refreshing, and shares an
-already running refresh instead of canceling and restarting it.
-The component itself still knows nothing about fetching or authorization.
-The morphing menu frame does not shrink in its scroll container: a long
-search result list scrolls rather than clipping its final rows. Keyboard Tab scrolls
-the newly focused control into view.
+The title pill's `onMenuOpen` starts the host's optional ranking read before
+People is selected. People snapshots that order on entering the level: late
+responses apply on its next opening, so an Add button never moves under the
+pointer. Pending or failed reads silently keep the directory fallback usable.
+The host gates both automatic and manual reads on API, person and member
+eligibility, and shares any in-flight refresh on reopening.
 
 ## Invariants
 
@@ -207,7 +183,8 @@ component test runner is needed for the same implementations.
 **What changed:** The picker shows five eligible people total, ranked by Channel
 collaborators, Organization collaborators, Members and Guests. Search exposes
 everyone else. Indexed candidate seeks read existing human reply and mention
-facts; reopening reuses any in-flight refresh and keeps the shortlist usable.
+facts. The title menu warms ranking before People is selected; each People
+opening keeps one order while late results wait for the next opening.
 
 **Why:** Five alphabetical suggestions gave unrelated accounts the same
 prominence as teammates. The first ranking query scanned all retained
@@ -221,8 +198,9 @@ the existing target/conversation indexes keep the source facts authoritative.
 Connector activity does not contribute to the requested Rally-only ranking.
 
 **Consequences:** Keep Channel context route-owned, filter access at read time,
-and deduplicate before the final five-person limit. Preserve the indexed
-candidate seeks and expression affinity; the real-workerd read-cost regression
+and deduplicate before the final five-person limit. Guard manual reads as well
+as automatic queries for guests. Keep the visible order stable until People is
+reopened. Preserve the indexed candidate seeks and expression affinity; the real-workerd read-cost regression
 must remain independent of unrelated Organization history.
 
 PR: #1367.
