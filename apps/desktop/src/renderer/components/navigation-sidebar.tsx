@@ -115,9 +115,8 @@ function compareChannelNames(left: SpaceSummary, right: SpaceSummary): number {
  * The comparator for the Channels nobody pinned. Recent is the Channel's last
  * activity, newest first, a Channel with none last. Needs attention puts an
  * unread Channel first, then one holding a thread that needs this person, each
- * group in Recent order. `heldId` is the open Channel: opening one reads it,
- * and without the hold it would drop out from under the pointer, as the
- * Threads tab's Needs attention does.
+ * group in Recent order. `heldId` is the open Channel; it keeps the unread
+ * rank after opening reads the Channel.
  */
 export function compareChannelRows(
   sort: SidebarChannelSort,
@@ -993,6 +992,10 @@ function ThreadsSection({ motion, scroll }: { motion?: () => void; scroll: RefOb
   const pin = usePinAction(api);
   const openChannelId = useOpenChannelId();
   const openThreadId = useOpenThreadId();
+  const { search } = useLocation();
+  // A breakout's pathname names its parent; its own row is named by the query.
+  const breakoutId = new URLSearchParams(search).get('substream');
+  const openRowId = openThreadId !== null && breakoutId && breakoutId !== '0' ? breakoutId : openThreadId;
   const list = useMyThreads();
   const liveById = useMemo(() => new Map((live.data ?? []).map((row) => [row.id, row])), [live.data]);
   const rows = useMemo(() => {
@@ -1023,9 +1026,9 @@ function ThreadsSection({ motion, scroll }: { motion?: () => void; scroll: RefOb
   // rather than promoting every selection to the attention group. All other
   // rows still sort live, and an explicit sort change starts a fresh order.
   const previousOrder = useRef<{ sort: SidebarChannelSort; ids: string[] } | null>(null);
-  if (sort === 'needs_you' && previousOrder.current?.sort === sort && openThreadId !== null) {
-    const heldIndex = previousOrder.current.ids.indexOf(openThreadId);
-    const currentIndex = unpinned.findIndex((row) => row.id === openThreadId);
+  if (sort === 'needs_you' && previousOrder.current?.sort === sort && openRowId !== null) {
+    const heldIndex = previousOrder.current.ids.indexOf(openRowId);
+    const currentIndex = unpinned.findIndex((row) => row.id === openRowId);
     if (heldIndex >= 0 && currentIndex >= 0 && heldIndex !== currentIndex) {
       const [held] = unpinned.splice(currentIndex, 1);
       unpinned.splice(heldIndex, 0, held!);
@@ -1086,7 +1089,7 @@ function ThreadsSection({ motion, scroll }: { motion?: () => void; scroll: RefOb
     ghost = false,
     position?: string,
   ): ReactNode => <ThreadRow
-    active={row.id === openThreadId}
+    active={row.id === openRowId}
     drag={drag}
     ghost={ghost}
     href={href(row)}
