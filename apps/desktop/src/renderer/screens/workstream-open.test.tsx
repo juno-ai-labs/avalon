@@ -1050,13 +1050,17 @@ describe('socket-first channel open', () => {
     expect(api.setSubstreamArchived).not.toHaveBeenCalled();
   });
 
-  it.each(['0', '00000000-0000-7000-8000-000000000660'])('keeps resolved conversation actions visible but disabled %s', async (childId) => {
-    const parent = recoveryBoot();
+  it.each([
+    { childId: '0', directoryCached: true },
+    { childId: '0', directoryCached: false },
+    { childId: '00000000-0000-7000-8000-000000000660', directoryCached: true },
+  ])('keeps resolved conversation actions disabled for $childId (directory cached: $directoryCached)', async ({ childId, directoryCached }) => {
+    const parent = recoveryBoot({ resolved: childId === '0' });
     const child = recoveryBoot({ title: 'Private child' });
     renderScreen((cache) => {
       cache.setQueryData(['workstream', workstreamId], parent);
       cache.setQueryData(['ordered-transcript', workstreamId], parent.transcript);
-      setCachedWorkstreams(cache, [{ ...parent, resolved: childId === '0' }]);
+      if (directoryCached) setCachedWorkstreams(cache, [parent]);
       cache.setQueryData<SpaceDirectory>(['spaces'], { waterline: 1, items: parent.spaceIds.map((id) => ({
         id: asSpaceId(id), name: 'Engineering', iconKey: 'briefcase', colorKey: 'blue', scope: 'workspace', reach: 'organization', status: 'active',
         systemRole: null, revision: 1, participants: [], channelCount: 1, attentionCount: 0,
