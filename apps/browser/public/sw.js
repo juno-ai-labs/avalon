@@ -36,10 +36,17 @@ self.addEventListener("activate", (event) => {
 
 // The installed app's icon shows the push's count, as APNs sets the Mac and
 // iPhone badge. A browser without the Badging API, or a plain tab, skips it.
-function setBadge(count) {
-  if (!Number.isSafeInteger(count) || count < 0 || !("setAppBadge" in self.navigator)) return Promise.resolve();
-  const set = count > 0 ? self.navigator.setAppBadge(count) : self.navigator.clearAppBadge();
-  return set.catch(() => undefined);
+// A focused Rally tab keeps its own count, as a Mac foreground alert leaves the
+// dock badge alone: the push may be for another Organization.
+async function setBadge(count) {
+  if (!Number.isSafeInteger(count) || count < 0 || !("setAppBadge" in self.navigator)) return;
+  const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  if (windows.some((client) => client.focused)) return;
+  try {
+    await (count > 0 ? self.navigator.setAppBadge(count) : self.navigator.clearAppBadge());
+  } catch {
+    // The badge is a hint; the notification still shows.
+  }
 }
 
 self.addEventListener("push", (event) => {

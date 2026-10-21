@@ -200,15 +200,20 @@ describe('browser app icon badge', () => {
 
   beforeEach(() => {
     delete window.rally;
+    localStorage.clear();
+    setAppBadge.mockClear();
+    clearAppBadge.mockClear();
     Object.assign(navigator, { setAppBadge, clearAppBadge });
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     Reflect.deleteProperty(navigator, 'setAppBadge');
     Reflect.deleteProperty(navigator, 'clearAppBadge');
   });
 
   it('sets the count, clears it at zero, and puts it back when the tab regains focus', async () => {
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true);
     await desktopBridge().setDockBadgeCount(3);
     expect(setAppBadge.mock.calls).toEqual([[3]]);
 
@@ -218,5 +223,24 @@ describe('browser app icon badge', () => {
 
     await desktopBridge().setDockBadgeCount(0);
     expect(clearAppBadge).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves the icon to the tab focused last, until this one is focused', async () => {
+    const focused = vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+    localStorage.setItem('rally.app-badge-owner', 'another-tab');
+    await desktopBridge().setDockBadgeCount(5);
+    await desktopBridge().setDockBadgeCount(0);
+    expect(setAppBadge).not.toHaveBeenCalled();
+    expect(clearAppBadge).not.toHaveBeenCalled();
+
+    await desktopBridge().setDockBadgeCount(2);
+    focused.mockReturnValue(true);
+    window.dispatchEvent(new Event('focus'));
+    expect(setAppBadge.mock.calls).toEqual([[2]]);
+
+    // Still the last focused, it keeps the icon current while in the background.
+    focused.mockReturnValue(false);
+    await desktopBridge().setDockBadgeCount(4);
+    expect(setAppBadge.mock.calls).toEqual([[2], [4]]);
   });
 });

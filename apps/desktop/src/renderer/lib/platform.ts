@@ -52,12 +52,15 @@ const browserApplicationSettings: DesktopApplicationSettings = {
 };
 const browserApplicationSettingsListeners = new Set<(settings: DesktopApplicationSettings) => void>();
 /**
- * The count the shell last put on the installed app's icon, or null before the
- * first. The service worker sets another Organization's count when its push
- * arrives, so a tab that regains focus puts this one back, as main does for the
- * Mac dock.
+ * The count this tab's shell last reported for the installed app's icon, or
+ * null before the first. The icon is one for every tab, so only the tab that
+ * holds it writes: the focused tab, or the one focused last. A tab that gains
+ * focus takes it and puts its own count back, as main does for the Mac dock
+ * after another Organization's push.
  */
 let browserAppBadgeCount: number | null = null;
+const browserAppBadgeOwnerKey = 'rally.app-badge-owner';
+const browserTabId = Math.random().toString(36).slice(2);
 const browserSessionListeners = new Set<(session: DesktopSession | null) => void>();
 const browserArtifactWindows = new Map<Window, { resourceId: string; version: number }>();
 const browserAuthAttempts = new Map<string, {
@@ -216,6 +219,25 @@ function setBrowserAppBadge(count: number): Promise<void> {
   return count > 0 ? navigator.setAppBadge(count) : navigator.clearAppBadge();
 }
 
+function holdsBrowserAppBadge(): boolean {
+  if (document.hasFocus()) return true;
+  try {
+    const owner = localStorage.getItem(browserAppBadgeOwnerKey);
+    return owner === null || owner === browserTabId;
+  } catch {
+    return false;
+  }
+}
+
+function takeBrowserAppBadge(): void {
+  try {
+    localStorage.setItem(browserAppBadgeOwnerKey, browserTabId);
+  } catch {
+    // Without storage only the focused tab writes.
+  }
+  void setBrowserAppBadge(browserAppBadgeCount ?? 0).catch(() => undefined);
+}
+
 const browserBridge: RallyDesktopBridge = {
   async getRuntimeConfig() {
     return {
@@ -309,12 +331,9 @@ const browserBridge: RallyDesktopBridge = {
     // The Badging API marks an installed app's icon (a Home Screen app on
     // iPhone and iPad); a plain tab has none, and browsers ignore the call.
     if (!('setAppBadge' in navigator)) return;
-    if (browserAppBadgeCount === null) {
-      window.addEventListener('focus', () => {
-        void setBrowserAppBadge(browserAppBadgeCount ?? 0).catch(() => undefined);
-      });
-    }
+    if (browserAppBadgeCount === null) window.addEventListener('focus', takeBrowserAppBadge);
     browserAppBadgeCount = count;
+    if (!holdsBrowserAppBadge()) return;
     await setBrowserAppBadge(count);
   },
   async setMenuBarEnabled() {
