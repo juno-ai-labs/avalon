@@ -6551,6 +6551,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         this.noteSidekickActivityChanged(this.workspaceId()!);
       },
       noteSidekickActivityChanged: (workspaceId) => this.noteSidekickActivityChanged(workspaceId),
+      channelColor: (workstreamId) => this.spaceStorage().channelColor(workstreamId),
       isChannelParticipant: async (workstreamId, userId) => {
         await this.readRelationship(this.workspaceId()!, userId);
         return this.isWorkstreamParticipant(workstreamId, userId);

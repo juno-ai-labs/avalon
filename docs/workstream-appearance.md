@@ -68,8 +68,9 @@ sent, which is the Sidekick's own business and lives in
 [`automation-lifecycle.md`](automation-lifecycle.md#choosing-what-a-sidekick-looks-like);
 this document owns the catalog, the descriptions, the colours, the picker's
 behaviour and the deterministic default, for every surface that has an
-appearance. Anything else that grows one comes here for those, and brings its
-own storage and its own glyph treatment.
+appearance. The deterministic default lives in contracts as
+`generatedWorkstreamAppearance`. Anything else that grows an appearance comes
+here for those defaults, and brings its own storage and glyph treatment.
 
 **So does a Space.** The icon tile on its dashboard is this picker's trigger,
 drawn with `SpaceIcon`. A Space's route replaces the name, icon and colour

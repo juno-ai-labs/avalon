@@ -49,7 +49,7 @@ export interface AutomationDirectoryRow extends Record<string, SqlStorageValue> 
 }
 
 /** A stored appearance, or undefined with the reason reported when it no longer parses. */
-function parsedAppearance(json: string | null, prefix: string, report: (code: string) => void): WorkstreamAppearance | undefined {
+export function parsedAppearance(json: string | null, prefix: string, report: (code: string) => void): WorkstreamAppearance | undefined {
   if (!json) return undefined;
   let value: unknown;
   try {
