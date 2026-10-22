@@ -1076,8 +1076,10 @@ hiding the Notifications section.
 
 **What changed:** Sidekick authoring Main uses `agent-model-sidekick-authoring`,
 whose checked-in default is the primary Sol route. Ace and Engineering MCP expose
-the role, and inference traces identify its flag. Explicit pins still win;
-activations, background agents and ordinary Threads keep their existing route.
+the role, and inference traces identify its flag. Wake-up admission carries the
+conversation type and substream into model selection so its stored run label
+matches inference routing. Explicit pins still win; activations, background
+agents and ordinary Threads keep their existing route.
 
 **Why:** A spreadsheet-to-calendar retry activated polling without resolving a
 declared event binding. The setup wizard needs the stronger model for composing
