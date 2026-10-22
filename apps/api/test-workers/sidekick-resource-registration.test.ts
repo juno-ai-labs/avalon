@@ -139,8 +139,8 @@ describe("Sidekick external resource registration", () => {
     expect(await resourceCount()).toBe(0);
   });
 
-  it("refuses folder registration instead of advertising a file-contents watch", async () => {
-    googleFile(200, { mimeType: "application/vnd.google-apps.folder" });
+  it.each(["folder", "shortcut"])("refuses %s registration instead of advertising a file-contents watch", async (kind) => {
+    googleFile(200, { mimeType: `application/vnd.google-apps.${kind}` });
     const { register } = await tools();
     await expect(register.execute({ pluginId: "plugin_google", resource: FILE }, context()))
       .rejects.toMatchObject({ code: "unsupported_capability" });

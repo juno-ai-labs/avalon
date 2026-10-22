@@ -2609,7 +2609,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       const mimeType = readString(metadata, "mimeType") ?? "";
       const resourceType = googleDriveResourceType(mimeType);
       const identity = { resourceId: fileId, name,
-        ...(mimeType === "application/vnd.google-apps.folder" ? {} : {
+        ...(["application/vnd.google-apps.folder", "application/vnd.google-apps.shortcut"].includes(mimeType) ? {} : {
           registration: { resourceType, canonicalUrl: readString(metadata, "webViewLink") },
         }) };
 
