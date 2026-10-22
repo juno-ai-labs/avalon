@@ -238,6 +238,15 @@ above Settings. It lists accessible personal, workspace, and room Sidekicks.
 The library uses the normal desktop session and workspace boundary. The center
 sidebar renders participants as a facepile and provides attachment removal.
 
+The Sidekick profile always shows Pause/Resume, Run now, Run history, and
+**When to expect it**. Unavailable actions stay focusable with a tooltip naming
+the reason, while their callbacks remain blocked. Run now requires an active,
+runnable Sidekick; Run history is available with triggers or previous runs.
+The timing section shows **No timing details yet.** when no summaries or next
+run exist; a visible inbound email address supplies **When an email arrives**
+for legacy definitions whose implicit email trigger has no summary. The
+conversation remains the editing surface, without a separate guidance section.
+
 ## Activity above the composer
 
 Channel, Thread, and Breakout composers show a distinct running Sidekick count,
@@ -1011,6 +1020,12 @@ or the memory store the automation scope lives in.
 
 ## Testing
 
+`pnpm --filter @rally/desktop exec vitest run
+src/renderer/components/automation-header.test.tsx` covers persistent profile
+controls, timing and legacy email summaries, keyboard navigation to unavailable
+menu items, their tooltip reasons, and inert Enter/Space activation. Visual
+placement, disabled hover styling and compact Details view are checked in Electron.
+
 Workstream recommendation coverage lives in `test-workers/automation-do.test.ts`
 (child agent tool attachment, fresh main/sibling catalogs, local loading, combined
 removal) and `test-workers/conversation-parent-contract.test.ts` (v12 migration,
@@ -1181,6 +1196,28 @@ The Sidekick authoring prompt carries no Google-specific lookup or attachment
 instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
+
+### 2026-10-22 — Keep Sidekick actions discoverable across lifecycle states
+
+**What changed:** Pause/Resume, Run now, Run history and timing stay visible.
+Unavailable actions explain their constraints on hover or keyboard focus and
+do not execute. Empty timing has an explicit message, including an email-trigger
+summary for older definitions. The “Make it work for you” guidance is removed.
+
+**Why:** The product request favors a consistent profile where people can see
+which actions exist and learn why they cannot use them. The prior conditional
+controls changed the screen's shape and hid those explanations; the extra
+guidance section repeated the conversation's editing role.
+
+**Considered and rejected:** Hiding unavailable controls preserved the earlier
+minimal profile but made capabilities harder to discover. Natively disabling
+explained controls would remove them from the keyboard path to their tooltip.
+
+**Consequences:** Visibility no longer implies availability. Hosts must preserve
+the lifecycle/runnable guards, block unavailable callbacks, and keep disabled
+explanations reachable by keyboard. Execution admission remains authoritative.
+
+PR: [#1409](https://github.com/juno-ai-labs/avalon/pull/1409).
 
 ### 2026-10-22 — Scoped Sidekicks start in their home's color
 

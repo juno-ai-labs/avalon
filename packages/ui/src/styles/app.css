@@ -145,6 +145,7 @@ a {
 }
 
 button:disabled,
+.button[aria-disabled='true'],
 .icon-button[aria-disabled='true'],
 .annotation-toolbar button[aria-disabled='true'] {
   cursor: not-allowed;
@@ -425,8 +426,8 @@ pre {
 
 /* Radix moves a menu item's focus by setting `data-highlighted`, not by
    hover, so a `.button` inside a menu takes the same look in that state. */
-.button:hover:not(:disabled),
-.button[data-highlighted] {
+.button:hover:not(:disabled):not([aria-disabled='true']),
+.button[data-highlighted]:not([aria-disabled='true']) {
   background-image: var(--hover-layer);
   border-color: var(--av-ref-color-line-4);
   color: var(--av-sys-color-text-default);
@@ -456,7 +457,7 @@ pre {
   font-weight: 400;
 }
 
-.button-primary:hover:not(:disabled) {
+.button-primary:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--av-cmp-button-primary-hover);
   border-color: transparent;
   color: var(--av-cmp-button-primary-color);
@@ -475,7 +476,7 @@ pre {
   font-weight: 590;
 }
 
-.button-danger:hover:not(:disabled) {
+.button-danger:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--av-sys-color-danger-strong);
   border-color: var(--av-sys-color-danger-strong);
   color: var(--av-sys-color-danger-on);
@@ -7162,7 +7163,6 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .automation-header .button { border-radius: var(--av-sys-size-radius-pill); }
 .automation-header .workstream-header-actions { width: 100%; gap: 8px; }
 .automation-header .workstream-header-actions > .button { flex: 1; justify-content: center; }
-.automation-header .sidekick-lifecycle-action[aria-disabled='true'] { cursor: not-allowed; opacity: 0.48; background-image: none; }
 .automation-lifecycle.is-draft { border-style: dashed; color: var(--av-sys-color-text-muted); }
 .automation-lifecycle.is-active { background: var(--av-sys-color-success-wash, transparent); color: var(--av-sys-color-success-base); }
 .automation-header-details { display: flex; flex-direction: column; gap: 24px; }
