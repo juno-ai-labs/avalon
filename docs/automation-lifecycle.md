@@ -845,9 +845,17 @@ color must come from the ring; one outside it is accepted only as the color
 already stored. The RPC field is optional, so a seeded or scripted definition
 leaves the appearance alone.
 
-A Sidekick nobody has chosen for stores `NULL`, which is not the same as
-choosing the default: the glyph falls back to the mark derived from the
-Sidekick's id.
+A Thread- or Breakout-scoped Sidekick starts with its home conversation's
+color in the creation transaction. It reads the current canonical Channel color
+through `WorkspaceSpaceStorage.channelColor`, so a pending recolor job cannot
+leave it wearing the conversation projection's old color. Without an active
+Channel placement, it copies the exact home's stored color or uses the same
+id-derived fallback as the glyph. An invalid stored appearance reports field
+diagnostics without blocking creation or replay.
+Only the color is copied: the icon remains the Sidekick's own generated mark.
+This is a creation-time default; later home color changes and repeated creation
+requests do not overwrite the Sidekick's appearance. Personal and Organization
+Sidekicks still start with `NULL` appearance and use their own id-derived mark.
 
 ## Invariants
 
@@ -1155,6 +1163,16 @@ The Sidekick authoring prompt carries no Google-specific lookup or attachment
 instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
+
+### 2026-10-22 — Scoped Sidekicks start in their home's color
+
+Scoped Sidekicks start in their home's color because deriving a color from
+the new Sidekick's id gave them an unrelated visual identity. The creation-time
+copy leaves later edits independent. Reading the canonical Channel color avoids
+freezing a delayed conversation projection's old color into the new Sidekick.
+Without a placement, missing or invalid home appearance uses the shared generated
+default; an invalid appearance reports the rejected field without blocking creation
+or replay.
 
 ### 2026-10-22 — A room archive archives its owned Sidekicks
 

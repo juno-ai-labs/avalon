@@ -6,6 +6,7 @@ import {
   AutomationDetailSchema,
   SidekickSkillSourceSchema,
   type SidekickSkillSource,
+  type SpaceColorKey,
   AutomationDraftSchema,
   AutomationExecutionPrincipalClaimSchema,
   AutomationRunDefinitionV1Schema,
@@ -13,6 +14,7 @@ import {
   AutomationSetEvaluatorRulesInputV1Schema,
   ExternalEventRegistrationProjectionV1Schema,
   PROJECT_COLOR_RING,
+  generatedWorkstreamAppearance,
   WORKSTREAM_ICON_KEYS,
   WorkstreamAppearanceSchema,
   WorkstreamAppearancePatchSchema,
@@ -109,7 +111,7 @@ import {
   type SidekickSkillReadRequest,
 } from "./automation-do-protocol";
 import { ReceiveChildEffectsRequestSchema, type DirectoryCommonEffect, type ReceiveChildEffectsRequest } from "./conversation-parent-object";
-import { owningThreads } from "./channel-rails";
+import { owningThreads, parsedAppearance } from "./channel-rails";
 import { sidekickAudienceAllows } from "./sidekick-audience";
 import { SCHEDULED_ALARM_RETRY_BASE_MS, scheduledAlarmRetryDelay, type ScheduledAlarm, type ScheduledAlarmOutcome, type ScheduledAlarmStore } from "./scheduled-alarms";
 
@@ -314,6 +316,8 @@ export interface HostedSidekickHost {
   noteSidekickActivityChanged(workspaceId: string): void;
   /** Whether a person is an active participant of a live Channel: a read of this object's own rows. */
   isChannelParticipant(workstreamId: string, userId: string): boolean | Promise<boolean>;
+  /** Current canonical Channel color, independent of delayed conversation projections. */
+  channelColor(workstreamId: string): SpaceColorKey | null;
   /** A Channel's or Breakout's own viewer decision, for a Sidekick homed there. */
   channelViewer(input: {
     workspaceId: string; parentId: string; substreamId: string; userId: string; requireGrantAuthority?: boolean;
@@ -491,6 +495,31 @@ export class HostedSidekick {
     // The insert is the existence check: a repeat finds the row and returns
     // nothing, and is answered from the row it found.
     return this.storage.transactionSync(() => {
+      // The home directory and the new Sidekick share this transaction. Copy
+      // only its color; the Sidekick keeps its own generated icon and later edits.
+      let appearanceJson: string | null = null;
+      if (request.owningWorkstreamId !== null) {
+        const main = request.owningSubstreamId === "0";
+        const home = main
+          ? this.sql.exec<{ appearance_json: string | null }>(
+            "SELECT appearance_json FROM channels WHERE workstream_id = ?", request.owningWorkstreamId,
+          ).toArray()[0]
+          : this.sql.exec<{ appearance_json: string | null }>(
+            "SELECT appearance_json FROM breakouts WHERE workstream_id = ? AND substream_id = ?",
+            request.owningWorkstreamId, request.owningSubstreamId,
+          ).toArray()[0];
+        const appearance = parsedAppearance(home?.appearance_json ?? null, "sidekick_home_appearance", (code) => {
+          logWarn(this.env, "sidekick_home_appearance_invalid", {
+            workspace_id: request.workspaceId, automation_id: request.automationId,
+            workstream_id: request.owningWorkstreamId, substream_id: request.owningSubstreamId, code,
+          });
+        });
+        // Conversation projections may still wear the old color while the
+        // Channel's recolor job is pending. Both home kinds use its authority.
+        const color = this.host.channelColor(request.owningWorkstreamId) ?? appearance?.color
+          ?? generatedWorkstreamAppearance(main ? request.owningWorkstreamId : request.owningSubstreamId).color;
+        appearanceJson = JSON.stringify({ icon: null, color });
+      }
       const created = this.sql.exec(
         `INSERT INTO automation_directory
            (automation_id, workspace_id, region, author_user_id, run_as_user_id, source_version, payload_hash,
@@ -500,7 +529,7 @@ export class HostedSidekick {
             default_plugin_ids_json, activity_source_plugin_ids_json, evaluator_projection_json,
             model_override, email_address, effective_after_event_sequence, authority_generation,
             stop_generation, chat_appearance_json, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 1, 'hosted', 'draft', NULL, ?, ?, ?, NULL, '', '', NULL, ?, 0, NULL,
+         VALUES (?, ?, ?, ?, ?, 1, 'hosted', 'draft', NULL, ?, ?, ?, NULL, '', '', NULL, ?, 0, ?,
                  0, NULL, '{}', '[]', '{}', '[]', NULL, NULL, NULL, ?, 0, NULL, ?, ?)
          ON CONFLICT(automation_id) DO NOTHING
          RETURNING automation_id`,
@@ -513,6 +542,7 @@ export class HostedSidekick {
         request.owningWorkstreamId,
         request.owningSubstreamId,
         now,
+        appearanceJson,
         request.authorityGeneration,
         now,
         now,
