@@ -60,8 +60,11 @@ export const LEGACY_RALLY_HEADER_PREFIXES: readonly string[] = Object.freeze([
  * `9` reads a Channel merge's `private`, from a thread the reader cannot open.
  * `10` reads resolution suggestions in conversation snapshots and events.
  * `11` reads human reply Activity, its preview and unread message count.
+ * `12` reads pending access requests and their email delivery state in previews.
  */
-export const CLIENT_CONTRACT_VERSION = 11;
+export const CLIENT_CONTRACT_VERSION = 12;
+/** Access previews include the requester's pending and emailed state. */
+export const PENDING_ACCESS_REQUESTS_CLIENT_CONTRACT = 12;
 /** Import verification includes explicit check outcomes and parallel file downloads. */
 export const SESSION_IMPORT_CLIENT_CONTRACT = 3;
 /**
