@@ -9,7 +9,7 @@ import { SidekickDelegationStorage } from "./sidekick-delegation-storage";
 import { rememberSidekickDelegationLocation } from "../services/sidekick-delegation-service";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import {
-  SidekickPrepareDelegationRequestSchema, SidekickSetMyDelegationRequestSchema, SidekickRemoveDelegateRequestSchema,
+  SidekickPrepareDelegationRequestSchema, SidekickSetMyDelegationRequestSchema, SidekickReadDelegationReceiptRequestSchema, SidekickRemoveDelegateRequestSchema,
 } from "./automation-do-protocol";
 import { type SidekickAttachment, SidekickAttachmentSchema } from "@rally/contracts";
 import type { Region } from "@rally/contracts/regions";
@@ -745,6 +745,17 @@ export class HostedSidekick {
     });
     if (this.row()) this.host.noteDirectoryChanged(this.sidekickId, false, Date.now());
     return result;
+  }
+
+  /** Own receipt reconciliation survives loss of membership, visibility and deletion. */
+  async readMyDelegationReceipt(input: z.input<typeof SidekickReadDelegationReceiptRequestSchema>) {
+    const request = parseRpcInput(SidekickReadDelegationReceiptRequestSchema, input, "sidekick_delegation_receipt");
+    if (request.automationId !== this.sidekickId) throw new Error("sidekick_identity_mismatch");
+    const found = this.delegations().receipt({ ...request, sidekickId: this.sidekickId });
+    if (found.outcome === "accepted" && found.result.allowed && !await this.delegationEligible(found.grant)) {
+      return { outcome: "unavailable" as const };
+    }
+    return found;
   }
 
   async removeDelegate(input: z.input<typeof SidekickRemoveDelegateRequestSchema>): Promise<SidekickDelegationMutationResult> {

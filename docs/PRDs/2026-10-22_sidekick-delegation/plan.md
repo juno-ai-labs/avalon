@@ -175,13 +175,37 @@ turn an implementation checklist into an assertion that its tests passed.
   documentation checks also passed. No new migration, provider preflight or
   cross-object revocation barrier was added. UI and model evidence remain open.
 
+### Completed consent replay
+
+- Completed self-consent tools have a read-only replay check. The canonical
+  speaker, target, intent, source and original effect ID must match the existing
+  receipt and preparation; current generation and allowed-grant eligibility
+  determine whether the acknowledgement still applies. No new grant, receipt
+  or preparation is written by the inspection.
+- The host checks before loading/emitting a cached success. Bind presents a
+  typed authorization refusal without executing or changing the historical
+  completed effect. Current withdrawals remain inspectable after access loss.
+- Real workerd consent lane: 12 passing cases after restoration. The exact
+  action receipt is read through the real RPC; an old acknowledgement stays
+  stale after withdrawal and fresh regrant to the same eligible person.
+  Harness index/prompt lanes passed 245 cases, including model-visible refusal
+  with its stable code and no new plan/executor/terminal effect event. Focused
+  API tool-schema, presentation and idempotency lanes passed 18 cases.
+- Production-code negative controls removed generation comparison, eligibility,
+  and the cache replay validator; each failed its intended assertion. The
+  stronger withdrawal/regrant control returned an old accepted acknowledgement
+  when its generation comparison was removed. Every mutation was restored;
+  the complete 12-case workerd and 245-case harness lanes then passed. Lint and
+  repository-wide typecheck passed. This adds no consent table or migration;
+  interrupted response-loss recovery remains separately unfinished.
+
 ### Next integration constraints
 
-The common admission policy is installed. The normal harness can still replay a
-completed tool receipt
-without entering that tool's executor. Its delegation-specific replay must
-reconcile current self-grant state before presenting an old result as current;
-the authority's generation check alone does not cover this outer cache.
+The common admission policy and completed-consent replay checks are installed.
+Completed replay reads current own-grant generation and eligibility without
+executing the consent tool. Interrupted consent mutation recovery still needs
+receipt reconciliation before any re-entry; completed replay alone does not
+prove that recovery path.
 
 Configured sources still need reconciliation across delegates' connection-
 specific Rally resource IDs, preserving provider resource/occurrence identity.

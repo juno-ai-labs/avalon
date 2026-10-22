@@ -3448,6 +3448,11 @@ export interface HarnessToolResult {
   loadedSkillRef?: string;
 }
 
+/** A historical completed effect whose result cannot be presented as current. */
+export interface HarnessToolReplayRefusal {
+  refusal: { code: string; message: string };
+}
+
 /**
  * One loadable instruction module, as the host hands it to the harness.
  *
@@ -3953,6 +3958,8 @@ export interface HarnessTool {
   /** Host-owned writes wait for their receipt under the run lifecycle, without a second tool timer. */
   deadline?: "run";
   execute(input: unknown, context: HarnessToolContext): Promise<HarnessToolResult>;
+  /** Read-only validation of a completed receipt; refusal never changes the old effect. */
+  validateCompletedReplay?(input: unknown, context: HarnessToolContext): Promise<BeforeToolCallDecision>;
   /** Resolve a host-only execution deadline after validated input is known. */
   resolveTimeoutMs?: (input: unknown) => number | undefined;
   /**
@@ -4386,7 +4393,7 @@ export interface RunHarnessInput {
     toolCallId: string,
     inputHash: string,
     policy: { pluginId: string } & HarnessToolPolicyIdentity,
-  ) => Promise<HarnessToolResult | null>;
+  ) => Promise<HarnessToolResult | HarnessToolReplayRefusal | null>;
   reauthorizePlugin?: (
     canonicalId: string,
     occasion: PluginAuthorizationOccasion,

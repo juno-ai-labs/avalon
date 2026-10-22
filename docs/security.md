@@ -47,6 +47,9 @@ stores self-grants with membership incarnations and withdrawal tombstones;
 the mutation ordering and rollout. Enrollment requires viewer access, whereas
 signed-in own-grant recovery and withdrawal do not require current Organization
 membership. Recovery reveals only that person's stored grant and safe label.
+Completed consent-tool replay reads the exact self-action receipt and current
+generation before acknowledging current consent. It never prepares or executes
+a fresh opt-in, and withdrawal receipts remain readable after access loss.
 Agent consent tools derive the speaker from a canonical human trigger and do
 not accept a model-supplied actor. Autonomous and background contexts receive no
 consent tools and cannot initialize creator consent by attributing authorship

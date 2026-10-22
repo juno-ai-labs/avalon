@@ -6,6 +6,7 @@ import { readCanvaReference } from "./canva-resource-access";
 import type { OutboundExternalBinding } from "../durable-objects/external-binding-outbox";
 import { runtimeDeferral } from "../lib/defer";
 import { Preparation, ToolSurfacePreparations } from "./harness-preparation";
+import { validateCompletedToolReplay } from "./completed-tool-replay";
 import { completionVerificationNudge } from "./completion-verification";
 import type { CompletionVerificationSnapshot } from "../durable-objects/completion-verification-storage";
 import { AGENT_MESSAGE_CONTENT_KIND, ImportedMessageProvenanceSchema } from "@rally/contracts";
@@ -4044,6 +4045,11 @@ export async function runWorkstreamHarness(
       if (!row) return null;
       const policyMatches = storedToolPolicyMatches(row.executionPlanJson, expectedPolicy);
       if (row.status === "completed" && row.requestHash === inputHash && policyMatches) {
+        const replayRefusal = await validateCompletedToolReplay([...harnessTools.corePlugins, ...harnessTools.plugins], policyIdentity, parseJson(row.inputJson, {}), {
+          workspaceId: input.workspaceId, workstreamId: input.parentId, harnessRunId: input.harnessRunId,
+          toolCallId, effectIntentId: row.effectIntentId, executionPrincipal: input.executionPrincipal, signal: harnessSignal,
+        });
+        if (replayRefusal) return replayRefusal;
         if (expectedPolicy.definition.name === "view_image") {
           // The picture was the result, and it lived only in that turn: the
           // sandbox file may have changed or gone since. The read is safe, so
