@@ -195,6 +195,7 @@ import {
 import { createClassifierDiagnosticSink } from "./classifier-diagnostics";
 import {
   AGENT_MODEL_FLAG_KEYS,
+  conversationModelRole,
   resolveAgentModelRouting,
   resolveWorkstreamModelRouting,
 } from "./agent-model-flags";
@@ -2736,6 +2737,7 @@ export async function runWorkstreamHarness(
   });
   const attemptLease = runtime.lease;
   const runs = createHarnessRunObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId);
+  const modelRole = profile?.role ?? conversationModelRole(input);
   const modelRoutingPreparation = new Preparation(() => profile
     ? resolveAgentModelRouting(env, profile.role, {
       workspaceId: input.workspaceId,
@@ -2745,6 +2747,8 @@ export async function runWorkstreamHarness(
     : resolveWorkstreamModelRouting(env, {
       workspaceId: input.workspaceId,
       workstreamId: input.parentId,
+      parentKind: input.parentKind,
+      substreamId: conversationSubstreamId,
     }));
   const contextWindowPreparation = new Preparation(() =>
     runtime?.persistentLoop?.contextWindowTokensByModel() ?? Promise.resolve({}));
@@ -3401,7 +3405,7 @@ export async function runWorkstreamHarness(
       executionPrincipal: input.executionPrincipal,
       traceContext: {
         source: "workstream",
-        feature: AGENT_MODEL_FLAG_KEYS[profile?.role ?? "workstream"],
+        feature: AGENT_MODEL_FLAG_KEYS[modelRole],
         workspaceId: input.workspaceId,
         workstreamId: input.parentId,
         substreamId: input.substreamId ?? "0",

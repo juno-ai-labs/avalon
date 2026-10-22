@@ -60,8 +60,8 @@ inherited model override. It grants no private-child viewer memberships. The
 child retains its inherited execution principal; admission resolves it locally,
 and messages do not replace it with a teammate's credentials. A worker's
 Terminal is its owner's: it uses the sandbox and checkout of the conversation
-that started it, through any further delegation, under a mutation lease held
-per tool call, so a worker's write waits with `sandbox_busy` only while a
+or Sidekick it works for, through further delegation, under a mutation lease
+held per tool call, so a worker's write waits with `sandbox_busy` only while a
 sibling or its owner is mid-call, and its reads take no lease, waiting only
 for a sandbox that is not yet running or whose checkout is still being
 prepared ([`terminal-workspaces.md`](terminal-workspaces.md)).
@@ -293,6 +293,11 @@ available tool inventory and wire names. Instructions lead with the action,
 use short sentences, and distinguish agent IDs from message IDs. Expected
 communication errors explain what to do next while retaining their diagnostic
 codes. These wording checks do not substitute for small-model evaluation.
+Every role passes the requested outcome and established constraints in an
+assignment, leaving unresolved implementation choices for the recipient to
+investigate. Assignments name the skills the recipient must load; a skill loaded
+by the sender is not evidence of a load by the recipient. Required execution
+steps belong in durable run instructions as well as the handoff.
 Background agents are explicitly told
 to execute their assignment directly and delegate further only when splitting
 work would materially help, and that a run ending without a message to their
@@ -345,6 +350,19 @@ the ownership flags from a conversation that acts for no thread, and a guest's
 grant-only contact. Complete desktop behavior remains an implementation gate.
 
 ## Changelog
+
+### 2026-10-21 — Assign outcomes and carry procedures across delegation
+
+**What changed:** Shared role guidance asks every delegator to pass outcomes,
+constraints and open decisions, name skills the recipient must load, and retain
+required execution steps in durable instructions.
+
+**Why:** The content-calendar coordinator assigned scheduled polling before the
+helper investigated events, and procedures loaded by the coordinator did not
+reach the agents that needed them. Preselecting an unverified mechanism and
+assuming skill context transfers both turn delegation into a source of omissions.
+The existing shared role function carries this rule before and after plugin
+loading, without adding another prompt surface.
 
 ### 2026-10-21 — Setup discovery stays in its thread and recovers against current state
 

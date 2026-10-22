@@ -18,8 +18,10 @@ import { durableObjectStubForWorkspace } from "../../lib/durable-object-namespac
  * A sandbox belongs to one conversation of a work stream — the one whose
  * `SubstreamAgent` holds its `terminal_workspace` row — and a run uses the
  * sandbox of the conversation it works *for*. For an ordinary run that is its
- * own conversation. For a background agent it is the conversation of the agent
- * that started it, or of that agent's own owner, up to the first conversation
+ * own conversation. All conversations under one Sidekick use its authoring
+ * conversation (substream 0). For a background agent in a work stream it is
+ * the conversation of the agent that started it, or of that agent's own owner,
+ * up to the first conversation
  * nobody delegated: the agents a conversation spawns share its files, its
  * checkout, and its exclusive mutation lease, rather than each provisioning a
  * sandbox of their own under the same stable name.
@@ -36,6 +38,8 @@ export interface TerminalRunScope {
    * so the coordinator hands their retention to the provider at creation.
    */
   parentKind: ConversationParentKind;
+  /** Whether this run is a delegated worker, which cannot reset its owner's files. */
+  backgroundAgent: boolean;
   /** The conversation this run executes in. */
   runSubstreamId: string;
   /** The conversation whose `SubstreamAgent` owns the sandbox this run uses. */
@@ -83,7 +87,12 @@ export async function resolveTerminalRunScope(
 ): Promise<TerminalRunScope> {
   const runSubstreamId = input.substreamId ?? "0";
   if (!input.backgroundAgent) {
-    return { parentKind: input.parentKind, runSubstreamId, authoritySubstreamId: runSubstreamId };
+    return {
+      parentKind: input.parentKind,
+      backgroundAgent: false,
+      runSubstreamId,
+      authoritySubstreamId: input.parentKind === "automation" ? "0" : runSubstreamId,
+    };
   }
   let root: AgentId = agentIdForAddress({
     parentKind: input.parentKind,
@@ -103,5 +112,10 @@ export async function resolveTerminalRunScope(
   if (address.parentKind !== input.parentKind || address.parentId !== input.parentId) {
     throw new Error("terminal_authority_parent_mismatch");
   }
-  return { parentKind: input.parentKind, runSubstreamId, authoritySubstreamId: address.substreamId };
+  return {
+    parentKind: input.parentKind,
+    backgroundAgent: true,
+    runSubstreamId,
+    authoritySubstreamId: input.parentKind === "automation" ? "0" : address.substreamId,
+  };
 }

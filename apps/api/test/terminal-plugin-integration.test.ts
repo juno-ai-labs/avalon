@@ -80,6 +80,10 @@ function fixture(
   const objectStores = new Map<string, DatabaseSync>([[S, objectStore]]);
   seedWorkstreamRun(objectStore, { id: R,
     executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
+  const workspace = createTestWorkspaceDO({
+    workspaceId: W, regionalDatabase: database,
+    register: (created) => { objectDatabases.push(created); },
+  });
   const env = createTestEnv({
     DB: sqliteD1(database), AVALON_REGION: "global",
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
@@ -89,11 +93,9 @@ function fixture(
     // of it.
     WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
       extra: {
-        ...workspaceObjectRpcs(createTestWorkspaceDO({
-          workspaceId: W,
-          regionalDatabase: database,
-          register: (created) => { objectDatabases.push(created); },
-        }).instance, ["terminalNetworkMode", "terminalNetworkSettings"]),
+        ...workspaceObjectRpcs(workspace.instance, [
+          "terminalNetworkMode", "terminalNetworkSettings", "sidekickReadAuthorizationFacts",
+        ]),
         ...(options.agentOwner ? { agentOwner: options.agentOwner } : {}),
       },
     }),
@@ -109,7 +111,7 @@ function fixture(
     triggerMessageId: null, activityId: null,
     executionPrincipal: { type: "user", userId: U }, reason: "user_message",
   };
-  return { database, objectStore, objectStores, env, input };
+  return { database, objectStore, objectStores, env, input, workspace };
 }
 
 function provider(): TerminalSandboxProvider {
@@ -182,12 +184,76 @@ function readGateway(baseSha = BASE): TerminalGitHubReadGateway {
 }
 
 describe("Terminal Bind integration", () => {
+  it("keeps the run-as user's shared files when the wizard executes as a different editor", async () => {
+    const { objectStore, objectStores, env, input, workspace } = fixture("supported");
+    await workspace.instance.sidekickCreate({
+      workspaceId: W, automationId: S, authorUserId: U, scope: "workspace",
+      owningWorkstreamId: null, owningSubstreamId: asSubstreamId("0"), authorityGeneration: 1,
+    });
+    const sandboxProvider = provider();
+    vi.mocked(sandboxProvider.runUtilityCommand).mockImplementation(async (_id, request) => ({
+      exitCode: 0,
+      stdout: request.operation === "file.read_page" ? JSON.stringify({
+        content: "shared site", startLine: 1, endLine: 1, totalLines: 1, truncated: false,
+      }) : "0\n",
+      stderr: "",
+    }));
+    const plugin = await createAvalonTerminalPlugin(env, { ...input, parentKind: "automation" }, undefined, {
+      provider: sandboxProvider,
+    });
+    expect(plugin?.systemMessage).toContain("Activations can overlap");
+    const read = plugin!.tools.find((tool) => tool.definition.name === "read_file")!.execute!;
+    const toolContext = { workspaceId: W, workstreamId: S, harnessRunId: R,
+      toolCallId: "wizard-read", executionPrincipal: input.executionPrincipal,
+      signal: new AbortController().signal };
+    await expect(read({ filePath: "site/index.html" }, toolContext))
+      .resolves.toMatchObject({ output: { content: "shared site" } });
+    // A claim changes execution identity without changing the author. Exercise
+    // the real HostedSidekick authorization-facts read, including cached reads.
+    const runAsUser = asUserId("30000000-0000-4000-8000-000000000099");
+    workspace.objectDatabase.prepare("UPDATE automation_directory SET run_as_user_id = ? WHERE automation_id = ?")
+      .run(runAsUser, S);
+    await expect(read({ filePath: "site/index.html" }, { ...toolContext, toolCallId: "old-editor" }))
+      .rejects.toMatchObject({ code: "sandbox_authority_mismatch" });
+    expect(sandboxProvider.deleteSandbox).not.toHaveBeenCalled();
+
+    const child = asSubstreamId("30000000-0000-4000-8000-000000000088");
+    const childRun = asHarnessRunId("30000000-0000-4000-8000-000000000089");
+    const childStore = testWorkstreamObjectStore();
+    openDatabases.push(childStore);
+    seedWorkstreamObjectRoot(childStore, { workstreamId: S, workspaceId: W });
+    seedWorkstreamRun(childStore, { id: childRun,
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: runAsUser }) });
+    objectStores.set(`${S}:${child}`, childStore);
+    const activation = await createAvalonTerminalPlugin(env, { ...input, parentKind: "automation",
+      substreamId: child, harnessRunId: childRun, executionPrincipal: { type: "user", userId: runAsUser },
+    }, undefined, { provider: sandboxProvider });
+    await expect(activation!.tools.find((tool) => tool.definition.name === "read_file")!.execute!(
+      { filePath: "site/index.html" }, { ...toolContext, toolCallId: "activation-read",
+        harnessRunId: childRun, executionPrincipal: { type: "user", userId: runAsUser } },
+    )).resolves.toMatchObject({ output: { content: "shared site" } });
+    // The legitimate claim rebuilds once. Returning to either the cached or a
+    // newly composed wizard must leave that new execution user's files alone.
+    const laterWizard = await createAvalonTerminalPlugin(env, { ...input, parentKind: "automation" }, undefined, {
+      provider: sandboxProvider,
+    });
+    for (const wizard of [plugin!, laterWizard!]) {
+      await expect(wizard.tools.find((tool) => tool.definition.name === "read_file")!.execute!(
+        { filePath: "site/index.html" }, { ...toolContext, toolCallId: "later-editor" },
+      )).rejects.toMatchObject({ code: "sandbox_authority_mismatch" });
+    }
+    expect(sandboxProvider.deleteSandbox).toHaveBeenCalledExactlyOnceWith("sandbox-1");
+    expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id FROM terminal_workspace"))
+      .toEqual({ generation: 2, sandbox_id: "sandbox-2" });
+  });
+
   it("registers the complete deferred plugin without allocating a sandbox", async () => {
     const { objectStore, env, input } = fixture("supported");
     const tools = await __integrationTesting.loadHarnessTools(env, input);
     const plugin = tools.plugins.find((candidate) => candidate.canonicalId === "rally:terminal");
 
     expect(plugin).toMatchObject({ preload: false, explicit: false, shortWireName: "" });
+    expect(plugin?.systemMessage).not.toContain("Sidekick's wizard");
     expect(plugin?.tools.map((tool) => tool.definition.name)).toEqual([
       "read_file", "view_image", "edit_file", "write_file", "apply_patch", "run_command",
       "checkout_repository", "import_resource", "publish_resource", "publish_branch_and_pr",

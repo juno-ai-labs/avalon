@@ -1,10 +1,10 @@
-import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthContext } from "../src/env";
 import { launchWorkstreamHarness, WorkstreamService } from "../src/services/workstream-service";
-import { createTestEnv } from "./helpers/cloudflare-test";
+import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import {
   openWorkstreamAuthorityForTest,
@@ -77,6 +77,43 @@ describe("creation before the durable-object authority opens", () => {
 });
 
 describe("launching a run against the open authority", () => {
+  it.each([
+    { parentKind: "automation" as const, substreamId: "0", expected: "openai/gpt-6.1-sol" },
+    { parentKind: "automation" as const, substreamId: "00000000-0000-7000-8000-000000000099", expected: "openai/gpt-5.6-terra" },
+    { parentKind: "workstream" as const, substreamId: "0", expected: "openai/gpt-5.6-terra" },
+  ])("records the conversation's model when waking $parentKind/$substreamId", async ({ parentKind, substreamId, expected }) => {
+    const database = preRetirementProductSqliteDatabase();
+    databases.push(database);
+    openWorkstreamAuthorityForTest(database);
+    seed(database);
+    const objectStores = new Map<string, DatabaseSync>();
+    const env = createTestEnv({
+      DB: sqliteD1(database), AVALON_REGION: "global",
+      FLAGS: createCloudflareTestBinding<Flagship>({
+        getObjectDetails: async (flagKey: string) => ({ flagKey, reason: "STATIC", value: {
+          model: flagKey === "agent-model-sidekick-authoring" ? "openai/gpt-6.1-sol" : "openai/gpt-5.6-terra",
+          fallbackModels: [],
+        } }),
+      }),
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
+    });
+    try {
+      const runId = await launchWorkstreamHarness(env, {
+        workspaceId, workstreamId, triggerMessageId: null, origin: "scheduled_wakeup",
+        executionPrincipal: { type: "user", userId: memberId },
+        scheduledWakeupId: "00000000-0000-7000-8000-0000000000e2",
+        conversation: { parentKind, substreamId: asSubstreamId(substreamId), backgroundAgent: false },
+      }, async () => true);
+      const key = substreamId === "0" ? workstreamId : `${workstreamId}:${substreamId}`;
+      const store = objectStores.get(key);
+      if (!store) throw new Error("expected the wake-up to open its conversation");
+      expect(workstreamObjectGet(store, "SELECT model FROM runs WHERE run_id = ?", runId))
+        .toEqual({ model: expected });
+    } finally {
+      databases.push(...objectStores.values());
+    }
+  });
+
   it("keeps a durably recorded activation replayable when the activation response is lost", async () => {
     const database = preRetirementProductSqliteDatabase();
     databases.push(database);

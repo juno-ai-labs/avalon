@@ -72,6 +72,7 @@ inherit the source conversation's model override:
 | Conversation import | `agent-model-session-import` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Suggestion draft | `agent-model-suggestion-draft` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Memory sweep | `agent-model-memory-sweep` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
+| Sidekick wizard | `agent-model-sidekick-authoring` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 
 The checked-in primary model is `openai/gpt-6.1-sol`, with low reasoning
 from the harness model-default registry. Flagship variations still override
@@ -86,8 +87,11 @@ new evaluation and deploy; leaving an editable Flagship value in front of the
 measured route would let production silently diverge from its evidence. The
 work-stream entry matches the `AgentInferenceSource` value written to the
 inference ledger, so a ledger row and its flag key name the same agent; an
-automation run and the conversation that drafts one are `workstream` runs on
-the work-stream agent's flag. The rest
+automation activation and its background agents remain `workstream` runs on
+the work-stream agent's flag. The Sidekick's authoring Main (`automation` parent,
+substream `0`) uses `sidekick_authoring`, independently defaulting to Sol even
+when the work-stream flag serves Terra. An explicit conversation model pin still
+wins. The rest
 are the standalone structured-output agents: message addressing uses the
 agent-harness JEV/fallback cascade; work-stream naming, the two halves of suggested work, and the
 work-stream description loop use the bounded structured-inference gateway.
@@ -1067,6 +1071,28 @@ both intent enqueue and delivery. Turning it off stops queued sends as well as
 hiding the Notifications section.
 
 ## Changelog
+
+### 2026-10-21 — Route the Sidekick wizard independently on Sol
+
+**What changed:** Sidekick authoring Main uses `agent-model-sidekick-authoring`,
+whose checked-in default is the primary Sol route. Ace and Engineering MCP expose
+the role, and inference traces identify its flag. Wake-up admission carries the
+conversation type and substream into model selection so its stored run label
+matches inference routing. Explicit pins still win; activations, background
+agents and ordinary Threads keep their existing route.
+
+**Why:** A spreadsheet-to-calendar retry activated polling without resolving a
+declared event binding. The setup wizard needs the stronger model for composing
+trigger selection and durable instructions, independently of the live Terra
+route used for ordinary conversations.
+
+**Considered and rejected:** Raising `agent-model-workstream` would change every
+ordinary conversation and activation. Pinning each wizard would prevent future
+fleet routing and omit its fallback models.
+
+**Consequences:** Existing unpinned wizards pick up the new role on their next
+evaluation after deployment. No change to the live work-stream flag is needed;
+an absent authoring flag uses the checked-in default until Ace provisions it.
 
 ### 2026-10-16 — The digest kill switch and its fail-open resolver are removed
 
