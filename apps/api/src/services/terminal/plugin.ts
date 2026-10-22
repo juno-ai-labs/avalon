@@ -161,6 +161,29 @@ export async function createAvalonTerminalPlugin(
     },
   });
   const provider = options.provider ?? ownedProvider!;
+  // Shared files are an execution-user boundary, not permission to act as the
+  // editor. Read the live Sidekick facts before activation and every tool,
+  // including reads that can reuse the runtime's cached acquisition.
+  const assertSandboxPrincipal = async (context: HarnessToolContext): Promise<void> => {
+    if (input.parentKind !== "automation") return;
+    const workspace = await durableObjectStubForWorkspace(
+      env, env.WORKSPACE_DOS, asWorkspaceId(input.workspaceId),
+      workspaceDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId)),
+    );
+    const facts = context.executionPrincipal.type === "user"
+      ? await workspace.sidekickReadAuthorizationFacts({
+        workspaceId: asWorkspaceId(input.workspaceId), parentId: input.parentId,
+        userId: context.executionPrincipal.userId, substreamIds: [],
+      })
+      : null;
+    if (!facts?.exists || !facts.executor) {
+      throw new TerminalToolError(
+        "sandbox_authority_mismatch",
+        "Only the user this Sidekick runs as can use its shared Terminal files. You can still edit its definition without accessing Terminal.",
+        { reason: "Continue as the Sidekick's run-as user to use its Terminal sandbox." },
+      );
+    }
+  };
   const coordinator = new TerminalSandboxCoordinator(
     env,
     terminalPort,
@@ -300,6 +323,7 @@ export async function createAvalonTerminalPlugin(
         toolInvocationId: context.effectIntentId ?? null,
       });
       try {
+        await assertSandboxPrincipal(context);
         const result = await withTerminalToolTrace(trace, () => executors[name](toolInput, context));
         const durationMs = Date.now() - startedAt;
         logStructuredEvent(env, "info", "terminal_tool_finished", {
@@ -451,6 +475,7 @@ export async function createAvalonTerminalPlugin(
       // between activation and its first Terminal tool, against an ~18s median
       // cold start — so for most runs this wait stops being visible at all.
       const preparing = withTerminalToolTrace(trace, async () => {
+        await assertSandboxPrincipal(terminalContext);
         await runtime.prepare(terminalContext, async (runtimeContext, sandbox) => {
           repositoryPreparationCode = await prepareRepositoryForActivation(runtimeContext, sandbox);
         });

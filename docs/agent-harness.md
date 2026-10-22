@@ -1690,7 +1690,9 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 **What changed:** The event skill branches explicitly between requested schedules,
 resolved event watches and justified polling, and saves the choice's rationale.
-The site skill checks existing shared files first and recovers missing source.
+The site skill backs up existing local files and imports the current published
+source before each refresh, retaining unfinished work while preserving newer
+changes made in another sandbox.
 Saved instructions identify the resource,
 owning thread, import and publication paths, and data format. Runs account for
 every requested source row and check each stage of completion separately.
