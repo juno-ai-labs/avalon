@@ -128,6 +128,8 @@ interface ComposerInputProps {
   toolsAccessory?: ReactNode;
   /** What the send button shows in place of its arrow, for a host whose send is not a plain send. */
   submitContent?: ReactNode;
+  /** Place a host-owned submit control elsewhere while retaining dictation finalization. */
+  renderSubmit?: (action: { disabled: boolean; pending: boolean; onClick: () => void }) => ReactNode;
   /** Main work streams opt into GrokBot's single-row message capsule. */
   layout?: 'toolbar' | 'message-capsule';
   maxHeight?: number;
@@ -176,7 +178,8 @@ interface ComposerInputProps {
    * and the signals are in `lib/ime.ts`.
    */
   onKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
-  onMention: () => void;
+  /** Absent where the input does not mention participants, such as issue reports. */
+  onMention?: () => void;
   /**
    * The caret moved, by arrow key, click, or drag. A composer whose `@` list is
    * open re-reads what the caret is naming from here: the list has to close when
@@ -285,6 +288,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   beforeInput,
   toolsAccessory,
   submitContent,
+  renderSubmit,
   layout = 'toolbar',
   maxHeight = 180,
   menuActions = NO_MENU_ACTIONS,
@@ -546,7 +550,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
 
   const beginMention = (): void => {
     if (dictation.state === 'transcribing' || dictation.state === 'finalizing') stopDictation();
-    onMention();
+    onMention?.();
   };
 
   /**
@@ -740,7 +744,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
         {notice && <div className="composer-notice">{notice}</div>}
         <div className="composer-toolbar">
           <div className="composer-tools">
-            {!messageCapsule && (
+            {!messageCapsule && onMention && (
               <IconButton disabled={submitting || dictationEditingBlocked || mentionDisabled} label={mentionLabel} onClick={beginMention}>
                 <AtSign size={15} />
               </IconButton>
@@ -919,9 +923,13 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                 first-time reader looks for is the one that was missing. Every
                 host already passes `submitDisabled` for an empty draft, so the
                 disabled state is the one it always computed. */}
-            <button aria-label={submitLabel} className={clsx('composer-send', submitContent !== undefined && 'has-content')} disabled={(submitDisabled && !dictationActive) || sendAfterDictation} onClick={() => void submit()} type="button">
+            {renderSubmit ? renderSubmit({
+              disabled: (submitDisabled && !dictationActive) || sendAfterDictation,
+              pending: submitting || sendAfterDictation,
+              onClick: () => void submit(),
+            }) : <button aria-label={submitLabel} className={clsx('composer-send', submitContent !== undefined && 'has-content')} disabled={(submitDisabled && !dictationActive) || sendAfterDictation} onClick={() => void submit()} type="button">
               {submitting || sendAfterDictation ? <LoaderCircle className="spin" size={15} /> : submitContent ?? <ArrowUp size={15} />}
-            </button>
+            </button>}
             {submitAccessory}
           </div>
         </div>

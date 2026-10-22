@@ -1,3 +1,4 @@
+import { MessageIssueReceiptSchema, type CreateMessageIssue, type MessageIssueReceipt } from '@rally/contracts/message-issues';
 import { connectorAuthorizationStatus } from '@rally/contracts';
 import type { Annotation } from '@rally/contracts';
 import { ManagedScopeGrantsSchema, RevokeScopeGrantSchema, ScopeGrantMutationResultSchema } from "@rally/contracts/scope-grants";
@@ -2233,11 +2234,10 @@ export class RallyApi {
     return { items: page.items.map(mapResource), nextCursor: page.nextCursor, ...(page.complete !== undefined ? { complete: page.complete } : {}) };
   }
 
-  /**
-   * Merge-back (docs/conversation-merge.md): with `breakoutId`, that Breakout's
-   * result into this Thread; without it, this Thread's result into one of its
-   * Channels. A retry with the same `clientMessageId` writes nothing again.
-   */
+  async createMessageIssue(input: CreateMessageIssue): Promise<MessageIssueReceipt> {
+    return this.request('/message-issues', { method: 'POST', body: input, schema: MessageIssueReceiptSchema });
+  }
+
   /** The Channels this thread can merge into, earliest placement first. */
   async mergeChannels(threadId: string): Promise<ConversationMergeChannels> {
     return this.request(`/conversations/${encodeURIComponent(threadId)}/merge-channels`, {
@@ -2245,6 +2245,11 @@ export class RallyApi {
     });
   }
 
+  /**
+   * Merge-back (docs/conversation-merge.md): with `breakoutId`, that Breakout's
+   * result into this Thread; without it, this Thread's result into one of its
+   * Channels. A retry with the same `clientMessageId` writes nothing again.
+   */
   async mergeConversation(
     threadId: string,
     { mentions: selected, ...request }: Omit<ConversationMergeRequest, 'mentions'> & { mentions?: MentionIdentity[] },

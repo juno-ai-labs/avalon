@@ -43,7 +43,8 @@
     "./client-session": "./src/client-session.ts",
     "./desktop-actions": "./src/desktop-actions.ts",
     "./browser-runtime": "./src/browser-runtime.ts",
-    "./usage": "./src/usage.ts"
+    "./usage": "./src/usage.ts",
+    "./message-issues": "./src/message-issues.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

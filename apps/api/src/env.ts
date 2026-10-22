@@ -45,6 +45,7 @@ export interface Env {
   AUDIT_DB: D1Database;
   /** The usage ledger, kept apart from `DB` so it can only fill itself. See docs/usage-metering.md. */
   USAGE_DB: D1Database;
+  MESSAGE_ISSUES_DB: D1Database;
   /** Shared, content-free routing authority available to both product regions. */
   PLATFORM_DB: D1Database;
   PAYLOADS: R2Bucket;
@@ -437,6 +438,7 @@ const EnvContractSchema = z.object({
   TELEMETRY_DB: binding<D1Database>(),
   AUDIT_DB: binding<D1Database>(),
   USAGE_DB: binding<D1Database>(),
+  MESSAGE_ISSUES_DB: binding<D1Database>(),
   PLATFORM_DB: binding<D1Database>(),
   PAYLOADS: binding<R2Bucket>(),
   TELEMETRY_PAYLOADS: binding<R2Bucket>(),
