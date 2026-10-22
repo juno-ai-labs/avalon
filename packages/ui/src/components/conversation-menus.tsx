@@ -564,10 +564,10 @@ function PublicSwitch({ actions }: { actions: ConversationRowActions | undefined
   />;
 }
 
-/** A level row's count, or None yet; nothing while the list is unknown. */
+/** A level row's count, including zero; nothing while the list is unknown. */
 function countMeta(items: readonly unknown[] | undefined): string | undefined {
   if (items === undefined) return undefined;
-  return items.length === 0 ? 'None yet' : `${items.length}`;
+  return `${items.length}`;
 }
 
 function MemoryLevelRow({ memory }: { memory: TitleMenuMemory | undefined }): React.JSX.Element | null {
