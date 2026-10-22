@@ -530,8 +530,8 @@ describe('Rally API wire adapter', () => {
   });
 
   it('reads the pin from pinnedModel, including one the legacy field cannot carry', () => {
-    expect(mapWorkstreamDetail({ ...detail, pinnedModel: 'x-ai/grok-4.7', modelOverride: null }))
-      .toMatchObject({ modelOverride: 'x-ai/grok-4.7' });
+    expect(mapWorkstreamDetail({ ...detail, pinnedModel: 'openai/gpt-6.1-sol', modelOverride: null }))
+      .toMatchObject({ modelOverride: 'openai/gpt-6.1-sol' });
   });
 
   it.each([

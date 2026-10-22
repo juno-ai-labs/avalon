@@ -750,13 +750,13 @@ describe("substream preparation on workerd", () => {
       mentions: [],
       attachmentIds: [],
       confirmedParticipantUserIds: [],
-    }, "x-ai/grok-4.7");
+    }, "openai/gpt-6.1-sol");
 
     const detail = await conversation(created.substreamId).fetch("https://object.test/internal/product", {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ operation: "get", auth: creatorAuth }),
     });
-    expect(await detail.json()).toMatchObject({ pinnedModel: "x-ai/grok-4.7", modelOverride: null });
+    expect(await detail.json()).toMatchObject({ pinnedModel: "openai/gpt-6.1-sol", modelOverride: null });
   });
 
   it("pins the child to the model its creator chose, and runs it there", async () => {

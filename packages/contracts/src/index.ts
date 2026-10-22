@@ -227,11 +227,17 @@ export type HarnessFailureCode = z.infer<typeof HarnessFailureCodeSchema>;
  * end of the list. The "orders each vendor's models newest first" test holds
  * the half of this a machine can check — a family whose ids carry comparable
  * version numbers must not ascend — which is every family except the two whose
- * members share a version (`claude-*-5.5`, `deepseek-v4.1-*`) and are ordered
- * by hand.
+ * members share a version (`deepseek-v4.1-*`) and are ordered by hand.
  *
  * **At most three per vendor.** Adding a vendor's newest model retires its
  * oldest entry here, so the menu stays short enough to scan as it is refreshed.
+ *
+ * **Only models that run on Rally's own provider accounts.** A pin reaches
+ * either Rally's Azure deployment through the harness or OpenRouter with
+ * Rally's own Azure or Google Cloud key. A model OpenRouter can serve only
+ * from its own accounts works, but runs outside those accounts and their terms,
+ * so it waits here until one of those routes exists. A call's `is_byok` in the
+ * inference lakehouse is how to confirm it.
  *
  * Nothing reads position 0. An earlier note here claimed the first entry was
  * what the selector showed before anything was chosen, and that has not been
@@ -250,17 +256,13 @@ export type HarnessFailureCode = z.infer<typeof HarnessFailureCodeSchema>;
  * See `docs/feature-flags.md` for how an override composes with the flags.
  */
 export const AGENT_MODEL_OVERRIDES = [
-  "x-ai/grok-4.7",
   "x-ai/grok-4.6",
-  "x-ai/grok-4.5",
   "google/gemini-4-argon",
   "google/gemini-3.8-flash",
   "google/gemini-3.7-flash",
   "openai/gpt-6.1-sol",
   "openai/gpt-6-luna",
   "openai/gpt-5.6-sol",
-  "anthropic/claude-opus-5.5",
-  "anthropic/claude-sonnet-5.5",
   "deepseek/deepseek-v4.1-flash-1017",
   "deepseek/deepseek-v4.1-flash",
   "deepseek/deepseek-v4-pro",
