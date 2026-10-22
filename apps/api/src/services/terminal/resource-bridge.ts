@@ -372,9 +372,9 @@ export function createTerminalResourceBridge(
    * `terminal:<room-id>:<path>`, so every run created a private fork at v1 and
    * the room's copy was never touched again.
    *
-   * The sandbox stays with the Sidekick's authoring conversation. An import
-   * may recover that room's generated site by its publication identity and
-   * attach it to this run; other resource access stays with the run's links.
+   * The sandbox stays with the Sidekick's authoring conversation. Imports
+   * resolve the live authorized resource scope independently of publication;
+   * a publication target is not an access grant.
    */
   publicationWorkstreamId?: string | null,
   /**
@@ -391,6 +391,7 @@ export function createTerminalResourceBridge(
    * Sidekick run, whose principal nobody asked to act.
    */
   onBehalfOfUserId: string | null = null,
+  publicationSubstreamId = "0",
 ): TerminalResourceBridge {
   // The layered runtime database routes resource rows to WorkspaceDO and
   // tool/link rows to SubstreamAgent. Keep every statement single-authority;
@@ -446,6 +447,7 @@ export function createTerminalResourceBridge(
       : attachWorkstreamRuntimeResource(env, {
         workspaceId: context.workspaceId,
         workstreamId,
+        substreamId: publicationSubstreamId,
         ...input,
       }));
     if (workstreamId === context.workstreamId) return;
@@ -645,7 +647,7 @@ export function createTerminalResourceBridge(
     async importResource(context, input, destinationPath, sandboxGeneration, providerSandboxId, provider) {
       const rows = await loadVisibleWorkstreamResourcesByIds(
         env.DB,
-        createConversationResourceLinks(env, context.workspaceId, context.workstreamId, undefined, importingSubstreamId ?? undefined),
+        createConversationResourceLinks(env, context.workspaceId, context.workstreamId, undefined, importingSubstreamId ?? undefined, context.executionPrincipal),
         {
           workspaceId: context.workspaceId,
           workstreamId: context.workstreamId,
@@ -653,27 +655,7 @@ export function createTerminalResourceBridge(
           resourceIds: [input.resourceId],
         },
       );
-      let row = rows[0];
-      if (!row && publicationWorkstreamId && publicationWorkstreamId !== context.workstreamId) {
-        // A new activation has no previous activation's links. Its server-bound
-        // publication target authorizes recovery of that target's generated
-        // sites only, not arbitrary attachments or another Thread's sites.
-        const [published] = await loadVisibleWorkstreamResourcesByIds(
-          env.DB,
-          createConversationResourceLinks(env, context.workspaceId, publicationWorkstreamId, undefined, "0"),
-          { workspaceId: context.workspaceId, workstreamId: publicationWorkstreamId,
-            principal: context.executionPrincipal, resourceIds: [input.resourceId] },
-        );
-        if (published?.resource_type === "generated_site"
-          && published.provider === "avalon_generated"
-          && String(published.provider_resource_id).startsWith(`terminal:${publicationWorkstreamId}:`)) {
-          await attachResource({ workspaceId: context.workspaceId, workstreamId: context.workstreamId,
-            ...(importingSubstreamId ? { substreamId: importingSubstreamId } : {}),
-            resourceId: published.id, attachedByUserId: context.executionPrincipal.type === "user"
-              ? context.executionPrincipal.userId : null });
-          row = published;
-        }
-      }
+      const row = rows[0];
       if (!row) {
         throw new TerminalToolError(
           "resource_not_found",

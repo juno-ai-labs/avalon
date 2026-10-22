@@ -16,7 +16,7 @@ export async function readConnectorResourceAttachment(
   env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   const [row] = await loadVisibleWorkstreamResourcesByIds(
     env.DB,
-    createConversationResourceLinks(env, input.workspaceId, input.workstreamId, undefined, input.substreamId),
+    createConversationResourceLinks(env, input.workspaceId, input.workstreamId, undefined, input.substreamId, input.principal),
     { ...input, resourceIds: [resourceId] },
   );
   if (!row) throw new ConnectorError("unauthorized", "attachmentResourceIds: resource is not attached or visible to this run", { field: "attachmentResourceIds" });

@@ -2910,7 +2910,7 @@ export async function runWorkstreamHarness(
     ? await loadWorkstreamContextCompaction(
         env.DB,
         orderedTranscript,
-        createConversationResourceLinks(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
+        createConversationResourceLinks(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId, input.executionPrincipal),
         input.workspaceId,
         input.parentId,
         input.executionPrincipal,
@@ -3616,7 +3616,7 @@ export async function runWorkstreamHarness(
             await liveness.pulse("compaction_prepare", true);
             await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
             preparedCompactionVisibilityFingerprint = await loadWorkstreamResourceInventoryFingerprint(
-              createConversationResourceLinks(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
+              createConversationResourceLinks(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId, input.executionPrincipal),
             );
           },
           renderAppendix: async () => {
@@ -3629,7 +3629,7 @@ export async function runWorkstreamHarness(
             try {
               current = await loadVisibleWorkstreamResourceInventory(
                 env.DB,
-                createConversationResourceLinks(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
+                createConversationResourceLinks(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId, input.executionPrincipal),
                 {
                   workspaceId: input.workspaceId,
                   workstreamId: input.parentId,
@@ -5440,7 +5440,7 @@ async function loadAuthorizedAttachmentReplay(
 // deliberately execution-scoped: connection changes are not cached across runs.
 async function loadHarnessInventory(env: Env, input: WorkstreamWorkflowInput) {
   return Promise.all([
-    createConversationResourceLinks(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0").attachedResourceIds(),
+    createConversationResourceLinks(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0", input.executionPrincipal).attachedResourceIds(),
     env.DB.prepare(
       `SELECT * FROM connector_connections WHERE workspace_id = ? AND status <> 'disabled'
        ORDER BY created_at ASC`,
@@ -5548,9 +5548,6 @@ async function loadHarnessTools(
     env,
     input,
     inObjectResourceAttacher,
-    // A work-stream-scoped Sidekick publishes into the room that owns it. Null
-    // for every other run, which publishes into its own conversation.
-    { publicationWorkstreamId: runDefinition?.owningWorkstreamId ?? null },
   );
   const multimodalGenerationPlugin = createAvalonMultimodalGenerationPlugin(
     env,
@@ -7437,18 +7434,9 @@ export async function reenterInterruptedWriteForRecovery(
   }
   let plugin: Awaited<ReturnType<typeof createAvalonTerminalPlugin>>;
   try {
-    // The same publication scope `loadHarnessTools` freezes. A work-stream
-    // scoped Sidekick publishes into the room that owns it, so a plugin built
-    // without this resolves `publish_resource` under the Sidekick's own
-    // conversation instead — a different path identity, which would make the
-    // reconciler look for the interrupted publication somewhere it was never
-    // written and report `not_landed` for a publication that landed.
-    const runDefinition = input.automationRun
-      ? await readAutomationRunDefinition(env, input)
-      : null;
-    plugin = await createAvalonTerminalPlugin(env, input, inObjectResourceAttacher, {
-      publicationWorkstreamId: runDefinition?.owningWorkstreamId ?? null,
-    });
+    // Plugin composition resolves the same admitted home for setup, execution
+    // and repair, so reconciliation looks under the original publication identity.
+    plugin = await createAvalonTerminalPlugin(env, input, inObjectResourceAttacher);
   } catch (error) {
     return { outcome: "unknown", reason: diagnosticErrorCode(error, "plugin_unavailable") };
   }
