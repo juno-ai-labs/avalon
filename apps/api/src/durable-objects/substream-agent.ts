@@ -1,3 +1,4 @@
+import { RESERVED_CHILD_MEMBERSHIP_VERSION } from "./hosted-parent";
 import { readCompletionVerificationSnapshot } from "./completion-verification-storage";
 import { projectConversationView } from "@rally/contracts/conversation-view";
 import { ConversationViewDeliverySchema, ConversationViewJobSchema, ConversationViewProjectionSchema, completeConversationViewDelivery, nextConversationViewAt, publishConversationViews } from "./conversation-view-projection";
@@ -1561,6 +1562,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       || identity.parentKind !== "workstream" || this.externalSubstreamId() !== request.substreamId) {
       return { status: "identity_mismatch" as const };
     }
+    const root = this.state.storage.sql.exec<{ authority_mode: string; authority_generation: number }>(
+      "SELECT authority_mode, authority_generation FROM workstream WHERE id = 1",
+    ).toArray()[0];
+    if (root?.authority_mode !== "authoritative" || root.authority_generation <= 0) return { status: "not_ready" as const };
     const store = new ParticipantAuthorityTransferStorage(this.state.storage);
     const transferId = store.currentTransferId();
     if (transferId !== null && transferId !== request.transferId) return { status: "conflict" as const };
@@ -1633,12 +1638,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       const projection = transfer.projectionForUser(userId);
       return projection?.active === true && projection.revision === requiredVersion;
     }
-    if (this.externalSubstreamId() === "0") return true;
-    const row = this.state.storage.sql.exec<{ version: number; active: number }>(
-      `SELECT version, active FROM private_child_membership_authority WHERE user_id = ?`,
-      userId,
+    // Unpublished import agents use the parent's creator-only reservation,
+    // never a ready conversation's roster. Its signed bootstrap version is
+    // distinct from grant registration, which advances the grant revision.
+    if (requiredVersion !== RESERVED_CHILD_MEMBERSHIP_VERSION || this.externalSubstreamId() === "0") return false;
+    const reservation = this.state.storage.sql.exec<{ active: number; version: number }>(
+      "SELECT active, version FROM private_child_membership_authority WHERE user_id = ?", userId,
     ).toArray()[0];
-    return row?.active === 1 && row.version === requiredVersion;
+    return reservation?.active === 1 && reservation.version === RESERVED_CHILD_MEMBERSHIP_VERSION;
   }
 
   /**
@@ -3362,6 +3369,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         true,
       )
       : method.apply(this.identityRows, parsed.data.args);
+    if (parsed.data.operation === "provision" && this.externalSubstreamId() === "0") await this.product.ensureParticipantAuthority();
     return { status: 200, payload: { ok: true, value: value ?? null } };
   }
 
@@ -3666,9 +3674,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         return jsonResponse(result);
       }
       if ((request.operation === "add_participant" || request.operation === "remove_participant")
-        && identity.parentKind === "workstream"
-        && new ParticipantAuthorityTransferStorage(this.state.storage).currentTransferId() !== null) {
+        && identity.parentKind === "workstream") {
         const active = request.operation === "add_participant";
+        await this.product.authorize(current);
         if (active) await this.product.authorizeParticipantAddition(current, request.userId);
         const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
           identity.workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspaceId)));

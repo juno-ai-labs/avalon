@@ -81,11 +81,10 @@ import {
 } from "../src/durable-objects/substream-loop-storage";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import { WorkstreamMessageStorage } from "../src/durable-objects/workstream-message-storage";
-import { WorkstreamIdentityStorage } from "../src/durable-objects/workstream-identity-storage";
 import { ParticipantAuthorityTransferStorage } from "../src/durable-objects/participant-authority-transfer";
 import { enqueueSemanticRealtimeReference } from "../src/durable-objects/workstream-semantic-realtime-outbox";
 import type { ScopeGrantStorage } from "../src/durable-objects/scope-grant-storage";
-import { hostedParentStub, insertChannelRow, readSharedWorkstream, withHostedParent } from "./helpers/hosted-parent";
+import { hostedParentStub, readSharedWorkstream, withHostedParent } from "./helpers/hosted-parent";
 import { resolveSidekickSkills } from "../src/services/sidekick-skills";
 import { AuthorizationService } from "../src/services/authorization-service";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
@@ -1093,7 +1092,7 @@ describe("a member's message travels the whole pipeline", () => {
       });
       if (delivery === "removed_before_recovery") {
         await expect.poll(() => live.frames.filter((frame) => frame.type === "participant_removed"))
-          .toMatchObject([{ userId: OTHER_USER_ID }]);
+          .toEqual(expect.arrayContaining([expect.objectContaining({ userId: OTHER_USER_ID })]));
         expect(live.frames.filter((frame) => frame.type === "participant_added")).toEqual([]);
       } else {
         await expect.poll(() => live.frames.filter((frame) => frame.type === "participant_added"))
@@ -1121,8 +1120,11 @@ describe("a member's message travels the whole pipeline", () => {
       (id,email,name,timezone,created_at) VALUES (?,?,'Roster member','UTC','2026-01-01T00:00:00.000Z')`)
       .bind(id, `${id}@example.test`)));
     await runInDurableObject(stub, async (instance, state) => {
-      new WorkstreamIdentityStorage(state.storage).admitParticipants({
-        userIds: [...userIds, OTHER_USER_ID], addedByUserId: USER_ID, reason: "explicit", now: Date.parse("2026-10-21T00:00:00.000Z"),
+      const projection = new ParticipantAuthorityTransferStorage(state.storage);
+      const transferId = projection.currentTransferId()!;
+      for (const userId of [...userIds, OTHER_USER_ID]) projection.applyProjection({
+        transferId, userId: asUserId(userId), revision: 1000, active: true, reason: "explicit",
+        addedByUserId: USER_ID, changedAt: Date.parse("2026-10-21T00:00:00.000Z"),
       });
       // Read the actual service output against real D1, without loading the
       // whole roster or starting another model run.
@@ -1171,12 +1173,16 @@ describe("a member's message travels the whole pipeline", () => {
       expect(await product(stub, { operation: change === "removed" ? "remove_participant" : "add_participant",
         auth: AUTH, userId: OTHER_USER_ID })).toMatchObject({ status: 200 });
       gate.open = true;
-      expect(await sending).toMatchObject({ status: 200, body: { deliveryState: "pending" } });
-      await expect.poll(() => live.frames.filter((frame) => frame.type === "participant_added"))
-        .toMatchObject([{ participant: { user: { id: OTHER_USER_ID } } }]);
-      expect(await product(stub, { operation: "get", auth: AUTH })).toMatchObject({ status: 200, body: {
-        participants: expect.arrayContaining([expect.objectContaining({ user: expect.objectContaining({ id: OTHER_USER_ID }) })]),
-      } });
+      if (change === "removed") {
+        expect(await sending).toMatchObject({ status: 409, body: { error: "participant_access_changed" } });
+        expect(await product(stub, { operation: "get", auth: AUTH })).toMatchObject({ status: 200, body: {
+          participants: expect.not.arrayContaining([expect.objectContaining({ user: expect.objectContaining({ id: OTHER_USER_ID }) })]),
+        } });
+      } else {
+        expect(await sending).toMatchObject({ status: 200, body: { deliveryState: "pending" } });
+        await expect.poll(() => live.frames.filter((frame) => frame.type === "participant_added"))
+          .toMatchObject([{ participant: { user: { id: OTHER_USER_ID } } }]);
+      }
     } finally {
       gate.open = true;
       await sending;
@@ -3216,9 +3222,17 @@ describe("a member's message travels the whole pipeline", () => {
   describe("participant projection delivery", () => {
     useHeldEffectQueue();
     it("migrates authoritative private-child membership and keeps Main mutations independently scoped", async () => {
+      const mainOwnerId = asUserId(crypto.randomUUID());
+      await env.DB.batch([
+        env.DB.prepare("INSERT INTO users(id,email,name,timezone,created_at) VALUES (?,'main-owner@example.test','Main owner','UTC','2026-01-01T00:00:00.000Z')").bind(mainOwnerId),
+        env.DB.prepare("INSERT INTO workspace_members(workspace_id,user_id,status,access_class,role) VALUES (?,?,'active','member','member')").bind(WORKSPACE_ID, mainOwnerId),
+      ]);
       const main = agentStub();
-      const opened = await initializeWorkstream(main,"first message");
-      await settledRun(main,opened.body.harnessRunId as string);
+      const opened = await initializeWorkstream(main, "first message", null, [mainOwnerId]);
+      await settledRun(main, opened.body.harnessRunId as string);
+      expect(await hostedParentStub(env, WORKSPACE_ID).mutateParticipantGrant({ operationId: crypto.randomUUID(),
+        actorUserId: mainOwnerId, userId: USER_ID, active: false,
+        target: { kind: "workstream", workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID } })).toMatchObject({ status: "committed" });
       const substreamId = asSubstreamId(crypto.randomUUID());
       const child = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global",WORKSPACE_ID,WORKSTREAM_ID,substreamId));
       expect((await child.bootstrapRuntime({ workspaceId:WORKSPACE_ID,parentKind:"workstream",parentId:WORKSTREAM_ID,
@@ -3267,7 +3281,7 @@ describe("a member's message travels the whole pipeline", () => {
         targets:[{ kind:"conversation" as const,...address }] };
       expect(await parent.createScopeInvitations(invitation)).toMatchObject({ status:"denied" });
       await runInDurableObject(parent, (_instance,state) => {
-        expect(state.storage.sql.exec("SELECT 1 FROM parent_participant_migrations WHERE parent_id=? AND substream_id<>'0'",WORKSTREAM_ID).toArray()).toEqual([]);
+        expect(state.storage.sql.exec("SELECT phase FROM parent_participant_migrations WHERE parent_id=? AND substream_id<>'0'",WORKSTREAM_ID).toArray()).toEqual([{ phase: "complete" }]);
       });
       expect(await parent.createScopeInvitations({ ...invitation,actorUserId:OTHER_USER_ID }))
         .toMatchObject({ status:"created" });
@@ -3277,7 +3291,7 @@ describe("a member's message travels the whole pipeline", () => {
       await expect.poll(() => parent.beginChildParticipantMigration(address), { timeout:30_000 })
         .toEqual({ status:"complete",transferId:migration.transferId });
       await withParentGrants(parent, address, (store) => {
-        expect(store.forUser(USER_ID)).toEqual([]);
+        expect(store.forUser(USER_ID).filter((grant) => grant.target.kind === "conversation" && grant.target.substreamId === substreamId)).toEqual([]);
       });
       await runDurableObjectAlarm(parent);
       await expect.poll(() => runInDurableObject(child, (_instance,state) =>
@@ -3290,7 +3304,7 @@ describe("a member's message travels the whole pipeline", () => {
       });
       await withParentGrants(parent, address, (store,state) => {
         expect(store.forUser(OTHER_USER_ID)).toMatchObject([{ target:{ kind:"conversation",substreamId },active:true }]);
-        expect(store.forUser(USER_ID)).toEqual([]);
+        expect(store.forUser(USER_ID).filter((grant) => grant.target.kind === "conversation" && grant.target.substreamId === substreamId)).toEqual([]);
         expect(store.read(OTHER_USER_ID,{ kind:"workstream",workspaceId:WORKSPACE_ID,parentId:WORKSTREAM_ID })).toBeNull();
         expect(() => state.storage.sql.exec("UPDATE parent_breakout_members SET active=0 WHERE parent_id=? AND substream_id=?",WORKSTREAM_ID,substreamId))
           .toThrow("participant_authority_transferred");
@@ -3298,7 +3312,7 @@ describe("a member's message travels the whole pipeline", () => {
           .toEqual({ state:"pending",attempts:0 });
       });
       await runInDurableObject(main, (_instance,state) => {
-        expect(new ParticipantAuthorityTransferStorage(state.storage).currentTransferId()).toBeNull();
+        expect(new ParticipantAuthorityTransferStorage(state.storage).currentTransferId()).toEqual(expect.any(String));
       });
       const participantRequest = { ...address,actorUserId:OTHER_USER_ID,userId:USER_ID,operationId:"child-participant-add" };
       const added = await parent.addPrivateChildParticipant(participantRequest);
@@ -3498,7 +3512,7 @@ describe("a member's message travels the whole pipeline", () => {
       await runInDurableObject(parent, (_instance, state) => {
         state.storage.sql.exec("UPDATE channels SET scope='workspace' WHERE workstream_id = ?", WORKSTREAM_ID);
       });
-      expect(await withHostedParent(parent, WORKSTREAM_ID, (hosted) => hosted.canRead(USER_ID))).toBe(true); // Legacy public visibility must not authorize a guest.
+      expect(await withHostedParent(parent, WORKSTREAM_ID, (hosted) => hosted.canRead(USER_ID))).toBe(false); // Public member visibility must not authorize a guest.
       await expect(artifactService.open(unrelatedResource)).rejects.toMatchObject({ status: 404, code: "artifact_not_found" });
       await runInDurableObject(parent, (_instance, state) => {
         state.storage.sql.exec("UPDATE channels SET scope='personal' WHERE workstream_id = ?", WORKSTREAM_ID);
@@ -3720,7 +3734,7 @@ describe("a member's message travels the whole pipeline", () => {
       const parentTarget = { kind: "workstream" as const, workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID };
       await withParentGrants(parent, address, (store) => {
         expect(store.mutate({ operationId: crypto.randomUUID(),
-          actorUserId: OTHER_USER_ID, userId: USER_ID, target: parentTarget, active: true, expectedRevision: 0 }, "existing-member"))
+          actorUserId: OTHER_USER_ID, userId: USER_ID, target: parentTarget, active: true, expectedRevision: store.read(USER_ID, parentTarget)?.revision ?? 0 }, "existing-member"))
           .toMatchObject({ status: "committed" });
       });
       // Whether the grant makes them one of the home's people is the
@@ -4042,7 +4056,7 @@ describe("a member's message travels the whole pipeline", () => {
       const mainTarget = { kind: "conversation" as const, workspaceId: WORKSPACE_ID,
         parentId: WORKSTREAM_ID, substreamId: asSubstreamId("0") };
       await withParentGrants(parent, address, (store, state) => {
-        state.storage.sql.exec("INSERT INTO parent_participant_migrations (parent_id,substream_id,transfer_id,incarnations_json,phase) VALUES (?, '0', ?, '{}', 'complete')", WORKSTREAM_ID, crypto.randomUUID());
+        state.storage.sql.exec("INSERT OR IGNORE INTO parent_participant_migrations (parent_id,substream_id,transfer_id,incarnations_json,phase) VALUES (?, '0', ?, '{}', 'complete')", WORKSTREAM_ID, crypto.randomUUID());
         state.storage.sql.exec("INSERT OR IGNORE INTO parent_children (parent_id,substream_id,kind,status,created_by_user_id,created_at) VALUES (?,'0','main','ready',?,0)", WORKSTREAM_ID, OTHER_USER_ID);
         expect(store.mutate({ operationId: crypto.randomUUID(), actorUserId: OTHER_USER_ID,
           userId: USER_ID, target: mainTarget, active: true, expectedRevision: 0 }, "existing-member"))
@@ -4100,20 +4114,14 @@ describe("a member's message travels the whole pipeline", () => {
       });
     });
 
-    it.each(["self", "mention", "queued", "controls"] as const)("prepares legacy Main sharing and handles %s participation through grants", async (participation) => {
+    it.each(["self", "mention", "queued", "controls"] as const)("handles %s participation through Main grants established at creation", async (participation) => {
       const stub = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID));
       const opened = await initializeWorkstream(stub, "first message");
       await settledRun(stub, opened.body.harnessRunId as string);
       const parent = hostedParentStub(env, WORKSPACE_ID);
       await parent.authority({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID });
-      await runInDurableObject(parent, (_instance, state) => {
-        state.storage.sql.exec(`INSERT OR IGNORE INTO parent_metadata
-          (parent_id,parent_kind,workspace_id,region,authority_generation,created_at,updated_at)
-          VALUES (?,'workstream',?,'global',1,0,0)`, WORKSTREAM_ID, WORKSPACE_ID);
-        // An open Channel, which is what lets a member join Main by speaking.
-        insertChannelRow(state, WORKSTREAM_ID, "Sharing test", "workspace");
-        if (participation !== "controls") state.storage.sql.exec("INSERT OR IGNORE INTO parent_children(parent_id,substream_id,kind,created_at) VALUES (?,'0','main',0)", WORKSTREAM_ID);
-      });
+      expect(await product(stub, { operation: "update", auth: AUTH, input: { scope: "workspace" } }))
+        .toMatchObject({ status: 200 });
       const request = { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, actorUserId: OTHER_USER_ID,
         operationId: crypto.randomUUID(), emails: ["guest@example.test"], expiresAt: null,
         targets: [{ kind: "conversation" as const, workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, substreamId: asSubstreamId("0") }] };
@@ -4125,12 +4133,9 @@ describe("a member's message travels the whole pipeline", () => {
         { kind: "workstream", workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID },
       ]);
       expect(options.scopes).toContainEqual({ target:request.targets[0],title:"Main" });
-      if (participation === "controls") await runInDurableObject(parent,(_instance,state) => {
-        expect(state.storage.sql.exec("SELECT 1 FROM parent_children WHERE parent_id=? AND substream_id='0'", WORKSTREAM_ID).toArray()).toEqual([]);
-      });
       await runInDurableObject(parent, (_instance, state) => {
-        // Discovering first-share choices never transfers the source authority.
-        expect(state.storage.sql.exec("SELECT 1 FROM parent_participant_migrations WHERE parent_id=? AND substream_id='0'", WORKSTREAM_ID).toArray()).toEqual([]);
+        expect(state.storage.sql.exec("SELECT phase FROM parent_participant_migrations WHERE parent_id=? AND substream_id='0'", WORKSTREAM_ID).toArray())
+          .toEqual([{ phase: "complete" }]);
       });
       let queuedTurnId: string | null = null;
       if (participation === "queued") {
@@ -4166,10 +4171,10 @@ describe("a member's message travels the whole pipeline", () => {
         const run = await settledRunForTrigger(stub, queuedTurnId);
         expect(PRE_PROVIDER_FAILURES).not.toContain(failureCode(run));
         await runInDurableObject(stub, (_instance, state) => {
-          expect(state.storage.sql.exec("SELECT 1 FROM participants WHERE user_id=? AND status='active'", OTHER_USER_ID).toArray()).toEqual([]);
+          expect(state.storage.sql.exec("SELECT status FROM participants WHERE user_id=?", OTHER_USER_ID).one()).toEqual({ status: "active" });
         });
         await withParentGrants(parent, request, (store) => {
-          expect(store.forUser(OTHER_USER_ID)).toEqual([]);
+          expect(store.forUser(OTHER_USER_ID)).toMatchObject([{ active: true, target: { kind: "conversation", substreamId: "0" } }]);
         });
         return;
       }
@@ -4271,6 +4276,13 @@ describe("a member's message travels the whole pipeline", () => {
           (parent_id,parent_kind,workspace_id,region,authority_generation,created_at,updated_at)
           VALUES (?,'workstream',?,'global',1,0,0)`, WORKSTREAM_ID,WORKSPACE_ID);
         state.storage.sql.exec("INSERT OR IGNORE INTO parent_children(parent_id,substream_id,kind,created_at) VALUES (?,'0','main',0)", WORKSTREAM_ID);
+        // Recreate an interrupted handoff after source commit and before
+        // target registration; new creation ordinarily finishes it already.
+        state.storage.sql.exec("UPDATE parent_participant_migrations SET phase='pending' WHERE parent_id=? AND substream_id='0'", WORKSTREAM_ID);
+        state.storage.sql.exec("DELETE FROM parent_participant_targets WHERE parent_id=?", WORKSTREAM_ID);
+        state.storage.sql.exec("DELETE FROM parent_participant_deliveries WHERE parent_id=?", WORKSTREAM_ID);
+        state.storage.sql.exec(`INSERT OR REPLACE INTO _internal_durable_alarms
+          (kind, alarm_key, due_at, created_at, updated_at) VALUES ('parent_participant_migration', ?, 0, 0, 0)`, `${WORKSTREAM_ID}:0`);
         state.storage.sql.exec(`CREATE TRIGGER fail_migration_completion BEFORE UPDATE OF phase ON parent_participant_migrations
           WHEN NEW.phase='complete' AND NEW.substream_id='0' BEGIN SELECT RAISE(ABORT, 'migration completion unavailable'); END`);
       });
@@ -4369,7 +4381,7 @@ describe("a member's message travels the whole pipeline", () => {
       const opened = await initializeWorkstream(stub, "first message");
       await settledRun(stub, opened.body.harnessRunId as string);
       const { socket } = await openSubscribedSocket(stub, crypto.randomUUID());
-      const transferId = crypto.randomUUID();
+      const transferId = await runInDurableObject(stub, (_instance, state) => new ParticipantAuthorityTransferStorage(state.storage).currentTransferId()!);
       const before = await runInDurableObject(stub, (_instance, state) => {
         const store = new ParticipantAuthorityTransferStorage(state.storage);
         store.prepare(transferId);
@@ -4379,7 +4391,7 @@ describe("a member's message travels the whole pipeline", () => {
         ).one().version;
       });
       const request = { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, substreamId: "0",
-        projection: { transferId, userId: USER_ID, revision: 1, active: false,
+        projection: { transferId, userId: USER_ID, revision: 1001, active: false,
           reason: "explicit" as const, addedByUserId: OTHER_USER_ID, changedAt: Date.now() } };
       const closed = new Promise<CloseEvent>((resolve) => socket.addEventListener("close", resolve, { once: true }));
       try {
@@ -4391,11 +4403,11 @@ describe("a member's message travels the whole pipeline", () => {
           expect(state.storage.sql.exec<{ version: number }>(
             "SELECT MAX(source_version) AS version FROM durable_outbox WHERE partition_key=?", `user:${USER_ID}`,
           ).one().version).toBe(before + 1);
-          expect(state.storage.sql.exec("SELECT revision FROM participant_projection_revisions WHERE user_id=?", USER_ID).one().revision).toBe(1);
+          expect(state.storage.sql.exec("SELECT revision FROM participant_projection_revisions WHERE user_id=?", USER_ID).one().revision).toBe(1001);
         });
         expect(await stub.applyParticipantProjection({ ...request,
-          projection: { ...request.projection, revision: 3, active: true } })).toEqual({ status: "applied" });
-        const reopened = await openSubscribedSocket(stub, crypto.randomUUID(), "0", 3);
+          projection: { ...request.projection, revision: 1003, active: true } })).toEqual({ status: "applied" });
+        const reopened = await openSubscribedSocket(stub, crypto.randomUUID(), "0", 1003);
         try {
           expect(await stub.applyParticipantProjection({ ...request,
             projection: { ...request.projection, revision: 2 } })).toEqual({ status: "stale" });
@@ -4650,18 +4662,24 @@ describe("a member's message travels the whole pipeline", () => {
       }],
     })).status).toBe(200);
 
-    // This direct bootstrap fixture bypasses the parent creation service, so
-    // install the same creator membership mirror that service confirms before
-    // issuing a child socket ticket.
-    await stub.applyPrivateChildMembership({
-      workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, substreamId,
-      userId: USER_ID, actorUserId: USER_ID, active: true, membershipVersion: 1,
+    const parent = hostedParentStub(env, WORKSPACE_ID);
+    await parent.reserveChild({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, substreamId: asSubstreamId("0"),
+      kind: "main", createdByUserId: USER_ID, authorityGeneration: 1, directory: { title: "Channel", description: "",
+        scope: "personal", systemKind: null, emailAddress: null, titleStatus: "settled", createdAt: new Date().toISOString() } });
+    await parent.reserveChild({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, substreamId,
+      kind: "child", createdByUserId: USER_ID, authorityGeneration: 1 });
+    await runInDurableObject(parent, (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO parent_breakout_members
+        (parent_id, substream_id, user_id, active, version, added_by_user_id, added_at, updated_at)
+        VALUES (?, ?, ?, 1, 1, ?, 0, 0)`, WORKSTREAM_ID, substreamId, USER_ID, USER_ID);
     });
+    await parent.ensureParticipantAuthority({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, substreamId });
 
     const { socket } = await openSubscribedSocket(
       stub,
       "00000000-0000-7000-8000-0000000005d1",
       substreamId,
+      2,
     );
     const operationId = "00000000-0000-7000-8000-0000000005d2";
     const receipt = nextSocketCommandOutcome(socket);

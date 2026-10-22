@@ -191,7 +191,7 @@ describe("substream preparation on workerd", () => {
     // The held effect queue leaves participant directory delivery pending.
     // Admission reads the Channel's scope from its directory row and its
     // participants from the parent's own rows, so it need not wait for that.
-    expect(await withHostedParent(parent(), WORKSTREAM_ID, (hosted) => hosted.canRead(OTHER_ID))).toBe(false);
+    expect(await withHostedParent(parent(), WORKSTREAM_ID, (hosted) => hosted.canRead(OTHER_ID))).toBe(true);
     const service = new SubstreamCreationService(TEST_ENV, { ...otherAuth, role: null });
     const prepared = await service.prepare(WORKSTREAM_ID, {
       operationId: crypto.randomUUID(), title: "Guest-created child", throughTurnId: "source-turn-1",
