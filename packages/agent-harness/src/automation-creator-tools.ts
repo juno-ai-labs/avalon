@@ -613,7 +613,7 @@ export function createAutomationsPlugin(
       "every week", "when this happens", "watch for", "remind",
     ],
     description:
-      "Configure this Sidekick to provide reusable knowledge or carry out delegated work within its existing scope.",
+      "Set up this Sidekick to provide reusable instructions or carry out work on a schedule or when an event occurs, within its existing scope.",
     systemMessage,
     tools: createAutomationCreatorTools(host),
     preload: false,
