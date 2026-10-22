@@ -52,6 +52,34 @@ function fixture() {
 }
 
 describe("Sidekick operation account selection over durable receipts", () => {
+  it("keeps activation mail IDs with their source account without redirecting a new inbox search", async () => {
+    const f = fixture();
+    const sourceAccount = { connectionId: b.connectionId, resourceKeys: ["google:message:event-message"] };
+    const result = await executeSidekickAccountOperation({ ...f.options(), sourceAccount,
+      identity: { kind: "account", resourceKeys: ["google:message:event-message"] } });
+    expect(result.executionAccount.connectionId).toBe(id(6));
+    await executeSidekickAccountOperation({ ...f.options(), sourceAccount,
+      identity: { kind: "account", resourceKeys: [] } });
+    expect(f.calls).toEqual([id(6), id(5)]);
+    await expect(executeSidekickAccountOperation({ ...f.options(), sourceAccount, selection: { userId: creator },
+      identity: { kind: "account", resourceKeys: ["google:message:event-message"] } })).rejects.toThrow("originating Sidekick account is unavailable");
+    const withdrawn = authority();
+    withdrawn.delegates = withdrawn.delegates.filter((grant) => grant.userId !== other);
+    await expect(executeSidekickAccountOperation({ ...f.options(), authority: withdrawn, sourceAccount,
+      identity: { kind: "account", resourceKeys: ["google:message:event-message"] } })).rejects.toThrow("originating Sidekick account is unavailable");
+    expect(f.calls).toEqual([id(6), id(5)]);
+  });
+
+  it("prefers a canonical source for a portable file while retaining safe read fallback", async () => {
+    const f = fixture();
+    await executeSidekickAccountOperation({ ...f.options(), sourceAccount: { connectionId: b.connectionId, resourceKeys: ["google:file:sheet"] },
+      execute: async (connection) => {
+        f.calls.push(connection.connectionId);
+        if (connection.connectionId === b.connectionId) throw connectorResourceAccessRefused("Not shared", {});
+        return { output: { values: [["Read"]] }, summary: "Read sheet" };
+      } });
+    expect(f.calls).toEqual([id(6), id(5)]);
+  });
   it("accepts a nullable unused selector without forwarding host account fields to the provider", () => {
     const definition = sidekickAccountToolDefinition({ name: "search", capability: "test.read", mode: "read", idempotency: "safe",
       description: "Search", inputSchema: { type: "object", additionalProperties: false, properties: { query: { type: "string" } } } });

@@ -1,7 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { googleOperationIdentity, googleOperationResultKeys } from "./google-operation-identity";
+import { googleOperationIdentity, googleOperationResultKeys, googleActivityResourceKeys } from "./google-operation-identity";
 
 describe("authored Google operation identity", () => {
+  it("projects normalized activation IDs without accepting source identity from prose or metadata", () => {
+    expect(googleActivityResourceKeys({ provider: "google", eventType: "email.received", resourceType: "gmail_thread",
+      providerResourceId: "thread-1", subject: { messageId: "message-1", threadId: "thread-1" } }))
+      .toEqual(["google:thread:thread-1", "google:message:message-1"]);
+    expect(googleActivityResourceKeys({ provider: "google", eventType: "calendar.event_changed", resourceType: "calendar_event",
+      providerResourceId: "event-1", subject: { calendarId: "primary", eventId: "event-1" } }))
+      .toEqual(["google:event:primary:event-1"]);
+    expect(googleActivityResourceKeys({ provider: "google", eventType: "sheets.spreadsheet_changed", resourceType: "google_sheet",
+      providerResourceId: "sheet-1", subject: {} })).toEqual(["google:file:sheet-1"]);
+    expect(googleActivityResourceKeys({ provider: "webhook", eventType: "email.received", resourceType: "gmail_thread",
+      providerResourceId: "forged-thread", subject: { messageId: "forged-message" } })).toEqual([]);
+  });
   it.each([
     ["drive.get_metadata", { fileId: "file-1" }], ["drive.download", { fileId: "file-1" }],
     ["docs.read_document", { documentId: "file-1" }], ["docs.append_text", { documentId: "file-1", text: "hello" }],

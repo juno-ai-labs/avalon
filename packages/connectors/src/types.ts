@@ -909,6 +909,8 @@ export interface ConnectorAdapter {
   resourceRegistrationCapability?: string;
   operationIdentity?(toolName: string, input: unknown): ConnectorOperationIdentity;
   operationResultKeys?(toolName: string, input: unknown, result: ConnectorToolResult): string[];
+  /** Canonical activity fields only; metadata and prose never select an account. */
+  activityResourceKeys?(activity: Pick<NormalizedActivity, "provider" | "eventType" | "resourceType" | "providerResourceId" | "subject">): string[];
   probeResourceAccess?(
     connection: AuthorizedConnectorConnection,
     reference: string,

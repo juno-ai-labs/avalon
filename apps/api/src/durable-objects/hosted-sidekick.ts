@@ -673,6 +673,23 @@ export class HostedSidekick {
     return this.coordinator(null, audience, false);
   }
 
+  /** Only the canonical event's source and authored ID projection bind tool accounts. */
+  private eventSourceAccount(eventId: string): NonNullable<AutomationRunDefinitionV1["opening"]>["sourceAccount"] {
+    const event = this.sql.exec<{
+      connection_id: string; connector_type: string; provider: string; event_type: string;
+      resource_type: string | null; provider_resource_id: string | null; subject_json: string;
+    }>(`SELECT connection_id,connector_type,provider,event_type,resource_type,provider_resource_id,subject_json
+         FROM workspace_connector_events WHERE event_id=?`, eventId).toArray()[0];
+    if (!event) return undefined;
+    const registry = connectorRegistryForEnv(this.env);
+    const adapter = registry.list().some((candidate) => candidate.type === event.connector_type) ? registry.get(event.connector_type) : undefined;
+    const resourceKeys = adapter?.activityResourceKeys?.({ provider: event.provider, eventType: event.event_type,
+      resourceType: event.resource_type, providerResourceId: event.provider_resource_id,
+      subject: JSON.parse(event.subject_json),
+    }) ?? [];
+    return resourceKeys.length > 0 ? { connectionId: event.connection_id, resourceKeys } : undefined;
+  }
+
   private delegationError(code: keyof typeof SIDEKICK_DELEGATION_ERRORS): ApiError {
     return new ApiError(code === "sidekick_not_found" ? 404 : 409, code, SIDEKICK_DELEGATION_ERRORS[code]);
   }
@@ -1169,7 +1186,7 @@ export class HostedSidekick {
       eventType: request.event.eventType,
       occurredAt: request.event.occurredAt,
       payloadHash: request.payloadHash,
-    }, externalEventOpening(request.event), coordinator);
+    }, { ...externalEventOpening(request.event), sourceAccount: this.eventSourceAccount(request.event.id) }, coordinator);
     return {
       admitted: true,
       outcomeCode: admitted.reused ? "sidekick_occurrence_replayed" : "sidekick_occurrence_admitted",
@@ -1262,6 +1279,8 @@ export class HostedSidekick {
     if (!run) throw new ApiError(404, "sidekick_run_not_found", "This run does not exist");
     if (!revision) throw new ApiError(404, "sidekick_definition_not_found", "The run's definition revision is missing");
     const definition = AutomationDraftSchema.parse(JSON.parse(revision.definition_json));
+    const opening = run.opening_json ? JSON.parse(run.opening_json) as NonNullable<AutomationRunDefinitionV1["opening"]> : null;
+    const trigger = JSON.parse(run.trigger_json) as AutomationRunTriggerV1;
     return AutomationRunDefinitionV1Schema.parse({
       schemaVersion: 1,
       automationId: sidekick.automation_id,
@@ -1288,8 +1307,9 @@ export class HostedSidekick {
       coordinatorUserId: run.coordinator_user_id,
       accountUserId: sidekick.legacy_account_user_id ?? sidekick.author_user_id,
       modelOverride: sidekick.model_override,
-      trigger: JSON.parse(run.trigger_json),
-      opening: run.opening_json ? JSON.parse(run.opening_json) : null,
+      trigger,
+      opening: opening && !opening.sourceAccount && trigger.kind === "external_event"
+        ? { ...opening, sourceAccount: this.eventSourceAccount(trigger.workspaceEventId) } : opening,
       state: run.state,
     });
   }
@@ -1743,7 +1763,7 @@ export class HostedSidekick {
     acceptedRevision: number | null,
     occurrenceKey: string,
     trigger: AutomationRunTriggerV1,
-    opening: { textContent: string; structuredContent: Record<string, unknown>; resourceId: string | null } | null,
+    opening: AutomationRunDefinitionV1["opening"],
     coordinatorUserId: string | null,
     seed: DemoSeed | null = null,
   ): { runId: string; reused: boolean } {

@@ -1,4 +1,4 @@
-import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId, AutomationRunDefinitionV1Schema } from "@rally/contracts";
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -17,6 +17,7 @@ import {
 } from "./helpers/durable-authority";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-object-rpcs";
+import { Preparation } from "../src/services/harness-preparation";
 
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000000");
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
@@ -177,7 +178,10 @@ function googleAsTwoAccounts(options: {
 const write = { spreadsheetId: FILE_ID, range: "A1:B1", values: [["a", "b"]], valueInputOption: "RAW" };
 
 describe("reaching one resource through whichever connection can", () => {
-  it("dispatches an assembled Sidekick Google tool using another consenting user's credentials", async () => {
+  it.each([
+    { source: false, expectedReads: ["personal-token", "workspace-token"], expectedOriginal: PERSONAL_ID },
+    { source: true, expectedReads: ["workspace-token"], expectedOriginal: WORKSPACE_CONNECTION_ID },
+  ])("dispatches an assembled Sidekick Google tool using another consenting user's credentials (event source: $source)", async ({ source, expectedReads, expectedOriginal }) => {
     const reads: string[] = [];
     const writes = googleAsTwoAccounts({ reads });
     const { env, database, objectStore, workspaceObject } = await fixture();
@@ -202,7 +206,19 @@ describe("reaching one resource through whichever connection can", () => {
     seedToolReceipt(objectStore, { id: "read-effect", runId: HARNESS_RUN_ID, toolCallId: "read-call",
       toolName: "sheets.read_values", status: "executing", mode: "read", executionPlanJson: '{"mode":"read"}' });
     const input = { ...workflowInput(), parentKind: "automation" as const };
-    const catalog = await __integrationTesting.loadHarnessTools(env, input, undefined, undefined, undefined, undefined, lease);
+    // Admission's canonical projection is covered in real workerd. Here the
+    // real loader must carry that typed run-opening reference into execution.
+    const runDefinition = source ? new Preparation(async () => AutomationRunDefinitionV1Schema.parse({
+      schemaVersion: 1, automationId: WORKSTREAM_ID, runId: HARNESS_RUN_ID, definitionRevision: 1,
+      definition: { name: "Calendar", description: "Read calendar", overview: "Read calendar", instructions: "Read calendar",
+        requiredCapabilities: [], expectedOutputs: [], defaultBehavior: {}, recommendedPlugins: [], memoryTables: [] },
+      defaultPluginIds: [], activitySourcePluginIds: {}, connectorBindings: {}, scope: "workspace", owningWorkstreamId: null,
+      runAsUserId: USER_ID, coordinatorUserId: USER_ID, accountUserId: USER_ID, modelOverride: null,
+      trigger: { kind: "manual", requestedByUserId: USER_ID }, state: "running",
+      opening: { textContent: "Calendar changed", structuredContent: {}, resourceId: null,
+        sourceAccount: { connectionId: WORKSPACE_CONNECTION_ID, resourceKeys: [`google:file:${FILE_ID}`] } },
+    })) : undefined;
+    const catalog = await __integrationTesting.loadHarnessTools(env, input, undefined, undefined, runDefinition, undefined, lease);
     const plugin = catalog.plugins.find((candidate) => catalog.frozenConnections.get(candidate.canonicalId)?.ownerUserId === USER_ID
       && candidate.tools.some((tool) => tool.definition.name === "sheets.update_values"))!;
     expect(plugin.systemMessage).toContain("rallyAccount.userId");
@@ -210,11 +226,11 @@ describe("reaching one resource through whichever connection can", () => {
     const readResult = await read.execute({ spreadsheetId: FILE_ID, range: "A1:B1" }, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID,
       harnessRunId: HARNESS_RUN_ID, toolCallId: "read-call", effectIntentId: "read-effect",
       executionPrincipal: input.executionPrincipal, signal: new AbortController().signal });
-    expect(reads).toEqual(["personal-token", "workspace-token"]);
+    expect(reads).toEqual(expectedReads);
     expect(readResult.output).toMatchObject({ values: [["Content calendar"]], servedThrough: { userId: other } });
     const receipts = testToolReceiptPort(objectStore);
     expect(await receipts.executionAccount({ runId: HARNESS_RUN_ID, effectIntentId: "read-effect" }))
-      .toMatchObject({ originalAccount: { connectionId: PERSONAL_ID }, account: { connectionId: WORKSPACE_CONNECTION_ID } });
+      .toMatchObject({ originalAccount: { connectionId: expectedOriginal }, account: { connectionId: WORKSPACE_CONNECTION_ID } });
     await receipts.complete({ effectIntentId: "read-effect", checkpointIndex: 5, outputRef: "read-output", outputSummary: "Read calendar",
       providerOperationId: FILE_ID, payloadJson: "{}", allowAmbiguousReconciliation: false,
       fence: { runId: HARNESS_RUN_ID, attemptId: lease.attemptId, owner: lease.owner }, now: Date.now() });
