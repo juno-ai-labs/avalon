@@ -32,6 +32,7 @@ import {
   type ConversationMergeV1,
   type Elicitation,
   type Message,
+  type User,
   type ResourceRelationshipType,
   type WorkstreamResource,
   type Workstream,
@@ -2987,10 +2988,11 @@ export class WorkstreamObjectProductService {
     }));
   }
 
-  async participant(userId: string): Promise<WorkstreamDetail["participants"][number] | null> {
-    const user = await this.env.DB.prepare(
+  async participant(userId: string, profiles?: ReadonlyMap<string, User>): Promise<WorkstreamDetail["participants"][number] | null> {
+    if (!this.isParticipant(userId)) return null;
+    const user = profiles ? profiles.get(userId) : await this.env.DB.prepare(
       `SELECT id, email, name, avatar_url, timezone, created_at FROM users WHERE id = ?`,
-    ).bind(userId).first<UserRow>();
+    ).bind(userId).first<UserRow>().then((row) => row ? userFromRow(row) : undefined);
     // Hydrating the profile yields; read membership afterward so a concurrent
     // removal or re-add cannot publish the roster we observed before that await.
     const row = first(this.storage.sql.exec<{
@@ -2999,7 +3001,7 @@ export class WorkstreamObjectProductService {
     }>(`SELECT participation_reason, added_at FROM participants WHERE user_id = ? AND status = 'active'`, userId));
     if (!row) return null;
     if (!user) throw new Error("participant_user_missing");
-    return { user: userFromRow(user), participationReason: row.participation_reason, joinedAt: iso(row.added_at)! };
+    return { user, participationReason: row.participation_reason, joinedAt: iso(row.added_at)! };
   }
 
   async authorizeParticipantAddition(auth: AuthContext, userId: string): Promise<"member" | "guest"> {
@@ -3113,23 +3115,16 @@ export class WorkstreamObjectProductService {
       parentId: identity.parentId, substreamId: this.externalSubstreamId() };
     const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, identity.workspaceId,
       workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspaceId)));
-    // An explicit addition can transfer a Breakout whose author has canonical
-    // parent membership but has not posted into its local roster yet.
-    for (const userId of [...userIds.filter((id) => id !== auth.userId), ...userIds.filter((id) => id === auth.userId)]) {
-      const request = { target, actorUserId: auth.userId, userId: asUserId(userId), active: true,
-        ...(options.participationReason ? { participationReason: options.participationReason } : {}),
-        operationId: await stableUuid(["participant-access", target, auth.userId, operationId, userId]) };
-      const result = userId === auth.userId
-        ? await parent.joinConversation(request)
-        : await parent.mutateParticipantGrant(request);
-      if (result.status !== "ready" && result.status !== "committed") {
-        throw new ApiError(409, "participant_access_changed", "Participant access changed; refresh and try again");
-      }
-      // A retried receipt must not restore a later revocation. The owner
-      // delivers its newest projection, so check the resulting local roster.
-      if (!this.isParticipant(userId)) {
-        throw new ApiError(409, "participant_access_changed", "Participant access changed; refresh and try again");
-      }
+    const participants = await Promise.all([...new Set(userIds)].map(async (userId) => ({
+      userId: asUserId(userId),
+      operationId: await stableUuid(["participant-access", target, auth.userId, operationId, userId]),
+    })));
+    const result = await parent.admitParticipants({ target, actorUserId: auth.userId, participants,
+      ...(options.participationReason ? { participationReason: options.participationReason } : {}) });
+    // The callback applies current revisions before replying. A receipt replay
+    // cannot restore a later revocation; inspect the resulting local projection.
+    if (result.status !== "ready" || participants.some(({ userId }) => !this.isParticipant(userId))) {
+      throw new ApiError(409, "participant_access_changed", "Participant access changed; refresh and try again");
     }
   }
 
@@ -3274,6 +3269,12 @@ export class WorkstreamObjectProductService {
         substreamId: input.substreamId,
       }),
     ];
+  }
+
+  /** Request-local profiles shared by effects and realtime hydration; never access evidence. */
+  async participantProfiles(userIds: readonly string[]): Promise<ReadonlyMap<string, User>> {
+    const rows = await this.messageUsers([...new Set(userIds)]);
+    return new Map([...rows].map(([userId, row]) => [userId, userFromRow(row)]));
   }
 
   /** Names for an effect payload, read before a commit that cannot await. */

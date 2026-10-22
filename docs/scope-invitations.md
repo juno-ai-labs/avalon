@@ -93,7 +93,13 @@ The conversation's `participants` table remains a versioned projection for names
 unread state, participant epochs and socket admission. Its identity/status writes
 are frozen by SQLite triggers; only parent projections may update them. Opening
 and read-position metadata stay local. Ordinary messages whose participants are
-already seated need no grant RPC. Visibility changes synchronously deliver their
+already seated need no grant RPC. Message admission sends all missing participants
+in one parent command, retaining one operation receipt per person. Pending
+projections for a conversation travel in one callback, including connector
+admission and handoff recovery. The source hydrates active recipients and actors
+in one D1 batch and reuses those request-local profiles for notification names
+and realtime frames; profiles never authorize access. Removals need no profile
+hydration, and manual adds perform actor authorization once. Visibility changes synchronously deliver their
 durable common effect to the parent so a newly public reader can join immediately.
 
 Completing a handoff delivers the pending participant projections for the whole
@@ -489,12 +495,17 @@ connector admission, viewer/resource authorization, owned-Sidekick participation
 checks and Breakout discovery use
 parent grants. Source rosters become fenced projections. A parent with grants
 already in service reconciles its source without importing stale seats. Visibility
-commands deliver their durable common effect before returning.
+commands deliver their durable common effect before returning. Admission and
+handoff projection delivery are batched by conversation, sharing one profile
+read for effects and realtime output and avoiding duplicate manual authorization.
 
 **Why:** A confirmed mention put a guest on a private Channel's local roster and
 published a sidebar entry, while transport required a grant and returned 404.
 Manual adds, creation, connectors and Breakout mentions exposed the same split.
 Keeping two writable admission systems would repeat it for the next caller.
+Per-person RPC callbacks and repeated profile reads also made admission latency
+grow with the roster; batching preserves the same authority and receipts without
+paying those network round trips for each recipient.
 
 **Considered and rejected:** Letting guests read the old roster would bypass grant
 incarnation and revocation fences. Patching only the mention writer would retain
