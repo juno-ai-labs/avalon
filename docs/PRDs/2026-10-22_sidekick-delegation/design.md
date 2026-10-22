@@ -90,6 +90,14 @@ interpretation or prompt injection can affect that speaker's grant, never a
 model-selected third party. Cover that risk in the evaluations; do not add a
 confirmation dialog or a new consent classifier.
 
+Apply that context check to creator initialization too. Existing autonomous
+agent tools can call `create_sidekick` under an inherited user principal;
+neither that principal nor the resulting `authorUserId` is a fresh opt-in.
+Only creation in a direct user-driven context initializes a creator grant.
+Autonomously created Sidekicks retain their author identity but no delegation
+until an eligible person opts in. Migration preserves only the established
+current execution principal, not a creator replaced by a legacy claim.
+
 ### Complete catalog and wire shapes
 
 The first column gives the authoring-local canonical name and stable wire name.
@@ -299,7 +307,8 @@ storage setup. Run lint, typecheck and the suites covering changed behavior.
 Tool contract checks cover required and forbidden fields, exact success and
 failure output, replay and delayed first delivery after withdrawal, current
 self-withdrawal after access loss, complete-list oversized-result refusal,
-and no enrollment through a user ID. Snapshot the wire names and discovery
+no enrollment through a user ID or autonomous creation, and migration that
+does not re-enroll a replaced creator. Snapshot the wire names and discovery
 guidance for both authoring and room plugin presentations.
 Prompt/tool evaluations on the configured medium fallback model cover target
 discovery, list then opt-in then withdrawal, wrong-user requests, absent consent,
