@@ -217,10 +217,28 @@ above Settings. It lists accessible personal, workspace, and room Sidekicks.
 The library uses the normal desktop session and workspace boundary. The center
 sidebar renders participants as a facepile and provides attachment removal.
 
+## Activity above the composer
+
+Channel, Thread, and Breakout composers show a distinct running Sidekick count,
+covering setup, manual, and triggered executions; idle, archived, and
+waiting-for-input executions do not count. The composer registers its exact
+target with `sidekick_activity` on the existing workspace socket; WorkspaceDO
+admits each target and pushes initial and changed `workspace_sidekick_activity`
+counts from accepted local child/run projections. Sources are exact homes,
+posting attachments, defaults, recommendations, and loaded instructions.
+Instruction links use the shared audience rule; posting consent exposes only
+activity, not Sidekick history.
+
+Execution, attachment, audience, visibility, and Channel-default changes use the durable
+post-commit lane to push watched counts. Subscription revisions and snapshot
+waterlines discard obsolete targets and older snapshots; reconnect re-registers
+the open composers. Counts have no REST fetch, polling, or per-Sidekick socket.
+
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
+| `apps/api/src/durable-objects/sidekick-activity.ts` | Target-scoped running count from accepted Sidekick execution projections and the target's attachment relationships. |
 | `apps/api/src/durable-objects/hosted-sidekick.ts` | `HostedSidekick`: `create`, `submitDefinition`, `apply`, `pause`, `resume`, `remove`, `setAppearance`, `setOwningRoomArchived`, `runNow`, `runSeeded`, `admitExternalEvent`, `admitInboundEmail`, `readRunDefinition`, `readRunState`, `continueRun`, `readDetail`, `listRuns`, `claimExecutionPrincipal`, the parent contract (`onChildCommonProjection` moves the run row), and the schedule, run and memory-table alarm entries. `WorkspaceDO` answers each as `sidekick*`. |
 | `apps/api/src/services/sidekick-run-provisioning.ts` | `provisionSidekickRun`: opens a run's conversation and starts its loop from the `sidekick_run_provision` Queue message the run's alarm entry sends. |
 | `apps/api/src/services/sidekick-run-continuation.ts` | `continueSidekickRun`, the run child's call to `continueRun`; `continuationSource`, who continued the run and where; and the refusal text the run's transcript records. |
@@ -1100,6 +1118,30 @@ The Sidekick authoring prompt carries no Google-specific lookup or attachment
 instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
+
+### 2026-10-21 — Receiving conversations show live Sidekick activity
+
+**What changed:** Each receiving composer shows a count of its running Sidekicks,
+including setup, manual, and triggered executions, through one activity read and
+the existing Organization socket's target-scoped count snapshots.
+
+**Why:** A Sidekick can work in its own conversation while posting to another,
+leaving that receiving conversation looking idle. Lifecycle summaries cannot
+answer whether setup or a run is currently executing.
+
+**Considered and rejected:** Opening a socket per Sidekick or polling its run
+history. The Organization already holds the accepted child projections and can
+answer the activity question without transferring history or adding connections.
+Reusing the full automation-list push would refetch unrelated Sidekick surfaces
+on every setup turn. Invalidating a REST count would spend a second round trip
+on data the socket owner already holds. Activity therefore pushes counts only
+to the composers watching them and leaves the directory waterline unchanged.
+
+**Consequences:** Association and target visibility decide where activity may
+appear; live execution decides whether it appears. Concurrent executions count
+once per Sidekick, and background agents retain their own independent row.
+
+Pull request: [#1399](https://github.com/juno-ai-labs/avalon/pull/1399).
 
 ### 2026-10-21 — Background workers under a Sidekick are not run continuations
 

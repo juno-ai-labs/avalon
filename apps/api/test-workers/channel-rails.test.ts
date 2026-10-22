@@ -15,6 +15,7 @@ import { seedParticipantGrants } from "./helpers/hosted-parent";
 import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
 import {
+  asSpaceId,
   asSubstreamId,
   asUserId,
   asWorkspaceId,
@@ -866,5 +867,262 @@ describe("the rail waterline", () => {
     await pushed;
     expect((await railOf(connection, channelA)).resources.map((resource) => resource.id)).toEqual([report]);
     connection.socket.close(1000, "done");
+  });
+});
+
+
+describe("attached Sidekick activity", () => {
+  const count = (parentId = channelA, substreamId = asSubstreamId("0"), userId = member) =>
+    organization().readSidekickActivity({ workspaceId, userId, parentKind: "workstream", parentId, substreamId });
+
+  async function sidekickEffect(id: string, substreamId: SubstreamId, state: string, extra: Partial<CommonEffect> = {}) {
+    // These older rail fixtures are directory rows; import the hosted fields
+    // before sending the same child effects a real hosted Sidekick receives.
+    await runInDurableObject(organization(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE automation_directory SET region = 'global',
+        created_at = COALESCE(created_at, 0), updated_at = COALESCE(updated_at, 0),
+        current_definition_revision = COALESCE(current_definition_revision, 0),
+        authority_generation = COALESCE(authority_generation, 1),
+        connector_bindings_json = COALESCE(connector_bindings_json, '{}'),
+        default_plugin_ids_json = COALESCE(default_plugin_ids_json, '[]'),
+        activity_source_plugin_ids_json = COALESCE(activity_source_plugin_ids_json, '{}'),
+        evaluator_projection_json = COALESCE(evaluator_projection_json, '[]'),
+        stop_generation = COALESCE(stop_generation, 0)
+        WHERE automation_id = ?`, id);
+    });
+    const effect = common("Helper", { state, ...extra });
+    const message = { ...envelope(asWorkstreamId(id), substreamId, effect), parentKind: "automation" as const };
+    await organization().receiveChildEffects({ substreamId, envelopes: [message] });
+    return message;
+  }
+
+  async function run(id: string, runId: SubstreamId, trigger: "manual" | "schedule") {
+    await runInDurableObject(organization(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO sidekick_runs
+        (sidekick_id, run_id, occurrence_key, trigger_json, definition_revision, harness_run_id, state, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 1, ?, 'pending', 0, 0)`, id, runId, runId, JSON.stringify({ type: trigger }), runId);
+    });
+    return sidekickEffect(id, runId, "running");
+  }
+
+  it("tracks setup, manual and scheduled execution, deduplicates Sidekicks and publishes start/finish", async () => {
+    const connection = await connect(member);
+    const directoryWaterline = async () => runInDurableObject(organization(), (_instance, state) =>
+      state.storage.sql.exec<{ waterline: number }>(`SELECT waterline FROM workspace_sidebar_list_state WHERE list = 'automations'`).one().waterline);
+    const beforeStart = await directoryWaterline();
+    const changed = connection.stream.next((frame) => frame.type === "workspace_sync"
+      && (frame.topics as string[]).includes("sidekick_activity"), "Sidekick started");
+    await runInDurableObject(organization(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE automation_directory SET lifecycle = 'draft' WHERE automation_id = ?`, skOwned);
+    });
+    await sidekickEffect(skOwned, asSubstreamId("0"), "running");
+    await changed;
+    expect(await directoryWaterline() - beforeStart).toBe(0);
+    expect(await count()).toEqual({ count: 1 });
+    const manualId = asSubstreamId("00000000-0000-7000-8000-0000000d7111");
+    const scheduleId = asSubstreamId("00000000-0000-7000-8000-0000000d7112");
+    await runInDurableObject(organization(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE automation_directory SET lifecycle = 'active' WHERE automation_id = ?`, skOwned);
+    });
+    const stale = await run(skOwned, manualId, "manual");
+    await run(skRecommended, scheduleId, "schedule");
+    expect(await count()).toEqual({ count: 2 });
+    await sidekickEffect(skOwned, asSubstreamId("0"), "completed");
+    expect(await count()).toEqual({ count: 2 });
+    await sidekickEffect(skOwned, manualId, "completed");
+    const beforeFinish = Math.max(0, ...connection.stream.received
+      .filter((frame) => frame.type === "workspace_sync")
+      .map((frame) => Number(frame.waterline)));
+    const finished = connection.stream.next((frame) => frame.type === "workspace_sync"
+      && (frame.topics as string[]).includes("sidekick_activity") && Number(frame.waterline) > beforeFinish, "Sidekick finished");
+    // Old stored projections need not conform to today's full strict schema.
+    await runInDurableObject(organization(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE sidekick_child_projections SET effect_json =
+        json_set(json_remove(effect_json, '$.title'), '$.retiredField', 1)
+        WHERE sidekick_id = ? AND substream_id = ?`, skRecommended, scheduleId);
+    });
+    await sidekickEffect(skRecommended, scheduleId, "failed");
+    await finished;
+    expect(await count()).toEqual({ count: 0 });
+    await organization().receiveChildEffects({ substreamId: manualId, envelopes: [stale] });
+    expect(await count()).toEqual({ count: 0 });
+    connection.socket.close();
+  });
+
+  it("keeps homes and loaded attachments local to the selected conversation and excludes background children", async () => {
+    const localSidekick = "00000000-0000-7000-8000-0000000d7113";
+    await writeSidekickDirectoryRow(env, { ...sidekick(localSidekick, {
+      title: "Breakout helper", scope: "workstream", owningWorkstreamId: channelA,
+    }), owningSubstreamId: breakoutA });
+    await sidekickEffect(localSidekick, asSubstreamId("0"), "running");
+    await sidekickEffect(skAttached, asSubstreamId("0"), "running");
+    // A stale personal skill attachment is hidden by the rail's audience rule.
+    await sidekickEffect(skPersonal, asSubstreamId("0"), "running");
+    await sidekickEffect(skOwned, asSubstreamId("00000000-0000-7000-8000-0000000d7114"), "running", { backgroundAgent: true });
+    expect(await count()).toEqual({ count: 1 });
+    expect(await count(channelA, breakoutA)).toEqual({ count: 1 });
+    expect(await count(channelB)).toEqual({ count: 0 });
+    await organization().attachSidekickConversation({
+      workspaceId, userId: member, automationId: skAttached, reference: channelB,
+    });
+    expect(await count(channelB)).toEqual({ count: 1 });
+    await sidekickEffect(localSidekick, asSubstreamId("0"), "needs_input");
+    expect(await count(channelA, breakoutA)).toEqual({ count: 0 });
+    await expect(runInDurableObject(organization(), (instance) =>
+      instance.readSidekickActivity({ workspaceId, userId: reader, parentKind: "workstream", parentId: channelB, substreamId: "0" }),
+    )).rejects.toThrow("Conversation not found");
+  });
+
+  it("signals changed Main and Breakout attachments without signaling ordinary conversation updates", async () => {
+    await sidekickEffect(skAttached, asSubstreamId("0"), "running");
+    const connection = await connect(member);
+    const activitySignals = async () => runInDurableObject(organization(), (_instance, state) =>
+      state.storage.sql.exec<{ total: number }>(`SELECT COUNT(*) AS total FROM workspace_sync_events,
+        json_each(topics_json) topic WHERE topic.value = 'sidekick_activity'`).one().total);
+    const before = await activitySignals();
+    const changed = connection.stream.next((frame) => frame.type === "workspace_sync"
+      && (frame.topics as string[]).includes("sidekick_activity"), "Breakout attachment changed");
+    await publish(channelA, [common("Breakout A", { sidekickAttachmentIds: [skAttached] })], breakoutA);
+    await changed;
+    expect(await count(channelA, breakoutA)).toEqual({ count: 1 });
+    expect(await activitySignals()).toBe(before + 1);
+    await publish(channelA, [common("Breakout A", { state: "running", sidekickAttachmentIds: [skAttached] })], breakoutA);
+    await publish(channelA, [channelAMain({ preview: "Another message" })]);
+    expect(await activitySignals()).toBe(before + 1);
+    await publish(channelA, [common("Breakout A", { sidekickAttachmentIds: [] })], breakoutA);
+    expect(await count(channelA, breakoutA)).toEqual({ count: 0 });
+    expect(await activitySignals()).toBe(before + 2);
+    await publish(channelA, [channelAMain({ sidekickAttachmentIds: [] })]);
+    expect(await count()).toEqual({ count: 0 });
+    expect(await activitySignals()).toBe(before + 3);
+    connection.socket.close();
+  });
+
+  it("refreshes instruction activity when the receiving audience changes", async () => {
+    await runInDurableObject(organization(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE automation_directory SET author_user_id = ? WHERE automation_id = ?`, member, skPersonal);
+    });
+    await sidekickEffect(skPersonal, asSubstreamId("0"), "running");
+    await publish(channelB, [common("Personal", { scope: "personal", sidekickAttachmentIds: [skPersonal] })]);
+    expect(await count(channelB)).toEqual({ count: 1 });
+    const connection = await connect(member);
+    const changed = connection.stream.next((frame) => frame.type === "workspace_sync"
+      && (frame.topics as string[]).includes("sidekick_activity"), "Receiving audience changed");
+    await publish(channelB, [viewer(reader, true, at)]);
+    await changed;
+    expect(await count(channelB)).toEqual({ count: 0 });
+    await publish(channelB, [viewer(reader, false)]);
+    expect(await count(channelB)).toEqual({ count: 1 });
+    await publish(channelB, [common("Personal", { scope: "workspace", sidekickAttachmentIds: [skPersonal] })]);
+    expect(await count(channelB)).toEqual({ count: 0 });
+    connection.socket.close();
+  });
+
+  it("returns committed attachment success when publishing fails and refreshes on retry", async () => {
+    await sidekickEffect(skAttached, asSubstreamId("0"), "running");
+    const request = { workspaceId, userId: member, automationId: skAttached, reference: channelB };
+    const attached = await runInDurableObject(organization(), async (instance) => {
+      const publish = vi.spyOn(instance, "publishSync").mockRejectedValueOnce(new Error("activity_publish_unavailable"));
+      try {
+        return await instance.attachSidekickConversation(request);
+      } finally {
+        publish.mockRestore();
+      }
+    });
+    expect(attached).toMatchObject({ ok: true, alreadyAttached: false });
+    expect(await count(channelB)).toEqual({ count: 1 });
+    const connection = await connect(member);
+    const changed = connection.stream.next((frame) => frame.type === "workspace_sync"
+      && (frame.topics as string[]).includes("sidekick_activity"), "Attachment retry refresh");
+    expect(await organization().attachSidekickConversation(request)).toMatchObject({ ok: true, alreadyAttached: true });
+    await changed;
+    connection.socket.close();
+  });
+
+  it("pushes initial and changed counts only for watched targets and clears refused targets", async () => {
+    const connection = await connect(member);
+    const target = { parentKind: "workstream", parentId: channelA, substreamId: "0" };
+    const subscribe = connection.stream.next((frame) => frame.type === "workspace_sidekick_activity", "Initial activity count");
+    connection.socket.send(JSON.stringify({ type: "sidekick_activity", revision: 1, targets: [target] }));
+    expect(await subscribe).toMatchObject({ revision: 1, target, count: 0 });
+    const started = connection.stream.next((frame) => frame.type === "workspace_sidekick_activity" && frame.count === 1, "Pushed running count");
+    await sidekickEffect(skOwned, asSubstreamId("0"), "running");
+    expect(await started).toMatchObject({ target, count: 1 });
+    const stopped = connection.stream.next((frame) => frame.type === "workspace_sidekick_activity" && frame.count === 0, "Pushed stopped count");
+    await sidekickEffect(skOwned, asSubstreamId("0"), "idle");
+    await stopped;
+    const guestConnection = await connect(reader);
+    const refused = guestConnection.stream.next((frame) => frame.type === "workspace_sidekick_activity", "Refused activity target");
+    const privateTarget = { parentKind: "workstream", parentId: channelB, substreamId: "0" };
+    guestConnection.socket.send(JSON.stringify({ type: "sidekick_activity", revision: 1, targets: [privateTarget] }));
+    expect(await refused).toMatchObject({ target: privateTarget, count: 0 });
+    connection.socket.send(JSON.stringify({ type: "sidekick_activity", revision: 2, targets: [] }));
+    await vi.waitFor(async () => {
+      expect(await runInDurableObject(organization(), (_instance, state) => state.getWebSockets()
+        .some((socket) => {
+          const attached = socket.deserializeAttachment() as { userId: string; sidekickActivityRevision?: number; sidekickActivityTargets?: unknown[] };
+          return attached.userId === member && attached.sidekickActivityRevision === 2 && attached.sidekickActivityTargets?.length === 0;
+        }))).toBe(true);
+    });
+    const before = connection.stream.received.filter((frame) => frame.type === "workspace_sidekick_activity").length;
+    await sidekickEffect(skOwned, asSubstreamId("0"), "running");
+    const done = connection.stream.next((frame) => frame.type === "pong", "Push barrier");
+    connection.socket.send("ping"); await done;
+    expect(connection.stream.received.filter((frame) => frame.type === "workspace_sidekick_activity").length - before).toBe(0);
+    connection.socket.close(); guestConnection.socket.close();
+  });
+
+  it("pushes Sidekick visibility changes without requiring another execution transition", async () => {
+    await sidekickEffect(skAttached, asSubstreamId("0"), "running");
+    const connection = await connect(member);
+    const target = { parentKind: "workstream", parentId: channelA, substreamId: "0" };
+    const initial = connection.stream.next((frame) => frame.type === "workspace_sidekick_activity", "Initial visible helper");
+    connection.socket.send(JSON.stringify({ type: "sidekick_activity", revision: 1, targets: [target] }));
+    expect(await initial).toMatchObject({ count: 1 });
+    const deleted = connection.stream.next((frame) => frame.type === "workspace_sidekick_activity" && frame.count === 0, "Deleted helper count");
+    await writeSidekickDirectoryRow(env, sidekick(skAttached, { title: "Deleted", scope: "workspace", lifecycle: "deleted" }));
+    await runInDurableObject(organization(), async (instance) => {
+      await (instance as unknown as { afterParentWrite(): Promise<void> }).afterParentWrite();
+    });
+    await deleted;
+    connection.socket.close();
+  });
+
+  it("pushes Channel counts when a running default is added or removed with no member Threads", async () => {
+    await runInDurableObject(organization(), (_instance, state) => {
+      completeSpaceBootstrap(state); insertSpace(state, []);
+      state.storage.sql.exec(`INSERT INTO parent_metadata
+        (parent_id, parent_kind, workspace_id, region, authority_generation, created_at, updated_at)
+        VALUES (?, 'space', ?, 'global', 1, 0, 0)`, spaceId, workspaceId);
+    });
+    await sidekickEffect(skRecommended, asSubstreamId("0"), "running");
+    const connection = await connect(member);
+    const target = { parentKind: "space", parentId: spaceId, substreamId: "0" };
+    const initial = connection.stream.next((frame) => frame.type === "workspace_sidekick_activity", "Initial Channel count");
+    connection.socket.send(JSON.stringify({ type: "sidekick_activity", revision: 1, targets: [target] }));
+    expect(await initial).toMatchObject({ target, count: 0 });
+    const added = connection.stream.next((frame) => frame.type === "workspace_sidekick_activity" && frame.count === 1, "Added running default");
+    const request = { workspaceId, userId: member, spaceId: asSpaceId(spaceId), kind: "sidekick" as const, targetId: skRecommended };
+    expect(await organization().addSpaceDefault(request)).toMatchObject({ ok: true });
+    await added;
+    const removed = connection.stream.next((frame) => frame.type === "workspace_sidekick_activity" && frame.count === 0, "Removed running default");
+    expect(await organization().removeSpaceDefault(request)).toMatchObject({ ok: true });
+    await removed;
+    connection.socket.close();
+  });
+
+  it("shows a Channel's attached defaults, and clears after the execution stops", async () => {
+    await runInDurableObject(organization(), (_instance, state) => {
+      completeSpaceBootstrap(state);
+      insertSpace(state, [channelA]);
+      state.storage.sql.exec(`INSERT INTO space_defaults
+        (space_id, kind, target_id, state, generation, created_at, updated_at)
+        VALUES (?, 'sidekick', ?, 'active', 1, 0, 0)`, spaceId, skRecommended);
+    });
+    const target = { workspaceId, userId: member, parentKind: "space" as const, parentId: spaceId, substreamId: "0" };
+    await sidekickEffect(skRecommended, asSubstreamId("0"), "running");
+    expect(await organization().readSidekickActivity(target)).toEqual({ count: 1 });
+    await sidekickEffect(skRecommended, asSubstreamId("0"), "idle");
+    expect(await organization().readSidekickActivity(target)).toEqual({ count: 0 });
   });
 });

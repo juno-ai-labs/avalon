@@ -134,6 +134,13 @@ not finish. A row is parsed when it is read back; one that does not parse is
 kept as `failed` with its code (`directory_followup_unreadable` is logged) and
 never run again.
 
+Changed child Sidekick attachments and Sidekick execution transitions also
+record an activity-only refresh in this lane, which pushes count snapshots to
+the exact targets watched on each workspace socket. The comparison happens when the
+exact child's projection is accepted, so Breakouts refresh independently of
+Main's directory waterline. Explicit posting attachments record their library
+and activity refresh in the attachment transaction, including a repeated attach.
+
 ### People the member table has never heard of
 
 The directory filters viewer rows by the Organization's own member table (see
@@ -512,7 +519,9 @@ migration 72 carries every directory row into the renamed tables and migration
 socket: each viewer's own breakouts per Channel, a roster change reaching only
 that breakout's members, running agents reaching every reader counted where
 each can look, a lost Channel tombstoned while the socket stays open, the
-current list after a resubscribe, and Main woken by a foreground. `workspace-socket-fanout.test.ts` proves who else a row
+current list after a resubscribe, and Main woken by a foreground. Each case
+uses a separate Organization identity: reset alone can interleave with a prior
+case's live socket or alarm and leave the reused authority populated. `workspace-socket-fanout.test.ts` proves who else a row
 reaches ([`websocket-architecture.md`](websocket-architecture.md#testing)).
 `conversation-effect-queue.test.ts` proves directory and activity rows land in
 the write and a mention leaves on the Queue; `hosted-parent-outbox.test.ts`

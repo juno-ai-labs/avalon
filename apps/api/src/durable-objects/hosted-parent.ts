@@ -220,6 +220,8 @@ export interface HostedParentHost {
    * A failure throws and takes the caller's transaction with it.
    */
   applyLocalEffects(envelopes: readonly ParentEffectEnvelope[]): { outbox: ParentEffectEnvelope[] };
+  /** Record an activity-only refresh inside the accepted attachment transaction. */
+  noteSidekickActivityChanged(workspaceId: string): void;
   /** A person's workspace relationship, from the Organization's own table. */
   readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null>;
   /** Record a relationship this request just read from or wrote to D1. */
@@ -909,12 +911,13 @@ export class HostedParent {
     now: number,
   ): boolean {
     const existing = kind === "common"
-      ? first(this.sql.exec<{ source_version: number; payload_hash: string }>(
-        `SELECT source_version, payload_hash FROM parent_child_projections WHERE parent_id = ? AND substream_id = ?`,
+      ? first(this.sql.exec<{ source_version: number; payload_hash: string; sidekick_ids: string | null; scope: string }>(
+        `SELECT source_version, payload_hash, json_extract(effect_json, '$.sidekickAttachmentIds') AS sidekick_ids,
+          json_extract(effect_json, '$.scope') AS scope FROM parent_child_projections WHERE parent_id = ? AND substream_id = ?`,
         this.parentId, substreamId,
       ))
-      : first(this.sql.exec<{ source_version: number; payload_hash: string }>(
-        `SELECT source_version, payload_hash FROM parent_child_viewer_projections
+      : first(this.sql.exec<{ source_version: number; payload_hash: string; is_participant: number }>(
+        `SELECT source_version, payload_hash, json_extract(effect_json, '$.isParticipant') AS is_participant FROM parent_child_viewer_projections
           WHERE parent_id = ? AND substream_id = ? AND user_id = ?`,
         this.parentId, substreamId, userId!,
       ));
@@ -928,6 +931,12 @@ export class HostedParent {
       });
     }
     if (kind === "common") {
+      if (envelope.effect.kind === "directory_common"
+        && ((existing && "sidekick_ids" in existing ? existing.sidekick_ids ?? "[]" : "[]")
+          !== JSON.stringify(envelope.effect.sidekickAttachmentIds ?? [])
+          || (existing && "scope" in existing && existing.scope !== envelope.effect.scope))) {
+        this.host.noteSidekickActivityChanged(envelope.workspaceId);
+      }
       this.sql.exec(
         `INSERT INTO parent_child_projections(parent_id, substream_id, source_version, payload_hash, effect_json, updated_at)
          VALUES (?, ?, ?, ?, ?, ?)
@@ -936,6 +945,10 @@ export class HostedParent {
         this.parentId, substreamId, envelope.sourceVersion, envelope.payloadHash, JSON.stringify(envelope.effect), now,
       );
     } else {
+      if (envelope.effect.kind === "directory_user"
+        && (existing && "is_participant" in existing ? existing.is_participant === 1 : false) !== envelope.effect.isParticipant) {
+        this.host.noteSidekickActivityChanged(envelope.workspaceId);
+      }
       this.sql.exec(
         `INSERT INTO parent_child_viewer_projections
            (parent_id, substream_id, user_id, source_version, payload_hash, effect_json, updated_at)

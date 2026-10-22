@@ -1241,6 +1241,7 @@ export class RallyApi {
     })).items;
   }
 
+
   async getSidekicks(signal?: AbortSignal): Promise<AutomationSummary[]> {
     const result = await this.request('/sidekicks', { signal, schema: wireAutomationPageSchema });
     return result.items.map(mapAutomationSummary);
