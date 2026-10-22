@@ -133,6 +133,7 @@ describe("the automations plugin", () => {
       "plugin_inspect",
       "people_search",
       "resources_search",
+      "resources_register",
       "sidekicks_list",
       "submit_draft",
       "set_evaluator_rules",

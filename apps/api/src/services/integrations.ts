@@ -1878,6 +1878,7 @@ function createAvalonAutomationsPlugin(
         "plugins.inspect",
         "people.search",
         "resources.search",
+        "resources.register",
         "evaluators.set",
       ].flatMap((capability) => [`rally.sidekick.${capability}`, `rally.automation.${capability}`]);
       const receiptPort = createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0");
@@ -1916,7 +1917,7 @@ function createAvalonAutomationsPlugin(
             await loadToolReplayOutput(env, receipt.outputRef, replayDeadline),
             resolvedPersonIds,
           );
-        } else if (receipt.outputRef && plan.canonicalToolName === "resources_search") {
+        } else if (receipt.outputRef && (plan.canonicalToolName === "resources_search" || plan.canonicalToolName === "resources_register")) {
           rememberAutomationResourceSearchResult(
             await loadToolReplayOutput(env, receipt.outputRef, replayDeadline),
             resolvedResources,
@@ -2240,6 +2241,8 @@ async function loadAutomationCreatorPluginCatalog(
       searchAliases: connectorSearchAliases(adapter),
       systemMessage: adapter.agentPlugin.systemMessage,
     });
+    const registrationCapability = adapter.resourceRegistrationCapability;
+    const activityTriggers = connectorActivityTriggerDescriptors(adapter, row.config_json == null ? null : String(row.config_json), scope, grantedScopes);
     let definitions = staticDefinitions;
     if (dynamicCapability) {
       try {
@@ -2286,8 +2289,14 @@ async function loadAutomationCreatorPluginCatalog(
       scope,
       searchAliases: presentation.searchAliases,
       systemMessage: presentation.systemMessage,
-      activityTriggers: connectorActivityTriggerDescriptors(adapter, row.config_json == null ? null : String(row.config_json), scope, grantedScopes),
+      activityTriggers,
       ...(activityRequiresScope ? { activityRequiresScope } : {}),
+      ...(adapter.probeResourceAccess && registrationCapability && granted.has(registrationCapability)
+        && automationBindableResourceTypes(activityTriggers).length > 0 ? {
+        registerResource: (reference: string, signal: AbortSignal) => registerAutomationCreatorResource(
+          env, { workspaceId, userId }, frozen, registrationCapability, reference, signal,
+        ),
+      } : {}),
       tools: definitions.flatMap((definition) => {
         const tool: HarnessTool = {
           definition,
@@ -2315,6 +2324,77 @@ async function loadAutomationCreatorPluginCatalog(
   }
   return catalog.sort((left, right) =>
     left.pluginId < right.pluginId ? -1 : left.pluginId > right.pluginId ? 1 : 0);
+}
+
+/** Register only a provider-verified identity, under the connection the catalog froze. */
+async function registerAutomationCreatorResource(
+  env: Env,
+  input: { workspaceId: WorkspaceId; userId: UserId },
+  frozen: FrozenConnectorPlugin,
+  capability: string,
+  reference: string,
+  signal: AbortSignal,
+) {
+  const { connection: loaded, adapter } = await loadAutomationCreatorConnectionContext(env, input, frozen, capability, signal);
+  const connection = { ...loaded, grantedScopes: loaded.grantedScopes.filter((grant) => frozen.grantedScopes.includes(grant)) };
+  const access = await withAuthorizedConnection(env, { connection, adapter, signal },
+    (authorized) => adapter.probeResourceAccess!(authorized, reference, signal));
+  if (access.access === "unrecognized") {
+    throw new ConnectorError("invalid_configuration", "resource: This connection does not recognize the external file URL or ID.");
+  }
+  if (access.access === "none") {
+    throw new ConnectorError("unauthorized", `resource: Cannot register this file through the selected connection (${access.reason}). Check resource access and use a connection that can read it.`);
+  }
+  if (!access.registration) {
+    throw new ConnectorError("unsupported_capability", "resource: This source cannot be registered as an event-bound file. For a shortcut, use the target file instead. For folder contents, inspect the declared event filter fields.");
+  }
+  const registration = access.registration;
+  const relationships = automationBindableResourceTypes(connectorActivityTriggerDescriptors(
+    adapter, JSON.stringify(connection.config), frozen.scope, connection.grantedScopes,
+  )).find((entry) => entry.resourceType === registration.resourceType)?.relationships;
+  if (!relationships?.length) {
+    throw new ConnectorError("unsupported_capability", "resource: This connection's events cannot bind to this resource type. Inspect the declared filters or use a supported source.");
+  }
+  // Provider I/O may yield while membership or the connection is revoked.
+  const [, membership] = await Promise.all([
+    assertAutomationCreatorConnectionAuthorized(env, input, frozen, capability),
+    env.DB.prepare("SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'")
+      .bind(input.workspaceId, input.userId).first<{ role: "owner" | "admin" | "member" }>(),
+  ]);
+  if (!membership) throw new Error("sidekick_draft_author_unavailable");
+  const resource = await new ResourceService(env, {
+    sessionId: "sidekick-resource-registration",
+    userId: input.userId,
+    workspaceId: input.workspaceId,
+    region: env.AVALON_REGION,
+    role: membership.role,
+    analyticsWorkspaceId: null,
+  }).resolve({
+    connectionId: frozen.connectionId,
+    provider: frozen.connectorType,
+    providerResourceId: access.resourceId,
+    resourceType: registration.resourceType,
+    title: access.name,
+    canonicalUrl: registration.canonicalUrl,
+  }, {
+    connectorType: frozen.connectorType,
+    scope: frozen.scope,
+    ownerUserId: frozen.ownerUserId,
+    modelPluginId: frozen.credentialModelPluginId ?? frozen.modelPluginId,
+    requiredCapabilities: [capability],
+  });
+  if (resource.resourceType !== registration.resourceType) {
+    throw new ConnectorError("invalid_configuration", "resource: The registered resource type differs from the provider-verified type. Its Rally metadata needs correction before binding; repeating registration will not repair it.");
+  }
+  return { resources: [{
+    id: resource.id,
+    title: resource.title,
+    provider: resource.provider,
+    resourceType: resource.resourceType,
+    pluginId: frozen.modelPluginId,
+    relationships,
+    sourceBindingKeys: [],
+  }] };
 }
 
 async function executeAutomationCreatorConnectorTool(
@@ -7909,6 +7989,10 @@ async function checkResourceAccess(
           grantedScopes: loaded.connection.grantedScopes.filter((capability) => frozen.grantedScopes.includes(capability)) };
         const access = await withAuthorizedConnection(env, { connection, adapter, signal },
           (authorized) => adapter.probeResourceAccess!(authorized, args.resource, signal));
+        if (access.access === "read" || access.access === "edit") {
+          return { ...identity, access: access.access, resourceId: access.resourceId, name: access.name,
+            ...(access.editNeedsGrant === undefined ? {} : { editNeedsGrant: access.editNeedsGrant }) };
+        }
         return { ...identity, ...access };
       } catch (error) {
         if (signal.aborted) throw error;
@@ -9093,6 +9177,7 @@ export const __integrationTesting = {
   logPluginAuthorizationFailure,
   loadWorkstreamContextCompaction,
   loadAutomationCreatorPluginCatalog,
+  createAvalonAutomationsPlugin,
   assertRunAuthorityStillValid,
   assertSafePublicUrl,
   createAvalonWorkstreamPlugin,

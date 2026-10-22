@@ -212,6 +212,22 @@ export function resolveWorkspaceConnectorResource(
   request: WorkspaceConnectorResourceResolveRequest,
 ): WorkspaceConnectorResourceResolveResult {
   return storage.transactionSync(() => {
+    const authority = request.connectionAuthority;
+    if (authority) {
+      const connection = storage.sql.exec<{ connector_type: string; scope: string; owner_user_id: string | null;
+        model_plugin_id: string | null; granted_scopes_json: string }>(
+        `SELECT connector_type, scope, owner_user_id, model_plugin_id, granted_scopes_json
+           FROM connector_connections WHERE id = ? AND workspace_id = ? AND status <> 'disabled'`,
+        request.connectionId, request.workspaceId,
+      ).toArray()[0];
+      const grants: unknown = connection ? JSON.parse(connection.granted_scopes_json) : null;
+      if (!connection || connection.connector_type !== authority.connectorType
+        || connection.scope !== authority.scope || connection.owner_user_id !== authority.ownerUserId
+        || connection.model_plugin_id !== authority.modelPluginId
+        || !Array.isArray(grants) || !authority.requiredCapabilities.every((capability) => grants.includes(capability))) {
+        return WorkspaceConnectorResourceResolveResultSchema.parse({ outcome: "connection_unavailable" });
+      }
+    }
     const existing = storage.sql.exec<{ id: string }>(
       `SELECT id FROM resources
         WHERE workspace_id = ? AND connection_id = ? AND provider = ? AND provider_resource_id = ?`,

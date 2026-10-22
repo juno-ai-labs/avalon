@@ -2590,6 +2590,8 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       return pollCheckpointedActivityStreams(pollingActivity, connection, signal);
     },
 
+    resourceRegistrationCapability: "drive.read",
+
     async probeResourceAccess(connection, reference, signal): Promise<ConnectorResourceAccess> {
       const fileId = googleDriveFileIdFromReference(reference);
       if (!fileId) return { access: "unrecognized" };
@@ -2605,6 +2607,12 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       if (readBoolean(metadata, "trashed") === true) return { access: "none", resourceId: fileId, reason: "trashed" };
       const name = readString(metadata, "name") ?? "Untitled file";
       const mimeType = readString(metadata, "mimeType") ?? "";
+      const resourceType = googleDriveResourceType(mimeType);
+      const identity = { resourceId: fileId, name,
+        ...(["application/vnd.google-apps.folder", "application/vnd.google-apps.shortcut"].includes(mimeType) ? {} : {
+          registration: { resourceType, canonicalUrl: readString(metadata, "webViewLink") },
+        }) };
+
       // Seeing the file's details is not reading it: a connection holding only
       // `sheets.read` sees a Doc's metadata and has no tool that reads it.
       const readCapability = GOOGLE_FILE_READ_CAPABILITY[mimeType];
@@ -2614,11 +2622,11 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       const capabilities = readRecord(metadata, "capabilities");
       const canEdit = Boolean(writeCapability && connection.grantedScopes.includes(writeCapability)
         && capabilities && readBoolean(capabilities, "canEdit") === true);
-      if (canEdit && readBoolean(metadata, "isAppAuthorized") === true) return { access: "edit", resourceId: fileId, name };
+      if (canEdit && readBoolean(metadata, "isAppAuthorized") === true) return { access: "edit", ...identity };
       if (!canRead) return { access: "none", resourceId: fileId, reason: "capability_not_granted" };
       return canEdit
-        ? { access: "read", resourceId: fileId, name, editNeedsGrant: true }
-        : { access: "read", resourceId: fileId, name };
+        ? { access: "read", ...identity, editNeedsGrant: true }
+        : { access: "read", ...identity };
     },
 
     async hydrateResource(connection, resource, signal) {
