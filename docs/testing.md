@@ -720,6 +720,16 @@ but `restoreMocks` does not restore timers, and Vitest's default
 and never restores them hands the next file in that worker a clock that does not
 advance.
 
+The renderer's shared setup explicitly unmounts React fixtures, drains one real
+zero-delay timer turn, then closes the local cache. Radix queues focus restoration
+on unmount; letting that callback outlive jsdom teardown can dispatch an event
+created by the restored global `CustomEvent` constructor on an old window's DOM
+node. Keep this ordering in `apps/desktop/src/renderer/test/setup.ts`, rather than
+repeating it in individual dialog fixtures. The drain uses a timer captured before
+tests install fake clocks, because `onTestFinished` restores some clocks only after
+shared `afterEach` hooks have run. Fixture-specific cleanup can still unmount
+before restoring globals that its components need during unmount.
+
 ### The migrated database fixtures
 
 `apps/api/test/helpers/sqlite-d1.ts` hands out a migrated regional database in
