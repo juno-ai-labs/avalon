@@ -1,12 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState } from 'react';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { asSubstreamId, asUserId, asWorkspaceId } from '@rally/contracts';
 import type { ScopeInvitationSummary } from '@rally/contracts/scope-grants';
 import { ApiError, RallyApi } from '../lib/api';
-import { ScopeSharingPanel, ShareConversationDialog } from './scope-sharing-panel';
+import { ScopeSharingPanel, ShareConversationDialog, useScopeInvitations } from './scope-sharing-panel';
 
 const workspaceId = '00000000-0000-4000-8000-000000000001';
 const parentId = '00000000-0000-4000-8000-000000000002';
@@ -18,6 +18,40 @@ function quietApi(): RallyApi {
   vi.spyOn(api, 'listScopeInvitations').mockResolvedValue({ status: 'ready', invitations: [] });
   return api;
 }
+
+it.each(['invitations', 'participants'])('suppresses repeat addresses while the %s refresh is still pending', async (last) => {
+  const api = quietApi();
+  const finishInvitations: Array<() => void> = [];
+  const finishParticipants: Array<() => void> = [];
+  vi.mocked(api.listScopeInvitations).mockImplementation(() => new Promise((resolve) => {
+    finishInvitations.push(() => resolve({ status: 'ready', invitations: [] }));
+  }));
+  const refreshParticipants = vi.fn(() => new Promise<void>((resolve) => { finishParticipants.push(resolve); }));
+  const create = vi.spyOn(api, 'createScopeInvitations').mockResolvedValue({ status: 'created', invitations: [] });
+  const client = new QueryClient();
+  client.setQueryData(['scope-invitations', parentId, '0'], []);
+  const { result } = renderHook(() => useScopeInvitations({ api, workspaceId, parentId, substreamId: '0',
+    enabled: false, refreshParticipants }), { wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider> });
+
+  await act(async () => { await result.current.invite.mutateAsync(['ada@example.test']); });
+  // The mutation is acknowledged even though both list reads are unresolved.
+  expect(create).toHaveBeenCalledTimes(1);
+  await act(async () => { for (const finish of last === 'invitations' ? finishParticipants : finishInvitations) finish(); });
+  await act(async () => { await result.current.invite.mutateAsync(['ada@example.test']); });
+  expect(create).toHaveBeenCalledTimes(1);
+  // A different address can still be submitted during the refresh.
+  await act(async () => { await result.current.invite.mutateAsync(['ada@example.test', 'bob@example.test']); });
+  expect(create).toHaveBeenCalledTimes(2);
+  expect(create.mock.calls[1]?.[0].emails).toEqual(['bob@example.test']);
+  await act(async () => { await result.current.invite.mutateAsync(['ada@example.test']); });
+  expect(create).toHaveBeenCalledTimes(2);
+  await act(async () => { for (const finish of [...finishInvitations, ...finishParticipants]) finish(); });
+  // Once fresh lists can supply the duplicate check, this temporary fence is gone.
+  await act(async () => { await result.current.invite.mutateAsync(['ada@example.test']); });
+  expect(create).toHaveBeenCalledTimes(3);
+  await act(async () => { for (const finish of [...finishInvitations, ...finishParticipants]) finish(); });
+  client.clear();
+});
 
 it.each(['0', '00000000-0000-4000-8000-000000000003'])('shares only conversation %s and reuses the email batch identity on retry', async (substreamId) => {
   const api = quietApi();

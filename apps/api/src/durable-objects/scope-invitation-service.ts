@@ -1,12 +1,12 @@
 import { z } from "zod";
 import { asUserId } from "@rally/contracts";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { ListScopeInvitationsSchema, ScopeInvitationsListSchema, CreateScopeInvitationsSchema, ClaimScopeInvitationsSchema, RevokeScopeInvitationSchema,
   WorkspaceRelationshipSchema, type ScopeGrant, type ScopeAccessRequest, type ScopeAccessResult, type ScopeInvitationResult, type ScopeInvitationSummary } from "@rally/contracts/scope-grants";
 import { workstreamAddressedUrl } from "@rally/contracts/workstream-links";
 import type { Env } from "../env";
 import { encryptString, decryptString } from "../lib/crypto";
 import { uuidV7 } from "../lib/uuid-v7";
-import { parseRpcInput } from "../lib/rpc-input";
 import { ensureGuestRelationship, type WorkspaceRelationship } from "../services/workspace-relationship-service";
 import { sendResendEmail } from "../services/resend";
 import { readConversationPreview } from "../services/conversation-preview";
@@ -108,8 +108,9 @@ export class ScopeInvitationService {
     // Only once the share is recorded, so a refused caller writes no rows. If
     // this fails the request fails, and the sharer's retry replays the same
     // operation to this line. A cleanup racing it is re-checked there.
-    const waiting = this.waiting();
-    const recipients = await this.prepareRecipients(request.workspaceId, emails.filter((email) => waiting.has(email)));
+    const pendingEmails = result.invitations.filter((invitation) => invitation.status === "pending"
+      && (invitation.expiresAt === null || invitation.expiresAt > Date.now())).map((invitation) => invitation.email);
+    const recipients = await this.prepareRecipients(request.workspaceId, pendingEmails);
     // An existing account holds the share now. Committed already, so a failure
     // here leaves it pending for their next sign-in.
     await this.claimForKnownRecipients(request.workspaceId, recipients).catch((error: unknown) => {
@@ -155,7 +156,9 @@ export class ScopeInvitationService {
         WHERE members.workspace_id = ? AND workspace.abandoned_at IS NULL
           AND verified.email IN (SELECT value FROM json_each(?))`).bind(workspaceId, addresses),
     ]);
-    return parseRpcInput(z.array(RecipientRelationshipSchema), results[2]!.results, "scope_invitation_recipients")
+    const parsed = z.array(RecipientRelationshipSchema).safeParse(results[2]!.results);
+    if (!parsed.success) throw new Error(zodDiagnosticCode(parsed.error, "scope_invitation_recipients")!);
+    return parsed.data
       .map(({ email, ...relationship }) => ({ email, relationship }));
   }
 
@@ -214,7 +217,8 @@ export class ScopeInvitationService {
 
   private async claimOne(invitationId: string, workspaceId: string, userId: string,
     preparedIncarnation?: string)
-    : Promise<{ status: "accepted"; invitation: ScopeInvitationSummary } | Extract<ScopeInvitationResult, { status: "denied" }>> {
+    : Promise<{ status: "accepted"; invitation: ScopeInvitationSummary }
+      | { status: "denied"; reason: Extract<ScopeInvitationResult, { status: "denied" }>["reason"] | "membership_convergence_required" }> {
     const initial = this.invitations.read(invitationId);
     if (!initial || initial.summary.status !== "pending" || !this.usable(initial)) return { status: "denied", reason: "invitation_unavailable" };
     // A sharer whose membership was replaced can never authorize this share
@@ -239,7 +243,7 @@ export class ScopeInvitationService {
     // membership event. Leave the share pending instead of binding its receipt
     // to the cached old membership (or replacing a newer one with this read).
     if (preparedIncarnation !== undefined && recipient.incarnation !== preparedIncarnation) {
-      return { status: "denied", reason: "relationship_required" };
+      return { status: "denied", reason: "membership_convergence_required" };
     }
     const currentActor = await this.readRelationship(workspaceId, initial.actorUserId);
     if (currentActor?.incarnation !== initial.actorIncarnation) return { status: "denied", reason: "sharing_required" };

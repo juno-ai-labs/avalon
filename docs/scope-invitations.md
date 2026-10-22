@@ -17,9 +17,9 @@ dialog, which embeds the panel beside its own controls, stays open on an emptied
 form. Participant mutations use the
 parent grant ledger for every ready conversation; transcript execution stays in the
 conversation owner.
-The People form becomes ready for another add when the share commits. Its
-invitation and participant lists refresh in the background rather than adding
-their round trips to the submitted action.
+The People form becomes ready when the share commits. Its lists refresh in the
+background; successful addresses are suppressed from another submission until
+both reads settle, so a quick repeat does not send another invitation email.
 
 ## Where the code lives
 
@@ -137,7 +137,8 @@ conversation only existed so a mail scanner fetching a link could not consume
 it, and with nothing in the link to consume, an email one-time code or Google
 sign-in is already a human proving they hold the mailbox.
 
-Creation writes one `scope_share_recipients` row per pending address in D1, naming the
+Creation writes one `scope_share_recipients` row per pending, unexpired address in
+the submitted operation, naming the
 Channel that holds the share, once the Organization object has recorded it, so
 a refused caller writes no rows. One D1 batch records those lookup rows,
 establishes guest relationships for already-verified addresses without changing
@@ -172,7 +173,8 @@ email, which is how they hear of it. These claims reuse the batch's relationship
 observations through the Organization's versioned member table; a newer
 suspension or replacement event wins. If its live membership and the batch
 name different incarnations, the share stays pending until the ordered membership
-event converges and a retry or sign-in claims it; it cannot bind a receipt to
+event converges and an explicit operation retry or sign-in claims it; the event
+alone does not retry the claim. It cannot bind a receipt to
 the old cached membership. Grant authorization is still rechecked
 after the batch. The delivery alarm, or a later sign-in, removes settled lookup
 rows instead of delaying the response for cleanup. Replaying an already-settled
@@ -526,24 +528,30 @@ nonparticipant and reconciliation of a stale child roster.
 
 ### 2026-10-22 — Batch recipient setup on the guest-add response path
 
-Guest additions were waiting for separate D1 trips to index addresses, look up
-verified accounts, insert and read each relationship, then delete settled index
-rows. Two production requests took 1.9 and 6.5 seconds. Creation now performs
-recipient setup in one primary batch and claims from its versioned observations;
-the existing delivery alarm handles settled-row cleanup. Access is still granted
-before the response, and email content is still frozen when the share is made.
-The People form also stops awaiting its post-commit list refreshes before
-accepting another add.
-The batch and retained relationship must agree on the membership incarnation:
-an unordered replacement stays pending rather than binding the claim to an old
-cached membership. An ordered event followed by retry resumes that same share.
+**What changed:** Creation batches recipient setup for the submitted operation's
+pending invitations; the existing delivery alarm cleans settled lookup rows.
+The People form acknowledges the commit before refreshing its lists, suppressing
+repeat addresses until both reads finish.
 
-Moving claims into background work was rejected because an existing recipient
-must be able to open the thread as soon as the add succeeds. A batch may create
+**Why:** Separate D1 trips to index addresses, look up accounts, insert and read
+relationships, then clean settled rows made two production requests take 1.9 and
+6.5 seconds. Waiting for renderer refreshes added further round trips.
+
+**Considered and rejected:** Background claims would acknowledge an add before
+the recipient could open it. Overwriting an unordered live membership snapshot
+would discard a potentially newer suspension or replacement. Such invitations
+remain pending for an explicit operation retry or sign-in after convergence.
+
+**Consequences:** Grants and frozen email content still commit before the
+response. A settled replay never prepares another operation's recipients.
+The batch and retained relationship must agree on membership incarnation.
+A batch may create
 an empty guest relationship before a later grant check refuses, as the existing
 claim saga already allowed; that relationship alone grants no conversation
 access. Preserve suspension and membership-incarnation fences, pending lookup
 rows for interrupted claims, and the rule that replay never restores access.
+
+PR: [#1408](https://github.com/juno-ai-labs/avalon/pull/1408).
 
 ### 2026-10-21 — Grants own every ready conversation's participation
 
