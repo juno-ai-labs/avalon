@@ -1839,7 +1839,7 @@ describe("a room Sidekick's run and the room's agents", () => {
     expect(await postTurns()).toHaveLength(1);
   });
 
-  it("pauses the automation when its owning room is archived", async () => {
+  it("archives the Sidekick when its owning Thread is archived", async () => {
     // Archived through the room's own surface; the archive reaches the room's
     // parent, hosted by the workspace, on the queue leg, and the workspace's
     // directory step tells the automation its room is gone.
@@ -1858,7 +1858,7 @@ describe("a room Sidekick's run and the room's agents", () => {
       state.storage.sql.exec<{ lifecycle: string; paused_by: string | null; owning_room_archived_at: number | null }>(
         `SELECT lifecycle, paused_by, owning_room_archived_at FROM automation_directory WHERE automation_id = ?`, AUTOMATION_ID,
       ).one());
-    expect(automation).toMatchObject({ lifecycle: "paused", paused_by: "room_archive" });
+    expect(automation).toMatchObject({ lifecycle: "deleted", paused_by: null });
     expect(automation.owning_room_archived_at).not.toBeNull();
     expect(await sidekickHost().authority({ workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID }))
       .toEqual({ exists: true, authorityGeneration: 1, archived: true });

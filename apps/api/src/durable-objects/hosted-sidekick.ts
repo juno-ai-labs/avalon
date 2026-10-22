@@ -633,8 +633,8 @@ export class HostedSidekick {
    * missing. Declared memory tables are owed by a stored entry armed in the
    * same transaction, and attempted once straight after it.
    *
-   * A paused Sidekick keeps its pause: `resume` is what lifts one, and a
-   * Channel archive's pause must hold through an edit.
+   * A paused Sidekick keeps its pause: only `resume` lifts it. An archived
+   * Sidekick refuses edits and cannot be activated again.
    */
   async apply(input: AutomationActorRequest): Promise<AutomationDetail> {
     const request = parseRpcInput(AutomationActorRequestSchema, input, "apply");
@@ -778,23 +778,13 @@ export class HostedSidekick {
     const row = this.assertSidekick(request.workspaceId, request.automationId);
     await this.assertManager(row, request.actor);
     if (row.lifecycle === "deleted") return;
-    const now = Date.now();
-    this.storage.transactionSync(() => {
-      this.stopOpenRuns(now);
-      this.cancelSidekickAlarms();
-      this.sql.exec(
-        `UPDATE automation_directory SET lifecycle = 'deleted', stop_generation = stop_generation + 1, updated_at = ?
-          WHERE automation_id = ?`,
-        now, this.sidekickId,
-      );
-      this.touchDirectory(now, this.writeRegistrations([]));
-    });
+    this.storage.transactionSync(() => this.archive(Date.now()));
     await this.host.afterRegistrations(this.sidekickId, null, []);
   }
 
   /**
-   * Archiving the home Channel pauses the Sidekick; unarchiving resumes it only
-   * when the archive paused it. Called inside the archive's own transaction.
+   * Archiving the home Thread or Breakout archives the Sidekick too. Restoring
+   * the room does not restore the Sidekick. The caller owns the transaction.
    */
   setOwningRoomArchived(input: AutomationOwningRoomArchivedRequest, now: number): { changed: boolean; outcomeCode: string } {
     const request = parseRpcInput(AutomationOwningRoomArchivedRequestSchema, input, "set_owning_room_archived");
@@ -802,28 +792,20 @@ export class HostedSidekick {
     if (row.owning_workstream_id !== request.workstreamId) {
       return { changed: false, outcomeCode: "sidekick_not_owned_by_workstream" };
     }
+    if (row.lifecycle === "deleted") return { changed: false, outcomeCode: "sidekick_already_archived" };
     if (request.archived) {
-      if (row.owning_room_archived_at !== null) return { changed: false, outcomeCode: "sidekick_room_already_archived" };
       this.sql.exec(
         `UPDATE automation_directory SET owning_room_archived_at = ?, updated_at = ? WHERE automation_id = ?`,
         now, now, this.sidekickId,
       );
-      if (row.lifecycle === "active") {
-        this.pauseBy("room_archive", now);
-        return { changed: true, outcomeCode: "sidekick_paused" };
-      }
-      this.touchDirectory(now);
-      return { changed: true, outcomeCode: "sidekick_room_archived" };
+      this.archive(now);
+      return { changed: true, outcomeCode: "sidekick_archived" };
     }
     if (row.owning_room_archived_at === null) return { changed: false, outcomeCode: "sidekick_room_not_archived" };
     this.sql.exec(
       `UPDATE automation_directory SET owning_room_archived_at = NULL, updated_at = ? WHERE automation_id = ?`,
       now, this.sidekickId,
     );
-    if (row.lifecycle === "paused" && row.paused_by === "room_archive") {
-      this.resumeFromPause(now);
-      return { changed: true, outcomeCode: "sidekick_resumed" };
-    }
     this.touchDirectory(now);
     return { changed: true, outcomeCode: "sidekick_room_unarchived" };
   }
@@ -1673,6 +1655,18 @@ export class HostedSidekick {
   // ---------------------------------------------------------------------------
   // Lifecycle helpers, each inside the caller's transaction.
   // ---------------------------------------------------------------------------
+
+  private archive(now: number): void {
+    this.stopOpenRuns(now);
+    this.cancelSidekickAlarms();
+    this.sql.exec(
+      `UPDATE automation_directory
+          SET lifecycle = 'deleted', paused_by = NULL, stop_generation = stop_generation + 1, updated_at = ?
+        WHERE automation_id = ?`,
+      now, this.sidekickId,
+    );
+    this.touchDirectory(now, this.writeRegistrations([]));
+  }
 
   private pauseBy(by: "person" | "room_archive", now: number): void {
     this.stopOpenRuns(now);

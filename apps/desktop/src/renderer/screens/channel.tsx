@@ -1181,7 +1181,8 @@ function ChannelHeader({ members, space, workspace }: {
     >
       <p className="modal-copy">
         It leaves the Channels list for everyone. Threads that belong only to this channel
-        are archived too. Threads in other channels stay active. You can restore this channel
+        and their owned Sidekicks are archived too. Threads in other channels stay active.
+        Restoring the channel does not restore its Threads or Sidekicks. You can restore this channel
         from <strong>Archived</strong> at the bottom of the Channels list.
       </p>
     </Modal>
