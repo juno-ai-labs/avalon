@@ -613,6 +613,91 @@ describe("adding somebody to a work stream", () => {
     });
   });
 
+  it("admits two people with one shared profile read and preserves revocation on replay", async () => {
+    const stub = agentStub();
+    await provisionWorkstream(stub);
+    const observed = await runInDurableObject(stub, async (instance, state) => {
+      // Observe real binding reads; no result or storage is substituted. The source can accept the parent's callback
+      // while its initiating admission is awaiting the parent.
+      const target = instance as unknown as { env: Env; product: { env: Env } };
+      const originalEnv = target.env;
+      const originalProductEnv = target.product.env;
+      let profileQueries = 0;
+      const database = new Proxy(originalProductEnv.DB, { get(current, property) {
+        if (property === "prepare") return (sql: string) => {
+          if (sql.includes("FROM users")) profileQueries++;
+          return current.prepare(sql);
+        };
+        const value = Reflect.get(current, property);
+        return typeof value === "function" ? value.bind(current) : value;
+      } });
+      target.env = new Proxy(originalEnv, { get: (current, property) => property === "DB" ? database : Reflect.get(current, property) });
+      target.product.env = target.env;
+      try {
+        const request = { target: { kind: "conversation" as const, workspaceId: WORKSPACE_ID,
+          parentId: WORKSTREAM_ID, substreamId: asSubstreamId("0") }, actorUserId: CREATOR_ID,
+          participants: [
+            { userId: asUserId(INVITEE_ID), operationId: "00000000-0000-7000-8000-0000000006d1" },
+            { userId: asUserId(SECOND_INVITEE_ID), operationId: "00000000-0000-7000-8000-0000000006d2" },
+          ] };
+        const admitted = await parentStub().admitParticipants(request);
+        const active = () => state.storage.sql.exec<{ user_id: string }>(
+          "SELECT user_id FROM participants WHERE status = 'active' ORDER BY user_id",
+        ).toArray().map((row) => row.user_id);
+        const initiallyActive = active();
+        const firstQueries = profileQueries;
+        const removed = await parentStub().mutateParticipantGrant({ ...request.participants[0]!,
+          target: request.target, actorUserId: CREATOR_ID, active: false,
+          operationId: "00000000-0000-7000-8000-0000000006d3" });
+        const removalQueries = profileQueries - firstQueries;
+        const replay = await parentStub().admitParticipants(request);
+        return { admitted, initiallyActive, profileQueries: firstQueries,
+          removed: removed.status, removalQueries, replay, afterReplay: active() };
+      } finally {
+        target.env = originalEnv;
+        target.product.env = originalProductEnv;
+      }
+    });
+    expect(observed).toEqual({
+      admitted: { status: "ready" }, initiallyActive: [CREATOR_ID, INVITEE_ID, SECOND_INVITEE_ID],
+      profileQueries: 1,
+      removed: "committed", removalQueries: 0, replay: { status: "denied" },
+      afterReplay: [CREATOR_ID, SECOND_INVITEE_ID],
+    });
+  });
+
+  it("authorizes a manual add once and checks the recipient membership", async () => {
+    const stub = agentStub();
+    await provisionWorkstream(stub);
+    const observed = await runInDurableObject(stub, async (instance) => {
+      const target = instance as unknown as { product: { env: Env } };
+      const originalEnv = target.product.env;
+      let membershipReads = 0;
+      const database = new Proxy(originalEnv.DB, { get(current, property) {
+        if (property === "prepare") return (sql: string) => {
+          if (sql.includes("FROM workspace_members")) membershipReads++;
+          return current.prepare(sql);
+        };
+        const value = Reflect.get(current, property);
+        return typeof value === "function" ? value.bind(current) : value;
+      } });
+      target.product.env = new Proxy(originalEnv, { get: (current, property) => property === "DB" ? database : Reflect.get(current, property) });
+      try {
+        const response = await instance.fetch(new Request("https://object.test/internal/product", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ operation: "add_participant", auth: AUTH, userId: INVITEE_ID }),
+        }));
+        const body = await response.json<{ user?: unknown }>();
+        return { membershipReads, status: response.status, participant: body.user };
+      } finally {
+        target.product.env = originalEnv;
+      }
+    });
+    expect(observed.membershipReads).toBe(2);
+    expect(observed.status).toBe(200);
+    expect(observed.participant).toMatchObject({ id: INVITEE_ID, name: "Invitee" });
+  });
+
   it("enqueues their directory row, an activity event, and a notification behind it", async () => {
     const stub = agentStub();
     await provisionWorkstream(stub);

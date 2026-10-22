@@ -7,6 +7,7 @@ import {
   ListScopeInvitationsSchema,
   ManagedScopeGrantsSchema,
   ParticipantGrantMutationSchema,
+  ParticipantAdmissionBatchSchema,
   RevokeScopeInvitationSchema,
   ScopeAccessRequestSchema,
   ScopeAccessResultSchema,
@@ -1816,20 +1817,29 @@ export class HostedParent {
   }
 
   async deliverParticipantProjection(substreamId: string, userId: string, revision?: number): Promise<void> {
+    await this.deliverParticipantProjections(substreamId, [{ userId, ...(revision === undefined ? {} : { revision }) }]);
+  }
+
+  private async deliverParticipantProjections(substreamId: string,
+    recipients: readonly { userId: string; revision?: number }[]): Promise<void> {
     const metadata = this.metadataRow();
     if (!metadata) throw new Error("participant_projection_parent_missing");
     const store = this.scopeGrants({ workspaceId: metadata.workspace_id, parentId: this.parentId });
-    const delivery = store.pendingParticipantProjection(substreamId, userId, revision);
-    if (!delivery) return;
+    const deliveries = [...new Map(recipients.map(({ userId, revision }) => [userId,
+      store.pendingParticipantProjection(substreamId, userId, revision)])).values()].filter((delivery) => delivery !== null);
+    if (!deliveries.length) return;
     const child = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS,
       metadata.workspace_id, conversationObjectName(this.env.AVALON_REGION, asWorkspaceId(metadata.workspace_id),
-        this.parentId, delivery.substreamId));
-    const result = await child.applyParticipantProjection({ workspaceId: metadata.workspace_id,
-      parentId: this.parentId, substreamId: delivery.substreamId, projection: delivery.projection });
-    if (result.status !== "applied" && result.status !== "unchanged" && result.status !== "stale") {
-      throw new Error(`participant_projection_delivery_${result.status}`);
+        this.parentId, asSubstreamId(substreamId)));
+    const results = await child.applyParticipantProjections({ workspaceId: metadata.workspace_id,
+      parentId: this.parentId, substreamId, projections: deliveries.map((delivery) => delivery.projection) });
+    for (const [index, delivery] of deliveries.entries()) {
+      const result = results[index];
+      if (!result || (result.status !== "applied" && result.status !== "unchanged" && result.status !== "stale")) {
+        throw new Error(`participant_projection_delivery_${result?.status ?? "missing"}`);
+      }
+      store.acknowledgeParticipantProjection(substreamId, delivery.projection.userId, delivery.projection.revision);
     }
-    store.acknowledgeParticipantProjection(delivery.substreamId, delivery.projection.userId, delivery.projection.revision);
   }
 
   /** Resumes from canonical receipts after failure at any cross-object boundary. */
@@ -1844,7 +1854,7 @@ export class HostedParent {
         WHERE parent_id = ? AND substream_id = ? AND acknowledged_revision IS NOT revision`,
       this.parentId, substreamId,
     ).toArray();
-    for (const row of pending) await this.deliverParticipantProjection(substreamId, row.user_id);
+    await this.deliverParticipantProjections(substreamId, pending.map((row) => ({ userId: row.user_id })));
   }
 
   private async runMainParticipantMigration(): Promise<void> {
@@ -2218,19 +2228,39 @@ export class HostedParent {
 
   async mutateParticipantGrant(input: ParticipantGrantMutation): Promise<ScopeGrantMutationResult> {
     const request = parseRpcInput(ParticipantGrantMutationSchema, input, "participant_grant_mutation");
+    const result = await this.commitParticipantGrant(request);
+    if (result.status === "committed") await this.deliverParticipantProjection(
+      request.target.kind === "workstream" ? "0" : request.target.substreamId, request.userId);
+    return result;
+  }
+
+  private async commitParticipantGrant(request: ParticipantGrantMutation): Promise<ScopeGrantMutationResult> {
     if (request.active) {
       const denied = await this.prepareSharingTargets({ ...request.target,
         actorUserId: request.actorUserId, targets: [request.target] });
       if (denied) return { status: "denied", reason: denied.reason === "relationship_required" ? "sharing_required" : denied.reason };
     }
-    const result = await this.authorizedGrantMutation({ ...request, expectedRevision: 0 }, true);
-    if (result.status === "committed") {
-      // Converge the addressed roster before replying; the alarm is the recovery path.
-      await this.deliverParticipantProjection(
-        request.target.kind === "workstream" ? "0" : request.target.substreamId, request.userId,
-      );
+    return this.authorizedGrantMutation({ ...request, expectedRevision: 0 }, true);
+  }
+
+  async admitParticipants(input: z.infer<typeof ParticipantAdmissionBatchSchema>): Promise<{ status: "ready" | "denied" }> {
+    const request = parseRpcInput(ParticipantAdmissionBatchSchema, input, "participant_admission");
+    const others = request.participants.filter((person) => person.userId !== request.actorUserId);
+    const self = request.participants.filter((person) => person.userId === request.actorUserId);
+    let ready = true;
+    for (const person of [...others, ...self]) {
+      const mutation = { ...person, target: request.target, actorUserId: request.actorUserId, active: true,
+        ...(request.participationReason ? { participationReason: request.participationReason } : {}) };
+      const result = person.userId === request.actorUserId
+        ? await this.commitConversationJoin(mutation) : await this.commitParticipantGrant(mutation);
+      if (result.status !== "ready" && result.status !== "committed") { ready = false; break; }
     }
-    return result;
+    // Receipts and delivery intents remain per person, including after partial
+    // admission or a lost batch response. Recovery always projects the newest revision.
+    await this.deliverParticipantProjections(request.target.substreamId, request.participants);
+    const store = this.scopeGrants(request.target);
+    return { status: ready && request.participants.every(({ userId }) =>
+      store.participantProjection(request.target.substreamId, userId)?.active) ? "ready" : "denied" };
   }
 
   async admitConnectorParticipants(
@@ -2247,10 +2277,7 @@ export class HostedParent {
     ).toArray()[0];
     if (receipt) {
       if (receipt.request_json !== canonical) throw new Error("connector_participant_admission_conflict");
-      const store = this.scopeGrants(request);
-      for (const userId of userIds) {
-        if (store.pendingParticipantProjection("0", userId)) await this.deliverParticipantProjection("0", userId);
-      }
+      await this.deliverParticipantProjections("0", userIds.map((userId) => ({ userId })));
       return { status: "ready" };
     }
     const relationships = await Promise.all(userIds.map((userId) =>
@@ -2284,9 +2311,7 @@ export class HostedParent {
       return { status: "ready" as const };
     });
     if (result.status === "ready") {
-      for (const userId of userIds) {
-        if (store.pendingParticipantProjection("0", userId)) await this.deliverParticipantProjection("0", userId);
-      }
+      await this.deliverParticipantProjections("0", userIds.map((userId) => ({ userId })));
     }
     return result;
   }
@@ -2294,6 +2319,13 @@ export class HostedParent {
   /** Posting may join a member-readable conversation, never grant a parent or another user. */
   async joinConversation(input: ParticipantGrantMutation): Promise<{ status: "ready" | "denied" }> {
     const request = parseRpcInput(ParticipantGrantMutationSchema, input, "join_conversation");
+    const result = await this.commitConversationJoin(request);
+    if (result.status !== "ready" || request.target.kind !== "conversation") return result;
+    await this.deliverParticipantProjection(request.target.substreamId, request.userId);
+    return { status: this.scopeGrants(request.target).participantProjection(request.target.substreamId, request.userId)?.active ? "ready" : "denied" };
+  }
+
+  private async commitConversationJoin(request: ParticipantGrantMutation): Promise<{ status: "ready" | "denied" }> {
     if (!request.active || request.userId !== request.actorUserId || request.target.kind !== "conversation") {
       return { status: "denied" };
     }
@@ -2307,7 +2339,6 @@ export class HostedParent {
       const result = store.mutateCurrent(request, relationship.incarnation);
       if (result.status !== "committed") return { status: "denied" };
     }
-    await this.deliverParticipantProjection(request.target.substreamId, request.userId);
     return { status: store.participantProjection(request.target.substreamId, request.userId)?.active ? "ready" : "denied" };
   }
 

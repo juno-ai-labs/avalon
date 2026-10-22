@@ -6900,6 +6900,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.parentWrite(async () => (await this.channelParent(input.parentId, input.workspaceId)).admitConnectorParticipants(input));
   }
 
+  async admitParticipants(input: Parameters<HostedParent["admitParticipants"]>[0]) {
+    return this.parentWrite(async () => (await this.channelParent(input.target.parentId, input.target.workspaceId)).admitParticipants(input));
+  }
+
   async joinConversation(input: Parameters<HostedParent["joinConversation"]>[0]) {
     return this.parentWrite(async () => (await this.channelParent(input.target.parentId, input.target.workspaceId)).joinConversation(input));
   }
