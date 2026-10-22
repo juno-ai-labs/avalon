@@ -466,6 +466,32 @@ describe('WorkspaceSocketProvider', () => {
     }));
   });
 
+  it('recovers an invalidation recorded before the access screen installs its listener', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const key = ['conversation-access-preview', 'thread-1', '0'];
+    const open: ConversationAccessPreview = {
+      kind: 'channel', title: 'Launch plan', appearance: null, markId: 'thread-1', access: 'open',
+    };
+    queryClient.setQueryData(key, open);
+    await queryClient.invalidateQueries({ queryKey: key, refetchType: 'none' });
+    let finishPreview!: (preview: ConversationAccessPreview) => void;
+    const pending = new Promise<ConversationAccessPreview>((resolve) => { finishPreview = resolve; });
+    const api = {
+      conversationAccessPreview: vi.fn(() => pending), requestConversationAccess: async () => undefined,
+    };
+    const onRetry = vi.fn();
+    render(<QueryClientProvider client={queryClient}>
+      <ConversationAccessRequest api={api} parentId="thread-1" substreamId="0"
+        fallback={<p>Thread unavailable</p>} onRetry={onRetry} />
+    </QueryClientProvider>);
+    await flushPromises();
+    expect(api.conversationAccessPreview).toHaveBeenCalledTimes(1);
+    expect(onRetry).not.toHaveBeenCalled();
+    await act(async () => { finishPreview(open); await pending; });
+    await vi.waitFor(() => expect(onRetry).toHaveBeenCalledTimes(1), { timeout: 5_000 });
+    expect(screen.getByRole('status').textContent).toBe('Opening thread…');
+  });
+
   it.each(['refused', 'failed'] as const)('waits for a fresh preview instead of retrying cached open access when the check is %s', async (outcome) => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     let finishPreview!: (preview: ConversationAccessPreview) => void;
