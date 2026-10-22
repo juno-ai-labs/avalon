@@ -479,6 +479,25 @@ it("never gives a revoked share to the address it was for", async () => {
   expect(await env.DB.prepare("SELECT 1 FROM workspace_members WHERE user_id=?").bind(newcomerId).first()).toBeNull();
 });
 
+it("does not prepare another pending operation's recipient when replaying a settled invitation", async () => {
+  const settledRequest = invitation();
+  const settled = await room().createScopeInvitations(settledRequest);
+  expect(settled).toMatchObject({ status: "created", invitations: [{ status: "accepted" }] });
+  await changeRelationships(env, workspaceId, [recipientId], env.DB.prepare(
+    "UPDATE workspace_members SET status='suspended',revision=revision+1 WHERE user_id=?").bind(recipientId));
+  const pending = await create();
+  expect(pending.status).toBe("pending");
+  await changeRelationships(env, workspaceId, [recipientId], env.DB.prepare(
+    "DELETE FROM workspace_members WHERE user_id=?").bind(recipientId));
+
+  expect(await room().createScopeInvitations(settledRequest)).toEqual(settled);
+  expect(await env.DB.prepare("SELECT 1 FROM workspace_members WHERE user_id=?").bind(recipientId).first()).toBeNull();
+  expect(await room().listScopeInvitations({ actorUserId: actorId, target: child })).toMatchObject({
+    status: "ready", invitations: expect.arrayContaining([{ ...pending, status: "pending" }]),
+  });
+  expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: false });
+});
+
 it("never gives an expired share to the address it was for", async () => {
   const created = await room().createScopeInvitations({ ...invitation([child], [NEWCOMER]), expiresAt: Date.now() + 60_000 });
   if (created.status !== "created") throw new Error(JSON.stringify(created));

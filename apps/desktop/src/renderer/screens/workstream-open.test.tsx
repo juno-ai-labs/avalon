@@ -1140,12 +1140,14 @@ describe('socket-first channel open', () => {
     await titleMenu('Thread menu: Recovered channel', 'Resolve Thread');
     const destination = change === 'unmount' ? '/settings' : `/channels/${channelB}/threads/${workstreamId}`;
     await act(async () => { await navigateInTest(destination); });
-    await act(async () => { finish(); });
-    expect(locationInTest.pathname).toBe(destination);
     if (change === 'channel change') {
       fireEvent.pointerDown(screen.getByRole('button', { name: 'Thread menu: Recovered channel' }), { button: 0, ctrlKey: false });
-      expect(await screen.findByRole('menuitem', { name: 'Resolve Thread' })).not.toHaveAttribute('aria-disabled', 'true');
+      // The new visit drops the old request's busy state. Check this before
+      // success can legitimately mark the shared Thread cache as resolved.
+      await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Resolve Thread' })).not.toHaveAttribute('aria-disabled', 'true'));
     }
+    await act(async () => { finish(); });
+    expect(locationInTest.pathname).toBe(destination);
   });
 
   it.each(['member', 'guest'])('keeps a child-only %s on the resolved non-first Breakout', async (accessClass) => {
