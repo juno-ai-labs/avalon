@@ -1153,6 +1153,8 @@ answer the activity question without transferring history or adding connections.
 appear; live execution decides whether it appears. Concurrent executions count
 once per Sidekick, and background agents retain their own independent row.
 
+Pull request: [#1399](https://github.com/juno-ai-labs/avalon/pull/1399).
+
 ### 2026-10-21 — Background workers under a Sidekick are not run continuations
 
 **What changed:** Input activation distinguishes delegated workers by their
