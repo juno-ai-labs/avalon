@@ -853,8 +853,9 @@ export class SpaceService {
    * Finish a staged operation whose request never came back, for a
    * `space_intent_resume` message already on the Queue.
    *
-   * Only intents staged before migration 94 exist; WorkspaceDO finishes each
-   * in one transaction (`resumeLegacyIntent`).
+   * WorkspaceDO delivers current per-thread archive commands through their
+   * canonical authority. Pre-migration-94 container intents finish locally in
+   * one transaction (`resumeLegacyIntent`).
    */
   async resumeIntent(operationId: string): Promise<SpaceIntentResumeOutcome> {
     const workspace = await this.workspace();

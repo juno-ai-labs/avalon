@@ -997,10 +997,18 @@ describe("the other Space operations", () => {
     const channel = await createSpace("Blog");
     const thread = await createChannel("archive-access-revoked", [asSpaceId(channel.id)], { participantUserIds: [MEMBER] });
     await deliverEffectsToWorkspace(env, spaceConversation(thread));
+    // Hold this delivery in durable scheduling state before it is staged. The
+    // real alarm can run while grant revocation awaits its participant projection.
+    // Explicit resume below ignores not_before and exercises the refusal itself.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`CREATE TRIGGER hold_archive_delivery AFTER INSERT ON space_intents
+        WHEN NEW.kind = 'archive'
+        BEGIN UPDATE space_intents SET not_before = 253402300799000 WHERE operation_id = NEW.operation_id; END`);
+    });
     expect((await request(`/spaces/${channel.id}/archive`, OWNER_AUTH, {}, "POST")).status).toBe(200);
     if (revoked === "Main access") {
-      // Commit the real canonical removal, holding its directory effect.
-      await new WorkstreamObjectClient(routeEnv(), OWNER_AUTH, thread).removeParticipant(OWNER);
+      // Remove the owning-Thread and Main grants together, holding the directory effect.
+      await new WorkstreamObjectClient(routeEnv(), OWNER_AUTH, thread).removeParticipant(OWNER, { owningThread: true });
     } else {
       await changeRelationships(env, WORKSPACE_ID, [OWNER],
         env.DB.prepare("UPDATE workspace_members SET status = 'suspended' WHERE workspace_id = ? AND user_id = ?")
