@@ -1270,6 +1270,8 @@ owns current inputs and execution. The wizard records validation evidence withou
 freezing changing inputs; activations still fetch current data and follow the saved
 failure and no-op rules. This is authoring guidance, not a new publication gate.
 
+Pull request: [#1425](https://github.com/juno-ai-labs/avalon/pull/1425).
+
 ### 2026-10-22 — Keep Sidekick actions discoverable across lifecycle states
 
 **What changed:** Pause/Resume, Run now, Run history and timing stay visible.
