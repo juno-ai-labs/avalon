@@ -122,6 +122,10 @@ Breakout remains listed and openable, and may still receive messages. Archiving
 hides it; restoring it keeps it resolved. Removing or replacing the destination
 merge does not reopen its source.
 
+Resolution does not revoke server merge admission: per-message merge actions and
+agent tools can still publish another result. The Thread title menu disables its
+Merge row when resolved, as described under [The client](#the-client).
+
 A Thread resolves in the same WorkspaceDO transaction that posts its Channel
 merge. A Breakout resolves when Main's durable `workstream_message_created`
 merge effect reaches its hosted parent, in the effect's receipted transaction.
@@ -278,7 +282,12 @@ quote line, as the Channel's other readers will see it, and the audience line
 says the thread's name stays hidden. "Merge to thread" or "Merge to <first
 Channel>" is the second hover action on every settled text message, after
 **New breakout**, and a row in the title menu that names the target at its
-end (the Thread, or "Channel"). Either opens the response card,
+end (the Thread, or "Channel"). A resolved Thread keeps this title-menu row
+visible but disabled, with a tooltip explaining that the thread is already resolved.
+Its resolved state falls back to the loaded conversation detail when a deep link
+opens a Thread outside the cached directory page, so the action is disabled on
+the first loaded menu.
+An enabled action opens the response card,
 `MergeResponseCard`, in the feed: under the turn the hover action or a
 suggestion named, or after the newest turn from the menu. It is the merge as
 the parent will draw it, `MergeMessage`'s layout made editable, under a tag

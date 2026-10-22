@@ -365,7 +365,11 @@ first visible Channel). A Breakout-only reader stays in the resolved Breakout
 when Main is inaccessible. Failed writes and results arriving after navigation
 or unmount never redirect. Members and guests can resolve within their admitted
 conversation scope. Resolved conversations keep the Resolve item visible but
-disabled; archived conversations offer no Resolve action.
+disabled, with a tooltip explaining that the thread or Breakout is already resolved.
+Explained disabled actions stay reachable with the menu's arrow keys, so their
+tooltips also open on keyboard focus; activation keeps the menu open and changes nothing.
+Archived conversations offer no Resolve action. The Thread menu's Merge behavior
+is described in [conversation merge](conversation-merge.md#the-client).
 
 Each menu has a root and levels. The root is a row of action tiles (Add people,
 Rename, Copy link, More), under a header on a Breakout, followed by People,
