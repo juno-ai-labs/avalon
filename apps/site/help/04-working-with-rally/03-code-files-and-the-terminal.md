@@ -59,6 +59,11 @@ helpers. Its runs keep separate conversations, but can reuse the files left
 by the wizard or an earlier run. Different Sidekicks and the Thread that
 requested one have separate computers.
 
+Only the person the Sidekick runs as can access its shared Terminal files.
+Someone else can edit its instructions without accessing or resetting that
+computer. If you change who it runs as, Rally rebuilds the sandbox under the
+new person's permissions.
+
 Helpers share the computer of the conversation or Sidekick they work for
 (see [Helpers, other conversations and receipts](06-helpers-and-receipts.md)).
 If two want to change files at once, one waits a moment.

@@ -32,10 +32,12 @@ that refreshes a site needs these tools for its publication step too.
 ## Configure an existing site's refresh before writing the Sidekick
 
 A Sidekick's wizard, activations, and background agents share one Terminal
-sandbox (file workspace). Each activation still has its own conversation.
-The requesting Thread's sandbox is separate. Reuse existing site files, but
-recover them from the published resource if they are missing after a reset or
-expiry. Using the same publication path alone does not recover missing files.
+sandbox (file workspace), accessible only to its current run-as user. Each
+activation still has its own conversation.
+The requesting Thread's sandbox is separate. Existing files may be older than
+what is published: someone can revise the site from another sandbox. Import the
+current published source before each refresh, including when local files exist.
+Using the same publication path alone neither recovers nor updates source files.
 
 Before saving the Sidekick, inspect the existing site and save these facts in
 its run instructions:
@@ -49,10 +51,17 @@ its run instructions:
 
 Save these steps for each run as well:
 
-1. Load Terminal and inspect the original site directory. If the files are
-   missing, call \`import_resource\` with the site's resource ID and that
-   directory as \`destinationPath\` before editing.
-2. Read the site files and the code that reads the data. Retrieve the
+1. Load Terminal and inspect the original site directory. If it exists, copy it
+   to a backup outside \`.rally-output\` before replacing it, so unfinished work
+   remains recoverable. Call \`import_resource\` with the site's resource ID, the
+   original directory as \`destinationPath\`, and \`overwrite: true\` when that
+   directory exists. A Thread-owned Sidekick can import the generated site still
+   attached to its original publishing Thread; saving an ID alone grants no
+   access to other resources. If import fails, report the recovery gap instead
+   of publishing an older local copy.
+2. Read the imported site files and the code that reads the data. Compare any
+   unfinished changes in the backup with the current source and carry forward
+   only changes needed for the request. Retrieve the
    current source records through their connection; do not rebuild from memory.
 3. Transform the records and update the necessary files, following the source-row
    checks below. Keep the format the site's code expects.

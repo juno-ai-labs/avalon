@@ -63,7 +63,12 @@ started it, through further delegation to the first conversation nobody
 delegated. Each shared caller records its actual execution conversation on its
 mutation lease. That lets the sandbox owner check the holder's liveness in the
 correct object. Overlapping tool mutations contend for the existing lease;
-sharing a sandbox does not make a whole multi-tool workflow atomic. A primary
+sharing a sandbox does not make a whole multi-tool workflow atomic.
+The plugin checks the Sidekick's live execution-user facts before preparation
+and every tool call, including reads using a cached acquisition. Only its
+current run-as user may access the sandbox. Another editor can configure the
+Sidekick but cannot read or reset those files. A legitimate execution-user
+change still replaces the old generation under its new principal. A primary
 Sidekick run may replace a sandbox whose permissions changed; a background
 agent cannot destroy its owner's workspace and must wait for a primary run.
 Files may need recovery after a permission reset, provider loss or expiry, so
@@ -251,11 +256,16 @@ stream stays a different document. For a work-stream-scoped Sidekick the work
 stream in that identity is the **room that owns it**, not the automation's own
 conversation: its run executes under the automation, using the Sidekick's shared
 sandbox and its own transcript, but the documents it publishes are the room's, so "refresh the
-dashboard" lands on the dashboard the room already has. Only publication is
-redirected to that room — the sandbox belongs to the Sidekick's authoring
+dashboard" lands on the dashboard the room already has. The sandbox belongs to the Sidekick's authoring
 conversation, while resource permissions and import attachments remain addressed
-to the run's own conversation — and the link and artifact
-registry follow the identity, so the document appears in the owning room's
+to the run's own conversation. A new run may recover a generated site still
+attached to its server-configured publishing room, provided its publication
+identity belongs to that room. Terminal attaches that specific site to the run
+before importing it; this does not inherit other attachments or follow arbitrary
+Thread IDs. Detached and foreign publications remain unavailable. The site skill
+backs up existing files and imports the current publication before each refresh
+so retained files cannot silently overwrite newer layout edits. Resource links
+and the artifact registry follow the publication identity, so the document appears in the owning room's
 resource list rather than the automation's. An equal content hash returns the existing
 resource untouched, which covers both a crash-replay of a settled call and a
 republish that changed nothing; a different hash swaps the content in place
@@ -1280,7 +1290,10 @@ update lag before changing the default.
 to its authoring conversation's sandbox. Run records and resource permissions
 stay in the execution conversation. Existing foreign-run mutation leases serialize
 shared writes. Primary activations may rebuild changed authority; background
-agents still cannot replace their owner's files. Provider retention is unchanged.
+agents still cannot replace their owner's files. Every plugin activation and
+tool call checks the live run-as user, so another editor cannot repeatedly
+replace the shared sandbox. Generated sites can be recovered from the configured
+publishing Thread without inheriting its other resources. Provider retention is unchanged.
 
 **Why:** Recreating the working directory for every activation made recurring
 site updates recover the same files repeatedly and prevented wizard preparation
