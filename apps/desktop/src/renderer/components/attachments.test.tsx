@@ -108,12 +108,9 @@ describe('attachment presentation', () => {
     });
   });
 
-  afterEach(async () => {
+  afterEach(() => {
+    // Revoke preview URLs while this fixture still owns the URL stub.
     cleanup();
-    // Radix restores focus in a zero-delay timer after unmount. Let that event
-    // run while its jsdom window still owns CustomEvent; otherwise file teardown
-    // can replace the constructor before it dispatches on the old DOM node.
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     vi.unstubAllGlobals();
   });
 
