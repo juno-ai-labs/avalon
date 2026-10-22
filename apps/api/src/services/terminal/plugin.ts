@@ -3,7 +3,7 @@ import {
   type HarnessPluginActivationContext,
   type HarnessToolContext,
 } from "@rally/agent-harness";
-import { asWorkspaceId, runRequesterUserId, type WorkstreamWorkflowInput } from "@rally/contracts";
+import { asWorkspaceId, runRequesterUserId, SidekickExecutionDelegationSchema, type SidekickExecutionDelegation, type WorkstreamWorkflowInput } from "@rally/contracts";
 import { newId } from "@rally/db";
 
 import type { Env } from "../../env";
@@ -155,28 +155,53 @@ export async function createAvalonTerminalPlugin(
     },
   });
   const provider = options.provider ?? ownedProvider!;
-  // Shared files are an execution-user boundary, not permission to act as the
-  // editor. Read the live Sidekick facts before activation and every tool,
-  // including reads that can reuse the runtime's cached acquisition.
-  const assertSandboxPrincipal = async (context: HarnessToolContext): Promise<void> => {
-    if (input.parentKind !== "automation") return;
-    const workspace = await durableObjectStubForWorkspace(
-      env, env.WORKSPACE_DOS, asWorkspaceId(input.workspaceId),
-      workspaceDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId)),
-    );
-    const facts = context.executionPrincipal.type === "user"
-      ? await workspace.sidekickReadAuthorizationFacts({
-        workspaceId: asWorkspaceId(input.workspaceId), parentId: input.parentId,
-        userId: context.executionPrincipal.userId, substreamIds: [],
-      })
-      : null;
-    if (!facts?.exists || !facts.executor) {
+  const sidekickWorkspace = input.parentKind === "automation"
+    ? await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, asWorkspaceId(input.workspaceId),
+      workspaceDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId)))
+    : null;
+  const readDelegation = async () => SidekickExecutionDelegationSchema.parse(
+    await sidekickWorkspace!.sidekickReadExecutionDelegation({ workspaceId: input.workspaceId, automationId: input.parentId }),
+  );
+  const initialDelegation = sidekickWorkspace ? await readDelegation() : null;
+  // Shell commands retain one explicitly selected GitHub connection. They do
+  // not retry across delegates or inherit a withdrawn owner's mounted token.
+  const repositoryDelegateAvailable = async (delegation?: SidekickExecutionDelegation | null): Promise<boolean> => {
+    if (!sidekickWorkspace) return true;
+    const terminal = terminalPort(input.workspaceId, input.parentId);
+    const selected = await terminal.selectedRepository();
+    if (!selected) return true;
+    const connection = await env.DB.prepare(
+      "SELECT scope, owner_user_id, status FROM connector_connections WHERE id = ? AND workspace_id = ?",
+    ).bind(selected.connectionId, input.workspaceId).first<{ scope: string; owner_user_id: string | null; status: string }>();
+    if (connection?.scope === "workspace" && connection.status !== "disabled") return true;
+    const available = connection?.status !== "disabled" && connection?.scope === "personal"
+      && (delegation ?? await readDelegation()).delegates.some((delegate) => delegate.userId === connection.owner_user_id);
+    // Missing expiry is not proof that a provider-side mount never landed.
+    // Zero records acknowledged removal and is already expired for bootstrap.
+    if (!available && selected.readTokenExpiresAt !== 0) {
+      const sandbox = await terminal.sandbox();
+      if (sandbox?.sandboxId) await provider.clearGitHubReadAccess(sandbox.sandboxId);
+      await terminal.recordRepositoryBootstrap({
+        generation: selected.bootstrappedSandboxGeneration ?? 0, readTokenExpiresAt: 0,
+        repositoryFullName: selected.repositoryFullName, baseSha: selected.baseSha, now: Date.now(),
+      });
+    }
+    return available;
+  };
+  // Access follows current consent; files remain Sidekick-owned. This also
+  // checks reads that reuse an acquisition made earlier in the same run.
+  const assertSandboxPrincipal = async (context: HarnessToolContext): Promise<SidekickExecutionDelegation | null> => {
+    if (!sidekickWorkspace) return null;
+    const principal = context.executionPrincipal;
+    const delegation = await readDelegation();
+    if (principal.type !== "user" || !delegation.delegates.some((delegate) => delegate.userId === principal.userId)) {
       throw new TerminalToolError(
         "sandbox_authority_mismatch",
-        "Only the user this Sidekick runs as can use its shared Terminal files. You can still edit its definition without accessing Terminal.",
-        { reason: "Continue as the Sidekick's run-as user to use its Terminal sandbox." },
+        "This Sidekick needs an eligible delegate to use its shared Terminal files.",
+        { reason: "Restore this user's delegation and Sidekick access, or start a new run with an eligible delegate." },
       );
     }
+    return delegation;
   };
   const coordinator = new TerminalSandboxCoordinator(
     env,
@@ -202,7 +227,9 @@ export async function createAvalonTerminalPlugin(
       operationId: context.harnessRunId,
       eventId: newId(),
     }),
-    { ...scope, runsPort: createHarnessRunPortFactory(env) },
+    { ...scope, runsPort: createHarnessRunPortFactory(env),
+      ...(initialDelegation ? { sharedFileUserId: initialDelegation.accountUserId } : {}),
+    },
   );
   const readGateway = options.readGateway ?? createGitHubRestReadGateway(env);
   const prepareRepository = async (
@@ -210,6 +237,7 @@ export async function createAvalonTerminalPlugin(
     sandbox: Parameters<typeof bootstrapTerminalRepository>[2],
     sandboxProvider: TerminalSandboxProvider,
   ): Promise<void> => {
+    if (!await repositoryDelegateAvailable()) return;
     try {
       await bootstrapTerminalRepository(
         env,
@@ -238,6 +266,7 @@ export async function createAvalonTerminalPlugin(
     context: HarnessToolContext,
     sandbox: Parameters<typeof bootstrapTerminalRepository>[2],
   ): Promise<string | null> => {
+    if (!await repositoryDelegateAvailable()) return "repository_delegate_unavailable";
     try {
       await bootstrapTerminalRepository(
         env,
@@ -318,8 +347,14 @@ export async function createAvalonTerminalPlugin(
         toolInvocationId: context.effectIntentId ?? null,
       });
       try {
-        await assertSandboxPrincipal(context);
-        const result = await withTerminalToolTrace(trace, () => executors[name](toolInput, context));
+        const delegation = await assertSandboxPrincipal(context);
+        const result = await withTerminalToolTrace(trace, async () => {
+          if (!await repositoryDelegateAvailable(delegation) && name === "publish_branch_and_pr") {
+            throw new TerminalToolError("repository_delegate_unavailable",
+              "The selected GitHub connection's owner is no longer an eligible delegate. Local files remain available. Restore their delegation or explicitly select an authorized repository connection before publishing.");
+          }
+          return executors[name](toolInput, context);
+        });
         const durationMs = Date.now() - startedAt;
         logStructuredEvent(env, "info", "terminal_tool_finished", {
           workspace_id: context.workspaceId,
@@ -395,7 +430,7 @@ export async function createAvalonTerminalPlugin(
     ? " Current workspace egress is Full internet."
     : " Current workspace egress is Trusted only; a network failure may mean the destination is not approved, so ask a workspace owner to review Terminal network targets instead of trying to bypass it.";
   const sidekickGuidance = input.parentKind === "automation"
-    ? " This Sidekick's wizard, activations, and background agents share one sandbox under its current run-as user. Other editors can configure its definition but cannot access those files. Publications belong to its home conversation when it has one, so reuse the original site's path to update it. import_resource can resolve a known Rally resource ID using the execution user's read access even when the resource is not attached or listed. Try the known site ID before requesting an attachment; mentioning an ID does not change permissions. Activations can overlap; the mutation lease protects one tool call, not a whole workflow. Load tracking-seen-or-done-items and claim a shared output before a multi-step update; use separate directories for independent work."
+    ? " This Sidekick's wizard, activations, and background agents share one sandbox. Eligible delegates can use these shared files; changing the coordinating user or withdrawing a delegation does not erase earlier files. New resource imports still require the selected user's current access. Publications belong to its home conversation when it has one, so reuse the original site's path to update it. import_resource can resolve a known Rally resource ID using the execution user's read access even when the resource is not attached or listed. Try the known site ID before requesting an attachment; mentioning an ID does not change permissions. Activations can overlap; the mutation lease protects one tool call, not a whole workflow. Load tracking-seen-or-done-items and claim a shared output before a multi-step update; use separate directories for independent work."
     : "";
   const plugin = createTerminalPlugin(
     observedExecutors,

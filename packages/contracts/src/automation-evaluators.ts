@@ -370,6 +370,10 @@ export const WorkspaceExternalEventSchema = z.strictObject({
   occurredAt: z.number().int().nonnegative(),
   audienceUserIds: z.array(IdSchema),
   audienceKind: z.enum(["workspace", "restricted"]),
+  /** Host-written source identity. Older queued deliveries resolve this from their registration. */
+  sourceConnectionId: IdSchema.optional(),
+  sourceConnectionScope: z.enum(["personal", "workspace"]).optional(),
+  sourceConnectionOwnerUserId: IdSchema.nullable().optional(),
 });
 export type WorkspaceExternalEvent = z.infer<typeof WorkspaceExternalEventSchema>;
 

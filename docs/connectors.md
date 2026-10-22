@@ -197,10 +197,19 @@ tools are opted in explicitly, while hosted MCP schemas/results remain untouched
 
 - A personal connection can be used only by its owner principal.
 - A workspace connection is an organization capability: every ad-hoc work stream in that workspace receives all tools granted to the connection. Those tool calls execute as the workspace principal, even when the run was started by a member.
-- Workspace automations remain explicitly bound to selected workspace connections so a published automation cannot silently change providers or accounts.
+- Sidekicks retain configured source bindings; delegation and the selected operation identity govern their use independently of ownership scope.
 - A work-stream participant does not expose their personal connections by joining.
 - Tools require both a manifest capability and a capability recorded on the connection.
 - Credentials are decrypted only for the duration of a backend operation.
+
+Sidekick event matching and delivery use that owner's eligible consent rather
+than the Sidekick's ownership scope. A Thread- or Organization-owned Sidekick
+can receive a personal event only while the owner is an eligible delegate;
+restricted workspace events require an eligible delegate inside the real
+audience. This standing consent covers the Sidekick's configured sharing and
+existing shared history. It does not widen ordinary Thread attachments or
+connector event visibility. [Sidekick lifecycle](automation-lifecycle.md#delegation-consent-authority)
+owns the common admission policy, coordinator identity and migration.
 
 Hosted MCP personal connections add one more layer without weakening those
 rules. Their static connector descriptor supplies trusted catalog prose and
@@ -1648,6 +1657,27 @@ this internal registration metadata from its existing access-only result. See [S
 and receipt replay.
 
 ## Changelog
+
+### 2026-10-22 — Admit Sidekick events through explicit delegation
+
+**What changed:** Matching and delivery accept a personal event for any Sidekick
+scope through the eligible source owner's consent. Restricted workspace events
+require an eligible delegate inside their actual audience.
+
+**Why:** The ownership-scope shortcut discarded a Thread-owned Sidekick's
+authorized Sheet changes while an hourly read could proceed.
+
+**Considered and rejected:** Extending the old privacy shortcut to schedules
+would restrict the requested standing consent for configured work and shared
+Sidekick history.
+
+**Consequences:** Consent disclosure must explain retained history and configured
+sharing. Ordinary resource attachments retain their existing audience rules.
+Authorization uses normal eventually consistent views, with no extra provider
+preflight. [Sidekick lifecycle](automation-lifecycle.md#2026-10-22--record-consent-independently-of-sidekick-ownership)
+owns the complete mechanism and rollout constraints.
+
+Related: [Sidekick delegation PRD](PRDs/2026-10-22_sidekick-delegation/prd.md).
 
 ### 2026-10-21 — Google credentials expose separate product bundles
 

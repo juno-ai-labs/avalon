@@ -49,6 +49,25 @@ export const SidekickDelegationGrantSchema = z.strictObject({
 });
 export type SidekickDelegationGrant = z.infer<typeof SidekickDelegationGrantSchema>;
 
+/** Host-only operation authority; no credentials or pooled principal. */
+export const SidekickExecutionDelegationSchema = z.strictObject({
+  sidekickId: IdSchema,
+  creatorUserId: UserIdSchema,
+  /** Existing account-relative work keeps its pre-migration run-as binding. */
+  accountUserId: UserIdSchema,
+  delegates: z.array(z.strictObject({
+    userId: UserIdSchema, generation: z.number().int().nonnegative(), grantedAt: z.number().int().nonnegative(),
+  })),
+});
+export type SidekickExecutionDelegation = z.infer<typeof SidekickExecutionDelegationSchema>;
+export const SidekickDelegationAttentionCodeSchema = z.enum(["no_eligible_delegate", "event_no_eligible_delegate", "coordinator_unavailable"]);
+export type SidekickDelegationAttentionCode = z.infer<typeof SidekickDelegationAttentionCodeSchema>;
+export const SIDEKICK_DELEGATION_ATTENTION_MESSAGES: Record<SidekickDelegationAttentionCode, string> = {
+  no_eligible_delegate: "Needs attention: no delegated user is available",
+  event_no_eligible_delegate: "Needs attention: the last configured source event had no eligible delegate. Opt in with an account that has access to that source.",
+  coordinator_unavailable: "Needs attention: the coordinating delegate is unavailable. Restore their delegation and access, or start a new run with an available delegate.",
+};
+
 export const SIDEKICK_DELEGATION_ERRORS = {
   sidekick_not_found: "This Sidekick is unavailable to you. Use Sidekick discovery for enrollment, or sidekick_my_delegations_list to withdraw your own grant.",
   sidekick_delegation_ambiguous_target: "More than one visible Sidekick has that name. Choose the intended Sidekick from the screen and use its Rally link or UUID.",

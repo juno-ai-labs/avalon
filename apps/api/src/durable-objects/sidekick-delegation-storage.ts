@@ -45,6 +45,18 @@ export interface SidekickDelegationMutation {
 export class SidekickDelegationStorage {
   constructor(private readonly storage: DurableObjectStorage) {}
 
+  /** Only a successful, explicitly authorized legacy claim grants human access. */
+  grantClaimAccess(sidekickId: string, userId: string): boolean {
+    return this.storage.sql.exec(
+      `INSERT INTO sidekick_claim_access(sidekick_id,user_id) VALUES (?,?) ON CONFLICT DO NOTHING RETURNING user_id`,
+      sidekickId, userId,
+    ).toArray().length === 1;
+  }
+
+  hasClaimAccess(sidekickId: string, userId: string): boolean {
+    return this.storage.sql.exec("SELECT 1 FROM sidekick_claim_access WHERE sidekick_id=? AND user_id=?", sidekickId, userId).toArray().length > 0;
+  }
+
   /** A retry of the same host intent can never refresh its observed generation. */
   prepare(sidekickId: string, userId: string, operationId: string, allowed: boolean): { generation: number } {
     return this.storage.transactionSync(() => {

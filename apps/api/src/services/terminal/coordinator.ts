@@ -127,6 +127,8 @@ export interface TerminalAcquisitionObservation {
  */
 export interface TerminalSandboxScope extends TerminalRunScope {
   runsPort: HarnessRunPortFactory;
+  /** Stable file identity, never execution authority. Preserves pre-delegation generations. */
+  sharedFileUserId?: string;
 }
 
 const YIELDED_RUN_STATUSES = new Set<string>(TERMINAL_YIELDED_RUN_STATUS_LIST);
@@ -276,16 +278,17 @@ export class TerminalSandboxCoordinator {
   }
 
   /**
-   * What a sandbox generation is frozen to: the principal the run acts as and
-   * the repository it may use. A row whose fingerprint differs is another
-   * caller's bytes, whichever way the difference runs.
+   * Ordinary conversations freeze files to their execution principal. A
+   * Sidekick retains its original file identity across eligible coordinators;
+   * the plugin checks live delegation separately before every operation.
    */
   private authorityFingerprint(
     context: HarnessToolContext,
     repositoryAuthority: RepositoryAuthorityRow | null,
   ): Promise<string> {
     return sha256(JSON.stringify({
-      principal: executionPrincipalKey(context.executionPrincipal),
+      principal: this.scope.parentKind === "automation" && this.scope.sharedFileUserId
+        ? `user:${this.scope.sharedFileUserId}` : executionPrincipalKey(context.executionPrincipal),
       repository: repositoryAuthority ?? "scratch",
     }));
   }
@@ -427,10 +430,7 @@ export class TerminalSandboxCoordinator {
         this.loadOrCreatePolicy(context.workspaceId, nowIso),
         this.loadRepositoryAuthority(context.workspaceId, context.workstreamId),
       ]);
-      const authorityFingerprint = await sha256(JSON.stringify({
-        principal: executionPrincipalKey(context.executionPrincipal),
-        repository: repositoryAuthority ?? "scratch",
-      }));
+      const authorityFingerprint = await this.authorityFingerprint(context, repositoryAuthority);
       row = await this.reserveFirstGeneration(
         context,
         authorityFingerprint,
@@ -869,6 +869,9 @@ export class TerminalSandboxCoordinator {
     const links = await this.terminal(context).importedResources(row.generation);
     if (links.length === 0) return false;
     if (links.some((candidate) => candidate.state !== "completed")) return true;
+    // Completed imports are retained Sidekick state, like its shared history.
+    // A new import still checks the selected user's current read access.
+    if (this.scope.parentKind === "automation") return false;
     // The attachment join used to ride along with the import rows. It cannot:
     // the imports are object-local and the relationship rows are not, so the
     // link check is its own statement against its own authority. Which

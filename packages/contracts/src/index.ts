@@ -5,6 +5,7 @@ export * from './artifact-annotations';
 import { ExternalPeopleSchema } from "./external-people";
 export { ExternalPeopleSchema, ExternalPersonSchema, MAX_EXTERNAL_PEOPLE, deduplicateExternalPeople } from "./external-people";
 import { z } from "zod";
+import { SidekickDelegationAttentionCodeSchema } from "./sidekick-delegation";
 import { ConversationViewRequestSchema } from "./conversation-view";
 import { AttachmentKindSchema, ResourceSlugSchema, parseStoredSuggestedAttachmentToolCall } from "./attachment-contracts";
 import { AutomationLifecycleStateSchema,
@@ -1732,6 +1733,9 @@ export const AutomationRunDefinitionV1Schema = z.strictObject({
    */
   owningSubstreamId: SubstreamIdSchema.default("0" as SubstreamId),
   runAsUserId: IdSchema,
+  /** Per-run coordination is independent of the legacy human access entitlement. */
+  coordinatorUserId: IdSchema.nullable().optional(),
+  accountUserId: IdSchema.optional(),
   modelOverride: z.string().min(1).nullable(),
   trigger: AutomationRunTriggerV1Schema,
   /**
@@ -1818,6 +1822,7 @@ export const AutomationRunSchema = z.object({
   /** The run id, which is also its substream under the automation. */
   id: IdSchema,
   automationId: IdSchema,
+  coordinatorUserId: IdSchema.nullable().optional(),
   triggerType: z.enum(["manual", "schedule", "external_event", "inbound_email"]),
   plannedFor: TimestampSchema.nullable(),
   startedAt: TimestampSchema.nullable(),
@@ -1831,6 +1836,8 @@ export const AutomationDetailSchema = AutomationSummarySchema.extend({
   lifecycle: AutomationLifecycleStateSchema,
   authorUserId: IdSchema,
   runAsUserId: IdSchema,
+  delegationStatus: z.enum(["available", "needs_opt_in", "no_eligible_delegate"]).optional(),
+  delegationAttention: z.strictObject({ code: SidekickDelegationAttentionCodeSchema, message: z.string() }).nullable().optional(),
   /** The latest submitted definition, or null before the chat has submitted one. */
   currentDefinition: AutomationDraftSchema.nullable(),
   currentDefinitionRevision: z.number().int().nonnegative(),
