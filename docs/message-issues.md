@@ -19,9 +19,11 @@ join stable product identities without adding feedback state to conversations.
 
 The action opens **Something go wrong?** with **Let us know what you expected
 so we can improve Rally.** The multiline input is `ComposerInput`, including
-its existing microphone selection, click/hold dictation, finalization, and
-stop-and-send behavior. Enter writes a newline. Send report starts a best-effort
-background request and closes the modal immediately. There is no delivery
+the same message-capsule layout as Threads and Breakouts, with only the
+microphone inside the input. Attachments, model selection and the inline send
+arrow are absent. **Send** sits beside **Cancel** in the modal footer; it still
+uses the composer’s click/hold dictation and final-transcript submission path.
+Enter writes a newline. Send starts a best-effort background request and closes the modal immediately. There is no delivery
 confirmation or retry prompt. Cancel, Escape, and outside click discard an
 unsent draft.
 
@@ -102,7 +104,9 @@ the API deployment applies it before promoting the new Worker.
 
 **What changed:** Added Oopsie reporting across the shared user and assistant
 message actions, with the existing dictation composer and a dedicated D1 store.
-Sending is best effort and dismisses the modal without waiting for storage.
+The shared Thread/Breakout capsule keeps only its microphone; a footer Send
+uses the same dictation finalization path. Sending is best effort and dismisses
+the modal without waiting for storage.
 
 **Why:** A report needs to identify the exact message and execution that went
 wrong without asking the person to reconstruct Organization, Thread and

@@ -1,5 +1,6 @@
 import type { CreateMessageIssue, MessageIssueTarget } from '@rally/contracts/message-issues';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type PropsWithChildren } from 'react';
+import { createPortal } from 'react-dom';
 import type { RallyApi } from '../lib/api';
 import { ComposerInput } from './composer-input';
 import { Button, Modal } from './primitives';
@@ -36,6 +37,7 @@ export function MessageIssueDialog({ api, report, onClose }: {
   onClose: () => void;
 }): React.JSX.Element {
   const [description, setDescription] = useState('');
+  const [submitContainer, setSubmitContainer] = useState<HTMLSpanElement | null>(null);
   const submitted = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const submit = (): void => {
@@ -49,30 +51,38 @@ export function MessageIssueDialog({ api, report, onClose }: {
   return <Modal
     restoreFocus
     description="Let us know what you expected so we can improve Rally."
-    footer={<Button onClick={onClose}>Cancel</Button>}
+    footer={<>
+      <Button onClick={onClose}>Cancel</Button>
+      <span ref={setSubmitContainer} />
+    </>}
     onOpenChange={(open) => { if (!open) onClose(); }}
     open
     title="Something go wrong?"
   >
-    <ComposerInput
-      api={api}
-      ariaLabel="Describe the issue"
-      attachments={[]}
-      autoFocus
-      fileInputRef={fileInputRef}
-      onOpenAttachment={() => undefined}
-      onRemoveAttachment={() => undefined}
-      onRetryAttachment={() => undefined}
-      onSubmit={submit}
-      onValueChange={setDescription}
-      placeholder="What happened, and what did you expect?"
-      rows={4}
-      shouldSubmitOnEnter={() => false}
-      submitContent="Send report"
-      submitDisabled={!description.trim()}
-      submitLabel="Send report"
-      uploading={false}
-      value={description}
-    />
+    <div className="has-message-capsule">
+      <ComposerInput
+        api={api}
+        ariaLabel="Describe the issue"
+        attachments={[]}
+        autoFocus
+        fileInputRef={fileInputRef}
+        layout="message-capsule"
+        onOpenAttachment={() => undefined}
+        onRemoveAttachment={() => undefined}
+        onRetryAttachment={() => undefined}
+        onSubmit={submit}
+        onValueChange={setDescription}
+        placeholder="What happened, and what did you expect?"
+        shouldSubmitOnEnter={() => false}
+        renderSubmit={({ disabled, pending, onClick }) => submitContainer && createPortal(
+          <Button aria-busy={pending || undefined} className="button-primary" disabled={disabled} onClick={onClick}>Send</Button>,
+          submitContainer,
+        )}
+        submitDisabled={!description.trim()}
+        submitLabel="Send"
+        uploading={false}
+        value={description}
+      />
+    </div>
   </Modal>;
 }
