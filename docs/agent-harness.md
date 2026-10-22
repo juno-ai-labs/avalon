@@ -668,17 +668,11 @@ Three bounds keep a looping model from loading its way into a context-limit erro
 
 The package ships eleven skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet. Five are unowned and offered to ordinary runs: `deep-research`, `writing-an-email`, `scheduling-a-calendar-event`, `using-the-local-inapp-browser`, and `using-external-structured-data`. The other six each set an `ownerPlugin` and are offered only to a run whose scope already carries that plugin: `polling-for-events` below, `tracking-seen-or-done-items` owned by `rally:tables`, `building-live-sites` above, and the three AI-chat readers — `reading-an-ai-chat`, `reading-chatgpt-conversations` and `reading-claude-conversations` (`reading-ai-chats-skills.ts`) — owned by Rally's browser plugin, `avalon:browser`. The generic reader is written against what every chat page must have (conversation data the page loaded, messages with authors, ids and parent links) rather than any markup, and ends in a self-check against the page; the provider companions carry routes and shapes as hints to verify, so a provider redesign degrades to the generic procedure instead of a wrong import. The email and calendar skills are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
 
-`using-external-structured-data` owns complete external reads, raw-response
-transfer, scripted transformation and field-by-field validation for spreadsheets,
-exports, database results and API records. It is provider-independent and unowned
-so the catalog can offer it without a particular connection or Terminal. Its
-local-file steps require loading Terminal separately; the skill grants no tools
-or access. Its four steps separate direct processing from Terminal transfer:
-read completely, preserve raw input, transform with code, then validate every
-field. `building-live-sites` loads this companion for source handling while
-retaining site recovery, data-format and publication instructions. The raw JSON
-fallback through `write_file` still relies on the model preserving the response;
-validation against saved input does not prove that transfer was faithful.
+`using-external-structured-data` owns the source-handling procedure shared by
+sites, reports, imports and other outputs. It has no owner-plugin gate; local-file
+steps require Terminal separately. See [the skill](../packages/agent-harness/src/using-external-structured-data-skill.ts)
+for its direct-processing and Terminal paths. `building-live-sites` references
+it while retaining site-specific recovery, formats and publication.
 
 `using-the-local-inapp-browser` is unowned so its limitation guidance reaches
 ordinary conversations that lack browser tools. [Agent profiles](#agent-profiles)
@@ -1735,6 +1729,8 @@ The transfer and validation procedure also applies to reports, imports and other
 outputs; keeping it only in the site skill would hide it from those tasks and
 encourage separate copies. Site recovery and publication remain in their
 existing skill so source-data guidance does not absorb destination behavior.
+
+Pull request: [#1421](https://github.com/juno-ai-labs/avalon/pull/1421).
 
 ### 2026-10-22 — Explain unsupported local browser requests through a skill
 
