@@ -2,9 +2,10 @@
 
 Terminal is Rally's deferred Bind plugin for bounded code execution, file
 mutation, resource exchange, and GitHub repository work. It gives a
-conversation one private Daytona sandbox — shared with every background agent
-that conversation starts — without turning Rally into an interactive coding
-harness: the model receives ten typed tools, not a PTY or a provider API, and a
+Thread, Breakout or Sidekick one private Daytona sandbox. A Sidekick shares
+its sandbox with its wizard, activations and background agents; ordinary
+conversations share theirs with the background agents they start. It is not an
+interactive coding harness: the model receives ten typed tools, not a PTY or a provider API, and a
 sandbox is allocated only when one of those tools executes.
 
 ## Where the code lives
@@ -13,8 +14,8 @@ sandbox is allocated only when one of those tools executes.
 | --- | --- |
 | `apps/api/src/services/terminal/contract.ts` | Canonical plugin prompt, ten tool descriptors and strict argument schemas, and regional configuration contract. |
 | `apps/api/src/services/terminal/plugin.ts` | Regional composition boundary and allocation-free deferred plugin registration. |
-| `apps/api/src/services/terminal/authority.ts` | Which conversation's sandbox a run uses: its own, or for a background agent the conversation that (transitively) started it, resolved once at plugin composition from WorkspaceDO's delegation records. |
-| `apps/api/src/services/terminal/coordinator.ts` | One-sandbox-per-conversation acquisition, authority fencing, exclusive mutation leases — including a lease held by a run in another conversation — and recovery after ambiguous provider calls. |
+| `apps/api/src/services/terminal/authority.ts` | Resolves the sandbox owner once at plugin composition: the Sidekick's wizard, or an ordinary conversation and its background agents. |
+| `apps/api/src/services/terminal/coordinator.ts` | Shared-sandbox acquisition, authority fencing, exclusive mutation leases — including a lease held by a run in another conversation — and recovery after ambiguous provider calls. |
 | `apps/api/src/services/terminal/daytona-provider.ts` | The only Daytona SDK adapter: private sandbox, process, file, network, lifecycle, and host-scoped secret primitives. |
 | `apps/api/src/services/terminal/tools.ts`, `runtime.ts` | Model-facing behavior, safe paths, bounded file/patch/command execution, durable command tasks, and self-healing failures. |
 | `apps/api/src/services/terminal/patch-format.ts`, `vendor/apply_patch.py` | The two patch texts `apply_patch` reads: the unified-diff and `*** Begin Patch` parsers that validate paths and shape the result, and OpenAI's reference applier for the second, vendored unmodified (MIT; provenance in `vendor/README.md`) and written into the sandbox beside a patch that needs it. |
@@ -50,21 +51,25 @@ successful acquisition, authority/policy decision, and
 repository preparation are reused for later tools in the same harness run.
 
 Which conversation owns the sandbox is decided once, when the plugin is
-composed (`authority.ts`), and bound into the Terminal port factory so nothing
-below it knows a run's Terminal address can differ from its own. An ordinary
-run uses its own conversation's sandbox: the main conversation's sandbox is the
-work stream's, a private side thread has one of its own, and so does each
-triggered run of a Sidekick, which is a conversation of its own under the
-automation, provisioned fresh for that run and never reopened. A background
-agent uses the sandbox of the conversation that started it — through any
-further delegation, up to the first conversation nobody delegated — so the
-agents a conversation spawns work in its files and its checkout, under its
-lease, rather than each provisioning a sandbox of their own. The main
-conversation's Daytona name keeps the derivation every deployed sandbox was
-created under; any other conversation folds its substream in. A background
-agent's port reaches the owning conversation's object over the wire, and the
-lease it takes there records which conversation its run executes in, because
-the owner's object cannot read that run's liveness from its own tables.
+composed (`authority.ts`), and bound into the Terminal port factory. Ordinary
+conversations have their own sandboxes. A Sidekick's wizard (substream `0`),
+activations, and background agents all use the sandbox owned by that Sidekick's
+wizard. Each activation retains its own transcript, execution records and
+resource permissions. Sharing files does not copy conversation context.
+Different Sidekicks and the Thread that requested one remain separate.
+
+A work-stream background agent uses the sandbox of the conversation that
+started it, through further delegation to the first conversation nobody
+delegated. Each shared caller records its actual execution conversation on its
+mutation lease. That lets the sandbox owner check the holder's liveness in the
+correct object. Overlapping tool mutations contend for the existing lease;
+sharing a sandbox does not make a whole multi-tool workflow atomic. A primary
+Sidekick run may replace a sandbox whose permissions changed; a background
+agent cannot destroy its owner's workspace and must wait for a primary run.
+Files may need recovery after a permission reset, provider loss or expiry, so
+saved refresh instructions retain the published resource and import paths.
+The main conversation's Daytona name keeps the derivation every deployed
+sandbox was created under; any other sandbox owner folds its substream in.
 
 The lease is held for one tool call, not one run. Readiness — creating,
 starting or restoring the sandbox under the run's authority and policy, and
@@ -244,11 +249,12 @@ publishing the same path again updates the resource the first publish created
 instead of minting a sibling, and the same file name published from another work
 stream stays a different document. For a work-stream-scoped Sidekick the work
 stream in that identity is the **room that owns it**, not the automation's own
-conversation: its run executes under the automation, with its own sandbox and
-transcript, but the documents it publishes are the room's, so "refresh the
+conversation: its run executes under the automation, using the Sidekick's shared
+sandbox and its own transcript, but the documents it publishes are the room's, so "refresh the
 dashboard" lands on the dashboard the room already has. Only publication is
-redirected — the sandbox, the resources the run may read, and the import path
-stay addressed to the run's own conversation — and the link and artifact
+redirected to that room — the sandbox belongs to the Sidekick's authoring
+conversation, while resource permissions and import attachments remain addressed
+to the run's own conversation — and the link and artifact
 registry follow the identity, so the document appears in the owning room's
 resource list rather than the automation's. An equal content hash returns the existing
 resource untouched, which covers both a crash-replay of a settled call and a
@@ -385,20 +391,15 @@ policy application, which now reach every conversation's row, refuse to act
 through it. The main conversation's derivation is unchanged, so its rows never
 match.
 
-None of that reaches a sandbox under an automation. A Sidekick's parent
-projects no Terminal deadline into the workspace directory (its child effects
-are not forwarded, and its directory row has no such column), so the sweep
-never sees the authoring conversation's sandbox or a triggered run's, and a
-policy change, which enumerates the same directory, does not either. Those
-sandboxes are retired by the provider alone: the coordinator creates one under
-an automation with Daytona's auto-delete set to Rally's thirty-day expiry,
-counted from Daytona's own auto-stop, so that it outlives its last use by the
-same time as a work stream's; a work stream's sandbox is created with no
-auto-delete and left to the sweep. A run's sandbox is likewise stopped by
-nothing but that auto-stop, fifteen idle minutes after its last command,
-rather than the sweep's five. A shorter life for a run's sandbox, which
-nothing reopens once the run has published its result, is a number for the
-team to set.
+None of that reaches a sandbox under a Sidekick. Its parent projects no
+Terminal deadline into the workspace directory, so the sweep and workspace
+policy-change walk do not reach its sandbox. The provider retires it instead:
+Daytona auto-stops it after fifteen idle minutes and deletes it thirty days
+after that stop. Later activations reopen the same sandbox while it is available;
+acquisition rechecks permissions and network policy before reuse. Existing
+per-activation sandboxes from before sharing retain their provider cleanup
+policy; they are not copied into the shared wizard sandbox. Published resources
+remain the recovery source for missing files. No migration changes their identity.
 
 **Daytona owns provider state; Rally owns identity, authority, leases, and
 retention intent.** Acquisition reads metadata before reusing the recorded
@@ -858,7 +859,13 @@ settled rather than retried, including one whose leftover command could not
 be stopped, a failed delete that keeps the sandbox, a failure with no
 recoverability verdict that deletes nothing, and a live claim waited out
 without a provider call; the port resolution rule is in
-`workstream-tool-receipt-locality.test.ts`. On real workerd,
+`workstream-tool-receipt-locality.test.ts`. The coordinator also proves that a
+primary Sidekick activation can replace changed permissions while a background
+agent cannot. On real workerd, `test-workers/terminal-sidekick-sandbox.test.ts`
+proves that the wizard and successive activations share the same persisted
+sandbox and exclusive mutation lease across eviction, while another Sidekick
+remains separate. Reverting the routing or the primary-run reset guard makes
+these focused tests fail. On real workerd,
 `test-workers/terminal-authority.test.ts` proves the lease SQL for a holder
 that ran elsewhere, that a factory bound to the owner's conversation leaves
 the agent's object, and that a stop or archive claim and its failure leave the
@@ -1266,6 +1273,22 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-10-21 — One sandbox for a Sidekick's wizard and all activations
+
+**What changed:** Terminal resolves every primary Sidekick run and delegated worker
+to its authoring conversation's sandbox. Run records and resource permissions
+stay in the execution conversation. Existing foreign-run mutation leases serialize
+shared writes. Primary activations may rebuild changed authority; background
+agents still cannot replace their owner's files. Provider retention is unchanged.
+
+**Why:** Recreating the working directory for every activation made recurring
+site updates recover the same files repeatedly and prevented wizard preparation
+from carrying into execution. Sharing the existing authoring owner reuses the
+platform's identity and lease primitives, rather than adding a filesystem-copy
+service or a second sandbox registry. Permission changes and provider loss still
+require recovery, and sandbox sharing must not share transcripts or merge
+separate Sidekicks. Old activation sandboxes expire through their existing policy.
 
 ### 2026-10-15 — The agent can look at an image it made
 

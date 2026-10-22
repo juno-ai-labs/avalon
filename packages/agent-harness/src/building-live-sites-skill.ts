@@ -29,6 +29,73 @@ skill supplies instructions, not tools; Terminal supplies the file-editing,
 \`import_resource\` and \`publish_resource\` tools the procedure uses. A Sidekick
 that refreshes a site needs these tools for its publication step too.
 
+## Configure an existing site's refresh before writing the Sidekick
+
+A Sidekick's wizard, activations, and background agents share one Terminal
+sandbox (file workspace). Each activation still has its own conversation.
+The requesting Thread's sandbox is separate. Reuse existing site files, but
+recover them from the published resource if they are missing after a reset or
+expiry. Using the same publication path alone does not recover missing files.
+
+Before saving the Sidekick, inspect the existing site and save these facts in
+its run instructions:
+
+- **Resource ID:** The published site's Rally resource ID, used to import it.
+- **Owning thread:** The thread in which the site was originally published.
+- **Import destination:** The original site directory, relative to \`/workspace\`.
+- **Publication path:** The same directory, relative to \`/workspace/.rally-output\`.
+- **Data format:** The data file names, how the rows are arranged in them, and
+  the field names and types the site's code expects.
+
+Save these steps for each run as well:
+
+1. Load Terminal and inspect the original site directory. If the files are
+   missing, call \`import_resource\` with the site's resource ID and that
+   directory as \`destinationPath\` before editing.
+2. Read the site files and the code that reads the data. Retrieve the
+   current source records through their connection; do not rebuild from memory.
+3. Transform the records and update the necessary files, following the source-row
+   checks below. Keep the format the site's code expects.
+4. Verify the updated files, then call \`publish_resource\` with the original
+   publication path. Check its result before reporting publication.
+
+For example, a content calendar published at \`content-calendar\` must be
+imported into \`.rally-output/content-calendar\` and republished as
+\`content-calendar\`. The saved definition must also carry the actual resource
+ID, owning thread and inspected data format; these paths alone are insufficient.
+If the original import destination is unknown, use the required destination
+reported by the import tool rather than inventing a new directory.
+
+Preserve **both the original publishing conversation and directory path**.
+For a site published in a thread, configure a workstream-scoped Sidekick owned
+by that same thread. Personal or Organization Sidekicks publish in their own
+conversation and cannot redirect publication to an arbitrary thread. Importing
+source does not change that target. If this run cannot publish in the original
+conversation, report that requirement rather than creating a replacement site.
+
+## Keep all requested source data and report verified results
+
+For a site built from spreadsheet rows or other structured records, transform
+the returned records with code rather than manually rewriting them. Read every
+source row that meets the request, including any additional pages or ranges.
+Compare the source row counts and IDs (or other unique row keys) with the
+converted data to catch omitted or duplicated rows. Explain any rows intentionally
+excluded. Keep the format the site's code expects, and do not invent missing
+values. Record when the data was synchronized separately from dates in the
+source; a row's date does not tell you when it was synchronized.
+
+Report these outcomes separately:
+
+- **Site published:** The publication tool returned success.
+- **Sidekick activated:** You checked that the saved Sidekick is active.
+- **Refresh executed successfully:** A Sidekick run read the source, updated and
+  checked the files, and published the refresh, with results confirming each step.
+
+Publishing the initial site and activating a Sidekick do not establish that a
+later refresh succeeded. Loading a skill does not prove its steps were followed.
+
+## Build and verify the site
+
 1. **Decide the site's kind by what the request needs, and express it
    only in files.** There is no mode setting anywhere — the layout is
    the decision:
@@ -222,31 +289,12 @@ that refreshes a site needs these tools for its publication step too.
    return real HTTP statuses (\`400\` with a short JSON body beats a
    \`200\` full of undefined).
 
-10. **Revise in place, never fork.** A change request or a Sidekick refresh
-   must preserve **both the original publishing conversation and directory
-   path**. Identify that conversation from the resource metadata or supplied
-   task context before promising an in-place refresh. For a site published in
-   a thread, configure a workstream-scoped Sidekick owned by that same thread.
-   Personal or workspace Sidekicks publish in their own conversation and cannot
-   redirect publication to an arbitrary thread. If this run cannot publish in
-   the original conversation, report that requirement instead of creating a
-   replacement site. Importing source does not change the publication target.
-
-   Recover the existing source, edit it, and republish it. If the
-   workspace no longer holds the files, call \`import_resource\` with the
-   existing site's resource ID first. A site import requires
-   \`destinationPath\` relative to the workspace root: use the original
-   publication directory beneath the resource output directory. If you do
-   not know it, use the required destination the import tool reports rather
-   than choosing a new path. Never assume a later run shares the original
-   sandbox or rebuild the site from memory. Update the necessary files, then
-   call \`publish_resource\` with **the same directory path**, relative to the
-   resource output directory, in the original publishing conversation. Same URL, same rail
-   entry, new version — viewers see it on their next load. Publishing
-   a renamed or copied directory mints a second site and strands the
-   URL people already have; do not do it. Keep chat narration short
-   and free of the site's code, and announce the artifact with an
-   embed citation.
+10. **Revise in place, never fork.** Follow the recovery procedure above,
+   edit the recovered files, and republish in the original conversation at the
+   original path. Same URL, same rail entry, new version — viewers see it on
+   their next load. Publishing a renamed or copied directory mints a second
+   site and strands the existing URL. Keep chat narration short and free of
+   the site's code, and announce a confirmed publication with an embed citation.
 
 ## Anti-patterns
 
@@ -541,7 +589,7 @@ export const BUILDING_LIVE_SITES_SKILL: HarnessSkill = {
   description:
     "How to build a public-by-default live web page or small app, or an active protected site: choose static, active, or stateful, write its handler or storage class against injected bindings, and revise it in place.",
   whenToUse:
-    "When a request is site-shaped — a page, dashboard, calculator, or small app someone will open — and you are about to write its files, beyond what the standing guidance already covers.",
+    "When building or updating a page, dashboard, calculator, or small app someone will open, or configuring a Sidekick to refresh an existing site.",
   body: BUILDING_LIVE_SITES_BODY,
   ownerPlugin: "rally:terminal",
   resources: [{ path: "reference/worked-examples.md", body: WORKED_EXAMPLES }],

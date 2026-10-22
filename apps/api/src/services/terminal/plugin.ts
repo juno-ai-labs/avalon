@@ -79,9 +79,8 @@ export async function createAvalonTerminalPlugin(
   const configuration = parseTerminalRegionConfiguration(env);
   if (configuration.capability === "unsupported") return null;
 
-  // Which conversation's sandbox this run uses: its own, or for a background
-  // agent the conversation that started it, so the agents a conversation
-  // spawns work in its files under its lease. Decided once, here, and bound
+  // One sandbox per ordinary conversation or per Sidekick. Delegated agents
+  // share that same owner's files and mutation lease. Decided once and bound
   // into the factory so nothing below needs to know a run's Terminal address
   // can differ from its own.
   let scope: TerminalRunScope;

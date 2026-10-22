@@ -320,92 +320,109 @@ export const SCHEDULING_A_CALENDAR_EVENT_SKILL: HarnessSkill = {
   body: SCHEDULING_A_CALENDAR_EVENT_BODY,
 };
 
-const POLLING_FOR_EVENTS_BODY = `Someone asking to be told **when** something happens is asking for a Sidekick
-with a trigger, not for something you can do in this turn. Rally starts a run
-only when something tells it to.
-
-Most connectors do declare events Rally can trigger on, so the first move is
-always to look. Polling is the fallback for what inspection rules out: a
-connection that declares no events at all, or one whose declared events do not
-cover what the person described. Reaching for a timer before you have looked is
-the most common way to get this wrong.
+const POLLING_FOR_EVENTS_BODY = `When work should happen **after an external change**, configure a Sidekick:
+saved instructions that start a separate run when a schedule or event triggers
+it. Doing the work once in this conversation does not set up future runs.
 
 The whole procedure runs through the Sidekicks plugin; load it before you start.
 
 ## Terms used in this skill
 
-- **Canonical Rally resource ID:** Rally's identifier for a registered resource,
-  distinct from its provider URL or file ID.
-- **Binding:** Restricting an event rule to events associated with one resource
-  through the selected connector. For example, a rule bound to one spreadsheet
+- **Event:** A message from a connected service saying that something changed.
+- **Polling:** Checking the source on a timer for new or changed items.
+- **Rally resource ID:** The ID returned by Rally's resource search for a file
+  or other resource recorded in Rally's resource catalog. It differs from the external service's URL or
+  file ID.
+- **Binding:** Limiting an event rule to changes associated with one resource
+  through the selected connection. For example, a rule bound to one spreadsheet
   ignores changes to other spreadsheets on that connection. Binding does not
   grant access to the file.
 
-## 1. Look for a real event before you settle for a timer
+## 1. Choose the trigger from the request and the available evidence
 
-Inspect the plugin for the connector the person named and read the event types
-it declares. If one of them covers what they described, trigger on that instead
-— a \`connector_activity\` trigger when deterministic filters express the match,
-a \`semantic_activity\` one when each event also has to pass a written condition,
-a \`webhook\` one when the event types belong to a webhook connection the
-workspace has already set up. A real event arrives immediately and costs nothing
-while nothing is happening.
+Follow the branch that matches the request:
 
-Assume the event exists until inspection says otherwise. Notes, meetings,
-messages, tickets and mail are exactly the things connectors tend to announce,
-so a request about one of them is a request to go and read that plugin's event
-types, not a reason to poll.
+- **An explicitly requested schedule:** Keep that schedule and choose its
+  trigger in step 3. Event binding may be suggested as an alternative; do not
+  silently replace the requested schedule.
+- **Work after an external change:** Inspect the named connector's declared
+  event types, then resolve the specific source through step 2 **before choosing
+  a timer**. If a suitable event and binding can express the watch, configure
+  them and continue with steps 4 and 5; no polling cadence is needed.
+- **A change that available events cannot express:** Use polling in step 3 only
+  after identifying the concrete gap: no suitable event, an event that cannot
+  be limited to the requested resource or condition, or a source that remains
+  unresolved after step 2.
+  An empty lookup establishes an unresolved resource, not an unsupported event.
 
-There is one trigger kind to stay away from: \`resource_watch\` reads as the right
-answer for "tell me when this one document changes", and a Sidekick accepted
-with only that trigger is never started by anything. Watch the source through
-its own declared events, or poll.
+For a supported event, use a \`connector_activity\` trigger when its filter
+fields can express the requested match. Use \`semantic_activity\` when each event
+also needs to be checked against a written condition. Use \`webhook\` when the
+event belongs to a webhook connection the Organization has already set up.
+Inspect which resource types and filter fields the event supports.
 
-Poll only when inspection shows no event type that fits. When you propose the
-Sidekick, say in one line that it checks on a timer because that connection does
-not announce this — otherwise the person reads the delay as a bug.
+If event binding fits better than polling, recommend it to the requester or
+coordinating agent: it reacts to the matching change and avoids repeated
+unchanged checks. Preserve an explicitly requested schedule unless the person
+chooses the alternative.
+
+Save a short explanation of the trigger choice in the Sidekick definition's
+run instructions:
+the selected event and resolved Rally resource (or declared filter when no
+resource binding is needed), the concrete reason polling is necessary, or the
+explicitly requested schedule. For polling, also explain the actual gap and
+expected delay in the user-friendly description. Do not describe an unresolved
+resource as a connection that announces no changes.
+
+Do not use \`resource_watch\`: a Sidekick accepted with only that trigger is
+never started by anything. Use the source's declared events or justified polling.
 
 ## 2. Resolve the specific external resource before binding it
 
-To bind the rule, find the resource's **canonical Rally resource ID** through
-resource discovery. When setting evaluator rules, put the returned \`id\` in
+To bind the rule, find the file or other source using Rally's resource search.
+When configuring the Sidekick's event rule, put the returned \`id\` in
 \`source.resourceId\` and its \`pluginId\` in \`source.suggestedSourcePluginId\`.
-Choose an event whose declared resource relationships include that resource's
-type. A provider URL or file ID cannot replace the Rally resource ID.
+Choose an event that supports binding to that resource type. The external
+service's URL or file ID cannot replace the Rally resource ID.
 
 Search Rally's registered resources for the external file or resource the
 Sidekick should monitor. This searches **registered Rally resources**, not the
-external provider; reading a file through its connector
-does not automatically register it. Read an empty result alongside
+external service. Reading a file through its connection does not automatically
+register it. Read an empty result alongside
 \`searchableResourceTypes\`:
 
-- First inspect the selected event's declared resource relationships. The
-  search types are a union across connected plugins; a nonempty list does not
-  establish that this event supports the requested resource type.
+- First inspect which resource types the selected event can bind to. The search
+  types cover all connected plugins; a nonempty list does not establish that
+  this particular event supports the requested type.
 - If that event supports the source's type and the type is listed, use the
   connector to confirm access and obtain the actual title, then search again
   with that title instead of a sentence combining the URL, ID and task. If the
   readable resource still cannot be found, report that the lookup did not
   resolve a registered Rally resource. No connector-resource registration tool
-  is exposed here. Name that registration gap rather than a permission denial;
-  never invent a Rally ID or substitute the provider's ID.
+  is available here. Explain that it needs registration in Rally; do not claim
+  that access was denied. Never invent a Rally ID or substitute the external
+  service's file ID.
 - If the selected event does not support the source's type or that type is
   absent from the list, registration cannot make it bindable. Use a supported
-  container and declared filter fields to express the restriction, or use
-  polling when the events cannot express it. This applies even when other
-  resource types are listed, as well as when the list is empty.
+  parent resource, such as a folder, and the event's filter fields to limit
+  which changes count. Use polling if those cannot express the requested watch.
+  This applies whether other types are listed or the list is empty.
 
-A search error is a failed lookup; an empty result is a search miss. Neither
-establishes that the provider or resource type is unsupported.
+A search error means the lookup failed. An empty result means no match was
+found. Neither establishes that the external service or resource type is
+unsupported.
 
-## 3. Choose the cadence, no faster than every ten minutes
+## 3. Configure an explicit schedule or the justified polling fallback
 
-First, if what they described is a time of day rather than a frequency — "every
-morning", "at 5pm on Fridays" — use a \`calendar\` trigger with a recurrence rule
+Event-triggered watches skip this step. For an explicitly requested schedule or
+a polling fallback established in steps 1 and 2, choose the timing as follows.
+For a time of day rather than a frequency — "every morning", "at 5pm on Fridays"
+— use a \`calendar\` trigger with a recurrence rule
 instead of an interval, then carry on through steps 4 and 5, which a timed
 watcher needs exactly as much.
 
-Otherwise poll with an \`interval\` trigger and set \`intervalSeconds\`.
+For a requested frequency or the polling fallback, use an \`interval\` trigger
+and set \`intervalSeconds\`.
 
 **Ten minutes — 600 seconds — is the floor, not the answer.** Every tick spends
 a model call and a round of connector reads whether or not anything changed, and
@@ -452,7 +469,7 @@ all of them is almost always what the person wanted, not one message each.
 - **A run that posts to say it found nothing.** Finish silently instead.`;
 
 /**
- * How to satisfy "tell me when X happens" for a connection with no webhook.
+ * How to configure work after an external change and justify any polling fallback.
  *
  * Deliberately a loaded skill rather than standing policy: it is irrelevant to
  * almost every turn, and trigger selection plus the cadence floor are
@@ -465,9 +482,9 @@ all of them is almost always what the person wanted, not one message each.
 export const POLLING_FOR_EVENTS_SKILL: HarnessSkill = {
   name: "polling-for-events",
   description:
-    "How to set up a Sidekick that watches for something: inspect declared events, resolve the source resource, choose a polling cadence only when needed, and compose tracking-seen-or-done-items to avoid repeated work.",
+    "How to set up a Sidekick that acts after a change: inspect available events, find the resource to watch, use timed checks only when needed, and load tracking-seen-or-done-items so later runs skip completed work.",
   whenToUse:
-    "When someone asks to be told whenever something happens — new mail, a finished meeting, a note or ticket added — and you are setting up a Sidekick to watch for it.",
+    "When configuring work that should happen after an external change—for example, refreshing a website when a spreadsheet changes, processing new files, or notifying someone. Check whether events can watch the requested resource before choosing a timer.",
   body: POLLING_FOR_EVENTS_BODY,
   // Spelled out rather than imported from the drafting tools, which import
   // from `./index`, which imports this file: the literal keeps that cycle out

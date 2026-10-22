@@ -365,15 +365,16 @@ export function createTerminalResourceBridge(
    * run is executing in.
    *
    * A work-stream-scoped Sidekick runs in its own conversation under the
-   * automation, with its own sandbox and its own transcript, but the documents
+   * automation, with the Sidekick's shared sandbox and its own transcript, but the documents
    * it publishes are the owning room's: "refresh the dashboard" means the
    * dashboard that room already has. Without this the publish identity is
    * `terminal:<automation-id>:<path>`, which can never collide with the room's
    * `terminal:<room-id>:<path>`, so every run created a private fork at v1 and
    * the room's copy was never touched again.
    *
-   * Only publication is redirected. The sandbox, the resources a run may read,
-   * and the import path stay addressed to the run's own conversation.
+   * Only publication is redirected to that room. The sandbox stays with the
+   * Sidekick's authoring conversation; resource access and import attachments
+   * stay addressed to the run's own conversation.
    */
   publicationWorkstreamId?: string | null,
   /**
