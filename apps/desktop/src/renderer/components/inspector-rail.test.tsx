@@ -894,7 +894,7 @@ describe('resource detail content preview', () => {
     expect(screen.queryByRole('heading', { name: 'literal' })).toBeNull();
   });
 
-  it('pins, copies a link to, and renames an artifact from its title pill menu', async () => {
+  it.each([false, true])('pins, copies a link to, and renames an artifact from its title pill menu (detached: %s)', async (detached) => {
     const onPin = vi.fn();
     const copy = vi.fn(async () => undefined);
     const onRenameResource = vi.fn(async () => undefined);
@@ -902,7 +902,7 @@ describe('resource detail content preview', () => {
       <Tooltip.Provider>
         <InspectorRail
           onRenameResource={onRenameResource}
-          panel={{ resourceId: note.id, onClose: vi.fn() }}
+          panel={{ resourceId: note.id, onClose: vi.fn(), detached }}
           resourceLink={() => copy}
           resourcePin={() => ({ on: false, onChange: onPin })}
           workstream={{ ...workstream, resources: [note] }}
@@ -920,6 +920,7 @@ describe('resource detail content preview', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy link' }));
     await waitFor(() => expect(copy).toHaveBeenCalledOnce());
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    expect(await screen.findByText('Copied.')).toBeVisible();
 
     openMenu();
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
@@ -928,6 +929,33 @@ describe('resource detail content preview', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Rename' }));
     await waitFor(() => expect(onRenameResource).toHaveBeenCalledWith(note, 'Q4 plan'));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('keeps the same live region through a failed copy and a successful retry', async () => {
+    vi.useFakeTimers();
+    try {
+      const copy = vi.fn(async () => undefined).mockRejectedValueOnce(new Error('clipboard unavailable'));
+      render(<Tooltip.Provider><InspectorRail
+        panel={{ resourceId: note.id, onClose: vi.fn() }}
+        resource={note}
+        resourceLink={() => copy}
+      /></Tooltip.Provider>);
+      const region = screen.getByRole('status');
+      const openMenu = (): void => {
+        fireEvent.pointerDown(screen.getByRole('button', { name: `Artifact menu: ${note.title}` }), { button: 0, ctrlKey: false });
+      };
+      openMenu();
+      await act(async () => { fireEvent.click(screen.getByRole('menuitem', { name: 'Copy link' })); });
+      expect(screen.getByRole('alertdialog')).toHaveTextContent('The link couldn’t be copied.');
+      fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+      expect(screen.getByRole('status')).toBe(region);
+      openMenu();
+      await act(async () => { fireEvent.click(screen.getByRole('menuitem', { name: 'Copy failed — click to retry' })); });
+      expect(screen.getByRole('status')).toBe(region);
+      expect(region).toHaveTextContent('Copied.');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('offers Unpin for a pinned artifact and leaves out what its host cannot do', async () => {

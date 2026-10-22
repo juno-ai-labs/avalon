@@ -25,6 +25,8 @@ export interface UseCopyResult {
   /** Writes the value and settles into `copied` or `failed`; never rejects. */
   copy: () => Promise<void>;
   state: CopyState;
+  /** A new identity for each rejected write, so an acknowledged failure can reopen on retry. */
+  failureOccurrence: object | undefined;
 }
 
 const writeThroughBridge = (text: string): Promise<void> => desktopBridge().copyText(text);
@@ -42,7 +44,9 @@ const writeThroughBridge = (text: string): Promise<void> => desktopBridge().copy
  * say so and offer the same click again.
  */
 export function useCopy({ copyText, onCopied, value }: UseCopyOptions): UseCopyResult {
-  const [state, setState] = useState<CopyState>('idle');
+  const [feedback, setFeedback] = useState<{ state: CopyState; failureOccurrence: object | undefined }>({
+    state: 'idle', failureOccurrence: undefined,
+  });
   // Read at click time rather than closed over, so `copy` keeps one identity
   // while the value or the telemetry it reports changes underneath it.
   const options = useRef<UseCopyOptions>({ copyText, onCopied, value });
@@ -73,13 +77,13 @@ export function useCopy({ copyText, onCopied, value }: UseCopyOptions): UseCopyR
       outcome = 'failed';
     }
     if (!mounted.current) return;
-    setState(outcome);
+    setFeedback({ state: outcome, failureOccurrence: outcome === 'failed' ? {} : undefined });
     if (outcome === 'copied') copied?.();
     reset.current = window.setTimeout(() => {
       reset.current = null;
-      if (mounted.current) setState('idle');
+      if (mounted.current) setFeedback({ state: 'idle', failureOccurrence: undefined });
     }, COPY_FEEDBACK_MS);
   }, []);
 
-  return { copy, state };
+  return { copy, ...feedback };
 }

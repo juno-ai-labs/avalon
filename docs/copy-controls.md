@@ -35,6 +35,11 @@ is ready for the same click; a failure's retry is that click. The options are
 read at click time through a ref, so `copy` keeps one identity while the value
 under it changes.
 
+Each rejected write also carries a fresh `failureOccurrence`, passed to visible
+`CopyStatus`. Acknowledging one failed attempt cannot silence another failure
+before the feedback timer resets. The status component stays mounted across
+failure and retry so a later success updates its existing live region.
+
 `CopyButton` is an `IconButton` over that hook. While idle its name and
 tooltip are the caller's label (`Copy endpoint`); while showing an outcome the
 name is `Copied` or `Copy failed — click to retry`, the glyph is a check or an
@@ -109,7 +114,10 @@ provider above it.
 
 Artifact and attachment title menus use `useCopy` for their copy tile and keep
 a `CopyStatus` live region outside the menu so the outcome survives closing it.
-Both show that status visibly above the preview; other copy controls retain
+Both show success through the shared `Toast` over the preview, without changing
+its size. Keep visible `CopyStatus` in a non-scrolling, positioned ancestor of
+the preview so it stays below the header after scrolling.
+Failed copies use an acknowledged error popup. Other copy controls retain
 their screen-reader-only status because their outcome remains on the visible icon.
 An attachment gallery keys its copy scope to the selected resource, so changing
 files clears the outcome and discards feedback from a write that finishes later.
@@ -119,6 +127,29 @@ the longer failed-copy retry label.
 The surfaces' own tests — the inbound-webhook dialog, the invite link, the
 inspector rail, the run-failure notice, the site detail, the code block —
 assert on the control by its accessible name.
+
+## Changelog
+
+### 2026-10-21 — Copy confirmation floats over its preview
+
+**What changed:** Visible `CopyStatus` uses the generic shared `Toast` pill,
+with retained entrance/exit motion and the existing two-second `useCopy` lifetime.
+Failures use the acknowledged popup instead of the retired status banner.
+Rejected writes carry distinct occurrences so quick retries reopen the notice;
+the inspector keeps the same toast live region mounted through failure and retry.
+
+**Why:** The plain “Copied” row looked like page content and resized the preview.
+The product requested temporary animated confirmation in the existing app style.
+
+**Considered and rejected:** A second timer in the toast would compete with
+`useCopy`; a DOM-only overlay would disappear beneath Electron's native site view.
+
+**Consequences:** Keep the toast outside layout flow and its live region mounted.
+Regular and detached panels anchor feedback outside their scrolling content.
+Native sites show their existing still while an overlapping toast is present,
+including its exit. Gallery selection still owns and clears its copy feedback.
+
+PR: [#1393](https://github.com/juno-ai-labs/avalon/pull/1393).
 
 ### 2026-09-13 — One icon control for every copy affordance
 
