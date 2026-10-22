@@ -9,7 +9,7 @@ import {
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkstreamSchema,
 } from '@rally/contracts';
-import type { SpaceDirectory } from '@rally/contracts';
+import type { ConversationAccessPreview, SpaceDirectory } from '@rally/contracts';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { onlineManager, QueryClient, QueryClientProvider, useQuery, type InfiniteData } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -464,6 +464,48 @@ describe('WorkspaceSocketProvider', () => {
       applicationState: 'foreground',
       foregroundWorkstreamId: null,
     }));
+  });
+
+  it.each(['reach', 'reconnect'] as const)('replaces an initial preview still pending when a %s nudge arrives', async (change) => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let finishStalePreview!: (preview: ConversationAccessPreview) => void;
+    const pending = new Promise<ConversationAccessPreview>((resolve) => { finishStalePreview = resolve; });
+    const open: ConversationAccessPreview = {
+      kind: 'channel', title: 'Launch plan', appearance: null, markId: 'thread-1', access: 'open',
+    };
+    const api = {
+      getWorkspaceSocketTicket: async () => ({
+        url: 'wss://api.rally.test/socket/workspaces/workspace-1', ticket: 'workspace-ticket',
+        protocols: socketTicketProtocols('workspace-ticket'),
+      }),
+      conversationAccessPreview: vi.fn().mockImplementationOnce(() => pending).mockResolvedValue(open),
+      requestConversationAccess: async () => undefined,
+    };
+    const onRetry = vi.fn();
+    render(<QueryClientProvider client={queryClient}>
+      <WorkspaceSocketProvider region="global" api={api} workspaceId="00000000-0000-7000-8000-000000000001">
+        <ConversationAccessRequest api={api} parentId="thread-1" substreamId="0"
+          fallback={<p>Thread unavailable</p>} onRetry={onRetry} />
+      </WorkspaceSocketProvider>
+    </QueryClientProvider>);
+    await flushPromises();
+    expect(api.conversationAccessPreview).toHaveBeenCalledTimes(1);
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => {
+      socket.open();
+      socket.message(change === 'reconnect' ? initialSidebarFrame() : {
+        type: 'workspace_reach_changed', occurredAt: '2026-10-22T00:00:00.000Z',
+        userIds: ['00000000-0000-7000-8000-000000000003'],
+      });
+    });
+    // The new request must observe the grant without waiting for the old
+    // response, whose pre-grant decision cannot be allowed back into the cache.
+    await vi.waitFor(() => expect(api.conversationAccessPreview).toHaveBeenCalledTimes(2), { timeout: 5_000 });
+    await vi.waitFor(() => expect(onRetry).toHaveBeenCalledTimes(1), { timeout: 5_000 });
+    await act(async () => { finishStalePreview({ ...open, access: 'requestable' }); await pending; });
+    expect(screen.getByRole('status').textContent).toBe('Opening thread…');
+    expect(screen.queryByRole('button', { name: 'Request access' })).toBeNull();
+    expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -2269,11 +2311,12 @@ describe('WorkspaceSocketProvider', () => {
       occurredAt: '2026-09-24T00:00:00.000Z',
       userIds: ['00000000-0000-7000-8000-000000000003'],
     }));
+    await flushPromises();
 
     // A member's Channel rows and Space pages are pushed on the same flip, so
     // the associative read a guest's sidebar is drawn from is the one to redo.
     expect(invalidate.mock.calls.map(([filters]) => filters?.queryKey)).toEqual([
-      ['conversation-access-preview'], ['merge-channels'], ['shared-navigation'],
+      ['merge-channels'], ['shared-navigation'], ['conversation-access-preview'],
     ]);
   });
 
@@ -2319,7 +2362,7 @@ describe('WorkspaceSocketProvider', () => {
       type: 'workspace_reach_changed', occurredAt: '2026-10-22T00:00:00.000Z',
       userIds: ['00000000-0000-7000-8000-000000000003'],
     };
-    // A membership nudge for another conversation must not dial this one.
+    // A refreshed preview that still refuses access must not retry the socket.
     act(() => socket.message(reach));
     await vi.waitFor(() => expect(api.conversationAccessPreview).toHaveBeenCalledTimes(1), { timeout: 5_000 });
     expect(onRetry).not.toHaveBeenCalled();

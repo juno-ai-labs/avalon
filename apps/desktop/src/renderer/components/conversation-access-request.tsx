@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { WorkstreamGlyph } from '@rally/ui/components/workstream-glyph';
 import { Check, LoaderCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -32,6 +32,7 @@ export function ConversationAccessRequest({ api, parentId, substreamId, fallback
    */
   onRetry: () => void;
 }): React.JSX.Element {
+  const queryClient = useQueryClient();
   const preview = useQuery({
     queryKey: [...CONVERSATION_ACCESS_PREVIEW_QUERY_KEY, parentId, substreamId],
     queryFn: () => api!.conversationAccessPreview(parentId, substreamId),
@@ -44,6 +45,15 @@ export function ConversationAccessRequest({ api, parentId, substreamId, fallback
   const request = useMutation({
     mutationFn: () => api!.requestConversationAccess(parentId, substreamId),
   });
+  useEffect(() => queryClient.getQueryCache().subscribe((event) => {
+    if (event.type !== 'updated' || event.action.type !== 'invalidate') return;
+    const [root, parent, substream] = event.query.queryKey;
+    if (root === CONVERSATION_ACCESS_PREVIEW_QUERY_KEY[0] && parent === parentId && substream === substreamId) {
+      // A push may replace the very first preview before it ever says
+      // requestable. Record that explicit refresh before its result arrives.
+      setWaitingFor(address);
+    }
+  }), [address, parentId, queryClient, substreamId]);
   useEffect(() => {
     if (preview.data?.access === 'requestable') setWaitingFor(address);
     else if (preview.data?.access === 'open' && waitingFor === address) onRetry();
@@ -51,12 +61,12 @@ export function ConversationAccessRequest({ api, parentId, substreamId, fallback
   // A newly admitted preview must not mount the error dialog while the retry
   // starts. An initially open preview still belongs to the ordinary error path:
   // retrying that on every mount would loop on unrelated connection failures.
+  const noun = preview.data?.kind === 'breakout' ? 'breakout' : 'thread';
   if (preview.data?.access === 'open' && waitingFor === address) {
-    return <OpeningState label={`Opening ${preview.data.kind === 'breakout' ? 'breakout' : 'thread'}…`} />;
+    return <OpeningState label={`Opening ${noun}…`} />;
   }
   if (!preview.data || preview.data.access !== 'requestable') return fallback;
-  const { kind, title, appearance, markId } = preview.data;
-  const noun = kind === 'breakout' ? 'breakout' : 'thread';
+  const { title, appearance, markId } = preview.data;
   return (
     <div className="screen-error-state screen-with-titlebar">
       <div className="screen-drag-strip window-drag" />
