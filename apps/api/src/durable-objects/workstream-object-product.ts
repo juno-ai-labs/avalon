@@ -6,7 +6,6 @@ import { mergeEmbedsOf, resolveShareableResources } from "../services/resource-s
 import { stableUuid } from "../lib/stable-uuid";
 import { AGENT_MESSAGE_CONTENT_KIND, ConversationInitializationSchema, ImportedMessageProvenanceSchema, PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
 import { WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, type MergeEmbed, type WorkstreamAppearancePatch } from "@rally/contracts";
-import { legacyWireAgentModelOverride } from "@rally/contracts";
 import { renderAgentMessage } from "../services/agent-message-content";
 import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
 import {
@@ -2141,11 +2140,6 @@ export class WorkstreamObjectProductService {
       && Date.now() - root.created_at > WORKSTREAM_NAMING_GRACE_MS
       ? "automatic"
       : root.title_status;
-    // Through the same validator routing reads it with, so a model retired
-    // from `AGENT_MODEL_OVERRIDES` reads here as unpinned exactly as it
-    // resolves on the way into a run. Parsing the stored string directly
-    // would fail the whole response instead.
-    const pinnedModel = agentModelOverride(root.model_override);
     return WorkstreamSchema.parse({
       id: root.workstream_key,
       workspaceId: root.parent_workspace_key,
@@ -2170,10 +2164,11 @@ export class WorkstreamObjectProductService {
       archivedAt: iso(root.archived_at),
       scope: root.scope,
       systemKind: root.system_kind,
-      pinnedModel,
-      // Older desktop builds parse this field as a closed enum and reject the
-      // whole conversation for an id they do not know.
-      modelOverride: legacyWireAgentModelOverride(pinnedModel),
+      // Through the same validator routing reads it with, so a model retired
+      // from `AGENT_MODEL_OVERRIDES` reads here as unpinned exactly as it
+      // resolves on the way into a run. Parsing the stored string directly
+      // would fail the whole response instead.
+      modelOverride: agentModelOverride(root.model_override),
       nextPendingWakeup: wakeup ? {
         dueAt: iso(wakeup.due_at),
         promptPreview: truncateUtf16Safe(wakeup.prompt.replace(/\s+/gu, " ").trim(), 40),

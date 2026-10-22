@@ -1068,31 +1068,6 @@ hiding the Notifications section.
 
 ## Changelog
 
-### 2026-10-21 — The pin list keeps each vendor's three newest models, and a pin is read as an open string
-
-**What changed:** `AGENT_MODEL_OVERRIDES` holds at most three models per
-vendor, newest first, and Anthropic joins it. `Workstream` gains `pinnedModel`,
-an open string carrying the pin; `modelOverride` stays on the wire only for
-installed builds, and carries the pin only when it is one of the ids those
-builds know.
-
-**Why:** The developer-mode selector had fallen one to two releases behind
-every vendor. Refreshing it exposed that a pin was read back through the same
-closed enum it was chosen from: a desktop build parses a conversation strictly,
-so any build older than the list rejected a conversation pinned to a newer
-model, for every viewer, with developer mode off.
-
-**Considered and rejected:** Gating the field on the client contract version.
-The workstream projection is built inside the conversation's Durable Object
-and fanned out over sockets that do not carry the reader's contract, so a
-second field reaches old and new builds alike without threading it there.
-
-**Consequences:** A model can now be added to the pin list without breaking
-any build released after this one. `modelOverride` and its frozen id list are
-removed once no build in the field reads them. Ace derives its suggestions
-from the pin list, so a model that is still a live fleet default must be kept
-in Ace's own extras when it leaves the pin list, as GPT-5.6 Terra is here.
-
 ### 2026-10-16 — The digest kill switch and its fail-open resolver are removed
 
 **What changed:** `digest-flags.ts` and the `digestsEnabled` client field are

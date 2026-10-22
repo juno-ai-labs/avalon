@@ -54,20 +54,19 @@ interface AgentModelPresentation {
  * changes nothing but a reader's expectations.
  */
 const PRESENTATION: Readonly<Record<AgentModelOverride, AgentModelPresentation>> = {
-  'x-ai/grok-4.7': { provider: 'xAI', label: 'Grok 4.7' },
   'x-ai/grok-4.6': { provider: 'xAI', label: 'Grok 4.6' },
   'x-ai/grok-4.5': { provider: 'xAI', label: 'Grok 4.5' },
-  'google/gemini-4-argon': { provider: 'Google', label: 'Gemini 4 Argon' },
+  'x-ai/grok-4.3': { provider: 'xAI', label: 'Grok 4.3' },
   'google/gemini-3.8-flash': { provider: 'Google', label: 'Gemini 3.8 Flash' },
   'google/gemini-3.7-flash': { provider: 'Google', label: 'Gemini 3.7 Flash' },
-  'openai/gpt-6.1-sol': { provider: 'OpenAI', label: 'GPT-6.1 Sol' },
-  'openai/gpt-6-luna': { provider: 'OpenAI', label: 'GPT-6 Luna' },
+  'google/gemini-3.6-flash': { provider: 'Google', label: 'Gemini 3.6 Flash' },
+  'google/gemini-3.5-flash': { provider: 'Google', label: 'Gemini 3.5 Flash' },
+  'google/gemini-3-flash-preview': { provider: 'Google', label: 'Gemini 3 Flash Preview' },
   'openai/gpt-5.6-sol': { provider: 'OpenAI', label: 'GPT-5.6 Sol' },
-  'anthropic/claude-opus-5.5': { provider: 'Anthropic', label: 'Claude Opus 5.5' },
-  'anthropic/claude-sonnet-5.5': { provider: 'Anthropic', label: 'Claude Sonnet 5.5' },
-  'deepseek/deepseek-v4.1-flash-1017': { provider: 'DeepSeek', label: 'DeepSeek V4.1 Flash 1017' },
-  'deepseek/deepseek-v4.1-flash': { provider: 'DeepSeek', label: 'DeepSeek V4.1 Flash' },
+  'openai/gpt-5.6-terra': { provider: 'OpenAI', label: 'GPT-5.6 Terra' },
+  'openai/gpt-5.6-luna': { provider: 'OpenAI', label: 'GPT-5.6 Luna' },
   'deepseek/deepseek-v4-pro': { provider: 'DeepSeek', label: 'DeepSeek V4 Pro' },
+  'deepseek/deepseek-v4-flash-0731': { provider: 'DeepSeek', label: 'DeepSeek V4 Flash 0731' },
 };
 
 export interface AgentModelChoice extends AgentModelPresentation {
