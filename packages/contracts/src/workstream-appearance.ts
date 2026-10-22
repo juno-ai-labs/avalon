@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { PROJECT_COLOR_KEYS_STORABLE } from "./projects";
+import { PROJECT_COLOR_KEYS_STORABLE, PROJECT_COLOR_RING, type ProjectColorKey } from "./projects";
 import {
   APPEARANCE_ICON_DESCRIPTIONS,
   GENERATED_APPEARANCE_ICON_KEYS,
@@ -77,3 +77,17 @@ export const PickedAppearanceSchema = z.strictObject({
   color: z.enum(PROJECT_COLOR_KEYS_STORABLE),
 });
 export type PickedAppearance = z.infer<typeof PickedAppearanceSchema>;
+
+/** Stable fallback shared by conversation glyphs and creation-time color inheritance. */
+export function generatedWorkstreamAppearance(id: string): { color: ProjectColorKey; iconIndex: number } {
+  let hash = 2_166_136_261;
+  for (let index = 0; index < id.length; index += 1) {
+    hash ^= id.charCodeAt(index);
+    hash = Math.imul(hash, 16_777_619);
+  }
+  const unsigned = hash >>> 0;
+  return {
+    color: PROJECT_COLOR_RING[unsigned % PROJECT_COLOR_RING.length] ?? "purple",
+    iconIndex: Math.floor(unsigned / PROJECT_COLOR_RING.length) % GENERATED_WORKSTREAM_ICON_KEYS.length,
+  };
+}
