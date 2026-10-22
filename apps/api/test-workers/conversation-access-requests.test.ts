@@ -19,10 +19,16 @@ import {
   type WorkstreamId,
 } from "@rally/contracts";
 import { beforeEach, describe, expect, it } from "vitest";
+import { Hono } from "hono";
+import type { HonoAppEnv } from "../src/env";
+import { conversationRoutes } from "../src/routes/conversations";
 
 import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 import { hostedParentStub } from "./helpers/hosted-parent";
+import { ConversationAccessRequestService } from "../src/services/conversation-access-request-service";
+import { conversationObjectName } from "../src/durable-objects/names";
+import { seedWorkstreamRoot } from "./helpers/substream-fixture";
 
 const workspaceId = asWorkspaceId("00000000-0000-4000-8000-0000000ac001");
 const privateChannel = asWorkstreamId("00000000-0000-4000-8000-0000000ac0a0");
@@ -115,21 +121,21 @@ describe("accessRequestSubject", () => {
   it("names a private Channel with its mark and its creator, and nothing else", async () => {
     expect(await subject(privateChannel, "0")).toEqual({
       kind: "channel", title: "Launch plan", appearance: { icon: "rocket", color: "teal" },
-      markId: privateChannel, createdByUserId: creator,
+      markId: privateChannel, createdByUserId: creator, requestPending: false, requestEmailed: false,
     });
   });
 
   it("gives a Breakout with no look of its own the Channel's, resolved from the Channel's id", async () => {
     expect(await subject(privateChannel, plainBreakout)).toEqual({
       kind: "breakout", title: "Pricing", appearance: { icon: "rocket", color: "teal" },
-      markId: privateChannel, createdByUserId: breakoutCreator,
+      markId: privateChannel, createdByUserId: breakoutCreator, requestPending: false, requestEmailed: false,
     });
   });
 
   it("keeps a Breakout's own look, resolved from its own id", async () => {
     expect(await subject(privateChannel, markedBreakout)).toEqual({
       kind: "breakout", title: "Copy", appearance: { icon: null, color: "amber" },
-      markId: markedBreakout, createdByUserId: breakoutCreator,
+      markId: markedBreakout, createdByUserId: breakoutCreator, requestPending: false, requestEmailed: false,
     });
   });
 
@@ -181,7 +187,74 @@ const ask = (substreamId: string = "0", approverUserId: string = creator) => org
   requesterName: "Samantha Lee", approverUserId,
 });
 
+async function initializePreviewConversation() {
+  // Admission imports the historical main roster from the real conversation
+  // object; the directory-only fixture above has not given it an identity.
+  const source = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", workspaceId, privateChannel));
+  await runInDurableObject(source, (_instance, state) => {
+    seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: privateChannel });
+  });
+}
+
 describe("stored access requests", () => {
+  it.each(["approved", "declined"] as const)("previews the requester's pending request until it is %s", async (status) => {
+    await initializePreviewConversation();
+    const service = new ConversationAccessRequestService(env, {
+      workspaceId, userId: requester, sessionId: `session-${requester}`, region: "global", role: "member",
+    });
+    expect(await service.preview(privateChannel, "0")).toMatchObject({ access: "requestable", requestPending: false });
+    const { request } = await ask();
+    expect(await service.preview(privateChannel, "0")).toMatchObject({ access: "requestable", requestPending: true });
+    expect(await organization().accessRequestSubject({
+      workspaceId, parentId: privateChannel, substreamId: "0", requesterUserId: creator,
+    })).toMatchObject({ requestPending: false });
+    expect(await organization().accessRequestSubject({
+      workspaceId, parentId: privateChannel, substreamId: plainBreakout, requesterUserId: requester,
+    })).toMatchObject({ requestPending: false });
+    await organization().resolveConversationAccessRequest({ workspaceId, id: request.id, status });
+    expect(await service.preview(privateChannel, "0")).toMatchObject({ requestPending: false });
+  });
+
+  it("serves the old preview shape to older browser clients and delivery state to contract 12", async () => {
+    await initializePreviewConversation();
+    const { request } = await ask();
+    const app = new Hono<HonoAppEnv>();
+    app.use("*", async (c, next) => {
+      c.set("auth", { workspaceId, userId: requester, sessionId: `session-${requester}`, region: "global", role: "member" });
+      await next();
+    });
+    app.route("/conversations", conversationRoutes);
+    const path = `/conversations/${privateChannel}/substreams/0/access-preview`;
+    const base = {
+      kind: "channel", title: "Launch plan", appearance: { icon: "rocket", color: "teal" },
+      markId: privateChannel, access: "requestable",
+    };
+    for (const contract of [undefined, "11", "invalid"]) {
+      const headers: Record<string, string> = { origin: "app://rallywithai" };
+      if (contract !== undefined) headers["x-rally-client-contract"] = contract;
+      const response = await app.request(path, { headers }, env);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual(base);
+    }
+    const headers = { origin: "app://rallywithai", "x-rally-client-contract": "12" };
+    const unsent = await app.request(path, { headers }, env);
+    expect(unsent.status).toBe(200);
+    expect(await unsent.json()).toEqual({ ...base, requestPending: true, requestEmailed: false });
+    await organization().markConversationAccessRequestEmailed({ workspaceId, id: request.id });
+    const sent = await app.request(path, { headers }, env);
+    expect(await sent.json()).toEqual({ ...base, requestPending: true, requestEmailed: true });
+  });
+
+  it("previews a pending Breakout request only for that Breakout", async () => {
+    await ask(plainBreakout, breakoutCreator);
+    expect(await organization().accessRequestSubject({
+      workspaceId, parentId: privateChannel, substreamId: plainBreakout, requesterUserId: requester,
+    })).toMatchObject({ requestPending: true });
+    expect(await organization().accessRequestSubject({
+      workspaceId, parentId: privateChannel, substreamId: markedBreakout, requesterUserId: requester,
+    })).toMatchObject({ requestPending: false });
+  });
+
   it("keeps one pending request per person per conversation, so asking again sends nothing new", async () => {
     const first = await ask();
     const again = await ask();
