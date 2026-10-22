@@ -662,7 +662,16 @@ The always-active `rally_skills` plugin owns two globally named controls. `load_
 
 Three bounds keep a looping model from loading its way into a context-limit error: a count cap, a budget over the total tokens of loaded bodies, and a byte cap on a single `read_skill_resource` response. Bind judges the first two (`admitSkillLoad`); Rally measures the token half by resolving the bodies the load would actually inject, and applies the third itself — an unbounded Tier-3 read would otherwise route around the Tier-2 budget, since a skill whose body fits can bundle a reference that does not. All three are configurable, through `maxActiveSkills`, `maxActiveSkillBodyTokens`, and `maxSkillResourceBytes`.
 
-The package ships nine skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet. Three are unowned and offered to every run: `deep-research`, `writing-an-email`, and `scheduling-a-calendar-event`. The other six each set an `ownerPlugin` and are offered only to a run whose scope already carries that plugin: `polling-for-events` below, `tracking-seen-or-done-items` owned by `rally:tables`, `building-live-sites` above, and the three AI-chat readers — `reading-an-ai-chat`, `reading-chatgpt-conversations` and `reading-claude-conversations` (`reading-ai-chats-skills.ts`) — owned by Rally's browser plugin, `avalon:browser`. The generic reader is written against what every chat page must have (conversation data the page loaded, messages with authors, ids and parent links) rather than any markup, and ends in a self-check against the page; the provider companions carry routes and shapes as hints to verify, so a provider redesign degrades to the generic procedure instead of a wrong import. The latter two of the unowned three are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
+The package ships ten skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet. Four are unowned and offered to ordinary runs: `deep-research`, `writing-an-email`, `scheduling-a-calendar-event`, and `using-the-local-inapp-browser`. The other six each set an `ownerPlugin` and are offered only to a run whose scope already carries that plugin: `polling-for-events` below, `tracking-seen-or-done-items` owned by `rally:tables`, `building-live-sites` above, and the three AI-chat readers — `reading-an-ai-chat`, `reading-chatgpt-conversations` and `reading-claude-conversations` (`reading-ai-chats-skills.ts`) — owned by Rally's browser plugin, `avalon:browser`. The generic reader is written against what every chat page must have (conversation data the page loaded, messages with authors, ids and parent links) rather than any markup, and ends in a self-check against the page; the provider companions carry routes and shapes as hints to verify, so a provider redesign degrades to the generic procedure instead of a wrong import. The email and calendar skills are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
+
+`using-the-local-inapp-browser` explains that ordinary conversations cannot
+inspect or operate the person's local Rally browser, even when a link is open
+and signed in there. It distinguishes public-web reads from that browser and
+offers screenshots for visual work or exports and pasted contents for text and
+data. It has no owner plugin so the limitation is discoverable in the very runs
+that lack browser tools. Agent profiles replace this ordinary catalog wholesale;
+the conversation importer receives only its three AI-chat reading skills and
+cannot discover or load the local-browser limitation skill.
 
 The API also offers `reading-google-meeting-notes`
 (`google-meeting-notes-skill.ts`) when the frozen catalog contains a Google
@@ -1150,8 +1159,13 @@ profile's, not the work-stream prompt), the model route (the profile's
 Flagship role, `resolveAgentModelRouting`), and the tool surface — exactly the
 profile's plugins as always-active core plugins, through `profileHarnessTools`,
 with no built-in or connector plugin and no plugin discovery. Its skill
-catalog is exactly the skills the profile names: a skill is instructions only,
-so naming one widens nothing a run can do. The
+catalog is exactly the skills the profile names, with no inherited built-in,
+connector, or Sidekick skills. This is a complete catalog declaration rather
+than a list of exclusions: general guidance about unsupported capabilities must
+not contradict a specialized profile that has those capabilities. The import
+pipeline test in `test-workers/session-import-run.test.ts` checks the catalog
+sent to every import-model request. A skill is instructions only, so naming one
+widens nothing a run can do. The
 registry is `apps/api/src/services/agent-profiles.ts`; `session_import`, the
 conversation importer, is its first entry, and its tools are [desktop
 actions](desktop-actions.md). A stored profile this Worker does not know fails
@@ -1698,6 +1712,25 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-10-22 — Explain unsupported local browser requests through a skill
+
+**What changed:** Ordinary conversations can load `using-the-local-inapp-browser`
+to explain that they cannot inspect a page open in Rally and offer an appropriate
+screenshot, export, or pasted contents.
+
+**Why:** A request to reproduce an open Claude document's visual style fell back
+to a public-web read of its sign-in page. The agent described that as browser
+inspection and later claimed a visual match after only rewriting Markdown.
+
+**Considered and rejected:** Treating public-web reading as access to the local
+signed-in browser. These are separate capabilities, and general browser access
+is not supported by ordinary conversations today.
+
+**Consequences:** The skill is offered without a browser owner plugin and grants
+no browser access. When ordinary conversations gain that capability, update this
+limitation alongside the tools; the importer's existing browser profile remains
+separate.
 
 ### 2026-10-22 — Distinguish a Sidekick activation from setup
 

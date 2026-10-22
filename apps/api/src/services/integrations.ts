@@ -3586,11 +3586,10 @@ export async function runWorkstreamHarness(
             : orderedTranscript.commitBindCompaction(compaction));
           preparedCompactionVisibilityFingerprint = null;
       },
-      // Offered to every run, never activated by being offered: a run sees only
-      // each catalog line until it loads one, and loading adds instructions and
-      // nothing else. What a surface may *do* is settled by the tool loop, so
-      // withholding a skill would only hide advice, never authority, and
-      // a future general skill would be hidden along with it.
+      // A profile supplies its complete skill catalog, just as it supplies its
+      // complete tool surface. Ordinary conversations compose built-in,
+      // connector and Sidekick skills; fixed-job profiles inherit none of them.
+      // This keeps general guidance from contradicting a profile's capabilities.
       skills: profile ? [...profile.skills] : [...BUILT_IN_SKILLS, ...connectorSkillsForPlugins(harnessTools.plugins), ...sidekickCatalog.map((entry) => ({ ...entry.skill,
         recommended: sidekickSnapshot.recommendedRefs?.includes(entry.durableRef) ?? false,
       }))],
