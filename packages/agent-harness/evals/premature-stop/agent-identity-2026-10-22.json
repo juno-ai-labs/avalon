@@ -4,466 +4,335 @@
   "model": "jev-1.14.0",
   "deadlineMs": 1000,
   "stopConfidenceThreshold": 0.7,
-  "questionsSha256": {
-    "baseline": "fc03eb3b41d9c614411bb950d6c32fb91d762196f8e63feb04577d4a24a9e15e",
-    "candidate": "e645ab0b1ecd063f5c50ea683a22508de965cd22d9d53d471ee0a49b1ad5bcad"
-  },
-  "byVariant": {
-    "baseline": {
+  "productionQuestionSha256": "05589f49040d771d70f02162ae77365389b2a9ed7518322c43dff4507c2ab0b9",
+  "originalComparison": {
+    "questionsSha256": {
+      "baseline": "fc03eb3b41d9c614411bb950d6c32fb91d762196f8e63feb04577d4a24a9e15e",
+      "candidate": "e645ab0b1ecd063f5c50ea683a22508de965cd22d9d53d471ee0a49b1ad5bcad"
+    },
+    "byVariant": {
+      "baseline": {
+        "existingSynthetic": {
+          "count": 60,
+          "labelMatches": 53,
+          "unavailable": 5,
+          "neededChecks": 18,
+          "missedChecks": 0,
+          "extraChecks": 7
+        },
+        "addressing": {
+          "count": 16,
+          "labelMatches": 16,
+          "unavailable": 0,
+          "neededChecks": 6,
+          "missedChecks": 0,
+          "extraChecks": 6
+        },
+        "production": [
+          {
+            "reprompt": true,
+            "failure": "typesafe_request_timed_out",
+            "answer": null
+          },
+          {
+            "reprompt": true,
+            "failure": "typesafe_request_timed_out",
+            "answer": null
+          },
+          {
+            "reprompt": true,
+            "failure": "typesafe_request_timed_out",
+            "answer": null
+          }
+        ]
+      },
+      "candidate": {
+        "existingSynthetic": {
+          "count": 60,
+          "labelMatches": 59,
+          "unavailable": 0,
+          "neededChecks": 18,
+          "missedChecks": 0,
+          "extraChecks": 4
+        },
+        "addressing": {
+          "count": 16,
+          "labelMatches": 16,
+          "unavailable": 0,
+          "neededChecks": 6,
+          "missedChecks": 0,
+          "extraChecks": 1
+        },
+        "production": [
+          {
+            "reprompt": false,
+            "failure": null,
+            "answer": {
+              "choice": "answer_or_result",
+              "confidence": 1
+            }
+          },
+          {
+            "reprompt": false,
+            "failure": null,
+            "answer": {
+              "choice": "answer_or_result",
+              "confidence": 0.99
+            }
+          },
+          {
+            "reprompt": false,
+            "failure": null,
+            "answer": {
+              "choice": "answer_or_result",
+              "confidence": 1
+            }
+          }
+        ]
+      }
+    },
+    "corpora": {
       "existingSynthetic": {
-        "count": 60,
-        "labelMatches": 53,
-        "unavailable": 5,
-        "neededChecks": 18,
-        "missedChecks": 0,
-        "extraChecks": 7
+        "cases": 60,
+        "repeatsPerVariant": 1,
+        "freshHoldout": false
       },
       "addressing": {
-        "count": 16,
-        "labelMatches": 16,
-        "unavailable": 0,
-        "neededChecks": 6,
-        "missedChecks": 0,
-        "extraChecks": 6
+        "cases": 8,
+        "repeatsPerVariant": 2,
+        "freshHoldout": false
       },
-      "production": [
-        {
-          "answer": null,
-          "reprompt": true,
-          "failure": "typesafe_request_timed_out"
-        },
-        {
-          "answer": null,
-          "reprompt": true,
-          "failure": "typesafe_request_timed_out"
-        },
-        {
-          "answer": null,
-          "reprompt": true,
-          "failure": "typesafe_request_timed_out"
-        }
-      ]
+      "productionReplay": {
+        "cases": 1,
+        "repeatsPerVariant": 3,
+        "rawContent": "Private and excluded from this report"
+      }
     },
-    "candidate": {
-      "existingSynthetic": {
-        "count": 60,
-        "labelMatches": 59,
-        "unavailable": 0,
-        "neededChecks": 18,
-        "missedChecks": 0,
-        "extraChecks": 4
-      },
-      "addressing": {
-        "count": 16,
-        "labelMatches": 16,
-        "unavailable": 0,
-        "neededChecks": 6,
-        "missedChecks": 0,
-        "extraChecks": 1
-      },
-      "production": [
-        {
-          "answer": {
-            "type": "choice",
-            "choice": "answer_or_result",
-            "confidence": 1,
-            "probabilities": {
-              "announces_unfinished_work": 0,
-              "answer_or_result": 1,
-              "blocker_or_question": 0,
-              "unclear": 0
-            }
-          },
-          "reprompt": false,
-          "failure": null
-        },
-        {
-          "answer": {
-            "type": "choice",
-            "choice": "answer_or_result",
-            "confidence": 0.99,
-            "probabilities": {
-              "announces_unfinished_work": 0,
-              "answer_or_result": 0.99,
-              "blocker_or_question": 0.01,
-              "unclear": 0
-            }
-          },
-          "reprompt": false,
-          "failure": null
-        },
-        {
-          "answer": {
-            "type": "choice",
-            "choice": "answer_or_result",
-            "confidence": 1,
-            "probabilities": {
-              "announces_unfinished_work": 0,
-              "answer_or_result": 1,
-              "blocker_or_question": 0,
-              "unclear": 0
-            }
-          },
-          "reprompt": false,
-          "failure": null
-        }
-      ]
-    }
+    "limitations": [
+      "Development regression comparison; existing synthetic cases were already inspected in previous experiments.",
+      "Baseline had five unavailable synthetic calls and three unavailable production replays; extra-check comparisons include those fallbacks.",
+      "Candidate still triggered one extra check across the sixteen addressing judgments because answer_or_result confidence was 0.69.",
+      "Live classifier checks do not prove deployment or end-to-end agent behavior."
+    ]
   },
-  "corpora": {
-    "existingSynthetic": {
-      "cases": 60,
-      "repeatsPerVariant": 1,
-      "freshHoldout": false
+  "reviewExploration": {
+    "questionHashes": [
+      "937bbc5c134916deba5f7316a204cea0bf943ddb2805d015894b1ce159a69fd6",
+      "9b0e8fa8f3e10853c921d208bab428615f9ad39c4f4bec76dcd121ccc441a27f"
+    ],
+    "outcome": "The first review round missed a new activity-without-standing-task fixture twice; an explicit task-context prerequisite caught it in the next round. Fresh review then showed that prerequisite would force extra checks for completed connector runs and self-contained saved wake-ups. The prerequisite and its authored fixture were withdrawn as an unintended scope expansion, rather than adding snapshot plumbing. These exploratory rounds are not validation of the final rubric.",
+    "withdrawnCase": "addressing-activity-missing-task",
+    "replacementCase": "addressing-completed-wakeup uses the production wake-up renderer and supplies the task in the trigger itself."
+  },
+  "finalComparison": {
+    "startedAt": "2026-10-22T22:10:53.761Z",
+    "finishedAt": "2026-10-22T22:11:28.311Z",
+    "model": "jev-1.14.0",
+    "deadlineMs": 1000,
+    "stopConfidenceThreshold": 0.7,
+    "noRetries": true,
+    "order": "One pair per case, alternating baseline-first and candidate-first; synthetic once, addressing twice, production three times.",
+    "questionsSha256": {
+      "baseline": "fc03eb3b41d9c614411bb950d6c32fb91d762196f8e63feb04577d4a24a9e15e",
+      "candidate": "05589f49040d771d70f02162ae77365389b2a9ed7518322c43dff4507c2ab0b9"
     },
-    "addressing": {
-      "cases": 8,
-      "repeatsPerVariant": 2,
-      "freshHoldout": false
+    "corpusSha256": {
+      "synthetic-cases.jsonl": "0a79d3a2b369267d31f98acd86aeaa007ed519398365ccc57239710101c520f0",
+      "addressing-cases.jsonl": "aa371714de215bbb8a8ea6a8e76cf4731bcd5172642ca456fa0ec7cd00285107"
     },
-    "productionReplay": {
-      "cases": 1,
-      "repeatsPerVariant": 3,
-      "rawContent": "Private and excluded from this report"
+    "byVariant": {
+      "baseline": {
+        "existingSynthetic": {
+          "count": 60,
+          "labelMatches": 58,
+          "unavailable": 0,
+          "neededChecks": 18,
+          "missedChecks": 0,
+          "extraChecks": 4,
+          "latencyMs": {
+            "p50": 149.18058399999995,
+            "p95": 383.8984580000015
+          },
+          "inputTokens": {
+            "p50": 1125,
+            "p95": 1152
+          },
+          "labelMismatchIds": [
+            "synthetic-calendar-promise",
+            "synthetic-unresolved-task"
+          ],
+          "missedCaseIds": [],
+          "extraCaseIds": [
+            "synthetic-unresolved-task",
+            "synthetic-claimed-success",
+            "synthetic-empty",
+            "synthetic-missing-antecedent"
+          ],
+          "unavailableCases": []
+        },
+        "addressing": {
+          "count": 30,
+          "labelMatches": 29,
+          "unavailable": 1,
+          "neededChecks": 18,
+          "missedChecks": 0,
+          "extraChecks": 6,
+          "latencyMs": {
+            "p50": 93.40754200000083,
+            "p95": 615.3649170000026
+          },
+          "inputTokens": {
+            "p50": 1095,
+            "p95": 1209
+          },
+          "labelMismatchIds": [],
+          "missedCaseIds": [],
+          "extraCaseIds": [
+            "addressing-other-participant",
+            "addressing-future-event",
+            "addressing-mixed-addressing-result",
+            "addressing-other-participant",
+            "addressing-future-event",
+            "addressing-mixed-addressing-result"
+          ],
+          "unavailableCases": [
+            {
+              "id": "addressing-scheduled-wakeup",
+              "failure": "typesafe_request_timed_out"
+            }
+          ]
+        },
+        "production": [
+          {
+            "reprompt": true,
+            "failure": null,
+            "latencyMs": 598.3421249999992,
+            "inputTokens": 4133,
+            "answer": {
+              "choice": "answer_or_result",
+              "confidence": 0.55
+            }
+          },
+          {
+            "reprompt": true,
+            "failure": null,
+            "latencyMs": 263.0191249999989,
+            "inputTokens": 4133,
+            "answer": {
+              "choice": "answer_or_result",
+              "confidence": 0.59
+            }
+          },
+          {
+            "reprompt": true,
+            "failure": null,
+            "latencyMs": 529.2352089999986,
+            "inputTokens": 4133,
+            "answer": {
+              "choice": "answer_or_result",
+              "confidence": 0.44
+            }
+          }
+        ]
+      },
+      "candidate": {
+        "existingSynthetic": {
+          "count": 60,
+          "labelMatches": 59,
+          "unavailable": 0,
+          "neededChecks": 18,
+          "missedChecks": 0,
+          "extraChecks": 4,
+          "latencyMs": {
+            "p50": 131.54229100000066,
+            "p95": 395.8496249999989
+          },
+          "inputTokens": {
+            "p50": 1276,
+            "p95": 1303
+          },
+          "labelMismatchIds": [
+            "synthetic-calendar-promise"
+          ],
+          "missedCaseIds": [],
+          "extraCaseIds": [
+            "synthetic-unresolved-task",
+            "synthetic-claimed-success",
+            "synthetic-empty",
+            "synthetic-missing-antecedent"
+          ],
+          "unavailableCases": []
+        },
+        "addressing": {
+          "count": 30,
+          "labelMatches": 29,
+          "unavailable": 1,
+          "neededChecks": 18,
+          "missedChecks": 0,
+          "extraChecks": 3,
+          "latencyMs": {
+            "p50": 123.06529099999898,
+            "p95": 766.7914170000004
+          },
+          "inputTokens": {
+            "p50": 1246,
+            "p95": 1360
+          },
+          "labelMismatchIds": [],
+          "missedCaseIds": [],
+          "extraCaseIds": [
+            "addressing-other-participant",
+            "addressing-mixed-addressing-result",
+            "addressing-mixed-addressing-result"
+          ],
+          "unavailableCases": [
+            {
+              "id": "addressing-scheduled-wakeup",
+              "failure": "typesafe_request_timed_out"
+            }
+          ]
+        },
+        "production": [
+          {
+            "reprompt": false,
+            "failure": null,
+            "latencyMs": 421.3829579999983,
+            "inputTokens": 4284,
+            "answer": {
+              "choice": "answer_or_result",
+              "confidence": 0.93
+            }
+          },
+          {
+            "reprompt": false,
+            "failure": null,
+            "latencyMs": 410.4435000000012,
+            "inputTokens": 4284,
+            "answer": {
+              "choice": "answer_or_result",
+              "confidence": 0.95
+            }
+          },
+          {
+            "reprompt": false,
+            "failure": null,
+            "latencyMs": 284.2028750000027,
+            "inputTokens": 4284,
+            "answer": {
+              "choice": "answer_or_result",
+              "confidence": 0.95
+            }
+          }
+        ]
+      }
     }
   },
   "limitations": [
-    "Development regression comparison; existing synthetic cases were already inspected in previous experiments.",
-    "Baseline had five unavailable synthetic calls and three unavailable production replays; extra-check comparisons include those fallbacks.",
-    "Candidate still triggered one extra check across the sixteen addressing judgments because answer_or_result confidence was 0.69.",
-    "Live classifier checks do not prove deployment or end-to-end agent behavior."
-  ],
-  "originalComparison": "The top-level byVariant, corpora and questionsSha256 describe the original pre-review comparison; reviewValidation below evaluates the final production question.",
-  "productionQuestionSha256": "9b0e8fa8f3e10853c921d208bab428615f9ad39c4f4bec76dcd121ccc441a27f",
-  "reviewValidation": {
-    "initialRound": {
-      "startedAt": "2026-10-22T22:02:21.532Z",
-      "finishedAt": "2026-10-22T22:02:58.030Z",
-      "questionsSha256": {
-        "baseline": "fc03eb3b41d9c614411bb950d6c32fb91d762196f8e63feb04577d4a24a9e15e",
-        "candidate": "937bbc5c134916deba5f7316a204cea0bf943ddb2805d015894b1ce159a69fd6"
-      },
-      "candidateMissedChecks": 2,
-      "baselineMissedChecks": 2,
-      "missedCaseIds": [
-        "addressing-activity-missing-task"
-      ],
-      "resolution": "Made the non-message-origin rule explicit: source activity alone without a standing task is unclear, even for an acknowledgement. The final round reruns the complete fixed comparison after that prompt change."
-    },
-    "finalRound": {
-      "startedAt": "2026-10-22T22:03:23.134Z",
-      "finishedAt": "2026-10-22T22:03:50.710Z",
-      "model": "jev-1.14.0",
-      "deadlineMs": 1000,
-      "stopConfidenceThreshold": 0.7,
-      "noRetries": true,
-      "order": "One pair per case, alternating baseline-first and candidate-first; synthetic once, addressing twice, production three times.",
-      "questionsSha256": {
-        "baseline": "fc03eb3b41d9c614411bb950d6c32fb91d762196f8e63feb04577d4a24a9e15e",
-        "candidate": "9b0e8fa8f3e10853c921d208bab428615f9ad39c4f4bec76dcd121ccc441a27f"
-      },
-      "corpusSha256": {
-        "synthetic-cases.jsonl": "0a79d3a2b369267d31f98acd86aeaa007ed519398365ccc57239710101c520f0",
-        "addressing-cases.jsonl": "1cce0619af2a30bf4205ce67fd5e397c1280cf24b9ddb5096eae7e51b7f43622"
-      },
-      "byVariant": {
-        "baseline": {
-          "existingSynthetic": {
-            "count": 60,
-            "labelMatches": 58,
-            "unavailable": 0,
-            "neededChecks": 18,
-            "missedChecks": 0,
-            "extraChecks": 4,
-            "latencyMs": {
-              "p50": 130.6007499999996,
-              "p95": 284.23079099999995
-            },
-            "inputTokens": {
-              "p50": 1125,
-              "p95": 1152
-            },
-            "labelMismatches": [
-              {
-                "id": "synthetic-calendar-promise",
-                "expected": "announces_unfinished_work",
-                "answer": {
-                  "type": "choice",
-                  "choice": "answer_or_result",
-                  "confidence": 0.51,
-                  "probabilities": {
-                    "announces_unfinished_work": 0.36,
-                    "answer_or_result": 0.63,
-                    "blocker_or_question": 0,
-                    "unclear": 0.01
-                  }
-                }
-              },
-              {
-                "id": "synthetic-unresolved-task",
-                "expected": "unclear",
-                "answer": {
-                  "type": "choice",
-                  "choice": "announces_unfinished_work",
-                  "confidence": 0.45,
-                  "probabilities": {
-                    "announces_unfinished_work": 0.59,
-                    "answer_or_result": 0.02,
-                    "blocker_or_question": 0,
-                    "unclear": 0.39
-                  }
-                }
-              }
-            ],
-            "missedCaseIds": [],
-            "extraCaseIds": [
-              "synthetic-unresolved-task",
-              "synthetic-claimed-success",
-              "synthetic-empty",
-              "synthetic-missing-antecedent"
-            ]
-          },
-          "addressing": {
-            "count": 30,
-            "labelMatches": 28,
-            "unavailable": 0,
-            "neededChecks": 20,
-            "missedChecks": 2,
-            "extraChecks": 6,
-            "latencyMs": {
-              "p50": 117.81720800000039,
-              "p95": 304.1557909999974
-            },
-            "inputTokens": {
-              "p50": 1088,
-              "p95": 1146
-            },
-            "labelMismatches": [
-              {
-                "id": "addressing-activity-missing-task",
-                "expected": "unclear",
-                "answer": {
-                  "type": "choice",
-                  "choice": "answer_or_result",
-                  "confidence": 0.85,
-                  "probabilities": {
-                    "announces_unfinished_work": 0.04,
-                    "answer_or_result": 0.89,
-                    "blocker_or_question": 0,
-                    "unclear": 0.07
-                  }
-                }
-              },
-              {
-                "id": "addressing-activity-missing-task",
-                "expected": "unclear",
-                "answer": {
-                  "type": "choice",
-                  "choice": "answer_or_result",
-                  "confidence": 0.85,
-                  "probabilities": {
-                    "announces_unfinished_work": 0.04,
-                    "answer_or_result": 0.89,
-                    "blocker_or_question": 0,
-                    "unclear": 0.07
-                  }
-                }
-              }
-            ],
-            "missedCaseIds": [
-              "addressing-activity-missing-task",
-              "addressing-activity-missing-task"
-            ],
-            "extraCaseIds": [
-              "addressing-other-participant",
-              "addressing-future-event",
-              "addressing-mixed-addressing-result",
-              "addressing-other-participant",
-              "addressing-future-event",
-              "addressing-mixed-addressing-result"
-            ]
-          },
-          "production": [
-            {
-              "answer": {
-                "type": "choice",
-                "choice": "answer_or_result",
-                "confidence": 0.55,
-                "probabilities": {
-                  "announces_unfinished_work": 0.11,
-                  "answer_or_result": 0.66,
-                  "blocker_or_question": 0.23,
-                  "unclear": 0
-                }
-              },
-              "reprompt": true,
-              "failure": null,
-              "latencyMs": 91.75733300000138,
-              "inputTokens": 4133
-            },
-            {
-              "answer": {
-                "type": "choice",
-                "choice": "answer_or_result",
-                "confidence": 0.6,
-                "probabilities": {
-                  "announces_unfinished_work": 0.1,
-                  "answer_or_result": 0.7,
-                  "blocker_or_question": 0.2,
-                  "unclear": 0
-                }
-              },
-              "reprompt": true,
-              "failure": null,
-              "latencyMs": 194.36833300000217,
-              "inputTokens": 4133
-            },
-            {
-              "answer": {
-                "type": "choice",
-                "choice": "answer_or_result",
-                "confidence": 0.56,
-                "probabilities": {
-                  "announces_unfinished_work": 0.1,
-                  "answer_or_result": 0.67,
-                  "blocker_or_question": 0.23,
-                  "unclear": 0
-                }
-              },
-              "reprompt": true,
-              "failure": null,
-              "latencyMs": 139.37616699999853,
-              "inputTokens": 4133
-            }
-          ]
-        },
-        "candidate": {
-          "existingSynthetic": {
-            "count": 60,
-            "labelMatches": 59,
-            "unavailable": 0,
-            "neededChecks": 18,
-            "missedChecks": 0,
-            "extraChecks": 4,
-            "latencyMs": {
-              "p50": 132.95891699999993,
-              "p95": 279.443
-            },
-            "inputTokens": {
-              "p50": 1305,
-              "p95": 1332
-            },
-            "labelMismatches": [
-              {
-                "id": "synthetic-calendar-promise",
-                "expected": "announces_unfinished_work",
-                "answer": {
-                  "type": "choice",
-                  "choice": "answer_or_result",
-                  "confidence": 0.35,
-                  "probabilities": {
-                    "announces_unfinished_work": 0.48,
-                    "answer_or_result": 0.51,
-                    "blocker_or_question": 0,
-                    "unclear": 0.01
-                  }
-                }
-              }
-            ],
-            "missedCaseIds": [],
-            "extraCaseIds": [
-              "synthetic-unresolved-task",
-              "synthetic-claimed-success",
-              "synthetic-empty",
-              "synthetic-missing-antecedent"
-            ]
-          },
-          "addressing": {
-            "count": 30,
-            "labelMatches": 30,
-            "unavailable": 0,
-            "neededChecks": 20,
-            "missedChecks": 0,
-            "extraChecks": 2,
-            "latencyMs": {
-              "p50": 116.89875000000029,
-              "p95": 294.99154199999975
-            },
-            "inputTokens": {
-              "p50": 1268,
-              "p95": 1326
-            },
-            "labelMismatches": [],
-            "missedCaseIds": [],
-            "extraCaseIds": [
-              "addressing-mixed-addressing-result",
-              "addressing-mixed-addressing-result"
-            ]
-          },
-          "production": [
-            {
-              "answer": {
-                "type": "choice",
-                "choice": "answer_or_result",
-                "confidence": 0.96,
-                "probabilities": {
-                  "announces_unfinished_work": 0.02,
-                  "answer_or_result": 0.97,
-                  "blocker_or_question": 0.01,
-                  "unclear": 0
-                }
-              },
-              "reprompt": false,
-              "failure": null,
-              "latencyMs": 131.68575000000055,
-              "inputTokens": 4313
-            },
-            {
-              "answer": {
-                "type": "choice",
-                "choice": "answer_or_result",
-                "confidence": 0.96,
-                "probabilities": {
-                  "announces_unfinished_work": 0.02,
-                  "answer_or_result": 0.97,
-                  "blocker_or_question": 0.01,
-                  "unclear": 0
-                }
-              },
-              "reprompt": false,
-              "failure": null,
-              "latencyMs": 109.98370900000009,
-              "inputTokens": 4313
-            },
-            {
-              "answer": {
-                "type": "choice",
-                "choice": "answer_or_result",
-                "confidence": 0.97,
-                "probabilities": {
-                  "announces_unfinished_work": 0.02,
-                  "answer_or_result": 0.98,
-                  "blocker_or_question": 0,
-                  "unclear": 0
-                }
-              },
-              "reprompt": false,
-              "failure": null,
-              "latencyMs": 137.47841699999844,
-              "inputTokens": 4313
-            }
-          ]
-        }
-      }
-    },
-    "realCorpus": "The prior 120-case real corpus is absent from this local environment; not rerun. The exact reported production input was replayed without reconstruction.",
-    "limitations": [
-      "Alternating pair order reduces run-order confounding; these small development samples do not establish a production latency change.",
-      "The final question adds 180 input tokens relative to the original on identical snapshots.",
-      "All cases and failed initial-round results were inspected during development; no fresh holdout claim.",
-      "The final candidate still triggers two extra addressing checks at low confidence and the calendar-promise label remains wrong, though its needed check is caught.",
-      "No unavailable calls in the final 186-call comparison; the original comparison timeouts remain in the historical results above.",
-      "No end-to-end task recovery or deployment was exercised by these classifier calls."
-    ]
-  }
+    "The prior private 120-case real corpus is absent from this local environment and was not rerun. Only the exact reported production snapshot was replayed, without reconstruction.",
+    "Existing and addressing cases were inspected during development; this is a regression comparison, not a fresh holdout.",
+    "Alternating pair order reduces run-order confounding; the small sample does not establish a production latency change.",
+    "The final question adds 151 input tokens on identical snapshots.",
+    "The final candidate still has three extra addressing checks and a calendar-promise label error; verification catches that required check.",
+    "Live classifier calls do not prove end-to-end recovery behavior, host snapshot completeness or deployment."
+  ]
 }
