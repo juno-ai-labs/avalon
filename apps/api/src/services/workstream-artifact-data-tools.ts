@@ -38,7 +38,7 @@ export class ArtifactDataToolError extends Error {
 }
 
 const RESOURCE_DESCRIPTION =
-  "The site whose stored data to read, as either the `resourceId` or the `slug` list_resources returned for it — call that tool with attachmentKind \"site\" to find one. A site's title is neither.";
+  "The site's Rally resourceId or slug. Use list_resources with attachmentKind \"site\" to discover sites, or supply a known ID or slug. A site's title is not an ID or slug.";
 
 const DescribeArgumentsSchema = z.strictObject({
   resource: z.string().min(1).max(200).describe(RESOURCE_DESCRIPTION),
@@ -107,9 +107,9 @@ export function createWorkstreamArtifactDataTools(
     if (!artifact) {
       throw new ArtifactDataToolError(
         "resource_not_found",
-        "That site is not attached or visible to this run. Call "
-        + `${listResourcesToolName} with attachmentKind "site" to choose one, then retry.`,
-        { reason: `Call ${listResourcesToolName} with attachmentKind "site" and choose a visible site.` },
+        "The site reference could not be read. Check its Rally resource ID or slug and the execution user's current read access. "
+        + `${listResourcesToolName} with attachmentKind "site" can help discover sites; a known resource may not appear in that listing.`,
+        { reason: "Check the site resource ID or slug and the execution user's current read access." },
       );
     }
     if (!artifact.stateful) {

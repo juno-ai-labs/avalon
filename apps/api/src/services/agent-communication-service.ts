@@ -77,9 +77,10 @@ export class AgentCommunicationService {
   private async validateAttachments(ids: string[], unavailableCode = "agent_attachment_unavailable") {
     const attachmentIds = [...new Set(ids)];
     if (attachmentIds.length === 0) return attachmentIds;
-    // What the sender can see, which for a Breakout includes its Channel's.
+    // Forwarding shares with another audience, so it requires an actual link
+    // in the sender's scope rather than the broader Sidekick read permission.
     const { links } = await createConversationResourceLinks(this.env, this.input.workspaceId, this.input.parentId,
-      undefined, this.input.substreamId ?? "0", this.input.executionPrincipal).links({ resourceIds: attachmentIds });
+      undefined, this.input.substreamId ?? "0", this.input.executionPrincipal).links({ resourceIds: attachmentIds }, { resolveReadable: false });
     const attached = new Set(links.map((link) => link.resource_id));
     if (attachmentIds.some((resourceId) => !attached.has(resourceId))) {
       throw new AgentCommunicationError(unavailableCode);

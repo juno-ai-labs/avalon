@@ -427,7 +427,7 @@ export function createTerminalResourceBridge(
     try { metadata = JSON.parse(row.metadata_json) as typeof metadata; } catch { /* legacy metadata */ }
     if (context.effectIntentId && metadata.publicationEffectIntentId === context.effectIntentId) return;
     const visible = await createConversationResourceLinks(env, context.workspaceId, target.parentId, undefined,
-      target.substreamId, context.executionPrincipal).links({ resourceIds: [row.id] });
+      target.substreamId, context.executionPrincipal).links({ resourceIds: [row.id] }, { resolveReadable: false });
     if (!visible.links.some((link) => link.resource_id === row.id)) {
       throw new TerminalToolError("resource_not_found", "The existing publication is not attached to this destination. Restore its attachment before updating it.");
     }
@@ -699,8 +699,8 @@ export function createTerminalResourceBridge(
       if (!row) {
         throw new TerminalToolError(
           "resource_not_found",
-          "That resource is no longer attached or visible to this run. Call list_resources to choose a currently visible resource, then retry import_resource.",
-          { reason: "Call list_resources and choose a currently visible resource ID." },
+          "resourceId could not be read. Check the Rally resource ID and this run's access. Sidekicks can import a known resource their execution user can read without attaching it first. Use list_resources to discover other resources.",
+          { field: "resourceId", reason: "Check the Rally resource ID and the execution user's current read access." },
         );
       }
       if (row.resource_type === "generated_site") {

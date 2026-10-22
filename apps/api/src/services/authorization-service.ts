@@ -88,13 +88,25 @@ export class AuthorizationService {
 
   /** Admission and the data it admits share one owner observation and RPC. */
   async readResource(subject: AuthorizationSubject, resourceId: string): Promise<ResourceReadMetadata> {
+    const [result] = await this.readResources(subject, [resourceId]);
+    if (!result) throw new Error('authorization_resource_read_metadata_missing');
+    requireAuthorizedRead(result.decision);
+    if (!result.metadata) throw new Error('authorization_resource_read_metadata_missing');
+    return result.metadata;
+  }
+
+  /** A single observation batch returns metadata only for admitted resources. */
+  async readResources(subject: AuthorizationSubject, resourceIds: readonly string[]) {
     const batch = new AuthorizationBatch(this.env, this.requestMembership, true);
-    requireAuthorizedRead(await new AccessContext(subject, batch).check({
+    const decisions = await new AccessContext(subject, batch).checkMany(resourceIds.map((resourceId) => ({
       kind: 'resource', workspaceId: subject.workspaceId, resourceId,
-    }));
-    const metadata = batch.readMetadata.get(resourceId);
-    if (!metadata) throw new Error('authorization_resource_read_metadata_missing');
-    return metadata;
+    })));
+    return resourceIds.map((resourceId, index) => {
+      const decision = decisions[index]!;
+      const metadata = decision.status === 'allowed' ? batch.readMetadata.get(resourceId) ?? null : null;
+      if (decision.status === 'allowed' && !metadata) throw new Error('authorization_resource_read_metadata_missing');
+      return { resourceId, decision, metadata };
+    });
   }
 }
 
