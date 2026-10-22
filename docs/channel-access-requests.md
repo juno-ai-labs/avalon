@@ -208,7 +208,9 @@ using it also covers a direct participant add.
 an admitted preview retries the conversation, whose new ticket checks access
 again. Reusing a pending preview can return a pre-grant refusal after the only
 push has passed; cancellation must discard that result, and the waiting screen
-must recognize the refresh even before its first preview arrives. An initially
+must recognize the refresh even before its first preview arrives. Recovery waits
+for the replacement check to succeed rather than trusting a cached open result.
+An initially
 admitted preview retains the ordinary error screen unless explicitly refreshed,
 so unrelated connection failures do not turn into immediate retry loops.
 
