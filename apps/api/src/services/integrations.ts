@@ -2346,7 +2346,7 @@ async function registerAutomationCreatorResource(
     throw new ConnectorError("unauthorized", `resource: Cannot register this file through the selected connection (${access.reason}). Check resource access and use a connection that can read it.`);
   }
   if (!access.registration) {
-    throw new ConnectorError("unsupported_capability", "resource: This connector cannot resolve a provider-verified identity for registration.");
+    throw new ConnectorError("unsupported_capability", "resource: This source cannot be registered as an event-bound file. Inspect the event filter fields for another way to express the requested watch.");
   }
   const registration = access.registration;
   const relationships = automationBindableResourceTypes(connectorActivityTriggerDescriptors(
@@ -2383,6 +2383,9 @@ async function registerAutomationCreatorResource(
     modelPluginId: frozen.credentialModelPluginId ?? frozen.modelPluginId,
     requiredCapabilities: [capability],
   });
+  if (resource.resourceType !== registration.resourceType) {
+    throw new ConnectorError("invalid_configuration", "resource: The registered resource type differs from the provider-verified type. Its Rally metadata needs correction before binding; repeating registration will not repair it.");
+  }
   return { resources: [{
     id: resource.id,
     title: resource.title,
