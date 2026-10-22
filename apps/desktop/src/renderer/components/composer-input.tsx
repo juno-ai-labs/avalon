@@ -176,7 +176,8 @@ interface ComposerInputProps {
    * and the signals are in `lib/ime.ts`.
    */
   onKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
-  onMention: () => void;
+  /** Absent where the input does not mention participants, such as issue reports. */
+  onMention?: () => void;
   /**
    * The caret moved, by arrow key, click, or drag. A composer whose `@` list is
    * open re-reads what the caret is naming from here: the list has to close when
@@ -546,7 +547,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
 
   const beginMention = (): void => {
     if (dictation.state === 'transcribing' || dictation.state === 'finalizing') stopDictation();
-    onMention();
+    onMention?.();
   };
 
   /**
@@ -740,7 +741,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
         {notice && <div className="composer-notice">{notice}</div>}
         <div className="composer-toolbar">
           <div className="composer-tools">
-            {!messageCapsule && (
+            {!messageCapsule && onMention && (
               <IconButton disabled={submitting || dictationEditingBlocked || mentionDisabled} label={mentionLabel} onClick={beginMention}>
                 <AtSign size={15} />
               </IconButton>

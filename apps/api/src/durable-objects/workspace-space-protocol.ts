@@ -1031,3 +1031,13 @@ export const WorkspaceSpaceIntentResumeResultSchema = z.union([
   z.strictObject({ ok: z.literal(false), refusal: SpaceChannelRefusalSchema }),
 ]);
 export type WorkspaceSpaceIntentResumeResult = z.input<typeof WorkspaceSpaceIntentResumeResultSchema>;
+
+/** A single readable Channel message, for issue-report provenance. */
+export const WorkspaceChannelMessageIssueRequestSchema = SpaceActorSchema.extend({
+  spaceId: SpaceIdSchema, messageId: z.string().min(1),
+}).strict();
+export type WorkspaceChannelMessageIssueRequest = z.infer<typeof WorkspaceChannelMessageIssueRequestSchema>;
+export const WorkspaceChannelMessageIssueResultSchema = z.strictObject({
+  authorKind: z.enum(["rally", "member"]), authorUserId: UserIdSchema.nullable(),
+  postedAt: z.number(), sourceWorkstreamId: WorkstreamIdSchema.nullable(),
+}).nullable();

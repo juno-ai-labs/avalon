@@ -142,6 +142,16 @@ scope collapses to its newest durable row; an intervening conversation row or
 history seam starts a separate occasion. Persistence therefore never produces
 a double-stacked control.
 
+## Message issue reports
+
+The shared action row offers **Oopsie** after Merge for sent user and assistant
+messages. Each feed supplies `MessageIssueProvider`; the modal stays outside
+virtualized rows and uses `ComposerInput` for typing and dictation. Inputs that
+have no mention handler omit the mention button. Actions pass
+both the canonical transcript turn and displayed block identities. Channel-feed
+messages use the same provider with a Channel target. [Message issues](message-issues.md)
+owns submission, authorization, provenance and the dedicated D1 store.
+
 ## Contract
 
 The composer confirms mentions that expand access: nonparticipants in personal

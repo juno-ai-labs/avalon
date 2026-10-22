@@ -1,3 +1,4 @@
+import { WorkspaceChannelMessageIssueRequestSchema, WorkspaceChannelMessageIssueResultSchema, type WorkspaceChannelMessageIssueRequest } from './workspace-space-protocol';
 import { SidekickActivityTargetSchema, type WorkspaceSidekickActivityEvent, type SidekickActivityTarget } from "@rally/contracts";
 import { runningSidekickCount, SidekickActivityRequestSchema, type SidekickActivityRequest } from "./sidekick-activity";
 import { RESOURCE_READ_PROJECTION_SQL } from '../services/resource-read-projection';
@@ -10412,6 +10413,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ok: true,
       page: { items, nextCursor: page.nextCursor },
     });
+  }
+
+  /** Read-only provenance for an explicit issue, admitted as the Channel feed is. */
+  async channelMessageIssueContext(input: WorkspaceChannelMessageIssueRequest) {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceChannelMessageIssueRequestSchema, input, "channel_message_issue");
+    this.assertWorkspace(request.workspaceId);
+    const viewer = await this.spaceReader(request.workspaceId, request.userId);
+    return WorkspaceChannelMessageIssueResultSchema.parse(viewer
+      ? this.spaceStorage().messageIssueContext(viewer, request.spaceId, request.messageId) : null);
   }
 
   /**
