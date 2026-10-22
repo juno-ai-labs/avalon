@@ -198,7 +198,7 @@ describe("prompt renderers", () => {
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "7ec45f6cefd22e4d9c3faaf6ed908c8ae46e3749efdf4664b32a10f074c23601",
+        hash: "cb5718c88a6d957b864be850433de9707f3fb3ef29202929b048164bb4053184",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -206,7 +206,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           sidekick: workstreamAutomation,
         }),
-        hash: "347c5cce5d85b7ca02114205503e7a56232c0a2dae5e086ea1b3c3ba29b5c0e5",
+        hash: "bfd0ada1c64b57cde3b7f3e7ffd0a5d54e860ddabbf193a6ef12feb8a1699bea",
       },
       workstreamName: {
         actual: renderWorkstreamNameMessages({
@@ -855,11 +855,8 @@ describe("prompt renderers", () => {
     expect(workstreamPrompt).toContain("protection requires an active site that enforces Rally viewer headers");
 
     // The 8,500-byte ceiling was introduced with the standing `# Sites`
-    // trigger. Re-measured after review removed a duplicate Documents sentence:
-    // the prompt without Sites is 7,701 bytes, Sites costs 662, and the total is
-    // 8,363 — 137 bytes of deliberate headroom rather than the previous 11.
-    // Stating the Organization, Channel, Thread, Breakout hierarchy in the
-    // orientation brought the total to 8,443, leaving 57 bytes.
+    // trigger. Keep platform definitions within it by removing repetitive
+    // introduction text rather than increasing the budget.
     expect(Buffer.byteLength(workstreamPrompt, "utf8")).toBeLessThan(8_500);
   });
 

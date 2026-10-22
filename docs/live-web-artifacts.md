@@ -102,6 +102,15 @@ barrier without adding each independent R2 round trip to the publication latency
 
 ### Revising
 
+The `building-live-sites` skill directs both interactive agents and Sidekicks
+refreshing a site to load Terminal for file editing, import and publication.
+Loading the skill supplies instructions without activating those tools. A later
+run must recover the existing source when its sandbox lacks the files. Preserving
+identity requires both the original publication conversation and directory path.
+For a thread's site, only a workstream-scoped Sidekick owned by that thread
+redirects publication there; personal and workspace Sidekicks publish in their
+own conversation. Importing the source does not change that target.
+
 A run asked to change a site it did not build — or built in a session that has
 since ended — brings the files back first, through `import_resource`
 on the site's own resource id. The manifest is the index, and `index.js` is
@@ -602,6 +611,25 @@ The selector and trust boundaries are owned by
 [artifact annotations](artifact-annotations.md).
 
 ## Changelog
+
+### 2026-10-21 — Site refresh guidance preserves the publication conversation
+
+**What changed:** The site skill requires both the original publishing
+conversation and directory path, and explains Terminal activation and source
+recovery for later runs.
+
+**Why:** Path-only refresh instructions promised the existing URL even for
+personal or workspace Sidekicks, whose publication namespace differs from the
+thread that created the site. Following that guidance would create a second site.
+
+**Considered and rejected:** Assuming a source import redirects publication;
+it copies the files but leaves the run's publication target unchanged.
+
+**Consequences:** A thread's refresh Sidekick must be owned by that thread.
+Runs that cannot target the original conversation report the limitation rather
+than publishing a replacement under a new identity.
+
+Pull request: [#1394](https://github.com/juno-ai-labs/avalon/pull/1394).
 
 ### 2026-10-19 — Stored data lives in the artifact title-menu pop-out
 

@@ -478,20 +478,18 @@ resource into registrations all ask that one function, and so does
 `resources_search`: it searches that set and nothing else, and reports it as
 `searchableResourceTypes` beside the rows.
 
-That field is what an empty answer has to be read against, because after the
-filter an empty page has two unrelated causes. With types listed, the query
-matched none of them and another wording may: the container exists and the rule
-should still name it. With no types listed, no resource can narrow a rule in this
-workspace at all, and only then is the rule written with a filter leaf instead —
-one repository is `repository equals owner/name`, which every GitHub event
-declares a filter field for. Telling the model the second when the first is true
-is how a search miss reaches a person as "the automation system cannot bind
-this", which is the sentence the whole path exists to stop repeating.
+A search result's `searchableResourceTypes` is the union across the catalog,
+not proof that the selected event supports a particular type. The event's
+`resourceRelationships` is authoritative. A supported type with no matching
+registered row is distinct from an unsupported type; a direct connector read
+does not register a resource, and no registration tool is exposed to the model.
+The `polling-for-events` skill owns the lookup and filter/polling fallback
+procedure, including reporting a registration gap without calling it a
+permission denial.
 
 A declared relationship is not a promise that anything materializes the type:
 Granola declares `granola_folder` and writes only `granola_note`, so a Granola
-workspace searches a type that has no rows. That reads as the first case above
-and is indistinguishable from a miss from here; it is a connector-side gap, and
+workspace searches a type that has no rows. That is indistinguishable from a search miss here; it is a connector-side gap, and
 [`connectors.md`](connectors.md) carries the invariant it violates.
 
 **Inbound email** arrives at the automation's permanent address
@@ -1093,18 +1091,13 @@ candidate summaries without recursively invoking other public service entrypoint
 Desktop and browser request management options only when their controls open, not
 on every transcript update.
 
-Sidekick authoring must compose authorized plugins before reporting a capability
-blocker. For Meet-note follow-ups, inspect Drive + Docs as well as Mail + Calendar:
-load `reading-google-meeting-notes` for the shared storage and lookup procedure,
-inspect Calendar activity `metadata.attachments` or read the event first, then
-read its attached transcript or notes Doc through the authorized Docs connection
-before any Drive search or blocked conclusion. Pass the attachment's `fileId` as
-`documentId`, or extract it from the Docs `fileUrl`. Drive discovery is the
-fallback when there is no relevant attachment or its read cannot supply the
-notes; preserve the specific read failure. Choose a declared document event or polling when Calendar changes do
-not cover notes availability. Gmail draft PDF attachments use Rally resource IDs.
-A missing connection or unshared notes document is an access requirement to
-report specifically, not evidence that the provider lacks the capability.
+Sidekick authoring uses the shared plugin-discovery guidance to check authorized
+capabilities before reporting a blocker. Provider-specific procedures stay with
+their owners: the Google plugin prompts point to `reading-google-meeting-notes`
+for meeting-document lookup and describe Gmail draft PDF resource attachments.
+That reading skill composes with `polling-for-events` for a recurring workflow.
+The Sidekick authoring prompt carries no Google-specific lookup or attachment
+instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
 
