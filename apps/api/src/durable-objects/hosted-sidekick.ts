@@ -1,3 +1,5 @@
+import { WorkstreamDirectoryCommonEffectSchema } from "@rally/contracts/conversation-effects";
+import { sidekickProjectionRunning } from "./sidekick-activity";
 import { type SidekickAttachment, SidekickAttachmentSchema } from "@rally/contracts";
 import type { Region } from "@rally/contracts/regions";
 import { z } from "zod";
@@ -1390,8 +1392,8 @@ export class HostedSidekick {
 
   /** Keep a child's newest common projection; `false` for one that is not newer. */
   private acceptChildProjection(substreamId: string, envelope: ConversationEffectEnvelope, now: number): boolean {
-    const existing = first(this.sql.exec<{ source_version: number; payload_hash: string }>(
-      `SELECT source_version, payload_hash FROM sidekick_child_projections WHERE sidekick_id = ? AND substream_id = ?`,
+    const existing = first(this.sql.exec<{ source_version: number; payload_hash: string; effect_json: string }>(
+      `SELECT source_version, payload_hash, effect_json FROM sidekick_child_projections WHERE sidekick_id = ? AND substream_id = ?`,
       this.sidekickId, substreamId,
     ));
     if (existing && existing.source_version > envelope.sourceVersion) return false;
@@ -1410,6 +1412,12 @@ export class HostedSidekick {
          payload_hash = excluded.payload_hash, effect_json = excluded.effect_json, updated_at = excluded.updated_at`,
       this.sidekickId, substreamId, envelope.sourceVersion, envelope.payloadHash, JSON.stringify(envelope.effect), now,
     );
+    if (envelope.effect.kind === "directory_common") {
+      const wasRunning = existing ? sidekickProjectionRunning(WorkstreamDirectoryCommonEffectSchema.parse(JSON.parse(existing.effect_json))) : false;
+      if (wasRunning !== sidekickProjectionRunning(envelope.effect)) {
+        this.host.noteDirectoryChanged(this.sidekickId, false, now);
+      }
+    }
     return true;
   }
 

@@ -1,3 +1,4 @@
+import { useSidekickActivity } from '../lib/use-sidekick-activity';
 import { validateAnnotationSend } from '../lib/use-annotation-pins';
 import { loadAnnotationPreview } from '../lib/annotation-preview';
 import { useAnnotationDraft, type AnnotationPin } from './artifact-annotations';
@@ -113,6 +114,7 @@ export function ChannelComposer({ channelColor, channelId, channelName, channelS
   workspace: Workspace;
 }): React.JSX.Element {
   const { api } = useAppSession();
+  const runningSidekicks = useSidekickActivity(api, { parentKind: 'space', parentId: channelId, substreamId: '0' });
   const annotationDraft = useAnnotationDraft();
   const visible = useContext(ConversationVisibilityContext);
   const navigate = useNavigate();
@@ -320,6 +322,7 @@ export function ChannelComposer({ channelColor, channelId, channelName, channelS
           attachments={attachmentDraft.attachments}
           autoFocus={!threadOpen}
           draftKey={draftKey}
+          runningSidekickCount={runningSidekicks}
           error={(tooLong ? MESSAGE_TOO_LONG_MESSAGE : undefined) ?? create.error?.message ?? attachmentDraft.error}
           fileInputRef={fileInputRef}
           members={members.data ?? []}

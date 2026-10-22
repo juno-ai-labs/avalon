@@ -1,3 +1,4 @@
+import { useSidekickActivity } from '../lib/use-sidekick-activity';
 import { validateAnnotationSend } from '../lib/use-annotation-pins';
 import { TranscriptHistoryStatus } from '../components/transcript-history-status';
 import { loadAnnotationPreview, readAnnotationVersion } from '../lib/annotation-preview';
@@ -2079,6 +2080,8 @@ function ConversationSurfaceContent({
     : null), [channelTranscript.data, id, originTurnId, visibleMembers]);
   // The Channel sends counts for all of its conversations; this composer
   // shows only the agents started from the conversation it belongs to.
+  const runningSidekicks = useSidekickActivity(api, id && parentKind === 'workstream'
+    ? { parentKind, parentId: id, substreamId } : null);
   const backgroundAgents = useQuery({
     queryKey: ['workstream-background-agents', id], queryFn: skipToken,
     initialData: null as Record<string, number> | null,
@@ -3927,6 +3930,7 @@ function ConversationSurfaceContent({
               await stop.mutateAsync();
             }}
             backgroundAgentCount={backgroundAgents.data}
+            runningSidekickCount={runningSidekicks}
             sendBlocked={feedFromLocalCache}
             sending={sending}
             uploading={attachmentDraft.uploading}

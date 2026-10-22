@@ -217,10 +217,37 @@ above Settings. It lists accessible personal, workspace, and room Sidekicks.
 The library uses the normal desktop session and workspace boundary. The center
 sidebar renders participants as a facepile and provides attachment removal.
 
+## Activity above the composer
+
+Channel, Thread, and Breakout composers show a running Sidekick count above the
+input, alongside a separate background-agent count when both are active. The
+same count covers the Sidekick's setup conversation, manual runs, and triggered
+runs. Each Sidekick counts once even when several of its executions overlap.
+Idle, finished, failed, stopped, archived, and waiting-for-input executions do
+not count; activation alone is not execution.
+
+`GET /sidekicks/activity` takes a storage-kind parent and exact substream.
+WorkspaceDO admits the reader through that target's ordinary viewer rule, then
+reads the existing `sidekick_child_projections` and `sidekick_runs` locally.
+Sources are a Channel's defaults, a Thread or Breakout home, explicit posting
+attachments, shared recommendations, and the selected conversation's loaded
+Sidekicks. Instruction links retain the rail's audience predicate. A Breakout's
+home and local attachments do not become Main's or a sibling's activity.
+The response carries only a count and grants no access to Sidekick history.
+
+Accepted Sidekick child projections publish the existing automation-list signal
+when execution enters or leaves a running state. The composer count refreshes
+on that signal, the existing automations topic, receiving Thread projection
+updates, and reconnect snapshots; no
+additional socket or polling interval is introduced. Explicit posting attachment
+changes publish that topic too. The count is independent of opening or sending
+in the conversation.
+
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
+| `apps/api/src/durable-objects/sidekick-activity.ts` | Target-scoped running count from accepted Sidekick execution projections and the target's attachment relationships. |
 | `apps/api/src/durable-objects/hosted-sidekick.ts` | `HostedSidekick`: `create`, `submitDefinition`, `apply`, `pause`, `resume`, `remove`, `setAppearance`, `setOwningRoomArchived`, `runNow`, `runSeeded`, `admitExternalEvent`, `admitInboundEmail`, `readRunDefinition`, `readRunState`, `continueRun`, `readDetail`, `listRuns`, `claimExecutionPrincipal`, the parent contract (`onChildCommonProjection` moves the run row), and the schedule, run and memory-table alarm entries. `WorkspaceDO` answers each as `sidekick*`. |
 | `apps/api/src/services/sidekick-run-provisioning.ts` | `provisionSidekickRun`: opens a run's conversation and starts its loop from the `sidekick_run_provision` Queue message the run's alarm entry sends. |
 | `apps/api/src/services/sidekick-run-continuation.ts` | `continueSidekickRun`, the run child's call to `continueRun`; `continuationSource`, who continued the run and where; and the refusal text the run's transcript records. |
@@ -979,6 +1006,13 @@ between a run and its parent and between the parent and the workspace do not
 deliver themselves: drive them with `deliverEffectsToWorkspace` and its
 siblings in `test-workers/helpers/conversation-effects.ts`.
 
+`apps/api/test-workers/channel-rails.test.ts` also drives setup and run child
+projections through WorkspaceDO, checks the receiving count and real socket
+start/finish signal, and verifies exact-conversation homes, Channel defaults,
+hidden personal attachments, and stale delivery. Renderer coverage in
+`workstream-open.test.tsx` and `workspace-socket.test.tsx` checks independent
+stacked counts and activity-query invalidation.
+
 ## Data model
 
 A Sidekick's rows are `WorkspaceDO`'s: `automation_directory` (with the
@@ -1100,6 +1134,24 @@ The Sidekick authoring prompt carries no Google-specific lookup or attachment
 instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
+
+### 2026-10-21 — Receiving conversations show live Sidekick activity
+
+**What changed:** Each receiving composer shows a count of its running Sidekicks,
+including setup, manual, and triggered executions, through one activity read and
+the existing Organization socket's automation invalidation signal.
+
+**Why:** A Sidekick can work in its own conversation while posting to another,
+leaving that receiving conversation looking idle. Lifecycle summaries cannot
+answer whether setup or a run is currently executing.
+
+**Considered and rejected:** Opening a socket per Sidekick or polling its run
+history. The Organization already holds the accepted child projections and can
+answer the activity question without transferring history or adding connections.
+
+**Consequences:** Association and target visibility decide where activity may
+appear; live execution decides whether it appears. Concurrent executions count
+once per Sidekick, and background agents retain their own independent row.
 
 ### 2026-10-21 — Background workers under a Sidekick are not run continuations
 

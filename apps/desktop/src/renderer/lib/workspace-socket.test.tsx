@@ -681,6 +681,7 @@ describe('WorkspaceSocketProvider', () => {
       ['automation-draft'],
       ['automation-runs'],
       ['sidekicks-library'],
+      ['sidekick-activity'],
       ['attached-sidekicks'],
       ['workstream-sidekicks'],
       ['recommended-sidekicks'],
@@ -1853,6 +1854,7 @@ describe('WorkspaceSocketProvider', () => {
     queryClient.setQueryData(['automation', automationId], { id: automationId, currentDefinition: null });
     queryClient.setQueryData(['automation-runs', automationId], []);
     queryClient.setQueryData(['sidekicks-library'], []);
+    queryClient.setQueryData(['sidekick-activity', 'workstream', 'room', '0'], 0);
     queryClient.setQueryData(['attached-sidekicks', 'room'], []);
     queryClient.setQueryData(['workstream-sidekicks', 'room'], []);
     const getWorkspaceSocketTicket = vi.fn(async () => ({
@@ -1900,6 +1902,7 @@ describe('WorkspaceSocketProvider', () => {
     expect(queryClient.getQueryState(['automation', automationId])?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(['automation-runs', automationId])?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(['sidekicks-library'])?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(['sidekick-activity', 'workstream', 'room', '0'])?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(['attached-sidekicks', 'room'])?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(['workstream-sidekicks', 'room'])?.isInvalidated).toBe(true);
   });
