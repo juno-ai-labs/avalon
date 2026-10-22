@@ -204,6 +204,13 @@ export class ScopeGrantStorage {
     return row ? ParticipantProjectionDeliverySchema.parse(JSON.parse(row.payload_json)) : null;
   }
 
+  pendingParticipantProjections(substreamId: string) {
+    return this.storage.sql.exec<{ payload_json: string }>(
+      "SELECT payload_json FROM parent_participant_deliveries WHERE parent_id=? AND substream_id=? AND acknowledged_revision IS NULL ORDER BY user_id",
+      this.parentId, substreamId,
+    ).toArray().map((row) => ParticipantProjectionDeliverySchema.parse(JSON.parse(row.payload_json)));
+  }
+
   participantProjection(substreamId: string, userId: string) {
     const row = this.storage.sql.exec<{ payload_json: string }>(
       "SELECT payload_json FROM parent_participant_deliveries WHERE parent_id=? AND substream_id=? AND user_id=?",

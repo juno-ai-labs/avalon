@@ -250,13 +250,38 @@ describe("creating a work stream", () => {
     const authority = await runInDurableObject(parent, (_instance, state) => ({
       migration: state.storage.sql.exec("SELECT transfer_id,phase FROM parent_participant_migrations WHERE parent_id = ? AND substream_id = '0'", parentId).one(),
       grants: state.storage.sql.exec("SELECT user_id,scope_kind,json_extract(grant_json,'$.revision') AS revision,json_extract(grant_json,'$.active') AS active FROM parent_grants WHERE parent_id = ?", parentId).toArray(),
+      ownerDelivery: state.storage.sql.exec(
+        "SELECT acknowledged_revision FROM parent_participant_deliveries WHERE parent_id = ? AND substream_id = '0' AND user_id = ?",
+        parentId, USER_ID,
+      ).one(),
     }));
     expect(authority.migration).toMatchObject({ phase: "complete" });
     expect(authority.grants).toEqual([{ user_id: USER_ID, scope_kind: "workstream", revision: 1, active: 1 }]);
+    expect(authority.ownerDelivery).toMatchObject({ acknowledged_revision: expect.any(Number) });
     const main = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, created.workstream.id));
     await runInDurableObject(main, (_instance, state) => {
       expect(state.storage.sql.exec("SELECT phase FROM participant_authority_transfer").one()).toEqual({ phase: "projection" });
+      expect(state.storage.sql.exec("SELECT revision FROM participant_projection_revisions WHERE user_id=?", USER_ID).one())
+        .toMatchObject({ revision: expect.any(Number) });
     });
+    const admission = await parent.authorizeViewer({
+      workspaceId: WORKSPACE_ID, parentId: created.workstream.id, userId: USER_ID, substreamId: asSubstreamId("0"),
+    });
+    expect(admission).toMatchObject({ authorized: true });
+    expect(admission.membershipVersion).toBeGreaterThan(0);
+    const opened = await main.fetch("https://substream.test/socket", { headers: {
+      Upgrade: "websocket",
+      "x-rally-workspace-id": WORKSPACE_ID,
+      "x-rally-workstream-id": created.workstream.id,
+      "x-rally-substream-id": "0",
+      "x-rally-user-id": USER_ID,
+      "x-rally-session-id": SESSION_ID,
+      "x-rally-socket-ticket-id": crypto.randomUUID(),
+      "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1000) + 60),
+      "x-rally-socket-admission-membership-version": String(admission.membershipVersion),
+    } });
+    expect(opened.status).toBe(101);
+    opened.webSocket?.close(1000, "done");
     expect(await parent.readScopeAccess({ userId: USER_ID, target: { kind: "workstream", workspaceId: WORKSPACE_ID,
       parentId: created.workstream.id } })).toMatchObject({ allowed: true, writable: true });
     expect((await service.createPrepared(input, history)).workstream.id).toBe(created.workstream.id);

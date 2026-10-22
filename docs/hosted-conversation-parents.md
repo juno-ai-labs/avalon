@@ -603,6 +603,30 @@ Space in an Organization now shares one SQLite database and one socket set.
 
 ## Changelog
 
+### 2026-10-22 — First-share migration delivers roster projections before returning
+
+**What changed:** Completing Main or child participant migration now delivers
+every queued roster projection in the same invocation, the way a later grant
+mutation already does.
+
+**Why:** `registerParticipantProjection` only queued the rows and armed the
+Organization alarm. The first share of a thread is that registration, so the
+people who were already in the room waited on a wake that nothing else had to
+take. A guest granted in the same request already got a foreground delivery.
+The conversation object then refused their positive membership ticket until
+that row landed, which is the "live connection could not be opened" notice.
+
+**Considered and rejected:** Leaving delivery on the alarm and asking them to
+retry. The Organization object may not take that wake if nothing else writes.
+Issuing membership version zero to grant holders would reopen workspace-scoped
+threads and leave a private thread's original members stuck.
+
+**Consequences:** The projection alarm remains the recovery path when the
+foreground delivery throws. Socket admission on the conversation object also
+keeps the frozen local roster as last-known admission until the first
+projection lands; that companion change lives in
+[`workstream-durable-object.md`](workstream-durable-object.md).
+
 ### 2026-10-06 — Hosted Sidekick SQL reads and writes as one object
 
 **What changed:** `HostedSidekick` and the `WorkspaceDO` Sidekick facade answer

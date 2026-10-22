@@ -1631,7 +1631,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const transfer = new ParticipantAuthorityTransferStorage(this.state.storage);
     if (transfer.currentTransferId() !== null) {
       const projection = transfer.projectionForUser(userId);
-      return projection?.active === true && projection.revision === requiredVersion;
+      if (projection) return projection.active === true && projection.revision === requiredVersion;
+      // The freeze left the legacy roster as last-known admission until the
+      // parent's first projection lands. A guest granted after the handoff has
+      // no local row and still waits for that delivery.
+      return this.product.isParticipant(userId);
     }
     if (this.externalSubstreamId() === "0") return true;
     const row = this.state.storage.sql.exec<{ version: number; active: number }>(
