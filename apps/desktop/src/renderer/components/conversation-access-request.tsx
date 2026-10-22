@@ -25,7 +25,7 @@ import { Button, ErrorNotice, OpeningState } from './primitives';
  * arrived before this screen. Other failures keep their own screen, and a failed
  * retry cannot loop on remount. `docs/channel-access-requests.md`.
  */
-export type ConversationAccessApi = Pick<RallyApi, 'conversationAccessPreview' | 'requestConversationAccess'>;
+export type ConversationAccessApi = Pick<RallyApi, 'viewerUserId' | 'conversationAccessPreview' | 'requestConversationAccess'>;
 
 export function ConversationAccessRequest({ api, parentId, substreamId, fallback, onRetry }: {
   api: ConversationAccessApi | null;
@@ -39,7 +39,8 @@ export function ConversationAccessRequest({ api, parentId, substreamId, fallback
 }): React.JSX.Element {
   const queryClient = useQueryClient();
   const recovery = useConversationAccessRecovery();
-  const queryKey = ['conversation-access-preview', parentId, substreamId];
+  const requesterUserId = api?.viewerUserId ?? null;
+  const queryKey = [...CONVERSATION_ACCESS_PREVIEW_QUERY_KEY, requesterUserId, parentId, substreamId];
   const preview = useQuery({
     queryKey,
     queryFn: async () => {
@@ -52,15 +53,22 @@ export function ConversationAccessRequest({ api, parentId, substreamId, fallback
   const address = `${parentId}:${substreamId}`;
   const [reopening, setReopening] = useState<string | null>(null);
   const request = useMutation({
-    mutationFn: (target: { parentId: string; substreamId: string }) =>
+    mutationKey: ['conversation-access-request', requesterUserId, parentId, substreamId],
+    mutationFn: (target: { parentId: string; substreamId: string; requesterUserId: string | null }) =>
       api!.requestConversationAccess(target.parentId, target.substreamId),
     onSuccess: async (_result, target) => {
-      const submittedQueryKey = ['conversation-access-preview', target.parentId, target.substreamId];
+      const submittedQueryKey = [...CONVERSATION_ACCESS_PREVIEW_QUERY_KEY, target.requesterUserId, target.parentId, target.substreamId];
       // A preview read before the write must not replace the successful result.
       await queryClient.cancelQueries({ queryKey: submittedQueryKey });
       queryClient.setQueryData<ConversationAccessPreview>(submittedQueryKey, (current) =>
         current ? { ...current, requestPending: true, requestEmailed: true } : current,
       );
+    },
+    onError: async (_error, target) => {
+      // Email can fail after the request was stored; read that outcome back.
+      await queryClient.invalidateQueries({
+        queryKey: [...CONVERSATION_ACCESS_PREVIEW_QUERY_KEY, target.requesterUserId, target.parentId, target.substreamId],
+      });
     },
   });
   const admitted = preview.isSuccess && preview.fetchStatus === 'idle' && preview.data?.access === 'open';
@@ -93,7 +101,7 @@ export function ConversationAccessRequest({ api, parentId, substreamId, fallback
           <p>You’re not in this {noun}, ask for access below</p>
         )}
         {(!preview.data.requestPending || !preview.data.requestEmailed) && (
-          <Button className="button-primary" disabled={request.isPending} onClick={() => request.mutate({ parentId, substreamId })}>
+          <Button className="button-primary" disabled={request.isPending} onClick={() => request.mutate({ parentId, substreamId, requesterUserId })}>
             {request.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
             {preview.data.requestPending ? 'Retry sending request' : 'Request access'}
           </Button>
