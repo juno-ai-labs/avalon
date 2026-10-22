@@ -145,6 +145,7 @@ a {
 }
 
 button:disabled,
+.button[aria-disabled='true'],
 .icon-button[aria-disabled='true'],
 .annotation-toolbar button[aria-disabled='true'] {
   cursor: not-allowed;
@@ -425,8 +426,8 @@ pre {
 
 /* Radix moves a menu item's focus by setting `data-highlighted`, not by
    hover, so a `.button` inside a menu takes the same look in that state. */
-.button:hover:not(:disabled),
-.button[data-highlighted] {
+.button:hover:not(:disabled):not([aria-disabled='true']),
+.button[data-highlighted]:not([aria-disabled='true']) {
   background-image: var(--hover-layer);
   border-color: var(--av-ref-color-line-4);
   color: var(--av-sys-color-text-default);
@@ -456,7 +457,7 @@ pre {
   font-weight: 400;
 }
 
-.button-primary:hover:not(:disabled) {
+.button-primary:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--av-cmp-button-primary-hover);
   border-color: transparent;
   color: var(--av-cmp-button-primary-color);
@@ -475,7 +476,7 @@ pre {
   font-weight: 590;
 }
 
-.button-danger:hover:not(:disabled) {
+.button-danger:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--av-sys-color-danger-strong);
   border-color: var(--av-sys-color-danger-strong);
   color: var(--av-sys-color-danger-on);
@@ -7172,7 +7173,7 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .automation-header-email span { min-width: 0; overflow-wrap: anywhere; }
 .automation-header-triggers { display: flex; flex-direction: column; gap: 8px; font-size: 14px; line-height: 1.5; list-style: none; margin: 0; padding: 0; }
 .automation-runs-next { color: var(--av-sys-color-text-muted); font-size: 12px; margin: 8px 0 0; }
-.sidekick-guidance p { margin: 0; color: var(--av-sys-color-text-subtle); font-size: 14px; line-height: 1.6; }
+.automation-timing-empty { margin: 0; color: var(--av-sys-color-text-muted); font-size: 14px; line-height: 1.5; }
 .sidekick-email-details summary { cursor: pointer; color: var(--av-sys-color-text-muted); font-size: 13px; }
 .sidekick-email-details[open] summary { margin-bottom: 12px; }
 .automation-runs-empty { color: var(--av-sys-color-text-muted); font-size: 13px; margin: 0; }
