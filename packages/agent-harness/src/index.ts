@@ -2868,6 +2868,8 @@ export interface AutomationCreatorPluginCatalogEntry {
    * rather than leaving the model to infer it from an absence.
    */
   activityRequiresScope?: "personal" | "workspace";
+  /** Host operation bound to this catalog entry's authorized connection. */
+  registerResource?: (reference: string, signal: AbortSignal) => Promise<unknown>;
   tools: Array<{
     name: string;
     /** Canonical adapter identity; `name` remains the exact model-facing wire name. */
@@ -3073,6 +3075,7 @@ export function executeAutomationCreatorDiscoveryTool(
           description: plugin.description,
           scope: plugin.scope,
           aliases: plugin.searchAliases,
+          resourceRegistrationSupported: Boolean(plugin.registerResource),
           tools: plugin.tools.map((tool) => ({ name: tool.name, description: tool.description, capability: tool.capability, mode: tool.mode, ...(tool.longRunning === undefined ? {} : { longRunning: tool.longRunning }) })),
           activityTriggerCount: plugin.activityTriggers.length,
           ...(activityTriggersUnavailable ? { activityTriggersUnavailable } : {}),
@@ -3100,6 +3103,7 @@ export function executeAutomationCreatorDiscoveryTool(
           description: plugin.description,
           scope: plugin.scope,
           aliases: plugin.searchAliases,
+          resourceRegistrationSupported: Boolean(plugin.registerResource),
           tools: plugin.tools.map((tool) => ({
             name: tool.name,
             description: tool.description,
@@ -3124,6 +3128,7 @@ export function executeAutomationCreatorDiscoveryTool(
         scope: plugin.scope,
         aliases: plugin.searchAliases,
         systemMessage: plugin.systemMessage,
+        resourceRegistrationSupported: Boolean(plugin.registerResource),
         tools: plugin.tools.map((tool) => ({
           name: tool.name,
           description: tool.description,
@@ -3822,7 +3827,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   },
   {
     name: "resources_search",
-    description: "Search the resources an event rule can be narrowed to. Returns canonical resource IDs with their source plugin and the relationship each is reached through, alongside searchableResourceTypes: every resource type this workspace's connected plugins declare a relationship to, which is the whole of what this tool searches. Anything an event produces rather than contains is outside it. Read an empty answer by that field: with types listed, this query matched none of them and another wording may — with none listed, no resource can narrow a rule here at all, so write the rule with a filter field from sidekick_plugin_inspect and omit resourceId.",
+    description: "Find registered Rally resources that can limit an event rule to one file or other source. Returns resources with canonical IDs, source pluginId, resourceType, and relationships. searchableResourceTypes lists the types searched across connected plugins; inspect the selected event to confirm its supported types. An empty result is a search miss. Use resources_register for a supported external file missing from this catalog.",
     capability: "rally.sidekick.resources.search",
     mode: "read",
     idempotency: "safe",
@@ -3837,6 +3842,22 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
         },
       },
       required: ["query"],
+    },
+  },
+  {
+    name: "resources_register",
+    description: "Register an existing external file in Rally so an event rule can watch it. Pass its URL or external file ID and the plugin that can read it. Verifies access and obtains the title and resource type from the provider. Returns resources with canonical Rally IDs, pluginId, resourceType, and relationships, just like resources_search. Repeated calls reuse the same resource. This records the file in Rally; it does not edit the file or change who can access it.",
+    capability: "rally.sidekick.resources.register",
+    mode: "write",
+    idempotency: "safe",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        pluginId: { type: "string", minLength: 1, description: "The authorized source pluginId from plugins_list or plugins_search, for example plugin_google. Use a connection that can read this file." },
+        resource: { type: "string", minLength: 1, description: "The existing file's full URL or external provider file ID, for example a Google Sheets URL. This is not a Rally resource ID." },
+      },
+      required: ["pluginId", "resource"],
     },
   },
   {

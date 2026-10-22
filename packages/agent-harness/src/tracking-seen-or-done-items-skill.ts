@@ -116,13 +116,24 @@ checking, and publishing. Terminal's per-tool lease does not cover that sequence
 
 ## 5. Establish the first-run baseline
 
-When configuring the workflow, say what the **first** run does, because the table
-is empty and everything looks new. For a polling backlog, record what predates
-the watch's baseline without reporting it, unless the person asked to be caught
-up. Label those rows as baseline items rather than successful external actions.
-An event that triggered the first run is new work: process it normally even if
-the table is empty. Silent baselining applies to the pre-existing backlog, not
-the triggering event. Save that distinction in the workflow's baseline policy.
+Choose the first-run policy from the requested outcome:
+
+- **Notify about new items:** Record items that predate the watch as baseline
+  without reporting them, unless catch-up was requested. Keep the watch's start
+  time or source cursor so items arriving before the first timer fires are not
+  silently treated as old. Baseline rows are not successful external actions.
+- **Keep an output synchronized:** On the first run and every later run, read
+  the current source and the actual destination, then reconcile differences.
+  An empty tracking table does not mean the output is current. Apply changes
+  that arrived after initial publication and before the first scheduled check.
+  Record a verified no-op only if source and destination already match; otherwise
+  record completion after the update succeeds. Follow the destination's recovery
+  procedure before comparing, such as importing the current published site.
+- **Process a triggering event:** Handle that event normally even when the table
+  is empty. Only pre-existing notification backlog may be silently baselined.
+
+Save the selected policy in the workflow instructions. If the destination cannot
+be read, report the recovery gap rather than recording an assumed baseline.
 
 ## Anti-patterns
 
@@ -134,5 +145,7 @@ the triggering event. Save that distinction in the workflow's baseline policy.
 - **Acting after only a read.** Two runs can both read an absent key. Act only
   after winning an atomic insert or a verified recovery claim.
 - **Silently baselining the first triggering event.** Process that event;
-  suppress only the pre-existing backlog covered by the baseline policy.`,
+  suppress only the pre-existing notification backlog covered by the baseline policy.
+- **Skipping the first synchronization because the table is empty.** Compare
+  against the actual destination and apply any difference before recording it.`,
 };

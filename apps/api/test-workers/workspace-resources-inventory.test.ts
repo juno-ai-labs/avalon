@@ -233,6 +233,7 @@ describe("connector resources", () => {
       provider: "canva", providerResourceId: "design", resourceType: "canva_design", title: "Design",
       canonicalUrl: "https://www.canva.com/design/design/view", protectedAccessJson: "encrypted-one", at: AT };
     const created = await workspace().resolveConnectorResource(request);
+    if (created.outcome === "connection_unavailable") throw new Error("unexpected_connection_refusal");
     await workspace().resolveConnectorResource({ ...request, candidateResourceId: nextId(), protectedAccessJson: "encrypted-two" });
     const row = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
       "SELECT protected_access_json, canonical_url, metadata_json FROM resources WHERE id = ?", created.resourceId,
@@ -256,7 +257,10 @@ describe("connector resources", () => {
     // exactly one resolve created the row, and every caller got the same id.
     expect(results.filter((result) => result.outcome === "created")).toHaveLength(1);
     expect(results.filter((result) => result.outcome === "existing")).toHaveLength(2);
-    expect(new Set(results.map((result) => result.resourceId)).size).toBe(1);
+    expect(new Set(results.map((result) => {
+      if (result.outcome === "connection_unavailable") throw new Error("unexpected_connection_refusal");
+      return result.resourceId;
+    })).size).toBe(1);
   });
 });
 
