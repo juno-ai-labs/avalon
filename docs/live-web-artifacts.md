@@ -102,14 +102,15 @@ barrier without adding each independent R2 round trip to the publication latency
 
 ### Sites built from structured data
 
-The site skill requires the same source-data procedure for initial publication
-and refreshes: complete connector reads, raw response files, scripted
-transformation, then comparison of every mapped field and source row before
-publication. Blank spreadsheet rows retain their positions; counts alone do not
-prove that copy, assets or other fields survived.
+The site skill delegates source-data handling to `using-external-structured-data`
+for both initial publication and refreshes: complete connector reads, raw
+response files, scripted transformation, then comparison of every mapped field
+and source row before publication. The shared skill owns this procedure for
+reports, imports and other outputs too. The site skill owns the destination's
+data format, recovery and publication checks.
 
 A connector response is not automatically a Terminal file. Agents use an
-exposed export/import path when one exists; otherwise the skill describes
+exposed export/import path when one exists; otherwise the shared skill describes
 copying each manageable raw JSON response through `write_file`. That fallback
 still passes through the model. Scripted validation proves the transformation
 against those saved inputs, not the fidelity of the transfer itself. A run that
@@ -635,9 +636,10 @@ The selector and trust boundaries are owned by
 
 ### 2026-10-22 — Preserve raw source data before building a site
 
-**What changed:** The site skill spells out raw-response transfer through
-`write_file`, source-row preservation and field-by-field validation for both
-initial builds and refreshes, including the limits of model-mediated copying.
+**What changed:** The site skill loads `using-external-structured-data` for
+raw-response transfer, source-row preservation and field-by-field validation in
+initial builds and refreshes. The general procedure lives in that shared skill;
+the site skill retains the site's data format and publication requirements.
 
 **Why:** A calendar builder read complete Sheet values but manually reconstructed
 37 posts, dropping populated copy and altering other fields while passing a
