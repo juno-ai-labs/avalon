@@ -179,10 +179,12 @@ malformed response causes one verification reprompt. This is a narrow judgment
 of stopping behavior, not a proof of factual correctness or task completeness.
 
 The question identifies Rally as the AI author of the candidate response and
-`@Rally` as a mention addressing that agent. Other named participants remain
-separate people or agents: their assignments do not become Rally's unfinished
-work unless Rally is also asked to act. An acknowledgement of an explicit
-instruction for Rally to wait or act after another participant or future event
+`@Rally` as a mention addressing that agent. Implicit requests and requests whose
+bot mention was removed still count; mentions may name recipients, subjects or
+connector tools rather than assignees. Work explicitly assigned only to another
+participant stays theirs. Non-message activations are judged against Rally's
+standing task, with missing task context classified as unclear. An acknowledgement
+of an explicit instruction for Rally to wait or act after another participant or future event
 is an answer/result. A separately requested immediate deliverable still has to
 be judged, even when the same message also tells Rally to wait afterward.
 
@@ -1604,9 +1606,7 @@ Run them with `pnpm --filter @rally/api test:workers` and the respective paths;
 `-t 'completion verification'` scopes the added runtime cases.
 
 The [premature-stop evaluation](../packages/agent-harness/evals/premature-stop/README.md#agent-identity-and-participant-addressing)
-adds live JEV regressions for agent identity, participant addressing and requested
-waiting. Its eight authored cases remain separate from the frozen corpus;
-deterministic provider doubles cover recovery mechanics, not these semantics.
+covers agent identity and addressing semantics through live JEV regressions.
 
 Sidekick catalog naming is covered by `apps/api/test/sidekick-presentation.test.ts`
 (`pnpm --filter @rally/api exec vitest run test/sidekick-presentation.test.ts`).
@@ -1749,13 +1749,14 @@ Pull request: [#1421](https://github.com/juno-ai-labs/avalon/pull/1421).
 ### 2026-10-22 — Identify the agent in completion judgments
 
 **What changed:** Completion verification identifies Rally and its mention syntax,
-scopes requested work to that agent, and distinguishes requested waiting from a
-blocker or an unfinished immediate task.
+scopes requested work to that agent without requiring a literal mention, and
+distinguishes requested waiting from a blocker or an unfinished immediate task.
+Connector and wakeup activity needs a resolved standing task before accepting a stop.
 
 **Why:** A production request assigned review to a person and explicitly told
-Rally to wait. The judge accepted Rally's acknowledgement at insufficient
-confidence, triggering a second acknowledgement from the same run. The judge
-had the conversation but no definition of which participant was the AI.
+Rally to wait. The judge accepted Rally's acknowledgement at 0.55 confidence,
+below the 0.70 stopping threshold, triggering a second acknowledgement from the
+same run. The judge had the conversation but no definition of which participant was the AI.
 
 **Considered and rejected:** Lowering the stopping threshold or bypassing checks
 on messages containing `@Rally`. Neither supplies the missing identity context,
