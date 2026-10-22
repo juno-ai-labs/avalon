@@ -12,7 +12,7 @@ import { __integrationTesting } from "../src/services/integrations";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import { boot, seedRun, seedWorkstreamRoot, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
-const WORKSPACE = asWorkspaceId("00000000-0000-7000-8000-00000000fa10");
+const WORKSPACE = asWorkspaceId("625b4efa-b784-45da-a06a-480d530e18ca");
 const USER = asUserId("00000000-0000-7000-8000-00000000fa11");
 const CONNECTION = "00000000-0000-7000-8000-00000000fa12";
 const FILE = "sheet-file-id-01";
@@ -137,6 +137,25 @@ describe("Sidekick external resource registration", () => {
     });
     await expect(register.execute({ pluginId: "plugin_google", resource: LINK }, context())).rejects.toThrow("no longer healthy or authorized");
     expect(await resourceCount()).toBe(0);
+  });
+
+  it("refuses folder registration instead of advertising a file-contents watch", async () => {
+    googleFile(200, { mimeType: "application/vnd.google-apps.folder" });
+    const { register } = await tools();
+    await expect(register.execute({ pluginId: "plugin_google", resource: FILE }, context()))
+      .rejects.toMatchObject({ code: "unsupported_capability" });
+    expect(await resourceCount()).toBe(0);
+  });
+
+  it("refuses a stale stored resource type instead of returning inconsistent relationships", async () => {
+    googleFile();
+    await workspace().resolveConnectorResource({ workspaceId: WORKSPACE, candidateResourceId: "00000000-0000-7000-8000-00000000fa17",
+      connectionId: CONNECTION, provider: "google", providerResourceId: FILE, resourceType: "drive_file",
+      title: "Old resource", canonicalUrl: LINK, at: new Date().toISOString() });
+    const { register } = await tools();
+    await expect(register.execute({ pluginId: "plugin_google", resource: LINK }, context()))
+      .rejects.toMatchObject({ code: "invalid_configuration", message: expect.stringContaining("metadata needs correction") });
+    expect(await resourceCount()).toBe(1);
   });
 
   it("rejects an unrecognized URL and undeclared arguments without a provider call", async () => {
