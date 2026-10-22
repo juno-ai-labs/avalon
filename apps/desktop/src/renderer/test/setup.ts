@@ -1,9 +1,13 @@
 import '@testing-library/jest-dom/vitest';
-import { configure } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { afterEach } from 'vitest';
 // jsdom ships no IndexedDB, and the composer's draft cache lives in one.
 import 'fake-indexeddb/auto';
 import { closeLocalCache } from '../lib/local-cache';
+
+// Capture the real timer before a test installs fake timers. Some fixtures restore
+// their clock in onTestFinished, which runs after this shared afterEach.
+const teardownSetTimeout = setTimeout;
 
 // An eviction forgets a conversation on disk from wherever it runs, so a test
 // that evicts under fake timers leaves the local cache holding a database open
@@ -11,7 +15,11 @@ import { closeLocalCache } from '../lib/local-cache';
 // worker that touches the cache would then hang on it. Dropping the connection
 // after every test makes the cache an environment fact rather than a hazard
 // each file has to know about.
-afterEach(() => {
+afterEach(async () => {
+  cleanup();
+  // Radix queues focus restoration during unmount. Finish that callback while
+  // its jsdom window still owns CustomEvent, before environment teardown.
+  await new Promise<void>((resolve) => teardownSetTimeout(resolve, 0));
   closeLocalCache();
 });
 
