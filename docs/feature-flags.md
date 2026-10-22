@@ -1068,6 +1068,29 @@ hiding the Notifications section.
 
 ## Changelog
 
+### 2026-10-21 — The pin list admits only models that run on Rally's own provider accounts
+
+**What changed:** Grok 4.7, Grok 4.5, Claude Opus 5.5 and Claude Sonnet 5.5
+left `AGENT_MODEL_OVERRIDES` the day they joined it. xAI now offers Grok 4.6
+alone, and the Anthropic group is gone.
+
+**Why:** Pinned sessions in production showed them running outside Rally's own
+accounts. Claude Opus 5.5 recorded `is_byok: false`: OpenRouter tried Google
+first and then served it from its own Claude Platform on AWS account. OpenRouter
+lists only xAI as a provider for Grok 4.7 and Grok 4.5, so neither can reach
+Rally's Azure key through it. GPT-6.1 Sol (Azure) and Gemini 4 Argon (Google)
+recorded `is_byok: true`, and Grok 4.6 runs on Rally's direct Azure binding.
+
+**Considered and rejected:** Keeping them with a note. A model that works in the
+picker gives no sign of whose account it ran on, so the list itself is where
+that has to be enforced.
+
+**Consequences:** A thread pinned to one of the four while they were listed now
+runs on the flag's model. Each can return once it runs on Rally's keys: Claude
+enabled in the Google Cloud project, or Azure Claude access added to
+OpenRouter; for Grok, a direct Azure binding like Grok 4.6's or an xAI key
+added to OpenRouter.
+
 ### 2026-10-21 — The pin list keeps each vendor's three newest models, and a pin is read as an open string
 
 **What changed:** `AGENT_MODEL_OVERRIDES` holds at most three models per

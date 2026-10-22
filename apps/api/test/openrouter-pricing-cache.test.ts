@@ -13,17 +13,13 @@ import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
 
 const NOW = Date.UTC(2026, 7, 30, 12);
 const EXPECTED_MODEL_IDS = [
-  "x-ai/grok-4.7",
   "x-ai/grok-4.6",
-  "x-ai/grok-4.5",
   "google/gemini-4-argon",
   "google/gemini-3.8-flash",
   "google/gemini-3.7-flash",
   "openai/gpt-6.1-sol",
   "openai/gpt-6-luna",
   "openai/gpt-5.6-sol",
-  "anthropic/claude-opus-5.5",
-  "anthropic/claude-sonnet-5.5",
   "deepseek/deepseek-v4.1-flash-1017",
   "deepseek/deepseek-v4.1-flash",
   "deepseek/deepseek-v4-pro",
