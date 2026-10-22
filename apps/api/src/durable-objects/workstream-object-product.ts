@@ -4987,11 +4987,7 @@ export class WorkstreamObjectProductService {
     }
     // Most messages change no participation. Stay synchronous on that path,
     // without reading identity/transfer state or contacting the grant owner.
-    // Counted before anything seats them: once participant authority has
-    // moved to the parent, preparation below projects them into the roster.
-    const participantCount = Number(first(this.storage.sql.exec<{ count: number }>(
-      `SELECT COUNT(*) AS count FROM participants WHERE status = 'active'`,
-    ))?.count ?? 0);
+    // Count new recipients before admission projects them into the roster.
     const participantAddedCount = new Set(confirmedParticipantUserIds.filter((userId) => !this.isParticipant(userId))).size;
     const missingParticipantUserIds = [...new Set([auth.userId, ...confirmedParticipantUserIds])]
       .filter((userId) => !this.isParticipant(userId));
@@ -5023,6 +5019,10 @@ export class WorkstreamObjectProductService {
     const connectorMentions = prepared.mentions
       .flatMap((mention) => mention.type === "connector" && mention.connectorType
         ? [mention.connectorType] : []);
+    // Admission has seated mentioned people: a handoff is no longer a solo chat.
+    const participantCount = Number(first(this.storage.sql.exec<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM participants WHERE status = 'active'`,
+    ))?.count ?? 0);
     let shouldInvoke = Boolean(input.forcedHarnessOrigin) || participantCount <= 1 || attachmentRows.length > 0 || Boolean(input.annotations?.some((a)=>a.comment.trim()));
     if (input.merge) {
       // A merge is a result posted for the thread's readers, never a request
