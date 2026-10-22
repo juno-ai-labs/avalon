@@ -519,7 +519,7 @@ The agent acts on clear scoped requests, infers safe defaults, batches independe
 
 Every address, identifier, URL, name, date, and quoted fact in an outward-facing write must be sourced from a tool result in the run, the authorized task context, or a person in the work stream. Inferring a default settles a choice among safe options and never supplies an unheld fact, so an unsourceable value is a missing identifier that routes to a lookup or a question rather than a plausible placeholder. Identifiers are threaded through unchanged from the result that produced them and from the same connection, and a result carrying only identifiers is a step rather than an answer. These are platform policy and belong here rather than in any one connector's plugin message, because the same failure is available through every connector that writes.
 
-Interactive multi-round work starts with a short plan and reports meaningful phase changes. Headless runs skip progress narration. Completions lead with the outcome, evidence, and blockers; private reasoning is never emitted.
+Substantial interactive work starts with a brief explanation of the approach. During execution, updates are reserved for blockers, unexpected delays, material changes of approach, or decisions requiring participants' attention. Routine tool calls, intermediate checks, and section-by-section writing are not narrated; findings stay in the completed result unless they materially change the task. Headless runs skip progress narration. Completions lead with the answer or result, use short, familiar words and active voice, and omit repetition, process recaps, and unsolicited next steps. They keep the detail and caveats the request needs, favor clear, natural language over rigid style rules, and stop once the request is satisfied. Private reasoning is never emitted.
 
 A run of a room's Sidekick posts its result itself, with `conversation_post` from the preloaded `rally:conversations` plugin, which defaults to the home named by the task context's `sidekick.homeConversationId`; the plugin's system message, not standing policy, names the tool. Nothing posts after the run. A Sidekick no room owns runs on the `self_delivery` surface, whose section tells the run that any sending its instructions ask for is its own work, done with its tools inside the run, and that it sends nothing when they ask for no delivery; left silent, a run that *describes* emailing a summary has not emailed it. [`conversation-tools.md`](conversation-tools.md) owns the plugin and [`automation-lifecycle.md`](automation-lifecycle.md) the home.
 
@@ -1715,6 +1715,16 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-10-22 — Updates and final responses carry only what participants need
+
+**What changed:** The work-stream prompt replaces its update-every-three-or-four-tool-calls instruction with a brief approach for substantial interactive work and updates only for blockers, unexpected delays, material changes of approach, or participant decisions. Routine checks and writing steps stay out of the chat; findings are saved for the completed result unless they materially change the task. Final responses lead with the result, use plain words and active voice, cut repetition and process recaps, and stop when the request is satisfied while retaining needed detail and caveats. Existing wording is shortened without removing requirements to keep the prompt within its fixed size budget.
+
+**Why:** A CSV business-case request accumulated progress messages that merely described intermediate checks and the next writing step, followed by a final message that repeated the published document's findings. Tool count was creating a reason to speak without creating information a participant needed, and the general response policy lacked a concise, direct writing rule.
+
+**Considered and rejected:** Keeping a fixed tool-call cadence with shorter updates still rewards routine narration. The existing work indicators already show that execution continues. A fixed response length would not account for requests that need substantial explanation; the rule preserves needed detail and makes clarity take precedence over strict brevity.
+
+**Consequences:** Narration remains available when expectations change, without a tool-count quota. Concision must not omit requested detail or material caveats. This changes prompt guidance only; reviewer acknowledgement loops and the feed's treatment of saved prose remain separate mechanisms.
 
 ### 2026-10-22 — Share structured-source handling across output types
 

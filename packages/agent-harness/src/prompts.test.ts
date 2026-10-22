@@ -199,7 +199,7 @@ describe("prompt renderers", () => {
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "fa52ea7409ed02b550bee47fa03bf94e87cb86dab2969825ffe5ba7bf1c1c0d3",
+        hash: "fe1c1fbcd07ec917317fb856289ea8a19f3095516518b4d49f83a4efd7c3103e",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -207,7 +207,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           sidekick: workstreamAutomation,
         }),
-        hash: "d2915e3119a727ccae1a27f598fc5a7ccd267eba2e883a5b5d7f32a693a6b4ca",
+        hash: "f61f5b669554456826f358b77e18df5809733b20c1029661c7e57832cbb8e8cb",
       },
       workstreamName: {
         actual: renderWorkstreamNameMessages({
@@ -789,9 +789,9 @@ describe("prompt renderers", () => {
       objective: "Introduce two people over email.",
     });
 
-    expect(prompt).toContain("must come from a tool result in this run");
-    expect(prompt).toContain("A value you cannot source requires a look up with a tool");
-    expect(prompt).toContain("**Never** write a plausible placeholder in its place");
+    expect(prompt).toContain("from this run's tool results, user input, or attached resources");
+    expect(prompt).toContain("Look up missing facts");
+    expect(prompt).toContain("never invent placeholders");
   });
 
   it("keeps workspace authority separate from external actor attribution and personal connectors", () => {
