@@ -126,13 +126,19 @@ is not there yet is such a failure, and the redelivery after the Channel row
 lands applies it.
 
 The sends that follow a directory change (socket publishes, Space snapshots,
-schedule refresh, watch reconciliation, archival notices to owned Sidekicks)
+schedule refresh, watch reconciliation, legacy archival reconciliation)
 cannot run inside a transaction. They are recorded as a
 `workspace_directory_followups` row in the same transaction, run straight after
 the commit, and taken by the alarm's `directory_followup` phase if that run did
 not finish. A row is parsed when it is read back; one that does not parse is
 kept as `failed` with its code (`directory_followup_unreadable` is logged) and
 never run again.
+
+Irreversible owned-Sidekick archival commits before those followups: Main's
+common snapshot retains `archiveGeneration` across restores, and a newly
+accepted generation cascades in the projection transaction. Breakout archival
+cascades in its canonical child registry transaction. A delayed archive
+projection cannot undo restoration or archive Sidekicks created afterward.
 
 Changed child Sidekick attachments and Sidekick execution transitions also
 record an activity-only refresh in this lane, which pushes count snapshots to
@@ -486,7 +492,7 @@ directory ([`scope-grant-directory.md`](scope-grant-directory.md)), invitations
 | --- | --- |
 | A local apply fails inside a parent write (a viewer row before its Channel row, a constraint, a schema rejection) | The parent transaction rolls back. A child's delivery throws and the Queue redelivers it; a request fails with the error. Nothing is left in the outbox. |
 | A write meets somebody the member table has never heard of | The transaction rolls back with `workspace_member_unknown`; the ids are learned with one D1 read each and the write runs once more. A second miss fails the write with that code. |
-| One Sidekick's pause or resume fails during a Channel archive | That Sidekick's transaction rolls back and `sidekick_owning_room_archival_failed` names it; the archive and every other Sidekick's pause stand. |
+| One Sidekick's archive fails in the canonical cascade | The Breakout registry change or Thread projection acceptance rolls back with its Sidekicks, preserving retryable work. Legacy post-commit reconciliation retains per-Sidekick rollback and logs `sidekick_owning_room_archival_failed`. |
 | A `parent_outbox` send fails | The row stays `pending`, with its code in `last_error_code`, and is due again on the alarm's retry schedule. `parent_effect_delivery_deferred` names the rows. |
 | A `parent_outbox` or `workspace_directory_followups` row does not parse (a follow-up row in the shape written before #989 is one), or an outbox row's destination refuses its shape | It is kept as `failed` with a `zodDiagnosticCode` naming the field, logged (`parent_outbox_row_unreadable`, `directory_followup_unreadable`), and never retried. An operator reads it with `run_workspace_sql` and deletes or repairs it. |
 | A directory row is found in `parent_outbox` | It is kept as `failed` with `parent_outbox_directory_row` and not applied. Directory rows apply in the parent's own transaction, so nothing writes one there. |
@@ -611,6 +617,28 @@ Space in an Organization now shares one SQLite database and one socket set.
   deleting those objects is its own decision.
 
 ## Changelog
+
+### 2026-10-22 — Preserve irreversible archive cascades across restore snapshots
+
+**What changed:** Main's common projection carries the root's monotonic
+`archiveGeneration`, retained on restore and backfilled by conversation schema
+81. Accepting a higher generation archives owned Sidekicks in the same
+transaction as the projection and receipt. Breakout archival applies the
+cascade alongside the canonical child registry write; compatibility fan-out
+reads that registry rather than a delayed Breakout directory projection.
+
+**Why:** Latest-state projection delivery can legitimately accept a restore
+before its archive. Dropping that older snapshot must not drop the permanent
+Sidekick archive, or later replay an archive against new work in a restored room.
+
+**Considered and rejected:** Relying on the latest `archivedAt` loses the
+transition. A separate event stream would duplicate the existing durable
+projection pipeline; a retained generation supplies the missing evidence.
+
+**Consequences:** A failed cascade rolls back projection acceptance, keeping
+the work retryable. Already accepted generations never repeat the cascade.
+Legacy senders remain accepted; existing room archive markers reconcile on
+their next lifecycle notice. Restoration does not restore Sidekicks.
 
 ### 2026-10-06 — Hosted Sidekick SQL reads and writes as one object
 

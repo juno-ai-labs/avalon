@@ -253,7 +253,7 @@ whole rather than splitting it.
   ledgers applied): the migrations, the attachment key, and the scope and title
   queries.
 - `apps/api/test-workers/conversation-tools.test.ts` (workerd): the home
-  projection, archive pausing a Breakout-homed Sidekick, attach refusal and
+  projection, archive cascading to a Breakout-homed Sidekick, attach refusal and
   idempotency, scope refusal, list re-admission after leaving a Breakout or
   after a membership ends, archived refusal, and an append that lands once
   without waking. A guest: refused an Organization-wide Channel without a

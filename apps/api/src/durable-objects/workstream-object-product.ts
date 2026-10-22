@@ -336,6 +336,7 @@ interface RootRow extends SqlRow {
   updated_at: number;
   completed_at: number | null;
   archived_at: number | null;
+  archive_generation: number;
   created_by_user_id: string | null;
   email_address: string | null;
   system_kind: "digest" | null;
@@ -707,6 +708,7 @@ export class WorkstreamObjectProductService {
 
   /** Fence the active loop in the same commit which makes its room unreadable. */
   private requestArchiveStopInTransaction(sql: SqlStorage, now: number): void {
+    sql.exec(`UPDATE workstream SET archive_generation = archive_generation + 1 WHERE id = 1 AND archived_at IS NULL`);
     sql.exec(
       `UPDATE substream_loops
           SET stop_requested_at = ?, stop_after_step_ordinal = step_ordinal,
@@ -3984,6 +3986,7 @@ export class WorkstreamObjectProductService {
       lastActivityAt: iso(root.last_people_activity_at)!,
       completedAt: iso(root.completed_at),
       archivedAt: iso(root.archived_at),
+      archiveGeneration: root.archive_generation,
       emailAddress: root.email_address,
       createdByUserId: root.created_by_user_id,
       titleStatus: root.title_status,
