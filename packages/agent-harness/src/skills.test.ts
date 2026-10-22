@@ -139,6 +139,29 @@ describe("skills in a run", () => {
     expect(second).toContain(`<skill_content name="${triage.name}">`);
   });
 
+  it("offers external structured-data guidance without requiring a provider or Terminal", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const responses = [
+      toolCallResponse("load_skill", { name: "using-external-structured-data" }),
+      textResponse("Ready to verify the source records."),
+    ];
+    const fetcher: typeof fetch = async (_request, init) => {
+      bodies.push(providerRequestView(JSON.parse(String(init?.body))) as Record<string, unknown>);
+      return responses.shift()!;
+    };
+
+    await expect(runHarness({
+      ...runInput(fetcher),
+      skills: [...BUILT_IN_SKILLS],
+      plugins: [],
+    })).resolves.toMatchObject({ status: "completed" });
+
+    expect(systemPrompt(bodies[0]!)).toContain("using-external-structured-data:");
+    expect(systemPrompt(bodies[1]!)).toContain('<skill_content name="using-external-structured-data">');
+    expect(toolNames(bodies[1]!)).not.toContain("run_command");
+    expect(toolNames(bodies[1]!)).not.toContain("write_file");
+  });
+
   it("offers seen-item tracking with Tables without requiring Sidekick authoring tools", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     const responses = [
