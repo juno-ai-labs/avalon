@@ -289,9 +289,9 @@ export class AgentCommunicationService {
     const thread = await this.threadPreparation.get();
     return listed.items
       .filter((sidekick) => sidekickOwnership(sidekick.owningWorkstreamId, thread) !== "another_thread")
-      .filter((sidekick) => !(this.input.parentKind === "automation" && sidekick.id === this.input.parentId))
       .map((sidekick) => ({
         sidekickId: sidekick.id, name: sidekick.name, description: sidekick.description,
+        isCurrentSidekick: this.input.parentKind === "automation" && sidekick.id === this.input.parentId,
         scope: sidekick.scope, ownedByThisWorkstream: sidekickOwnership(sidekick.owningWorkstreamId, thread) === "this_thread",
         canEdit: true, status: sidekick.status, nextRunAt: sidekick.nextRunAt, lastRunAt: sidekick.lastRunAt,
         agentId: agentIdForAddress({ parentKind: "automation", parentId: sidekick.id, substreamId: asSubstreamId("0") }),
@@ -301,9 +301,11 @@ export class AgentCommunicationService {
   /** Setup never falls back to a personal, organization or foreign-thread Sidekick. */
   async sidekicks() {
     if (this.input.executionPrincipal.type !== "user") return { sidekicks: [] };
-    const sidekicks = (await this.editableSidekicks()).filter((sidekick) => sidekick.ownedByThisWorkstream);
+    const sidekicks = (await this.editableSidekicks()).filter((sidekick) => sidekick.ownedByThisWorkstream || sidekick.isCurrentSidekick);
     const thread = await this.threadPreparation.get();
-    return { sidekicks, ...(sidekicks.length ? {} : { next: thread === null
+    return { sidekicks, ...(sidekicks.length ? {} : { next: this.input.automationRun
+      ? `You are already executing Sidekick ${this.input.automationRun.automationId}. An empty editable list does not mean it needs to be created. Complete this activation using its saved instructions.`
+      : thread === null
       ? "This conversation has no owning thread. Set up a thread-owned Sidekick from the intended thread."
       : "This thread has no editable Sidekicks. Create one here with create_sidekick (scope=workstream), then send setup instructions to its authoring agent." }) };
   }
