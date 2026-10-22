@@ -144,6 +144,8 @@ Regular and detached panels anchor feedback outside their scrolling content.
 Native sites show their existing still while an overlapping toast is present,
 including its exit. Gallery selection still owns and clears its copy feedback.
 
+PR: [#1393](https://github.com/juno-ai-labs/avalon/pull/1393).
+
 ### 2026-09-13 — One icon control for every copy affordance
 
 **What changed:** `useCopy` and `CopyButton` were added, with `CopyField` for a
