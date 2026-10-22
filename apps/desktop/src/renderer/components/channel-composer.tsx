@@ -114,7 +114,7 @@ export function ChannelComposer({ channelColor, channelId, channelName, channelS
   workspace: Workspace;
 }): React.JSX.Element {
   const { api } = useAppSession();
-  const runningSidekicks = useSidekickActivity(api, { parentKind: 'space', parentId: channelId, substreamId: '0' });
+  const runningSidekicks = useSidekickActivity({ parentKind: 'space', parentId: channelId, substreamId: '0' });
   const annotationDraft = useAnnotationDraft();
   const visible = useContext(ConversationVisibilityContext);
   const navigate = useNavigate();

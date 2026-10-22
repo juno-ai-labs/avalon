@@ -1,4 +1,3 @@
-import { SidekickActivitySchema, SidekickActivityTargetSchema } from "@rally/contracts";
 import { Hono } from "hono";
 import { zValidator } from "../middleware/validation";
 import {
@@ -58,9 +57,6 @@ automationRoutes.get("/workstream/:workstreamId", zValidator("param", z.object({
   await new AutomationService(c.env, getAuth(c))
     .listForWorkstream(c.req.valid("param").workstreamId),
 )));
-automationRoutes.get("/activity", zValidator("query", SidekickActivityTargetSchema), async (c) =>
-  c.json(SidekickActivitySchema.parse(await new AutomationService(c.env, getWorkspaceAuth(c))
-    .activity(c.req.valid("query")))));
 automationRoutes.get("/:id", zValidator("param", idParam), async (c) =>
   c.json(AutomationDetailSchema.parse(detailResponse(
     await new AutomationService(c.env, getWorkspaceAuth(c)).detail(c.req.valid("param").id),

@@ -2080,7 +2080,7 @@ function ConversationSurfaceContent({
     : null), [channelTranscript.data, id, originTurnId, visibleMembers]);
   // The Channel sends counts for all of its conversations; this composer
   // shows only the agents started from the conversation it belongs to.
-  const runningSidekicks = useSidekickActivity(api, id && parentKind === 'workstream'
+  const runningSidekicks = useSidekickActivity(id && parentKind === 'workstream'
     ? { parentKind, parentId: id, substreamId } : null);
   const backgroundAgents = useQuery({
     queryKey: ['workstream-background-agents', id], queryFn: skipToken,
