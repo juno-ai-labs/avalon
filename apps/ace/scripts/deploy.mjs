@@ -161,6 +161,7 @@ await Promise.all([
   ensureModelFlag('agent-model-session-import', 'Drives the person\'s desktop browser (page script, page outline, screenshots, input) to read a ChatGPT or Claude conversation and its files into a new Channel. Must accept images.', 'openai/gpt-6.1-sol', ['google/gemini-3.8-flash']),
   ensureModelFlag('agent-model-suggestion-draft', 'Writes the words a conversation suggestion carries after the classifier has judged a settled turn worth carrying up or breaking out: a merge note for the parent readers, or a Breakout opening prompt and subject. Runs only on a confident positive, after the chip is shown.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.8-flash']),
   ensureModelFlag('agent-model-memory-sweep', 'Reads a window of a Thread, Breakout or Sidekick conversation after it settles and decides which facts Rally should remember, revise or retract; the judgment is what a colleague would need later, so it runs on a strong model.', 'openai/gpt-6.1-sol', ['google/gemini-3.8-flash']),
+  ensureModelFlag('agent-model-sidekick-authoring', 'Creates and revises Sidekick definitions in their authoring conversations, including event bindings, schedules, tools, and durable run instructions.', 'openai/gpt-6.1-sol', ['google/gemini-3.8-flash']),
 ]);
 await verifyRuntimeQueuePermissions({ accountId, token: aceRuntimeToken });
 
