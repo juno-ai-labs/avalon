@@ -819,6 +819,39 @@ describe("a hosted Sidekick", () => {
       .rejects.toThrow(/no such table: connector_connections/u);
   });
 
+  it.each(["plugin_mcp_rally_engineering_3", "plugin_custom_mcp_3"])(
+    "binds and reclaims a named MCP connection through %s",
+    async (pluginId) => {
+      await runInDurableObject(workspaceStub(), (_instance, state) => {
+        state.storage.sql.exec(
+          `INSERT INTO connector_connections
+            (id, workspace_id, connector_type, scope, display_name, granted_scopes_json,
+             status, cursor_json, config_json, created_at, updated_at, model_plugin_id)
+           VALUES (?, ?, 'custom_mcp', 'workspace', 'Rally Engineering', '["custom_mcp.tools"]',
+             'healthy', '{}', '{}', ?, ?, 'plugin_custom_mcp_3')`,
+          SLACK_CONNECTION_ID, WORKSPACE_ID, NOW, NOW,
+        );
+      });
+      await createDraft();
+      await submit({ ...DEFINITION,
+        recommendedPlugins: [{ pluginId, recommendedTools: [], reason: "Inspect Rally" }],
+      });
+      expect(await apply()).toMatchObject({
+        lifecycle: "active", connectorBindings: { [pluginId]: SLACK_CONNECTION_ID },
+      });
+      // A stale binding must be repaired from the same name-aware directory
+      // used when accepting a new definition.
+      await runInDurableObject(workspaceStub(), (_instance, state) => {
+        state.storage.sql.exec(`UPDATE automation_directory SET connector_bindings_json = ? WHERE automation_id = ?`,
+          JSON.stringify({ [pluginId]: "00000000-0000-7000-8000-00000000ad41" }), AUTOMATION_ID);
+      });
+      expect(await workspaceStub().sidekickClaimExecutionPrincipal({ ...addressed(), actor: actor() }))
+        .toMatchObject({ reboundPluginIds: [pluginId], unboundProviders: [] });
+      expect(JSON.parse((await automationRow()).connector_bindings_json!))
+        .toEqual({ [pluginId]: SLACK_CONNECTION_ID });
+    },
+  );
+
   it.each([
     { pluginIds: ["plugin_google_mail_calendar", "plugin_google_drive"], retained: ["gmail.read", "calendar.read", "drive.read", "docs.read", "sheets.read"] },
     { pluginIds: ["plugin_google"], retained: ["gmail.read", "calendar.read", "drive.read", "docs.read", "sheets.read"] },

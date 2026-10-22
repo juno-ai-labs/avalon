@@ -2016,12 +2016,12 @@ function createAvalonAutomationsPlugin(
         const plugins = new Map<string, string[]>();
         if (connectionIds.length > 0) {
           const rows = await env.DB.prepare(
-            `SELECT id, connector_type, model_plugin_id, granted_scopes_json FROM connector_connections
+            `SELECT id, connector_type, model_plugin_id, display_name, granted_scopes_json FROM connector_connections
               WHERE workspace_id = ? AND id IN (${connectionIds.map(() => "?").join(", ")})`,
-          ).bind(input.workspaceId, ...connectionIds).all<{ id: string; connector_type: string; model_plugin_id: string | null; granted_scopes_json: string }>();
+          ).bind(input.workspaceId, ...connectionIds).all<{ id: string; connector_type: string; model_plugin_id: string | null; display_name: string; granted_scopes_json: string }>();
           for (const row of rows.results ?? []) if (row.model_plugin_id) {
             plugins.set(row.id, connectorPluginViews(row.connector_type, row.model_plugin_id,
-              parseJson<string[]>(row.granted_scopes_json, [])).map((view) => view.modelPluginId));
+              parseJson<string[]>(row.granted_scopes_json, []), row.display_name).map((view) => view.modelPluginId));
           }
         }
         return {
@@ -2167,6 +2167,7 @@ async function loadAutomationCreatorPluginCatalog(
   const seen = new Set<string>();
   const rows = (result.results ?? []).flatMap((row) => connectorPluginViews(
     String(row.connector_type), String(row.model_plugin_id ?? ""), parseJson<string[]>(row.granted_scopes_json, []),
+    typeof row.display_name === "string" ? row.display_name : undefined,
   ).map((view): Record<string, unknown> & ConnectorPluginView => ({ ...row, ...view })));
   for (const row of rows) {
     const modelPluginId = row.modelPluginId;
@@ -5617,6 +5618,7 @@ async function loadHarnessTools(
   const seenModelPluginIds = new Set<string>();
   const orderedConnectionRows = (connectionRows.results ?? []).flatMap((row) => connectorPluginViews(
     String(row.connector_type), String(row.model_plugin_id ?? ""), parseJson<string[]>(row.granted_scopes_json, []),
+    typeof row.display_name === "string" ? row.display_name : undefined,
   ).map((view): Record<string, unknown> & ConnectorPluginView => ({ ...row, ...view }))).sort((left, right) => {
     const priority = connectorSelectionPriority(left, input.executionPrincipal, attached)
       - connectorSelectionPriority(right, input.executionPrincipal, attached);
@@ -5662,7 +5664,8 @@ async function loadHarnessTools(
     // tools this connection actually exposes; a second Google credential is
     // `google_2_…`, and an example naming the first one would not run.
     const shortWireName = stableConnectionWireName(row.credentialModelPluginId);
-    const defaultSelected = connectorPluginBindingViews(String(row.connector_type), row.credentialModelPluginId, grantedScopes)
+    const defaultSelected = connectorPluginBindingViews(String(row.connector_type), row.credentialModelPluginId, grantedScopes,
+      typeof row.display_name === "string" ? row.display_name : undefined)
       .some((view) => defaultModelPluginIds.has(view.modelPluginId));
     const presentation = connectorPluginPresentation(String(row.connector_type), grantedScopes, shortWireName, {
       displayName: adapter.manifest.displayName,

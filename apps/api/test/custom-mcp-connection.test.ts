@@ -1,9 +1,12 @@
-import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId, type WorkstreamWorkflowInput } from "@rally/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env } from "../src/env";
 import { decryptString } from "../src/lib/crypto";
+import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import { ConnectionService } from "../src/services/connection-service";
+import { __integrationTesting } from "../src/services/integrations";
+import { testSubstreamAgentsBinding, testWorkstreamObjectStore } from "./helpers/durable-authority";
 import {
   createCloudflareTestBinding,
   createTestDurableObjectId,
@@ -39,6 +42,47 @@ afterEach(() => {
 });
 
 describe("custom MCP connections", () => {
+  it("identifies existing named servers in run and Sidekick catalogs without changing their tool prefixes", async () => {
+    const { auth, database, env } = fixture();
+    stubMcpServer([READ_TOOL]);
+    const service = new ConnectionService(env, auth);
+    const connections = [];
+    for (const [index, name] of ["Cloudflare Observability", "Rally Engineering"].entries()) {
+      const { connection } = await service.createCustomMcp({
+        displayName: name, scope: "workspace", serverUrl: `https://mcp${index}.example.test/mcp`,
+        requestHeaders: { "X-Api-Key": "secret-value" }, toolPolicy: "all_tools",
+      });
+      connections.push(connection);
+    }
+    const input: WorkstreamWorkflowInput = {
+      region: "global", workspaceId: WORKSPACE_ID, parentKind: "workstream",
+      parentId: asWorkstreamId("00000000-0000-4000-8000-000000000004"),
+      loopId: "custom-mcp-named-catalog", harnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000005"),
+      triggerMessageId: null, activityId: null, executionPrincipal: { type: "user", userId: USER_ID }, reason: "test",
+    };
+    const runtimeEnv = withWorkspaceRuntimeDatabase(createTestEnv({ ...env,
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(testWorkstreamObjectStore()),
+    }), WORKSPACE_ID);
+    const selected = await __integrationTesting.loadHarnessTools(runtimeEnv, input);
+    const plugins = selected.plugins.filter((plugin) => plugin.connectorType === "custom_mcp");
+    expect(plugins.map((plugin) => ({ id: plugin.modelId, wire: plugin.shortWireName }))).toEqual([
+      { id: "plugin_mcp_cloudflare_observability_1", wire: "custom_mcp" },
+      { id: "plugin_mcp_rally_engineering_2", wire: "custom_mcp_2" },
+    ]);
+    const engineering = plugins[1]!;
+    expect(selected.frozenConnections.get(engineering.canonicalId)).toMatchObject({
+      connectionId: connections[1]!.id, credentialModelPluginId: "plugin_custom_mcp_2",
+    });
+    const tools = await engineering.loadTools!();
+    expect(tools.map((tool) => tool.definition.name)).toEqual(["search_docs"]);
+    const catalog = await __integrationTesting.loadAutomationCreatorPluginCatalog(runtimeEnv, WORKSPACE_ID, USER_ID);
+    expect(catalog.map((plugin) => plugin.pluginId)).toEqual([
+      "plugin_mcp_cloudflare_observability_1", "plugin_mcp_rally_engineering_2",
+    ]);
+    expect(database.prepare("SELECT model_plugin_id FROM connector_connections ORDER BY created_at").all())
+      .toEqual([{ model_plugin_id: "plugin_custom_mcp" }, { model_plugin_id: "plugin_custom_mcp_2" }]);
+  });
+
   it("stores a header-authenticated server only once it answers, and reports its live catalog", async () => {
     const { auth, database, env } = fixture();
     const requests: Array<{ url: string; apiKey: string | null }> = [];
@@ -420,6 +464,8 @@ function fixture() {
   insertUser.run(MEMBER_ID, "custom-mcp-member", "member@example.test", "Workspace Member", at, at);
   regional.prepare(`INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
     VALUES (?, 'Custom MCP', 'custom-mcp', 'global', ?, ?, ?)`).run(WORKSPACE_ID, USER_ID, at, at);
+  regional.prepare(`INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+    VALUES (?, ?, 'owner', 'active', ?)`).run(WORKSPACE_ID, USER_ID, at);
   const workspace = createTestWorkspaceDO({
     workspaceId: WORKSPACE_ID,
     regionalDatabase: regional,
