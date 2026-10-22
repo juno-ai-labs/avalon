@@ -466,6 +466,48 @@ describe('WorkspaceSocketProvider', () => {
     }));
   });
 
+  it.each(['refused', 'failed'] as const)('waits for a fresh preview instead of retrying cached open access when the check is %s', async (outcome) => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let finishPreview!: (preview: ConversationAccessPreview) => void;
+    let failPreview!: (error: Error) => void;
+    const pending = new Promise<ConversationAccessPreview>((resolve, reject) => { finishPreview = resolve; failPreview = reject; });
+    const open: ConversationAccessPreview = {
+      kind: 'channel', title: 'Launch plan', appearance: null, markId: 'thread-1', access: 'open',
+    };
+    const api = {
+      getWorkspaceSocketTicket: async () => ({
+        url: 'wss://api.rally.test/socket/workspaces/workspace-1', ticket: 'workspace-ticket',
+        protocols: socketTicketProtocols('workspace-ticket'),
+      }),
+      conversationAccessPreview: vi.fn().mockResolvedValueOnce(open).mockImplementation(() => pending),
+      requestConversationAccess: async () => undefined,
+    };
+    const onRetry = vi.fn();
+    render(<QueryClientProvider client={queryClient}>
+      <WorkspaceSocketProvider region="global" api={api} workspaceId="00000000-0000-7000-8000-000000000001">
+        <ConversationAccessRequest api={api} parentId="thread-1" substreamId="0"
+          fallback={<p>Thread unavailable</p>} onRetry={onRetry} />
+      </WorkspaceSocketProvider>
+    </QueryClientProvider>);
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => {
+      socket.open();
+      socket.message({ type: 'workspace_reach_changed', occurredAt: '2026-10-22T00:00:00.000Z',
+        userIds: ['00000000-0000-7000-8000-000000000003'] });
+    });
+    await vi.waitFor(() => expect(api.conversationAccessPreview).toHaveBeenCalledTimes(2), { timeout: 5_000 });
+    expect(onRetry).not.toHaveBeenCalled();
+    await act(async () => {
+      if (outcome === 'failed') failPreview(new Error('access check failed'));
+      else finishPreview({ ...open, access: 'requestable' });
+      await pending.catch(() => undefined);
+    });
+    if (outcome === 'failed') await screen.findByText('Thread unavailable');
+    else await screen.findByRole('button', { name: 'Request access' });
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+
   it.each(['reach', 'reconnect'] as const)('replaces an initial preview still pending when a %s nudge arrives', async (change) => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     let finishStalePreview!: (preview: ConversationAccessPreview) => void;
