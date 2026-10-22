@@ -374,7 +374,7 @@ export function createTerminalPlugin(
     shortWireName: "",
     displayName: "Terminal",
     searchAliases: ["code", "shell", "bash", "python", "javascript", "typescript", "sqlite", "git", "pull request", "artifact"],
-    description: "Get an isolated Linux sandbox that allows you to write/run code, edit files, create artifacts/documents, work in git repositories, and open GitHub pull requests.",
+    description: "Run Bash, Python, or JavaScript in a Linux sandbox to analyze data, edit files, create documents, publish or update hosted websites, and work with Git repositories and GitHub pull requests.",
     systemMessage,
     tools,
     preload: false,
