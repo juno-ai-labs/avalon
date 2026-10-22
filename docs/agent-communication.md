@@ -40,7 +40,9 @@ ownership independently. Repeating those operations preserves existing records.
 Membership has no removal operation.
 
 Discovery reads a team's roster after checking the requester belongs to it.
-Send requires a shared team. The host prefers the incoming exchange's scope;
+Send requires a shared team. Delivery refuses `agent_self_message` when the
+resolved recipient is the sender, before admitting input or waking a loop. The
+host prefers the incoming exchange's scope;
 otherwise the stable first common team supplies the scope. Reply uses the
 received message's original sender and team, and only its recipient can reply.
 Replies to Sidekick authoring conversations and their inclusion in teammate
@@ -364,6 +366,8 @@ grant-only contact. Complete desktop behavior remains an implementation gate.
 
 Discovery includes the Sidekick this conversation configures or executes and
 marks it with `isCurrentSidekick`, while preserving the existing access filters.
+Self-addressed sends and replies are refused before input admission so listing
+itself cannot wake it with its own setup instructions.
 A scheduled calendar run received an empty list because discovery excluded
 itself, then followed the result’s create instruction and installed a duplicate.
 Returning its identity prevents that misleading absence without hiding valid

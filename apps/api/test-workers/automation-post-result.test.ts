@@ -541,7 +541,7 @@ describe("a room Sidekick's run and the room's agents", () => {
       .toContain(`This conversation configures Sidekick ${sidekickId}`);
   });
 
-  it("lists a personal Sidekick's own identity without unrelated setup candidates", async () => {
+  it("lists a personal Sidekick's own identity without unrelated setup candidates or self-delivery", async () => {
     const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
       parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
       harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
@@ -562,6 +562,15 @@ describe("a room Sidekick's run and the room's agents", () => {
     expect(await own.sidekicks()).toEqual({ sidekicks: [expect.objectContaining({
       sidekickId: personal.sidekickId, isCurrentSidekick: true, scope: "personal", ownedByThisWorkstream: false,
     })] });
+    await expect(own.send({ agentId: personal.agentId, message: "Configure this Sidekick", attachmentIds: [] },
+      { ...context, effectIntentId: crypto.randomUUID() })).rejects.toMatchObject({ code: "agent_self_message" });
+    const authoring = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, personal.sidekickId),
+    ));
+    expect(await runInDurableObject(authoring, (_instance, state) => ({
+      runs: state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM runs").one().n,
+      pending: state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM pending_loop_input_mailbox").one().n,
+    }))).toEqual({ runs: 0, pending: 0 });
   });
 
   it("identifies the current Sidekick in activation discovery and model context", async () => {
