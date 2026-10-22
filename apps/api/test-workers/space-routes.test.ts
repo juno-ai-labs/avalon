@@ -17,6 +17,7 @@ import {
   createExecutionContext,
   reset,
   runInDurableObject,
+  runDurableObjectAlarm,
   waitOnExecutionContext,
 } from "cloudflare:test";
 import { SignJWT } from "jose";
@@ -41,10 +42,11 @@ import { createApp } from "../src/app";
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { AuthContext, Env } from "../src/env";
 import { personalSpaceIdFor } from "../src/durable-objects/workspace-space-protocol";
-import { seatOrganizationMember } from "../src/services/space-bootstrap-service";
+import { seatOrganizationMember, SpaceBootstrapService, spaceBootstrapDriver } from "../src/services/space-bootstrap-service";
 import { SpaceService } from "../src/services/space-service";
 import { seatSpaceInvitee } from "../src/services/workspace-realtime-service";
 import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
+import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
 import { deliverEffectsToWorkspace } from "./helpers/conversation-effects";
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
@@ -266,6 +268,40 @@ async function conversationInitialized(parentId: string): Promise<boolean> {
 async function channelSpaceIds(workstreamId: WorkstreamId): Promise<string[]> {
   const placed = await workspace().channelSpaces({ workspaceId: WORKSPACE_ID, userId: OWNER, workstreamId });
   return [...placed.spaceIds].sort();
+}
+
+/** Deliver the durable archive commands independently of the HTTP request. */
+async function resumeChannelArchives(workstreamId: WorkstreamId): Promise<string> {
+  const read = await workspace().runInspectionSql({
+    sql: "SELECT operation_id FROM space_intents WHERE kind = 'archive' AND workstream_id = ? ORDER BY created_at DESC",
+    bindings: [workstreamId],
+  });
+  const operationId = String(read.rows[0]?.operation_id);
+  expect(read.rows.length).toBeGreaterThan(0);
+  await workspace().resumeSpaceIntent({ auth: OWNER_AUTH, operationId });
+  return operationId;
+}
+
+/** Drive the existing repair phases, whose Queue is deliberately held in this suite. */
+async function finishHomeRepair(): Promise<void> {
+  const driver = await spaceBootstrapDriver(routeEnv(), WORKSPACE_ID, "global");
+  if (!driver) throw new Error("home repair has no active member");
+  const service = new SpaceBootstrapService(routeEnv(), driver);
+  for (;;) {
+    const read = await workspace().runInspectionSql({
+      sql: "SELECT phase, cursor, blocked_json FROM space_bootstrap WHERE id = 1", bindings: [],
+    });
+    const row = read.rows[0];
+    if (!row) throw new Error("home repair state missing");
+    expect(JSON.parse(String(row.blocked_json))).toEqual([]);
+    if (row.phase === "complete") return;
+    const cursor = row.cursor === null ? null : asWorkstreamId(String(row.cursor));
+    if (row.phase === "general" || row.phase === "pending") await service.runGeneral();
+    else if (row.phase === "preflight") await service.runPreflight(cursor);
+    else if (row.phase === "memberships") await service.runMemberships(cursor);
+    else if (row.phase === "finalize") await service.runFinalize();
+    else throw new Error(`unexpected home repair phase ${String(row.phase)}`);
+  }
 }
 
 /** The audience `GET /workstreams/:id/access` reports as the Channel's own. */
@@ -842,11 +878,158 @@ describe("the other Space operations", () => {
     expect(await conversationInitialized(created.id)).toBe(false);
   });
 
+  it("archives exclusive threads without moving them to General, while shared threads stay active", async () => {
+    const opened = await workspace().openGeneralSpace({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: asSpaceId(crypto.randomUUID()),
+    });
+    if (!opened.ok || "absent" in opened) throw new Error("openGeneralSpace refused");
+    const channel = await createSpace("Blog");
+    const other = await createSpace("Editorial");
+    const exclusive = await createChannel("exclusive-calendar", [asSpaceId(channel.id)]);
+    const shared = await createChannel("shared-calendar", [asSpaceId(channel.id), asSpaceId(other.id)]);
+    await deliverEffectsToWorkspace(env, spaceConversation(exclusive));
+    await deliverEffectsToWorkspace(env, spaceConversation(shared));
+
+    expect(await request(`/spaces/${channel.id}/archive`, OWNER_AUTH, {}, "POST"))
+      .toMatchObject({ status: 200, body: { status: "archived" } });
+
+    const lifecycle = (id: string) => runInDurableObject(spaceConversation(id), (_instance, state) =>
+      state.storage.sql.exec<{ exact_state: string; archived: number }>(
+        "SELECT exact_state, archived_at IS NOT NULL AS archived FROM workstream WHERE id = 1",
+      ).one());
+    // Returning the Channel result does not wait for any thread authority.
+    expect(await lifecycle(exclusive)).toEqual({ exact_state: "idle", archived: 0 });
+    await resumeChannelArchives(exclusive);
+    expect(await lifecycle(exclusive)).toEqual({ exact_state: "archived", archived: 1 });
+    expect(await lifecycle(shared)).toEqual({ exact_state: "idle", archived: 0 });
+    await deliverEffectsToWorkspace(env, spaceConversation(exclusive));
+    expect(await channelSpaceIds(exclusive)).not.toContain(opened.space.id);
+    expect(await channelSpaceIds(shared)).toEqual([other.id]);
+    expect(await workspace().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: exclusive, userId: OWNER }))
+      .toMatchObject({ authorized: true, archived: true });
+
+    expect(await request(`/spaces/${channel.id}/restore`, OWNER_AUTH, {}, "POST"))
+      .toMatchObject({ status: 200, body: { status: "active" } });
+    expect(await lifecycle(exclusive)).toEqual({ exact_state: "archived", archived: 1 });
+    expect(await channelSpaceIds(shared)).toEqual([channel.id, other.id].sort());
+  });
+
+  it("replays an interrupted Channel archive without re-archiving a thread restored afterwards", async () => {
+    const channel = await createSpace("Blog");
+    const thread = await createChannel("archive-receipt", [asSpaceId(channel.id)]);
+    await deliverEffectsToWorkspace(env, spaceConversation(thread));
+    expect((await request(`/spaces/${channel.id}/archive`, OWNER_AUTH, {}, "POST")).status).toBe(200);
+    await resumeChannelArchives(thread);
+    await deliverEffectsToWorkspace(env, spaceConversation(thread));
+
+    const intent = await workspace().runInspectionSql({
+      sql: "SELECT operation_id, state FROM space_intents WHERE kind = 'archive' AND workstream_id = ?",
+      bindings: [thread],
+    });
+    expect(intent.rows).toEqual([{ operation_id: expect.any(String), state: "settled" }]);
+    const operationId = String(intent.rows[0]?.operation_id);
+    // The thread committed, but WorkspaceDO died before saving its receipt.
+    await workspace().runInspectionSql({
+      sql: "UPDATE space_intents SET state = 'pending' WHERE operation_id = ?", bindings: [operationId],
+    });
+    expect((await request(`/workstreams/${thread}`, OWNER_AUTH, { archived: false }, "PATCH")).status).toBe(200);
+    await deliverEffectsToWorkspace(env, spaceConversation(thread));
+
+    expect(await workspace().resumeSpaceIntent({ auth: OWNER_AUTH, operationId }))
+      .toEqual({ ok: true, outcome: "settled" });
+    expect(await runInDurableObject(spaceConversation(thread), (_instance, state) =>
+      state.storage.sql.exec<{ archived: number }>(
+        "SELECT archived_at IS NOT NULL AS archived FROM workstream WHERE id = 1",
+      ).one())).toEqual({ archived: 0 });
+    expect(await workspace().runInspectionSql({
+      sql: "SELECT state FROM space_intents WHERE operation_id = ?", bindings: [operationId],
+    })).toMatchObject({ rows: [{ state: "cancelled" }] });
+    await finishHomeRepair();
+    const general = await new SpaceService(routeEnv(), OWNER_AUTH).ensureGeneral();
+    expect(await channelSpaceIds(thread)).toContain(general.id);
+  });
+
+  it("replays a lost archive reply with the same command hash after retry metadata changes", async () => {
+    const channel = await createSpace("Blog");
+    const thread = await createChannel("archive-hash", [asSpaceId(channel.id)]);
+    await deliverEffectsToWorkspace(env, spaceConversation(thread));
+    expect((await request(`/spaces/${channel.id}/archive`, OWNER_AUTH, {}, "POST")).status).toBe(200);
+    // Exercise actual alarm delivery, not only the resume RPC.
+    await workspace().runInspectionSql({
+      sql: "UPDATE space_intents SET not_before = 0 WHERE workstream_id = ?", bindings: [thread],
+    });
+    await runDurableObjectAlarm(workspace());
+    const operationId = await resumeChannelArchives(thread);
+    // Mutable resume metadata is not part of the archive command's identity.
+    await workspace().runInspectionSql({
+      sql: "UPDATE space_intents SET state = 'pending', cursor = 'recovered' WHERE operation_id = ?", bindings: [operationId],
+    });
+    await resumeChannelArchives(thread);
+    expect(await workspace().runInspectionSql({
+      sql: "SELECT state, last_error_code FROM space_intents WHERE operation_id = ?", bindings: [operationId],
+    })).toMatchObject({ rows: [{ state: "settled", last_error_code: null }] });
+  });
+
+  it.each(["restore", "share"] as const)("cancels an undelivered thread archive after a %s", async (change) => {
+    const channel = await createSpace("Blog");
+    const other = await createSpace("Editorial");
+    const thread = await createChannel(`archive-superseded-${change}`, [asSpaceId(channel.id)]);
+    await deliverEffectsToWorkspace(env, spaceConversation(thread));
+    expect((await request(`/spaces/${channel.id}/archive`, OWNER_AUTH, {}, "POST")).status).toBe(200);
+    if (change === "restore") {
+      expect((await request(`/spaces/${channel.id}/restore`, OWNER_AUTH, {}, "POST")).status).toBe(200);
+    } else {
+      expect(await workspace().addSpaceChannel({
+        auth: OWNER_AUTH, spaceId: asSpaceId(other.id), workstreamId: thread,
+      })).toMatchObject({ ok: true });
+    }
+    const operationId = await resumeChannelArchives(thread);
+    expect(await runInDurableObject(spaceConversation(thread), (_instance, state) =>
+      state.storage.sql.exec<{ archived: number }>("SELECT archived_at IS NOT NULL AS archived FROM workstream WHERE id = 1").one()))
+      .toEqual({ archived: 0 });
+    expect(await workspace().runInspectionSql({
+      sql: "SELECT state, receipts_json FROM space_intents WHERE operation_id = ?", bindings: [operationId],
+    })).toMatchObject({ rows: [{ state: "settled", receipts_json: '["archive_superseded"]' }] });
+    expect(await channelSpaceIds(thread)).toContain(change === "restore" ? channel.id : other.id);
+  });
+
+  it.each(["Main access", "Organization membership"] as const)("settles a permanent %s refusal and repairs the live thread's home", async (revoked) => {
+    const channel = await createSpace("Blog");
+    const thread = await createChannel("archive-access-revoked", [asSpaceId(channel.id)], { participantUserIds: [MEMBER] });
+    await deliverEffectsToWorkspace(env, spaceConversation(thread));
+    // Hold this delivery in durable scheduling state before it is staged. The
+    // real alarm can run while grant revocation awaits its participant projection.
+    // Explicit resume below ignores not_before and exercises the refusal itself.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`CREATE TRIGGER hold_archive_delivery AFTER INSERT ON space_intents
+        WHEN NEW.kind = 'archive'
+        BEGIN UPDATE space_intents SET not_before = 253402300799000 WHERE operation_id = NEW.operation_id; END`);
+    });
+    expect((await request(`/spaces/${channel.id}/archive`, OWNER_AUTH, {}, "POST")).status).toBe(200);
+    if (revoked === "Main access") {
+      // Remove the owning-Thread and Main grants together, holding the directory effect.
+      await new WorkstreamObjectClient(routeEnv(), OWNER_AUTH, thread).removeParticipant(OWNER, { owningThread: true });
+    } else {
+      await changeRelationships(env, WORKSPACE_ID, [OWNER],
+        env.DB.prepare("UPDATE workspace_members SET status = 'suspended' WHERE workspace_id = ? AND user_id = ?")
+          .bind(WORKSPACE_ID, OWNER));
+    }
+    const operationId = await resumeChannelArchives(thread);
+    expect(await workspace().runInspectionSql({
+      sql: "SELECT state, last_error_code FROM space_intents WHERE operation_id = ?", bindings: [operationId],
+    })).toMatchObject({ rows: [{ state: "settled",
+      last_error_code: revoked === "Main access" ? "workstream_not_found" : "space_intent_requester_inactive" }] });
+    await deliverEffectsToWorkspace(env, spaceConversation(thread));
+    await finishHomeRepair();
+    const general = await new SpaceService(routeEnv(), MEMBER_AUTH).ensureGeneral();
+    expect(await workspace().channelSpaces({ workspaceId: WORKSPACE_ID, userId: MEMBER, workstreamId: thread }))
+      .toMatchObject({ spaceIds: [general.id] });
+  });
+
   it("archives and restores a Space", async () => {
     const general = await createSpace("Everything");
     const created = await createSpace("Hiring");
-    // Two Spaces, so the archive is not refused `space_membership_final`: the
-    // Channel keeps a home when this one closes.
+    // A shared thread stays active in its other Channel.
     const workstreamId = await createChannel("two-homes", [
       asSpaceId(general.id), asSpaceId(created.id),
     ]);

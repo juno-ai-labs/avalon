@@ -42,7 +42,6 @@ import {
   mainOpenableSql,
   member,
   channelListedSql,
-  organizationWide,
   organizationWideSql,
   spaceListedSql,
   type AccessClass,
@@ -3770,31 +3769,17 @@ export class WorkspaceSpaceStorage {
     });
   }
 
-  /**
-   * Archive a Channel container, first adding to General every live thread
-   * that would otherwise be left in no Channel, all in one transaction.
-   * Only Organization-wide threads the archiver may list move; any other
-   * stranded thread keeps the archive refused.
-   *
-   * A thread started from a Channel's composer lives in that Channel alone,
-   * so refusing those (`space_membership_final`) would refuse nearly every
-   * archive. General is where every member already looks, and a restore puts
-   * the thread back in this Channel too. Without a General (an Organization
-   * still opening) the refusal stands. Answers which threads moved, so the
-   * caller can publish General's change.
-   */
+  /** Archive a Channel and durably request normal archival of its exclusive threads. */
   archive(
-    workspaceId: string,
     userId: string,
     spaceId: string,
     now = Date.now(),
-  ): { result: WorkspaceSpaceMutationResult; rehomed: string[] } {
-    // A refusal throws out of the transaction so the threads already added
-    // to General roll back with it: a refused archive changes nothing.
+  ): WorkspaceSpaceMutationResult {
     try {
       return this.storage.transactionSync(() => {
-        const rehomed = this.rehomeStrandedInGeneral(workspaceId, userId, spaceId, now);
-        const prepared = this.prepareArchive(userId, spaceId, now);
+        const exclusive = this.liveMemberWorkstreamIds(spaceId)
+          .filter((workstreamId) => this.otherActiveSpaceIds(workstreamId, spaceId).length === 0);
+        const prepared = this.prepareArchive(userId, spaceId, now, exclusive);
         if (!prepared.ok) throw new ArchiveRefused(prepared);
         const space = this.finalizeArchive(userId, spaceId, now);
         if (space === "protected") {
@@ -3803,44 +3788,21 @@ export class WorkspaceSpaceStorage {
         if (space === false) {
           throw new ArchiveRefused({ ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] });
         }
-        return { result: { ok: true, space }, rehomed };
+        const threadArchives = exclusive.map((workstreamId): WorkspaceSpaceIntentClaim => ({
+          operationId: uuidV7(), kind: "archive", spaceId, workstreamId,
+          spaceRevision: space.revision, membershipGeneration: null,
+          sourceSpaceId: null, sourceSpaceRevision: null, sourceMembershipGeneration: null,
+          cursor: null, requestedByUserId: userId,
+        }));
+        for (const intent of threadArchives) {
+          this.recordIntent({ ...intent, deliveryGeneration: null, notBefore: now }, now);
+        }
+        return { ok: true, space };
       });
     } catch (error) {
-      if (error instanceof ArchiveRefused) return { result: error.result, rehomed: [] };
+      if (error instanceof ArchiveRefused) return error.result;
       throw error;
     }
-  }
-
-  private rehomeStrandedInGeneral(workspaceId: string, userId: string, spaceId: string, now: number): string[] {
-    const general = this.generalSpaceId();
-    if (general === null || general === spaceId || !this.canEdit(userId, spaceId, true)) return [];
-    const stranded = this.liveMemberWorkstreamIds(spaceId)
-      .filter((workstreamId) => this.otherActiveSpaceIds(workstreamId, spaceId).length === 0);
-    // Only a thread every member may already read moves, and only one the
-    // archiver may list: General shows a row to every member, so moving a
-    // private thread there would tell the Organization it exists. The rest
-    // stay where they are and keep the archive refused.
-    const listable = new Set(this.listableChannelIds(member(userId), stranded));
-    const rehomed: string[] = [];
-    for (const workstreamId of stranded) {
-      if (!listable.has(workstreamId) || !this.organizationWideThread(workstreamId)) continue;
-      const added = this.addMembership({
-        workspaceId: asWorkspaceId(workspaceId),
-        userId: asUserId(userId),
-        spaceId: asSpaceId(general),
-        workstreamId: asWorkstreamId(workstreamId),
-      }, now);
-      if (added.ok) rehomed.push(workstreamId);
-    }
-    return rehomed;
-  }
-
-  private organizationWideThread(workstreamId: string): boolean {
-    const row = this.storage.sql.exec<{ scope: string }>(
-      `SELECT scope FROM channels WHERE workstream_id = ?`,
-      workstreamId,
-    ).toArray()[0];
-    return row !== undefined && organizationWide(row.scope, "member");
   }
 
   /**
@@ -3927,12 +3889,11 @@ export class WorkspaceSpaceStorage {
   /**
    * Refuse only an archive that would leave a live Channel with no home.
    *
-   * Archived Channels keep their membership so restoring this Space returns
-   * them, and the memberships below still stage to `removing` with the rest.
-   * They do not block: no list renders them, so asking the person to move one
-   * first is a refusal they cannot act on.
+   * An exclusive thread may leave the active hierarchy only when its normal
+   * archive is staged by the caller. Do not silently archive a thread the
+   * requester cannot read. Already-archived threads never block the operation.
    */
-  prepareArchive(userId: string, spaceId: string, now = Date.now()): WorkspaceSpaceMutationResult {
+  prepareArchive(userId: string, spaceId: string, now = Date.now(), archiveThreadIds: readonly string[] = []): WorkspaceSpaceMutationResult {
     return this.storage.transactionSync(() => {
       if (!this.canEdit(userId, spaceId, true)) {
         return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
@@ -3957,19 +3918,35 @@ export class WorkspaceSpaceStorage {
           stranded.push(workstreamId);
         }
       }
-      if (stranded.length > 0) {
+      const listable = new Set(this.listableChannelIds(member(userId), stranded));
+      const mainOpenable = new Set(this.storage.sql.exec<{ workstream_id: string }>(
+        `SELECT directory.workstream_id FROM channels directory
+          LEFT JOIN channel_viewers viewer ON viewer.workstream_id = directory.workstream_id
+            AND viewer.user_id = ? AND viewer.authority_generation = directory.authority_generation
+          WHERE directory.workstream_id IN (SELECT value FROM json_each(?))
+            AND ${mainOpenableSql("directory", "viewer", "member")}`,
+        userId, JSON.stringify(stranded),
+      ).toArray().map((row) => row.workstream_id));
+      const archiving = new Set(archiveThreadIds);
+      const blocked = stranded.filter((id) => !archiving.has(id) || !mainOpenable.has(id));
+      if (blocked.length > 0) {
         return {
           ok: false,
           code: "space_membership_final",
           unreachableUserIds: [],
-          blockedWorkstreamIds: this.listableChannelIds(member(userId), stranded).map(asWorkstreamId),
+          blockedWorkstreamIds: blocked.filter((id) => listable.has(id)).map(asWorkstreamId),
         };
       }
+      // Keep the archived threads' placement in their archived Channel. This
+      // also prevents the orphan-repair backstop from moving them into General
+      // while their canonical archive effects are still on the Queue.
       this.storage.sql.exec(
         `UPDATE space_channel_memberships SET state = 'removing', generation = generation + 1, updated_at = ?
-          WHERE space_id = ? AND state = 'active'`,
+          WHERE space_id = ? AND state = 'active'
+            AND workstream_id NOT IN (SELECT value FROM json_each(?))`,
         now,
         spaceId,
+        JSON.stringify(archiveThreadIds),
       );
       this.advanceWaterline(now);
       const space = this.space(spaceId, member(userId));
@@ -4515,6 +4492,66 @@ export class WorkspaceSpaceStorage {
       now,
       operationId,
     );
+  }
+
+  /** The Channel and exclusive placement must still describe this archive. */
+  threadArchiveCurrent(operationId: string): boolean {
+    return this.storage.sql.exec<{ one: number }>(
+      `SELECT 1 AS one FROM space_intents intent
+        JOIN spaces space ON space.space_id = intent.space_id
+        JOIN space_channel_memberships membership
+          ON membership.space_id = intent.space_id AND membership.workstream_id = intent.workstream_id
+       WHERE intent.operation_id = ? AND intent.state IN ('pending', 'applied')
+         AND space.archived_at IS NOT NULL AND space.revision = intent.space_revision
+         AND membership.state = 'active'
+         AND NOT EXISTS (
+           SELECT 1 FROM space_channel_memberships other
+           JOIN spaces other_space ON other_space.space_id = other.space_id
+           WHERE other.workstream_id = intent.workstream_id AND other.state = 'active'
+             AND other_space.archived_at IS NULL
+         )`,
+      operationId,
+    ).toArray().length > 0;
+  }
+
+  /**
+   * A restored or permanently refused live thread must have an active home.
+   * Release only archived placements; the existing orphan repair supplies General.
+   * Cancelling pending commands also fences a lost archive reply after a restore.
+   */
+  releaseThreadArchiveHolds(workstreamIds: readonly string[], now = Date.now()): boolean {
+    if (!this.ready() || workstreamIds.length === 0) return false;
+    return this.storage.transactionSync(() => {
+      const ids = JSON.stringify(workstreamIds);
+      this.storage.sql.exec(
+        `UPDATE space_intents SET state = 'cancelled', updated_at = ?
+          WHERE kind = 'archive' AND workstream_id IN (SELECT value FROM json_each(?))
+            AND state IN ('pending', 'applied')`,
+        now, ids,
+      );
+      const released = this.storage.sql.exec<{ workstream_id: string }>(
+        `UPDATE space_channel_memberships
+            SET state = 'removing', generation = generation + 1, updated_at = ?
+          WHERE workstream_id IN (SELECT value FROM json_each(?)) AND state = 'active'
+            AND space_id IN (SELECT space_id FROM spaces WHERE archived_at IS NOT NULL)
+            AND workstream_id IN (SELECT workstream_id FROM channels WHERE archived_at IS NULL)
+          RETURNING workstream_id`,
+        now, ids,
+      ).toArray();
+      if (released.length > 0) this.advanceWaterline(now);
+      return released.length > 0;
+    });
+  }
+
+  /** Permanent refusal ends the command and lets ordinary repair recover its home. */
+  abandonThreadArchive(intent: WorkspaceSpaceIntentClaim, reason: string, now = Date.now()): boolean {
+    return this.storage.transactionSync(() => {
+      this.recordIntentFailure(intent.operationId, reason, now);
+      this.settleIntent(intent.operationId, reason, true, now);
+      if (intent.workstreamId === null) return false;
+      this.releaseThreadArchiveHolds([intent.workstreamId], now);
+      return this.unplacedChannelExists([intent.workstreamId]) && this.reopenBootstrap(now);
+    });
   }
 
   /**
