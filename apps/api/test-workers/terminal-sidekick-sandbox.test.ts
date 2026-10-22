@@ -63,6 +63,10 @@ it("shares the wizard's durable sandbox and mutation lease across Sidekick activ
   expect(await activationA.claimOperation({ runId: firstRun, runSubstreamId: first,
     generation: 1, leaseExpiresAt: now + 60_000, now }))
     .toMatchObject({ operationRunId: firstRun, operationRunSubstreamId: first });
+  await activationA.recordImportedResource({ sandboxGeneration: 1,
+    resourceId: "00000000-0000-4000-8000-000000000099", destinationPath: ".rally-output/calendar",
+    sourceSha256: "a".repeat(64), sizeBytes: 1, state: "completed", importedAt: now,
+    attachedSubstreamId: first, now });
   expect(await activationB.claimOperation({ runId: secondRun, runSubstreamId: second,
     generation: 1, leaseExpiresAt: now + 60_000, now })).toBeNull();
   await evictDurableObject(owner);
@@ -72,6 +76,16 @@ it("shares the wizard's durable sandbox and mutation lease across Sidekick activ
   expect(await activationB.claimOperation({ runId: secondRun, runSubstreamId: second,
     generation: 1, leaseExpiresAt: now + 60_000, now }))
     .toMatchObject({ sandboxId: "sidekick-provider-sandbox", operationRunId: secondRun });
+  await activationB.recordImportedResource({ sandboxGeneration: 1,
+    resourceId: "00000000-0000-4000-8000-000000000099", destinationPath: ".rally-output/calendar",
+    sourceSha256: "b".repeat(64), sizeBytes: 2, state: "completed", importedAt: now,
+    attachedSubstreamId: second, now });
+  // Re-importing the same output replaces its authorizing activation. An
+  // hourly refresh does not accumulate one link check per historical run.
+  expect(await wizard.importedResources(1)).toEqual([{
+    resourceId: "00000000-0000-4000-8000-000000000099", destinationPath: ".rally-output/calendar",
+    state: "completed", attachedSubstreamId: second,
+  }]);
   expect(await wizard.claimOperation({ runId: wizardRun, generation: 1,
     leaseExpiresAt: now + 60_000, now })).toBeNull();
 
