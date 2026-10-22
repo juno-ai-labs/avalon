@@ -5,6 +5,7 @@ import { connectorBrandMark } from './plugin-marks';
 describe('pluginGroup', () => {
   it.each([
     'rally:core',
+    'rally:conversations',
     'rally:discovery',
     'rally:memory',
     'rally:tables',
