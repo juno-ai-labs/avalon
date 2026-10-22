@@ -18,15 +18,14 @@ import { searchAudienceGroup, searchAudienceGroupId } from '../src/services/sear
  * be written; its parent does. A room's parent, hosted in the Organization's
  * `WorkspaceDO`, answers from the room's scope and participants, and from a hosted Sidekick's author and scope and,
  * for a room's automation, from the room's participants through WorkspaceDO.
- * Both report an archive rather than folding it into the answer: an archived
- * parent's conversations stay readable and refuse every write, so a child
- * never outlives its parent's archive.
+ * Archiving a Thread keeps its parent readable but archives its owned
+ * Sidekicks, which become inaccessible even to their author. Legacy Sidekicks
+ * retained by the earlier room-archive behavior can still be read, with the
+ * archive flag carried into their socket admission to refuse every write.
  *
- * The last test drives that rule end to end: the real socket ticket carries
- * the parent's archive into the admission, and the conversation object refuses
- * `create_message` on a socket admitted that way, even though its own row is
- * not archived (the automation's conversation is, by design, never archived
- * on its own; its room was).
+ * The last test starts from that retained legacy state: the real socket ticket
+ * carries the parent's archive into the admission, and the conversation object
+ * refuses `create_message` even though its own row is not archived.
  */
 
 import { env } from "cloudflare:workers";
@@ -322,13 +321,13 @@ function viewer(parentId: string, userId: UserId) {
   return { workspaceId: WORKSPACE_ID, parentId, userId };
 }
 
-function nextFrameOfType(socket: WebSocket, type: string): Promise<Record<string, unknown>> {
+function nextFrameOfType(socket: WebSocket, ...types: string[]): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`no ${type} frame within ${SOCKET_FRAME_TIMEOUT_MS}ms`)), SOCKET_FRAME_TIMEOUT_MS);
+    const timer = setTimeout(() => reject(new Error(`no ${types.join(" or ")} frame within ${SOCKET_FRAME_TIMEOUT_MS}ms`)), SOCKET_FRAME_TIMEOUT_MS);
     const onMessage = (event: MessageEvent) => {
       try {
         const frame = JSON.parse(String(event.data)) as Record<string, unknown>;
-        if (frame.type !== type) return;
+        if (!types.includes(String(frame.type))) return;
         clearTimeout(timer);
         socket.removeEventListener("message", onMessage);
         resolve(frame);
@@ -1261,22 +1260,19 @@ describe("conversation parent contract", () => {
     expect(await automationStub(owned).listChildren({ workspaceId: WORKSPACE_ID, parentId: owned }))
       .toEqual({ children: [{ substreamId: "0", kind: "main", createdAt: expect.any(Number) }] });
 
-    // Archiving the room archives its automation's conversations; deleting an
-    // automation archives its own. The author still reads, with the archive
-    // reported. A participant who never wrote it does not: WorkspaceDO's
-    // participation predicate answers false for an archived room, so the
-    // automation's room-scope answer closes with the room. That is what the
-    // object does today; whether a former participant should keep reading a
-    // finished room's automation, as they keep reading the room itself, is a
-    // product decision this assertion exists to surface rather than settle.
+    // Archiving the room archives its owned Sidekick. Neither authorship nor
+    // participation keeps access to the Sidekick's retained conversations.
     const address = { kind: 'conversation' as const, workspaceId: WORKSPACE_ID, parentId: owned, substreamId: asSubstreamId('0') };
     expect(await createAccessContext(TEST_ENV, { ...AUTH, userId: PARTICIPANT_ID }).check(address)).toMatchObject({ status: 'allowed' });
     await archiveRoom(PERSONAL_ROOM_ID);
-    // Archiving the owning room removes inherited automation access; its author still reads.
-    expect(await createAccessContext(TEST_ENV, { ...AUTH, userId: PARTICIPANT_ID }).check(address)).toMatchObject({ status: 'denied' });
-    expect(await createAccessContext(TEST_ENV, AUTH).check(address)).toMatchObject({ status: 'allowed' });
+    expect(await createAccessContext(TEST_ENV, { ...AUTH, userId: PARTICIPANT_ID }).check(address)).toMatchObject({ status: 'not_found' });
+    expect(await createAccessContext(TEST_ENV, AUTH).check(address)).toMatchObject({ status: 'not_found' });
     expect(await automationStub(owned).authorizeViewer(viewer(owned, AUTHOR_ID)))
-      .toMatchObject({ authorized: true, archived: true });
+      .toEqual({ authorized: false, archived: true });
+    for (const userId of [AUTHOR_ID, PARTICIPANT_ID]) {
+      await expect(new ConversationService(socketEnv, { ...AUTH, userId }).socketTicket(owned))
+        .rejects.toMatchObject({ status: 404, code: "conversation_not_found" });
+    }
     expect(await automationStub(owned).authorizeViewer(viewer(owned, PARTICIPANT_ID)))
       .toEqual({ authorized: false, archived: true });
     expect(await automationStub(owned).authority({ workspaceId: WORKSPACE_ID, parentId: owned }))
@@ -1292,7 +1288,7 @@ describe("conversation parent contract", () => {
       .toEqual({ exists: true, authorityGeneration: 1, archived: true });
   });
 
-  it("carries a parent's archive into the socket admission, and the conversation then refuses a write", async () => {
+  it("carries a legacy Sidekick's room archive into its socket admission and refuses a write", async () => {
     await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID]);
     const owned = await seedAutomation("workstream", PERSONAL_ROOM_ID);
     const service = new ConversationService(socketEnv, AUTH);
@@ -1301,7 +1297,17 @@ describe("conversation parent contract", () => {
     expect(live).toMatchObject({ parentKind: "automation", parentId: owned, substreamId: "0" });
     expect(live.admission?.parentArchived).toBe(false);
 
-    await archiveRoom(PERSONAL_ROOM_ID);
+    // Historical persisted state: the old room archive left this draft
+    // Sidekick readable with owning_room_archived_at set. There is no bulk
+    // migration of those rooms, so the existing read-only admission still
+    // needs coverage independently of the new terminal archive transition.
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.transactionSync(() => {
+        const now = Date.now();
+        state.storage.sql.exec("UPDATE channels SET archived_at = ? WHERE workstream_id = ?", now, PERSONAL_ROOM_ID);
+        state.storage.sql.exec("UPDATE automation_directory SET owning_room_archived_at = ? WHERE automation_id = ?", now, owned);
+      });
+    });
 
     const issued = await service.socketTicket(owned);
     const archived = await verifySocketTicket(socketEnv, issued.ticket);
@@ -1318,13 +1324,14 @@ describe("conversation parent contract", () => {
     if (!socket) throw new Error("the upgrade carried no socket");
     socket.accept();
     try {
-      const failed = nextFrameOfType(socket, "client_command_failed");
+      const result = nextFrameOfType(socket, "client_command_failed", "client_command_succeeded");
       socket.send(JSON.stringify({
         type: "create_message",
         operationId: "00000000-0000-7000-8000-00000000ad3e",
         payload: { clientMessageId: "archived-parent-write", text: "Still there?" },
       }));
-      expect(await failed).toMatchObject({
+      expect(await result).toMatchObject({
+        type: "client_command_failed",
         command: "create_message",
         clientMessageId: "archived-parent-write",
         error: { status: 409, code: "conversation_parent_archived" },

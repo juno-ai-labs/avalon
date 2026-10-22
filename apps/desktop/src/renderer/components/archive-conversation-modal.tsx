@@ -17,6 +17,10 @@ export function ArchiveConversationModal({ target, pending, error, onClose, onCo
     </>}
   >
     <p className="modal-copy"><strong>{target?.title}</strong> leaves the sidebar for everyone in it, and stops accepting messages.</p>
+    <p className="modal-copy">
+      Sidekicks owned by this {target?.noun}{target?.noun === 'thread' ? ' or its Breakouts' : ''} are archived too.
+      {' '}Restoring it does not restore its Sidekicks.
+    </p>
     {error && <ErrorNotice>{error}</ErrorNotice>}
   </Modal>;
 }

@@ -5928,6 +5928,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       },
       applyLocalEffects: (envelopes) => this.applyLocalEffects(envelopes),
       noteSidekickActivityChanged: (workspaceId) => this.noteSidekickActivityChanged(workspaceId),
+      archiveOwnedSidekicks: (workspaceId, parentId, substreamId, archived, now) =>
+        this.archiveOwnedSidekicks(workspaceId, parentId, substreamId, archived, now),
       readRelationship: (workspaceId, userId) => this.readRelationship(workspaceId, userId),
       noteRelationship: (relationship) => this.noteRelationship(relationship),
     };
@@ -9433,8 +9435,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
       throw new ApiError(403, "sidekick_directory_access_denied", "You cannot list this room's Sidekicks");
     }
-    // An archived room's rail still renders, and its automations are paused
-    // rather than gone, so a participant of the archived room may list them.
+    // An archived room's rail still renders. Its participants may read the
+    // owned list, which omits Sidekicks archived with the room.
     if (!this.isWorkstreamParticipant(request.workstreamId, request.userId, { includeArchived: true })) {
       throw new ApiError(403, "sidekick_directory_access_denied", "You cannot list this room's Sidekicks");
     }
@@ -13790,7 +13792,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
     }
     this.publishChannelRows(this.collectRailChanges(rows));
-    // A Channel archive pauses the Sidekicks it owns during the pass; their
+    // A Thread archive archives the Sidekicks it owns during the pass; their
     // list goes out with nothing awaited after the Channel's row.
     if (this.sidekickDirectoryMoved) {
       this.sidekickDirectoryMoved = false;
@@ -14128,11 +14130,24 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return { applied };
   }
 
-  /**
-   * Turn authoritative watched links into exact typed registrations. The work
-   * stream projects only the link intent; WorkspaceDO resolves resource and
-   * connector facts and uses the same replacement engine as automations.
-   */
+  /** Archive a room's owned Sidekicks in the canonical transition/projection transaction. */
+  private archiveOwnedSidekicks(workspaceId: string, parentId: string, substreamId: string, archived: boolean, now: number): void {
+    const owned = this.state.storage.sql.exec<{ automation_id: string }>(
+      `SELECT automation_id FROM automation_directory
+        WHERE owning_workstream_id = ? AND lifecycle <> 'deleted'
+          AND (? = '0' OR owning_substream_id = ?)
+          AND (? OR owning_room_archived_at IS NOT NULL)
+        ORDER BY automation_id`,
+      parentId, substreamId, substreamId, Number(archived),
+    ).toArray();
+    const host = this.hostedSidekickHost();
+    for (const row of owned) {
+      new HostedSidekick(host, row.automation_id).setOwningRoomArchived({
+        workspaceId: asWorkspaceId(workspaceId), automationId: row.automation_id, workstreamId: parentId, archived,
+      }, now);
+    }
+  }
+
   /**
    * Tell each automation a room owns that the room's archive state changed.
    *
@@ -14159,9 +14174,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
          FROM automation_directory automation
          JOIN channels directory
            ON directory.workstream_id = automation.owning_workstream_id
-         LEFT JOIN breakouts breakout
+         LEFT JOIN parent_children breakout
            ON automation.owning_substream_id <> '0'
-          AND breakout.workstream_id = automation.owning_workstream_id
+          AND breakout.parent_id = automation.owning_workstream_id
           AND breakout.substream_id = automation.owning_substream_id
         WHERE automation.lifecycle <> 'deleted'
           AND (?3 IS NULL OR automation.automation_id = ?3)
@@ -14177,26 +14192,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (owned.length === 0) return;
     await this.ensureParentWorkspace(workspaceId);
     const host = this.hostedSidekickHost();
-    // Each Sidekick's pause or resume, its registrations and its alarm entries
+    // Each Sidekick's archive, its registrations and its alarm entries
     // commit in one local transaction per Sidekick, right after the archive
     // that caused them, so one that fails leaves the others moved.
     for (const row of owned) {
       try {
         const sidekick = new HostedSidekick(host, row.automation_id);
         const now = Date.now();
-        const outcome = this.state.storage.transactionSync(() => sidekick.setOwningRoomArchived({
+        this.state.storage.transactionSync(() => sidekick.setOwningRoomArchived({
           workspaceId: asWorkspaceId(workspaceId),
           automationId: row.automation_id,
           workstreamId: row.workstream_id,
           archived: row.archived_at !== null || row.breakout_archived_at !== null,
         }, now));
-        if (outcome.outcomeCode === "sidekick_resumed") {
-          const resumed = sidekick.row();
-          const evaluators = resumed ? JSON.parse(resumed.evaluator_projection_json) as unknown[] : [];
-          if (resumed?.accepted_definition_revision != null && evaluators.length > 0) {
-            await this.joinSidekickSlackSources(workspaceId, row.automation_id, resumed.accepted_definition_revision, evaluators);
-          }
-        }
       } catch (error) {
         logWarn(this.env, "sidekick_owning_room_archival_failed", {
           workspace_id: workspaceId,
@@ -14208,7 +14216,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     // The automations list is not published here: the pass that ran this
     // sends it right after the archived Channel's row, in the same turn, so
-    // a client sees the archive and its pauses together.
+    // a client sees the room and its Sidekicks disappear together.
     await this.armNextAlarm();
   }
 
