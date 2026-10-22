@@ -16,7 +16,7 @@ import { createAgentCommunicationPlugin } from "./agent-communication-plugin";
 import { continueSidekickRun } from "./sidekick-run-continuation";
 import { AgentMessageContentSchema, renderAgentMessage } from "./agent-message-content";
 import { ObjectPortError } from "../runtime/object-port";
-import { dynamicConnectorCapability, stableConnectionWireName, stableWireToolName, validateDynamicConnectorTools } from "./connector-tool-inventory";
+import { dynamicConnectorCapability, stableConnectionWireName, stableWireToolName, validateDynamicConnectorTools, discoverDynamicConnectorTools, connectorServerPresentation, storedConnectorServerMetadata } from "./connector-tool-inventory";
 import { ApiError } from "../lib/api-error";
 import { connectorPluginViews, connectorPluginBindingViews, connectorPluginCanonicalId, type GooglePluginBundle, type ConnectorPluginView } from "../lib/connector-plugin-views";
 import { resolveSidekickSkills, sidekickSkillCatalog, sidekickSkillRef, recommendedSidekickRefs } from "./sidekick-skills";
@@ -2016,12 +2016,12 @@ function createAvalonAutomationsPlugin(
         const plugins = new Map<string, string[]>();
         if (connectionIds.length > 0) {
           const rows = await env.DB.prepare(
-            `SELECT id, connector_type, model_plugin_id, granted_scopes_json FROM connector_connections
+            `SELECT id, connector_type, model_plugin_id, display_name, granted_scopes_json FROM connector_connections
               WHERE workspace_id = ? AND id IN (${connectionIds.map(() => "?").join(", ")})`,
-          ).bind(input.workspaceId, ...connectionIds).all<{ id: string; connector_type: string; model_plugin_id: string | null; granted_scopes_json: string }>();
+          ).bind(input.workspaceId, ...connectionIds).all<{ id: string; connector_type: string; model_plugin_id: string | null; display_name: string; granted_scopes_json: string }>();
           for (const row of rows.results ?? []) if (row.model_plugin_id) {
             plugins.set(row.id, connectorPluginViews(row.connector_type, row.model_plugin_id,
-              parseJson<string[]>(row.granted_scopes_json, [])).map((view) => view.modelPluginId));
+              parseJson<string[]>(row.granted_scopes_json, []), row.display_name).map((view) => view.modelPluginId));
           }
         }
         return {
@@ -2064,8 +2064,32 @@ function createAvalonAutomationsPlugin(
         const details: unknown[] = await (await hostedParentStub(env, workspaceId)).sidekickReadDetails({ workspaceId,
           actor: { userId: asUserId(authorUserId), participantOfOwningWorkstream: true },
           automationIds: [authoredAutomationId] });
-        const sidekicks = details.map((read: unknown) => {
-          const detail = AutomationDetailSchema.parse(read);
+        const parsedDetails = details.map((read) => AutomationDetailSchema.parse(read));
+        const legacyPluginIds = [...new Set(parsedDetails.flatMap((detail) =>
+          detail.currentDefinition?.recommendedPlugins.map((plugin) => plugin.pluginId)
+            .filter((id) => /^plugin_custom_mcp(?:_[1-9][0-9]*)?$/u.test(id)) ?? []))];
+        const currentPluginIds = new Map<string, string>();
+        if (legacyPluginIds.length > 0) {
+          const connections = await env.DB.prepare(
+            `SELECT model_plugin_id, display_name FROM connector_connections
+              WHERE workspace_id = ? AND connector_type = 'custom_mcp' AND status <> 'disabled'
+                AND (scope = 'workspace' OR (scope = 'personal' AND owner_user_id = ?))
+                AND model_plugin_id IN (${legacyPluginIds.map(() => "?").join(", ")})`,
+          ).bind(workspaceId, authorUserId, ...legacyPluginIds)
+            .all<{ model_plugin_id: string; display_name: string }>();
+          for (const connection of connections.results) {
+            currentPluginIds.set(connection.model_plugin_id,
+              connectorPluginViews("custom_mcp", connection.model_plugin_id, [], connection.display_name)[0]!.modelPluginId);
+          }
+        }
+        const sidekicks = parsedDetails.map((detail) => {
+          // Project saved credential IDs into the same catalog an edit can load
+          // and inspect. Durable definitions and bindings keep their identities.
+          const currentDefinition = detail.currentDefinition && { ...detail.currentDefinition,
+            recommendedPlugins: detail.currentDefinition.recommendedPlugins.map((plugin) => ({ ...plugin,
+              pluginId: currentPluginIds.get(plugin.pluginId) ?? plugin.pluginId,
+            })),
+          };
           return {
             sidekickId: detail.id,
             canEdit: true,
@@ -2078,9 +2102,9 @@ function createAvalonAutomationsPlugin(
             appearance: detail.appearance ?? null,
             currentDefinitionRevision: detail.currentDefinitionRevision,
             acceptedDefinitionRevision: detail.acceptedDefinitionRevision,
-            currentDefinition: detail.currentDefinition && detail.currentDefinition.definitionVersion !== 2
-              ? { ...detail.currentDefinition, definitionVersion: 2, triggers: [...detail.currentDefinition.triggers, { type: "inbound_email" }] }
-              : detail.currentDefinition,
+            currentDefinition: currentDefinition && currentDefinition.definitionVersion !== 2
+              ? { ...currentDefinition, definitionVersion: 2, triggers: [...currentDefinition.triggers, { type: "inbound_email" }] }
+              : currentDefinition,
           };
         });
         return { sidekicks };
@@ -2167,6 +2191,7 @@ async function loadAutomationCreatorPluginCatalog(
   const seen = new Set<string>();
   const rows = (result.results ?? []).flatMap((row) => connectorPluginViews(
     String(row.connector_type), String(row.model_plugin_id ?? ""), parseJson<string[]>(row.granted_scopes_json, []),
+    String(row.display_name),
   ).map((view): Record<string, unknown> & ConnectorPluginView => ({ ...row, ...view })));
   for (const row of rows) {
     const modelPluginId = row.modelPluginId;
@@ -2235,18 +2260,19 @@ async function loadAutomationCreatorPluginCatalog(
       && row.display_name.trim() !== adapter.manifest.displayName
       ? `${adapter.manifest.displayName}: ${row.display_name.trim()}`
       : adapter.manifest.displayName;
-    const presentation = connectorPluginPresentation(String(row.connector_type), grantedScopes, wirePrefix, {
+    const basePresentation = connectorPluginPresentation(String(row.connector_type), grantedScopes, wirePrefix, {
       displayName: row.connector_type === "custom_mcp" ? adapter.manifest.displayName : connectionName,
       description: adapter.agentPlugin.description,
       searchAliases: connectorSearchAliases(adapter),
       systemMessage: adapter.agentPlugin.systemMessage,
     });
+    let presentation = connectorServerPresentation(basePresentation, storedConnectorServerMetadata(row.config_json));
     const registrationCapability = adapter.resourceRegistrationCapability;
     const activityTriggers = connectorActivityTriggerDescriptors(adapter, row.config_json == null ? null : String(row.config_json), scope, grantedScopes);
     let definitions = staticDefinitions;
     if (dynamicCapability) {
       try {
-        definitions = await withDeadline(30_000, async (signal) => {
+        const discovered = await withDeadline(30_000, async (signal) => {
           const { connection } = await loadAutomationCreatorConnectionContext(
             env,
             { workspaceId, userId },
@@ -2257,16 +2283,12 @@ async function loadAutomationCreatorPluginCatalog(
           return withAuthorizedConnection(
             env,
             { connection, adapter, signal },
-            async (authorized) => validateDynamicConnectorTools(
-              env,
-              adapter,
-              scope,
-              grantedScopes,
-              wirePrefix,
-              await adapter.dynamicAgentTools!.discover(authorized, signal),
-            ),
+            (authorized) => discoverDynamicConnectorTools(env, adapter, authorized, wirePrefix, signal,
+              row.provider_account_id == null ? null : String(row.provider_account_id)),
           );
         });
+        definitions = discovered.tools;
+        presentation = connectorServerPresentation(basePresentation, discovered.server);
       } catch (error) {
         logStructuredEvent(env, "warn", "dynamic_connector_tools_unavailable", {
           connector_type: connectorType,
@@ -5616,6 +5638,7 @@ async function loadHarnessTools(
   const seenModelPluginIds = new Set<string>();
   const orderedConnectionRows = (connectionRows.results ?? []).flatMap((row) => connectorPluginViews(
     String(row.connector_type), String(row.model_plugin_id ?? ""), parseJson<string[]>(row.granted_scopes_json, []),
+    String(row.display_name),
   ).map((view): Record<string, unknown> & ConnectorPluginView => ({ ...row, ...view }))).sort((left, right) => {
     const priority = connectorSelectionPriority(left, input.executionPrincipal, attached)
       - connectorSelectionPriority(right, input.executionPrincipal, attached);
@@ -5661,14 +5684,16 @@ async function loadHarnessTools(
     // tools this connection actually exposes; a second Google credential is
     // `google_2_…`, and an example naming the first one would not run.
     const shortWireName = stableConnectionWireName(row.credentialModelPluginId);
-    const defaultSelected = connectorPluginBindingViews(String(row.connector_type), row.credentialModelPluginId, grantedScopes)
+    const defaultSelected = connectorPluginBindingViews(String(row.connector_type), row.credentialModelPluginId, grantedScopes,
+      String(row.display_name))
       .some((view) => defaultModelPluginIds.has(view.modelPluginId));
-    const presentation = connectorPluginPresentation(String(row.connector_type), grantedScopes, shortWireName, {
+    const basePresentation = connectorPluginPresentation(String(row.connector_type), grantedScopes, shortWireName, {
       displayName: adapter.manifest.displayName,
       description: adapter.agentPlugin.description,
       searchAliases: connectorSearchAliases(adapter),
       systemMessage: adapter.agentPlugin.systemMessage,
     });
+    let presentation = connectorServerPresentation(basePresentation, storedConnectorServerMetadata(row.config_json));
     const dynamicCapability = dynamicConnectorCapability(adapter, scope, grantedScopes);
     const staticDefinitions = dynamicCapability
       ? []
@@ -5802,19 +5827,16 @@ async function loadHarnessTools(
                 dynamicCapability,
                 signal,
               );
-              const definitions = await withAuthorizedConnection(
+              const discovered = await withAuthorizedConnection(
                 env,
                 { connection, adapter, signal },
-                async (authorized) => validateDynamicConnectorTools(
-                  env,
-                  adapter,
-                  scope,
-                  grantedScopes,
-                  shortWireName,
-                  await adapter.dynamicAgentTools!.discover(authorized, signal),
-                ),
+                (authorized) => discoverDynamicConnectorTools(env, adapter, authorized, shortWireName, signal,
+                  row.provider_account_id == null ? null : String(row.provider_account_id)),
               );
-              const discoveredTools = definitions
+              presentation = connectorServerPresentation(basePresentation, discovered.server);
+              connectorPlugin.description = presentation.description;
+              connectorPlugin.systemMessage = presentation.systemMessage;
+              const discoveredTools = discovered.tools
                 .flatMap((definition) => addPluginTool(definition));
               if (!discoveredTools.length) {
                 throw new ConnectorError("unsupported_capability", `${adapter.manifest.displayName} MCP exposed no usable tools`);
@@ -5840,7 +5862,7 @@ async function loadHarnessTools(
           }
         }
       : undefined;
-    plugins.push({
+    const connectorPlugin: HarnessPlugin = {
       canonicalId: pluginId,
       modelId: modelPluginId,
       shortWireName,
@@ -5856,7 +5878,8 @@ async function loadHarnessTools(
       ...(loadTools ? { loadTools } : {}),
       preload: defaultSelected || attached.has(connectionId),
       explicit: defaultSelected || attached.has(connectionId),
-    });
+    };
+    plugins.push(connectorPlugin);
   }
   // Verify former Google identities against their complete, unchanged tool
   // surfaces. Identity aliases alone must never make a stale receipt replayable.

@@ -16,6 +16,7 @@ and connection rules it inherits are in [`connectors.md`](connectors.md).
 
 | Path | Responsibility |
 | --- | --- |
+| `apps/api/src/lib/connector-plugin-views.ts` | Name-derived model IDs and compatibility aliases over unchanged credential identities. |
 | `packages/connectors/src/custom-mcp.ts` | The adapter: per-connection endpoint resolution, header and OAuth authentication, the tool-policy filter, and the person-facing tool inventory. |
 | `packages/connectors/src/hosted-mcp.ts` | The shared MCP transport, OAuth discovery/DCR/PKCE, and the `selectTools` narrowing hook this connector supplies. |
 | `packages/contracts/src/index.ts` | `CustomMcpConnectionConfigSchema`, `CustomMcpRequestHeadersSchema`, the two request contracts, the settings response, and the header limits. |
@@ -42,7 +43,7 @@ string a reconnect is matched against is the string the adapter dials.
   than the one whose consent screen the person saw.
 
 **Both paths prove the server before reporting success**, through the adapter's
-own health check — the same discovery an activation runs, so the connection's
+own discovery — also used by its health check and activation, so the connection's
 tool policy, the model-facing name normalization, the schema bounds, and the
 collision checks all decide it. A connection whose only symptom is a plugin that
 fails to load inside somebody's run three days later is the failure this avoids,
@@ -95,6 +96,29 @@ and is usable by nobody else, so it exposes exactly what that person can already
 do. The policy exists because a workspace connection hands one credential to
 every member.
 
+### Descriptions and server instructions
+
+Discovery prefers the server's nonblank `serverInfo.description`; when absent,
+it builds an extractive description from the tool names and descriptions that
+this connection's policy admits. It uses the existing 4,000-character description
+bound and normalizes controls and whitespace to one line. Optional `instructions`
+from initialization join the plugin's `systemMessage`, under Rally's policy and
+the user's request, and appear in `Active Plugin Instructions` after activation.
+They are refreshed before explicit and restored loads reach inference; a server
+that stops returning instructions clears the previous value.
+
+`config_json.mcpServerMetadata` stores the description and optional instructions
+so the next conversation's initial catalog requires no network request. Setup,
+settings inventory, Test/count discovery, activation and Sidekick catalog reads
+refresh it. Writes check the provider account, owner, scope, grants and config
+excluding derived metadata: a late discovery cannot overwrite a new endpoint,
+policy, account or owner. Count writes ignore this derived field under their
+otherwise unchanged fence. Existing connections with no metadata receive one
+background discovery when listed, even if their tool count is already known;
+a claimed marker prevents concurrent lists or a failed backfill from repeatedly
+calling the server. A later explicit discovery can still repair missing metadata.
+No new schema migration or model inference is required.
+
 ### Looking at what a server offers
 
 `GET /connections/:id/custom-mcp/tools` reads the same live catalog an
@@ -145,12 +169,17 @@ additional authority.
   request with `redirect: "manual"` and treats a 3xx as an answer, so a server
   cannot have Rally re-send a bearer token or a configured header to another
   host by answering with a `Location`.
-- **The configured name identifies participant activity only.** Live runs use
+- **The configured name supplies a model ID, never prompt instructions.** Custom
+  MCP IDs combine the name and allocated ordinal, such as
+  `plugin_mcp_rally_engineering_3`. Stored IDs and tool wire prefixes stay
+  unchanged; saved bindings accept both named and legacy IDs. An authoring read
+  projects legacy recommendations into the current catalog IDs before editing.
+- **Participant activity uses the configured name.** Live runs use
   the saved name after removing controls, bidi formatting, and line breaks while preserving
   Unicode joiners, falling back
   to `Custom MCP server` when empty. `HarnessPlugin.activityDisplayName` is
-  separate from the static model-facing `displayName`, descriptions, aliases,
-  and system messages. Automation catalogs also retain the static model name.
+  separate from the static model-facing `displayName` and aliases. Descriptions
+  and usage instructions come from the separately discovered server metadata. Automation catalogs also retain the static display name.
   Transcript activities carry `connectorType` independently so a custom server
   named Slack keeps the Model Context Protocol mark and a connection-specific row.
 
@@ -195,7 +224,7 @@ workspace hitting it is a conversation rather than a refusal.
 
 ```bash
 pnpm --filter @rally/connectors exec vitest run src/custom-mcp.test.ts
-pnpm --filter @rally/api exec vitest run test/custom-mcp-connection.test.ts
+pnpm --filter @rally/api exec vitest run test/custom-mcp-connection.test.ts test/connector-plugin-views.test.ts
 pnpm --filter @rally/api exec vitest run test/connector-catalog-discovery.test.ts
 pnpm --filter @rally/desktop exec vitest run src/renderer/screens/workspace-settings.test.tsx
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts \
@@ -210,6 +239,12 @@ pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts \
   server, the rollback when it refuses, the policy update, the administrator
   boundary, and the unreadable-catalog response. It stubs `globalThis.fetch`,
   because the registry builds the adapter from the environment.
+- `connector-plugin-views.test.ts` covers name-derived IDs, duplicate and truncated
+  names, identifier normalization, and legacy binding aliases. The connection
+  suite checks both assembled catalogs, stable tool prefixes and a ready edit of a
+  saved legacy recommendation; the real-workerd
+  `hosted-sidekick.test.ts` checks acceptance and principal-claim rebinding with
+  both named and legacy IDs.
 - `connector-catalog-discovery.test.ts` checks configured server names, control
   character removal, and the unnamed fallback without changing trusted prose.
 - The workerd suite carries the schema half: migration 31 rebuilds
@@ -247,12 +282,33 @@ the endpoint and the header are one decision and are captured together.
 
 ## Open questions
 
-- **Model discovery still uses generic custom MCP names.** Configured names
-  are participant metadata, not trusted catalog text. Making them searchable
-  needs a separately framed untrusted-data surface.
 - **Editing a connection is add-and-remove.** There is no route to change an
   endpoint, replace headers, or rename a server; a change means a new connection
   and deleting the old one.
+
+## Changelog
+
+### 2026-10-22 — Identify and describe configured servers in the model catalog
+
+A run asked to use Rally Engineering loaded Cloudflare Observability instead:
+all four configured servers appeared as “Custom MCP server” with identical
+aliases, and the first server’s expired authorization was then attributed to
+Engineering. Conversation and Sidekick catalogs now derive a model ID from the
+configured name plus the stored credential ordinal. Identifier normalization
+makes the name searchable without inserting raw configuration into trusted
+prompt prose. Rewriting stored IDs or tool prefixes was rejected because saved
+bindings and historical receipts depend on them. Keep those identities stable,
+retain legacy binding aliases, and preserve the ordinal through truncation.
+Authoring reads translate saved legacy recommendations into current catalog IDs,
+so ready edits pass the same load-and-inspect checks as new definitions.
+Conversation and Sidekick searches share punctuation normalization, so a
+multiword name also matches its underscore-separated identifier.
+The same change uses initialization descriptions or an extractive tool fallback
+and retains server instructions in the authorized active-plugin system section.
+Persisting that discovery avoids a provider round trip just to build the initial
+catalog; refreshing the shared plugin at activation prevents stale instructions
+from surviving a server update. Derived metadata must not bypass the connection's
+configuration, account, ownership or grant fence.
 
 ### 2026-09-11 — Name the server in participant activity
 

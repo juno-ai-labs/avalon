@@ -92,7 +92,7 @@ import {
   type RunHarnessInput,
   type StreamResult,
 } from "./index";
-import { renderPromptPluginCatalog } from "./prompts/plugin-catalog";
+import { normalizedPluginSearchText, renderPromptPluginCatalog } from "./prompts/plugin-catalog";
 import { renderPromptSkillCatalog } from "./prompts/skill-catalog";
 import { renderCompactionCheckpointContent } from "./prompts/compaction";
 import {
@@ -353,10 +353,6 @@ function classifiedToolFailure(
   details?: Record<string, unknown>,
 ): Error & { code: string; details?: Record<string, unknown> } {
   return Object.assign(new Error(message), { code, ...(details ? { details } : {}) });
-}
-
-function normalizedPluginSearchText(value: string): string {
-  return value.normalize("NFKC").toLowerCase().match(/[\p{L}\p{N}]+/gu)?.join(" ") ?? "";
 }
 
 function searchAvailablePlugins(
