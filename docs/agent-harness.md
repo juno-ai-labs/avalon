@@ -1709,8 +1709,9 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 ### 2026-10-22 — Explain unsupported local browser requests through a skill
 
 **What changed:** Ordinary conversations can load `using-the-local-inapp-browser`
-to explain that they cannot inspect a page open in Rally and offer an appropriate
-screenshot, export, or pasted contents.
+to explain that they cannot inspect a page open in Rally and offer appropriate
+inputs, including the existing import action for ChatGPT or Claude conversation
+text.
 
 **Why:** A request to reproduce an open Claude document's visual style fell back
 to a public-web read of its sign-in page. The agent described that as browser
