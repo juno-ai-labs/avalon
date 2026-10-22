@@ -1,0 +1,136 @@
+{
+  "date": "2026-10-22",
+  "purpose": "Explicit agent identity and participant addressing in completion verification",
+  "model": "jev-1.14.0",
+  "deadlineMs": 1000,
+  "stopConfidenceThreshold": 0.7,
+  "questionsSha256": {
+    "baseline": "fc03eb3b41d9c614411bb950d6c32fb91d762196f8e63feb04577d4a24a9e15e",
+    "candidate": "e645ab0b1ecd063f5c50ea683a22508de965cd22d9d53d471ee0a49b1ad5bcad"
+  },
+  "byVariant": {
+    "baseline": {
+      "existingSynthetic": {
+        "count": 60,
+        "labelMatches": 53,
+        "unavailable": 5,
+        "neededChecks": 18,
+        "missedChecks": 0,
+        "extraChecks": 7
+      },
+      "addressing": {
+        "count": 16,
+        "labelMatches": 16,
+        "unavailable": 0,
+        "neededChecks": 6,
+        "missedChecks": 0,
+        "extraChecks": 6
+      },
+      "production": [
+        {
+          "answer": null,
+          "reprompt": true,
+          "failure": "typesafe_request_timed_out"
+        },
+        {
+          "answer": null,
+          "reprompt": true,
+          "failure": "typesafe_request_timed_out"
+        },
+        {
+          "answer": null,
+          "reprompt": true,
+          "failure": "typesafe_request_timed_out"
+        }
+      ]
+    },
+    "candidate": {
+      "existingSynthetic": {
+        "count": 60,
+        "labelMatches": 59,
+        "unavailable": 0,
+        "neededChecks": 18,
+        "missedChecks": 0,
+        "extraChecks": 4
+      },
+      "addressing": {
+        "count": 16,
+        "labelMatches": 16,
+        "unavailable": 0,
+        "neededChecks": 6,
+        "missedChecks": 0,
+        "extraChecks": 1
+      },
+      "production": [
+        {
+          "answer": {
+            "type": "choice",
+            "choice": "answer_or_result",
+            "confidence": 1,
+            "probabilities": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 1,
+              "blocker_or_question": 0,
+              "unclear": 0
+            }
+          },
+          "reprompt": false,
+          "failure": null
+        },
+        {
+          "answer": {
+            "type": "choice",
+            "choice": "answer_or_result",
+            "confidence": 0.99,
+            "probabilities": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 0.99,
+              "blocker_or_question": 0.01,
+              "unclear": 0
+            }
+          },
+          "reprompt": false,
+          "failure": null
+        },
+        {
+          "answer": {
+            "type": "choice",
+            "choice": "answer_or_result",
+            "confidence": 1,
+            "probabilities": {
+              "announces_unfinished_work": 0,
+              "answer_or_result": 1,
+              "blocker_or_question": 0,
+              "unclear": 0
+            }
+          },
+          "reprompt": false,
+          "failure": null
+        }
+      ]
+    }
+  },
+  "corpora": {
+    "existingSynthetic": {
+      "cases": 60,
+      "repeatsPerVariant": 1,
+      "freshHoldout": false
+    },
+    "addressing": {
+      "cases": 8,
+      "repeatsPerVariant": 2,
+      "freshHoldout": false
+    },
+    "productionReplay": {
+      "cases": 1,
+      "repeatsPerVariant": 3,
+      "rawContent": "Private and excluded from this report"
+    }
+  },
+  "limitations": [
+    "Development regression comparison; existing synthetic cases were already inspected in previous experiments.",
+    "Baseline had five unavailable synthetic calls and three unavailable production replays; extra-check comparisons include those fallbacks.",
+    "Candidate still triggered one extra check across the sixteen addressing judgments because answer_or_result confidence was 0.69.",
+    "Live classifier checks do not prove deployment or end-to-end agent behavior."
+  ]
+}
