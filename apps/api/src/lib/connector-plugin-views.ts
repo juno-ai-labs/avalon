@@ -23,9 +23,14 @@ export function connectorPluginViews(
   connectorType: string,
   modelPluginId: string,
   grantedScopes: readonly string[],
+  displayName?: string,
 ): ConnectorPluginView[] {
   if (connectorType !== "google") {
-    return [{ modelPluginId, credentialModelPluginId: modelPluginId, grantedScopes: [...grantedScopes] }];
+    return [{
+      modelPluginId: connectorType === "custom_mcp" ? customMcpModelPluginId(modelPluginId, displayName) : modelPluginId,
+      credentialModelPluginId: modelPluginId,
+      grantedScopes: [...grantedScopes],
+    }];
   }
   const bundles = googleBundles(grantedScopes);
   return bundles.map(({ key, grantedScopes }) => ({
@@ -34,6 +39,19 @@ export function connectorPluginViews(
     grantedScopes,
     ...(bundles.length > 1 ? { googleBundle: key } : {}),
   }));
+}
+
+/** A bounded identifier derived from the name, never raw configuration in prompt prose. */
+function customMcpModelPluginId(credentialId: string, displayName?: string): string {
+  const match = /^plugin_custom_mcp(?:_([1-9][0-9]*))?$/u.exec(credentialId);
+  if (!match || displayName === undefined) return credentialId;
+  const suffix = `_${match[1] ?? "1"}`;
+  const prefix = "plugin_mcp_";
+  const slug = displayName.normalize("NFKD").toLowerCase()
+    .replace(/\p{M}/gu, "").replace(/[^a-z0-9]+/gu, "_").replace(/^_+|_+$/gu, "") || "server";
+  // ModelPluginIdSchema permits 70 characters, including `plugin_`. Preserve
+  // the allocated ordinal even when the name is truncated or transliterates away.
+  return `${prefix}${slug.slice(0, 70 - prefix.length - suffix.length).replace(/_+$/u, "")}${suffix}`;
 }
 
 export function connectorPluginCanonicalId(connectionId: string, googleBundle?: GooglePluginBundle): string {
@@ -45,8 +63,14 @@ export function connectorPluginBindingViews(
   connectorType: string,
   modelPluginId: string,
   grantedScopes: readonly string[],
+  displayName?: string,
 ): ConnectorPluginView[] {
-  if (connectorType !== "google") return connectorPluginViews(connectorType, modelPluginId, grantedScopes);
+  if (connectorType !== "google") {
+    const views = connectorPluginViews(connectorType, modelPluginId, grantedScopes, displayName);
+    return views[0]?.modelPluginId === modelPluginId ? views : [
+      ...views, { modelPluginId, credentialModelPluginId: modelPluginId, grantedScopes: [...grantedScopes] },
+    ];
+  }
   const bundles = googleBundles(grantedScopes);
   if (bundles.length === 0) return [];
   return [...bundles.map(({ key, grantedScopes }) => ({

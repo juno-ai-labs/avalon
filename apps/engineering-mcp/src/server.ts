@@ -188,7 +188,21 @@ const sqlInputSchema = {
 };
 
 export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal): McpServer {
-  const server = new McpServer({ name: "Rally engineering", version: "1.0.0" });
+  const server = new McpServer({
+    name: "Rally engineering",
+    version: "1.0.0",
+    description: "Inspect and administer Rally organizations, Channels, Threads, Breakouts, Sidekicks and artifacts. Read production databases, inference data and Worker logs; manage feature flags and model routing; create organizations and conversations and send messages as a selected Rally user.",
+  }, {
+    instructions: [
+      "Use these tools for Rally engineering investigations and requested administration.",
+      "Product names differ from storage: an Organization is a workspace, a Channel is a Space, a Thread is a workstream, and a Breakout is a substream. Main is substream 0.",
+      "Resolve the exact organization, user and conversation before investigating. Start with the list/search tools and inspect database schemas before querying rows; bind SQL values with placeholders.",
+      "For participant-visible content use read_channel, read_thread or read_breakout as the selected user and follow pagination. Those reads omit internal tools and thinking; use the exact conversation's inspection SQL and observability tools when diagnosing execution failures.",
+      "SQL tools can mutate production data. Use read-only queries for investigations; make changes only within the user's request. For creation and message sends, reuse the same operationId and arguments after an uncertain outcome rather than creating a second operation.",
+      "Filter logs and analytical queries to the relevant time window and identifiers. Never expose credentials, OAuth codes, socket tickets or unrelated private content found in diagnostic data.",
+      "Separate verified durable state, observed tool results and inference from hypotheses, and distinguish a local change from a merged or deployed fix.",
+    ].join("\n\n"),
+  });
 
   server.registerTool("create_org", {
     description: "Create a Rally Organization in the specified region, owned by creatorUserId, and directly add userIds as members. All users must already exist in that region (use search_users). No invitations or login credentials are created. Reuse operationId and the same arguments to resume an uncertain result; orgId is operationId.",

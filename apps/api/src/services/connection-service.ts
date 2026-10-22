@@ -7,7 +7,7 @@ import { TELEMETRY_CONNECTOR_TYPES, type TelemetryConnectorType } from "@rally/c
 import { AshbyEventSelectionSchema, slackInstallationId } from "@rally/connectors";
 import { enqueueConnectorInstallation, runConnectorInstallation } from "./connector-installation-service";
 import { withDeadline } from "../lib/deadline";
-import { dynamicConnectorCapability, stableConnectionWireName, validateDynamicConnectorTools } from "./connector-tool-inventory";
+import { dynamicConnectorCapability, stableConnectionWireName, discoverDynamicConnectorTools, storeConnectorServerMetadata } from "./connector-tool-inventory";
 import { RALLY_HEADERS } from "@rally/contracts/http-headers";
 import {
   CUSTOM_MCP_CONNECTOR_TYPE,
@@ -565,6 +565,10 @@ export class ConnectionService {
     if (!dynamicConnectorCapability(adapter, scope, granted)) {
       return { toolCount: offeredStaticToolCount(adapter, scope, granted), toolCountMissing: null };
     }
+    if (row.connector_type === "custom_mcp"
+      && !Object.hasOwn(parseJson<Record<string, unknown>>(row.config_json, {}), "mcpServerMetadata")) {
+      runtimeDeferral(this.backfillDiscoveredToolCount(workspaceId, String(row.id)));
+    }
     if (typeof row.discovered_tool_count === "number") {
       return { toolCount: row.discovered_tool_count, toolCountMissing: null };
     }
@@ -582,9 +586,13 @@ export class ConnectionService {
   private async backfillDiscoveredToolCount(workspaceId: string, connectionId: string): Promise<void> {
     try {
       const claimed = await this.env.DB.prepare(
-        `UPDATE connector_connections SET tool_count_backfill_attempted_at = ?
+        `UPDATE connector_connections SET tool_count_backfill_attempted_at = ?,
+          config_json = CASE WHEN connector_type = 'custom_mcp'
+            AND json_type(config_json, '$.mcpServerMetadata') IS NULL
+            THEN json_set(config_json, '$.mcpServerMetadata', json('{"backfillAttempted":true}')) ELSE config_json END
           WHERE id = ? AND workspace_id = ? AND status <> 'disabled'
-            AND discovered_tool_count IS NULL AND tool_count_backfill_attempted_at IS NULL
+            AND ((discovered_tool_count IS NULL AND tool_count_backfill_attempted_at IS NULL)
+              OR (connector_type = 'custom_mcp' AND json_type(config_json, '$.mcpServerMetadata') IS NULL))
           RETURNING id`,
       ).bind(nowIso(), connectionId, workspaceId).first<{ id: string }>();
       if (claimed?.id !== connectionId) return;
@@ -690,14 +698,10 @@ export class ConnectionService {
       const definitions = await withSettingsInventoryDeadline(async (inventorySignal) => withAuthorizedConnection(
         this.env,
         { connection: await this.context(connection), adapter, signal: inventorySignal },
-        async (authorized) => validateDynamicConnectorTools(
-          this.env,
-          adapter,
-          connection.scope,
-          granted,
-          stableConnectionWireName(connection.model_plugin_id),
-          await adapter.dynamicAgentTools!.discover(authorized, inventorySignal),
-        ),
+        async (authorized) => (await discoverDynamicConnectorTools(
+          this.env, adapter, authorized, stableConnectionWireName(connection.model_plugin_id), inventorySignal,
+          connection.provider_account_id == null ? null : String(connection.provider_account_id),
+        )).tools,
       ), signal);
       return grantedToolCount(adapter, connection.scope, granted, definitions);
     } catch (error) {
@@ -747,13 +751,17 @@ export class ConnectionService {
    */
   private async storeDiscoveredToolCount(connection: StoredConnection, count: number | null): Promise<void> {
     const changed = await this.env.DB.prepare(
-      `UPDATE connector_connections SET discovered_tool_count = ?
+      `UPDATE connector_connections SET discovered_tool_count = ?,
+          tool_count_backfill_attempted_at = COALESCE(tool_count_backfill_attempted_at, ?)
         WHERE id = ? AND workspace_id = ? AND status <> 'disabled'
-          AND granted_scopes_json = ? AND config_json = ? AND provider_account_id IS ?
+          AND granted_scopes_json = ?
+          AND json_remove(config_json, '$.mcpServerMetadata') = json_remove(?, '$.mcpServerMetadata')
+          AND provider_account_id IS ?
           AND discovered_tool_count IS NOT ?
         RETURNING id`,
     ).bind(
       count,
+      nowIso(),
       connection.id,
       connection.workspace_id,
       String(connection.granted_scopes_json),
@@ -3276,15 +3284,20 @@ export class ConnectionService {
     return withSettingsInventoryDeadline((signal) => withAuthorizedConnection(
       this.env,
       { connection: context, adapter, signal },
-      (authorized) => listCustomMcpToolInventory(authorized, signal),
+      async (authorized) => {
+        const inventory = await listCustomMcpToolInventory(authorized, signal);
+        if (connection.status !== "disabled") await storeConnectorServerMetadata(this.env, authorized, inventory.server,
+          connection.provider_account_id == null ? null : String(connection.provider_account_id));
+        return inventory;
+      },
     ));
   }
 
   /**
    * Prove a stored connection can actually serve the model.
    *
-   * Through the adapter's own health check, which runs the discovery the
-   * plugin runs — the connection's tool policy, the model-facing name
+   * Through the adapter's own discovery, also used by its health check —
+   * the connection's tool policy, the model-facing name
    * normalization, the schema bounds, the collision checks. Counting the raw
    * catalog instead would accept a server whose every tool the policy filters
    * out, or whose names collide once normalized: nonempty here, and refused at
@@ -3296,13 +3309,8 @@ export class ConnectionService {
     ).bind(id).first<StoredConnection>();
     if (!row) throw new ApiError(500, "connection_write_failed", "The MCP connection could not be loaded");
     const adapter = this.customMcpAdapter();
-    const context = await this.context(row);
-    const health = await withAuthorizedConnection(
-      this.env,
-      { connection: context, adapter, signal: AbortSignal.timeout(20_000) },
-      (authorized) => adapter.healthCheck(authorized, AbortSignal.timeout(20_000)),
-    );
-    if (!health.ok) throw new ConnectorError("unsupported_capability", health.message);
+    const count = await this.discoverToolCount(row, adapter, parseJson<string[]>(row.granted_scopes_json, []));
+    await this.storeDiscoveredToolCount(row, count);
   }
 
   async ingestAshbyWebhook(connectionId: string, rawBody: Uint8Array, headers: Headers) {

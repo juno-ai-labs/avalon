@@ -1,9 +1,14 @@
-import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId, type AutomationDraft, type WorkstreamWorkflowInput } from "@rally/contracts";
+import { executeAutomationCreatorDiscoveryTool, runHarness } from "@rally/agent-harness";
+import { providerRequestView, responsesStreamResponse } from "@rally/agent-harness/test-support/responses-stream";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env } from "../src/env";
 import { decryptString } from "../src/lib/crypto";
+import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import { ConnectionService } from "../src/services/connection-service";
+import { __integrationTesting } from "../src/services/integrations";
+import { testSubstreamAgentsBinding, testWorkstreamObjectStore } from "./helpers/durable-authority";
 import {
   createCloudflareTestBinding,
   createTestDurableObjectId,
@@ -39,6 +44,164 @@ afterEach(() => {
 });
 
 describe("custom MCP connections", () => {
+  it("edits a saved legacy MCP recommendation through the current catalog ID", async () => {
+    const { auth, env, stub } = fixture();
+    stubMcpServer([READ_TOOL]);
+    await new ConnectionService(env, auth).createCustomMcp({
+      displayName: "Rally Engineering", scope: "workspace", serverUrl: SERVER_URL,
+      requestHeaders: { "X-Api-Key": "secret-value" }, toolPolicy: "all_tools",
+    });
+    const input = { ...catalogWorkflowInput(), parentKind: "automation" as const };
+    const saved: AutomationDraft = {
+      definitionVersion: 2, name: "Engineering", description: "Inspect Rally", overview: "Inspect Rally",
+      instructions: "Inspect the selected Thread.", triggers: [{ type: "manual" }], requiredCapabilities: [],
+      expectedOutputs: [], defaultBehavior: {}, memoryTables: [], suggestedScope: "personal",
+      followUpQuestion: null, elicitation: null, ready: true,
+      recommendedPlugins: [{ pluginId: "plugin_custom_mcp", recommendedTools: [], reason: "Inspect Rally" }],
+    };
+    // Only the Sidekick RPC boundary is doubled; the connection lookup executes
+    // against the real WorkspaceDO schema. Inference is not needed for this edit.
+    const saveDefinition = vi.fn(async () => ({ definitionRevision: 4 }));
+    Object.assign(stub, {
+      sidekickReadDetails: async () => [{
+        id: input.parentId, name: saved.name, description: saved.description, scope: "personal",
+        status: "active", lifecycle: "active", nextRunAt: null, lastRunAt: null,
+        updatedAt: "2026-10-22T00:00:00.000Z", currentDefinition: saved,
+        currentDefinitionRevision: 3, acceptedDefinitionRevision: 3, authorUserId: USER_ID,
+        runAsUserId: USER_ID, connectorBindings: {}, recentRuns: [],
+      }],
+      sidekickSaveDefinition: saveDefinition,
+    });
+    const runtimeEnv = withWorkspaceRuntimeDatabase(createTestEnv({ ...env,
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(testWorkstreamObjectStore()),
+    }), WORKSPACE_ID);
+    const selected = await __integrationTesting.loadHarnessTools(runtimeEnv, input);
+    const authoring = selected.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")!;
+    const tool = (name: string) => authoring.tools.find((candidate) => candidate.definition.name === name)!;
+    const listed = await tool("sidekicks_list").execute({}, { toolCallId: "read-saved" } as never);
+    const draft = (listed.output as { sidekicks: Array<{ currentDefinition: AutomationDraft }> }).sidekicks[0]!.currentDefinition;
+    expect(draft.recommendedPlugins).toEqual([
+      { pluginId: "plugin_mcp_rally_engineering_1", recommendedTools: [], reason: "Inspect Rally" },
+    ]);
+    expect(saved.recommendedPlugins[0]!.pluginId).toBe("plugin_custom_mcp");
+    const engineering = selected.plugins.find((plugin) => plugin.connectorType === "custom_mcp")!;
+    await engineering.loadTools!();
+    __integrationTesting.recordCredentialPluginActivation(engineering.canonicalId, selected.frozenConnections,
+      new Set(), selected.loadedAutomationPluginIds);
+    await tool("plugin_inspect").execute({ pluginId: "plugin_mcp_rally_engineering_1" }, { toolCallId: "inspect" } as never);
+    await expect(tool("submit_draft").execute({ ...draft, instructions: "Inspect the selected Thread and summarize it.",
+      icon: "file-text", color: "blue", sidekickId: input.parentId }, { toolCallId: "edit" } as never))
+      .resolves.toMatchObject({ output: { accepted: true } });
+    expect(saveDefinition).toHaveBeenCalledWith(expect.objectContaining({ draft: expect.objectContaining({
+      recommendedPlugins: [{ pluginId: "plugin_mcp_rally_engineering_1", recommendedTools: [], reason: "Inspect Rally" }],
+    }) }));
+  });
+
+  it.each([false, true])("puts fresh server instructions in the model's system prompt (restored=%s)", async (restored) => {
+    const { auth, database, env } = fixture();
+    const server: { description?: string; instructions?: string } = {
+      description: "Inspect deployment logs", instructions: "Old account guidance.",
+    };
+    stubMcpServer([READ_TOOL], [], server);
+    const { connection } = await new ConnectionService(env, auth).createCustomMcp({
+      displayName: "Engineering", scope: "workspace", serverUrl: SERVER_URL,
+      requestHeaders: { "X-Api-Key": "secret-value" }, toolPolicy: "all_tools",
+    });
+    expect(JSON.parse(String(database.prepare("SELECT config_json FROM connector_connections WHERE id = ?").get(connection.id)!.config_json)))
+      .toMatchObject({ mcpServerMetadata: { description: "Inspect deployment logs", instructions: "Old account guidance." } });
+    const input = catalogWorkflowInput();
+    const runtimeEnv = withWorkspaceRuntimeDatabase(createTestEnv({ ...env,
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(testWorkstreamObjectStore()),
+    }), WORKSPACE_ID);
+    const selected = await __integrationTesting.loadHarnessTools(runtimeEnv, input);
+    const plugin = selected.plugins.find((candidate) => candidate.connectorType === "custom_mcp")!;
+    expect(plugin.description).toBe("Inspect deployment logs");
+    // The server can update its instructions between catalog construction and activation.
+    server.description = "Inspect current Worker logs";
+    server.instructions = "Choose the exact Worker before querying logs.";
+    const prompts: string[] = [];
+    const fetcher: typeof fetch = async (_url, init) => {
+      const request = providerRequestView<{ messages: Array<{ role: string; content: string | Array<{ text?: string }> }> }>(JSON.parse(String(init?.body)));
+      const content = request.messages.find((message) => message.role === "system")!.content;
+      prompts.push(typeof content === "string" ? content : content.map((part) => part.text ?? "").join("\n"));
+      const load = !restored && prompts.length === 1;
+      const delta = load ? { tool_calls: [{ index: 0, id: "load-mcp", type: "function",
+        function: { name: "load_plugin", arguments: JSON.stringify({ pluginId: plugin.modelId }) } }] } : { content: "Ready." };
+      return responsesStreamResponse([{ choices: [{ delta, finish_reason: load ? "tool_calls" : "stop" }] }]);
+    };
+    expect(await runHarness({
+      config: { apiKey: "test-key", primaryModel: "google/gemini-2.5-flash-lite", fetch: fetcher,
+        maxIterations: 4, maxToolCalls: 3, maxWallClockMs: 120_000, toolTimeoutMs: 30_000, maxWebResults: 4 },
+      workspaceId: WORKSPACE_ID, workstreamId: input.parentId, loopId: input.loopId, harnessRunId: input.harnessRunId,
+      executionPrincipal: input.executionPrincipal, systemPrompt: "Investigate the selected deployment.",
+      messages: [{ role: "user", content: "Use Engineering." }], corePlugins: [], plugins: [plugin],
+      activationHints: restored ? [plugin.canonicalId] : [], reauthorizePlugin: () => "authorized", onEvent: () => {},
+    })).toMatchObject({ status: "completed" });
+    if (!restored) {
+      expect(prompts[0]).toContain("Inspect deployment logs");
+      expect(prompts[0]).not.toContain("Old account guidance.");
+      expect(prompts[0]).not.toContain("Choose the exact Worker before querying logs.");
+    }
+    expect(prompts.at(-1)).toContain("# Active Plugin Instructions");
+    expect(prompts.at(-1)).toContain("Choose the exact Worker before querying logs.");
+    expect(prompts.at(-1)).not.toContain("Old account guidance.");
+    const catalog = await __integrationTesting.loadAutomationCreatorPluginCatalog(runtimeEnv, WORKSPACE_ID, USER_ID);
+    expect(catalog[0]).toMatchObject({ description: "Inspect current Worker logs" });
+    expect(catalog[0]!.systemMessage).toContain("Choose the exact Worker before querying logs.");
+    delete server.description;
+    delete server.instructions;
+    await new ConnectionService(env, auth).getCustomMcpSettings(connection.id);
+    const refreshed = await __integrationTesting.loadHarnessTools(runtimeEnv, input);
+    expect(refreshed.plugins.find((candidate) => candidate.connectorType === "custom_mcp")).toMatchObject({
+      description: "Available tools: search_docs: Search the corpus",
+    });
+    expect(refreshed.plugins.find((candidate) => candidate.connectorType === "custom_mcp")!.systemMessage)
+      .not.toContain("Choose the exact Worker before querying logs.");
+  });
+
+  it("identifies existing named servers in run and Sidekick catalogs without changing their tool prefixes", async () => {
+    const { auth, database, env } = fixture();
+    stubMcpServer([READ_TOOL]);
+    const service = new ConnectionService(env, auth);
+    const connections = [];
+    for (const [index, name] of ["Cloudflare Observability", "Rally Engineering"].entries()) {
+      const { connection } = await service.createCustomMcp({
+        displayName: name, scope: "workspace", serverUrl: `https://mcp${index}.example.test/mcp`,
+        requestHeaders: { "X-Api-Key": "secret-value" }, toolPolicy: "all_tools",
+      });
+      connections.push(connection);
+    }
+    const input: WorkstreamWorkflowInput = {
+      region: "global", workspaceId: WORKSPACE_ID, parentKind: "workstream",
+      parentId: asWorkstreamId("00000000-0000-4000-8000-000000000004"),
+      loopId: "custom-mcp-named-catalog", harnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000005"),
+      triggerMessageId: null, activityId: null, executionPrincipal: { type: "user", userId: USER_ID }, reason: "test",
+    };
+    const runtimeEnv = withWorkspaceRuntimeDatabase(createTestEnv({ ...env,
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(testWorkstreamObjectStore()),
+    }), WORKSPACE_ID);
+    const selected = await __integrationTesting.loadHarnessTools(runtimeEnv, input);
+    const plugins = selected.plugins.filter((plugin) => plugin.connectorType === "custom_mcp");
+    expect(plugins.map((plugin) => ({ id: plugin.modelId, wire: plugin.shortWireName }))).toEqual([
+      { id: "plugin_mcp_cloudflare_observability_1", wire: "custom_mcp" },
+      { id: "plugin_mcp_rally_engineering_2", wire: "custom_mcp_2" },
+    ]);
+    const engineering = plugins[1]!;
+    expect(selected.frozenConnections.get(engineering.canonicalId)).toMatchObject({
+      connectionId: connections[1]!.id, credentialModelPluginId: "plugin_custom_mcp_2",
+    });
+    const tools = await engineering.loadTools!();
+    expect(tools.map((tool) => tool.definition.name)).toEqual(["search_docs"]);
+    const catalog = await __integrationTesting.loadAutomationCreatorPluginCatalog(runtimeEnv, WORKSPACE_ID, USER_ID);
+    expect(catalog.map((plugin) => plugin.pluginId)).toEqual([
+      "plugin_mcp_cloudflare_observability_1", "plugin_mcp_rally_engineering_2",
+    ]);
+    expect(executeAutomationCreatorDiscoveryTool("plugins_search", { query: "Rally Engineering" }, catalog))
+      .toMatchObject({ plugins: [{ pluginId: "plugin_mcp_rally_engineering_2" }] });
+    expect(database.prepare("SELECT model_plugin_id FROM connector_connections ORDER BY created_at").all())
+      .toEqual([{ model_plugin_id: "plugin_custom_mcp" }, { model_plugin_id: "plugin_custom_mcp_2" }]);
+  });
+
   it("stores a header-authenticated server only once it answers, and reports its live catalog", async () => {
     const { auth, database, env } = fixture();
     const requests: Array<{ url: string; apiKey: string | null }> = [];
@@ -77,6 +240,7 @@ describe("custom MCP connections", () => {
       serverUrl: SERVER_URL,
       authMode: "headers",
       toolPolicy: "read_only_tools",
+      mcpServerMetadata: { description: "Available tools: search_docs: Search the corpus" },
     });
     expect(row.provider_account_id).toBe(SERVER_URL);
     expect(row.model_plugin_id).toBe("plugin_custom_mcp");
@@ -386,6 +550,7 @@ describe("custom MCP connections", () => {
 function stubMcpServer(
   tools: readonly Record<string, unknown>[],
   requests: Array<{ url: string; apiKey: string | null }> = [],
+  server: { description?: string; instructions?: string } = {},
 ): void {
   vi.stubGlobal("fetch", async (target: string | URL | Request, init?: RequestInit) => {
     const url = new URL(typeof target === "string" ? target : target instanceof URL ? target.href : target.url);
@@ -396,12 +561,20 @@ function stubMcpServer(
     if (request.method === "notifications/initialized") return new Response(null, { status: 202 });
     const id = request.id as number;
     const result = request.method === "initialize"
-      ? { protocolVersion: "2025-06-18", capabilities: {} }
+      ? { protocolVersion: "2025-06-18", capabilities: {}, serverInfo: { name: "Example", version: "1", description: server.description },
+          instructions: server.instructions }
       : { tools };
     return new Response(JSON.stringify({ jsonrpc: "2.0", id, result }), {
       headers: { "content-type": "application/json" },
     });
   });
+}
+
+function catalogWorkflowInput(): WorkstreamWorkflowInput {
+  return { region: "global", workspaceId: WORKSPACE_ID, parentKind: "workstream",
+    parentId: asWorkstreamId("00000000-0000-4000-8000-000000000004"), loopId: "custom-mcp-metadata",
+    harnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000005"),
+    triggerMessageId: null, activityId: null, executionPrincipal: { type: "user", userId: USER_ID }, reason: "test" };
 }
 
 /**
@@ -420,6 +593,8 @@ function fixture() {
   insertUser.run(MEMBER_ID, "custom-mcp-member", "member@example.test", "Workspace Member", at, at);
   regional.prepare(`INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
     VALUES (?, 'Custom MCP', 'custom-mcp', 'global', ?, ?, ?)`).run(WORKSPACE_ID, USER_ID, at, at);
+  regional.prepare(`INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+    VALUES (?, ?, 'owner', 'active', ?)`).run(WORKSPACE_ID, USER_ID, at);
   const workspace = createTestWorkspaceDO({
     workspaceId: WORKSPACE_ID,
     regionalDatabase: regional,
@@ -445,6 +620,7 @@ function fixture() {
   return {
     database,
     auth,
+    stub,
     env: createTestEnv({
       DB: sqliteD1(regional),
       AVALON_REGION: "global",
