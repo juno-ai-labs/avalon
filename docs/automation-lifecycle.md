@@ -33,8 +33,11 @@ reason for polling. The authoring prompt points to the skill for that procedure.
 
 Every activation starts an independent conversation. The Sidekick's wizard,
 activations and background agents share one Terminal sandbox; the requesting
-Thread and other Sidekicks keep separate sandboxes. Transcripts and resource
-permissions remain separate. The authoring prompt saves resource IDs, recovery
+Thread and other Sidekicks keep separate sandboxes. Transcripts and direct attachments remain separate. The wizard, activations
+and workers also see resources visible to their execution user in the home and
+explicitly attached conversations, resolved live rather than copied at setup.
+They publish into the admitted home conversation when it has one; see
+[`agent-attachments.md`](agent-attachments.md#authorized-work-stream-discovery-and-text-hydration). The authoring prompt saves resource IDs, recovery
 steps and shared-table access instructions because files can still be lost after
 a reset or expiry. For an existing site's refresh,
 `building-live-sites` supplies the required import/update/publish procedure and
