@@ -6,7 +6,11 @@ link; a Channel's feed does not list threads they cannot open. They see its name
 "You're not in this thread, ask for access below" ("breakout" for a Breakout),
 and a primary
 **Request access** button. The button records a request addressed to the
-conversation's creator and emails them. The creator can answer it in any of
+conversation's creator and emails them. While a request is pending, including
+after reopening or reloading, the screen shows **Access requested — awaiting
+approval** and **Try again** instead of asking them to request access again.
+If the email has not been sent, **Retry sending request** remains available.
+The creator can answer it in any of
 these places, and every one settles the same stored request:
 
 - **Approve access** in the email: one click, no sign-in.
@@ -54,7 +58,20 @@ The person who asked gets an email when the request is approved or declined.
    `authorizeViewer` the ticket runs: an initially `open` preview keeps the old
    error screen,
    `requestable` shows the request screen. A Breakout with no look of its own
-   wears its Channel's, and `markId` is then the Channel's id.
+   wears its Channel's, and `markId` is then the Channel's id. The same object
+   read checks whether the signed-in requester has a pending request for this
+   exact conversation and whether its email was sent (`requestPending` and
+   `requestEmailed`). These fields are sent only to clients at contract 12 or
+   later; older browser builds receive the original preview shape because
+   their decoders are strict. Reopening refreshes the stored state, while a
+   successful send cancels older preview reads before updating the submitted
+   conversation's waiting state, even if the requester has navigated elsewhere.
+   A failed send refreshes the preview too: the request may already be stored
+   even though its email failed, so the screen offers the resend action at once.
+   Preview keys and submission variables include the requester identity, so
+   switching accounts cannot let an old send overwrite the new person's state.
+   If a send response interrupts a check for a newer access-recovery version,
+   that check is refreshed so a fast approval push still reopens the thread.
 3. **The request.** The approver is the conversation's creator, who must be an
    active member and not the requester. The Organization object records the
    request, or returns the one already pending for this person and
@@ -107,6 +124,10 @@ decision email as `conversation_access_decision_dev_email`.
 
 ## Invariants
 
+- **The waiting state comes from the requester's own pending row.** Another
+  person's request, another conversation, or an answered request must not hide
+  **Request access**. Guard: the workerd file's pending-preview tests and
+  `conversation-access-request.test.tsx`'s fresh-visit and reopening tests.
 - **Only the approver's own add can let someone in.** Every path runs the add
   the app runs, as the approver, so an approval never grants more than they
   could by hand. Guard: the add paths' own tests.
@@ -191,6 +212,31 @@ pnpm --filter @rally/contracts exec vitest run src/desktop-deep-link-intent.test
 - Should requests and their links expire?
 
 ## Changelog
+
+### 2026-10-22 — Preserve the requester's waiting state on reopen
+
+**What changed:** The access preview includes the signed-in person's pending
+request and email-delivery state for clients at contract 12 or later. Desktop
+and web show **Access requested — awaiting approval** for a pending request,
+retain **Retry sending request** if email delivery failed, and discard older
+preview reads when a send succeeds. Completion updates are bound to the submitted
+conversation so navigating during a request cannot mark another one as pending.
+Failed sends reconcile the stored state immediately rather than waiting for reopen.
+Cache and mutation state are scoped to the requester as well as the conversation.
+The access-push recovery version from PR #1416 is preserved when request completion
+cancels an admission check, so the two recovery paths cannot lose a fast approval.
+
+**Why:** The screen remembered only the current component's successful click.
+Reopening showed **Request access** even though the Organization still held a
+pending request, leaving the requester unsure whether they had asked.
+
+**Considered and rejected:** Persisting a local sent flag: it would miss requests
+from another device and outlive an approval or decline. The existing preview
+RPC can read the authoritative pending row without another network hop.
+
+**Consequences:** Pending state stays scoped to person and conversation. Older
+desktops keep their original response shape, and a stored but undelivered email
+remains retryable under the request's existing idempotency key.
 
 ### 2026-10-22 — Recover waiting conversations on an access push
 

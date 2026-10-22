@@ -16688,12 +16688,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * an active member and holds the id, and this names only what a Channel
    * reached through a Breakout already names (`docs/channel-access-requests.md`).
    */
-  async accessRequestSubject(input: { workspaceId: string; parentId: string; substreamId: string }): Promise<{
+  async accessRequestSubject(input: {
+    workspaceId: string; parentId: string; substreamId: string; requesterUserId?: string;
+  }): Promise<{
     kind: "channel" | "breakout";
     title: string;
     appearance: z.infer<typeof WorkstreamAppearanceSchema> | null;
     markId: string;
     createdByUserId: string | null;
+    requestPending: boolean;
+    requestEmailed: boolean;
   } | null> {
     await this.initialized;
     const request = parseRpcInput(AccessRequestSubjectRequestSchema, input, "access_request_subject");
@@ -16713,6 +16717,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ...(breakout ? [request.parentId, request.substreamId] : [request.parentId]),
     ).toArray()[0];
     if (!row) return null;
+    const pendingRequest = request.requesterUserId === undefined ? null
+      : this.accessRequestStorage().pending(request.parentId, request.substreamId, request.requesterUserId);
     return AccessRequestSubjectSchema.parse({
       kind: breakout ? "breakout" : "channel",
       title: row.title,
@@ -16721,6 +16727,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         appearanceJson: row.appearance_json, parentAppearanceJson: row.parent_appearance_json ?? null,
       }),
       createdByUserId: row.created_by_user_id,
+      requestPending: pendingRequest !== null,
+      requestEmailed: pendingRequest?.emailed ?? false,
     });
   }
 
