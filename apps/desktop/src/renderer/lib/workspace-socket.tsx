@@ -295,7 +295,7 @@ function invalidateTopic(
       // The workstream's owned and recommended Sidekicks, plus what its
       // conversation loaded. A room's row never travels in the
       // pushed sidebar list, so this topic is what tells its rails to re-read.
-      ['attached-sidekicks'], ['workstream-sidekicks'], ['recommended-sidekicks'],
+      ['attached-sidekicks'], ['workstream-sidekicks'], ['recommended-sidekicks'], ['sidekick-activity'],
     ],
     notes: [['note']],
     // Projects are gone and Spaces replaced them; Space state is carried by the
@@ -637,6 +637,7 @@ export function WorkspaceSocketProvider({
         if (sidebar.spaces) {
           applyVersionedSpaceSnapshot(queryClient, sidebar.spaces, sidebar.ordering ?? [], sidebar.spacesReady ?? true, sidebar.pinnedOrder, { pins: sidebar.pins, artifactPins: sidebar.artifactPins, channelStats: sidebar.channelStats });
         }
+        void queryClient.invalidateQueries({ queryKey: ['sidekick-activity'] });
         directoryLive = true;
         setSidebarConnect((current) => ({
           generation: (current?.generation ?? 0) + 1,
@@ -664,6 +665,7 @@ export function WorkspaceSocketProvider({
         sidebar.automations.waterline,
         sidebar.automations.items.map(mapAutomationSummary),
       );
+      void queryClient.invalidateQueries({ queryKey: ['sidekick-activity'] });
       // `spacesReady` is optional on the wire and read as ready when absent:
       // a payload from a server that predates the cutover describes an
       // Organization that was never going to open, not one still opening.
@@ -1262,6 +1264,9 @@ export function WorkspaceSocketProvider({
               }
             }
             if (applied.commonApplied) {
+              // Accepted conversation projections can change loaded Sidekick
+              // links even while the Sidekick itself keeps running.
+              void queryClient.invalidateQueries({ queryKey: ['sidekick-activity', 'workstream', workstreamState.data.workstreamId] });
               void queryClient.invalidateQueries({
                 queryKey: ['terminal-workstream', workstreamState.data.workstreamId],
                 exact: true,
@@ -1302,6 +1307,7 @@ export function WorkspaceSocketProvider({
               void queryClient.invalidateQueries({ queryKey: ['automation'] });
               void queryClient.invalidateQueries({ queryKey: ['automation-runs'] });
               void queryClient.invalidateQueries({ queryKey: ['sidekicks-library'] });
+              void queryClient.invalidateQueries({ queryKey: ['sidekick-activity'] });
               void queryClient.invalidateQueries({ queryKey: ['attached-sidekicks'] });
               void queryClient.invalidateQueries({ queryKey: ['workstream-sidekicks'] });
               // Relayed as the `automations` topic it amounts to, so the

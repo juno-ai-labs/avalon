@@ -4735,6 +4735,15 @@ export const SidekickAttachmentSchema = z.object({
 });
 export type SidekickAttachment = z.infer<typeof SidekickAttachmentSchema>;
 
+/** Storage names: a Channel is a space, and a Thread or Breakout is a workstream conversation. */
+export const SidekickActivityTargetSchema = z.strictObject({
+  parentKind: z.enum(['space', 'workstream']),
+  parentId: IdSchema,
+  substreamId: z.union([z.literal('0'), IdSchema]),
+});
+export type SidekickActivityTarget = z.infer<typeof SidekickActivityTargetSchema>;
+export const SidekickActivitySchema = z.strictObject({ count: z.number().int().nonnegative() });
+
 /** A resource attached to a Channel's Main conversation, as its rail lists it. */
 export const ChannelRailResourceSchema = z.strictObject({
   id: IdSchema,
