@@ -770,7 +770,7 @@ export class SpaceService {
     return MoveChannelBetweenSpacesResultSchema.parse({ source, target });
   }
 
-  /** Archive a Space once no live member Channel would be stranded by it: one WorkspaceDO write. */
+  /** Archive a Channel and its exclusive threads through WorkspaceDO. */
   async archive(spaceId: SpaceId): Promise<SpaceSummary> {
     return this.settled(await (await this.workspace()).archiveSpace({
       workspaceId: asWorkspaceId(this.auth.workspaceId),
