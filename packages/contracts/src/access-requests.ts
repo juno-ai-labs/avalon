@@ -21,6 +21,8 @@ export const ConversationAccessPreviewSchema = z.strictObject({
   /** The id the mark resolves unset parts from: the Channel's when a Breakout wears the Channel's look. */
   markId: z.string(),
   access: z.enum(["open", "requestable"]),
+  /** Whether this viewer already has a pending request for this conversation. */
+  requestPending: z.boolean().default(false),
 });
 export type ConversationAccessPreview = z.infer<typeof ConversationAccessPreviewSchema>;
 

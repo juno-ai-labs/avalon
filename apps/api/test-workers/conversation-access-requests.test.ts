@@ -23,6 +23,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 import { hostedParentStub } from "./helpers/hosted-parent";
+import { ConversationAccessRequestService } from "../src/services/conversation-access-request-service";
+import { conversationObjectName } from "../src/durable-objects/names";
+import { seedWorkstreamRoot } from "./helpers/substream-fixture";
 
 const workspaceId = asWorkspaceId("00000000-0000-4000-8000-0000000ac001");
 const privateChannel = asWorkstreamId("00000000-0000-4000-8000-0000000ac0a0");
@@ -115,21 +118,21 @@ describe("accessRequestSubject", () => {
   it("names a private Channel with its mark and its creator, and nothing else", async () => {
     expect(await subject(privateChannel, "0")).toEqual({
       kind: "channel", title: "Launch plan", appearance: { icon: "rocket", color: "teal" },
-      markId: privateChannel, createdByUserId: creator,
+      markId: privateChannel, createdByUserId: creator, requestPending: false,
     });
   });
 
   it("gives a Breakout with no look of its own the Channel's, resolved from the Channel's id", async () => {
     expect(await subject(privateChannel, plainBreakout)).toEqual({
       kind: "breakout", title: "Pricing", appearance: { icon: "rocket", color: "teal" },
-      markId: privateChannel, createdByUserId: breakoutCreator,
+      markId: privateChannel, createdByUserId: breakoutCreator, requestPending: false,
     });
   });
 
   it("keeps a Breakout's own look, resolved from its own id", async () => {
     expect(await subject(privateChannel, markedBreakout)).toEqual({
       kind: "breakout", title: "Copy", appearance: { icon: null, color: "amber" },
-      markId: markedBreakout, createdByUserId: breakoutCreator,
+      markId: markedBreakout, createdByUserId: breakoutCreator, requestPending: false,
     });
   });
 
@@ -182,6 +185,39 @@ const ask = (substreamId: string = "0", approverUserId: string = creator) => org
 });
 
 describe("stored access requests", () => {
+  it.each(["approved", "declined"] as const)("previews the requester's pending request until it is %s", async (status) => {
+    // Admission imports the historical main roster from the real conversation
+    // object; the directory-only fixture above has not given it an identity.
+    const source = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", workspaceId, privateChannel));
+    await runInDurableObject(source, (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: privateChannel });
+    });
+    const service = new ConversationAccessRequestService(env, {
+      workspaceId, userId: requester, sessionId: `session-${requester}`, region: "global", role: "member",
+    });
+    expect(await service.preview(privateChannel, "0")).toMatchObject({ access: "requestable", requestPending: false });
+    const { request } = await ask();
+    expect(await service.preview(privateChannel, "0")).toMatchObject({ access: "requestable", requestPending: true });
+    expect(await organization().accessRequestSubject({
+      workspaceId, parentId: privateChannel, substreamId: "0", requesterUserId: creator,
+    })).toMatchObject({ requestPending: false });
+    expect(await organization().accessRequestSubject({
+      workspaceId, parentId: privateChannel, substreamId: plainBreakout, requesterUserId: requester,
+    })).toMatchObject({ requestPending: false });
+    await organization().resolveConversationAccessRequest({ workspaceId, id: request.id, status });
+    expect(await service.preview(privateChannel, "0")).toMatchObject({ requestPending: false });
+  });
+
+  it("previews a pending Breakout request only for that Breakout", async () => {
+    await ask(plainBreakout, breakoutCreator);
+    expect(await organization().accessRequestSubject({
+      workspaceId, parentId: privateChannel, substreamId: plainBreakout, requesterUserId: requester,
+    })).toMatchObject({ requestPending: true });
+    expect(await organization().accessRequestSubject({
+      workspaceId, parentId: privateChannel, substreamId: markedBreakout, requesterUserId: requester,
+    })).toMatchObject({ requestPending: false });
+  });
+
   it("keeps one pending request per person per conversation, so asking again sends nothing new", async () => {
     const first = await ask();
     const again = await ask();
