@@ -7,6 +7,7 @@ export function connectorTextPages(
   bucket: Pick<R2Bucket, "put" | "get">,
   scope: { region: string; workspaceId: string; workstreamId: string; substreamId: string; connectionId: string },
   assertOwned: () => Promise<void>,
+  signal?: AbortSignal,
 ): ConnectorTextPages {
   const prefix = `${scope.region}/${scope.workspaceId}/workstreams/${scope.workstreamId}/substreams/${scope.substreamId}/connector-text/${scope.connectionId}/`;
   function key(id: string) {
@@ -22,15 +23,16 @@ export function connectorTextPages(
       await assertOwned();
       const id = crypto.randomUUID();
       await bucket.put(key(id), bytes, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
-      await assertOwned();
+      signal?.throwIfAborted();
       return id;
     },
     async read(id, offset, length) {
-      await assertOwned();
+      signal?.throwIfAborted();
       const object = await bucket.get(key(id), { range: { offset, length } });
       if (!object) throw new ConnectorError("invalid_payload", "textPage: the text snapshot is unavailable; start a new read", { field: "textPage", reason: "text_snapshot_unavailable" });
       const bytes = new Uint8Array(await object.arrayBuffer());
-      await assertOwned();
+      // The executing host fences result publication; do not repeat its RPCs for an R2 read.
+      signal?.throwIfAborted();
       return { bytes, totalBytes: object.size };
     },
   };

@@ -1,0 +1,20 @@
+[
+  {
+    "canonicalToolName": "docs.append_text",
+    "capability": "docs.write",
+    "mode": "write",
+    "idempotency": "record_before_execute",
+    "pluginId": "connection:00000000-0000-4000-8000-000000000007",
+    "connectionId": "00000000-0000-4000-8000-000000000007",
+    "toolSurfaceHash": "HWbgpDln2humYMYCyuEZ-eoeBcS8_jylFeOpRbxLpgY"
+  },
+  {
+    "canonicalToolName": "drive.export",
+    "capability": "drive.read",
+    "mode": "read",
+    "idempotency": "safe",
+    "pluginId": "connection:00000000-0000-4000-8000-000000000007",
+    "connectionId": "00000000-0000-4000-8000-000000000007",
+    "toolSurfaceHash": "HWbgpDln2humYMYCyuEZ-eoeBcS8_jylFeOpRbxLpgY"
+  }
+]

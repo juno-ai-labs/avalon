@@ -1272,7 +1272,7 @@ describe("connectors", () => {
       contentTruncated: false
     });
     expect(driveMetadataFields).toContain("isAppAuthorized");
-    expect(driveMetadataFields).toContain("capabilities(canEdit)");
+    expect(driveMetadataFields).toContain("capabilities(canEdit,canDownload)");
   });
 
   it("exposes bounded scoped read tools without raw Gmail parts or PDF base64", async () => {
