@@ -159,7 +159,7 @@ The host resolves stored-loadable Sidekicks against execution and conversation a
 | `packages/agent-harness/src/tool-arguments.ts` | Schema-guided numeric-string normalization, blanked-optional-argument stripping, and bounded model-visible argument errors. |
 | `scripts/eslint-rules/tool-input-boundaries.mjs` | Prevents individual tools from replacing the exact shared numeric-string policy with permissive coercion or compatibility unions. |
 | `packages/agent-harness/src/prompts/` | Every stable prompt. Byte-stable and golden-hashed; read [`writing-prompts.md`](writing-prompts.md) first. |
-| `packages/agent-harness/src/skills.ts`, `built-in-skills.ts` | The skill registry, its three bounds, and the five skills the package ships — three unowned, two scoped by `ownerPlugin`. |
+| `packages/agent-harness/src/skills.ts`, `built-in-skills.ts` | The skill registry, its three bounds, and the built-in skill catalog, including procedures scoped by `ownerPlugin`. |
 | `packages/agent-harness/src/tool-activity.ts` | `toolActivityName` — the prose every transcript row is labelled with. |
 | `packages/agent-harness/src/tool-schema-safety.ts` | The measured rule for what xAI reads as an object, two build-time checks over what Bind's sanitizer *emits*, and the run-time repair gated on one of them — that repair is the piece with the blast radius, since it rewrites third-party schemas. |
 | `apps/api/src/runtime/harness-run-runtime.ts` | The host side: admission, the lease, run scope, receipts, terminal state. |
@@ -666,7 +666,13 @@ The always-active `rally_skills` plugin owns two globally named controls. `load_
 
 Three bounds keep a looping model from loading its way into a context-limit error: a count cap, a budget over the total tokens of loaded bodies, and a byte cap on a single `read_skill_resource` response. Bind judges the first two (`admitSkillLoad`); Rally measures the token half by resolving the bodies the load would actually inject, and applies the third itself — an unbounded Tier-3 read would otherwise route around the Tier-2 budget, since a skill whose body fits can bundle a reference that does not. All three are configurable, through `maxActiveSkills`, `maxActiveSkillBodyTokens`, and `maxSkillResourceBytes`.
 
-The package ships ten skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet. Four are unowned and offered to ordinary runs: `deep-research`, `writing-an-email`, `scheduling-a-calendar-event`, and `using-the-local-inapp-browser`. The other six each set an `ownerPlugin` and are offered only to a run whose scope already carries that plugin: `polling-for-events` below, `tracking-seen-or-done-items` owned by `rally:tables`, `building-live-sites` above, and the three AI-chat readers — `reading-an-ai-chat`, `reading-chatgpt-conversations` and `reading-claude-conversations` (`reading-ai-chats-skills.ts`) — owned by Rally's browser plugin, `avalon:browser`. The generic reader is written against what every chat page must have (conversation data the page loaded, messages with authors, ids and parent links) rather than any markup, and ends in a self-check against the page; the provider companions carry routes and shapes as hints to verify, so a provider redesign degrades to the generic procedure instead of a wrong import. The email and calendar skills are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
+The package ships eleven skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet. Five are unowned and offered to ordinary runs: `deep-research`, `writing-an-email`, `scheduling-a-calendar-event`, `using-the-local-inapp-browser`, and `using-external-structured-data`. The other six each set an `ownerPlugin` and are offered only to a run whose scope already carries that plugin: `polling-for-events` below, `tracking-seen-or-done-items` owned by `rally:tables`, `building-live-sites` above, and the three AI-chat readers — `reading-an-ai-chat`, `reading-chatgpt-conversations` and `reading-claude-conversations` (`reading-ai-chats-skills.ts`) — owned by Rally's browser plugin, `avalon:browser`. The generic reader is written against what every chat page must have (conversation data the page loaded, messages with authors, ids and parent links) rather than any markup, and ends in a self-check against the page; the provider companions carry routes and shapes as hints to verify, so a provider redesign degrades to the generic procedure instead of a wrong import. The email and calendar skills are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
+
+`using-external-structured-data` owns the source-handling procedure shared by
+sites, reports, imports and other outputs. It has no owner-plugin gate; local-file
+steps require Terminal separately. See [the skill](../packages/agent-harness/src/using-external-structured-data-skill.ts)
+for its direct-processing and Terminal paths. `building-live-sites` references
+it while retaining site-specific recovery, formats and publication.
 
 `using-the-local-inapp-browser` is unowned so its limitation guidance reaches
 ordinary conversations that lack browser tools. [Agent profiles](#agent-profiles)
@@ -1709,6 +1715,22 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-10-22 — Share structured-source handling across output types
+
+**What changed:** Added the built-in `using-external-structured-data` skill for
+complete reads, raw-response transfer, coded transformations and field-by-field
+checks. It is offered without a provider-specific owner and asks for Terminal
+only when local files or code are needed. The site skill loads it instead of
+copying the general procedure.
+
+**Why:** A calendar build lost source fields despite a complete Sheet response.
+The transfer and validation procedure also applies to reports, imports and other
+outputs; keeping it only in the site skill would hide it from those tasks and
+encourage separate copies. Site recovery and publication remain in their
+existing skill so source-data guidance does not absorb destination behavior.
+
+Pull request: [#1421](https://github.com/juno-ai-labs/avalon/pull/1421).
 
 ### 2026-10-22 — Explain unsupported local browser requests through a skill
 
