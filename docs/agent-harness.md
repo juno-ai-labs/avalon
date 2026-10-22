@@ -652,6 +652,16 @@ and the model sees `success: false` with a stable code and recovery action. A
 returned result containing an `error` field would instead be a completed tool by
 protocol and is forbidden for these cases.
 
+The existing Sidekick plugin adds self-delegation tools only for a direct human
+trigger whose canonical author matches the execution user. The host derives
+that user; the model supplies the Sidekick target and allow/withdraw intent.
+Both room and authoring presentations keep stable `sidekick_…` wire names.
+[Sidekick lifecycle](automation-lifecycle.md#delegation-consent-authority) owns
+the consent authority; loading these tools starts no run and grants no account
+access. Sidekick activation prompts carry permission-recovery guidance directly,
+independently of the authoring plugin: report unresolved work once through the
+existing conversation post, and never claim delivery after a refusal.
+
 ### Skills
 
 A plugin gives the model a capability; a **skill** gives it a procedure. Skills are markdown instruction modules — how this workspace triages a queue, what a handover note must carry, the house voice — disclosed in the same three tiers the plugin catalog uses, because a workspace's accumulated know-how does not fit in a context window while a catalog line costs about fifty tokens.

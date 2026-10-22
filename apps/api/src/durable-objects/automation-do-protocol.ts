@@ -48,6 +48,8 @@ export const AutomationCreateRequestSchema = z.strictObject({
    */
   owningSubstreamId: SubstreamIdSchema.default("0" as SubstreamId),
   authorityGeneration: z.number().int().positive(),
+  /** Trusted host provenance; absent for old or autonomous callers, never inferred from author identity. */
+  creatorConsent: z.strictObject({ requestId: IdSchema }).optional(),
 }).superRefine((value, context) => {
   if ((value.scope === "workstream") !== (value.owningWorkstreamId !== null)) {
     context.addIssue({
@@ -85,6 +87,18 @@ export const AutomationActorRequestSchema = z.strictObject({
   actor: AutomationActorSchema,
 });
 export type AutomationActorRequest = z.infer<typeof AutomationActorRequestSchema>;
+
+/** Host-private preparation state, never part of a model-advertised input. */
+export const SidekickPrepareDelegationRequestSchema = z.strictObject({
+  ...Addressed, userId: UserIdSchema, allowed: z.boolean(), operationId: IdSchema,
+});
+export const SidekickSetMyDelegationRequestSchema = SidekickPrepareDelegationRequestSchema.extend({
+  expectedGeneration: z.number().int().nonnegative(),
+  source: z.enum(["self_service", "agent_request"]),
+});
+export const SidekickRemoveDelegateRequestSchema = AutomationActorRequestSchema.extend({
+  userId: UserIdSchema, operationId: IdSchema,
+});
 
 /**
  * A partial icon/colour choice for the Sidekick itself.

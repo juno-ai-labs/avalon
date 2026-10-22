@@ -20,6 +20,7 @@ import { workspaceDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
+import { rememberSidekickDelegationLocation } from "./sidekick-delegation-service";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
@@ -43,12 +44,15 @@ export async function createAutomation(env: Env, input: {
   /** The home conversation under the owning Channel: its Main ("0", the default) or a Breakout. */
   owningSubstreamId?: string;
   automationId?: string;
+  /** Supplied only by a host handling direct user creation, never an inherited execution principal. */
+  creatorConsent?: { requestId: string };
 }): Promise<{ automationId: string; created: boolean }> {
   const workspaceId = asWorkspaceId(input.workspaceId);
   const automationId = asAutomationId(input.automationId ?? uuidV7());
   const authority = await readWorkstreamAuthorityControl(env);
   const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
     workspaceDOName(env.AVALON_REGION, workspaceId));
+  if (input.creatorConsent) await rememberSidekickDelegationLocation(env, workspaceId, input.authorUserId);
   const { created } = await workspace.sidekickCreate({
     workspaceId,
     automationId,
@@ -57,6 +61,7 @@ export async function createAutomation(env: Env, input: {
     owningWorkstreamId: input.owningWorkstreamId,
     owningSubstreamId: asSubstreamId(input.owningSubstreamId ?? "0"),
     authorityGeneration: authority.generation,
+    ...(input.creatorConsent ? { creatorConsent: input.creatorConsent } : {}),
   });
   // Both steps run on a replay too. The object's row commits first, and a
   // first call that died after it answered `created: false` forever after,
@@ -96,6 +101,7 @@ export class AutomationService {
       authorUserId: this.auth.userId,
       scope: "personal",
       owningWorkstreamId: null,
+      creatorConsent: { requestId: uuidV7() },
     });
     return { automationId };
   }
@@ -137,6 +143,12 @@ export class AutomationService {
   async detail(automationId: string): Promise<AutomationDetail> {
     const workspace = await this.workspace();
     return workspace.sidekickReadDetail(await this.actorRequest(automationId));
+  }
+
+  async removeDelegate(automationId: string, userId: string, operationId: string) {
+    return (await this.workspace()).sidekickRemoveDelegate({
+      ...await this.actorRequest(automationId), userId: asUserId(userId), operationId,
+    });
   }
 
   async apply(automationId: string): Promise<AutomationDetail> {

@@ -16,6 +16,7 @@ import { workspaceRealtimeInvalidation } from "./middleware/workspace-realtime";
 import { accessOperatorRoutes } from './routes/access-operations';
 import { authRoutes } from "./routes/auth";
 import { automationRoutes, sidekickRoutes } from "./routes/automations";
+import { accountSidekickDelegationRoutes } from "./routes/sidekick-delegation";
 import { connectionCallbackRoutes, connectionRoutes, webhookIngestionRoutes } from "./routes/connections";
 import { connectorMaintenanceOperatorRoutes } from './routes/connector-maintenance-operations';
 import { conversationRoutes } from "./routes/conversations";
@@ -177,6 +178,7 @@ export function createApp(): Hono<HonoAppEnv> {
   identityApi.route("/resources", resourceRoutes);
   identityApi.route("/automations", automationRoutes);
   identityApi.route("/sidekicks", sidekickRoutes);
+  identityApi.route("/account/sidekick-delegation", accountSidekickDelegationRoutes);
   identityApi.route("/feature-flags", featureFlagRoutes);
   identityApi.route("/telemetry", authenticatedTelemetryRoutes);
   // Members and guests alike: each answers only for what this person may

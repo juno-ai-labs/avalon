@@ -62,6 +62,14 @@ first read.
 
 ### Tools
 
+Sidekick activation instructions direct the model to post an unresolved
+permission problem to the owning conversation once for that run, naming the
+blocked work and a concrete recovery action. Successful account fallback needs
+no error post. This uses the same `post` authorization and receipt, and grants
+no extra destination access. A refused post must stay a visible failure; its
+attempt is never evidence of delivery. A Sidekick without a home leaves the
+actionable failure on its activation.
+
 Wire names are `conversation_list`, `conversation_list_next`,
 `conversation_read`, `conversation_read_next`, `conversation_post` and
 `conversation_attach`. A `conversationId` is `<channelId>` for a Main

@@ -207,7 +207,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           sidekick: workstreamAutomation,
         }),
-        hash: "d2915e3119a727ccae1a27f598fc5a7ccd267eba2e883a5b5d7f32a693a6b4ca",
+        hash: "be86b8b6a4a7b6fc94bc99f3da991f0a8f9c26a1190fe40fbdc96719c46a09f2",
       },
       workstreamName: {
         actual: renderWorkstreamNameMessages({
@@ -395,23 +395,24 @@ describe("prompt renderers", () => {
     expect(prompt).not.toMatch(/\n{3,}/u);
   });
 
-  it("names a room Sidekick's home in its task context and no posting tool in policy", () => {
+  it("names a room Sidekick's home and gives activation-specific permission recovery", () => {
     const prompt = renderWorkstreamSystemPrompt({
       title: "Weekly engineering brief: 2026-08-07",
       objective: "Produce the scheduled weekly engineering brief.",
       sidekick: workstreamAutomation,
     });
 
-    // The home is where the conversation plugin posts by default. The prompt
-    // names the place; the plugin's system message names the tool, because a
-    // tool name in standing policy renders for runs whose plugin is absent.
+    // Permission recovery must reach activations even without authoring tools.
     expect(prompt).toContain('"homeConversationId": "00000000-0000-7000-8000-0000000000aa/00000000-0000-7000-8000-0000000000ab"');
     expect(prompt).toContain('"sidekickId": "00000000-0000-7000-8000-0000000000ac"');
     expect(prompt).toContain('"definitionRevision": 3');
     expect(prompt).toContain("You are executing one activation of the existing Sidekick");
     expect(prompt).toContain("Do not create a replacement Sidekick or schedule its next regular activation just to keep it running.");
     expect(prompt).not.toContain("post_result");
-    expect(prompt).not.toMatch(/conversation_[a-z_]+/u);
+    expect(prompt).toContain("use conversation_post to tell the owning conversation what is blocked");
+    expect(prompt).toContain("Successful fallback needs no permission-error message");
+    expect(prompt).toContain("report the unresolved problem once for this run");
+    expect(prompt).toContain("do not claim delivery");
     expect(prompt).not.toContain("# Result delivery");
   });
 

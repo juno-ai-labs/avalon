@@ -266,6 +266,8 @@ import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import { withToolPagination } from "./tool-pagination";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
+import { directSidekickDelegationUser } from "./sidekick-delegation-service";
+import { sidekickDelegationTools, sidekickDelegationGuidance } from "./sidekick-delegation-tools";
 import { createTranscriptObjectPort } from "../runtime/transcript-port";
 import { renderSubstreamInitialContext } from "./substream-initial-context";
 import type { TranscriptObjectPort } from "../durable-objects/workstream-transcript-protocol";
@@ -1766,6 +1768,7 @@ function createAvalonAutomationsPlugin(
   input: WorkstreamWorkflowInput,
   loadedPluginIds: Set<string>,
   expandPages: (tool: HarnessTool, prefix: string, connectionId: string | null) => HarnessTool[],
+  delegationUser: UserId | null = null,
 ): HarnessPlugin {
   const catalog: AutomationCreatorPluginCatalogEntry[] = [];
   const inspectedPluginIds = new Set<string>();
@@ -1823,10 +1826,13 @@ function createAvalonAutomationsPlugin(
         },
       };
     })];
+    if (delegationUser) tools.push(...sidekickDelegationTools(env, input, delegationUser, true));
     return { canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_skill_recommendations", shortWireName: "",
-      displayName: "Skill recommendations", description: "Choose which reusable skills to recommend for future runs in this thread. To use a skill now, call load_skill.",
-      searchAliases: ["skill", "instructions", "knowledge", "recommend", "procedure"],
-      systemMessage: "Use list_skill_recommendations, recommend_skill and unrecommend_skill to manage this thread's skill recommendations. Recommendations affect future executions; call load_skill with a name from the Skills catalog to use instructions now. To set up delegated work, use the separate sidekicks_list and create_sidekick agent tools.",
+      displayName: "Skill recommendations",
+      description: `Choose which reusable skills to recommend for future runs in this thread. To use a skill now, call load_skill.${delegationUser ? " Inspect Sidekick delegates and allow or stop allowing a Sidekick to act as you." : ""}`,
+      searchAliases: ["skill", "instructions", "knowledge", "recommend", "procedure",
+        ...(delegationUser ? ["sidekick", "delegate", "delegation", "account", "consent", "allow", "withdraw"] : [])],
+      systemMessage: `Use list_skill_recommendations, recommend_skill and unrecommend_skill to manage this thread's skill recommendations. Recommendations affect future executions; call load_skill with a name from the Skills catalog to use instructions now. To set up delegated work, use the separate sidekicks_list and create_sidekick agent tools.${delegationUser ? ` ${sidekickDelegationGuidance(true)}` : ""}`,
       tools, preload: false, explicit: false };
   }
   /**
@@ -2155,7 +2161,7 @@ function createAvalonAutomationsPlugin(
   });
   return {
     ...plugin,
-    systemMessage: `${plugin.systemMessage} This conversation configures Sidekick ${authoredAutomationId}. Read its current definition before revising it.`,
+    systemMessage: `${plugin.systemMessage} This conversation configures Sidekick ${authoredAutomationId}. Read its current definition before revising it. ${delegationUser ? sidekickDelegationGuidance(false) : ""}`,
     // An automation's own conversation exists to draft and edit it, so the
     // tools are in hand from the first turn there. In a room they stay
     // discoverable behind `list_plugins`, where most turns never need them.
@@ -2163,13 +2169,13 @@ function createAvalonAutomationsPlugin(
     // Restored durable activations deliberately skip onActivate, so every tool
     // also passes through this single-flight preparation. That is what restores
     // the inspection/evaluator facts a replacement object lost from memory.
-    tools: plugin.tools.map((tool) => ({
+    tools: [...plugin.tools.map((tool): HarnessTool => ({
       ...tool,
       execute: async (raw, context) => {
         await prepare();
         return tool.execute(raw, context);
       },
-    })),
+    })), ...(delegationUser ? sidekickDelegationTools(env, input, delegationUser, false) : [])],
     onActivate: async () => prepare(),
   };
 }
@@ -5580,7 +5586,7 @@ async function loadHarnessTools(
   const loadedAutomationPluginIds = new Set<string>();
   const automationsPlugin = input.executionPrincipal.type === "user" && !input.automationRun && (input.parentKind === "workstream"
     || (input.parentKind === "automation" && (input.substreamId ?? "0") === "0"))
-    ? createAvalonAutomationsPlugin(env, input, loadedAutomationPluginIds, expandPages)
+    ? createAvalonAutomationsPlugin(env, input, loadedAutomationPluginIds, expandPages, await directSidekickDelegationUser(env, input))
     : null;
   // List, read and post to Rally conversations, scoped by the loop: a
   // Breakout loop reaches its own conversation and its Channel's Main; a
