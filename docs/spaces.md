@@ -83,8 +83,9 @@ WorkspaceDO holds a copy.
 
 **Each Channel owns its own audience.** A Space grants none (see
 [A Space starts Organization-wide and grants no reader](#a-space-starts-organization-wide-and-grants-no-reader)), so a
-membership, an archive and a restore change only WorkspaceDO's Space tables
-and never reach a Channel. The code that once applied a Space's audience to its
+membership and a restore change only WorkspaceDO's Space tables. Archiving
+also requests canonical archival of threads that have no other active Space;
+it does not change their audience. The code that once applied a Space's audience to its
 Channels is gone; [`space-access-sources.md`](space-access-sources.md) keeps
 what it taught.
 
@@ -265,17 +266,37 @@ Channel onto the same Space, are ordinary rather than a 404.
 Removing one is the same shape in reverse (`removeSpaceChannel`,
 `WorkspaceSpaceStorage.removeMembership`), with one refusal in front of it:
 `space_membership_final` preserves the invariant that every Channel has a home.
-A move, an archive and a restore are likewise one transaction each.
+A move and a restore are likewise one transaction each.
 
-**An archive re-homes rather than refuses.** A thread started from a Channel's
-composer lives in that Channel alone, so the invariant would refuse nearly
-every archive. `WorkspaceSpaceStorage.archive` first adds each live thread
-whose only active Space is the one being archived to General
-(`rehomeStrandedInGeneral`, through `addMembership`, defaults included), then
-archives, in one transaction; WorkspaceDO publishes General's change for the
-threads it moved. A restore reactivates the archived Space's memberships, so a
-re-homed thread ends up in both. Without a General (an Organization still
-opening), or for General itself, `space_membership_final` still refuses.
+**A Channel archive archives its exclusive threads.** In one WorkspaceDO
+transaction, `WorkspaceSpaceStorage.archive` captures live threads whose only
+active Space is this one, archives the Space, and records one durable archive
+intent per exclusive thread. Shared threads remain active in their other
+Channels. An exclusive thread whose Main is unreadable or not yet projected refuses the whole
+operation without exposing its identity or partially archiving the Channel.
+General and Personal Channels remain protected.
+
+Each thread intent reuses the normal idempotent `applyQueuedBatchUpdate`
+archive command in its Main SubstreamAgent. That command stops execution and
+publishes the canonical archive through the existing parent/directory effects,
+including owned-agent and Sidekick cleanup. The request returns after staging
+and arming the alarm; the alarm delivers the commands. Transport failures remain
+retryable. Before delivery, the Channel must still be archived at the captured
+revision and the thread still exclusive. Restore or a new active placement
+supersedes the old command. The command hash covers the archive operation rather
+than mutable intent metadata.
+
+Canonical refusals and an inactive requester settle the command with their
+reason. They release its archived placement hold so ordinary orphan repair can
+give the live thread a home in General. Independently restoring a thread does
+the same on its canonical directory transition and cancels pending old archives.
+Successful archives keep their placement in the archived Channel.
+
+An exclusive thread retains its membership under the archived Space, preventing
+the orphan-repair backstop from moving it to General while effects are in
+flight. Shared memberships stage to `removing` as before. Restoring a Channel
+restores its placements; it does not unarchive the independently archived
+threads. There is no move into General and no General defaults applied.
 
 **A placement moves a thread's colour.** For now a thread and its Breakouts
 store the colour of the thread's canonical Channel. Triggers on
@@ -758,9 +779,11 @@ the coordinator runs `SpaceService.ensureGeneral`, and asks again.
 
 ### Resuming an interrupted operation
 
-Every Space operation is now one WorkspaceDO transaction, so none can die half
-way and none stages an intent. The resume path is left for `space_intents` rows
-staged before that change.
+Space membership and container writes commit in one WorkspaceDO transaction.
+Channel archival additionally records per-thread `archive` intents with a
+non-null `workstream_id`, for delivery through the thread's independent authority.
+The alarm handles those current commands as described above. The same table and
+alarm also finish legacy container intents staged before migration 94.
 
 **The alarm finishes a legacy intent in place, one transaction per intent.** It
 claims unsettled intents, advancing their retry gate first, and runs each
@@ -771,13 +794,13 @@ memberships, or cancels as `move_superseded` when a competing move won; an
 `archive` finalizes the archive, or puts its memberships back and settles
 `archive_abandoned` when it cannot; a `restore` or `audience` intent only
 settles, because the Space write already happened and there is nothing to carry
-to a Channel. An intent a request or a Queue delivery is running is skipped (an
-in-memory single-flight keyed by operation id, `spaceIntentRuns`).
+to a Channel. Thread commands carry canonical receipts, so overlapping deliveries
+replay rather than repeat the mutation.
 
-A requester who has left the Organization has nothing run as them: the alarm
-and the Queue consumer both leave the intent pending with
-`space_intent_requester_inactive` on the row. Every such intent was staged
-before migration 94, and nothing stages one now. An `archive` intent still asks
+A requester who has left the Organization has nothing run as them. For legacy
+intents, the alarm and Queue consumer retain the pending row with
+`space_intent_requester_inactive`. New per-thread archive commands instead settle
+that refusal and release the placement hold for repair. A legacy `archive` intent still asks
 `canEdit` as it finishes, so one whose Space has gone private since finishes
 only for a participant and is otherwise taken back as `archive_abandoned`. A
 resume that fails for any other reason records its code on the row and
@@ -1307,7 +1330,7 @@ news.** The waterline is one counter for news of any kind. `stampChannelNews`
 takes the Channel's next ordinal and reads its member author through it; Rally
 as author reads nobody through. Every transition of a membership
 into `active` — `enterMembershipAtBirth`, `finalizeMembership` (and so
-`addMembership` and an archive's re-home into General), a move's target, a
+`addMembership`), a move's target, a
 restore, an abandoned archive putting its rows back, a legacy `add` intent —
 goes through `stampPlacements`, which takes an ordinal per placement in the same
 transaction and stamps it on that membership. `postMessage` takes one for a
@@ -1404,23 +1427,15 @@ active keep `NULL`, which the feed reports as zero.
   Space's scope decides only who lists the Space. A feature that lets a Space
   grant readers again should start from
   [`space-access-sources.md`](space-access-sources.md).
-- **Every live thread has at least one active Space.** Removal from the last
-  one is refused `space_membership_final`. An archive first moves into General
-  each thread it would strand that is Organization-wide and that the archiver
-  can list; any other stranded thread (private, or one the archiver cannot
-  list) keeps the archive refused `space_membership_final`. The moves and the
-  archive are one WorkspaceDO transaction, so a refused archive rolls back
-  whole and moves nothing. Moving a private thread was refused because it would
-  have shown as a locked row to every General reader; locked rows are gone, and
-  the refusal is kept for now with no other reason recorded. Moving one the archiver
-  cannot list would let them act on work they cannot see. An archived thread
-  keeps its membership so restoring the Space returns it, but no list renders
-  it, so it is not a stranded home that has to move first. A thread the
-  directory has not yet named is treated as live: the guard fails closed until
-  that thread is known archived. Guard: `channels-threads-navigation.test.ts`
-  "given a thread that lives only in a Channel, when the Channel is archived,
-  then the thread moves to General and a restore puts it back", and the
-  refused archives in `space-authority.test.ts`.
+- **An active thread has a home, or a durable archive in flight.** Removing its
+  last membership is refused `space_membership_final`. Archiving its last
+  Channel instead records its canonical archive request in the same transaction
+  as the Channel archive and preserves its placement there. A shared thread
+  keeps its other active Channels. An exclusive thread the requester cannot
+  read, or whose directory row has not arrived, still refuses the operation.
+  Tests: the archive cases in `space-routes.test.ts` and
+  `channels-threads-navigation.test.ts`, and the refusal/intent cases in
+  `space-authority.test.ts`.
 - **A private Space is not found through a thread in it.** A reader of one
   thread in a private Space does not list the Space, so a thread's `spaceIds`
   can name fewer Spaces than it sits in. A reader who keeps access to a thread
@@ -2014,6 +2029,32 @@ while Spaces are not open, and closing the cutover queues it again when a
 member is still unseated.
 
 ## Changelog
+
+### 2026-10-21 — Archive exclusive threads with their Channel
+
+**What changed:** A Channel archive records durable archive commands for its
+exclusive threads and leaves shared threads active elsewhere. Each command uses
+the normal thread archival path and a stable receipt; the existing intent alarm
+retries interrupted deliveries. Exclusive placements stay under the archived
+Channel, and restoring the Channel does not unarchive those threads.
+
+**Why:** Archiving Blog during an experiment cleanup moved its content-calendar
+thread into General, leaving the experiment active in another place. The person
+asked to archive the container and its exclusive work together instead.
+
+**Considered and rejected:** Keeping the move to General preserved the unwanted
+work. Changing only directory rows would let the canonical conversation keep
+running and later overwrite the apparent archive. A new archive queue would
+duplicate the existing intent retries and thread-command receipts.
+
+**Consequences:** Thread archive delivery crosses an object boundary and is
+recoverable after the Channel transaction commits, without holding the archive
+request open for its RPCs. Delivery rechecks the Channel revision and exclusive
+placement; a permanent refusal or independent thread restore releases the hold
+for ordinary orphan repair. A retry must reuse its original command receipt,
+and a Channel restore must not undo a completed independent thread archive.
+
+PR: [#1398](https://github.com/juno-ai-labs/avalon/pull/1398).
 
 ### 2026-10-21 — Reuse directories for user-scoped MCP lists
 
