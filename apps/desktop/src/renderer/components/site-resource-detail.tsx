@@ -253,15 +253,15 @@ export function SiteResourceDetail({
     };
   }, []);
 
-  // The owning lightbox is allowed. Modal overlays always win; tooltips
-  // only pause the live page when they actually cover its visible rectangle.
+  // The owning lightbox is allowed. Modal overlays always win; tooltips and
+  // toasts only pause the live page when they cover its visible rectangle.
   const occluded = React.useCallback((): boolean => {
     const pane = paneRef.current;
     if (!pane) return false;
-    return [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="menu"], [role="tooltip"]')]
+    return [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="menu"], [role="tooltip"], [data-native-overlay]')]
       .some((overlay) => {
         if (overlay.contains(pane)) return false;
-        if (overlay.getAttribute('role') !== 'tooltip') return overlay.getAttribute('data-state') !== 'closed';
+        if (overlay.getAttribute('role') !== 'tooltip' && !overlay.hasAttribute('data-native-overlay')) return overlay.getAttribute('data-state') !== 'closed';
         // With an aria-label Radix puts the role on a hidden span. Measure
         // the positioned wrapper, and read open/closed off the content.
         if (overlay.closest('[data-state]')?.getAttribute('data-state') === 'closed') return false;

@@ -361,9 +361,10 @@ is the only place that can forward into it.
   hostile one would paint artifact content over the chrome a person needs to
   escape it. And a `WebContentsView` composites *above* the renderer's DOM, so
   any app surface that can overlap the rail — a dialog, the command palette, a
-  lightbox, or a tooltip — must collapse the view to nothing while it is open,
-  or artifact content paints over it. Tooltips only collapse it when their
-  positioned rectangle overlaps the visible pane, so hovering elsewhere leaves
+  lightbox, tooltip, or toast — must collapse the view to nothing while it is open,
+  or artifact content paints over it. Tooltips and `data-native-overlay` toast
+  bodies only collapse it when their positioned rectangle overlaps the visible
+  pane, so feedback elsewhere leaves
   the live page running. Radix can expose the tooltip role on a hidden label;
   overlap uses its visible popper wrapper and is rechecked when that wrapper
   is positioned after mount. The pane under the view shows a still of the page,
