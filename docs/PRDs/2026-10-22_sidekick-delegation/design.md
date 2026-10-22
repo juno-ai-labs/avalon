@@ -95,8 +95,10 @@ agent tools can call `create_sidekick` under an inherited user principal;
 neither that principal nor the resulting `authorUserId` is a fresh opt-in.
 Only creation in a direct user-driven context initializes a creator grant.
 Autonomously created Sidekicks retain their author identity but no delegation
-until an eligible person opts in. Migration preserves only the established
-current execution principal, not a creator replaced by a legacy claim.
+until an eligible person opts in. Migration preserves established direct-user
+creation/self-claim authority, not a creator replaced by a legacy claim or an
+inherited principal from autonomous creation. A matching legacy creator/run-as
+value without direct-user provenance remains ungranted and visibly needs opt-in.
 
 ### Complete catalog and wire shapes
 
@@ -308,7 +310,8 @@ Tool contract checks cover required and forbidden fields, exact success and
 failure output, replay and delayed first delivery after withdrawal, current
 self-withdrawal after access loss, complete-list oversized-result refusal,
 no enrollment through a user ID or autonomous creation, and migration that
-does not re-enroll a replaced creator. Snapshot the wire names and discovery
+does not enroll autonomous/ambiguous creations or re-enroll a replaced creator.
+Snapshot the wire names and discovery
 guidance for both authoring and room plugin presentations.
 Prompt/tool evaluations on the configured medium fallback model cover target
 discovery, list then opt-in then withdrawal, wrong-user requests, absent consent,
