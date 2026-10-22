@@ -3253,7 +3253,7 @@ describe("connectors", () => {
       return googleJson(file);
     };
     const sheet = { id: "sheet-file-id-01", name: "Creator Content Intake",
-      mimeType: "application/vnd.google-apps.spreadsheet" };
+      mimeType: "application/vnd.google-apps.spreadsheet", webViewLink: "https://docs.google.com/spreadsheets/d/sheet-file-id-01/edit" };
     const registration = { resourceType: "google_sheet", canonicalUrl: "https://docs.google.com/spreadsheets/d/sheet-file-id-01/edit" };
     const link = "https://docs.google.com/spreadsheets/d/sheet-file-id-01/edit";
 

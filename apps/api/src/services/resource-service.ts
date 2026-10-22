@@ -25,6 +25,7 @@ import { encryptString, sha256Hex } from "../lib/crypto";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { truncateUtf16Safe } from "../lib/text";
 import { createResourceObjectPort } from "../runtime/resource-port";
+import type { WorkspaceConnectorResourceResolveRequest } from "../durable-objects/workspace-resources-protocol";
 import { emitProductUsageTelemetry } from "../telemetry/product-usage";
 import {
   materializeAttachmentDerivative,
@@ -294,7 +295,7 @@ export class ResourceService {
     // deletion into an unrecoverable orphan.
   }
 
-  async resolve(input: ResolveResourceInput) {
+  async resolve(input: ResolveResourceInput, expectedConnection?: WorkspaceConnectorResourceResolveRequest["connectionAuthority"]) {
     const connection = await this.loadConnection(input.connectionId);
     if (connection.connector_type !== input.provider && !(connection.connector_type === "google" && input.provider.startsWith("google"))) {
       throw new ApiError(422, "provider_mismatch", "The resource does not belong to the selected connection");
@@ -321,8 +322,18 @@ export class ResourceService {
       title: input.title,
       canonicalUrl: canvaReference?.canonicalUrl ?? input.canonicalUrl ?? null,
       ...(canvaReference ? { protectedAccessJson: canvaReference.protectedAccessJson } : {}),
+      connectionAuthority: expectedConnection ?? {
+        connectorType: String(connection.connector_type),
+        scope: connection.scope === "workspace" ? "workspace" : "personal",
+        ownerUserId: connection.owner_user_id == null ? null : String(connection.owner_user_id),
+        modelPluginId: connection.model_plugin_id == null ? null : String(connection.model_plugin_id),
+        requiredCapabilities: [],
+      },
       at: nowIso(),
     });
+    if (canonical.outcome === "connection_unavailable") {
+      throw new ApiError(409, "resource_connection_unavailable", "connectionId: The connection or required capabilities changed before registration. Check resource access again.");
+    }
     if (canonical.outcome === "created") {
       await allocateResourceSlugBesideCreation(this.env, this.auth.workspaceId, canonical.resourceId);
     }

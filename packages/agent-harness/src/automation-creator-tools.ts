@@ -177,6 +177,8 @@ function describeUnboundRules(unbound: AutomationSetEvaluatorRulesInputV1["evalu
   return `${unbound.length === 1 ? "This rule names something else" : "These rules name something else"}: ${named}`;
 }
 
+const RegisterResourceInputSchema = z.strictObject({ pluginId: z.string().min(1), resource: z.string().min(1) });
+
 export function createAutomationCreatorTools(input: AutomationCreatorToolHost): HarnessTool[] {
   const catalog = input.catalog;
   const inspectedAutomationPluginIds = input.inspectedPluginIds;
@@ -250,11 +252,11 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
     {
       definition: creatorDefinition("resources_register"),
       validateInput: (raw) => {
-        const parsed = z.strictObject({ pluginId: z.string().min(1), resource: z.string().min(1) }).safeParse(raw);
+        const parsed = RegisterResourceInputSchema.safeParse(raw);
         return parsed.success ? null : parsed.error;
       },
       execute: async (raw, context) => {
-        const args = z.strictObject({ pluginId: z.string().min(1), resource: z.string().min(1) }).parse(raw);
+        const args = RegisterResourceInputSchema.parse(raw);
         const plugin = catalog.find((entry) => entry.pluginId === args.pluginId);
         if (!plugin) throw new Error("sidekick_resource_plugin_unavailable: Find the source plugin with plugins_list or plugins_search.");
         if (!plugin.registerResource) throw new Error("sidekick_resource_registration_unsupported: This plugin cannot register external resources. Inspect its events and available filters before choosing a fallback.");
@@ -582,7 +584,7 @@ export const AUTOMATIONS_PLUGIN_ID = "rally:sidekicks";
 export const AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE = [
   "Sidekicks let people delegate work or knowledge. Create and edit them through conversation; never ask users to edit system instructions.",
   "Generate both internal instructions and a clear user-friendly description of the behavior. Explain missing details through questions.",
-  "For work that should start after an external change, load polling-for-events and use a suitable event by default. If the source is missing from Rally's resource search, register it through its authorized connection and bind the returned resource ID without asking the person to choose registration or polling. Save why you chose an event or a timer. Preserve an explicitly requested schedule. If registration or binding fails, report the actual error and ask only for a fallback that changes the requested behavior.",
+  "For work after an external change, load polling-for-events and follow its event-first setup and resource-registration procedure.",
   "Each Sidekick run has a separate conversation, but its wizard, runs, and background agents share one Terminal sandbox (file workspace). Other Sidekicks and the requesting Thread have separate sandboxes. Only the Sidekick's run-as user can use its shared Terminal files; other editors can still configure it. Save resource IDs, file recovery steps, and instructions for opening shared tables so work can recover if files are missing. To update an existing site, load building-live-sites and save its import, update, and publish steps in the run instructions.",
   "Activations can overlap, and Terminal locks only one tool call at a time. For runs that update the same files or publication, load tracking-seen-or-done-items and save shared-table coordination steps for the whole update; use separate directories for independent work.",
   "A ready submission saves and activates immediately. Do not ask the person to press Create or Apply. Submit only the behavior they requested.",

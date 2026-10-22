@@ -3827,7 +3827,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   },
   {
     name: "resources_search",
-    description: "Find registered Rally resources that can limit an event rule to one file or other source. Returns resources with canonical IDs, source pluginId, resourceType, and relationships. searchableResourceTypes lists the types searched across connected plugins; inspect the selected event to confirm its supported types. An empty result is a search miss. If the event supports the requested file, register it with resources_register rather than asking the person to choose a timer.",
+    description: "Find registered Rally resources that can limit an event rule to one file or other source. Returns resources with canonical IDs, source pluginId, resourceType, and relationships. searchableResourceTypes lists the types searched across connected plugins; inspect the selected event to confirm its supported types. An empty result is a search miss. Use resources_register for a supported external file missing from this catalog.",
     capability: "rally.sidekick.resources.search",
     mode: "read",
     idempotency: "safe",
@@ -3846,7 +3846,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   },
   {
     name: "resources_register",
-    description: "Register an existing external file in Rally so an event rule can watch it. Pass its URL or external file ID and the plugin that can read it. Verifies access and obtains the title and resource type from the provider. Returns resources with canonical Rally IDs, pluginId, resourceType, and relationships, just like resources_search. Repeated calls reuse the same resource. This records the file in Rally; it does not edit the file or change who can access it. For a requested change-triggered workflow, register a missing resource and use its event without asking for confirmation.",
+    description: "Register an existing external file in Rally so an event rule can watch it. Pass its URL or external file ID and the plugin that can read it. Verifies access and obtains the title and resource type from the provider. Returns resources with canonical Rally IDs, pluginId, resourceType, and relationships, just like resources_search. Repeated calls reuse the same resource. This records the file in Rally; it does not edit the file or change who can access it.",
     capability: "rally.sidekick.resources.register",
     mode: "write",
     idempotency: "safe",
