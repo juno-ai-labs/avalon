@@ -30,7 +30,7 @@ import { WORKSPACE_SOCKET_OPEN_TIMEOUT_MS } from '@rally/contracts/workspace-rea
 import { DIRECTORY_CACHE_KEY, workspaceDirectorySlice } from './workspace-directory-cache';
 import { useMergeChannels } from './use-merge-channels';
 import { ConversationAccessRequest } from '../components/conversation-access-request';
-import { refreshConversationAccessPreviews } from './access-requests';
+import { CONVERSATION_ACCESS_RECOVERY_QUERY_KEY, refreshConversationAccessPreviews } from './access-requests';
 import { MY_THREADS_QUERY_KEY, SPACES_QUERY_KEY, type ThreadNavigationPage } from './sidebar-list-store';
 
 import type * as TelemetryModule from './telemetry';
@@ -465,6 +465,49 @@ describe('WorkspaceSocketProvider', () => {
       applicationState: 'foreground',
       foregroundWorkstreamId: null,
     }));
+  });
+
+  it('retains a socket nudge across collection until a waiting screen mounts, then releases it with the socket', async () => {
+    vi.useFakeTimers();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const onRetry = vi.fn();
+    const api = {
+      getWorkspaceSocketTicket: async () => ({
+        url: 'wss://api.rally.test/socket/workspaces/workspace-1', ticket: 'workspace-ticket',
+        protocols: socketTicketProtocols('workspace-ticket'),
+      }),
+      conversationAccessPreview: async () => ({
+        kind: 'channel' as const, title: 'Launch plan', appearance: null, markId: 'thread-1', access: 'open' as const,
+      }),
+      requestConversationAccess: async () => undefined,
+    };
+    const contents = (waiting: boolean) => <QueryClientProvider client={queryClient}>
+      <WorkspaceSocketProvider region="global" api={api} workspaceId="00000000-0000-7000-8000-000000000001">
+        {waiting && <ConversationAccessRequest api={api} parentId="thread-1" substreamId="0"
+          fallback={<p>Thread unavailable</p>} onRetry={onRetry} />}
+      </WorkspaceSocketProvider>
+    </QueryClientProvider>;
+    const mounted = render(contents(false));
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    socket.send.mockImplementation((message: string) => {
+      if (message === 'ping') queueMicrotask(() => socket.dispatchEvent(new MessageEvent('message', { data: 'pong' })));
+    });
+    act(() => { socket.open(); socket.message(initialSidebarFrame()); });
+    await flushPromises();
+    // The unobserved entry's normal five-minute collection timer is almost
+    // due. A setQueryData write alone does not restart that timer.
+    await act(async () => { await vi.advanceTimersByTimeAsync(5 * 60_000 - 1_000); });
+    act(() => socket.message({ type: 'workspace_reach_changed', occurredAt: '2026-10-22T00:00:00.000Z',
+      userIds: ['00000000-0000-7000-8000-000000000003'] }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    mounted.rerender(contents(true));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('status').textContent).toBe('Opening thread…');
+    mounted.unmount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(5 * 60_000 + 1); });
+    expect(queryClient.getQueryData(CONVERSATION_ACCESS_RECOVERY_QUERY_KEY)).toBeUndefined();
   });
 
   it('waits for an offline-paused preview to resume before consuming its access nudge', async () => {
