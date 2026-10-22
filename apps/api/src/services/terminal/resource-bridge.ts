@@ -168,11 +168,12 @@ async function storedArtifactHasSocialPreview(
  */
 const PUBLISHED_IDENTITY_MAXIMUM = ResourceSchema.shape.providerResourceId.unwrap().maxLength ?? 500;
 
-async function publishedResourceIdentity(workstreamId: string, filePath: string): Promise<string> {
-  const readable = `terminal:${workstreamId}:${normalizePublishPath(filePath)}`;
+async function publishedResourceIdentity(workstreamId: string, filePath: string, substreamId = "0"): Promise<string> {
+  const owner = substreamId === "0" ? workstreamId : `${workstreamId}:substream:${substreamId}`;
+  const readable = `terminal:${owner}:${normalizePublishPath(filePath)}`;
   if (readable.length <= PUBLISHED_IDENTITY_MAXIMUM) return readable;
   const digest = await sha256Hex(new TextEncoder().encode(normalizePublishPath(filePath)));
-  return `terminal:${workstreamId}:sha256:${digest}`;
+  return `terminal:${owner}:sha256:${digest}`;
 }
 
 function publishedOutput(row: PublishedRow, sizeBytes: number): TerminalPublishedResourceOutput {
@@ -372,11 +373,11 @@ export function createTerminalResourceBridge(
    * `terminal:<room-id>:<path>`, so every run created a private fork at v1 and
    * the room's copy was never touched again.
    *
-   * The sandbox stays with the Sidekick's authoring conversation. An import
-   * may recover that room's generated site by its publication identity and
-   * attach it to this run; other resource access stays with the run's links.
+   * The sandbox stays with the Sidekick's authoring conversation. Imports
+   * resolve the live authorized resource scope independently of publication;
+   * a publication target is not an access grant.
    */
-  publicationWorkstreamId?: string | null,
+  publicationHome?: (() => Promise<{ parentId: string; substreamId: string } | null>) | null,
   /**
    * The conversation this run executes in, when it is not the one whose
    * object holds the sandbox: a background agent importing into its owner's
@@ -391,6 +392,7 @@ export function createTerminalResourceBridge(
    * Sidekick run, whose principal nobody asked to act.
    */
   onBehalfOfUserId: string | null = null,
+  publicationSubstreamId = "0",
 ): TerminalResourceBridge {
   // The layered runtime database routes resource rows to WorkspaceDO and
   // tool/link rows to SubstreamAgent. Keep every statement single-authority;
@@ -409,12 +411,51 @@ export function createTerminalResourceBridge(
    * did not ask for and its delivered result deliberately excluded, so an
    * internal capture stays in the conversation that produced it.
    */
-  const publicationWorkstream = (
+  const publicationAddress = async (
     context: { workstreamId: string },
-    internalProviderResourceId?: string | undefined,
-  ) => (internalProviderResourceId === undefined
-    ? publicationWorkstreamId ?? context.workstreamId
-    : context.workstreamId);
+    internalProviderResourceId?: string,
+  ) => {
+    // Internal captures stay local and require no access to the home.
+    const home = internalProviderResourceId === undefined ? await publicationHome?.() : null;
+    return home ?? { parentId: context.workstreamId, substreamId: publicationSubstreamId };
+  };
+  const assertExistingPublicationVisible = async (context: HarnessToolContext, target: { parentId: string; substreamId: string },
+    row: Pick<PublishedRow, "id" | "metadata_json"> | null) => {
+    if (!row || !publicationHome) return;
+    // A response-lost insert may precede its link. Only that exact receipt may repair it.
+    let metadata: { publicationEffectIntentId?: string } = {};
+    try { metadata = JSON.parse(row.metadata_json) as typeof metadata; } catch { /* legacy metadata */ }
+    if (context.effectIntentId && metadata.publicationEffectIntentId === context.effectIntentId) return;
+    const visible = await createConversationResourceLinks(env, context.workspaceId, target.parentId, undefined,
+      target.substreamId, context.executionPrincipal).links({ resourceIds: [row.id] });
+    if (!visible.links.some((link) => link.resource_id === row.id)) {
+      throw new TerminalToolError("resource_not_found", "The existing publication is not attached to this destination. Restore its attachment before updating it.");
+    }
+  };
+  const publicationSelect = `SELECT id, title, mime_type, content_ref, content_sha256, metadata_json,
+      model_content_status, created_at, slug, resource_type FROM resources
+      WHERE workspace_id = ? AND provider = 'avalon_generated' AND provider_resource_id = ?`;
+  const publicationRow = (workspaceId: string, providerResourceId: string) => workspace.prepare(publicationSelect)
+    .bind(workspaceId, providerResourceId).first<PublishedSiteRow & { resource_type: string }>();
+  const existingPublication = async (context: HarnessToolContext, target: { parentId: string; substreamId: string },
+    filePath: string, providerResourceId: string) => {
+    const current = await publicationRow(context.workspaceId, providerResourceId);
+    if (current) {
+      await assertExistingPublicationVisible(context, target, current);
+      return current;
+    }
+    // Wizards formerly published under the Sidekick ID. Keep an admitted legacy
+    // publication's resource and URL when the home has no publication at this path.
+    if (publicationHome && target.parentId !== context.workstreamId) {
+      const legacy = await publicationRow(context.workspaceId, await publishedResourceIdentity(context.workstreamId, filePath));
+      if (legacy) {
+        await assertExistingPublicationVisible(context, { parentId: context.workstreamId,
+          substreamId: importingSubstreamId ?? publicationSubstreamId }, legacy);
+        return legacy;
+      }
+    }
+    return null;
+  };
   /**
    * Link a published document to the work stream that owns it, and to the one
    * that produced it when those differ.
@@ -438,14 +479,15 @@ export function createTerminalResourceBridge(
       attachedByUserId: string | null;
       eventType?: "resource_attached" | "resource_updated";
     },
-    internalProviderResourceId?: string | undefined,
+    target: { parentId: string; substreamId: string },
   ) => {
-    const workstreamId = publicationWorkstream(context, internalProviderResourceId);
+    const workstreamId = target.parentId;
     await (workstreamId === context.workstreamId
       ? attachResource({ workspaceId: context.workspaceId, workstreamId, ...input })
       : attachWorkstreamRuntimeResource(env, {
         workspaceId: context.workspaceId,
         workstreamId,
+        substreamId: target.substreamId,
         ...input,
       }));
     if (workstreamId === context.workstreamId) return;
@@ -645,7 +687,7 @@ export function createTerminalResourceBridge(
     async importResource(context, input, destinationPath, sandboxGeneration, providerSandboxId, provider) {
       const rows = await loadVisibleWorkstreamResourcesByIds(
         env.DB,
-        createConversationResourceLinks(env, context.workspaceId, context.workstreamId, undefined, importingSubstreamId ?? undefined),
+        createConversationResourceLinks(env, context.workspaceId, context.workstreamId, undefined, importingSubstreamId ?? undefined, context.executionPrincipal),
         {
           workspaceId: context.workspaceId,
           workstreamId: context.workstreamId,
@@ -653,27 +695,7 @@ export function createTerminalResourceBridge(
           resourceIds: [input.resourceId],
         },
       );
-      let row = rows[0];
-      if (!row && publicationWorkstreamId && publicationWorkstreamId !== context.workstreamId) {
-        // A new activation has no previous activation's links. Its server-bound
-        // publication target authorizes recovery of that target's generated
-        // sites only, not arbitrary attachments or another Thread's sites.
-        const [published] = await loadVisibleWorkstreamResourcesByIds(
-          env.DB,
-          createConversationResourceLinks(env, context.workspaceId, publicationWorkstreamId, undefined, "0"),
-          { workspaceId: context.workspaceId, workstreamId: publicationWorkstreamId,
-            principal: context.executionPrincipal, resourceIds: [input.resourceId] },
-        );
-        if (published?.resource_type === "generated_site"
-          && published.provider === "avalon_generated"
-          && String(published.provider_resource_id).startsWith(`terminal:${publicationWorkstreamId}:`)) {
-          await attachResource({ workspaceId: context.workspaceId, workstreamId: context.workstreamId,
-            ...(importingSubstreamId ? { substreamId: importingSubstreamId } : {}),
-            resourceId: published.id, attachedByUserId: context.executionPrincipal.type === "user"
-              ? context.executionPrincipal.userId : null });
-          row = published;
-        }
-      }
+      const row = rows[0];
       if (!row) {
         throw new TerminalToolError(
           "resource_not_found",
@@ -909,14 +931,9 @@ export function createTerminalResourceBridge(
      * distinguish "I wrote this" from "somebody wrote this".
      */
     async reconcilePublishedResource(context, input) {
-      const providerResourceId = await publishedResourceIdentity(
-        publicationWorkstream(context, undefined),
-        input.filePath,
-      );
-      const document = await workspace.prepare(
-        `SELECT id FROM resources
-          WHERE workspace_id = ? AND provider = 'avalon_generated' AND provider_resource_id = ?`,
-      ).bind(context.workspaceId, providerResourceId).first<{ id: string }>();
+      const target = await publicationAddress(context);
+      const providerResourceId = await publishedResourceIdentity(target.parentId, input.filePath, target.substreamId);
+      const document = await existingPublication(context, target, input.filePath, providerResourceId);
       if (!document) return { outcome: "not_landed" as const };
       const versions = await workspace.prepare(
         `SELECT title, mime_type, content_ref, content_sha256, metadata_json,
@@ -948,6 +965,7 @@ export function createTerminalResourceBridge(
     },
 
     async publishResource(context, input, bytes) {
+      const target = await publicationAddress(context, input.providerResourceId);
       const maximum = numericEnv(env, "MAX_ATTACHMENT_BYTES", 25_000_000);
       if (bytes.byteLength > maximum) {
         throw new TerminalToolError("resource_limit_exceeded", `The file is ${bytes.byteLength} bytes; published resources allow at most ${maximum}. Reduce or split it and retry.`, { field: "filePath", expected: `file bytes at most ${maximum}` });
@@ -963,19 +981,12 @@ export function createTerminalResourceBridge(
       // unique per call, which recognized a replay of that one call and nothing
       // else, so a second draft of the same file became a second document.
       const providerResourceId = input.providerResourceId
-        ?? await publishedResourceIdentity(publicationWorkstream(context, undefined), input.filePath);
-      const select = `SELECT id, title, mime_type, content_ref, content_sha256, metadata_json,
-                model_content_status, created_at
-           FROM resources
-          WHERE workspace_id = ? AND provider = 'avalon_generated' AND provider_resource_id = ?`;
-      const existing = await workspace.prepare(select)
-        .bind(context.workspaceId, providerResourceId).first<PublishedRow>();
-      // Publications that settled under the per-call identity keep it. Their
-      // attempt can still replay, and the path lookup above cannot see them, so
-      // this second lookup is what stops a replay publishing a second copy of a
-      // file this call already published.
-      const settled = existing ?? await workspace.prepare(select)
-        .bind(context.workspaceId, `terminal:${effectIntentId}`).first<PublishedRow>();
+        ?? await publishedResourceIdentity(target.parentId, input.filePath, target.substreamId);
+      const existing = input.providerResourceId === undefined
+        ? await existingPublication(context, target, input.filePath, providerResourceId)
+        : await publicationRow(context.workspaceId, providerResourceId);
+      // Preserve the exact per-call identity of publications that predate path identities.
+      const settled = existing ?? await publicationRow(context.workspaceId, `terminal:${effectIntentId}`);
 
       const sourceName = fileName(input.filePath);
       const mimeType = verifyAttachmentMimeType(bytes, sourceName, null);
@@ -989,7 +1000,7 @@ export function createTerminalResourceBridge(
           const linked = await createResourceObjectPort(
             env,
             context.workspaceId,
-            publicationWorkstream(context, input.providerResourceId),
+            target.parentId, undefined, target.substreamId,
           ).isAttached({ resourceId: settled.id });
           if (linked && eventType === undefined) return;
           await attachPublication(context, {
@@ -998,7 +1009,7 @@ export function createTerminalResourceBridge(
               ? context.executionPrincipal.userId
               : null,
             ...(eventType ? { eventType } : {}),
-          }, input.providerResourceId);
+          }, target);
         };
         // Equal content covers both a crash-replay of a settled call and a
         // republish that changed nothing: the stored bytes are already these
@@ -1042,7 +1053,7 @@ export function createTerminalResourceBridge(
             ? context.executionPrincipal.userId
             : null,
           eventType: "resource_updated",
-        }, input.providerResourceId);
+        }, target);
         return publishedOutput(updated, bytes.byteLength);
       }
 
@@ -1103,7 +1114,7 @@ export function createTerminalResourceBridge(
           attachedByUserId: context.executionPrincipal.type === "user"
             ? context.executionPrincipal.userId
             : null,
-        }, input.providerResourceId);
+        }, target);
       } catch {
         // The resource insert may have committed before its response was lost.
         // Keep both the stable resource identity and staging fence intact so a
@@ -1142,14 +1153,9 @@ export function createTerminalResourceBridge(
     },
 
     async publishedKindForPath(context, filePath) {
-      const providerResourceId = await publishedResourceIdentity(publicationWorkstream(context), filePath);
-      const row = await workspace.prepare(
-        `SELECT resource_type, mime_type FROM resources
-          WHERE workspace_id = ? AND provider = 'avalon_generated' AND provider_resource_id = ?`,
-      ).bind(context.workspaceId, providerResourceId).first<{
-        resource_type: string;
-        mime_type: string | null;
-      }>();
+      const target = await publicationAddress(context);
+      const providerResourceId = await publishedResourceIdentity(target.parentId, filePath, target.substreamId);
+      const row = await existingPublication(context, target, filePath, providerResourceId);
       if (!row) return null;
       if (row.resource_type === "generated_site") return "site";
       // An archive and an ordinary document are the same row type; only the
@@ -1170,19 +1176,11 @@ export function createTerminalResourceBridge(
      * the Terminal import instead.
      */
     async publishSiteResource(context, input, site) {
+      const target = await publicationAddress(context);
       const effectIntentId = requireTerminalEffectIntent(context, "publication");
-      const providerResourceId = await publishedResourceIdentity(
-        publicationWorkstream(context),
-        input.filePath,
-      );
-      const select = `SELECT id, title, mime_type, content_ref, content_sha256, metadata_json,
-                model_content_status, created_at, slug
-           FROM resources
-          WHERE workspace_id = ? AND provider = 'avalon_generated' AND provider_resource_id = ?`;
-      const existing = await workspace.prepare(select)
-        .bind(context.workspaceId, providerResourceId).first<PublishedSiteRow>();
-      const settled = existing ?? await workspace.prepare(select)
-        .bind(context.workspaceId, `terminal:${effectIntentId}`).first<PublishedSiteRow>();
+      const providerResourceId = await publishedResourceIdentity(target.parentId, input.filePath, target.substreamId);
+      const existing = await existingPublication(context, target, input.filePath, providerResourceId);
+      const settled = existing ?? await publicationRow(context.workspaceId, `terminal:${effectIntentId}`);
 
       // A republish that would turn a live site back into an archive never
       // reaches here — the runtime refuses it — but a republish that changes
@@ -1222,7 +1220,7 @@ export function createTerminalResourceBridge(
               ? context.executionPrincipal.userId
               : null,
             eventType: settledMetadata.publicationEventType,
-          });
+          }, target);
         }
         return siteOutput(env, settled, {
           artifactId: previous.artifactId,
@@ -1242,7 +1240,7 @@ export function createTerminalResourceBridge(
       const title = [...(input.displayName?.trim() || siteTitle(input.filePath))].slice(0, 300).join("");
       const written = await writeArtifactVersion(env, {
         workspaceId: context.workspaceId,
-        workstreamId: publicationWorkstream(context),
+        workstreamId: target.parentId,
         region: env.AVALON_REGION,
         artifactId: previous?.artifactId ?? null,
         resourceId,
@@ -1327,7 +1325,7 @@ export function createTerminalResourceBridge(
           attachedByUserId: context.executionPrincipal.type === "user"
             ? context.executionPrincipal.userId
             : null,
-        });
+        }, target);
         slug = await allocateResourceSlugBesideCreation(env, context.workspaceId, resourceId);
       }
 
@@ -1335,7 +1333,7 @@ export function createTerminalResourceBridge(
         artifactId: written.artifactId,
         hostnameStub,
         workspaceId: context.workspaceId,
-        workstreamId: publicationWorkstream(context),
+        workstreamId: target.parentId,
         resourceId,
         mode: site.mode,
         stateful: site.stateful,
@@ -1349,7 +1347,7 @@ export function createTerminalResourceBridge(
       await pointArtifactAtVersion(env, {
         artifactId: written.artifactId,
         workspaceId: context.workspaceId,
-        workstreamId: publicationWorkstream(context),
+        workstreamId: target.parentId,
         resourceId,
         region: env.AVALON_REGION,
         manifest: written.manifest,
@@ -1364,7 +1362,7 @@ export function createTerminalResourceBridge(
             ? context.executionPrincipal.userId
             : null,
           eventType: "resource_updated",
-        });
+        }, target);
       }
 
       return siteOutput(env, {

@@ -2,6 +2,7 @@ import { classifyAttachmentKind, type AttachmentKind, type ExecutionPrincipal } 
 import type { ResourceObjectPort } from "../durable-objects/workstream-resource-protocol";
 import type { ResourceLinkRow } from "../durable-objects/workstream-resource-storage";
 import { BOUND_PARAMETER_ID_CHUNK } from "../durable-objects/bound-parameters";
+import { sha256Hex } from "../lib/crypto";
 import { listedResourceVisibilitySql } from "./resource-listing";
 
 export interface VisibleWorkstreamResourceRow extends Record<string, unknown> {
@@ -85,11 +86,10 @@ const RESOURCE_LOOKUP_BATCH = BOUND_PARAMETER_ID_CHUNK;
  * The links one conversation's runs see, and the fingerprint that changes
  * whenever they do.
  *
- * A Channel's Main conversation sees its own links. A Breakout sees its own and
- * every link its Channel's Main holds, because a Breakout has full access to
- * what its parent has attached: the handoff summary it opens on names the
- * Channel's documents, and a run that could not read them answered
- * `resource_not_found` for a document anybody in the Channel could open.
+ * A Thread's Main sees its own links; a Breakout also sees Main's links.
+ * A Sidekick additionally sees its wizard's attachments and resources in its
+ * home and explicit conversation attachments, admitted as the execution user.
+ * The source inventories are read live rather than copied into each run.
  */
 export interface ConversationResourceLinks {
   links(input: { resourceIds?: readonly string[] }): Promise<{
@@ -102,70 +102,72 @@ export interface ConversationResourceLinks {
   inventoryFingerprint(): Promise<string>;
 }
 
-/**
- * Build {@link ConversationResourceLinks} over the conversation's own object
- * and, lazily, its Channel's Main.
- *
- * Whether to inherit is the object's answer (`inheritsChannelLinks`), not the
- * caller's, because most readers hold only the port for "the conversation
- * this run executes in". The Channel is asked only once that answer is yes, so
- * a Channel's own runs pay nothing. Where both hold a link, the conversation's
- * own wins: its relationship and watch state are the ones a reader acts on.
- */
+/** Merge live authorized sources, keeping the executing conversation's own links first. */
 export function conversationResourceLinks(
   own: ResourceObjectPort,
   channel: () => ResourceObjectPort,
+  sidekickSources?: (context: { sidekickId: string; substreamId: string }) => Promise<Array<{
+    key: string; resources: ConversationResourceLinks;
+  }>>,
+  knownContext?: Awaited<ReturnType<ResourceObjectPort["inheritanceContext"]>>,
 ): ConversationResourceLinks {
-  let inherits: Promise<boolean> | null = null;
-  let channelPort: ResourceObjectPort | null = null;
-  const inheritsChannel = () => (inherits ??= own.inheritsChannelLinks());
-  const parent = () => (channelPort ??= channel());
+  // The object's parent and conversation identity do not change. The related
+  // conversations and their admission are deliberately read again per operation.
+  let identity: ReturnType<ResourceObjectPort["inheritanceContext"]> | null = null;
+  const context = () => (identity ??= knownContext ? Promise.resolve(knownContext) : own.inheritanceContext());
+  const inherited = async () => {
+    const scope = await context();
+    if (scope.kind === "breakout") {
+      return [{ key: "thread", resources: conversationResourceLinks(channel(), channel, undefined, { kind: "none" }) }];
+    }
+    return scope.kind === "sidekick" && sidekickSources ? sidekickSources(scope) : [];
+  };
   return {
     async links(selection) {
-      const [ownLinks, inheriting] = await Promise.all([own.attachedLinks(selection), inheritsChannel()]);
-      const ownIds = new Set(ownLinks.map((link) => link.resource_id));
-      // A point lookup (what read_resource makes) already knows the ids, so the
-      // Channel answers both questions in one round trip rather than two.
-      const [channelAll, channelNamedOnMessages] = inheriting
-        ? await Promise.all([
-          parent().attachedLinks(selection),
-          selection.resourceIds ? parent().resourceIdsOnMessages({ resourceIds: selection.resourceIds }) : null,
-        ])
-        : [[], []];
-      const channelLinks = channelAll.filter((link) => !ownIds.has(link.resource_id));
-      const [ownOnMessages, channelOnMessages] = await Promise.all([
-        ownLinks.length > 0 ? own.resourceIdsOnMessages({ resourceIds: [...ownIds] }) : [],
-        channelNamedOnMessages ?? (channelLinks.length > 0
-          ? parent().resourceIdsOnMessages({ resourceIds: channelLinks.map((link) => link.resource_id) })
-          : []),
+      const [sources, ownLinks, namedOnMessages] = await Promise.all([
+        inherited(), own.attachedLinks(selection),
+        selection.resourceIds ? own.resourceIdsOnMessages({ resourceIds: selection.resourceIds }) : null,
       ]);
-      const channelIds = new Set(channelLinks.map((link) => link.resource_id));
-      return {
-        links: [...ownLinks, ...channelLinks],
-        onMessages: new Set([...ownOnMessages, ...channelOnMessages.filter((id) => channelIds.has(id))]),
-      };
+      const [ownOnMessages, others] = await Promise.all([
+        namedOnMessages ?? (ownLinks.length ? own.resourceIdsOnMessages({ resourceIds: ownLinks.map((link) => link.resource_id) }) : []),
+        Promise.all(sources.map((source) => source.resources.links(selection))),
+      ]);
+      const links = new Map(ownLinks.map((link) => [link.resource_id, link]));
+      const onMessages = new Set(ownOnMessages);
+      for (const other of others) {
+        for (const link of other.links) {
+          if (links.has(link.resource_id)) continue;
+          links.set(link.resource_id, link);
+          if (other.onMessages.has(link.resource_id)) onMessages.add(link.resource_id);
+        }
+      }
+      return { links: [...links.values()], onMessages };
     },
     async attachedResourceIds() {
-      const [ownIds, inheriting] = await Promise.all([own.attachedResourceIds(), inheritsChannel()]);
-      return inheriting ? [...new Set([...ownIds, ...await parent().attachedResourceIds()])] : ownIds;
+      const sources = await inherited();
+      const ids = await Promise.all([own.attachedResourceIds(), ...sources.map((source) => source.resources.attachedResourceIds())]);
+      return [...new Set(ids.flat())];
     },
     async inventoryFingerprint() {
-      const [revision, inheriting] = await Promise.all([own.inventoryRevision(), inheritsChannel()]);
-      // `inventory:<own>` is what a compaction checkpoint fences on, so the
-      // own revision stays first; `ownInventoryRevision` reads it back.
-      return inheriting
-        ? `inventory:${revision}/${await parent().inventoryRevision()}`
-        : `inventory:${revision}`;
+      const sources = await inherited();
+      const [revision, fingerprints] = await Promise.all([
+        own.inventoryRevision(),
+        Promise.all(sources.map(async (source) => [source.key, await source.resources.inventoryFingerprint()])),
+      ]);
+      if ((await context()).kind === "breakout") {
+        return `inventory:${revision}/${fingerprints[0]![1]!.slice("inventory:".length)}`;
+      }
+      return sources.length ? `inventory:${revision}/${await sha256Hex(JSON.stringify(fingerprints))}` : `inventory:${revision}`;
     },
   };
 }
 
 /**
  * The conversation's own revision from a fingerprint, which is the one its
- * object can fence a compaction commit on. Null for anything malformed.
+ * object can fence a compaction commit on. Null when the own revision is missing or invalid.
  */
 export function ownInventoryRevision(fingerprint: string): number | null {
-  const match = /^inventory:(\d+)(?:\/\d+)?$/u.exec(fingerprint);
+  const match = /^inventory:(\d+)(?:\/.+)?$/u.exec(fingerprint);
   const revision = match ? Number(match[1]) : Number.NaN;
   return Number.isSafeInteger(revision) ? revision : null;
 }

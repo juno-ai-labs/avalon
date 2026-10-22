@@ -215,7 +215,7 @@ function fixture(
       env,
       testTerminalPortFactory(objectStore),
       inObjectResourceAttacher,
-      publicationWorkstreamId,
+      publicationWorkstreamId ? async () => ({ parentId: publicationWorkstreamId, substreamId: "0" }) : null,
     ),
   };
 }
@@ -271,63 +271,17 @@ describe("Terminal resource bridge", () => {
     ).run(RESOURCE, U, JSON.stringify({ id: RESOURCE }), Date.parse("2026-08-13"), Date.parse("2026-08-13"));
   }
 
-  it.each(["site", "unbound", "detached", "foreign-site", "document"])(
-    "resolves only an attached generated site from the bound publishing Thread (%s)", async (kind) => {
-      const room = "10000000-0000-4000-8000-000000000099";
-      const activation = "10000000-0000-4000-8000-000000000098";
-      const state = fixture();
-      const roomStore = testWorkstreamObjectStore();
-      openDatabases.push(roomStore);
-      seedWorkstreamObjectRoot(roomStore, { workstreamId: room, workspaceId: W });
-      attachSiteResource(state, await publishedSite(state, [["index.html", "<h1>Latest layout</h1>"]]));
-      const link = state.objectStore.prepare("SELECT resource_json, attached_at, updated_at FROM workstream_resource_links WHERE resource_id = ?")
-        .get(RESOURCE) as { resource_json: string; attached_at: number; updated_at: number };
-      state.objectStore.prepare("DELETE FROM workstream_resource_links WHERE resource_id = ?").run(RESOURCE);
-      if (kind !== "detached") {
-        roomStore.prepare(`INSERT INTO workstream_resource_links
-          (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
-          VALUES (?, ?, 0, 'generated', ?, ?, ?)`)
-          .run(RESOURCE, U, link.resource_json, link.attached_at, link.updated_at);
-      }
-      state.database.prepare("UPDATE resources SET provider_resource_id = ?, resource_type = ? WHERE id = ?")
-        .run(`terminal:${kind === "foreign-site" ? S : room}:wedding-site`,
-          kind === "document" ? "generated_document" : "generated_site", RESOURCE);
-      state.env.SUBSTREAM_AGENTS = createTestEnv({ SUBSTREAM_AGENTS: testSubstreamAgentsBinding(state.database, {
-        objectStores: new Map([[`${S}:${activation}`, state.objectStore], [room, roomStore]]),
-      }) }).SUBSTREAM_AGENTS;
-      const bridge = createTerminalResourceBridge(state.env, testTerminalPortFactory(state.objectStore),
-        async (input) => {
-          state.objectStore.prepare(`INSERT INTO workstream_resource_links
-            (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
-            VALUES (?, ?, 0, 'generated', ?, ?, ?)`)
-            .run(input.resourceId, input.attachedByUserId, JSON.stringify({ id: input.resourceId }), 1, 1);
-        }, kind === "unbound" ? null : room, activation);
-      vi.mocked(state.provider.runUtilityCommand).mockImplementation(async (_id, input) => ({
-        exitCode: 0,
-        stdout: input.operation === "resource.import.finalize" ? "1\n"
-          : input.operation === "resource.import.stage" ? "exists\n" : "",
-        stderr: "",
-      }));
-      const importing = bridge.importResource(context,
-        { resourceId: RESOURCE, destinationPath: ".rally-output/wedding-site", overwrite: true },
-        ".rally-output/wedding-site", 1, "sandbox", state.provider);
-      if (kind === "site") {
-        await expect(importing).resolves.toMatchObject({ outcome: "replaced", fileCount: 1 });
-        // The source comes from the current publication, even when local files
-        // already exist and no previous activation's resource links were passed.
-        expect(state.provider.writeFile).toHaveBeenCalledWith("sandbox",
-          expect.stringMatching(/\/index\.html$/u),
-          new TextEncoder().encode("<h1>Latest layout</h1>"), context.signal);
-        expect(state.objectStore.prepare("SELECT resource_id FROM workstream_resource_links").all())
-          .toEqual([{ resource_id: RESOURCE }]);
-      } else {
-        await expect(importing).rejects.toMatchObject({ code: "resource_not_found" });
-        expect(state.provider.writeFile).not.toHaveBeenCalled();
-        expect(state.objectStore.prepare("SELECT COUNT(*) AS count FROM workstream_resource_links").get())
-          .toEqual({ count: 0 });
-      }
-    },
-  );
+  it("does not treat a publication target as a resource access grant", async () => {
+    const state = fixture();
+    const room = "10000000-0000-4000-8000-000000000099";
+    attachSiteResource(state, await publishedSite(state, [["index.html", "<h1>Private</h1>"]]));
+    state.objectStore.prepare("DELETE FROM workstream_resource_links WHERE resource_id = ?").run(RESOURCE);
+    await expect(state.bridgeFor(room).importResource(context,
+      { resourceId: RESOURCE, destinationPath: ".rally-output/wedding-site" },
+      ".rally-output/wedding-site", 1, "sandbox", state.provider))
+      .rejects.toMatchObject({ code: "resource_not_found" });
+    expect(state.provider.writeFile).not.toHaveBeenCalled();
+  });
 
   it("materializes a published site's own source so a run can revise what is served", async () => {
     const state = fixture();

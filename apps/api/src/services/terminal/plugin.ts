@@ -18,7 +18,7 @@ import {
   TERMINAL_TOOL_NAMES,
   type TerminalToolExecutors,
 } from "./contract";
-import { resolveTerminalRunScope, workspaceAgentOwnerLookup, type TerminalRunScope } from "./authority";
+import { resolveTerminalPublicationHome, resolveTerminalRunScope, workspaceAgentOwnerLookup, type TerminalRunScope } from "./authority";
 import { TerminalSandboxCoordinator } from "./coordinator";
 import { createHarnessRunPortFactory } from "../../runtime/harness-run-port";
 import { createResourcePortFactory } from "../../runtime/resource-port";
@@ -67,12 +67,6 @@ export async function createAvalonTerminalPlugin(
   options: {
     provider?: TerminalSandboxProvider;
     readGateway?: TerminalGitHubReadGateway;
-    /**
-     * The room a work-stream-scoped Sidekick publishes into. See
-     * `createTerminalResourceBridge`: a Sidekick's sandbox is its own, but its
-     * published documents belong to the room that owns it.
-     */
-    publicationWorkstreamId?: string | null;
   } = {},
 ): Promise<(HarnessPlugin & Disposable) | null> {
   env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
@@ -284,12 +278,13 @@ export async function createAvalonTerminalPlugin(
       env,
       terminalPort,
       inObjectResourceAttacher,
-      options.publicationWorkstreamId ?? null,
+      input.parentKind === "automation" ? () => resolveTerminalPublicationHome(env, input) : null,
       // A background agent imports what its own conversation has attached into
       // its owner's sandbox; the import records that conversation so the
       // revocation check asks it, not the owner's.
       scope.runSubstreamId === scope.authoritySubstreamId ? null : scope.runSubstreamId,
       runRequesterUserId(input),
+      scope.authoritySubstreamId,
   );
   const runtime = createDaytonaTerminalRuntime(
     terminalPort,
@@ -400,7 +395,7 @@ export async function createAvalonTerminalPlugin(
     ? " Current workspace egress is Full internet."
     : " Current workspace egress is Trusted only; a network failure may mean the destination is not approved, so ask a workspace owner to review Terminal network targets instead of trying to bypass it.";
   const sidekickGuidance = input.parentKind === "automation"
-    ? " This Sidekick's wizard, activations, and background agents share one sandbox under its current run-as user. Other editors can configure its definition but cannot access those files. If a known site ID is missing from the resource list, attempt import_resource with that ID before asking for reattachment. Activations can overlap; the mutation lease protects one tool call, not a whole workflow. Load tracking-seen-or-done-items and claim a shared output before a multi-step update; use separate directories for independent work."
+    ? " This Sidekick's wizard, activations, and background agents share one sandbox under its current run-as user. Other editors can configure its definition but cannot access those files. Publications belong to its home conversation when it has one, so reuse the original site's path to update it. If a known site ID is missing from the resource list, attempt import_resource with that ID before asking for reattachment. Activations can overlap; the mutation lease protects one tool call, not a whole workflow. Load tracking-seen-or-done-items and claim a shared output before a multi-step update; use separate directories for independent work."
     : "";
   const plugin = createTerminalPlugin(
     observedExecutors,

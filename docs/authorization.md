@@ -173,6 +173,8 @@ does not reach.
 Guest admission observations are shared only within the current authorization
 batch, like other owner observations. Skill visibility alone does not expose a
 Sidekick's resources; existing member authorization remains on its original path.
+Sidekick resource inheritance follows current execution-user admission; see
+[`agent-attachments.md`](agent-attachments.md#authorized-work-stream-discovery-and-text-hydration).
 
 Explicit resource refresh and artifact open/error/data routes also admit guests.
 Refresh runs the existing resource read proof before loading metadata or invoking

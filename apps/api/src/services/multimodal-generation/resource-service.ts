@@ -127,7 +127,7 @@ export function createMultimodalGenerationResourceStore(
       const requested = [resourceId, ...(maskResourceId ? [maskResourceId] : [])];
       const rows = await loadVisibleWorkstreamResourcesByIds(
         env.DB,
-        conversationResourceLinksFrom(resourcePortFactory, context.workspaceId, context.workstreamId),
+        conversationResourceLinksFrom(resourcePortFactory, context.workspaceId, context.workstreamId, undefined, { env, principal: context.executionPrincipal }),
         {
           workspaceId: context.workspaceId,
           workstreamId: context.workstreamId,
