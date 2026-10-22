@@ -4804,6 +4804,19 @@ function conversationToolEntry(conversation: {
   };
 }
 
+/** Keep own and parent context ahead of peers on the paginated list. */
+function conversationToolEntries(
+  conversations: readonly ScopedConversation[],
+  channels: readonly ConversationToolEntry[],
+): ConversationToolEntry[] {
+  const leading: ConversationToolEntry[] = [];
+  const peers: ConversationToolEntry[] = [];
+  for (const conversation of conversations) {
+    (conversation.isOwn || conversation.isParent ? leading : peers).push(conversationToolEntry(conversation));
+  }
+  return [...leading, ...channels, ...peers];
+}
+
 function conversationToolRefusal(
   code: ConversationToolRefusalCode,
   available: readonly string[],
@@ -9134,7 +9147,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const channels = await this.conversationToolChannels(request.workspaceId, request.scope, request.userId);
     const scoped = scopeConversations(this.state.storage.sql, request.scope, request.userId, channels.map((channel) => channel.parentId));
     const conversations = await this.reachableConversations(request.workspaceId, request.scope, scoped, request.userId);
-    return { conversations: [...conversations.map(conversationToolEntry), ...channels] };
+    return { conversations: conversationToolEntries(conversations, channels) };
   }
 
   /**
@@ -9223,11 +9236,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const channels = await this.conversationToolChannels(request.workspaceId, request.scope, request.userId);
     const scoped = scopeConversations(this.state.storage.sql, request.scope, request.userId, channels.map((channel) => channel.parentId));
     // Only a refusal lists what the person can reach, so only a refusal pays for it.
-    const available = async () => [
-      ...(await this.reachableConversations(request.workspaceId, request.scope, scoped, request.userId))
-        .map((conversation) => conversation.conversationId),
-      ...channels.map((channel) => channel.conversationId),
-    ];
+    const available = async () => conversationToolEntries(
+      await this.reachableConversations(request.workspaceId, request.scope, scoped, request.userId), channels,
+    ).map((conversation) => conversation.conversationId);
     let target: ScopedConversation | undefined;
     if (request.reference === null) {
       target = scoped.find((conversation) => conversation.isHome);
@@ -9251,14 +9262,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       target = match.conversation as ScopedConversation;
     }
     const resourceId = target.substreamId === "0" ? target.parentId : target.substreamId;
-    const namedByTitle = request.scope.kind === "conversation" && request.reference !== null
-      && parseConversationId(request.reference) === null;
-    if (target.archived && !namedByTitle) return conversationToolRefusal("conversation_archived", [], resourceId);
+    const referenceAddress = request.reference === null ? null : parseConversationId(request.reference);
+    const namedPeerByTitle = request.scope.kind === "conversation" && request.reference !== null
+      && !target.isOwn && !target.isParent
+      && (referenceAddress === null || conversationIdOf(referenceAddress) !== target.conversationId);
+    if (target.archived && !namedPeerByTitle) return conversationToolRefusal("conversation_archived", [], resourceId);
     const admission = await this.conversationToolAdmission(
       request.workspaceId, admissionAddress(request.scope, target), request.userId,
     );
     // A guessed title must not reveal a private peer's identity or archive state.
-    if (namedByTitle && (!admission.authorized || target.archived || admission.archived)) {
+    if (namedPeerByTitle && (!admission.authorized || target.archived || admission.archived)) {
       return conversationToolRefusal("conversation_not_in_scope", await available());
     }
     if (!admission.authorized) return conversationToolRefusal("conversation_access_denied", [], resourceId);
