@@ -51,22 +51,28 @@ or a report, it brings it back into the Thread as a file. If it makes the same
 file again later, you get a new version of that file rather than a second copy.
 Files are covered in [Artifacts](../06-things-rally-makes/01-artifacts.md).
 
-## One computer per conversation
+## Which conversations share a computer
 
-Each conversation gets its own sandbox. The Thread has one, each Breakout has
-its own, and each Sidekick run has its own. Helpers that Rally starts from a
-conversation share that conversation's sandbox (helpers come up in
-[Helpers, other conversations and receipts](06-helpers-and-receipts.md)).
+Each Thread and Breakout gets its own sandbox. A Sidekick has one shared
+sandbox for its setup conversation (the wizard), all its runs, and their
+helpers. Its runs keep separate conversations, but can reuse the files left
+by the wizard or an earlier run. Different Sidekicks and the Thread that
+requested one have separate computers.
 
-The sandbox is not kept running all the time. After about five minutes with
-nothing to do it goes to sleep, and Rally wakes it up the next time it needs
-it. Files Rally left on it come back. Anything that was still running, such as
-a test web server, does not.
+Helpers share the computer of the conversation or Sidekick they work for
+(see [Helpers, other conversations and receipts](06-helpers-and-receipts.md)).
+If two want to change files at once, one waits a moment.
+
+The sandbox is not kept running all the time. After about five idle minutes a
+Thread's or Breakout's computer goes to sleep; a Sidekick's sleeps after about
+fifteen. Rally wakes it up when it needs it again. Files normally come back,
+but anything still running, such as a test web server, does not.
 
 > [!WARNING]
-> The sandbox is a workshop, not a filing cabinet. It is deleted after 30 days.
-> Anything worth keeping should come back into the Thread as a file, so ask
-> Rally to "save that into the Thread" if it has not already.
+> The sandbox is a workshop, not a filing cabinet. It can be reset when
+> permissions change and is deleted after about 30 days without use. Publish
+> anything worth keeping as an artifact. Rally can recover published files if
+> the sandbox's working copy is lost.
 
 ## What it cannot do
 

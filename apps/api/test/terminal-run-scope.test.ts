@@ -42,9 +42,9 @@ describe("the conversation whose Terminal a run uses", () => {
     const ownerOf = owners([[agent(WORKSTREAM, THREAD), agent(WORKSTREAM, "0")]]);
 
     await expect(resolveTerminalRunScope(input(undefined, false), ownerOf))
-      .resolves.toEqual({ parentKind: "workstream", runSubstreamId: "0", authoritySubstreamId: "0" });
+      .resolves.toEqual({ parentKind: "workstream", backgroundAgent: false, runSubstreamId: "0", authoritySubstreamId: "0" });
     await expect(resolveTerminalRunScope(input(THREAD, false), ownerOf))
-      .resolves.toEqual({ parentKind: "workstream", runSubstreamId: THREAD, authoritySubstreamId: THREAD });
+      .resolves.toEqual({ parentKind: "workstream", backgroundAgent: false, runSubstreamId: THREAD, authoritySubstreamId: THREAD });
     // An ordinary run's conversation is its own whatever the table says.
     expect(ownerOf).not.toHaveBeenCalled();
   });
@@ -56,9 +56,30 @@ describe("the conversation whose Terminal a run uses", () => {
     ]);
 
     await expect(resolveTerminalRunScope(input(WORKER, true), ownerOf))
-      .resolves.toEqual({ parentKind: "workstream", runSubstreamId: WORKER, authoritySubstreamId: THREAD });
+      .resolves.toEqual({ parentKind: "workstream", backgroundAgent: true, runSubstreamId: WORKER, authoritySubstreamId: THREAD });
     await expect(resolveTerminalRunScope(input(NESTED_WORKER, true), ownerOf))
-      .resolves.toEqual({ parentKind: "workstream", runSubstreamId: NESTED_WORKER, authoritySubstreamId: THREAD });
+      .resolves.toEqual({ parentKind: "workstream", backgroundAgent: true, runSubstreamId: NESTED_WORKER, authoritySubstreamId: THREAD });
+  });
+
+  it("shares the authoring sandbox across Sidekick activations without changing their run addresses", async () => {
+    const ownerOf = owners([]);
+    for (const substreamId of ["0", THREAD, WORKER]) {
+      await expect(resolveTerminalRunScope({ ...input(substreamId, false), parentKind: "automation" }, ownerOf))
+        .resolves.toEqual({ parentKind: "automation", backgroundAgent: false,
+          runSubstreamId: substreamId, authoritySubstreamId: "0" });
+    }
+    expect(ownerOf).not.toHaveBeenCalled();
+  });
+
+  it("uses the same Sidekick sandbox for nested background agents", async () => {
+    const sidekickAgent = (substreamId: string) => agentIdForAddress({
+      parentKind: "automation", parentId: WORKSTREAM, substreamId: asSubstreamId(substreamId),
+    });
+    const ownerOf = owners([[sidekickAgent(NESTED_WORKER), sidekickAgent(WORKER)],
+      [sidekickAgent(WORKER), sidekickAgent(THREAD)]]);
+    await expect(resolveTerminalRunScope({ ...input(NESTED_WORKER, true), parentKind: "automation" }, ownerOf))
+      .resolves.toEqual({ parentKind: "automation", backgroundAgent: true,
+        runSubstreamId: NESTED_WORKER, authoritySubstreamId: "0" });
   });
 
   it("refuses a root under another parent rather than sharing files across work streams", async () => {

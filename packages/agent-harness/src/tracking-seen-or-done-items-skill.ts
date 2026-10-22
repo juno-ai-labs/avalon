@@ -4,12 +4,17 @@ import type { HarnessSkill } from "./index";
 export const TRACKING_SEEN_OR_DONE_ITEMS_SKILL: HarnessSkill = {
   name: "tracking-seen-or-done-items",
   description: "Give each Sidekick or other type of run a way to know what other runs have already seen or done. Keep a durable table with stable source keys, establish a baseline, overlap reads, and record completed work so later runs skip it.",
-  whenToUse: "When configuring or executing a workflow whose runs need to know what other runs have seen or done. Every activation of a Sidekick gets its own independent run; use this for Sidekicks and other workflows that need shared state across runs.",
+  whenToUse: "When configuring or executing a workflow whose runs need to know what other runs have seen or done. Every activation of a Sidekick gets its own independent run and conversation, while its wizard and runs share Terminal files. Use this for Sidekicks and other workflows that need durable records of completed work across runs.",
   ownerPlugin: "rally:tables",
   body: `Give each Sidekick (every activation of a Sidekick gets its own independent
 run) or other type of run a way to know what other runs have already seen or done.
 Instructions on how to keep a durable table with stable source keys, establish
 a baseline, overlap reads, and record completed work so later runs skip it.
+
+Sidekick runs have separate conversations, but share Terminal files with their
+wizard and background agents. A shared file workspace does not automatically
+record what was completed, and files can be lost after a reset or expiry. Keep
+those records in the durable table described here.
 
 ## Terms used in this skill
 

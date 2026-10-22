@@ -71,13 +71,12 @@ export const TERMINAL_WARM_STOP_MS = WARM_STOP_MINUTES * 60_000;
  * A work stream's sandboxes are stopped, archived and expired by the
  * workspace alarm, whose directory entry the work stream's parent projects.
  * An automation's parent projects no Terminal deadline, so a Sidekick's
- * sandboxes — the authoring conversation's and one per triggered run — are
- * retired by the provider instead: Daytona stops one fifteen idle minutes
+ * shared sandbox, owned by its authoring conversation, is retired by the
+ * provider instead: Daytona stops one fifteen idle minutes
  * after its last use and deletes it this many minutes after that stop. The
  * number is Rally's own thirty-day expiry so that both kinds of sandbox
- * outlive their last use by the same time; a shorter life for a run's sandbox,
- * which nothing reopens once the run has published its results, is a number
- * the team sets, not one derived here.
+ * outlive their last use by the same time. Each later activation reuses the
+ * Sidekick's sandbox while it remains available.
  */
 export const AUTOMATION_SANDBOX_DELETE_AFTER_STOPPED_MINUTES = EXPIRE_DAYS * 24 * 60;
 
@@ -121,8 +120,8 @@ export interface TerminalAcquisitionObservation {
  * Which conversation the coordinator's sandbox belongs to, and which one the
  * run holding it executes in.
  *
- * The two differ only for a background agent, which uses the sandbox of the
- * conversation that (transitively) started it. Then the lease it takes is
+ * The two differ for Sidekick activations and for background agents. Their
+ * sandbox lives in another conversation, while the lease they take is
  * held by a run whose row lives in another object, and `runsPort` is how the
  * coordinator asks that object whether such a holder has yielded.
  */
@@ -253,6 +252,7 @@ export class TerminalSandboxCoordinator {
      */
     private readonly scope: TerminalSandboxScope = {
       parentKind: "workstream",
+      backgroundAgent: false,
       runSubstreamId: "0",
       authoritySubstreamId: "0",
       runsPort: createHarnessRunPortFactory(env),
@@ -526,18 +526,15 @@ export class TerminalSandboxCoordinator {
       const importedResourceRevoked = await this.hasRevokedImportedResource(context, row);
       if (
         (row.authorityFingerprint !== authorityFingerprint || importedResourceRevoked)
-        && this.scope.runSubstreamId !== this.scope.authoritySubstreamId
+        && this.scope.backgroundAgent
       ) {
-        // The sandbox is another conversation's, and replacing it destroys
-        // that conversation's checkout. A background agent inherits its
-        // starter's principal, so its fingerprint matches its owner's unless
-        // the owner's own sandbox has gone stale; the owner's next call is
-        // what reprovisions it, and this run waits for that rather than
-        // doing it from underneath.
+        // Only a primary run may replace shared files after authority changes.
+        // A Sidekick activation is primary even though its sandbox lives in
+        // the authoring conversation; delegated workers must leave it intact.
         throw new TerminalToolError(
           "sandbox_authority_mismatch",
-          "The sandbox this agent shares with the conversation that started it no longer matches that conversation's authority, or a resource imported into it was revoked. That conversation's next Terminal call reprovisions it.",
-          { reason: "Ask the conversation that started this agent to run a Terminal tool, then retry." },
+          "The shared sandbox needs to be rebuilt because its permissions changed or an imported resource was revoked. A background agent cannot reset it.",
+          { reason: "Ask the main agent in the owning conversation, or a Sidekick activation, to run a Terminal tool; then retry." },
         );
       }
       if (row.authorityFingerprint !== authorityFingerprint || importedResourceRevoked) {

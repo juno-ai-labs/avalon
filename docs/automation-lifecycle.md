@@ -19,6 +19,28 @@ The model generates internal instructions and a user-friendly description. An
 incomplete submission does not replace the accepted revision. Edits preserve a
 person's pause; an archived owning room still refuses publication.
 
+The authoring wizard has its own model route, `sidekick_authoring`, defaulting
+to Sol independently of the ordinary Thread and activation route. Explicit model
+pins still win; see [`feature-flags.md`](feature-flags.md). For work requested
+after an external change, authoring guidance loads `polling-for-events`, inspects
+declared events and resolves the specific source before choosing a timer. When
+a supported event binding fits better, the wizard recommends it to the requester
+or coordinating agent and explains the faster reaction and avoided unchanged
+checks. An explicitly requested schedule stays in place unless the person chooses
+the suggested alternative. A polling fallback names its actual event or resource
+resolution gap rather than claiming the connector announces no changes. The saved
+definition retains the selected event and resolved resource, or the concrete
+reason for polling. The authoring prompt points to the skill for that procedure.
+
+Every activation starts an independent conversation. The Sidekick's wizard,
+activations and background agents share one Terminal sandbox; the requesting
+Thread and other Sidekicks keep separate sandboxes. Transcripts and resource
+permissions remain separate. The authoring prompt saves resource IDs, recovery
+steps and shared-table access instructions because files can still be lost after
+a reset or expiry. For an existing site's refresh,
+`building-live-sites` supplies the required import/update/publish procedure and
+separates initial publication, activation and verified refresh completion.
+
 `automation.loadable` is a stored boolean, not a consumer-derived classification.
 The `sidekickLoadable` policy currently returns true for zero configured triggers.
 Publication writes the accepted revision and this value in one transaction;
@@ -562,10 +584,11 @@ delete stops rather than finishing on stale consent. The one exception is a
 continued run, below. The `rally:sidekicks` drafting plugin is withheld from a
 run.
 
-A run that loads Terminal gets a sandbox of its own, provisioned fresh under
-the run's conversation and never reopened. The automation projects no Terminal
-deadline for the workspace sweep, so that sandbox is created with Daytona's
-auto-delete set and is retired by the provider alone;
+A run that loads Terminal reuses the sandbox owned by its Sidekick's wizard.
+All activations and background agents share its files and mutation lease, while
+run transcripts and resource permissions remain separate. The Sidekick projects
+no Terminal deadline for the workspace sweep, so the shared sandbox is created
+with Daytona's auto-delete set and retired by the provider alone;
 [`terminal-workspaces.md`](terminal-workspaces.md) owns that mechanism.
 
 The run reports its state the way every conversation does: its
@@ -1118,6 +1141,21 @@ The Sidekick authoring prompt carries no Google-specific lookup or attachment
 instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
+
+### 2026-10-21 — Authoring has its own model and preserves activation prerequisites
+
+**What changed:** The wizard uses the independent `sidekick_authoring` model route,
+defaulting to Sol. Its prompt loads the event-selection procedure for external
+changes, recommends a better event binding without replacing requested schedules,
+and saves recovery and shared-table access steps. The wizard and activations
+share one Terminal sandbox while their conversations remain independent.
+
+**Why:** Authoring has to resolve capabilities and hand off executable instructions,
+not merely produce a plausible schedule. The content-calendar experiment skipped
+resource resolution and relied on files in its creator's sandbox. Raising the
+wizard's model alone would leave the same implicit handoff; the saved definition
+must explain how the next run finds its files and shared state, including
+recovery after the shared sandbox is reset or expires.
 
 ### 2026-10-21 — Receiving conversations show live Sidekick activity
 

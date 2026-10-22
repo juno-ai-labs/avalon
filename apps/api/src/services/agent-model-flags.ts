@@ -7,6 +7,7 @@ import {
   type AgentModelOverride,
   type AgentModelRole,
   type AgentModelRouting,
+  type WorkstreamWorkflowInput,
 } from "@rally/contracts";
 import type { Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
@@ -76,6 +77,7 @@ export function defaultAgentModelRouting(env: Env, role: AgentModelRole): AgentM
     case "inline_child":
     case "session_import":
     case "memory_sweep":
+    case "sidekick_authoring":
       return { model: modelId(env.OPENROUTER_PRIMARY_MODEL), fallbackModels };
     case "workstream_naming":
       return { model: modelId(env.OPENROUTER_CLASSIFIER_MODEL), fallbackModels };
@@ -319,28 +321,45 @@ export function pinnedModelRouting(model: string): AgentModelRouting {
   return { model, fallbackModels: [] };
 }
 
+type ConversationModelContext = {
+  parentKind?: WorkstreamWorkflowInput["parentKind"];
+  substreamId?: string | undefined;
+};
+
+/** Only a Sidekick's Main is its wizard; activations and workers keep their existing route. */
+export function conversationModelRole(
+  context: ConversationModelContext,
+): "workstream" | "sidekick_authoring" {
+  return context.parentKind === "automation" && (context.substreamId ?? "0") === "0"
+    ? "sidekick_authoring"
+    : "workstream";
+}
+
 /**
  * The work-stream agent's route plan for one work stream: its own override if
- * it carries one, otherwise `agent-model-workstream`.
+ * it carries one, otherwise its conversation role's flag. Sidekick authoring
+ * has its own role; triggered runs and ordinary threads retain `workstream`.
  *
  * The override wins over the flag rather than the other way round. A flag is a
  * fleet-wide default and an override is somebody asking this one work stream to
  * run somewhere else, so a rollout reaching the workspace must not quietly take
  * the pinned work stream with it.
  *
- * Unlike `resolveAgentModelRouting` this reads D1, so it can throw — against
- * the same database every caller is already writing its `harness_runs` row to.
+ * Unlike `resolveAgentModelRouting` this reads the authoritative conversation
+ * identity, so its object RPC can fail before flag evaluation.
  */
 export async function resolveWorkstreamModelRouting(
   env: Env,
-  context: { workspaceId: string; workstreamId: string },
+  context: { workspaceId: string; workstreamId: string }
+    & ConversationModelContext,
 ): Promise<AgentModelRouting> {
+  const role = conversationModelRole(context);
   const row = await createIdentityObjectPort(env, context.workspaceId, context.workstreamId)
     .identity();
   const override = agentModelOverride(row?.model_override);
   if (override) {
     logStructuredEvent(env, "debug", "workstream_model_override_applied", {
-      agent: "workstream",
+      agent: role,
       workspace_id: context.workspaceId,
       workstream_id: context.workstreamId,
       model: override,
@@ -352,13 +371,13 @@ export async function resolveWorkstreamModelRouting(
   const unknown = unknownStoredOverride(row?.model_override);
   if (unknown) {
     logStructuredEvent(env, "warn", "workstream_model_override_unknown", {
-      agent: "workstream",
+      agent: role,
       workspace_id: context.workspaceId,
       workstream_id: context.workstreamId,
       stored_model: unknown,
     });
   }
-  return resolveAgentModelRouting(env, "workstream", context);
+  return resolveAgentModelRouting(env, role, context);
 }
 
 /** `resolveWorkstreamModelRouting`, reduced to the model column's value. */
