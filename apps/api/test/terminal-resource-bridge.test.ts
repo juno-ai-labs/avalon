@@ -215,7 +215,7 @@ function fixture(
       env,
       testTerminalPortFactory(objectStore),
       inObjectResourceAttacher,
-      publicationWorkstreamId,
+      publicationWorkstreamId ? async () => ({ parentId: publicationWorkstreamId, substreamId: "0" }) : null,
     ),
   };
 }
