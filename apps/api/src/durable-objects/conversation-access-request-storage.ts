@@ -56,6 +56,7 @@ export function conversationMark(input: {
 /** Both sides of each request RPC, parsed by the Organization object (`parseRpcInput` on the way in). */
 export const AccessRequestSubjectRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema, parentId: IdSchema, substreamId: SubstreamIdSchema,
+  requesterUserId: IdSchema.optional(),
 });
 export const AccessRequestSubjectSchema = z.strictObject({
   kind: z.enum(["channel", "breakout"]),
@@ -63,6 +64,7 @@ export const AccessRequestSubjectSchema = z.strictObject({
   appearance: WorkstreamAppearanceSchema.nullable(),
   markId: IdSchema,
   createdByUserId: IdSchema.nullable(),
+  requestPending: z.boolean(),
 }).nullable();
 export const RecordAccessRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema, parentId: IdSchema, substreamId: SubstreamIdSchema,
@@ -102,6 +104,15 @@ const stored = (row: Row): StoredAccessRequest => StoredAccessRequestSchema.pars
 
 export class ConversationAccessRequestStorage {
   constructor(private readonly sql: SqlStorage) {}
+
+  hasPending(parentId: string, substreamId: string, requesterUserId: string): boolean {
+    if (!this.tablePresent()) return false;
+    return this.sql.exec(
+      `SELECT 1 FROM conversation_access_requests
+        WHERE parent_id = ? AND substream_id = ? AND requester_user_id = ? AND status = 'pending'`,
+      parentId, substreamId, requesterUserId,
+    ).toArray().length > 0;
+  }
 
   /** The pending request this person already has for this conversation, or a new one. */
   record(input: {

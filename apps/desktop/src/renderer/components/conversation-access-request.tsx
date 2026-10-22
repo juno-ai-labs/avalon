@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { ConversationAccessPreview } from '@rally/contracts';
 import { WorkstreamGlyph } from '@rally/ui/components/workstream-glyph';
 import { Check, LoaderCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -38,20 +39,25 @@ export function ConversationAccessRequest({ api, parentId, substreamId, fallback
 }): React.JSX.Element {
   const queryClient = useQueryClient();
   const recovery = useConversationAccessRecovery();
+  const queryKey = ['conversation-access-preview', parentId, substreamId];
   const preview = useQuery({
-    queryKey: [...CONVERSATION_ACCESS_PREVIEW_QUERY_KEY, parentId, substreamId],
+    queryKey,
     queryFn: async () => {
       const recoveryVersion = queryClient.getQueryData<ConversationAccessRecovery>(CONVERSATION_ACCESS_RECOVERY_QUERY_KEY)?.version ?? 0;
       return { ...await api!.conversationAccessPreview(parentId, substreamId), recoveryVersion };
     },
     enabled: Boolean(api),
     retry: false,
-    staleTime: 30_000,
   });
   const address = `${parentId}:${substreamId}`;
   const [reopening, setReopening] = useState<string | null>(null);
   const request = useMutation({
     mutationFn: () => api!.requestConversationAccess(parentId, substreamId),
+    onSuccess: () => {
+      queryClient.setQueryData<ConversationAccessPreview>(queryKey, (current) =>
+        current ? { ...current, requestPending: true } : current,
+      );
+    },
   });
   const admitted = preview.isSuccess && preview.fetchStatus === 'idle' && preview.data?.access === 'open';
   const canRecover = admitted && recovery !== undefined
@@ -75,18 +81,20 @@ export function ConversationAccessRequest({ api, parentId, substreamId, fallback
       <div className="conversation-access-request window-no-drag">
         <WorkstreamGlyph appearance={appearance ?? undefined} id={markId} size={40} />
         <h1 className="conversation-access-request-title">{title}</h1>
-        <p>You’re not in this {noun}, ask for access below</p>
-        {request.isSuccess ? (
+        {preview.data.requestPending ? (
           <>
             <p className="conversation-access-request-sent" role="status">
-              <Check aria-hidden="true" size={14} /> Request sent. This {noun} opens once you’re approved.
+              <Check aria-hidden="true" size={14} /> Access requested — awaiting approval
             </p>
             <Button onClick={onRetry}>Try again</Button>
           </>
         ) : (
-          <Button className="button-primary" disabled={request.isPending} onClick={() => request.mutate()}>
-            {request.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />} Request access
-          </Button>
+          <>
+            <p>You’re not in this {noun}, ask for access below</p>
+            <Button className="button-primary" disabled={request.isPending} onClick={() => request.mutate()}>
+              {request.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />} Request access
+            </Button>
+          </>
         )}
         {request.error && (
           <ErrorNotice>
