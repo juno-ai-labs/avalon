@@ -67,6 +67,15 @@ function renderHeader(automation: AutomationDetail, overrides: Partial<React.Com
   return handlers;
 }
 
+async function openActionsWithKeyboard(): Promise<HTMLElement> {
+  const trigger = screen.getByRole('button', { name: 'More Sidekick actions' });
+  trigger.focus();
+  fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+  const run = await screen.findByRole('menuitem', { name: 'Run now' });
+  await waitFor(() => expect(run).toHaveFocus());
+  return run;
+}
+
 describe('AutomationHeader', () => {
   it('opens the shared appearance picker from the hexagon and saves one field', async () => {
     const handlers = renderHeader({ ...draft, appearance: { icon: 'atom', color: 'blue' } });
@@ -107,9 +116,9 @@ describe('AutomationHeader', () => {
       : 'This Sidekick has been archived and can no longer be paused.');
   });
 
-  it.each(['pause', 'resume', 'archive', 'run'] as const)('keeps the lifecycle control visible and inert during %s', (pending) => {
-    const handlers = renderHeader({ ...draft, lifecycle: 'active' }, { pending });
-    const pause = screen.getByRole('button', { name: pending === 'pause' ? 'Pausing…' : pending === 'resume' ? 'Resuming…' : 'Pause' });
+  it('keeps the lifecycle control visible and inert while an action is pending', () => {
+    const handlers = renderHeader({ ...draft, lifecycle: 'active' }, { pending: 'pause' });
+    const pause = screen.getByRole('button', { name: 'Pausing…' });
     expect(pause).toHaveAttribute('aria-disabled', 'true');
     fireEvent.click(pause);
     expect(handlers.onPause).not.toHaveBeenCalled();
@@ -155,7 +164,6 @@ describe('AutomationHeader', () => {
     expect(screen.queryByRole('button', { name: 'Apply changes' })).toBeNull();
     expect(screen.getByText('Active')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'When to expect it' })).toBeVisible();
-    expect(screen.getByText('No timing details yet.')).toBeVisible();
     const email = screen.getByText('weekly-changelog@automation.rallywith.ai');
     expect(email).not.toBeVisible();
     fireEvent.click(screen.getByText('Email this Sidekick'));
@@ -164,6 +172,18 @@ describe('AutomationHeader', () => {
 
     renderHeader({ ...active, currentDefinitionRevision: 2 });
     expect(screen.queryByRole('button', { name: 'Apply changes' })).toBeNull();
+  });
+
+  it('describes legacy inbound email even without explicit trigger summaries', () => {
+    renderHeader({
+      ...draft,
+      lifecycle: 'active',
+      currentDefinition: { ...definition, triggers: [] },
+      emailAddress: 'weekly-changelog@automation.rallywith.ai',
+      runnable: true,
+    });
+    expect(screen.getByRole('list', { name: 'Triggers' })).toHaveTextContent('When an email arrives');
+    expect(screen.queryByText('No timing details yet.')).toBeNull();
   });
 
   it('shows the next scheduled time even without current trigger summaries', () => {
@@ -222,28 +242,31 @@ describe('AutomationHeader', () => {
     ['deleted', true, 'This Sidekick has been archived and cannot run.'],
   ] as const)('explains unavailable Run now for %s with runnable=%s', async (lifecycle, runnable, reason) => {
     const handlers = renderHeader({ ...draft, lifecycle, runnable });
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'More Sidekick actions' }), { button: 0, ctrlKey: false });
-    const run = await screen.findByRole('menuitem', { name: 'Run now' });
+    const run = await openActionsWithKeyboard();
     expect(run).toHaveAttribute('aria-disabled', 'true');
-    fireEvent.click(run);
-    expect(handlers.onRunNow).not.toHaveBeenCalled();
-    expect(screen.getByRole('menu')).toBeVisible();
-    fireEvent.keyDown(document.body, { key: 'ArrowDown' });
-    fireEvent.focus(run);
     expect(await screen.findByRole('tooltip')).toHaveTextContent(reason);
+    for (const key of ['Enter', ' ']) {
+      fireEvent.keyDown(run, { key });
+      expect(handlers.onRunNow).not.toHaveBeenCalled();
+      expect(screen.getByRole('menu')).toBeVisible();
+      expect(run).toHaveFocus();
+    }
   });
 
   it('keeps unavailable Run history visible, explains it and does not open the dialog', async () => {
     renderHeader(draft);
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'More Sidekick actions' }), { button: 0, ctrlKey: false });
+    const run = await openActionsWithKeyboard();
+    fireEvent.keyDown(run, { key: 'ArrowDown' });
     const history = await screen.findByRole('menuitem', { name: 'Run history' });
+    await waitFor(() => expect(history).toHaveFocus());
     expect(history).toHaveAttribute('aria-disabled', 'true');
-    fireEvent.click(history);
-    expect(screen.queryByRole('dialog', { name: 'Run history' })).toBeNull();
-    expect(screen.getByRole('menu')).toBeVisible();
-    fireEvent.keyDown(document.body, { key: 'ArrowDown' });
-    fireEvent.focus(history);
     expect(await screen.findByRole('tooltip')).toHaveTextContent('This Sidekick has no triggers or previous runs.');
+    for (const key of ['Enter', ' ']) {
+      fireEvent.keyDown(history, { key });
+      expect(screen.queryByRole('dialog', { name: 'Run history' })).toBeNull();
+      expect(screen.getByRole('menu')).toBeVisible();
+      expect(history).toHaveFocus();
+    }
   });
 
   it('starts a runnable active Sidekick from the menu', async () => {

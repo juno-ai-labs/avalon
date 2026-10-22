@@ -8,7 +8,8 @@ import { ArchiveAutomationDialog } from './archive-automation-dialog';
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
 import type { AutomationDetail, AutomationRun } from '../lib/types';
 import { statusLabel } from '../lib/format';
-import { Badge, Button, IconButton, ErrorNotice, Modal, StatusDot, Tip } from './primitives';
+import { Badge, Button, IconButton, ErrorNotice, Modal, StatusDot } from './primitives';
+import { MenuActionItem } from '@rally/ui/components/menu-action-item';
 import { RelativeTime } from './relative-time';
 
 export type AutomationHeaderAction = 'pause' | 'resume' | 'archive' | 'run';
@@ -86,17 +87,14 @@ export function AutomationHeader({
   // commands visible and explain the same constraints without issuing them.
   const hasTriggers = automation.runnable ?? ((definition?.triggers.length ?? 0) > 0);
   const isPaused = automation.lifecycle === 'paused';
-  const pendingReasons: Record<AutomationHeaderAction, string> = {
-    pause: 'This Sidekick is being paused. Please wait.',
-    resume: 'This Sidekick is being resumed. Please wait.',
-    archive: 'This Sidekick is being archived. Please wait.',
-    run: 'A run is starting. Please wait.',
-  };
-  const disabledReason = pending !== null ? pendingReasons[pending]
-    : automation.lifecycle === 'draft' ? 'Finish setting up this Sidekick in the conversation before you can pause it.'
-      : automation.lifecycle === 'deleted' ? 'This Sidekick has been archived and can no longer be paused.'
-        : undefined;
-  const runDisabledReason = pending !== null ? pendingReasons[pending] : {
+  const pendingReason = pending !== null ? 'Please wait for the current action to finish.' : undefined;
+  const disabledReason = pendingReason ?? {
+    draft: 'Finish setting up this Sidekick in the conversation before you can pause it.',
+    active: undefined,
+    paused: undefined,
+    deleted: 'This Sidekick has been archived and can no longer be paused.',
+  }[automation.lifecycle];
+  const runDisabledReason = pendingReason ?? {
     draft: 'Finish setting up this Sidekick in the conversation before starting a run.',
     active: hasTriggers ? undefined : 'Add a trigger in the conversation before starting a run.',
     paused: 'Resume this Sidekick before starting a run.',
@@ -104,6 +102,9 @@ export function AutomationHeader({
   }[automation.lifecycle];
   const historyDisabledReason = hasTriggers || listedRuns.length > 0
     ? undefined : 'This Sidekick has no triggers or previous runs.';
+  // Older accepted definitions receive email without listing an email trigger.
+  const triggerSummaries = automation.triggerSummaries.length === 0 && automation.emailAddress
+    ? ['When an email arrives'] : automation.triggerSummaries;
   const [confirmingArchive, setConfirmingArchive] = useState(false);
   const [showRunHistory, setShowRunHistory] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
@@ -138,51 +139,22 @@ export function AutomationHeader({
           </div>
         </div>
         <div className="workstream-header-actions window-no-drag">
-          <Tip label={disabledReason ?? (isPaused ? 'Resume this Sidekick' : 'Pause this Sidekick')}>
-            <Button
-              className="sidekick-lifecycle-action"
-              aria-disabled={disabledReason ? true : undefined}
-              onClick={(event) => {
-                if (disabledReason) { event.preventDefault(); return; }
-                if (isPaused) onResume(); else onPause();
-              }}
-            >
-              {isPaused ? <Play aria-hidden="true" size={14} /> : <CirclePause aria-hidden="true" size={14} />}
-              {pending === 'pause' ? 'Pausing…' : pending === 'resume' ? 'Resuming…' : isPaused ? 'Resume' : 'Pause'}
-            </Button>
-          </Tip>
+          <Button disabledReason={disabledReason} onClick={isPaused ? onResume : onPause}>
+            {isPaused ? <Play aria-hidden="true" size={14} /> : <CirclePause aria-hidden="true" size={14} />}
+            {pending === 'pause' ? 'Pausing…' : pending === 'resume' ? 'Resuming…' : isPaused ? 'Resume' : 'Pause'}
+          </Button>
           <DropdownMenu.Root>
             <DropdownMenu.Trigger asChild>
               <IconButton label="More Sidekick actions"><Ellipsis size={16} /></IconButton>
             </DropdownMenu.Trigger>
             <DropdownMenu.Portal>
               <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
-                <Tip label={runDisabledReason ?? 'Start a run now'} side="right">
-                  <DropdownMenu.Item
-                    className="menu-item"
-                    aria-disabled={runDisabledReason ? true : undefined}
-                    data-disabled={runDisabledReason ? '' : undefined}
-                    onSelect={(event) => {
-                      if (runDisabledReason) { event.preventDefault(); return; }
-                      onRunNow();
-                    }}
-                  >
-                    <Play size={14} /> {pending === 'run' ? 'Starting…' : 'Run now'}
-                  </DropdownMenu.Item>
-                </Tip>
-                <Tip label={historyDisabledReason ?? 'View previous runs'} side="right">
-                  <DropdownMenu.Item
-                    className="menu-item"
-                    aria-disabled={historyDisabledReason ? true : undefined}
-                    data-disabled={historyDisabledReason ? '' : undefined}
-                    onSelect={(event) => {
-                      if (historyDisabledReason) { event.preventDefault(); return; }
-                      setShowRunHistory(true);
-                    }}
-                  >
-                    <History size={14} /> Run history
-                  </DropdownMenu.Item>
-                </Tip>
+                <MenuActionItem disabled={Boolean(runDisabledReason)} disabledReason={runDisabledReason} onSelect={onRunNow} tooltipSide="right">
+                  <Play size={14} /> {pending === 'run' ? 'Starting…' : 'Run now'}
+                </MenuActionItem>
+                <MenuActionItem disabled={Boolean(historyDisabledReason)} disabledReason={historyDisabledReason} onSelect={() => setShowRunHistory(true)} tooltipSide="right">
+                  <History size={14} /> Run history
+                </MenuActionItem>
                 <DropdownMenu.Item className="menu-item" onSelect={() => {
                   setCopyFailed(false);
                   void onCopyLink().catch(() => setCopyFailed(true));
@@ -211,9 +183,9 @@ export function AutomationHeader({
       <div className="automation-header-details">
         <section className="sidekick-profile-section">
           <h2>When to expect it</h2>
-          {automation.triggerSummaries.length === 0 && !automation.nextRunAt && <p className="automation-timing-empty">No timing details yet.</p>}
-          {automation.triggerSummaries.length > 0 && <ul aria-label="Triggers" className="automation-header-triggers">
-            {automation.triggerSummaries.map((summary) => <li key={summary}>{summary}</li>)}
+          {triggerSummaries.length === 0 && !automation.nextRunAt && <p className="automation-timing-empty">No timing details yet.</p>}
+          {triggerSummaries.length > 0 && <ul aria-label="Triggers" className="automation-header-triggers">
+            {triggerSummaries.map((summary) => <li key={summary}>{summary}</li>)}
           </ul>}
           {automation.nextRunAt && <p className="automation-runs-next">Next <RelativeTime value={automation.nextRunAt} /></p>}
         </section>
