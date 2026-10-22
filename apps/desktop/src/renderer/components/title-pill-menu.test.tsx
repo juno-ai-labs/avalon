@@ -56,7 +56,7 @@ describe('a title pill menu with levels', () => {
     openMenu();
 
     expect(await screen.findByRole('menuitem', { name: /^People\s*1 · Private/u })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: /^Sidekicks\s*None yet/u })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /^Sidekicks\s*0/u })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /^Breakouts\s*1/u })).toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: /^Channels/u })).not.toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: 'Add people' })).toBeInTheDocument();
@@ -252,10 +252,10 @@ describe('a title pill menu with levels', () => {
     await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
   });
 
-  it('counts None yet in the Memory row of a conversation with nothing remembered, and says so in its level', async () => {
+  it('counts 0 in the Memory row of a conversation with nothing remembered, and says so in its level', async () => {
     renderChannelPill({ memory: { facts: [], onRemove: vi.fn() } });
     openMenu();
-    expect(await screen.findByRole('menuitem', { name: /^Memory\s*None yet/u })).toBeInTheDocument();
+    expect(await screen.findByRole('menuitem', { name: /^Memory\s*0/u })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('menuitem', { name: /^Memory/u }));
     expect(await screen.findByText('Rally has not remembered anything about this thread yet.')).toBeInTheDocument();
   });
