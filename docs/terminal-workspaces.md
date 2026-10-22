@@ -262,7 +262,10 @@ to the run's own conversation. A new run may recover a generated site still
 attached to its server-configured publishing room, provided its publication
 identity belongs to that room. Terminal attaches that specific site to the run
 before importing it; this does not inherit other attachments or follow arbitrary
-Thread IDs. Detached and foreign publications remain unavailable. The site skill
+Thread IDs. Sidekick Terminal guidance and the site skill tell agents to attempt
+importing a known site ID before asking for reattachment, even when it is absent
+from the run's resource list. An import refusal, rather than the list alone,
+establishes that recovery failed. Detached and foreign publications remain unavailable. The site skill
 backs up existing files and imports the current publication before each refresh
 so retained files cannot silently overwrite newer layout edits. Resource links
 and the artifact registry follow the publication identity, so the document appears in the owning room's
