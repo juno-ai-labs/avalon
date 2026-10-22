@@ -1,4 +1,5 @@
 import type { ConnectorOperationIdentity, ConnectorToolResult } from "./types";
+import type { NormalizedActivity } from "@rally/contracts";
 
 const FILE_PARAMETERS: Readonly<Record<string, string>> = {
   "drive.get_metadata": "fileId", "drive.download": "fileId", "drive.export": "fileId",
@@ -11,6 +12,25 @@ function object(value: unknown): Record<string, unknown> {
 }
 function key(kind: string, value: unknown): string[] {
   return typeof value === "string" && value.length > 0 ? [`google:${kind}:${value}`] : [];
+}
+
+/** IDs produced by Google's normalizers, never metadata or event prose. */
+export function googleActivityResourceKeys(activity: Pick<NormalizedActivity, "provider" | "eventType" | "resourceType" | "providerResourceId" | "subject">): string[] {
+  if (activity.provider !== "google") return [];
+  const subject = activity.subject;
+  if (activity.resourceType === "gmail_thread") return [...new Set([
+    ...key("thread", activity.providerResourceId), ...key("thread", subject.threadId), ...key("message", subject.messageId),
+  ])];
+  if (activity.resourceType === "calendar_event") {
+    const calendar = subject.calendarId;
+    if (typeof calendar !== "string" || !calendar) return [];
+    return [...key(`event:${calendar}`, activity.providerResourceId ?? subject.eventId),
+      ...(calendar === "primary" ? [] : key("calendar", calendar))];
+  }
+  if (["google_sheet", "google_doc", "drive_file"].includes(activity.resourceType ?? "")) {
+    return key("file", activity.providerResourceId);
+  }
+  return [];
 }
 
 export function googleOperationIdentity(name: string, input: unknown): ConnectorOperationIdentity {

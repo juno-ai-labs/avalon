@@ -1,6 +1,6 @@
 import { z } from "zod";
 import {
-  IdSchema, SidekickExecutionDelegationSchema, asUserId, type SidekickExecutionDelegation,
+  IdSchema, SidekickExecutionDelegationSchema, AutomationRunDefinitionV1Schema, asUserId, type SidekickExecutionDelegation, type AutomationRunDefinitionV1,
   type ToolDefinition, type ToolExecutionAccount, type WorkstreamWorkflowInput,
 } from "@rally/contracts";
 import { ConnectorError, isConnectorResourceAccessRefusal, type ConnectorOperationIdentity, type ConnectorToolResult } from "@rally/connectors";
@@ -50,6 +50,17 @@ export async function readSidekickOperationDelegation(env: Env, input: Workstrea
   }));
 }
 
+/** A background child inherits origin references, not its root's instructions or tools. */
+export async function readSidekickOperationSource(env: Env, input: WorkstreamWorkflowInput): Promise<NonNullable<AutomationRunDefinitionV1["opening"]>["sourceAccount"]> {
+  if (input.parentKind !== "automation" || !input.automationDelegation || input.automationRun) return undefined;
+  const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, input.workspaceId,
+    workspaceDOName(env.AVALON_REGION, input.workspaceId));
+  const definition = AutomationRunDefinitionV1Schema.parse(await workspace.sidekickReadRunDefinition({
+    workspaceId: input.workspaceId, automationId: input.parentId, runId: input.automationDelegation.runId,
+  }));
+  return definition.opening?.sourceAccount;
+}
+
 export interface SidekickAccountConnection {
   connectionId: string;
   scope: "personal" | "workspace";
@@ -67,6 +78,7 @@ export async function executeSidekickAccountOperation<C extends SidekickAccountC
   workspaceId: WorkstreamWorkflowInput["workspaceId"];
   coordinatorUserId: string | null;
   requested: C; candidates: readonly C[]; sourceConnectionIds: readonly string[];
+  sourceAccount?: NonNullable<AutomationRunDefinitionV1["opening"]>["sourceAccount"];
   identity: ConnectorOperationIdentity;
   selection?: SidekickAccountSelection;
   mode: "read" | "write";
@@ -99,6 +111,7 @@ export async function executeSidekickAccountOperation<C extends SidekickAccountC
   // effect's selection; unrelated identities remain bound.
   const bindingConnections = [...new Set(bindings.map((binding) => binding.account.connectionId))];
   const continuation = context.executionAccount;
+  const source = options.sourceAccount?.resourceKeys.some((key) => identity.resourceKeys.includes(key)) ? options.sourceAccount : undefined;
   const relevantBindings = selection || continuation ? bindings.filter((binding) =>
     (!selection?.connectionId || binding.account.connectionId === selection.connectionId)
     && (!selection?.userId || binding.account.delegatedUserId === selection.userId)
@@ -112,10 +125,11 @@ export async function executeSidekickAccountOperation<C extends SidekickAccountC
     && (identity.kind === "account" || options.mode === "write")) {
     throw unavailable("This operation depends on another account's result. Use its originating account, or read the resource through the required account before planning a new write.");
   }
+  const origin = bound?.connectionId ?? source?.connectionId;
   const pin = prior && prior.phase !== "refused" ? prior.account.connectionId : continuation?.connectionId
     ? continuation.connectionId
-    : bound && (identity.kind === "account" || options.mode === "write") ? bound.connectionId : null;
-  const requiredUser = selection?.userId ?? (identity.kind === "account" && !bound && !selection?.connectionId && !continuation ? authority.accountUserId : null);
+    : origin && (identity.kind === "account" || options.mode === "write") ? origin : null;
+  const requiredUser = selection?.userId ?? (identity.kind === "account" && !origin && !selection?.connectionId && !continuation ? authority.accountUserId : null);
   if (requiredUser && !grants.has(asUserId(requiredUser))) {
     throw unavailable("The required account is not an eligible Sidekick delegate. Restore that person's delegation and access; this operation will not use another person's account.");
   }
@@ -135,6 +149,7 @@ export async function executeSidekickAccountOperation<C extends SidekickAccountC
   const rank = (connection: C): number[] => [
     connection.connectionId === preferredAccountConnection ? 0 : 1,
     connection.connectionId === bound?.connectionId ? 0 : 1,
+    connection.connectionId === source?.connectionId ? 0 : 1,
     sourceOrder.get(connection.connectionId) ?? Number.POSITIVE_INFINITY,
     connection.ownerUserId === authority.creatorUserId ? 0 : 1,
     connection.ownerUserId ? grantOrder.get(asUserId(connection.ownerUserId)) ?? Number.POSITIVE_INFINITY : Number.POSITIVE_INFINITY,

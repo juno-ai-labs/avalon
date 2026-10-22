@@ -1747,6 +1747,8 @@ export const AutomationRunDefinitionV1Schema = z.strictObject({
     textContent: z.string().min(1),
     structuredContent: z.record(z.string(), z.unknown()),
     resourceId: IdSchema.nullable(),
+    /** Host-derived provider references from the canonical activation event. */
+    sourceAccount: z.strictObject({ connectionId: IdSchema, resourceKeys: z.array(z.string()) }).optional(),
   }).nullable(),
   state: z.enum(["pending", "running", "needs_input", "completed", "failed", "stopped"]),
 });

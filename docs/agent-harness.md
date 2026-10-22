@@ -661,6 +661,17 @@ the preserved task account, even when another person coordinates the run. An
 empty search, transient failure, cancellation or ambiguous write never changes
 account. A named person does not fall through to a workspace bot.
 
+An external-event opening retains host-derived `sourceAccount` references.
+WorkspaceDO projects canonical provider IDs through the authored adapter; event
+metadata and prose cannot select the connection. Mail/calendar references use
+that originating account on their first operation, while unrelated searches
+still use the task account. Portable file reads prefer the event source and
+retain safe fallback. Older openings can recover this reference from the
+existing canonical event row without replaying the event. A background child
+reads only that reference from its existing root-run authority; it does not
+inherit the root's instruction or plugin configuration. References produced by
+later tool results remain a separate handoff concern.
+
 The existing receipt checkpoint log records `execution_account` selections
 before dispatch, definite refusals, and the account that served the result.
 It retains both first selection and actual principal, connection and consent
@@ -1630,6 +1641,18 @@ outputs, summaries, token content, and provider responses remain excluded.
 
 ## Testing
 
+`pnpm --filter @rally/api exec vitest run test/sidekick-operation-accounts.test.ts
+ test/connector-resource-access.test.ts test/tool-pagination.test.ts` covers
+account ordering, refusal-only fallback, durable account pins, withdrawal,
+named/empty searches, the assembled Google executor and private page identity.
+`test-workers/tool-receipt-authority.test.ts` proves lease, cancellation,
+rollback and eviction against real workerd; run it with the Workers config.
+`test-workers/sidekick-delegation-admission.test.ts` covers canonical event
+references and old openings. Pure guidance tests in
+`packages/agent-harness/src/prompts/sidekick-accounts.test.ts` prove assembly,
+not model behavior. Production-code negative controls are recorded in the
+[delegation implementation plan](PRDs/2026-10-22_sidekick-delegation/plan.md).
+
 Completion verification is covered by
 `packages/agent-harness/src/completion-verification.test.ts` (JEV threshold,
 unavailability and cancellation), `packages/agent-harness/src/index.test.ts`
@@ -1774,6 +1797,8 @@ Existing receipt checkpoints retain selections and definite refusals, actual
 serving identity and grant generation. Completed results bind dependent writes,
 provider references and private pagination. Google declares those identities;
 undeclared and hosted MCP surfaces keep one explicitly selected connection.
+Canonical activation events bind their provider references before any tool
+result exists; old run openings recover that reference from the event row.
 
 **Why:** A Thread-owned Sidekick could have consent to read a sheet through a
 second person, but the connector executor still admitted only the coordinator's

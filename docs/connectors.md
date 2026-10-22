@@ -1606,6 +1606,8 @@ independent change condition, mixed batches, and URL/metadata merge behavior.
 
 | Suite | Covers |
 | --- | --- |
+| `packages/connectors/src/google-operation-identity.test.ts` | Code-authored file, mail and calendar reference projection from tool results and canonical normalized activities. |
+| `apps/api/test/sidekick-operation-accounts.test.ts`, `apps/api/test/connector-resource-access.test.ts` | Delegated account order, sticky references and actual assembled Google credential selection with provider HTTP doubles; source-origin preference is checked before dispatch. |
 | `apps/desktop/src/renderer/lib/connector-connection-card.test.ts`, `apps/desktop/src/renderer/lib/transcript.test.ts`, `apps/desktop/src/renderer/components/connector-mentions.test.tsx`, `apps/desktop/src/renderer/components/workstream-blocks.test.tsx` | Display compatibility, adjacent card deduplication, hidden-work visibility, known-provider fallback, guest visibility, and update/reload actions with live progress. |
 | `apps/api/test/connector-credential-freshness.test.ts` | Both halves of the freshness contract. Its conformance half **enumerates the registry rather than a hand-written list**, so a connector added later is enrolled by existing: for every adapter that can refresh a credential, a provider that rejects the token must be answered with a refresh and a retry. An adapter whose health check does not present the connection's expiring credential — Notion introspects a token in the request body under the integration's own client credentials — declares that in the fixture table, so the exemption is a reviewable fact rather than a silent pass. |
 | `apps/api/test/connector-credential-refresh.test.ts` | The lease, the serialized rotation, the adopt-don't-redeem path, and that a successful refresh heals the row. |
@@ -1679,6 +1681,10 @@ scope through the eligible source owner's consent. Restricted workspace events
 require an eligible delegate inside their actual audience. Authored Google
 operation identities permit known-file fallback across consenting owners;
 account-relative work and provider-created IDs retain their original account.
+The optional authored `activityResourceKeys` projection also maps canonical
+normalized event subjects/resources into those same keys, so an activation
+reference has an origin before any tool has returned a result. Event metadata
+does not supply the account or these keys.
 
 **Why:** The ownership-scope shortcut discarded a Thread-owned Sidekick's
 authorized Sheet changes while an hourly read could proceed.
