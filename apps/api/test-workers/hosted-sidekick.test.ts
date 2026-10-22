@@ -1271,6 +1271,48 @@ describe("a hosted Sidekick", () => {
       .toEqual({ authorized: false, archived: true });
   });
 
+  it.each(["pause", "resume"] as const)("does not resurrect a Sidekick archived during %s authorization", async (operation) => {
+    const roomId = "00000000-0000-7000-8000-00000000ad80";
+    await createDraft(roomId);
+    await submit();
+    await apply();
+    if (operation === "resume") await workspaceStub().sidekickPause({ ...addressed(), actor: actor() });
+    await runInDurableObject(workspaceStub(), async (instance, state) => {
+      const host = (instance as unknown as { hostedSidekickHost: () => HostedSidekickHost }).hostedSidekickHost();
+      const sidekick = new HostedSidekick(host, AUTOMATION_ID);
+      const pending = sidekick[operation]({ ...addressed(), actor: actor() });
+      state.storage.transactionSync(() => sidekick.setOwningRoomArchived({ ...addressed(), workstreamId: roomId, archived: true }, Date.now()));
+      await expect(pending).rejects.toMatchObject({ code: "sidekick_not_found" });
+    });
+    expect(await automationRow()).toMatchObject({ lifecycle: "deleted", paused_by: null });
+    expect(await workspaceStub().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID, userId: AUTHOR_ID }))
+      .toEqual({ authorized: false, archived: true });
+  });
+
+  it.each(["room_archive", "person", "draft"] as const)("archives a legacy %s Sidekick when its room is restored", async (stateBeforeRestore) => {
+    const roomId = "00000000-0000-7000-8000-00000000ad80";
+    await createDraft(roomId);
+    if (stateBeforeRestore !== "draft") {
+      await submit();
+      await apply();
+      await workspaceStub().sidekickPause({ ...addressed(), actor: actor() });
+    }
+    await runInDurableObject(workspaceStub(), (instance, state) => {
+      // Historical state written before room archival became terminal.
+      state.storage.sql.exec(`UPDATE automation_directory SET owning_room_archived_at = 1000, paused_by = ? WHERE automation_id = ?`,
+        stateBeforeRestore === "draft" ? null : stateBeforeRestore, AUTOMATION_ID);
+      const host = (instance as unknown as { hostedSidekickHost: () => HostedSidekickHost }).hostedSidekickHost();
+      expect(state.storage.transactionSync(() => new HostedSidekick(host, AUTOMATION_ID)
+        .setOwningRoomArchived({ ...addressed(), workstreamId: roomId, archived: false }, Date.now())))
+        .toEqual({ changed: true, outcomeCode: "sidekick_archived" });
+      expect(state.storage.sql.exec(`SELECT owning_room_archived_at FROM automation_directory WHERE automation_id = ?`, AUTOMATION_ID).one())
+        .toEqual({ owning_room_archived_at: 1000 });
+    });
+    expect(await automationRow()).toMatchObject({ lifecycle: "deleted", paused_by: null });
+    await expect(runInDurableObject(workspaceStub(), (instance: WorkspaceDO) => instance.sidekickResume({ ...addressed(), actor: actor() })))
+      .rejects.toMatchObject({ code: "sidekick_not_found" });
+  });
+
   it("creates the tables a definition declares in the automation's memory scope, once", async () => {
     const declared = [{
       name: "Deploys",

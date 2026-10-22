@@ -5928,6 +5928,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       },
       applyLocalEffects: (envelopes) => this.applyLocalEffects(envelopes),
       noteSidekickActivityChanged: (workspaceId) => this.noteSidekickActivityChanged(workspaceId),
+      archiveOwnedSidekicks: (workspaceId, parentId, substreamId, archived, now) =>
+        this.archiveOwnedSidekicks(workspaceId, parentId, substreamId, archived, now),
       readRelationship: (workspaceId, userId) => this.readRelationship(workspaceId, userId),
       noteRelationship: (relationship) => this.noteRelationship(relationship),
     };
@@ -14128,11 +14130,24 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return { applied };
   }
 
-  /**
-   * Turn authoritative watched links into exact typed registrations. The work
-   * stream projects only the link intent; WorkspaceDO resolves resource and
-   * connector facts and uses the same replacement engine as automations.
-   */
+  /** Archive a room's owned Sidekicks in the canonical transition/projection transaction. */
+  private archiveOwnedSidekicks(workspaceId: string, parentId: string, substreamId: string, archived: boolean, now: number): void {
+    const owned = this.state.storage.sql.exec<{ automation_id: string }>(
+      `SELECT automation_id FROM automation_directory
+        WHERE owning_workstream_id = ? AND lifecycle <> 'deleted'
+          AND (? = '0' OR owning_substream_id = ?)
+          AND (? OR owning_room_archived_at IS NOT NULL)
+        ORDER BY automation_id`,
+      parentId, substreamId, substreamId, Number(archived),
+    ).toArray();
+    const host = this.hostedSidekickHost();
+    for (const row of owned) {
+      new HostedSidekick(host, row.automation_id).setOwningRoomArchived({
+        workspaceId: asWorkspaceId(workspaceId), automationId: row.automation_id, workstreamId: parentId, archived,
+      }, now);
+    }
+  }
+
   /**
    * Tell each automation a room owns that the room's archive state changed.
    *
@@ -14159,9 +14174,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
          FROM automation_directory automation
          JOIN channels directory
            ON directory.workstream_id = automation.owning_workstream_id
-         LEFT JOIN breakouts breakout
+         LEFT JOIN parent_children breakout
            ON automation.owning_substream_id <> '0'
-          AND breakout.workstream_id = automation.owning_workstream_id
+          AND breakout.parent_id = automation.owning_workstream_id
           AND breakout.substream_id = automation.owning_substream_id
         WHERE automation.lifecycle <> 'deleted'
           AND (?3 IS NULL OR automation.automation_id = ?3)
