@@ -284,6 +284,12 @@ Organization members bypass confirmation in Organization-visible conversations;
 guests without participation and people joining personal conversations require
 confirmation. Rejected mention ranges never seat anyone.
 
+Ordinary follow-up admission reads the active participant count after admitting
+the mentioned people. A message that adds a second person therefore reaches
+addressing and continuation classification instead of the solo-conversation
+automatic invocation path. The pre-admission recipient count is only used to
+report how many people were added.
+
 Message admissions carry `participationReason: "message"` through grant receipts
 and participant projections. They leave earlier history read and emit only the
 mention notification. Ordinary participant additions keep their added notice.
@@ -1931,6 +1937,24 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-10-22 — Classify handoffs against the admitted audience
+
+**What changed:** Follow-up messages read the participant count after mentioned
+people have been admitted, before deciding whether the solo-conversation
+invocation shortcut applies.
+
+**Why:** Katherine's handoff to Anderson, explicitly telling Rally not to
+respond, started Rally because admission reused the old one-person count even
+after Anderson joined. Addressing never received that handoff.
+
+**Considered and rejected:** Preserving the pre-admission solo count, retained
+in #1364 to align participant-storage paths, made those paths consistently
+bypass the classifier for a message addressed to a newly added person.
+
+**Consequences:** Participant admission completes before the invocation decision.
+Opening-message classification and the attachment, annotation and forced-run
+paths retain their existing rules; this change does not redefine those gates.
 
 ### 2026-10-21 — Preserve the opening feed when live authority replaces its preview
 

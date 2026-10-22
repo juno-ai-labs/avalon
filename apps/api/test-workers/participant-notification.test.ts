@@ -22,7 +22,8 @@ import { admitConnectorAudience } from "../src/services/connector-workstream-aud
 
 import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 import {
   asSubstreamId,
@@ -1094,6 +1095,90 @@ describe("naming somebody when the work stream is created", () => {
 });
 
 describe("mentioning a nonparticipant on an existing conversation", () => {
+  it.each(["personal", "workspace"] as const)("classifies the Anderson handoff after admitting him to a solo %s conversation", async (scope) => {
+    const stub = agentStub(CONFIRMED_MENTION_ID);
+    await env.DB.batch([
+      env.DB.prepare("UPDATE users SET name = 'Kendall Brooks' WHERE id = ?").bind(CREATOR_ID),
+      env.DB.prepare("UPDATE users SET name = 'Anderson Coop' WHERE id = ?").bind(INVITEE_ID),
+    ]);
+    await provisionWorkstream(stub, CONFIRMED_MENTION_ID, { title: "Email Export Business Case", scope });
+    await sendAndSettle(stub, {
+      text: "Business case and data are ready.",
+      clientMessageId: "handoff-history",
+      seed: { packVersion: "test", actionId: "handoff-history", assistant: null },
+    });
+    await deliveredEffects(stub, CONFIRMED_MENTION_ID);
+    const mention = "@Anderson Coop";
+    const text = `${mention} business case and data above. can you take it from here and see if there is anything i missed? @Rally don't respond`;
+
+    await runInDurableObject(stub, async (instance, state) => {
+      const service = (instance as unknown as { product: WorkstreamObjectProductService }).product;
+      expect(await service.ensureParticipantAuthority(CREATOR_ID)).toBe(true);
+      const originalEnv = service["env"];
+      Reflect.set(service, "env", new Proxy(originalEnv, {
+        get: (current, property, receiver) => property === "TYPESAFE_API_KEY"
+          ? "handoff-classifier-test-key"
+          : Reflect.get(current, property, receiver),
+      }));
+      expect(state.storage.sql.exec<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM participants WHERE status = 'active'",
+      ).one().count).toBe(1);
+      const addressingRequests: { state: unknown; participants: string[] }[] = [];
+      // Only the external classifier is scripted; admission, grants, roster,
+      // transcript and invocation decisions use their real workerd storage.
+      const provider = vi.spyOn(globalThis, "fetch").mockImplementation(async (_request, init) => {
+        const body = z.object({
+          questions: z.record(z.string(), z.unknown()),
+          state: z.unknown(),
+        }).parse(JSON.parse(String(init?.body)));
+        if ("addressing" in body.questions) {
+          addressingRequests.push({
+            state: body.state,
+            participants: state.storage.sql.exec<{ user_id: string }>(
+              "SELECT user_id FROM participants WHERE status = 'active' ORDER BY user_id",
+            ).toArray().map((row) => row.user_id),
+          });
+          return Response.json({ model: "jev-1.14.0", answers: {
+            addressing: { type: "choice", choice: "people_only", confidence: 0.99 },
+          } });
+        }
+        if ("continuation" in body.questions) {
+          return Response.json({ model: "jev-1.14.0", answers: {
+            continuation: { type: "choice", choice: "use_addressing", confidence: 0.99 },
+            assignment: { type: "choice", choice: "not_assigned_to_rally", confidence: 0.99 },
+            contributors: { type: "choice", choice: "contributors_present", confidence: 0.99 },
+          } });
+        }
+        throw new Error("unexpected_handoff_classifier_request");
+      });
+      try {
+        const sent = await service.createMessage(AUTH, {
+          text, clientMessageId: "anderson-handoff", attachmentIds: [],
+          mentions: [{ type: "person", userId: INVITEE_ID, connectorType: null, startOffset: 0, endOffset: mention.length }],
+          confirmedParticipantUserIds: scope === "personal" ? [INVITEE_ID] : [],
+        });
+        expect(state.storage.sql.exec<{ user_id: string }>(
+          "SELECT user_id FROM participants WHERE status = 'active' ORDER BY user_id",
+        ).toArray().map((row) => row.user_id)).toEqual([CREATOR_ID, INVITEE_ID]);
+        expect(addressingRequests).toEqual([{
+          state: expect.objectContaining({
+            current_message: expect.objectContaining({ text, mentioned_people: ["Anderson Coop"] }),
+          }),
+          participants: [CREATOR_ID, INVITEE_ID],
+        }]);
+        expect(sent.deliveryState).toBe("canonical");
+        expect(state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM runs").one().count).toBe(0);
+        expect(state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM pending_loop_inputs").one().count).toBe(0);
+        expect(state.storage.sql.exec<{ target_user_id: string }>(
+          "SELECT target_user_id FROM participant_transcript_mentions WHERE turn_id = ?", sent.turn.turnId,
+        ).one().target_user_id).toBe(INVITEE_ID);
+      } finally {
+        provider.mockRestore();
+        Reflect.set(service, "env", originalEnv);
+      }
+    });
+  });
+
   it.each([["queued", false], ["direct", false], ["queued", true], ["direct", true]] as const)("seats a workspace-visible mention recipient without confirmation (%s, transferred=%s)", async (mode, transferred) => {
     const stub = agentStub(WORKSPACE_VISIBLE_MENTION_ID);
     await provisionWorkstream(stub, WORKSPACE_VISIBLE_MENTION_ID, { scope: "workspace" });
@@ -1127,6 +1212,9 @@ describe("mentioning a nonparticipant on an existing conversation", () => {
         }],
         confirmedParticipantUserIds: [],
         attachmentIds: [],
+        // Queue coverage explicitly invokes Rally; a human-only handoff now
+        // uses classification after its recipient joins the conversation.
+        ...(mode === "queued" ? { forcedHarnessOrigin: "user_message" } : {}),
         ...(mode === "direct" ? {
           seed: { packVersion: "test", actionId: "workspace-mention", assistant: null },
         } : {}),
@@ -1314,7 +1402,7 @@ describe("mentioning a nonparticipant on an existing conversation", () => {
     await sendAndSettle(stub, { clientMessageId: "scope-history", seed: { packVersion: "test", actionId: "scope-history", assistant: null } });
     const input = { text: "Ask @Invitee to review", clientMessageId: "scope-mention",
       mentions: [{ type: "person" as const, userId: INVITEE_ID, connectorType: null, startOffset: 4, endOffset: 12 }],
-      confirmedParticipantUserIds: [], attachmentIds: [] };
+      confirmedParticipantUserIds: [], attachmentIds: [], forcedHarnessOrigin: "user_message" };
     await runInDurableObject(stub, async (instance, state) => {
       const service = (instance as unknown as { product: WorkstreamObjectProductService }).product;
       let enter!: () => void;
@@ -1428,6 +1516,7 @@ describe("mentioning a nonparticipant on an existing conversation", () => {
       input: {
         text: "Ask @Invitee to review",
         clientMessageId: "seat-after-history",
+        forcedHarnessOrigin: "user_message",
         mentions: [{
           type: "person",
           userId: INVITEE_ID,
