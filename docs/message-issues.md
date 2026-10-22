@@ -118,3 +118,5 @@ duplicate the composer's recording and finalization lifecycle.
 **Consequences:** Future message renderers must provide canonical turn identity
 as well as visible block identity, and future deployments must provision the
 separate database before exposing the endpoint.
+
+PR: [#1410](https://github.com/juno-ai-labs/avalon/pull/1410).
