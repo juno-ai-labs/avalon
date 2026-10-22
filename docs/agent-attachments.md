@@ -184,16 +184,20 @@ reads. Connector execution permissions remain separate.
 
 **A Sidekick can also read a known resource ID without an attachment.** For an
 explicit ID absent from its inherited links, the shared lookup asks
-`AuthorizationService.checkMany` whether the current execution user can read
+`AuthorizationService.readResources` whether the current execution user can read
 that resource anywhere in the Organization. The wizard, activations and their
 background agents use the same rule. Denied, missing and foreign resources stay
 unreadable; an unavailable authority returns a retryable failure. Each lookup
-checks current permissions. Supplying an ID never creates permission.
+checks current permissions and returns admitted resource and artifact metadata
+with the decision, avoiding another metadata routing hop. Supplying an ID
+never creates permission.
 
 These direct reads create no attachment and do not expand `list_resources`,
 inventory fingerprints, or the sidebar. Attachment forwarding remains the preferred handoff
 even when a resource is already readable: it makes the intended resource
-explicit and preserves shared context. Terminal import and subsequent
+explicit and preserves shared context. Forwarding still requires an actual
+attachment in the sender's own or inherited scope; direct read permission does
+not widen that sharing gate. Terminal import and subsequent
 revocation checks use the same resolution, and artifact data tools resolve a
 supplied ID or alias before applying it. Ordinary Thread and Breakout agents
 retain their existing attachment scope.
@@ -756,7 +760,10 @@ of message text or silently attaching every referenced resource was rejected:
 the tool already receives a typed ID, and read permission does not imply a
 request to share or advertise it. Keep listing scoped to related conversations,
 recheck direct access for imports and later sandbox use, and preserve canonical
-denial, workspace boundaries and retryable authorization failures.
+denial, workspace boundaries and retryable authorization failures. Receipt
+replay treats unavailable authorization as an invalid old read, while a new
+explicit read keeps its retryable failure. Read access alone must not widen
+attachment forwarding to another audience.
 
 ### 2026-10-22 — Resolve Sidekick resources from its live conversation scope
 

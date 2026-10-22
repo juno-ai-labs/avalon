@@ -54,12 +54,7 @@ resource ID in \`send_message.attachmentIds\` (or
 without messaging or waking the wizard, use
 \`sidekick_attach_resource({ sidekickId, resourceId })\`.
 
-A missing attachment must not block an authorized read: Sidekick resource tools
-can use a known Rally resource ID whenever the execution user can read it,
-even if it is not attached or listed. Have the wizard try importing the original
-site by ID. Mentioning or saving an ID does not change permissions; an access
-refusal requires checking the ID and that user's access. Confirm that the wizard
-can import the original site.
+Confirm that the wizard can import the original site.
 
 For overlapping refreshes, load \`tracking-seen-or-done-items\` and save its
 shared-table coordination procedure, keyed by the site resource ID. One run
@@ -75,8 +70,8 @@ Save these steps for each run as well:
    original directory as \`destinationPath\`, and \`overwrite: true\` when that
    directory exists. If a known site ID is missing from the resource list,
    attempt \`import_resource\` with that ID before asking for reattachment.
-   The execution user must be able to read the site. A known ID can
-   resolve without an attachment; it does not change that user's permissions.
+   The execution user must be able to read the site; a missing attachment
+   does not block that authorized ID lookup.
    If import fails, report the recovery gap instead of publishing an older local copy.
 2. Read the imported site files and the code that reads the data. Compare any
    unfinished changes in the backup with the current source and carry forward

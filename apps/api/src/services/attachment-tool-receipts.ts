@@ -9,6 +9,7 @@ import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import type { Env } from "../env";
 import { createConversationResourceLinks } from "../runtime/resource-port";
 import { loadVisibleWorkstreamResourcesByIds } from "./workstream-resource-visibility";
+import { asApiError } from "../lib/api-error";
 
 interface ReceiptDependency {
   resourceId: string;
@@ -135,15 +136,17 @@ export async function validateAttachmentToolReceiptReplay(
       principal: input.principal,
       resourceIds: dependencies.map((dependency) => dependency.resourceId),
     },
-  );
+  ).catch((error: unknown) => {
+    // An old read is not replayable while its permission cannot be established.
+    // The next explicit read retains its retryable authorization error.
+    if (asApiError(error)?.code === "authorization_unavailable") return null;
+    throw error;
+  });
+  if (visible === null) return "invalid";
   const visibleIds = new Set(visible.map((resource) => resource.id));
   for (const dependency of dependencies) {
     if (!visibleIds.has(dependency.resourceId)) return "invalid";
-    const resource = await env.DB.prepare(
-      `SELECT model_content_sha256 FROM resources
-        WHERE workspace_id = ? AND id = ?`,
-    ).bind(input.workspaceId, dependency.resourceId)
-      .first<{ model_content_sha256: string | null }>();
+    const resource = visible.find((row) => row.id === dependency.resourceId);
     if (resource?.model_content_sha256 !== dependency.derivativeSha256) return "invalid";
   }
   return "valid";

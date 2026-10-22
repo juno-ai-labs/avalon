@@ -258,7 +258,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
   },
   import_resource: {
     name: "import_resource",
-    description: "Copy the original bytes of one authorized Rally resource into the terminal workspace. A Sidekick can use a known resource ID readable by its execution user without an attachment; list_resources is not the full set of readable resources. Omit destinationPath for deterministic placement; explicit destinations are create-only unless overwrite is true. Send overwrite only together with destinationPath.",
+    description: "Copy the original bytes of one authorized Rally resource into the terminal workspace. Omit destinationPath for deterministic placement; explicit destinations are create-only unless overwrite is true. Send overwrite only together with destinationPath.",
     capability: "terminal.resource.import",
     mode: "write",
     idempotency: "record_before_execute",
@@ -267,7 +267,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
       type: "object",
       additionalProperties: false,
       properties: {
-        resourceId: { type: "string", format: "uuid", description: "Rally resource UUID. A Sidekick can use a known ID its execution user can read, even if it is not attached or listed." },
+        resourceId: { type: "string", format: "uuid", description: "Rally resource UUID." },
         destinationPath: pathProperty("Explicit destination path relative to the workspace root. For a site resource this names the directory root to materialize the tree into."),
         overwrite: { type: "boolean", default: false, description: "Replace an existing destination only when intentional. For a site this replaces the whole destination directory rather than merging into it, so files a later version deleted do not survive." },
       },
