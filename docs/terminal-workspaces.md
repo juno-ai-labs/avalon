@@ -54,8 +54,10 @@ Which conversation owns the sandbox is decided once, when the plugin is
 composed (`authority.ts`), and bound into the Terminal port factory. Ordinary
 conversations have their own sandboxes. A Sidekick's wizard (substream `0`),
 activations, and background agents all use the sandbox owned by that Sidekick's
-wizard. Each activation retains its own transcript, execution records and
-resource permissions. Sharing files does not copy conversation context.
+wizard. Each activation retains its own transcript, execution records and direct
+attachments, plus resources visible to its execution user in the
+Sidekick's home and explicitly attached conversations. Sharing files does not
+copy conversation context.
 Different Sidekicks and the Thread that requested one remain separate.
 
 A work-stream background agent uses the sandbox of the conversation that
@@ -257,14 +259,20 @@ stream in that identity is the **room that owns it**, not the automation's own
 conversation: its run executes under the automation, using the Sidekick's shared
 sandbox and its own transcript, but the documents it publishes are the room's, so "refresh the
 dashboard" lands on the dashboard the room already has. The sandbox belongs to the Sidekick's authoring
-conversation, while resource permissions and import attachments remain addressed
-to the run's own conversation. A new run may recover a generated site still
-attached to its server-configured publishing room, provided its publication
-identity belongs to that room. Terminal attaches that specific site to the run
-before importing it; this does not inherit other attachments or follow arbitrary
-Thread IDs. A site missing from the run's resource list may still be recoverable
-by ID; the import result determines whether recovery succeeds. Detached and
-foreign publications remain unavailable. The site skill
+conversation. Its wizard, activations and workers resolve and re-admit the
+home at each publication or recovery lookup. A refused home blocks publication,
+not commands or imports. Main retains `terminal:<thread>:<path>` identities;
+a Breakout uses `terminal:<thread>:substream:<breakout>:<path>` for files,
+sites and reconciliation. Existing publications must be attached to that
+destination before reuse, except when repairing the exact receipt that created
+them before its attachment committed. If the home has no publication at the
+path, a visible legacy wizard publication under the Sidekick ID is updated in
+place, preserving its resource ID and URL, including during recovery.
+
+Imports use the [shared live resource scope](agent-attachments.md#authorized-work-stream-discovery-and-text-hydration),
+also rechecked for import revocation; a publication target grants no read access.
+A known site ID missing from a list should
+still be tried with `import_resource`. The site skill
 backs up existing files and imports the current publication before each refresh
 so retained files cannot silently overwrite newer layout edits. Resource links
 and the artifact registry follow the publication identity, so the document appears in the owning room's
@@ -1285,6 +1293,20 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-10-22 — Give setup the same home publication identity as activations
+
+The wizard could neither import its home Thread's site nor publish back to that
+Thread, although scheduled activations had a narrow recovery exception. Setup,
+activations, workers and interrupted-write repair now resolve the admitted home
+at each publication and recovery lookup, without taking away other Terminal
+tools on a home-access refusal. Breakout identities include the child address
+to prevent same-path outputs from overwriting another audience's publication.
+Imports and revocation use live inherited
+resource access rather than attaching a recovered site to each run. Creating a
+Sidekick-owned replacement was rejected because it changes the site's identity
+and URL. Preserve internal command captures in the producing conversation and
+keep home Breakout publications attached to that exact Breakout.
 
 ### 2026-10-21 — One sandbox for a Sidekick's wizard and all activations
 

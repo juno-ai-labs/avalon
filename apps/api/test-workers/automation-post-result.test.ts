@@ -527,7 +527,7 @@ describe("a room Sidekick's run and the room's agents", () => {
     const refusal = await otherRoom.send({ agentId: created.agentId, message: "CONFIGURE_SIDEKICK REVISE: take this over.",
       attachmentIds: [] }, { ...context, workstreamId: elsewhere, effectIntentId: crypto.randomUUID() }).catch((error: unknown) => error);
     expect(readStructuredFailure(refusal)).toEqual({ code: "sidekick_owned_by_another_thread", details: {
-        reason: "This message was not delivered. For setup here, refresh sidekicks_list. For an explicitly named target, use find_sidekick or report its refusal without replacing it. This refusal does not establish a connector or scheduling blocker.",
+        reason: "This action was not performed. For setup here, refresh sidekicks_list. For an explicitly named target, use find_sidekick or report its refusal without replacing it. This refusal does not establish a connector or scheduling blocker.",
         retryable: false, available: ["sidekicks_list", "find_sidekick", "create_sidekick"],
       } });
     await service.send({ agentId: created.agentId, message: "CONFIGURE_SIDEKICK REVISE: add cost comparison.", attachmentIds: [] },

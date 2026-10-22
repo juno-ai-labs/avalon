@@ -10,6 +10,7 @@ import {
 
 import { workspaceDOName } from "../../durable-objects/names";
 import type { Env } from "../../env";
+import { TerminalToolError } from "./tools";
 import { durableObjectStubForWorkspace } from "../../lib/durable-object-namespace";
 
 /**
@@ -118,4 +119,20 @@ export async function resolveTerminalRunScope(
     runSubstreamId,
     authoritySubstreamId: input.parentKind === "automation" ? "0" : address.substreamId,
   };
+}
+
+/** The admitted home owns publications from setup, activations and workers alike. */
+export async function resolveTerminalPublicationHome(env: Env, input: Pick<WorkstreamWorkflowInput,
+  "workspaceId" | "parentKind" | "parentId" | "executionPrincipal">): Promise<{ parentId: string; substreamId: string } | null> {
+  if (input.parentKind !== "automation" || input.executionPrincipal.type !== "user") return null;
+  const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS,
+    asWorkspaceId(input.workspaceId), workspaceDOName(env.AVALON_REGION, input.workspaceId));
+  const home = await workspace.resolveConversationToolTarget({
+    workspaceId: input.workspaceId, userId: input.executionPrincipal.userId,
+    scope: { kind: "sidekick", automationId: input.parentId }, reference: null,
+  });
+  if (home.ok) return { parentId: home.conversation.parentId, substreamId: home.conversation.substreamId };
+  if (home.code === "conversation_home_missing") return null;
+  throw new TerminalToolError(home.code,
+    "This Sidekick's home conversation is unavailable to the execution user. Restore its access before publishing there.");
 }

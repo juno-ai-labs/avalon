@@ -162,23 +162,21 @@ export class WorkstreamResourceStorage {
     ))?.revision ?? 0);
   }
 
-  /**
-   * Whether this conversation is a Breakout, whose runs also see every
-   * resource its Channel's Main conversation has attached.
-   *
-   * Asked of the object rather than of the caller because most readers hold
-   * only the port for "the conversation this run executes in", not its
-   * address. Two other kinds of substream inherit nothing: a Sidekick's run
-   * child (an automation parent), and a `start_agent` worker, which has a
-   * `background_agent` row and sees only the attachments it was handed.
-   */
-  inheritsChannelLinks(): boolean {
-    return first(this.sql.exec<{ inherits: number } & Record<string, SqlStorageValue>>(
-      `SELECT workstream.parent_kind = 'workstream'
-              AND COALESCE(identity.external_substream_id, '0') <> '0'
-              AND NOT EXISTS (SELECT 1 FROM background_agent) AS inherits
+  /** Host identity for resource inheritance; never supplied by the model. */
+  inheritanceContext(): { kind: "sidekick"; sidekickId: string; substreamId: string } | { kind: "breakout" } | { kind: "none" } {
+    const row = first(this.sql.exec<{
+      parent_kind: string; workstream_key: string; substream_id: string; background: number;
+    }>(
+      `SELECT workstream.parent_kind, workstream.workstream_key,
+              COALESCE(identity.external_substream_id, '0') AS substream_id,
+              EXISTS (SELECT 1 FROM background_agent) AS background
          FROM workstream LEFT JOIN substream_agent_identity AS identity ON identity.id = 1
         WHERE workstream.id = 1`,
-    ))?.inherits === 1;
+    ));
+    if (row?.parent_kind === "automation") {
+      return { kind: "sidekick", sidekickId: row.workstream_key, substreamId: row.substream_id };
+    }
+    return row?.parent_kind === "workstream" && row.substream_id !== "0" && !row.background
+      ? { kind: "breakout" } : { kind: "none" };
   }
 }

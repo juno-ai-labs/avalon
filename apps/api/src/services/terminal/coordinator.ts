@@ -889,7 +889,7 @@ export class TerminalSandboxCoordinator {
     }
     for (const [substreamId, resourceIds] of byConversation) {
       const attached = new Set((await conversationResourceLinksFrom(
-        this.resourcePort, context.workspaceId, context.workstreamId, substreamId,
+        this.resourcePort, context.workspaceId, context.workstreamId, substreamId, { env: this.env, principal: context.executionPrincipal },
       ).links({ resourceIds: [...resourceIds] })).links.map((link) => link.resource_id));
       for (const resourceId of resourceIds) {
         if (!attached.has(resourceId)) return true;

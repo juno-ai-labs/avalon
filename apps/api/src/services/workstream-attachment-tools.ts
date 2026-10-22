@@ -196,7 +196,7 @@ export function createWorkstreamAttachmentTools(
         try {
           result = await loadVisibleWorkstreamResourcePage(
             env.DB,
-            createConversationResourceLinks(env, input.workspaceId, input.parentId),
+            createConversationResourceLinks(env, input.workspaceId, input.parentId, undefined, undefined, input.executionPrincipal),
             {
               workspaceId: input.workspaceId,
               workstreamId: input.parentId,
@@ -652,7 +652,7 @@ export async function rehydrateWorkstreamViewReceipt(
   if (!parsedInput.success || !parsedOutput.success || parsedOutput.data.returned === 0) return [];
   const visible = await loadVisibleWorkstreamResourcesByIds(
     env.DB,
-    createConversationResourceLinks(env, input.workspaceId, input.parentId),
+    createConversationResourceLinks(env, input.workspaceId, input.parentId, undefined, undefined, input.executionPrincipal),
     {
       workspaceId: input.workspaceId,
       workstreamId: input.parentId,
@@ -987,7 +987,7 @@ async function loadScopedResourceRows(
   }
   return loadVisibleWorkstreamResourcesByIds(
     env.DB,
-    createConversationResourceLinks(env, input.workspaceId, input.parentId),
+    createConversationResourceLinks(env, input.workspaceId, input.parentId, undefined, undefined, input.executionPrincipal),
     {
       workspaceId: input.workspaceId,
       workstreamId: input.parentId,

@@ -95,6 +95,7 @@ function fixture(
       extra: {
         ...workspaceObjectRpcs(workspace.instance, [
           "terminalNetworkMode", "terminalNetworkSettings", "sidekickReadAuthorizationFacts",
+          "resolveConversationToolTarget", "conversationToolScope",
         ]),
         ...(options.agentOwner ? { agentOwner: options.agentOwner } : {}),
       },
@@ -190,6 +191,9 @@ describe("Terminal Bind integration", () => {
       workspaceId: W, automationId: S, authorUserId: U, scope: "workspace",
       owningWorkstreamId: null, owningSubstreamId: asSubstreamId("0"), authorityGeneration: 1,
     });
+    await workspace.instance.applyMemberStatus({ workspaceId: W, sequence: 1, removed: false, relationship: {
+      workspaceId: W, userId: U, accessClass: "member", role: "owner", status: "active", incarnation: "test-member", revision: 1,
+    } });
     const sandboxProvider = provider();
     vi.mocked(sandboxProvider.runUtilityCommand).mockImplementation(async (_id, request) => ({
       exitCode: 0,
@@ -217,6 +221,9 @@ describe("Terminal Bind integration", () => {
       .rejects.toMatchObject({ code: "sandbox_authority_mismatch" });
     expect(sandboxProvider.deleteSandbox).not.toHaveBeenCalled();
 
+    await workspace.instance.applyMemberStatus({ workspaceId: W, sequence: 2, removed: false, relationship: {
+      workspaceId: W, userId: runAsUser, accessClass: "member", role: "member", status: "active", incarnation: "new-executor", revision: 1,
+    } });
     const child = asSubstreamId("30000000-0000-4000-8000-000000000088");
     const childRun = asHarnessRunId("30000000-0000-4000-8000-000000000089");
     const childStore = testWorkstreamObjectStore();

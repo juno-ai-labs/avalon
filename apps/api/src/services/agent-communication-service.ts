@@ -6,7 +6,8 @@ import {
   type StartAgentResult, type SendAgentMessageInput, type ReplyToAgentMessageInput, type WorkstreamWorkflowInput,
 } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
-import type { Env } from "../env";
+import type { AuthContext, Env } from "../env";
+import { WorkstreamObjectClient } from "./workstream-object-client";
 import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { createIdentityObjectPort } from "../runtime/identity-port";
@@ -73,15 +74,15 @@ export class AgentCommunicationService {
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
   }
 
-  private async validateAttachments(ids: string[]) {
+  private async validateAttachments(ids: string[], unavailableCode = "agent_attachment_unavailable") {
     const attachmentIds = [...new Set(ids)];
     if (attachmentIds.length === 0) return attachmentIds;
     // What the sender can see, which for a Breakout includes its Channel's.
     const { links } = await createConversationResourceLinks(this.env, this.input.workspaceId, this.input.parentId,
-      undefined, this.input.substreamId ?? "0").links({ resourceIds: attachmentIds });
+      undefined, this.input.substreamId ?? "0", this.input.executionPrincipal).links({ resourceIds: attachmentIds });
     const attached = new Set(links.map((link) => link.resource_id));
     if (attachmentIds.some((resourceId) => !attached.has(resourceId))) {
-      throw new AgentCommunicationError("agent_attachment_unavailable");
+      throw new AgentCommunicationError(unavailableCode);
     }
     return attachmentIds;
   }
@@ -366,6 +367,26 @@ export class AgentCommunicationService {
       parentId: created.automationId, substreamId: asSubstreamId("0") }) };
   }
 
+  /** Add context without admitting a message, joining a team or waking a loop. */
+  async attachSidekickResource(sidekickId: string, resourceId: string) {
+    const agentId = agentIdForAddress({ parentKind: "automation", parentId: sidekickId, substreamId: asSubstreamId("0") });
+    await this.authorizeSidekick(agentId);
+    await this.validateAttachments([resourceId], "sidekick_resource_unavailable");
+    if (this.input.executionPrincipal.type !== "user") throw new AgentCommunicationError("sidekick_contact_user_unavailable");
+    const userId = this.input.executionPrincipal.userId;
+    const member = await this.env.DB.prepare(
+      "SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'",
+    ).bind(this.input.workspaceId, userId).first<{ role: AuthContext["role"] }>();
+    if (!member) throw new AgentCommunicationError("sidekick_contact_forbidden");
+    // Like conversation_merge, a harness execution has no login session.
+    // The product authority rechecks this member before its ordinary attach.
+    const auth: AuthContext = { sessionId: `sidekick-resource:${this.input.harnessRunId}`, userId,
+      workspaceId: this.input.workspaceId, region: this.input.region, role: member.role, principal: "connector" };
+    const result = await WorkstreamObjectClient.forParent(this.env, auth, "automation", sidekickId).attachResources([resourceId]);
+    if (!result.ok) throw new AgentCommunicationError(`sidekick_${result.code}`);
+    return { sidekickId, resourceId, alreadyAttached: !result.linked.includes(resourceId) };
+  }
+
   async list() {
     const result = await (await this.workspace()).listAgentTeammates({ workspaceId: this.input.workspaceId,
       teamId: await this.team(), requesterAgentId: this.senderId });
@@ -417,6 +438,10 @@ class AgentCommunicationError extends Error {
       agent_message_not_received: "Copy Message ID from a message you received. You cannot respond using another agent’s message ID.",
       agent_self_message: "Do the work in this conversation. You cannot send or reply to your own agent address.",
       agent_not_owned: "Message the agent instead. You can stop only agents you own.",
+      sidekick_resource_unavailable: "resourceId is not visible in this conversation. Use list_resources and choose a visible Rally resource ID.",
+      sidekick_resource_not_found: "resourceId could not be read. Refresh list_resources and choose an available Rally resource ID.",
+      sidekick_resource_access_denied: "resourceId cannot be shared by this execution user. Choose a resource this user may share.",
+      sidekick_attachment_draft_requires_message: "resourceId is an unsent upload. Send it in a message before attaching it as an existing resource.",
       agent_attachment_unavailable: "Attach the resource to this conversation before forwarding it, or remove it from attachmentIds.",
       workstream_archived: "Stop sending work to this destination. Its workstream is archived or no longer exists.",
       agent_origin_stopped: "Wait for a continuation message. This agent is stopped and cannot start more work.",
@@ -424,7 +449,7 @@ class AgentCommunicationError extends Error {
       agent_destination_unavailable: "List teammates again and choose an available agentId. This recipient is unavailable.",
       agent_destination_mismatch: "Copy the exact agentId from creation or discovery. The supplied ID does not match the recipient.",
       sidekick_contact_forbidden: "Choose a Sidekick you can access. This Sidekick is unavailable to this execution.",
-      sidekick_owned_by_another_thread: "This Sidekick belongs to another thread, so only that thread can change it. The message was not delivered.",
+      sidekick_owned_by_another_thread: "This Sidekick belongs to another thread, so only that thread can change it.",
       sidekick_contact_user_unavailable: "Ask your coordinator to contact the Sidekick. This execution has no user identity for Sidekick access.",
       sidekick_author_unavailable: "Ask your coordinator to create the Sidekick. This execution has no user identity for creation.",
       sidekick_owning_workstream_unavailable: "Choose personal or workspace scope if appropriate. This conversation has no owning workstream.",
@@ -439,7 +464,7 @@ class AgentCommunicationError extends Error {
     this.name = "AgentCommunicationError";
     if (code === "sidekick_contact_forbidden" || code === "sidekick_owned_by_another_thread") {
       this.details = {
-        reason: "This message was not delivered. For setup here, refresh sidekicks_list. For an explicitly named target, use find_sidekick or report its refusal without replacing it. This refusal does not establish a connector or scheduling blocker.",
+        reason: "This action was not performed. For setup here, refresh sidekicks_list. For an explicitly named target, use find_sidekick or report its refusal without replacing it. This refusal does not establish a connector or scheduling blocker.",
         retryable: false,
         available: ["sidekicks_list", "find_sidekick", "create_sidekick"],
       };

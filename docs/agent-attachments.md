@@ -165,22 +165,37 @@ set, while model tools use bounded point, batch, aggregate, and keyset-page
 queries. A workspace principal never inherits a user's private-note view.
 Knowledge of a resource ID or cursor does not bypass this query.
 
-**A Breakout sees its Channel's resources.** The links the query starts from are
-`ConversationResourceLinks`: the conversation's own `workstream_resource_links`,
-and when the conversation's object answers `inheritsChannelLinks` (a Breakout of
-a Channel, not a Sidekick's run child or a `start_agent` worker) every link its
-Channel's Main holds as well. Where both hold a link to the same resource, the Breakout's own wins. Every
-model-facing reader takes these links rather than a bare port, so `list_resources`,
-`read_resource`, `search_resource`, `view_resource`, `summarize_resource`,
-Terminal's `import_resource` and its revocation check, image edits, artifact
-data, `start_agent` attachments and receipt replay all agree on what a Breakout can reach. The sidebar is not one of them: it still
-shows a conversation's own set.
+**A Breakout sees its Thread's resources.** `ConversationResourceLinks`
+combines the conversation's own links with its Thread's Main links. The
+object's `inheritanceContext` identifies a Breakout or a Sidekick without
+trusting a model-supplied relationship. An ordinary background agent still
+sees only resources explicitly passed to it.
+
+**A Sidekick sees its home and explicitly attached conversations' resources.**
+Its wizard, activations and background agents share this default. Each read
+uses the execution user's current conversation admission through
+`conversationToolScope`; private siblings and unrelated conversations are
+excluded. A Breakout home or attachment includes its Thread's Main resources,
+following the same rule as an ordinary Breakout. Activations and workers also
+see the Sidekick wizard's own attachments. Resources are resolved live, not
+copied to each run: later attachments appear, and detaching a conversation,
+archiving it or losing access removes its inherited resources on subsequent
+reads. Connector execution permissions remain separate.
+
+Own links take precedence over inherited links. Every model-facing reader
+uses this composition: resource list/read/search/view/summary, Terminal import
+and import revocation, image edits, artifact data, agent handoffs and receipt
+replay. The sidebar continues to show its conversation's own attachments.
 
 `list_resources` returns 25 rows by default and at most 50, optionally
 filtered by one of the eight natural-language kinds. Continuations bind the
 principal, work stream, filters, size, ordering key, and an inventory
 fingerprint: `inventory:<revision>` for a Channel, `inventory:<own>/<channel>`
-for a Breakout, each part a monotonic inventory revision. SubstreamAgent advances that revision for relationship, message-
+for a Breakout. A Sidekick appends a SHA-256 digest of its admitted source
+conversation addresses and inventory fingerprints, keeping the cursor bounded
+while a scope change still invalidates it even when the old and new sources
+have equal revision numbers. Each revision is
+monotonic. SubstreamAgent advances that revision for relationship, message-
 attachment, classification/content identity, and note-visibility mutations, but
 not hydration timestamps or derivative processing bookkeeping. A continuation
 compares it before and after its bounded queries, so a relevant change
@@ -714,6 +729,16 @@ existing ten-file cap. Target read/version authorization is independent from
 attachment reservation, since a pin usually names an already-sent resource.
 
 ## Changelog
+
+### 2026-10-22 — Resolve Sidekick resources from its live conversation scope
+
+A site handed to a wizard by ID was attached only to the requesting Thread;
+import failed and the coordinator commissioned a replacement site. Sidekick
+resource readers now reuse the home and explicit-conversation scope already
+used by conversation tools, admitted as the execution user on each read.
+Copying all links at setup was rejected because later attachments and access
+removal would diverge. Keep every model reader and inventory fingerprint on
+this shared composition; knowing an ID or sharing a Channel adds no grant.
 
 ### 2026-10-19 — Gmail draft attachments use authorized original resources
 
