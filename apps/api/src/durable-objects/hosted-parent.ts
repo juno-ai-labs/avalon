@@ -1854,6 +1854,16 @@ export class HostedParent {
         this.parentId, migration.transfer_id,
       );
     });
+    await this.deliverPendingParticipantProjections("0");
+  }
+
+  /** Same as a grant mutation: land queued roster projections before returning. */
+  private async deliverPendingParticipantProjections(substreamId: string): Promise<void> {
+    const metadata = this.metadataRow();
+    if (!metadata) return;
+    const store = this.scopeGrants({ workspaceId: metadata.workspace_id, parentId: this.parentId });
+    await Promise.all(store.pendingParticipantProjections(substreamId).map((delivery) =>
+      this.deliverParticipantProjection(delivery.substreamId, delivery.projection.userId, delivery.projection.revision)));
   }
 
   /** Internal cutover command; callers must migrate legacy writers before invoking it. */
@@ -1915,6 +1925,7 @@ export class HostedParent {
         this.parentId, substreamId, migration.transfer_id,
       );
     });
+    await this.deliverPendingParticipantProjections(substreamId);
   }
 
   async beginChildParticipantMigration(input: { workspaceId: string; parentId: string; substreamId: string }): Promise<{

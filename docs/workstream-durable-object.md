@@ -1920,6 +1920,34 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 
 ## Changelog
 
+### 2026-10-22 — First share leaves the room openable without waiting on the projection alarm
+
+**What changed:** Completing Main or child participant migration now delivers
+queued roster projections in the same invocation, the way a later grant mutation
+already does. `conversationMembershipAllows` also keeps admitting a still-active
+local participant after the freeze until that first projection lands.
+
+**Why:** The first share of a thread transfers participant authority to grants
+and issues the original people a positive membership version. The conversation
+object refused that ticket until the parent projection alarm applied their
+row. That landing was alarm-only, unlike grant mutations, so the person who
+just shared the thread could see "The live connection could not be opened"
+while every other Channel in the Organization still connected. A guest granted
+in the same request already got a foreground delivery; the people who were
+already in the room did not.
+
+**Considered and rejected:** Issuing membership version zero to grant holders
+who also have implicit Organization-wide Main access. That would reopen
+workspace-scoped threads and leave a private thread's original members stuck.
+Leaving delivery on the alarm and asking them to retry waits on a wake the
+Organization object may not take if nothing else writes.
+
+**Consequences:** The projection alarm remains the recovery path when the
+foreground delivery throws. A guest who was not on the frozen roster still
+needs their projection; grant mutations already deliver that before returning.
+The parent-side delivery change is recorded in
+[`hosted-conversation-parents.md`](hosted-conversation-parents.md).
+
 ### 2026-10-21 — Reuse transcript hydration for Worker-side reads
 
 **What changed:** An authorized product RPC exposes the existing transcript
