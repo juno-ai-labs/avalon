@@ -42,7 +42,7 @@ import {
   bootstrapWorkstreamRuntimeEnvironment,
   provisionWorkstreamObject,
 } from "../src/services/workstream-runtime-database";
-import { deliverChildEffects, deliverEffectsToWorkspace } from "./helpers/conversation-effects";
+import { consumeEffectBodies, deliverChildEffects, deliverEffectsToWorkspace, pendingChildEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { listVisiblePrivateChildren, withHostedParent } from "./helpers/hosted-parent";
 import { applySidekick, sidekickWorkspace } from "./helpers/sidekick";
@@ -194,12 +194,12 @@ async function seedBreakout(title: string): Promise<SubstreamId> {
 }
 
 /** A room Sidekick whose home is `home`, created the way authoring creates one, applied and projected. */
-async function seedSidekick(home: SubstreamId | "0"): Promise<void> {
+async function seedSidekick(home: SubstreamId | "0", automationId = AUTOMATION_ID): Promise<void> {
   await createAutomation(TEST_ENV, {
     workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "workstream",
-    owningWorkstreamId: ROOM_ID, owningSubstreamId: home, automationId: AUTOMATION_ID,
+    owningWorkstreamId: ROOM_ID, owningSubstreamId: home, automationId,
   });
-  const addressed = { workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID };
+  const addressed = { workspaceId: WORKSPACE_ID, automationId };
   await workspace().sidekickSubmitDefinition({ ...addressed, draft: DEFINITION, evaluatorRules: null, submittedByRunId: null });
   await applySidekick(TEST_ENV, {
     ...addressed, actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: true },
@@ -269,7 +269,7 @@ describe("a Sidekick's home conversation", () => {
       .rejects.toMatchObject({ code: "sidekick_owning_workstream_forbidden" });
   });
 
-  it("sends an archived Channel's row only once its Sidekicks are paused, with their list in the same turn", async () => {
+  it("sends an archived Thread's row only once its Sidekicks are archived, with their list in the same turn", async () => {
     await seedSidekick("0");
     const response = await workspace().fetch("https://workspace.test/socket", { headers: {
       Upgrade: "websocket", "x-rally-workspace-id": WORKSPACE_ID, "x-rally-placement-affinity": "wnam",
@@ -284,7 +284,7 @@ describe("a Sidekick's home conversation", () => {
     socket.addEventListener("message", (event) => { frames.push(JSON.parse(String(event.data)) as Record<string, unknown>); });
     try {
       socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
-      await expect.poll(() => frames.some((frame) => frame.type === "workspace_sync")).toBe(true);
+      await expect.poll(() => frames.some((frame) => frame.type === "workspace_sync"), { timeout: 5_000 }).toBe(true);
       frames.length = 0;
 
       expect((await post(conversation(ROOM_ID), "/internal/product", {
@@ -292,18 +292,14 @@ describe("a Sidekick's home conversation", () => {
       })).status).toBe(200);
       await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID));
 
-      // The archived Channel's row, then the automations list the archive's
-      // pauses moved, sent together with nothing between them.
+      // The archived Thread's row and the updated Sidekick list arrive together.
       const archivedRow = () => frames.findIndex((frame) => frame.type === "workspace_workstream_state"
         && frame.workstreamId === ROOM_ID && frame.workstream === null);
-      await expect.poll(archivedRow).toBeGreaterThanOrEqual(0);
+      await expect.poll(archivedRow, { timeout: 5_000 }).toBeGreaterThanOrEqual(0);
       const list = frames[archivedRow() + 1];
-      expect(list).toMatchObject({ type: "workspace_sidebar_list", list: "automations" });
-      // The row went out after the pause committed, so a rail it prompts the
-      // client to read already shows the Sidekick paused.
-      expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ paused_by: string | null }>(
-        `SELECT paused_by FROM automation_directory WHERE automation_id = ?`, AUTOMATION_ID,
-      ).one())).toEqual({ paused_by: "room_archive" });
+      expect(list).toMatchObject({ type: "workspace_sidebar_list", list: "automations", items: [] });
+      expect(await workspace().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID, userId: AUTHOR_ID }))
+        .toEqual({ authorized: false, archived: true });
       // No earlier automations list told the client before its Channel did.
       expect(frames.slice(0, archivedRow()).filter((frame) => frame.list === "automations")).toEqual([]);
     } finally {
@@ -311,9 +307,78 @@ describe("a Sidekick's home conversation", () => {
     }
   });
 
-  it("pauses the Sidekick when its home Breakout is archived", async () => {
+  it.each(["Thread", "Breakout"] as const)("retains the %s archive cascade when restore is delivered first", async (kind) => {
+    const home = kind === "Thread" ? "0" : await seedBreakout("Weekly call");
+    await seedSidekick(home);
+    for (const archived of [true, false]) {
+      if (kind === "Thread") {
+        expect((await post(conversation(ROOM_ID), "/internal/product", {
+          operation: "update", auth: AUTH, input: { archived },
+        })).status).toBe(200);
+      } else {
+        await workspace().setPrivateChildArchived({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
+          substreamId: asSubstreamId(home), actorUserId: AUTHOR_ID, archived });
+      }
+    }
+    const effects = (await pendingChildEffects(conversation(ROOM_ID, home)))
+      .filter((envelope) => envelope.effect.kind === "directory_common")
+      .sort((a, b) => b.sourceVersion - a.sourceVersion);
+    const restored = effects[0]!;
+    expect(restored.effect).toMatchObject({ archivedAt: null, archiveGeneration: 1 });
+    expect(effects.some((envelope) => envelope.effect.kind === "directory_common" && envelope.effect.archivedAt !== null)).toBe(true);
+    expect(await consumeEffectBodies(TEST_ENV, [restored])).toEqual({ acked: 1, retried: 0 });
+    expect(await workspace().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID, userId: AUTHOR_ID }))
+      .toEqual({ authorized: false, archived: true });
+
+    // New work in the restored room must survive old archive deliveries/replays.
+    const newSidekick = asAutomationId(crypto.randomUUID());
+    await seedSidekick(home, newSidekick);
+    for (const envelope of [...effects.slice(1), restored]) {
+      expect(await consumeEffectBodies(TEST_ENV, [envelope])).toEqual({ acked: 1, retried: 0 });
+    }
+    expect(await workspace().sidekickReadDetail({ workspaceId: WORKSPACE_ID, automationId: newSidekick,
+      actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: true } }))
+      .toMatchObject({ lifecycle: "active" });
+  });
+
+  it("keeps new Sidekicks when a restored Breakout's directory projection is delayed", async () => {
+    const home = await seedBreakout("Weekly call");
+    await seedSidekick(home);
+    await workspace().setPrivateChildArchived({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
+      substreamId: home, actorUserId: AUTHOR_ID, archived: true });
+    await workspace().setPrivateChildArchived({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
+      substreamId: home, actorUserId: AUTHOR_ID, archived: false });
+    const newSidekick = asAutomationId(crypto.randomUUID());
+    await seedSidekick(home, newSidekick);
+    // Accept the archive projection after the registry has already restored
+    // the Breakout and admitted new work, before delivering its restore.
+    const archived = (await pendingChildEffects(conversation(ROOM_ID, home)))
+      .find((envelope) => envelope.effect.kind === "directory_common" && envelope.effect.archivedAt !== null);
+    expect(archived).toBeDefined();
+    expect(await consumeEffectBodies(TEST_ENV, [archived])).toEqual({ acked: 1, retried: 0 });
+    await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID, home));
+    expect(await workspace().sidekickReadDetail({ workspaceId: WORKSPACE_ID, automationId: newSidekick,
+      actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: true } }))
+      .toMatchObject({ lifecycle: "active" });
+  });
+
+  it.each(["active", "paused", "draft"] as const)("archives a Sidekick in %s state with its home Breakout and keeps Main and sibling Sidekicks", async (lifecycle) => {
     const breakout = await seedBreakout("Weekly call");
-    await seedSidekick(breakout);
+    const sibling = await seedBreakout("Hiring");
+    const mainSidekick = asAutomationId(crypto.randomUUID());
+    const siblingSidekick = asAutomationId(crypto.randomUUID());
+    await seedSidekick("0", mainSidekick);
+    await seedSidekick(sibling, siblingSidekick);
+    if (lifecycle === "draft") {
+      await createAutomation(TEST_ENV, {
+        workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "workstream",
+        owningWorkstreamId: ROOM_ID, owningSubstreamId: breakout, automationId: AUTOMATION_ID,
+      });
+    } else {
+      await seedSidekick(breakout);
+      if (lifecycle === "paused") await workspace().sidekickPause({ workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID,
+        actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: true } });
+    }
 
     await workspace().setPrivateChildArchived({
       workspaceId: WORKSPACE_ID, parentId: ROOM_ID, substreamId: breakout, actorUserId: AUTHOR_ID, archived: true,
@@ -324,8 +389,20 @@ describe("a Sidekick's home conversation", () => {
       state.storage.sql.exec<{ lifecycle: string; paused_by: string | null; owning_room_archived_at: number | null }>(
         `SELECT lifecycle, paused_by, owning_room_archived_at FROM automation_directory WHERE automation_id = ?`, AUTOMATION_ID,
       ).one());
-    expect(row).toMatchObject({ lifecycle: "paused", paused_by: "room_archive" });
+    expect(row).toMatchObject({ lifecycle: "deleted", paused_by: null });
     expect(row.owning_room_archived_at).not.toBeNull();
+    for (const automationId of [mainSidekick, siblingSidekick]) {
+      expect(await workspace().sidekickReadDetail({ workspaceId: WORKSPACE_ID, automationId,
+        actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: true } }))
+        .toMatchObject({ lifecycle: "active" });
+    }
+
+    await workspace().setPrivateChildArchived({
+      workspaceId: WORKSPACE_ID, parentId: ROOM_ID, substreamId: breakout, actorUserId: AUTHOR_ID, archived: false,
+    });
+    await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID, breakout));
+    expect(await workspace().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID, userId: AUTHOR_ID }))
+      .toEqual({ authorized: false, archived: true });
   });
 });
 

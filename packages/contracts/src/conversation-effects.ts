@@ -43,6 +43,8 @@ export const WorkstreamDirectoryCommonEffectSchema = z.strictObject({
   lastActivityAt: TimestampSchema,
   completedAt: NullableTimestampSchema,
   archivedAt: NullableTimestampSchema,
+  /** Monotonic archive count, retained by restore snapshots. Absent on legacy senders. */
+  archiveGeneration: z.number().int().nonnegative().optional(),
   emailAddress: z.string().email().max(254).nullable().optional(),
   createdByUserId: IdSchema.nullable().optional(),
   titleStatus: z.enum(["naming", "automatic", "settled"]).optional(),

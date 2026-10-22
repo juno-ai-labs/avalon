@@ -279,7 +279,7 @@ General and Personal Channels remain protected.
 Each thread intent reuses the normal idempotent `applyQueuedBatchUpdate`
 archive command in its Main SubstreamAgent. That command stops execution and
 publishes the canonical archive through the existing parent/directory effects,
-including owned-agent and Sidekick cleanup. The request returns after staging
+including owned-agent cleanup and archival of owned Sidekicks. The request returns after staging
 and arming the alarm; the alarm delivers the commands. Transport failures remain
 retryable. Before delivery, the Channel must still be archived at the captured
 revision and the thread still exclusive. Restore or a new active placement

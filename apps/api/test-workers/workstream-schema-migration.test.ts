@@ -10,6 +10,31 @@ import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 
 describe("work-stream schema migration in workerd", () => {
+  it.each([null, 1500])("backfills archive history from a v80 root archived at %s", async (archivedAt) => {
+    const stub = env.MIGRATION_PROBE_DO!.getByName(`archive-generation-v80-${archivedAt}`);
+    await stub.ping();
+    await runInDurableObject(stub, (_instance, state) => {
+      applyDurableObjectSqliteMigrations({ storage: state.storage,
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 80),
+        component: "substream_agent_do", workerVersionId: "v80", now: 1000 });
+      state.storage.sql.exec(`INSERT INTO workstream (
+        id, workstream_key, parent_workspace_key, region, authority_mode, title, scope,
+        exact_state, state_reason_code, next_sequence_number, next_attention_ordinal,
+        authority_epoch, scope_epoch, source_authorization_floor, listing_epoch, deletion_epoch,
+        run_revision, created_at, last_people_activity_at, state_changed_at, updated_at, archived_at
+      ) VALUES (1, 'thread-1', 'workspace-1', 'global', 'authoritative', 'Existing', 'personal',
+        'idle', 'seeded', 1, 1, 0, 0, 0, 0, 0, 0, 1000, 1000, 1000, 1000, ?)`, archivedAt);
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      applyDurableObjectSqliteMigrations({ storage: state.storage,
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
+        component: "substream_agent_do", workerVersionId: "current", now: 2000 });
+      expect(state.storage.sql.exec(`SELECT title, archived_at, archive_generation FROM workstream`).one())
+        .toEqual({ title: "Existing", archived_at: archivedAt, archive_generation: archivedAt === null ? 0 : 1 });
+      expect(state.storage.sql.exec(`PRAGMA foreign_key_check`).toArray()).toEqual([]);
+    });
+  });
+
   it("upgrades populated v53 activities and retains connector identity on updates", async () => {
     const stub = env.MIGRATION_PROBE_DO!.getByName("plugin-connector-identity-v54");
     await stub.ping();

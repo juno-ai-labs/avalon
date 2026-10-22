@@ -44,6 +44,7 @@ import type { AuthContext, Env } from "../src/env";
 import { personalSpaceIdFor } from "../src/durable-objects/workspace-space-protocol";
 import { seatOrganizationMember, SpaceBootstrapService, spaceBootstrapDriver } from "../src/services/space-bootstrap-service";
 import { SpaceService } from "../src/services/space-service";
+import { createAutomation } from "../src/services/automation-service";
 import { seatSpaceInvitee } from "../src/services/workspace-realtime-service";
 import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
 import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
@@ -878,7 +879,7 @@ describe("the other Space operations", () => {
     expect(await conversationInitialized(created.id)).toBe(false);
   });
 
-  it("archives exclusive threads without moving them to General, while shared threads stay active", async () => {
+  it("archives exclusive threads and their Sidekicks while shared threads and attached workspace Sidekicks stay active", async () => {
     const opened = await workspace().openGeneralSpace({
       workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: asSpaceId(crypto.randomUUID()),
     });
@@ -889,6 +890,15 @@ describe("the other Space operations", () => {
     const shared = await createChannel("shared-calendar", [asSpaceId(channel.id), asSpaceId(other.id)]);
     await deliverEffectsToWorkspace(env, spaceConversation(exclusive));
     await deliverEffectsToWorkspace(env, spaceConversation(shared));
+    const exclusiveSidekick = crypto.randomUUID();
+    const sharedSidekick = crypto.randomUUID();
+    const attachedSidekick = crypto.randomUUID();
+    for (const [automationId, owningWorkstreamId] of [[exclusiveSidekick, exclusive], [sharedSidekick, shared], [attachedSidekick, null]] as const) {
+      await createAutomation(routeEnv(), { workspaceId: WORKSPACE_ID, authorUserId: OWNER,
+        scope: owningWorkstreamId ? "workstream" : "workspace", owningWorkstreamId, automationId });
+    }
+    await workspace().setSidekickRecommendation({ workspaceId: WORKSPACE_ID, parentId: exclusive,
+      userId: OWNER, sidekickId: attachedSidekick, attached: true });
 
     expect(await request(`/spaces/${channel.id}/archive`, OWNER_AUTH, {}, "POST"))
       .toMatchObject({ status: 200, body: { status: "archived" } });
@@ -903,6 +913,13 @@ describe("the other Space operations", () => {
     expect(await lifecycle(exclusive)).toEqual({ exact_state: "archived", archived: 1 });
     expect(await lifecycle(shared)).toEqual({ exact_state: "idle", archived: 0 });
     await deliverEffectsToWorkspace(env, spaceConversation(exclusive));
+    expect(await workspace().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: exclusiveSidekick, userId: OWNER }))
+      .toEqual({ authorized: false, archived: true });
+    const sidekickIds = async () => (await workspace().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: OWNER }))
+      .items.map((item) => item.id).sort();
+    expect(await sidekickIds()).toEqual([attachedSidekick]);
+    expect(await workspace().sidekickReadDetail({ workspaceId: WORKSPACE_ID, automationId: sharedSidekick,
+      actor: { userId: OWNER, actorRole: "owner", participantOfOwningWorkstream: true } })).toMatchObject({ lifecycle: "draft" });
     expect(await channelSpaceIds(exclusive)).not.toContain(opened.space.id);
     expect(await channelSpaceIds(shared)).toEqual([other.id]);
     expect(await workspace().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: exclusive, userId: OWNER }))
@@ -911,6 +928,9 @@ describe("the other Space operations", () => {
     expect(await request(`/spaces/${channel.id}/restore`, OWNER_AUTH, {}, "POST"))
       .toMatchObject({ status: 200, body: { status: "active" } });
     expect(await lifecycle(exclusive)).toEqual({ exact_state: "archived", archived: 1 });
+    expect(await sidekickIds()).toEqual([attachedSidekick]);
+    expect(await workspace().sidekickReadDetail({ workspaceId: WORKSPACE_ID, automationId: sharedSidekick,
+      actor: { userId: OWNER, actorRole: "owner", participantOfOwningWorkstream: true } })).toMatchObject({ lifecycle: "draft" });
     expect(await channelSpaceIds(shared)).toEqual([channel.id, other.id].sort());
   });
 

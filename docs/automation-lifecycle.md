@@ -650,7 +650,7 @@ one identity and one history, and can complete more than once.
    turn, so a recovered execution does not add a second one.
 
 **Refusals.** `continueRun` answers `sidekick_deleted` for an archived
-Sidekick, `sidekick_paused` for one a person or a room archive paused, `run_not_found`
+Sidekick, `sidekick_paused` for one a person paused, `run_not_found`
 when the Sidekick object holds no row or no such run, and `run_principal_changed`
 when the Sidekick runs as somebody other than the run did. The
 child then lands the input as a delivered turn and appends a `system` row after
@@ -714,8 +714,22 @@ otherwise. Personal and workspace Sidekicks have no home and keep `"0"`.
 The home narrows who counts as the room. `authorizeViewer`, the resource
 authorization owner (`<channel>/<home>` in `authorization-service.ts`) and search
 discovery all read the Breakout's members for a Breakout home and the Channel's
-participants for a Main one. Archiving the home Breakout, or the Channel that
-holds it, pauses the Sidekick through `setOwningRoomArchived`; see Lifecycle.
+participants for a Main one. Archiving the home Breakout or its Thread archives
+the Sidekick through `setOwningRoomArchived`, including drafts and manually
+paused Sidekicks. Archiving a Channel archives its exclusive Threads through
+the canonical Thread archive path and therefore archives their owned Sidekicks;
+shared Threads remain active in their other Channels. A workspace Sidekick
+merely attached or recommended in an archived conversation remains available
+elsewhere. Restoring a Channel, Thread or Breakout never restores an archived
+Sidekick; see Lifecycle.
+
+Thread snapshots retain a monotonic archive generation across restores. The
+hosted parent applies each new generation's irreversible Sidekick cascade in
+the projection transaction, so delivering restore before archive cannot lose
+the cascade. Breakout archival commits its Sidekick cascade with the canonical
+child registry change in WorkspaceDO. A legacy `owning_room_archived_at` marker
+also becomes terminal on the next archive or restore notice. Pause and resume
+re-read lifecycle after authorization so an intervening archive stays terminal.
 
 A Sidekick reads and posts through the `rally:conversations` plugin
 ([`conversation-tools.md`](conversation-tools.md)), whose scope for a Sidekick is
@@ -736,7 +750,7 @@ as a skill, and loading writes them automatically.
 | `pause` | a manager | `runs` in `pending`, `running`, or `needs_input` become `stopped`; `lifecycle = 'paused'`, `paused_by = 'person'`; schedule and run alarm entries cancelled; the workspace's registrations replaced with `[]`; sidebar row enqueued |
 | `resume` | a manager | each schedule's next due instant recomputed from now (a paused automation does not fire what it slept through), `lifecycle = 'active'`, `paused_by` cleared, alarms re-armed, the accepted evaluator projection re-registered with a fresh sequence boundary; refused with `sidekick_room_archived` while the owning room is archived |
 | `archive` (`POST /sidekicks/:id/archive`; legacy `DELETE` remains for installed clients) | a manager | open runs stopped, stored `lifecycle = 'deleted'`, alarms cancelled, registrations replaced with `[]`; the object, conversation, and run history remain stored but become inaccessible, and `authorizeViewer` answers unauthorized and archived from then on. `deleted` is the compatibility tombstone name, not a claim that retained data was destroyed. There is no unarchive operation or archived-Sidekick browser yet. |
-| `setOwningRoomArchived` | `WorkspaceDO`, from a directory effect that archived or unarchived the owning room | archiving pauses an `active` automation with `paused_by = 'room_archive'`; unarchiving resumes only an automation the archive paused, so a person's pause is never undone by somebody unarchiving the room. The Worker's viewer decision reports `archived` while the room is, which makes the automation's conversation and runs read-only |
+| `setOwningRoomArchived` | `WorkspaceDO`, from a directory effect that archived or unarchived the owning room | archiving uses the same terminal archive as an explicit Sidekick archive: active, paused and draft Sidekicks become `deleted`, open runs stop, triggers are cleared, and the Sidekick disappears from owned lists and becomes inaccessible. Replayed archive notifications are idempotent. Restoring the room never restores the Sidekick |
 
 Who may manage (`assertManager`): the author or the run-as principal; for a
 `workspace` automation also an owner or admin; for a room's automation only a
@@ -893,7 +907,7 @@ Sidekick's id.
 - **A room's automation is the room's.** Its scope is fixed at creation, its
   managers are whoever may manage the room (grants and an archive included),
   its viewers the room's participants, it is listed only in the room's Channel menu,
-  and the room's archive pauses it. Authorship confers nothing on it.
+  and the room's archive archives it. Authorship confers nothing on it.
 
 ## Boundary
 
@@ -993,7 +1007,7 @@ substreams. Harness `skills.test.ts` proves recommendations do not load bodies.
 | `apps/desktop/src/renderer/components/workstream-glyph.test.tsx` | `pnpm --filter @rally/desktop test` | The play cut out of the hexagon with its own mask, its hover target, and the sentence it reports. |
 | `apps/api/test-workers/automation-acceptance-bindings.test.ts` | `pnpm --filter @rally/api test:workers` | The binding half in isolation: the table absent from D1, a recommended plugin bound from the workspace object's connections, a missing one refused, a disabled row skipped for the live one. |
 | `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and watched work streams; a redelivery admits once. |
-| `apps/api/test-workers/conversation-parent-contract.test.ts`, `conversation-effect-queue.test.ts` | `pnpm --filter @rally/api test:workers` | The parent contract through the real ticket route, and the effect legs an automation's children use, including a child effect producing no `parent_effect` row. Owned by [`workstream-durable-object.md`](workstream-durable-object.md#testing). |
+| `apps/api/test-workers/conversation-parent-contract.test.ts`, `conversation-effect-queue.test.ts` | `pnpm --filter @rally/api test:workers` | The parent contract through the real ticket route, including refusal of author and participant access and fresh tickets after a room archive, retained legacy read-only admission, and the effect legs an automation's children use, including a child effect producing no `parent_effect` row. Owned by [`workstream-durable-object.md`](workstream-durable-object.md#testing). |
 | `apps/api/test/external-event-evaluator.test.ts` | `pnpm --filter @rally/api test` | The pure predicate: legal and illegal documents, missing-field semantics, the connector vocabulary an authoring rule is held to — and the boundary between the two predicate spellings, which is where a change that let the model's `matching` reach a stored column would fail. |
 | `apps/api/test-workers/sidekick-run-continuation.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd with the effect queue held, so the run row still reads finished while the continuation runs: input to a completed run continuing it with `automationRun`, the run-as principal (changed since the run started) and the revision accepted since, with the continuation note last; paused, archived and unknown runs refused with their codes, both inputs landed, and the run continuing after a resume; two concurrent replies both reaching the model as the continued run; a finished row reopened only by a newer projection, a stale completion not closing it, repeated complete and reopen cycles, `idle` not reopening, and a paused Sidekick not reopening; an elicitation answer keeping the run's context. |
 | `apps/api/test/run-authority-validity.test.ts` | `pnpm --filter @rally/api test` | A running run admitted, a paused or unknown one stopped, connector evidence not re-read after admission, and a run with no automation reference asking no automation; a continuation acting through a `completed` or `failed` row and a `stopped` one that stopped before the approval, and refused for a stop after it or a paused Sidekick. |
@@ -1141,6 +1155,35 @@ The Sidekick authoring prompt carries no Google-specific lookup or attachment
 instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
+
+### 2026-10-22 — A room archive archives its owned Sidekicks
+
+**What changed:** Archiving a Thread or a Sidekick's home Breakout invokes the
+same Sidekick archive primitive as an explicit archive, for drafts, active and
+paused Sidekicks. Runs stop, schedule and run alarms are cancelled, registrations
+are cleared, and the retained Sidekick becomes inaccessible. Channel archives
+inherit this behavior for their exclusive Threads. Restoring a room never
+reactivates its archived Sidekicks. The Channel, Thread and Breakout archive
+dialogs describe the cascade and that restoring the room does not restore its
+Sidekicks.
+
+**Why:** Archiving a place should archive the delegated work it owns. Pausing
+left those Sidekicks retained as live product objects and allowed restoring the
+room to restart them, which conflicts with the requested archive behavior.
+
+**Considered and rejected:** Archiving every attached workspace Sidekick would
+also stop work used by unrelated conversations. The cascade follows ownership;
+shared attachments and Sidekicks in shared Threads that remain active survive.
+
+**Consequences:** The archive fan-out and explicit archive share one synchronous
+transition, including the execution stop fence and trigger cleanup. Replays
+cannot increment the stop fence again or restore a tombstone. Definitions and
+run history remain stored under the existing archive retention policy, and no
+Sidekick unarchive operation is introduced. Thread common snapshots retain an
+archive generation across restore, and Breakout registry archival commits the
+cascade locally; out-of-order effects cannot discard this permanent work.
+Restore notices reconcile legacy room archive markers rather than clearing
+them, and pause/resume re-read lifecycle after their authorization await.
 
 ### 2026-10-21 — Authoring has its own model and preserves activation prerequisites
 

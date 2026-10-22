@@ -1230,25 +1230,87 @@ describe("a hosted Sidekick", () => {
     expect(await automationRow()).toMatchObject({ lifecycle: "active", accepted_definition_revision: 2 });
   });
 
-  it("refuses to apply to an automation whose owning room is archived", async () => {
+  it("archives an owned Sidekick with its runs and triggers, retains its history, and never restores it with the room", async () => {
+    const roomId = "00000000-0000-7000-8000-00000000ad80";
+    await createDraft(roomId);
+    await submit({ ...DEFINITION, triggers: [{ type: "manual" }, { type: "interval", intervalSeconds: 3_600, summary: "Every hour" }] });
+    await apply();
+    const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "archive-owned-run" });
+    await runInDurableObject(workspaceStub(), (instance, state) => {
+      const writer = instance as unknown as { writeSidekickRegistrations: (id: string, evaluators: unknown[]) => number };
+      state.storage.transactionSync(() => writer.writeSidekickRegistrations(AUTOMATION_ID, [{
+        evaluatorId: "00000000-0000-7000-8000-00000000ad40",
+        source: { connectorType: "slack", connectionId: SLACK_CONNECTION_ID, eventType: "slack.message.posted" },
+        when: { kind: "always" },
+      }]));
+    });
+    expect(await activeRegistrations()).toBe(1);
+    expect((await alarms()).filter((alarm) => alarm.kind === AUTOMATION_SCHEDULE_ALARM_KIND)).toHaveLength(1);
+
+    const archive = (archived: boolean) => runInDurableObject(workspaceStub(), (instance, state) => {
+      const host = (instance as unknown as { hostedSidekickHost: () => HostedSidekickHost }).hostedSidekickHost();
+      return state.storage.transactionSync(() => new HostedSidekick(host, AUTOMATION_ID)
+        .setOwningRoomArchived({ ...addressed(), workstreamId: roomId, archived }, Date.now()));
+    });
+    expect(await archive(true)).toEqual({ changed: true, outcomeCode: "sidekick_archived" });
+    expect(await automationRow()).toMatchObject({ lifecycle: "deleted", paused_by: null, accepted_definition_revision: 1 });
+    expect(await workspaceStub().sidekickReadRunState({ ...addressed(), runId: started.runId }))
+      .toMatchObject({ state: "stopped", lifecycle: "deleted" });
+    expect((await alarms()).filter((alarm) => alarm.kind === AUTOMATION_SCHEDULE_ALARM_KIND || alarm.kind === AUTOMATION_RUN_ALARM_KIND))
+      .toEqual([]);
+    expect(await activeRegistrations()).toBe(0);
+    await expect(runInDurableObject(workspaceStub(), (instance: WorkspaceDO) => instance.sidekickSubmitDefinition({
+      ...addressed(), draft: DEFINITION, evaluatorRules: null, submittedByRunId: null,
+    }))).rejects.toThrow("This Sidekick was archived");
+    await expect(apply()).rejects.toMatchObject({ code: "sidekick_not_found" });
+
+    expect(await archive(true)).toEqual({ changed: false, outcomeCode: "sidekick_already_archived" });
+    expect(await archive(false)).toEqual({ changed: false, outcomeCode: "sidekick_already_archived" });
+    expect((await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID })).items).toEqual([]);
+    expect(await workspaceStub().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID, userId: AUTHOR_ID }))
+      .toEqual({ authorized: false, archived: true });
+  });
+
+  it.each(["pause", "resume"] as const)("does not resurrect a Sidekick archived during %s authorization", async (operation) => {
     const roomId = "00000000-0000-7000-8000-00000000ad80";
     await createDraft(roomId);
     await submit();
     await apply();
-    // What a Channel archive does to each Sidekick it owns, applied directly:
-    // the archive walk itself is covered in conversation-tools.test.ts.
-    await runInDurableObject(workspaceStub(), (instance, state) => {
+    if (operation === "resume") await workspaceStub().sidekickPause({ ...addressed(), actor: actor() });
+    await runInDurableObject(workspaceStub(), async (instance, state) => {
       const host = (instance as unknown as { hostedSidekickHost: () => HostedSidekickHost }).hostedSidekickHost();
-      state.storage.transactionSync(() => new HostedSidekick(host, AUTOMATION_ID)
-        .setOwningRoomArchived({ ...addressed(), workstreamId: roomId, archived: true }, Date.now()));
+      const sidekick = new HostedSidekick(host, AUTOMATION_ID);
+      const pending = sidekick[operation]({ ...addressed(), actor: actor() });
+      state.storage.transactionSync(() => sidekick.setOwningRoomArchived({ ...addressed(), workstreamId: roomId, archived: true }, Date.now()));
+      await expect(pending).rejects.toMatchObject({ code: "sidekick_not_found" });
     });
-    expect(await automationRow()).toMatchObject({ lifecycle: "paused", paused_by: "room_archive" });
-    await submit({ ...DEFINITION, instructions: "Say hello three times." });
+    expect(await automationRow()).toMatchObject({ lifecycle: "deleted", paused_by: null });
+    expect(await workspaceStub().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID, userId: AUTHOR_ID }))
+      .toEqual({ authorized: false, archived: true });
+  });
 
-    // The archive holds until the room comes back; `resume` refuses with this
-    // code, and apply now answers the same instead of walking around it.
-    await expect(apply()).rejects.toMatchObject({ code: "sidekick_room_archived" });
-    expect(await automationRow()).toMatchObject({ lifecycle: "paused", paused_by: "room_archive", accepted_definition_revision: 1 });
+  it.each(["room_archive", "person", "draft"] as const)("archives a legacy %s Sidekick when its room is restored", async (stateBeforeRestore) => {
+    const roomId = "00000000-0000-7000-8000-00000000ad80";
+    await createDraft(roomId);
+    if (stateBeforeRestore !== "draft") {
+      await submit();
+      await apply();
+      await workspaceStub().sidekickPause({ ...addressed(), actor: actor() });
+    }
+    await runInDurableObject(workspaceStub(), (instance, state) => {
+      // Historical state written before room archival became terminal.
+      state.storage.sql.exec(`UPDATE automation_directory SET owning_room_archived_at = 1000, paused_by = ? WHERE automation_id = ?`,
+        stateBeforeRestore === "draft" ? null : stateBeforeRestore, AUTOMATION_ID);
+      const host = (instance as unknown as { hostedSidekickHost: () => HostedSidekickHost }).hostedSidekickHost();
+      expect(state.storage.transactionSync(() => new HostedSidekick(host, AUTOMATION_ID)
+        .setOwningRoomArchived({ ...addressed(), workstreamId: roomId, archived: false }, Date.now())))
+        .toEqual({ changed: true, outcomeCode: "sidekick_archived" });
+      expect(state.storage.sql.exec(`SELECT owning_room_archived_at FROM automation_directory WHERE automation_id = ?`, AUTOMATION_ID).one())
+        .toEqual({ owning_room_archived_at: 1000 });
+    });
+    expect(await automationRow()).toMatchObject({ lifecycle: "deleted", paused_by: null });
+    await expect(runInDurableObject(workspaceStub(), (instance: WorkspaceDO) => instance.sidekickResume({ ...addressed(), actor: actor() })))
+      .rejects.toMatchObject({ code: "sidekick_not_found" });
   });
 
   it("creates the tables a definition declares in the automation's memory scope, once", async () => {
