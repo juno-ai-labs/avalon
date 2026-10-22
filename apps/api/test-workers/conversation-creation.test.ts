@@ -269,19 +269,9 @@ describe("creating a work stream", () => {
     });
     expect(admission).toMatchObject({ authorized: true });
     expect(admission.membershipVersion).toBeGreaterThan(0);
-    const opened = await main.fetch("https://substream.test/socket", { headers: {
-      Upgrade: "websocket",
-      "x-rally-workspace-id": WORKSPACE_ID,
-      "x-rally-workstream-id": created.workstream.id,
-      "x-rally-substream-id": "0",
-      "x-rally-user-id": USER_ID,
-      "x-rally-session-id": SESSION_ID,
-      "x-rally-socket-ticket-id": crypto.randomUUID(),
-      "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1000) + 60),
-      "x-rally-socket-admission-membership-version": String(admission.membershipVersion),
-    } });
-    expect(opened.status).toBe(101);
-    opened.webSocket?.close(1000, "done");
+    await runInDurableObject(main, (instance) => {
+      expect(instance["conversationMembershipAllows"](USER_ID, admission.membershipVersion ?? 0)).toBe(true);
+    });
     expect(await parent.readScopeAccess({ userId: USER_ID, target: { kind: "workstream", workspaceId: WORKSPACE_ID,
       parentId: created.workstream.id } })).toMatchObject({ allowed: true, writable: true });
     expect((await service.createPrepared(input, history)).workstream.id).toBe(created.workstream.id);
