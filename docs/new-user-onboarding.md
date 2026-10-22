@@ -50,6 +50,10 @@ agent run is created by onboarding. The unshipped starter columns and removed fi
 Joining an organization, as its creator or an invited member, makes the person
 a participant of General and gives them their own Personal Channel; see
 [the Personal Channel](spaces.md#the-personal-channel).
+Invitation acceptance immediately dispatches the membership trigger's durable
+relationship event, including on a replay with a pending delivery. The ordinary
+queue consumer performs the seating; the scheduled sweep recovers failed
+dispatches rather than being the first producer for a successful acceptance.
 
 Creating an organization prefills its name. `GET /onboarding/organization-suggestion`
 takes the domain of the signed-in person's email and fetches `https://<domain>/`,
