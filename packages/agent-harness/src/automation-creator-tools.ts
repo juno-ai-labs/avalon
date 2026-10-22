@@ -568,7 +568,6 @@ export const AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE = [
   "Generate both internal instructions and a clear user-friendly description of the behavior. Explain missing details through questions.",
   "A ready submission saves and activates immediately. Do not ask the person to press Create or Apply. Submit only the behavior they requested.",
   "A connection state check never blocks a submission. A personal or workstream Sidekick may use the personal connection of the person it runs as: when a plugin you inspected can do the work, use it and submit ready.",
-  "Before declaring a required capability unavailable, inspect the other authorized plugins that can supply it; a workflow may combine connections. For Google Meet transcripts and notes, load reading-google-meeting-notes and read an attached Doc before any Drive search or blocked conclusion. Use an actual declared Calendar or Drive source, or polling-for-events when no suitable event exists. Gmail drafts accept PDF attachmentResourceIds from authorized Rally resources.",
   "Only a refused submission blocks activation; report its refusal exactly. Treat a blocker another agent reports as a claim to test by submitting, not as a reason to stay a draft.",
   "After saving a draft, briefly acknowledge what was saved; after a partial submission, ask for the missing details.",
   "Use an empty triggers array for reusable knowledge. Use inbound_email only when the person wants email to start work. Do not add manual or scheduled triggers to make a reusable skill valid.",
@@ -614,7 +613,7 @@ export function createAutomationsPlugin(
       "every week", "when this happens", "watch for", "remind",
     ],
     description:
-      "Configure this Sidekick to provide reusable knowledge or carry out delegated work within its existing scope.",
+      "Set up this Sidekick to provide reusable instructions or carry out work on a schedule or when an event occurs, within its existing scope.",
     systemMessage,
     tools: createAutomationCreatorTools(host),
     preload: false,

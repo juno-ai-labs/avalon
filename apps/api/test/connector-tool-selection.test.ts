@@ -1348,6 +1348,8 @@ describe("connector tools selected for harness runs", () => {
     ).find((plugin) => plugin.canonicalId === "rally:tables");
     expect(tables?.systemMessage).toContain("query those exact row IDs again");
     expect(tables?.systemMessage).toContain("table_insert_rows");
+    expect(tables?.systemMessage).toContain("a pending claim is not completed work");
+    expect(tables?.systemMessage).toContain("must still process the event that triggered the run");
     expect(tables?.systemMessage).not.toMatch(/\binsert_rows\b(?!\s+can)/u);
   });
 

@@ -111,9 +111,8 @@ canonical example where one earns its place. Do not enumerate every edge case,
 and do not stuff a persona — a paragraph of character description costs prefix
 on every turn and changes little that a clear rule would not change better.
 
-The fixed overhead is capped by test (8,000 bytes for the standing policy
-prompts). Treat the ceiling as a design constraint: when you need room, the
-right move is usually to move something out, not to raise it.
+The fixed overhead is capped by tests. Treat the ceiling as a design constraint:
+when you need room, the right move is usually to move something out, not to raise it.
 
 ### 7. Point at discovery; don't enumerate what changes
 
@@ -295,6 +294,13 @@ user-role message, never in the system prompt.
 
 Catalogs turn run state into prompt text, so they are judged on determinism and
 on what they do at the budget edge — the prompt-side face of principle 7.
+
+Write each plugin description for a model that has not loaded its tools or
+instructions yet: name the actions it supports and the tasks it is useful for.
+Use familiar task words that also help keyword discovery, such as "publish a
+website" or "track completed items", rather than internal labels such as
+"execution lifecycle" or "typed durable collections". Keep execution procedures
+in the plugin's instructions or a skill.
 
 - **Sort and de-duplicate before rendering**; bound the loadable section, never
   the active one.
