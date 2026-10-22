@@ -30,6 +30,7 @@ import type { ScopeGrantStorage } from "../src/durable-objects/scope-grant-stora
 import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
 import { writeSidekickDirectoryRow } from "./helpers/sidekick";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
+import { placeMembership } from "./helpers/space-membership";
 
 /** Its own workspace: object names are shared across files, storage is not. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000ad20");
@@ -162,13 +163,17 @@ beforeEach(async () => {
 
 describe("automation directory", () => {
   it.each([
+    { home: "0", storedColor: "purple", expectedColor: "green", canonicalColor: "green" },
+    { home: "00000000-0000-7000-8000-00000000ad25", storedColor: "purple", expectedColor: "green", canonicalColor: "green" },
+    { home: "00000000-0000-7000-8000-00000000ad25", storedColor: null, expectedColor: "green", canonicalColor: "green" },
     { home: "0", storedColor: "purple", expectedColor: "purple" },
     { home: "00000000-0000-7000-8000-00000000ad25", storedColor: "black", expectedColor: "black" },
     { home: "0", storedColor: "not-a-color", expectedColor: "lime" },
     { home: "00000000-0000-7000-8000-00000000ad25", storedColor: "not-a-color", expectedColor: "emerald" },
     { home: "0", storedColor: null, expectedColor: "lime" },
     { home: "00000000-0000-7000-8000-00000000ad25", storedColor: null, expectedColor: "emerald" },
-  ] as const)("inherits home $home color $storedColor at creation", async ({ home, storedColor, expectedColor }) => {
+  ] as const)("inherits home $home color $storedColor at creation expected $expectedColor", async (testCase) => {
+    const { home, storedColor, expectedColor } = testCase;
     const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     await runInDurableObject(workspaceStub(), (instance, state) => {
       // The test Worker defaults to error-only logging. Exercise the production
@@ -180,7 +185,7 @@ describe("automation directory", () => {
             ? "warn" : Reflect.get(current, property, receiver),
         });
       }
-      // Deliberately different Thread and Breakout colors: the exact home wins.
+      // Without a canonical Channel color, the exact home wins over its sibling.
       state.storage.sql.exec("UPDATE channels SET appearance_json = ? WHERE workstream_id = ?",
         JSON.stringify({ icon: "rocket", color: home === "0" ? storedColor : "orange" }), ROOM_ID);
       if (home !== "0") {
@@ -194,6 +199,20 @@ describe("automation directory", () => {
         storedColor === null ? null : JSON.stringify({ icon: "book", color: storedColor }));
       }
     });
+    if ("canonicalColor" in testCase) {
+      const reserved = await workspaceStub().reserveSpace({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
+        space: { name: "Release channel", iconKey: "briefcase", colorKey: "purple", scope: "workspace" } });
+      if (!reserved.ok) throw new Error(reserved.code);
+      await placeMembership(workspaceStub(), { workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
+        spaceId: reserved.space.id, workstreamId: ROOM_ID });
+      await workspaceStub().noteSpacePresentation({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
+        spaceId: reserved.space.id, presentation: { name: "Release channel", iconKey: "briefcase", colorKey: testCase.canonicalColor } });
+      // The recolor authority moved, but neither conversation projection has.
+      const projected = await runInDurableObject(workspaceStub(), (_instance, state) =>
+        state.storage.sql.exec<{ appearance_json: string }>(
+          "SELECT appearance_json FROM channels WHERE workstream_id = ?", ROOM_ID).one());
+      expect(JSON.parse(projected.appearance_json).color).toBe(home === "0" ? "purple" : "orange");
+    }
     const automationId = nextAutomationId();
     await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID,
       scope: "workstream", owningWorkstreamId: ROOM_ID, owningSubstreamId: home, automationId });

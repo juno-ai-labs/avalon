@@ -846,10 +846,12 @@ already stored. The RPC field is optional, so a seeded or scripted definition
 leaves the appearance alone.
 
 A Thread- or Breakout-scoped Sidekick starts with its home conversation's
-color, copied from that exact home's directory row in the creation transaction.
-If the home has no stored color, it uses the same id-derived color as the glyph.
-An invalid stored appearance is reported with field diagnostics and uses that
-fallback too; cosmetic data cannot block creation or a replay.
+color in the creation transaction. It reads the current canonical Channel color
+through `WorkspaceSpaceStorage.channelColor`, so a pending recolor job cannot
+leave it wearing the conversation projection's old color. Without an active
+Channel placement, it copies the exact home's stored color or uses the same
+id-derived fallback as the glyph. An invalid stored appearance reports field
+diagnostics without blocking creation or replay.
 Only the color is copied: the icon remains the Sidekick's own generated mark.
 This is a creation-time default; later home color changes and repeated creation
 requests do not overwrite the Sidekick's appearance. Personal and Organization
@@ -1166,9 +1168,11 @@ instructions. See [Google connector guidance](connectors.md#google).
 
 Scoped Sidekicks start in their home's color because deriving a color from
 the new Sidekick's id gave them an unrelated visual identity. The creation-time
-copy leaves later edits independent. Missing or invalid home appearance uses
-the shared generated default; an invalid appearance reports the rejected field
-without blocking creation or replay.
+copy leaves later edits independent. Reading the canonical Channel color avoids
+freezing a delayed conversation projection's old color into the new Sidekick.
+Without a placement, missing or invalid home appearance uses the shared generated
+default; an invalid appearance reports the rejected field without blocking creation
+or replay.
 
 ### 2026-10-22 — A room archive archives its owned Sidekicks
 
