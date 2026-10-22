@@ -49,6 +49,7 @@ export function MessageIssueDialog({ api, report, onClose }: {
     onClose();
   };
   return <Modal
+    showCloseButton={false}
     restoreFocus
     description="Let us know what you expected so we can improve Rally."
     footer={<>
