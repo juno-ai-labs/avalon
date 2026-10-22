@@ -512,7 +512,9 @@ migration 72 carries every directory row into the renamed tables and migration
 socket: each viewer's own breakouts per Channel, a roster change reaching only
 that breakout's members, running agents reaching every reader counted where
 each can look, a lost Channel tombstoned while the socket stays open, the
-current list after a resubscribe, and Main woken by a foreground. `workspace-socket-fanout.test.ts` proves who else a row
+current list after a resubscribe, and Main woken by a foreground. Each case
+uses a separate Organization identity: reset alone can interleave with a prior
+case's live socket or alarm and leave the reused authority populated. `workspace-socket-fanout.test.ts` proves who else a row
 reaches ([`websocket-architecture.md`](websocket-architecture.md#testing)).
 `conversation-effect-queue.test.ts` proves directory and activity rows land in
 the write and a mention leaves on the Queue; `hosted-parent-outbox.test.ts`
