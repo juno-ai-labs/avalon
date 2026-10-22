@@ -111,9 +111,8 @@ canonical example where one earns its place. Do not enumerate every edge case,
 and do not stuff a persona — a paragraph of character description costs prefix
 on every turn and changes little that a clear rule would not change better.
 
-The fixed overhead is capped by test (8,000 bytes for the standing policy
-prompts). Treat the ceiling as a design constraint: when you need room, the
-right move is usually to move something out, not to raise it.
+The fixed overhead is capped by tests. Treat the ceiling as a design constraint:
+when you need room, the right move is usually to move something out, not to raise it.
 
 ### 7. Point at discovery; don't enumerate what changes
 
