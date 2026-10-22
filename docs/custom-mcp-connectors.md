@@ -16,6 +16,7 @@ and connection rules it inherits are in [`connectors.md`](connectors.md).
 
 | Path | Responsibility |
 | --- | --- |
+| `apps/api/src/lib/connector-plugin-views.ts` | Name-derived model IDs and compatibility aliases over unchanged credential identities. |
 | `packages/connectors/src/custom-mcp.ts` | The adapter: per-connection endpoint resolution, header and OAuth authentication, the tool-policy filter, and the person-facing tool inventory. |
 | `packages/connectors/src/hosted-mcp.ts` | The shared MCP transport, OAuth discovery/DCR/PKCE, and the `selectTools` narrowing hook this connector supplies. |
 | `packages/contracts/src/index.ts` | `CustomMcpConnectionConfigSchema`, `CustomMcpRequestHeadersSchema`, the two request contracts, the settings response, and the header limits. |
@@ -145,12 +146,20 @@ additional authority.
   request with `redirect: "manual"` and treats a 3xx as an answer, so a server
   cannot have Rally re-send a bearer token or a configured header to another
   host by answering with a `Location`.
-- **The configured name identifies participant activity only.** Live runs use
+- **The configured name supplies a model ID, never prompt instructions.** Custom MCP views
+  derive IDs such as `plugin_mcp_rally_engineering_3` from the configured name and
+  the credential’s allocated ordinal. Names normalize to ASCII identifier characters;
+  the existing 70-character model-ID contract bounds the slug while preserving
+  the ordinal, so duplicate, truncated, and non-ASCII-only names remain distinct.
+  The canonical connection ID, stored `model_plugin_id`, tool wire prefixes, and
+  receipts stay unchanged. Conversation and Sidekick catalogs use the same view;
+  saved Sidekick bindings accept both the named view and the stored legacy ID.
+  Live runs use
   the saved name after removing controls, bidi formatting, and line breaks while preserving
   Unicode joiners, falling back
   to `Custom MCP server` when empty. `HarnessPlugin.activityDisplayName` is
   separate from the static model-facing `displayName`, descriptions, aliases,
-  and system messages. Automation catalogs also retain the static model name.
+  and system messages. Automation catalogs also retain the static display name.
   Transcript activities carry `connectorType` independently so a custom server
   named Slack keeps the Model Context Protocol mark and a connection-specific row.
 
@@ -195,7 +204,7 @@ workspace hitting it is a conversation rather than a refusal.
 
 ```bash
 pnpm --filter @rally/connectors exec vitest run src/custom-mcp.test.ts
-pnpm --filter @rally/api exec vitest run test/custom-mcp-connection.test.ts
+pnpm --filter @rally/api exec vitest run test/custom-mcp-connection.test.ts test/connector-plugin-views.test.ts
 pnpm --filter @rally/api exec vitest run test/connector-catalog-discovery.test.ts
 pnpm --filter @rally/desktop exec vitest run src/renderer/screens/workspace-settings.test.tsx
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts \
@@ -210,6 +219,11 @@ pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts \
   server, the rollback when it refuses, the policy update, the administrator
   boundary, and the unreadable-catalog response. It stubs `globalThis.fetch`,
   because the registry builds the adapter from the environment.
+- `connector-plugin-views.test.ts` covers name-derived IDs, duplicate and truncated
+  names, identifier normalization, and legacy binding aliases. The connection
+  suite checks both assembled catalogs and stable tool prefixes; the real-workerd
+  `hosted-sidekick.test.ts` checks acceptance and principal-claim rebinding with
+  both named and legacy IDs.
 - `connector-catalog-discovery.test.ts` checks configured server names, control
   character removal, and the unnamed fallback without changing trusted prose.
 - The workerd suite carries the schema half: migration 31 rebuilds
@@ -247,12 +261,23 @@ the endpoint and the header are one decision and are captured together.
 
 ## Open questions
 
-- **Model discovery still uses generic custom MCP names.** Configured names
-  are participant metadata, not trusted catalog text. Making them searchable
-  needs a separately framed untrusted-data surface.
 - **Editing a connection is add-and-remove.** There is no route to change an
   endpoint, replace headers, or rename a server; a change means a new connection
   and deleting the old one.
+
+## Changelog
+
+### 2026-10-22 — Identify configured servers in the model catalog
+
+A run asked to use Rally Engineering loaded Cloudflare Observability instead:
+all four configured servers appeared as “Custom MCP server” with identical
+aliases, and the first server’s expired authorization was then attributed to
+Engineering. Conversation and Sidekick catalogs now derive a model ID from the
+configured name plus the stored credential ordinal. Identifier normalization
+makes the name searchable without inserting raw configuration into trusted
+prompt prose. Rewriting stored IDs or tool prefixes was rejected because saved
+bindings and historical receipts depend on them. Keep those identities stable,
+retain legacy binding aliases, and preserve the ordinal through truncation.
 
 ### 2026-09-11 — Name the server in participant activity
 

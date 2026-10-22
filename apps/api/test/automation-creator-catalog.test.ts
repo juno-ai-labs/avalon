@@ -44,6 +44,7 @@ function localDatabase(): DatabaseSync {
       id TEXT PRIMARY KEY,
       workspace_id TEXT NOT NULL,
       connector_type TEXT NOT NULL,
+      display_name TEXT NOT NULL DEFAULT 'Test connection',
       scope TEXT NOT NULL,
       owner_user_id TEXT,
       granted_scopes_json TEXT NOT NULL DEFAULT '[]',
