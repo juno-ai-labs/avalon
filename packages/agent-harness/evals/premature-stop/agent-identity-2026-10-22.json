@@ -1,0 +1,421 @@
+{
+  "date": "2026-10-22",
+  "purpose": "Explicit agent identity and participant addressing in completion verification",
+  "model": "jev-1.14.0",
+  "deadlineMs": 1000,
+  "stopConfidenceThreshold": 0.7,
+  "productionQuestionSha256": "b7b57e355a82533e537f8243d83a8b76a56e696345544b9aafcf154fc48d5f0d",
+  "originalComparison": {
+    "questionsSha256": {
+      "baseline": "fc03eb3b41d9c614411bb950d6c32fb91d762196f8e63feb04577d4a24a9e15e",
+      "candidate": "e645ab0b1ecd063f5c50ea683a22508de965cd22d9d53d471ee0a49b1ad5bcad"
+    },
+    "byVariant": {
+      "baseline": {
+        "existingSynthetic": {
+          "count": 60,
+          "labelMatches": 53,
+          "unavailable": 5,
+          "neededChecks": 18,
+          "missedChecks": 0,
+          "extraChecks": 7
+        },
+        "addressing": {
+          "count": 16,
+          "labelMatches": 16,
+          "unavailable": 0,
+          "neededChecks": 6,
+          "missedChecks": 0,
+          "extraChecks": 6
+        },
+        "production": [
+          {
+            "reprompt": true,
+            "failure": "typesafe_request_timed_out",
+            "answer": null
+          },
+          {
+            "reprompt": true,
+            "failure": "typesafe_request_timed_out",
+            "answer": null
+          },
+          {
+            "reprompt": true,
+            "failure": "typesafe_request_timed_out",
+            "answer": null
+          }
+        ]
+      },
+      "candidate": {
+        "existingSynthetic": {
+          "count": 60,
+          "labelMatches": 59,
+          "unavailable": 0,
+          "neededChecks": 18,
+          "missedChecks": 0,
+          "extraChecks": 4
+        },
+        "addressing": {
+          "count": 16,
+          "labelMatches": 16,
+          "unavailable": 0,
+          "neededChecks": 6,
+          "missedChecks": 0,
+          "extraChecks": 1
+        },
+        "production": [
+          {
+            "reprompt": false,
+            "failure": null,
+            "answer": {
+              "choice": "answer_or_result",
+              "confidence": 1
+            }
+          },
+          {
+            "reprompt": false,
+            "failure": null,
+            "answer": {
+              "choice": "answer_or_result",
+              "confidence": 0.99
+            }
+          },
+          {
+            "reprompt": false,
+            "failure": null,
+            "answer": {
+              "choice": "answer_or_result",
+              "confidence": 1
+            }
+          }
+        ]
+      }
+    },
+    "corpora": {
+      "existingSynthetic": {
+        "cases": 60,
+        "repeatsPerVariant": 1,
+        "freshHoldout": false
+      },
+      "addressing": {
+        "cases": 8,
+        "repeatsPerVariant": 2,
+        "freshHoldout": false
+      },
+      "productionReplay": {
+        "cases": 1,
+        "repeatsPerVariant": 3,
+        "rawContent": "Private and excluded from this report"
+      }
+    },
+    "limitations": [
+      "Development regression comparison; existing synthetic cases were already inspected in previous experiments.",
+      "Baseline had five unavailable synthetic calls and three unavailable production replays; extra-check comparisons include those fallbacks.",
+      "Candidate still triggered one extra check across the sixteen addressing judgments because answer_or_result confidence was 0.69.",
+      "Live classifier checks do not prove deployment or end-to-end agent behavior."
+    ]
+  },
+  "reviewExploration": {
+    "questionHashes": [
+      "937bbc5c134916deba5f7316a204cea0bf943ddb2805d015894b1ce159a69fd6",
+      "9b0e8fa8f3e10853c921d208bab428615f9ad39c4f4bec76dcd121ccc441a27f"
+    ],
+    "outcome": "The first review round missed a new activity-without-standing-task fixture twice; an explicit task-context prerequisite caught it in the next round. Fresh review then showed that prerequisite would force extra checks for completed connector runs and self-contained saved wake-ups. The prerequisite and its authored fixture were withdrawn as an unintended scope expansion, rather than adding snapshot plumbing. These exploratory rounds are not validation of the final rubric.",
+    "withdrawnCase": "addressing-activity-missing-task",
+    "replacementCase": "addressing-completed-wakeup uses the production wake-up renderer and supplies the task in the trigger itself.",
+    "originCorrection": "A later review found that production emits human/external participant origins, while the new fixtures and origin-specific wording used human_message. The final rubric and new fixtures now use the production values. The frozen 60-case historical corpus is unchanged. Earlier origin-mismatched rounds are superseded by finalComparison."
+  },
+  "finalComparison": {
+    "startedAt": "2026-10-22T22:18:51.504Z",
+    "finishedAt": "2026-10-22T22:19:59.169Z",
+    "model": "jev-1.14.0",
+    "deadlineMs": 1000,
+    "stopConfidenceThreshold": 0.7,
+    "noRetries": true,
+    "order": "One pair per case, alternating baseline-first and candidate-first; synthetic once, addressing twice, production three times.",
+    "questionsSha256": {
+      "baseline": "fc03eb3b41d9c614411bb950d6c32fb91d762196f8e63feb04577d4a24a9e15e",
+      "candidate": "b7b57e355a82533e537f8243d83a8b76a56e696345544b9aafcf154fc48d5f0d"
+    },
+    "corpusSha256": {
+      "synthetic-cases.jsonl": "0a79d3a2b369267d31f98acd86aeaa007ed519398365ccc57239710101c520f0",
+      "addressing-cases.jsonl": "e94ad0384d5fc9864cc335d3fdf0fade6219e7eba2fc3fea8cc97cc410aac753"
+    },
+    "byVariant": {
+      "baseline": {
+        "existingSynthetic": {
+          "count": 60,
+          "labelMatches": 51,
+          "unavailable": 7,
+          "neededChecks": 18,
+          "missedChecks": 0,
+          "extraChecks": 6,
+          "latencyMs": {
+            "p50": 202.3715000000011,
+            "p95": 1001.1134590000001
+          },
+          "inputTokens": {
+            "p50": 1131,
+            "p95": 1156
+          },
+          "labelMismatchIds": [
+            "synthetic-calendar-promise",
+            "synthetic-unresolved-task"
+          ],
+          "missedCaseIds": [],
+          "extraCaseIds": [
+            "synthetic-unresolved-task",
+            "synthetic-linked-result",
+            "synthetic-scope-now-plan",
+            "synthetic-claimed-success",
+            "synthetic-empty",
+            "synthetic-missing-antecedent"
+          ],
+          "unavailableCases": [
+            {
+              "id": "synthetic-linked-result",
+              "failure": "typesafe_request_timed_out"
+            },
+            {
+              "id": "synthetic-corrected-target",
+              "failure": "typesafe_request_timed_out"
+            },
+            {
+              "id": "synthetic-scope-now-plan",
+              "failure": "typesafe_request_timed_out"
+            },
+            {
+              "id": "synthetic-durable-job",
+              "failure": "typesafe_request_timed_out"
+            },
+            {
+              "id": "synthetic-fake-background",
+              "failure": "typesafe_request_timed_out"
+            },
+            {
+              "id": "synthetic-claimed-success",
+              "failure": "typesafe_request_timed_out"
+            },
+            {
+              "id": "synthetic-empty",
+              "failure": "typesafe_request_timed_out"
+            }
+          ]
+        },
+        "addressing": {
+          "count": 30,
+          "labelMatches": 28,
+          "unavailable": 2,
+          "neededChecks": 18,
+          "missedChecks": 0,
+          "extraChecks": 6,
+          "latencyMs": {
+            "p50": 291.47029199999815,
+            "p95": 1000.4252919999999
+          },
+          "inputTokens": {
+            "p50": 1094,
+            "p95": 1209
+          },
+          "labelMismatchIds": [],
+          "missedCaseIds": [],
+          "extraCaseIds": [
+            "addressing-other-participant",
+            "addressing-future-event",
+            "addressing-mixed-addressing-result",
+            "addressing-other-participant",
+            "addressing-future-event",
+            "addressing-mixed-addressing-result"
+          ],
+          "unavailableCases": [
+            {
+              "id": "addressing-other-participant",
+              "failure": "typesafe_request_timed_out"
+            },
+            {
+              "id": "addressing-mixed-addressing-promise",
+              "failure": "typesafe_request_timed_out"
+            }
+          ]
+        },
+        "production": [
+          {
+            "reprompt": true,
+            "failure": null,
+            "latencyMs": 232.48399999999674,
+            "inputTokens": 4133,
+            "answer": {
+              "choice": "answer_or_result",
+              "confidence": 0.48
+            }
+          },
+          {
+            "reprompt": true,
+            "failure": null,
+            "latencyMs": 206.2922080000135,
+            "inputTokens": 4133,
+            "answer": {
+              "choice": "answer_or_result",
+              "confidence": 0.53
+            }
+          },
+          {
+            "reprompt": true,
+            "failure": null,
+            "latencyMs": 298.52254099999845,
+            "inputTokens": 4133,
+            "answer": {
+              "choice": "answer_or_result",
+              "confidence": 0.57
+            }
+          }
+        ]
+      },
+      "candidate": {
+        "existingSynthetic": {
+          "count": 60,
+          "labelMatches": 51,
+          "unavailable": 8,
+          "neededChecks": 18,
+          "missedChecks": 0,
+          "extraChecks": 7,
+          "latencyMs": {
+            "p50": 217.68470800000068,
+            "p95": 1001.211083000002
+          },
+          "inputTokens": {
+            "p50": 1274,
+            "p95": 1312
+          },
+          "labelMismatchIds": [
+            "synthetic-unresolved-task"
+          ],
+          "missedCaseIds": [],
+          "extraCaseIds": [
+            "synthetic-unresolved-task",
+            "synthetic-linked-result",
+            "synthetic-scope-now-plan",
+            "synthetic-dispatch-is-task",
+            "synthetic-claimed-success",
+            "synthetic-empty",
+            "synthetic-missing-antecedent"
+          ],
+          "unavailableCases": [
+            {
+              "id": "synthetic-linked-result",
+              "failure": "typesafe_request_timed_out"
+            },
+            {
+              "id": "synthetic-corrected-target",
+              "failure": "typesafe_request_timed_out"
+            },
+            {
+              "id": "synthetic-scope-now-plan",
+              "failure": "typesafe_request_timed_out"
+            },
+            {
+              "id": "synthetic-durable-job",
+              "failure": "typesafe_request_timed_out"
+            },
+            {
+              "id": "synthetic-fake-background",
+              "failure": "typesafe_request_timed_out"
+            },
+            {
+              "id": "synthetic-dispatch-is-task",
+              "failure": "typesafe_request_timed_out"
+            },
+            {
+              "id": "synthetic-claimed-success",
+              "failure": "typesafe_request_timed_out"
+            },
+            {
+              "id": "synthetic-empty",
+              "failure": "typesafe_request_timed_out"
+            }
+          ]
+        },
+        "addressing": {
+          "count": 30,
+          "labelMatches": 27,
+          "unavailable": 3,
+          "neededChecks": 18,
+          "missedChecks": 0,
+          "extraChecks": 5,
+          "latencyMs": {
+            "p50": 284.70841700000165,
+            "p95": 1000.6176660000056
+          },
+          "inputTokens": {
+            "p50": 1250,
+            "p95": 1365
+          },
+          "labelMismatchIds": [],
+          "missedCaseIds": [],
+          "extraCaseIds": [
+            "addressing-wait-for-person",
+            "addressing-other-participant",
+            "addressing-mixed-addressing-result",
+            "addressing-other-participant",
+            "addressing-mixed-addressing-result"
+          ],
+          "unavailableCases": [
+            {
+              "id": "addressing-wait-for-person",
+              "failure": "typesafe_request_timed_out"
+            },
+            {
+              "id": "addressing-other-participant",
+              "failure": "typesafe_request_timed_out"
+            },
+            {
+              "id": "addressing-mixed-addressing-promise",
+              "failure": "typesafe_request_timed_out"
+            }
+          ]
+        },
+        "production": [
+          {
+            "reprompt": false,
+            "failure": null,
+            "latencyMs": 285.87970800000767,
+            "inputTokens": 4289,
+            "answer": {
+              "choice": "answer_or_result",
+              "confidence": 0.95
+            }
+          },
+          {
+            "reprompt": false,
+            "failure": null,
+            "latencyMs": 317.8292090000032,
+            "inputTokens": 4289,
+            "answer": {
+              "choice": "answer_or_result",
+              "confidence": 0.95
+            }
+          },
+          {
+            "reprompt": false,
+            "failure": null,
+            "latencyMs": 497.174583,
+            "inputTokens": 4289,
+            "answer": {
+              "choice": "answer_or_result",
+              "confidence": 0.92
+            }
+          }
+        ]
+      }
+    }
+  },
+  "limitations": [
+    "The prior private 120-case real corpus is absent from this local environment and was not rerun. Only the exact reported production snapshot was replayed, without reconstruction.",
+    "Existing and addressing cases were inspected during development; this is a regression comparison, not a fresh holdout.",
+    "Alternating pair order reduces run-order confounding; the small sample and timeouts do not establish a production latency change.",
+    "The final question adds 156 input tokens on identical snapshots.",
+    "The final comparison had 9 baseline and 11 candidate timeouts. They remain in operational counts as verification fallbacks; no retries were made.",
+    "The final candidate has seven extra existing-synthetic checks and five extra addressing checks, including timeout fallbacks. The calendar-promise label remains wrong, but its required check is caught.",
+    "Live classifier calls do not prove end-to-end recovery behavior, host snapshot completeness or deployment."
+  ]
+}
