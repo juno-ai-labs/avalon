@@ -360,6 +360,19 @@ describe("a conversation import run", () => {
       // The profile's skills, offered by Bind's own skill tools.
       "load_skill", "read_skill_resource",
     ]));
+    // Inspect every actual import-model request: a profile replaces the default
+    // catalog, so general advice about unavailable browser access never leaks in.
+    const importCalls = provider.calls.filter((call) => call.toolNames.includes("browser_js"));
+    expect(importCalls.length).toBeGreaterThan(0);
+    for (const call of importCalls) {
+      const prompt = call.messages.filter((message) => message.role === "system")
+        .map((message) => String(message.content)).join("\n");
+      const catalog = /# Skills\n([\s\S]*?)(?:\n# |$)/u.exec(prompt)?.[1] ?? "";
+      expect([...catalog.matchAll(/^- ([a-z0-9-]+)(?::|$)/gmu)].map((match) => match[1]).sort()).toEqual([
+        "reading-an-ai-chat", "reading-chatgpt-conversations", "reading-claude-conversations",
+      ]);
+      expect(prompt).not.toContain("using-the-local-inapp-browser");
+    }
     expect(JSON.parse(String(provider.calls[1]!.messages.at(-1)?.content))).toEqual({ success: true, data: { output: ['{"turns":2}'] } });
     // Finishing returns to the model, whose reply is the run's final turn, so the run completes.
     await expect.poll(() => runInDurableObject(child(run.workstreamId, run.substreamId), (_instance, state) =>
