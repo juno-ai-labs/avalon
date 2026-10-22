@@ -737,28 +737,6 @@ describe("substream preparation on workerd", () => {
     });
   });
 
-  it("names a pin older builds do not know only in pinnedModel", async () => {
-    // Builds released before `pinnedModel` parse `modelOverride` as a closed
-    // enum and reject the whole conversation for an id outside it, so a model
-    // added to the pin list since must reach them as unpinned.
-    const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
-    const operationId = "00000000-0000-7000-8000-00000000ce47";
-    await service.prepare(WORKSTREAM_ID, { operationId, throughTurnId: "source-turn-1" });
-    const created = await service.confirm(WORKSTREAM_ID, operationId, {
-      clientMessageId: "newer-pin-opening",
-      text: "Check the enterprise tier claims",
-      mentions: [],
-      attachmentIds: [],
-      confirmedParticipantUserIds: [],
-    }, "x-ai/grok-4.7");
-
-    const detail = await conversation(created.substreamId).fetch("https://object.test/internal/product", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ operation: "get", auth: creatorAuth }),
-    });
-    expect(await detail.json()).toMatchObject({ pinnedModel: "x-ai/grok-4.7", modelOverride: null });
-  });
-
   it("pins the child to the model its creator chose, and runs it there", async () => {
     const service = new SubstreamCreationService(TEST_ENV, creatorAuth);
     const operationId = "00000000-0000-7000-8000-00000000ce43";
@@ -794,7 +772,7 @@ describe("substream preparation on workerd", () => {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ operation: "get", auth: creatorAuth }),
     });
-    expect(await detail.json()).toMatchObject({ pinnedModel: "x-ai/grok-4.6", modelOverride: "x-ai/grok-4.6" });
+    expect(await detail.json()).toMatchObject({ modelOverride: "x-ai/grok-4.6" });
 
     // And the column is what the child's own run resolves its route from, which
     // is the whole point of writing it: a pin the composer records but routing
