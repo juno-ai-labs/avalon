@@ -79,8 +79,8 @@ export function useEmbeddedBrowserPlacement(pageRef: RefObject<HTMLElement | nul
       const occluded = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="menu"]')]
         .some((overlay) => {
           if (overlay.contains(page) || overlay.getAttribute('data-state') === 'closed') return false;
-          // Dialogs own the whole window, including their scrim. A menu in
-          // the conversation pane does not cover the browser beside it.
+          // Preserve the existing window-wide treatment of dialogs. A menu
+          // in the conversation pane does not cover the browser beside it.
           if (overlay.getAttribute('role') !== 'menu') return true;
           const menu = (overlay.closest('[data-radix-popper-content-wrapper]') ?? overlay).getBoundingClientRect();
           return menu.width > 0 && menu.height > 0
@@ -97,7 +97,14 @@ export function useEmbeddedBrowserPlacement(pageRef: RefObject<HTMLElement | nul
     };
     const sizes = new ResizeObserver(update);
     sizes.observe(page);
-    const overlays = new MutationObserver(update);
+    const overlays = new MutationObserver((mutations) => {
+      // Dictation and virtualized transcript rows also change inline styles.
+      // Only menu positioning and sizing need placement checks here.
+      if (mutations.some((mutation) => mutation.attributeName !== 'style'
+        || (mutation.target instanceof Element
+          && (mutation.target.matches('[data-radix-popper-content-wrapper]')
+            || mutation.target.closest('[role="menu"]') !== null)))) update();
+    });
     overlays.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-state', 'role', 'style'] });
     window.addEventListener('resize', update);
     update();
