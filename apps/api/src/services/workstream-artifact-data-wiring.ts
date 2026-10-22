@@ -11,7 +11,7 @@
  *
  * See `docs/live-web-artifacts.md`.
  */
-import { asArtifactId, type ExecutionPrincipal } from "@rally/contracts";
+import { asArtifactId, IdSchema, type ExecutionPrincipal } from "@rally/contracts";
 
 import { artifactHostDOName } from "../durable-objects/names";
 import type { Env } from "../env";
@@ -38,9 +38,10 @@ export function createArtifactDataToolContext(
     async resolveArtifact(reference: string): Promise<ResolvedArtifact | null> {
       // Resolve the supplied ID or alias, then use the same point authorization
       // as every resource reader. A Sidekick need not have this site attached.
-      const candidate = await env.DB.prepare(
-        "SELECT id FROM resources WHERE workspace_id = ? AND (id = ? OR slug = ?) AND resource_type = 'generated_site'",
-      ).bind(input.workspaceId, reference, reference).first<{ id: string }>();
+      const parsedId = IdSchema.safeParse(reference);
+      const candidate = parsedId.success ? { id: parsedId.data } : await env.DB.prepare(
+        "SELECT id FROM resources WHERE workspace_id = ? AND slug = ? AND resource_type = 'generated_site'",
+      ).bind(input.workspaceId, reference).first<{ id: string }>();
       if (!candidate) return null;
       const [match] = await loadVisibleWorkstreamResourcesByIds(
         env.DB,
@@ -52,11 +53,11 @@ export function createArtifactDataToolContext(
           resourceIds: [candidate.id],
         },
       );
-      if (!match) return null;
+      if (!match || match.resource_type !== "generated_site") return null;
       // Read from the registry rather than the resource row: what an artifact
       // *is* — its id, its mode, whether it keeps data — lives there, and the
       // resource row deliberately records only what the path published as.
-      const row = await env.DB.prepare(
+      const row = match.artifact !== undefined ? match.artifact : await env.DB.prepare(
         `SELECT artifact_id, mode, stateful FROM artifact_registry
           WHERE workspace_id = ? AND resource_id = ?`,
       ).bind(input.workspaceId, match.id).first<{
