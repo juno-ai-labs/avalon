@@ -169,15 +169,12 @@ additional authority.
   request with `redirect: "manual"` and treats a 3xx as an answer, so a server
   cannot have Rally re-send a bearer token or a configured header to another
   host by answering with a `Location`.
-- **The configured name supplies a model ID, never prompt instructions.** Custom MCP views
-  derive IDs such as `plugin_mcp_rally_engineering_3` from the configured name and
-  the credential’s allocated ordinal. Names normalize to ASCII identifier characters;
-  the existing 70-character model-ID contract bounds the slug while preserving
-  the ordinal, so duplicate, truncated, and non-ASCII-only names remain distinct.
-  The canonical connection ID, stored `model_plugin_id`, tool wire prefixes, and
-  receipts stay unchanged. Conversation and Sidekick catalogs use the same view;
-  saved Sidekick bindings accept both the named view and the stored legacy ID.
-  Live runs use
+- **The configured name supplies a model ID, never prompt instructions.** Custom
+  MCP IDs combine the name and allocated ordinal, such as
+  `plugin_mcp_rally_engineering_3`. Stored IDs and tool wire prefixes stay
+  unchanged; saved bindings accept both named and legacy IDs. An authoring read
+  projects legacy recommendations into the current catalog IDs before editing.
+- **Participant activity uses the configured name.** Live runs use
   the saved name after removing controls, bidi formatting, and line breaks while preserving
   Unicode joiners, falling back
   to `Custom MCP server` when empty. `HarnessPlugin.activityDisplayName` is
@@ -244,7 +241,8 @@ pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts \
   because the registry builds the adapter from the environment.
 - `connector-plugin-views.test.ts` covers name-derived IDs, duplicate and truncated
   names, identifier normalization, and legacy binding aliases. The connection
-  suite checks both assembled catalogs and stable tool prefixes; the real-workerd
+  suite checks both assembled catalogs, stable tool prefixes and a ready edit of a
+  saved legacy recommendation; the real-workerd
   `hosted-sidekick.test.ts` checks acceptance and principal-claim rebinding with
   both named and legacy IDs.
 - `connector-catalog-discovery.test.ts` checks configured server names, control
@@ -301,6 +299,8 @@ makes the name searchable without inserting raw configuration into trusted
 prompt prose. Rewriting stored IDs or tool prefixes was rejected because saved
 bindings and historical receipts depend on them. Keep those identities stable,
 retain legacy binding aliases, and preserve the ordinal through truncation.
+Authoring reads translate saved legacy recommendations into current catalog IDs,
+so ready edits pass the same load-and-inspect checks as new definitions.
 Conversation and Sidekick searches share punctuation normalization, so a
 multiword name also matches its underscore-separated identifier.
 The same change uses initialization descriptions or an extractive tool fallback

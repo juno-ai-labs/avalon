@@ -822,6 +822,7 @@ describe("a hosted Sidekick", () => {
   it.each(["plugin_mcp_rally_engineering_3", "plugin_custom_mcp_3"])(
     "binds and reclaims a named MCP connection through %s",
     async (pluginId) => {
+      const customMcpConnectionId = "00000000-0000-7000-8000-00000000ad42";
       await runInDurableObject(workspaceStub(), (_instance, state) => {
         state.storage.sql.exec(
           `INSERT INTO connector_connections
@@ -829,7 +830,7 @@ describe("a hosted Sidekick", () => {
              status, cursor_json, config_json, created_at, updated_at, model_plugin_id)
            VALUES (?, ?, 'custom_mcp', 'workspace', 'Rally Engineering', '["custom_mcp.tools"]',
              'healthy', '{}', '{}', ?, ?, 'plugin_custom_mcp_3')`,
-          SLACK_CONNECTION_ID, WORKSPACE_ID, NOW, NOW,
+          customMcpConnectionId, WORKSPACE_ID, NOW, NOW,
         );
       });
       await createDraft();
@@ -837,7 +838,7 @@ describe("a hosted Sidekick", () => {
         recommendedPlugins: [{ pluginId, recommendedTools: [], reason: "Inspect Rally" }],
       });
       expect(await apply()).toMatchObject({
-        lifecycle: "active", connectorBindings: { [pluginId]: SLACK_CONNECTION_ID },
+        lifecycle: "active", connectorBindings: { [pluginId]: customMcpConnectionId },
       });
       // A stale binding must be repaired from the same name-aware directory
       // used when accepting a new definition.
@@ -848,7 +849,7 @@ describe("a hosted Sidekick", () => {
       expect(await workspaceStub().sidekickClaimExecutionPrincipal({ ...addressed(), actor: actor() }))
         .toMatchObject({ reboundPluginIds: [pluginId], unboundProviders: [] });
       expect(JSON.parse((await automationRow()).connector_bindings_json!))
-        .toEqual({ [pluginId]: SLACK_CONNECTION_ID });
+        .toEqual({ [pluginId]: customMcpConnectionId });
     },
   );
 
