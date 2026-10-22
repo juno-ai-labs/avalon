@@ -201,6 +201,7 @@ describe("plugin wire names", () => {
       "search_resource",
       "send_message",
       "show_connector_connection",
+      "sidekick_attach_resource",
       "sidekicks_list",
       "start_agent",
       "stop_agent",

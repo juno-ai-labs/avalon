@@ -75,7 +75,7 @@ describe("the agents plugin", () => {
     sidekicks: async () => ({ sidekicks: [{ sidekickId, name: "Monitor", description: "", scope: "workstream" as const,
       ownedByThisWorkstream: true, isCurrentSidekick: false, canEdit: true, status: "draft" as const, nextRunAt: null, lastRunAt: null, agentId: `automation/${sidekickId}/0` as never }] }),
     send: async (input) => ({ messageId: sidekickId, next: "agentId" in input ? input.agentId : "" }),
-    findSidekick: unused, createSidekick: unused, start: unused, list: unused, stop: unused,
+    findSidekick: unused, createSidekick: unused, attachSidekickResource: unused, start: unused, list: unused, stop: unused,
   } satisfies AgentCommunicationTools;
   const plugin = createAgentCommunicationPlugin(service, "");
   const tool = (name: string) => plugin.tools.find((candidate) => candidate.definition.name === name)!;
