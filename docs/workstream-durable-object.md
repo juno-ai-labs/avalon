@@ -284,11 +284,15 @@ Organization members bypass confirmation in Organization-visible conversations;
 guests without participation and people joining personal conversations require
 confirmation. Rejected mention ranges never seat anyone.
 
-Ordinary follow-up admission reads the active participant count after admitting
-the mentioned people. A message that adds a second person therefore reaches
-addressing and continuation classification instead of the solo-conversation
-automatic invocation path. The pre-admission recipient count is only used to
-report how many people were added.
+Ordinary follow-up admission reads the active participant count after preparing
+participant access. Parent-owned admission has already projected the mentioned
+people into the roster. Locally owned admission (including Sidekick conversations)
+seats them atomically with the message, so the invocation decision also counts
+accepted recipients and the author who are still unseated after preparation.
+Already projected seats are not counted twice. A message that adds a second
+person therefore reaches addressing and continuation classification instead of
+the solo-conversation automatic invocation path. The pre-admission recipient
+count is only used to report how many people were added.
 
 Message admissions carry `participationReason: "message"` through grant receipts
 and participant projections. They leave earlier history read and emit only the
@@ -1940,9 +1944,9 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 
 ### 2026-10-22 — Classify handoffs against the admitted audience
 
-**What changed:** Follow-up messages read the participant count after mentioned
-people have been admitted, before deciding whether the solo-conversation
-invocation shortcut applies.
+**What changed:** Follow-up messages read the participant count after participant
+access preparation and include accepted local recipients still awaiting message
+commit, before deciding whether the solo-conversation invocation shortcut applies.
 
 **Why:** Katherine's handoff to Anderson, explicitly telling Rally not to
 respond, started Rally because admission reused the old one-person count even
@@ -1952,9 +1956,12 @@ after Anderson joined. Addressing never received that handoff.
 in #1364 to align participant-storage paths, made those paths consistently
 bypass the classifier for a message addressed to a newly added person.
 
-**Consequences:** Participant admission completes before the invocation decision.
-Opening-message classification and the attachment, annotation and forced-run
-paths retain their existing rules; this change does not redefine those gates.
+**Consequences:** Parent-owned participant admission completes before the
+invocation decision. Locally owned seats retain their atomic message commit;
+the decision includes those accepted recipients without an extra RPC or await.
+Ordinary messages with no new participants add no queries. Opening-message
+classification and the attachment, annotation and forced-run paths retain their
+existing rules; this change does not redefine those gates.
 
 ### 2026-10-21 — Preserve the opening feed when live authority replaces its preview
 

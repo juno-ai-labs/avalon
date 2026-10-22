@@ -5019,10 +5019,12 @@ export class WorkstreamObjectProductService {
     const connectorMentions = prepared.mentions
       .flatMap((mention) => mention.type === "connector" && mention.connectorType
         ? [mention.connectorType] : []);
-    // Admission has seated mentioned people: a handoff is no longer a solo chat.
+    // Parent-owned admission has projected the roster; locally owned recipients
+    // join atomically with the message below. Count that accepted audience too,
+    // rechecking after preparation so projected seats are never counted twice.
     const participantCount = Number(first(this.storage.sql.exec<{ count: number }>(
       `SELECT COUNT(*) AS count FROM participants WHERE status = 'active'`,
-    ))?.count ?? 0);
+    ))?.count ?? 0) + missingParticipantUserIds.filter((userId) => !this.isParticipant(userId)).length;
     let shouldInvoke = Boolean(input.forcedHarnessOrigin) || participantCount <= 1 || attachmentRows.length > 0 || Boolean(input.annotations?.some((a)=>a.comment.trim()));
     if (input.merge) {
       // A merge is a result posted for the thread's readers, never a request

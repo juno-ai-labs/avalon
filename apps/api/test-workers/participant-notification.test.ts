@@ -281,12 +281,12 @@ async function openWorkstream(
 async function provisionWorkstream(
   stub: DurableObjectStub<SubstreamAgent>,
   workstreamId = WORKSTREAM_ID,
-  options: { title?: string; scope?: "personal" | "workspace"; substreamId?: string } = {},
+  options: { title?: string; scope?: "personal" | "workspace"; substreamId?: string; parentKind?: "workstream" | "automation" } = {},
 ): Promise<void> {
   await parkEffectQueue(stub);
   expect((await stub.bootstrapRuntime({
     workspaceId: WORKSPACE_ID,
-    parentKind: "workstream",
+    parentKind: options.parentKind ?? "workstream",
     parentId: workstreamId,
     substreamId: asSubstreamId(options.substreamId ?? "0"),
     generation: 1,
@@ -1095,37 +1095,48 @@ describe("naming somebody when the work stream is created", () => {
 });
 
 describe("mentioning a nonparticipant on an existing conversation", () => {
-  it.each(["personal", "workspace"] as const)("classifies the Anderson handoff after admitting him to a solo %s conversation", async (scope) => {
+  it.each([
+    { scope: "personal", parentKind: "workstream" },
+    { scope: "workspace", parentKind: "workstream" },
+    { scope: "personal", parentKind: "automation" },
+    { scope: "workspace", parentKind: "automation" },
+  ] as const)("classifies the Anderson handoff in a solo $scope $parentKind conversation", async ({ scope, parentKind }) => {
     const stub = agentStub(CONFIRMED_MENTION_ID);
     await env.DB.batch([
       env.DB.prepare("UPDATE users SET name = 'Kendall Brooks' WHERE id = ?").bind(CREATOR_ID),
       env.DB.prepare("UPDATE users SET name = 'Anderson Coop' WHERE id = ?").bind(INVITEE_ID),
     ]);
-    await provisionWorkstream(stub, CONFIRMED_MENTION_ID, { title: "Email Export Business Case", scope });
-    await sendAndSettle(stub, {
-      text: "Business case and data are ready.",
-      clientMessageId: "handoff-history",
-      seed: { packVersion: "test", actionId: "handoff-history", assistant: null },
+    await provisionWorkstream(stub, CONFIRMED_MENTION_ID, { title: "Email Export Business Case", scope, parentKind });
+    const history = await product(stub, {
+      operation: "create_message", parentKind, auth: AUTH,
+      input: {
+        text: "Business case and data are ready.", clientMessageId: "handoff-history",
+        mentions: [], confirmedParticipantUserIds: [], attachmentIds: [],
+        seed: { packVersion: "test", actionId: "handoff-history", assistant: null },
+      },
     });
-    await deliveredEffects(stub, CONFIRMED_MENTION_ID);
+    expect(history.status, JSON.stringify(history.body)).toBe(200);
+    if (parentKind === "workstream") await deliveredEffects(stub, CONFIRMED_MENTION_ID);
     const mention = "@Anderson Coop";
     const text = `${mention} business case and data above. can you take it from here and see if there is anything i missed? @Rally don't respond`;
-
+    const addressingRequests: { state: unknown; participants: string[] }[] = [];
+    let restoreProvider: () => void = () => {};
+    let restoreEnv: () => void = () => {};
     await runInDurableObject(stub, async (instance, state) => {
       const service = (instance as unknown as { product: WorkstreamObjectProductService }).product;
-      expect(await service.ensureParticipantAuthority(CREATOR_ID)).toBe(true);
+      if (parentKind === "workstream") expect(await service.ensureParticipantAuthority(CREATOR_ID)).toBe(true);
       const originalEnv = service["env"];
       Reflect.set(service, "env", new Proxy(originalEnv, {
         get: (current, property, receiver) => property === "TYPESAFE_API_KEY"
           ? "handoff-classifier-test-key"
           : Reflect.get(current, property, receiver),
       }));
+      restoreEnv = () => Reflect.set(service, "env", originalEnv);
       expect(state.storage.sql.exec<{ count: number }>(
         "SELECT COUNT(*) AS count FROM participants WHERE status = 'active'",
       ).one().count).toBe(1);
-      const addressingRequests: { state: unknown; participants: string[] }[] = [];
-      // Only the external classifier is scripted; admission, grants, roster,
-      // transcript and invocation decisions use their real workerd storage.
+      // Only the external classifier is scripted; message admission and run
+      // activation enter through the same binding used in production.
       const provider = vi.spyOn(globalThis, "fetch").mockImplementation(async (_request, init) => {
         const body = z.object({
           questions: z.record(z.string(), z.unknown()),
@@ -1151,32 +1162,42 @@ describe("mentioning a nonparticipant on an existing conversation", () => {
         }
         throw new Error("unexpected_handoff_classifier_request");
       });
-      try {
-        const sent = await service.createMessage(AUTH, {
+      restoreProvider = () => provider.mockRestore();
+    });
+    try {
+      const sent = await product(stub, {
+        operation: "create_message", parentKind, auth: AUTH,
+        input: {
           text, clientMessageId: "anderson-handoff", attachmentIds: [],
           mentions: [{ type: "person", userId: INVITEE_ID, connectorType: null, startOffset: 0, endOffset: mention.length }],
           confirmedParticipantUserIds: scope === "personal" ? [INVITEE_ID] : [],
-        });
+        },
+      });
+      expect(sent.status, JSON.stringify(sent.body)).toBe(200);
+      expect(sent.body.deliveryState).toBe("canonical");
+      expect(addressingRequests).toEqual([{
+        state: expect.objectContaining({
+          current_message: expect.objectContaining({ text, mentioned_people: ["Anderson Coop"] }),
+        }),
+        // Sidekick recipients commit atomically with the message; parent-owned
+        // recipients have already been projected before classification.
+        participants: parentKind === "workstream" ? [CREATOR_ID, INVITEE_ID] : [CREATOR_ID],
+      }]);
+      const turnId = z.object({ turn: z.object({ turnId: z.string() }) }).parse(sent.body).turn.turnId;
+      await runInDurableObject(stub, (_instance, state) => {
         expect(state.storage.sql.exec<{ user_id: string }>(
           "SELECT user_id FROM participants WHERE status = 'active' ORDER BY user_id",
         ).toArray().map((row) => row.user_id)).toEqual([CREATOR_ID, INVITEE_ID]);
-        expect(addressingRequests).toEqual([{
-          state: expect.objectContaining({
-            current_message: expect.objectContaining({ text, mentioned_people: ["Anderson Coop"] }),
-          }),
-          participants: [CREATOR_ID, INVITEE_ID],
-        }]);
-        expect(sent.deliveryState).toBe("canonical");
         expect(state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM runs").one().count).toBe(0);
         expect(state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM pending_loop_inputs").one().count).toBe(0);
         expect(state.storage.sql.exec<{ target_user_id: string }>(
-          "SELECT target_user_id FROM participant_transcript_mentions WHERE turn_id = ?", sent.turn.turnId,
+          "SELECT target_user_id FROM participant_transcript_mentions WHERE turn_id = ?", turnId,
         ).one().target_user_id).toBe(INVITEE_ID);
-      } finally {
-        provider.mockRestore();
-        Reflect.set(service, "env", originalEnv);
-      }
-    });
+      });
+    } finally {
+      restoreProvider();
+      await runInDurableObject(stub, () => restoreEnv());
+    }
   });
 
   it.each([["queued", false], ["direct", false], ["queued", true], ["direct", true]] as const)("seats a workspace-visible mention recipient without confirmation (%s, transferred=%s)", async (mode, transferred) => {
