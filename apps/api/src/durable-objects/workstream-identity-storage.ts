@@ -1,4 +1,3 @@
-import { ParticipantAuthorityTransferStorage } from "./participant-authority-transfer";
 import type { SqlStorageCursor, SqlStorageValue } from "@cloudflare/workers-types";
 import {
   type SpaceColorKey,
@@ -422,66 +421,15 @@ export class WorkstreamIdentityStorage {
     reason: string;
     now: number;
   }): { outcome: ParticipantAdmission } {
+    if (this.identity()?.parent_kind !== "automation") throw new Error("channel_participant_grant_required");
     return this.storage.transactionSync(() => ({ outcome: this.seat(input).outcome }));
-  }
-
-  /**
-   * Seat a whole audience, all or none.
-   *
-   * The caller that needs this is a connector's audience reconciliation, which
-   * publishes a `participant_joined` effect for everybody this call newly
-   * seated. Admitting the audience one operation at a time makes that
-   * unrecoverable: a call that seats three of five and then throws leaves the
-   * three seated, and the retry — which recomputes "newly admitted" against a
-   * roster that now contains them — publishes nothing for any of the three.
-   * Their admission is lost with no row anywhere recording that it was not
-   * announced. The routed batch this replaced could not fail that way, because
-   * it was one statement set against one work stream.
-   *
-   * `addedByUserId` is null when nobody else is credited, and each member is
-   * then recorded as having seated themselves; that is the arriving-member case
-   * and it is per-user, which is why it is resolved here rather than by the
-   * caller repeating it.
-   *
-   * The admitted rows come back rather than being read again. The second read
-   * was not just a round trip: between the writes and the read, a removal could
-   * land, and the audience would publish a joining for somebody no longer on
-   * the work stream — or drop one who is.
-   */
-  admitParticipants(input: {
-    userIds: readonly string[];
-    addedByUserId: string | null;
-    reason: string;
-    now: number;
-  }): { userId: string; outcome: ParticipantAdmission; participationReason: string; addedAt: number }[] | null {
-    return this.storage.transactionSync(() => {
-      // Report the handoff in the existing admission RPC. Ordinary connector
-      // turns must not resolve a parent just to discover the local writer.
-      if (new ParticipantAuthorityTransferStorage(this.storage).currentTransferId() !== null) return null;
-      return input.userIds.map((userId) => {
-        const seated = this.seat({
-          userId,
-          addedByUserId: input.addedByUserId ?? userId,
-          reason: input.reason,
-          now: input.now,
-        });
-        return {
-          userId,
-          outcome: seated.outcome,
-          participationReason: seated.participationReason,
-          addedAt: seated.addedAt,
-        };
-      });
-    });
   }
 
   /**
    * One seating, without a transaction of its own.
    *
-   * Both admission entry points and `adoptCreator` share it, so the branch and
-   * the re-admission resets are written once. Every caller already holds a
-   * transaction, and the fields it returns are the ones it just wrote — which
-   * is why the plural form needs no read after its writes.
+   * Used only for parent-authorized Sidekick seating. Channel participation
+   * is written through grants, including trusted connector audiences.
    */
   private seat(input: {
     userId: string;
@@ -534,66 +482,26 @@ export class WorkstreamIdentityStorage {
   }
 
   /**
-   * Seat somebody, and make them the creator if the seat is open.
-   *
-   * A work stream started from a connector conversation has no Avalon creator
-   * until somebody in that conversation is identified. The seat is open when
-   * nobody holds it, or when the holder is the guess this caller is now
-   * correcting — a verified account link beats an inference from an email
-   * address, and only then.
-   *
-   * The demotion of the previous holder is the fourth statement of the routed
-   * batch, and the reason it was a batch: the promotion and the demotion are
-   * one fact about who this work stream belongs to, and a work stream with two
-   * creators or none is what a partial application leaves behind.
-   *
-   * After participant handoff this method changes attribution only. The caller
-   * admits through the parent grant ledger; source participant writes stay fenced.
+   * Correct connector creator attribution without independently granting access.
+   * A verified account link may replace an earlier email-identity guess; the
+   * caller admits that person separately through the parent grant ledger.
    */
   adoptCreator(input: {
     userId: string;
     previousAssignedUserId: string | null;
     mayCorrectVerifiedCreator: boolean;
     now: number;
-  }): { outcome: "adopted" | "seated" | "unchanged"; participantAuthority: "legacy" | "grants" } {
+  }): { outcome: "adopted" | "unchanged" } {
     return this.storage.transactionSync(() => {
       const root = this.identity();
       if (!root) throw new Error("workstream_identity_target_missing");
-      const previousCreator = root.created_by_user_id;
-      const participantAuthority = new ParticipantAuthorityTransferStorage(this.storage).currentTransferId() === null
-        ? "legacy" as const : "grants" as const;
-      const makeCreator = previousCreator === null || (
-        input.mayCorrectVerifiedCreator
-        && input.previousAssignedUserId !== null
-        && previousCreator === input.previousAssignedUserId
+      const makeCreator = root.created_by_user_id === null || (
+        input.mayCorrectVerifiedCreator && input.previousAssignedUserId !== null
+        && root.created_by_user_id === input.previousAssignedUserId
       );
-      if (participantAuthority === "legacy") this.seat({
-        userId: input.userId,
-        addedByUserId: input.userId,
-        reason: "explicit",
-        now: input.now,
-      });
-      if (!makeCreator) return { outcome: participantAuthority === "legacy" ? "seated" as const : "unchanged" as const, participantAuthority };
-      this.sql.exec(
-        `UPDATE workstream SET created_by_user_id = ?, updated_at = ? WHERE id = 1`,
-        input.userId,
-        input.now,
-      );
-      if (participantAuthority === "legacy") this.sql.exec(
-        `UPDATE participants SET participation_reason = 'creator', updated_at = ?
-          WHERE user_id = ?`,
-        input.now,
-        input.userId,
-      );
-      if (participantAuthority === "legacy" && previousCreator !== null && previousCreator !== input.userId) {
-        this.sql.exec(
-          `UPDATE participants SET participation_reason = 'explicit', updated_at = ?
-            WHERE user_id = ? AND participation_reason = 'creator'`,
-          input.now,
-          previousCreator,
-        );
-      }
-      return { outcome: "adopted" as const, participantAuthority };
+      if (!makeCreator) return { outcome: "unchanged" as const };
+      this.sql.exec("UPDATE workstream SET created_by_user_id = ?, updated_at = ? WHERE id = 1", input.userId, input.now);
+      return { outcome: "adopted" as const };
     });
   }
 

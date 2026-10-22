@@ -370,9 +370,9 @@ export class WorkstreamObjectClient {
       operationId: options.operationId ?? uuidV7() }));
   }
 
-  async removeParticipant(userId: string, options: { operationId?: string } = {}): Promise<void> {
+  async removeParticipant(userId: string, options: { operationId?: string; owningThread?: boolean } = {}): Promise<void> {
     await this.request({ operation: "remove_participant", userId,
-      operationId: options.operationId ?? uuidV7() });
+      operationId: options.operationId ?? uuidV7(), ...(options.owningThread ? { owningThread: true } : {}) });
   }
 
   /**

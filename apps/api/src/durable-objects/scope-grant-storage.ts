@@ -16,6 +16,12 @@ import { z } from "zod";
 import { ParticipantProjectionSchema, ParticipantTransferSnapshotSchema, type ParticipantTransferSnapshot } from "./participant-authority-transfer";
 import { ScheduledAlarmStore } from "./scheduled-alarms";
 
+/** SQL counterpart of current-membership grant validity in resolveScopedAccess.
+ * Callers use these fixed aliases and load the relationship before synchronous reads. */
+export const CURRENT_MEMBER_GRANT_SQL = `json_extract(grant_row.grant_json, '$.active') = 1
+  AND relationship.active = 1 AND json_extract(relationship.relationship_json, '$.status') = 'active'
+  AND json_extract(grant_row.grant_json, '$.membershipIncarnation') = json_extract(relationship.relationship_json, '$.incarnation')`;
+
 /**
  * The Organization object's alarm kinds for a parent's grant work. Keys lead
  * with the parent id, because one object now holds every Channel's grants.

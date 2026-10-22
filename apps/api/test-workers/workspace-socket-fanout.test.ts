@@ -1,3 +1,4 @@
+import { seedParticipantGrants } from "./helpers/hosted-parent";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 /**
@@ -299,6 +300,8 @@ beforeEach(async () => {
       id, workspaceId, scope, ownerUserId, pluginId);
     }
   });
+  await seedParticipantGrants(env, workspaceId, openChannel, [owner, member]);
+  await seedParticipantGrants(env, workspaceId, privateChannel, [owner, member]);
   await publishMain(openChannel, common("Open"), viewer(owner), viewer(member));
   await publishMain(privateChannel, common("Private", { scope: "personal" }), viewer(owner), viewer(member));
 });
@@ -313,6 +316,7 @@ describe("a Channel's row on the workspace socket", () => {
         (parent_id, substream_id, user_id, active, version, added_by_user_id, added_at, updated_at)
         VALUES (?, ?, ?, 1, 1, ?, 1, 1)`, openChannel, child, owner, owner);
     });
+    await seedParticipantGrants(env, workspaceId, openChannel, [owner], child);
     for (const substreamId of [asSubstreamId("0"), child]) {
       await organization().applyConversationView({
         type: "conversation_view_v1", region: "global", workspaceId, parentId: openChannel,
@@ -337,7 +341,7 @@ describe("a Channel's row on the workspace socket", () => {
     expect(await view(outsiderSocket, child)).toBeNull();
     expect(await view(ownerSocket, child)).toMatchObject({ header: { title: "Private preview" } });
     await runInDurableObject(organization(), (_instance, state) => {
-      state.storage.sql.exec("UPDATE parent_breakout_members SET active = 0 WHERE parent_id = ? AND substream_id = ?",
+      state.storage.sql.exec("UPDATE parent_grants SET grant_json = json_set(grant_json, '$.active', json('false')) WHERE parent_id = ? AND substream_id = ?",
         openChannel, child);
     });
     expect(await view(ownerSocket, child)).toBeNull();

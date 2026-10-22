@@ -15,6 +15,7 @@
  * refused, and a Space's feed effects must not reach the workspace even though
  * its directory effects do.
  */
+import { seedParticipantGrants } from "./helpers/hosted-parent";
 import { env } from "cloudflare:workers";
 import { evictDurableObject, reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -350,6 +351,7 @@ async function openMemberChannel(workstreamId: WorkstreamId): Promise<void> {
       OWNER,
     );
   });
+  await seedParticipantGrants(env, WORKSPACE_ID, workstreamId, [OWNER]);
 }
 
 function nextMessage(socket: WebSocket): Promise<MessageEvent> {
