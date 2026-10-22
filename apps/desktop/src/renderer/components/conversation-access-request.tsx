@@ -56,13 +56,15 @@ export function ConversationAccessRequest({ api, parentId, substreamId, fallback
   }), [address, parentId, queryClient, substreamId]);
   useEffect(() => {
     if (preview.data?.access === 'requestable') setWaitingFor(address);
-    else if (preview.data?.access === 'open' && waitingFor === address) onRetry();
-  }, [address, onRetry, preview.data?.access, waitingFor]);
+    // Refetching keeps cached data visible; only the completed check can
+    // confirm that an earlier open decision still applies.
+    else if (preview.isSuccess && !preview.isFetching && preview.data?.access === 'open' && waitingFor === address) onRetry();
+  }, [address, onRetry, preview.data?.access, preview.isFetching, preview.isSuccess, waitingFor]);
   // A newly admitted preview must not mount the error dialog while the retry
   // starts. An initially open preview still belongs to the ordinary error path:
   // retrying that on every mount would loop on unrelated connection failures.
   const noun = preview.data?.kind === 'breakout' ? 'breakout' : 'thread';
-  if (preview.data?.access === 'open' && waitingFor === address) {
+  if (preview.isSuccess && preview.data?.access === 'open' && waitingFor === address) {
     return <OpeningState label={`Opening ${noun}…`} />;
   }
   if (!preview.data || preview.data.access !== 'requestable') return fallback;
