@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import type { ConversationAccessPreview } from '@rally/contracts';
 import { describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../lib/api';
+import { refreshConversationAccessPreviews } from '../lib/access-requests';
 import { ConversationAccessRequest, type ConversationAccessApi } from './conversation-access-request';
 
 const PARENT = '00000000-0000-4000-8000-0000000ac0a0';
@@ -31,6 +32,51 @@ function show(api: ConversationAccessApi, substreamId = '0', onRetry: () => void
 }
 
 describe('ConversationAccessRequest', () => {
+  it('does not carry an opening indicator into another requester session', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    await refreshConversationAccessPreviews(client);
+    const api = fakeApi(preview({ access: 'open' }));
+    const onRetry = vi.fn();
+    const target = (viewerUserId: string) => <QueryClientProvider client={client}>
+      <ConversationAccessRequest api={{ ...api, viewerUserId }} parentId={PARENT} substreamId="0"
+        fallback={<p>Thread unavailable</p>} onRetry={onRetry} />
+    </QueryClientProvider>;
+    const view = render(target(VIEWER));
+    expect((await screen.findByRole('status')).textContent).toBe('Opening thread…');
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    client.clear();
+    view.rerender(target('another-requester'));
+    expect(await screen.findByText('Thread unavailable')).toBeTruthy();
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves an approval push that arrives before the send response', async () => {
+    let finishRequest!: () => void;
+    let finishStalePreview!: (value: ConversationAccessPreview) => void;
+    const stale = new Promise<ConversationAccessPreview>((resolve) => { finishStalePreview = resolve; });
+    const api = {
+      viewerUserId: VIEWER,
+      conversationAccessPreview: vi.fn<ConversationAccessApi['conversationAccessPreview']>()
+        .mockResolvedValueOnce(preview()).mockImplementationOnce(() => stale)
+        .mockResolvedValue(preview({ access: 'open' })),
+      requestConversationAccess: vi.fn(() => new Promise<void>((resolve) => { finishRequest = resolve; })),
+    } satisfies ConversationAccessApi;
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const onRetry = vi.fn();
+    show(api, '0', onRetry, client);
+    fireEvent.click(await screen.findByRole('button', { name: 'Request access' }));
+    await vi.waitFor(() => expect(api.requestConversationAccess).toHaveBeenCalledTimes(1), { timeout: 2_000 });
+    let refresh!: Promise<void>;
+    act(() => { refresh = refreshConversationAccessPreviews(client); });
+    await vi.waitFor(() => expect(api.conversationAccessPreview).toHaveBeenCalledTimes(2), { timeout: 2_000 });
+    await act(async () => { finishRequest(); });
+    await vi.waitFor(() => expect(onRetry).toHaveBeenCalledTimes(1), { timeout: 2_000 });
+    await act(async () => { finishStalePreview(preview()); await refresh; });
+    expect(screen.getByRole('status').textContent).toBe('Opening thread…');
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
   it('names a Channel the member is not in and sends one request for it', async () => {
     const api = fakeApi(preview());
     show(api);
