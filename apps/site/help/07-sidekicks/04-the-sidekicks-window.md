@@ -62,11 +62,12 @@ The details panel shows:
 - a lifecycle badge: **Draft**, **Active** or **Paused**;
 - the scope badge: **Only you**, **Organization** or **Thread**;
 - the description;
-- the controls: **Pause** or **Resume**, and a **…** button with the rest;
-- **When to expect it**: the triggers in plain words, and **Next** with how
-  long until the next scheduled run, when there is one;
-- **Make it work for you**, a reminder that you change the Sidekick by
-  asking in the conversation;
+- the controls: **Pause** or **Resume**, always visible beside the **…** button
+  with the rest. When unavailable, the control is disabled; hover or focus it
+  for an explanation. Drafts must finish setup in the conversation first;
+- **When to expect it**, always visible: the triggers in plain words, and
+  **Next** with how long until the next scheduled run, when there is one.
+  With neither available, it says **No timing details yet.**;
 - **Email this Sidekick**, if it has an email address (see
   [Triggers and schedules](03-triggers-and-schedules.md#email-a-sidekick)).
 
@@ -80,8 +81,9 @@ you sure?"; the run starts. This is the quickest way to test a Sidekick you
 have made, rather than waiting until Monday to find out it misunderstood you.
 
 **Run now** works only when the Sidekick is **Active** and has at least one
-trigger. It is greyed out on drafts and paused Sidekicks, and missing
-altogether on instructions-only Sidekicks, which have nothing to run.
+trigger. The item is always visible and is greyed out when unavailable,
+including on drafts, paused Sidekicks and instructions-only Sidekicks.
+Hover or focus it for an explanation of what is needed before it can run.
 
 ## Run history
 
@@ -113,8 +115,8 @@ Runs stay out of your sidebar: no row, no unread dot, no notification of their
 own. You see a run's work where it posts it (see
 [Where a Sidekick's results go](05-where-results-go.md)).
 
-The **Run history** item appears only once the Sidekick has triggers or has
-already run.
+The **Run history** item is always visible. It is disabled until the Sidekick
+has triggers or has already run; hover or focus it for an explanation.
 
 ## Pause and Resume
 
