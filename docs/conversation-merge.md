@@ -282,11 +282,10 @@ quote line, as the Channel's other readers will see it, and the audience line
 says the thread's name stays hidden. "Merge to thread" or "Merge to <first
 Channel>" is the second hover action on every settled text message, after
 **New breakout**, and a row in the title menu. A Breakout's title-menu row reads
-"Merge to <name> Thread", with no separate name at the right. Both title-menu
-rows bold the destination's name, leaving "Merge to", a trailing "Channel" in
-the Channel's name, and the "Thread" suffix in regular weight.
-A Thread's row shows a Channel count only when it has multiple
-targets, with no redundant "Channel" suffix for a single target.
+"Merge to <name> Thread" (or "Merge to thread" while unnamed); a Thread's row
+reads "Merge to <Channel name>", with a count at the right only for multiple
+Channels. `MergeDestinationLabel` bolds the destination name and keeps a trailing
+type word regular, reusing an existing "Thread" suffix rather than duplicating it.
 A resolved Thread keeps this title-menu row
 visible but disabled, with a tooltip explaining that the thread is already resolved.
 Its resolved state falls back to the loaded conversation detail when a deep link

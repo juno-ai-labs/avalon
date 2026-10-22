@@ -96,6 +96,16 @@ function ConversationActionRow({ children, className, disabled = false, disabled
   return explained ? <Tip label={disabledReason}>{row}</Tip> : row;
 }
 
+/** Keep a destination's type word regular, with an unnamed-target fallback. */
+export function MergeDestinationLabel({ name, kind }: { name: string; kind: 'channel' | 'thread' }): React.JSX.Element {
+  const noun = kind === 'thread' ? 'Thread' : 'Channel';
+  const title = name.trim();
+  if (!title) return <>Merge to {noun.toLowerCase()}</>;
+  const hasNoun = title === noun || title.endsWith(` ${noun}`);
+  const destination = hasNoun ? title.slice(0, -noun.length).trimEnd() : title;
+  return <>Merge to {destination && <strong>{destination}</strong>}{(hasNoun || kind === 'thread') && <>{destination ? ' ' : ''}{noun}</>}</>;
+}
+
 /** The menu row that opens the composer's merge mode; the breakout mark rotated 180°. */
 function MergeRow({ actions }: { actions?: ConversationRowActions | undefined }): React.JSX.Element | null {
   if (!actions?.merge) return null;
