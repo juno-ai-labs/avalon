@@ -24,7 +24,7 @@
     "terminal:build-snapshot": "tsx scripts/build-terminal-snapshot.ts",
     "terminal:verify-provider-interface": "tsx scripts/verify-terminal-provider-interface.ts",
     "terminal:verify-provider": "tsx scripts/verify-terminal-provider.ts",
-    "db:migrate": "node ../../scripts/migrate-d1.mjs && pnpm db:platform:migrate && pnpm db:observability:migrate && pnpm db:usage:migrate",
+    "db:migrate": "node ../../scripts/migrate-d1.mjs && pnpm db:platform:migrate && pnpm db:observability:migrate && pnpm db:usage:migrate && pnpm db:message-issues:migrate",
     "db:migrate:remote": "node ../../scripts/migrate-d1.mjs --remote --region global",
     "db:migrate:remote:list": "node ../../scripts/migrate-d1.mjs --remote --list --region global",
     "db:platform:migrate": "wrangler d1 migrations apply PLATFORM_DB --local --persist-to .wrangler/state/global --config platform.wrangler.jsonc",
@@ -36,7 +36,9 @@
     "db:observability:migrate": "wrangler d1 migrations apply TELEMETRY_DB --local --persist-to .wrangler/state/global --config wrangler.global.jsonc && wrangler d1 migrations apply AUDIT_DB --local --persist-to .wrangler/state/global --config wrangler.global.jsonc",
     "db:observability:migrate:remote": "wrangler d1 migrations apply TELEMETRY_DB --remote --config wrangler.global.jsonc && wrangler d1 migrations apply AUDIT_DB --remote --config wrangler.global.jsonc",
     "db:usage:migrate": "wrangler d1 migrations apply USAGE_DB --local --persist-to .wrangler/state/global --config wrangler.global.jsonc",
-    "db:usage:migrate:remote": "wrangler d1 migrations apply USAGE_DB --remote --config wrangler.global.jsonc"
+    "db:usage:migrate:remote": "wrangler d1 migrations apply USAGE_DB --remote --config wrangler.global.jsonc",
+    "db:message-issues:migrate": "wrangler d1 migrations apply MESSAGE_ISSUES_DB --local --persist-to .wrangler/state/global --config wrangler.global.jsonc",
+    "db:message-issues:migrate:remote": "wrangler d1 migrations apply MESSAGE_ISSUES_DB --remote --config wrangler.global.jsonc"
   },
   "dependencies": {
     "@rally/agent-harness": "workspace:*",

@@ -1508,6 +1508,19 @@ export class WorkspaceSpaceStorage {
     ).toArray();
   }
 
+  /** Message provenance after the same Channel reach check as feedPage. */
+  messageIssueContext(viewer: Viewer, spaceId: string, messageId: string) {
+    if (this.reach(viewer, spaceId) === null) return null;
+    const row = this.storage.sql.exec<ChannelMessageRow>(
+      "SELECT author_kind, author_user_id, posted_at, source_workstream_id FROM space_messages WHERE space_id = ? AND message_id = ?",
+      spaceId, messageId,
+    ).toArray()[0];
+    return row ? {
+      authorKind: row.author_kind, authorUserId: row.author_user_id,
+      postedAt: row.posted_at, sourceWorkstreamId: row.source_workstream_id,
+    } : null;
+  }
+
   /**
    * Delete one Channel message. Returns its author and the thread it was
    * about, so the caller can decide who may, or null when it is not there.

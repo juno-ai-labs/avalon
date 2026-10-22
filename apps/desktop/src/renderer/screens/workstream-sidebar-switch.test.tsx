@@ -70,12 +70,13 @@ import type { WorkstreamBoot, WorkstreamDetail } from '../lib/types';
 import type * as CollaborationSessionModule from '../lib/collaboration-session';
 import type { ClientSession } from '@rally/contracts/client-session';
 import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
-import type { SubstreamId } from '@rally/contracts';
+import { asSubstreamId } from '@rally/contracts';
 import { conversationDirectoryQueryKey } from '../lib/conversation-directory';
 import { ChannelPaneContextValue, OPEN_EXPANDED, type ChannelPaneContext } from '../lib/navigation-routes';
 
 const firstWorkstreamId = '00000000-0000-7000-8000-000000000801';
 const secondWorkstreamId = '00000000-0000-7000-8000-000000000802';
+const breakoutId = asSubstreamId('00000000-0000-7000-8000-000000000803');
 
 function boot(id: string, title: string): WorkstreamBoot {
   return {
@@ -133,14 +134,14 @@ function WorkstreamRouteControls(): React.JSX.Element {
       <button onClick={() => void navigate(`/workstreams/${secondWorkstreamId}`)} type="button">
         Switch channel
       </button>
-      <button onClick={() => void navigate(`/workstreams/${firstWorkstreamId}?substream=child`)} type="button">
+      <button onClick={() => void navigate(`/workstreams/${firstWorkstreamId}?substream=${breakoutId}`)} type="button">
         Reopen breakout
       </button>
     </>
   );
 }
 
-function renderScreen(child = false, directory?: SharedNavigationDirectory, channelPane: ChannelPaneContext | null = null, state: unknown = null): QueryClient {
+function renderScreen(child = false, directory?: SharedNavigationDirectory, channelPane: ChannelPaneContext | null = null, state: unknown = null, substreamId: string = breakoutId): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
@@ -149,13 +150,13 @@ function renderScreen(child = false, directory?: SharedNavigationDirectory, chan
   seedWorkstream(queryClient, secondWorkstreamId, 'Second channel');
   if (child) {
     const { transcript, ...detail } = boot(firstWorkstreamId, 'Shared child');
-    queryClient.setQueryData(['substream-workstream', firstWorkstreamId, 'child'], detail);
-    queryClient.setQueryData(['substream-ordered-transcript', firstWorkstreamId, 'child'], transcript);
+    queryClient.setQueryData(['substream-workstream', firstWorkstreamId, substreamId], detail);
+    queryClient.setQueryData(['substream-ordered-transcript', firstWorkstreamId, substreamId], transcript);
   }
   render(
     <Tooltip.Provider>
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={[{ pathname: `/workstreams/${firstWorkstreamId}`, search: child ? '?substream=child' : '', state }]}>
+        <MemoryRouter initialEntries={[{ pathname: `/workstreams/${firstWorkstreamId}`, search: child ? `?substream=${substreamId}` : '', state }]}>
           <WorkstreamRouteControls />
           <ChannelPaneContextValue.Provider value={channelPane}>
             <Routes>
@@ -203,13 +204,19 @@ describe('the right sidebar does not follow a channel switch', () => {
       spaces: [],
       workstreams: [{
         parentId: firstWorkstreamId, title: 'First channel', scope: 'personal', archived: false,
-        conversations: [{ substreamId: 'child' as SubstreamId, title: 'Shared child', scope: 'personal', archived: false }],
+        conversations: [{ substreamId: breakoutId, title: 'Shared child', scope: 'personal', archived: false }],
       }],
     });
     await screen.findByRole('button', { name: 'Breakout menu: Shared child' });
     expect(screen.queryByRole('button', { name: /^Channel menu:/u })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Close breakout' })).not.toBeInTheDocument();
     expect(retainedSocket).toHaveBeenCalledWith(api, firstWorkstreamId, false, 'workstream', '0');
+  });
+
+  it('keeps the Thread rendered when a Breakout URL has a malformed ID', async () => {
+    renderScreen(true, undefined, null, null, 'malformed');
+    expect(await screen.findByRole('button', { name: 'Thread menu: First channel' })).toBeVisible();
+    expect(screen.getAllByRole('textbox')).toHaveLength(2);
   });
 
   it('expands a breakout over its thread and puts it back', async () => {

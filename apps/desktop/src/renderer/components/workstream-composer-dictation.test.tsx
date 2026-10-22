@@ -83,6 +83,9 @@ vi.mock('../lib/use-realtime-dictation', async (importOriginal) => {
 });
 
 import { WorkstreamComposer } from './workstream-composer';
+import { MessageIssueProvider } from './message-issue-dialog';
+import { MessageActions } from './workstream-blocks';
+import { asSubstreamId } from '@rally/contracts';
 
 const workstream: WorkstreamDetail = {
   id: 'workstream-1',
@@ -744,5 +747,29 @@ describe('WorkstreamComposer live dictation', () => {
       expect(onSend).toHaveBeenCalledWith('Keep the recovered transcript', [], undefined, undefined);
     }
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  });
+});
+
+
+describe('Oopsie footer dictation submission', () => {
+  it('finalizes an empty recording through the footer Send before reporting', async () => {
+    const createMessageIssue = vi.fn(async () => ({ id: 'report-id', createdAt: '2026-10-22T00:00:00.000Z' }));
+    render(<Tooltip.Provider><MessageIssueProvider
+      api={{ createMessageIssue, getTranscriptionSocketTicket: vi.fn(), prefetchTranscriptionSocketTicket: vi.fn() }}
+      target={{ kind: 'conversation', parentId: '00000000-0000-7000-8000-00000000db13', substreamId: asSubstreamId('0') }}
+    >
+      <MessageActions telemetry={{ messageId: 'turn-1' }} text="Answer" />
+    </MessageIssueProvider></Tooltip.Provider>);
+    fireEvent.click(screen.getByRole('button', { name: 'Oopsie' }));
+    const send = screen.getByRole('button', { name: 'Send' });
+    expect(send).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+    await waitFor(() => expect(send).toBeEnabled());
+    dictationHarness.finalTranscript = 'I expected a different answer.';
+    fireEvent.click(send);
+    await waitFor(() => expect(createMessageIssue).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      description: 'I expected a different answer.', messageId: 'turn-1',
+    })));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });

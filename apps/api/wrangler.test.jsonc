@@ -35,6 +35,7 @@
     "GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET": "test-not-a-real-client-secret"
   },
   "d1_databases": [
+    { "binding": "MESSAGE_ISSUES_DB", "database_name": "rally-message-issues-test", "database_id": "00000000-0000-0000-0000-000000000007" },
     {
       "binding": "DB",
       "database_name": "avalon-do-runtime-tests",

@@ -1,3 +1,4 @@
+import { useReportMessageIssue } from './message-issue-dialog';
 import { MessageAnnotations } from './artifact-annotations';
 import { rehypeAnnotationSource } from '../lib/annotation-source';
 import clsx from 'clsx';
@@ -5,6 +6,7 @@ import { personalColor, personalColorInk } from './personal-avatar';
 import { MemberPresentationContext } from '../lib/member-presentation';
 import {
   IconBrain,
+  IconBug,
   IconDeviceDesktop,
   IconImageGeneration,
   IconAlertTriangle,
@@ -241,6 +243,7 @@ function codeLanguageLabel(normalizedLanguage: string, requestedLanguage: string
 }
 
 interface MessageCopyTelemetry {
+  turnId?: string;
   messageId: string;
   workstreamId: string;
 }
@@ -1790,11 +1793,12 @@ export function MessageActions({
   rendered?: { text: string; mentions: MessageMention[] };
   subject?: 'response' | 'message';
   /** A Channel's own message is in no Thread, so it reports no `workstreamId`. */
-  telemetry?: { messageId: string; workstreamId?: string };
+  telemetry?: { messageId: string; workstreamId?: string; turnId?: string };
   text: string;
   textActions?: boolean;
   verbatim?: boolean;
 }): React.JSX.Element {
+  const reportIssue = useReportMessageIssue();
   const [saving, setSaving] = useState<MessageExportFormat | null>(null);
   const [failed, setFailed] = useState<MessageExportFormat | null>(null);
   const exportsAvailable = desktopServicesAvailable();
@@ -1870,6 +1874,9 @@ export function MessageActions({
       >
         {onStartSubstream && <StartSubstreamButton onStart={onStartSubstream} />}
         {hasText && onMerge && <MergeButton merge={onMerge} text={text} />}
+        {reportIssue && telemetry && <MessageAction description="Oopsie" onClick={() => reportIssue(telemetry.turnId ?? telemetry.messageId, telemetry.messageId)}>
+          <IconBug aria-hidden="true" size={12} /> Oopsie
+        </MessageAction>}
         {offersText && (
           <MessageAction description={`Copy ${subject}`} onClick={() => void copyResponse().catch(() => undefined)}><Clipboard size={12} /> Copy</MessageAction>
         )}
@@ -1945,13 +1952,14 @@ export function AssistantMessageContent({
   text: string;
   telemetry?: MessageCopyTelemetry;
 }): React.JSX.Element {
+  const reportIssue = useReportMessageIssue();
   return (
     <>
       {text ? (
         <MarkdownBody citations={citations} collapseHeadings={collapseHeadings} mentions={mentions} streaming={streaming} telemetry={telemetry}>{text}</MarkdownBody>
       ) : null}
       {afterText}
-      {showCopy && !streaming && (text !== '' || onStartSubstream !== undefined) && (
+      {showCopy && !streaming && (text !== '' || onStartSubstream !== undefined || (reportIssue !== null && telemetry !== undefined)) && (
         <MessageActions
           citations={citations}
           mentions={mentions}
@@ -3022,7 +3030,7 @@ export function MessageBlock({
           mentions={message.mentions}
           onMerge={mergeAction}
           onStartSubstream={startSubstream}
-          telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
+          telemetry={{ messageId: message.id, workstreamId: message.workstreamId, turnId: message.transcriptTurnId }}
           text={message.text}
         />}
         className="message-block"
@@ -3048,7 +3056,7 @@ export function MessageBlock({
           citations={citations}
           mentions={message.mentions}
           speechKind="message"
-          telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
+          telemetry={{ messageId: message.id, workstreamId: message.workstreamId, turnId: message.transcriptTurnId }}
         >{message.text}</MarkdownBody>
       </MergeMessage>
     );
@@ -3096,7 +3104,7 @@ export function MessageBlock({
             mentions={message.mentions}
             messageId={message.id}
             onOpenAttachment={onOpenAttachment}
-            telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
+            telemetry={{ messageId: message.id, workstreamId: message.workstreamId, turnId: message.transcriptTurnId }}
             text={message.text}
           />
           <MessageAnnotations content={message.annotationContent} onOpen={onOpenAttachment} />
@@ -3112,6 +3120,7 @@ export function MessageBlock({
           <MessageActions
             onMerge={mergeAction}
             onStartSubstream={startSubstream}
+            telemetry={!message.streaming && !message.deliveryState ? { messageId: message.id, workstreamId: message.workstreamId, turnId: message.transcriptTurnId } : undefined}
             text={message.text ?? ''}
             textActions={false}
           />
@@ -3129,7 +3138,7 @@ export function MessageBlock({
             onStartSubstream={startSubstream}
             streaming={message.streaming}
             text={message.text ?? ''}
-            telemetry={{ messageId: message.id, workstreamId: message.workstreamId }}
+            telemetry={{ messageId: message.id, workstreamId: message.workstreamId, turnId: message.transcriptTurnId }}
           />
 
         </>

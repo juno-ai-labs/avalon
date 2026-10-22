@@ -53,6 +53,11 @@ Passwordless challenge storage is defined by migration 0111 and documented in
 [email sign-in](email-login.md). Challenge redemption records an identity-only
 session receipt; workspace relationships and grants remain separate authorities.
 
+## Message issue reports
+
+[Message issues](message-issues.md) owns the separate `MESSAGE_ISSUES_DB` schema
+for Oopsie reports and their message, conversation and reporter references.
+
 ## Signup lineage
 
 Regional migration 0121 adds an opaque telemetry flow to OAuth state, desktop
