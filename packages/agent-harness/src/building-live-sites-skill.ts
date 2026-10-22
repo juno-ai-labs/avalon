@@ -56,7 +56,9 @@ Save these steps for each run as well:
    to a backup outside \`.rally-output\` before replacing it, so unfinished work
    remains recoverable. Call \`import_resource\` with the site's resource ID, the
    original directory as \`destinationPath\`, and \`overwrite: true\` when that
-   directory exists. A Thread-owned Sidekick can import the generated site still
+   directory exists. If a known site ID is missing from the resource list,
+   attempt \`import_resource\` with that ID before asking for reattachment.
+   A Thread-owned Sidekick can import the generated site still
    attached to its original publishing Thread; saving an ID alone grants no
    access to other resources. If import fails, report the recovery gap instead
    of publishing an older local copy.
