@@ -383,7 +383,7 @@ export async function resolveWorkstreamModelRouting(
 /** `resolveWorkstreamModelRouting`, reduced to the model column's value. */
 export async function scheduledWorkstreamModelForExisting(
   env: Env,
-  context: { workspaceId: string; workstreamId: string },
+  context: { workspaceId: string; workstreamId: string } & ConversationModelContext,
 ): Promise<string> {
   return (await resolveWorkstreamModelRouting(env, context)).model;
 }

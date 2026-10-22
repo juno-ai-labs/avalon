@@ -249,6 +249,8 @@ export async function launchWorkstreamHarness(
   const model = await scheduledWorkstreamModelForExisting(executionEnv, {
     workspaceId: input.workspaceId,
     workstreamId: input.workstreamId,
+    parentKind,
+    substreamId,
   });
   const runs = createHarnessRunObjectPort(
     executionEnv,
