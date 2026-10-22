@@ -2,7 +2,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { MemoryReviewFact } from '@rally/contracts';
 import { describe, expect, it, vi } from 'vitest';
-import { BreakoutMenu, ChannelMenu } from '@rally/ui/components/conversation-menus';
+import { BreakoutMenu, ChannelMenu, MergeDestinationLabel } from '@rally/ui/components/conversation-menus';
 import { TitlePill } from '@rally/ui/components/title-pill';
 
 const member = { id: 'user-1', name: 'Adam', email: 'adam@example.test', timezone: 'UTC' };
@@ -33,6 +33,22 @@ function renderChannelPill(overrides: Partial<React.ComponentProps<typeof Channe
 function openMenu(): void {
   fireEvent.pointerDown(screen.getByRole('button', { name: 'Thread menu: Launch' }), { button: 0, ctrlKey: false });
 }
+
+describe('merge destination labels', () => {
+  it.each([
+    { kind: 'channel' as const, name: 'Engineering', label: 'Merge to Engineering', bold: 'Engineering' },
+    { kind: 'channel' as const, name: 'Your Personal Channel', label: 'Merge to Your Personal Channel', bold: 'Your Personal' },
+    { kind: 'thread' as const, name: 'Launch', label: 'Merge to Launch Thread', bold: 'Launch' },
+    { kind: 'thread' as const, name: 'Launch Thread', label: 'Merge to Launch Thread', bold: 'Launch' },
+    { kind: 'thread' as const, name: 'Thread', label: 'Merge to Thread', bold: undefined },
+    { kind: 'thread' as const, name: '', label: 'Merge to thread', bold: undefined },
+    { kind: 'thread' as const, name: '   ', label: 'Merge to thread', bold: undefined },
+  ])('renders $kind destination "$name" once, with only its name emphasized', ({ kind, name, label, bold }) => {
+    const { container } = render(<MergeDestinationLabel kind={kind} name={name} />);
+    expect(container.textContent).toBe(label);
+    expect(container.querySelector('strong')?.textContent).toBe(bold);
+  });
+});
 
 describe('a title pill menu with levels', () => {
   it('opens at a root of actions and level rows, with Artifacts below People even when empty', async () => {
