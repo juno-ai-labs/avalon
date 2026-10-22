@@ -6835,6 +6835,17 @@ async function readRunAuthority(
       && !continuedAfterFinish(input, live))) {
     throw new ConnectorError("unauthorized", "This Sidekick run is no longer running");
   }
+  if (!live.coordinatorEligible) {
+    await (await hostedParentStub(env, input.workspaceId)).sidekickNoteCoordinatorUnavailable({
+      workspaceId: input.workspaceId, automationId: run.automationId, runId: run.runId,
+    }).catch((error: unknown) => logStructuredEvent(env, "warn", "sidekick_attention_record_failed", {
+      workspace_id: input.workspaceId, automation_id: run.automationId, run_id: run.runId,
+      code: diagnosticErrorCode(error, "sidekick_attention_record_unavailable"),
+    }));
+    throw new ApiError(409, "sidekick_coordinator_unavailable",
+      "The coordinating delegate is unavailable. Restore their delegation and access, or start a new run with an available delegate.",
+      { sidekickId: run.automationId, runId: run.runId });
+  }
   const snapshot: RunAuthoritySnapshot = {
     automationRunId: run.runId,
     automationTemplateVersionId: `${run.automationId}:${run.definitionRevision}`,

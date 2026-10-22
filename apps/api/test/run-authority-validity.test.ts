@@ -38,6 +38,7 @@ type RunState = "pending" | "running" | "needs_input" | "completed" | "failed" |
 type Lifecycle = "draft" | "active" | "paused" | "deleted";
 
 type AuthorityState = {
+  coordinatorEligible: boolean;
   memberStatus: string;
   archivedAt: string | null;
   activityExists: boolean;
@@ -128,8 +129,9 @@ class AuthorityDatabase {
           // still wants this run finished.
           sidekickReadRunState: async (request: Record<string, unknown>) => {
             this.runStateReads.push(request);
-            return this.state.run;
+            return this.state.run ? { ...this.state.run, coordinatorEligible: this.state.coordinatorEligible } : null;
           },
+          sidekickNoteCoordinatorUnavailable: async () => undefined,
         }),
       }),
     });
@@ -183,6 +185,7 @@ class AuthorityStatement {
 
 function state(overrides: Partial<AuthorityState> = {}): AuthorityState {
   return {
+    coordinatorEligible: true,
     memberStatus: "active",
     archivedAt: null,
     activityExists: true,
@@ -291,6 +294,14 @@ describe("durable run authority revalidation", () => {
       .rejects.toThrow(/no longer running/i);
   });
 
+  it("names an unavailable coordinator instead of silently transferring the run's principal", async () => {
+    const database = new AuthorityDatabase(state());
+    const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, input());
+    database.state.coordinatorEligible = false;
+    await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, input(), snapshot))
+      .rejects.toMatchObject({ code: "sidekick_coordinator_unavailable", details: { sidekickId: AUTOMATION_ID, runId: RUN_ID } });
+  });
+
   // `pending` is not here: provisioning starts a run's loop before it reports
   // the run running, so a pending row is live (sidekick-run-continuation.test.ts).
   it.each([
@@ -374,7 +385,8 @@ describe("durable run authority revalidation", () => {
     const namespace = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
       idFromName: (name: string) => createTestDurableObjectId(name),
       // The run's own state is the Sidekick's, hosted in the same object.
-      get: () => ({ connectorEvent, sidekickReadRunState: async () => database.state.run }),
+      get: () => ({ connectorEvent, sidekickReadRunState: async () => database.state.run
+        ? { ...database.state.run, coordinatorEligible: database.state.coordinatorEligible } : null }),
     });
     const env = createTestEnv({
       ...database.env,

@@ -1,9 +1,13 @@
 import { sidekickProjectionRunning } from "./sidekick-activity";
 import {
   SIDEKICK_DELEGATION_ERRORS, SidekickDelegatesResultSchema,
+  SidekickExecutionDelegationSchema, type SidekickExecutionDelegation, type WorkspaceExternalEvent,
+  SidekickDelegationAttentionCodeSchema, SIDEKICK_DELEGATION_ATTENTION_MESSAGES, type SidekickDelegationAttentionCode,
   type SidekickDelegationGrant, type SidekickDelegationMutationResult, type SidekickDelegatesResult,
 } from "@rally/contracts";
 import { SidekickDelegationStorage } from "./sidekick-delegation-storage";
+import { rememberSidekickDelegationLocation } from "../services/sidekick-delegation-service";
+import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import {
   SidekickPrepareDelegationRequestSchema, SidekickSetMyDelegationRequestSchema, SidekickRemoveDelegateRequestSchema,
 } from "./automation-do-protocol";
@@ -147,11 +151,13 @@ import { SCHEDULED_ALARM_RETRY_BASE_MS, scheduledAlarmRetryDelay, type Scheduled
 
 /** A stored entry per accepted revision whose declared memory tables are still owed. */
 export const SIDEKICK_MEMORY_TABLES_ALARM_KIND = "sidekick_memory_tables";
+export const SIDEKICK_DELEGATION_MIGRATION_ALARM_KIND = "sidekick_delegation_migration";
 /** The Sidekick alarm kinds `WorkspaceDO` dispatches here. */
 export const HOSTED_SIDEKICK_ALARM_KINDS: ReadonlySet<string> = new Set([
   AUTOMATION_SCHEDULE_ALARM_KIND,
   AUTOMATION_RUN_ALARM_KIND,
   SIDEKICK_MEMORY_TABLES_ALARM_KIND,
+  SIDEKICK_DELEGATION_MIGRATION_ALARM_KIND,
 ]);
 
 /** `<sidekickId>:<key>`: every Sidekick entry names its Sidekick, so one Sidekick's are cancelled alone. */
@@ -202,6 +208,9 @@ export interface HostedSidekickRow extends Record<string, SqlStorageValue> {
   region: Region;
   author_user_id: string;
   run_as_user_id: string;
+  legacy_account_user_id: string | null;
+  delegation_migrated: number;
+  delegation_attention_code: string | null;
   lifecycle: Lifecycle;
   paused_by: "person" | "room_archive" | null;
   scope: AutomationScope;
@@ -258,6 +267,7 @@ interface RunRow extends Record<string, SqlStorageValue> {
   seed_json: string | null;
   /** Who the run runs as, recorded when it is provisioned; null while pending. */
   run_as_user_id: string | null;
+  coordinator_user_id: string | null;
   created_at: number;
   started_at: number | null;
   completed_at: number | null;
@@ -332,6 +342,8 @@ export interface HostedSidekickHost {
   }): Promise<{ authorized: boolean; archived: boolean }>;
   readManagementAccess(input: { workspaceId: string; parentId: string; userId: string }): Promise<{ allowed: boolean; writable: boolean }>;
   readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null>;
+  /** Compatibility entitlement from an explicit legacy claim; delegation never creates one. */
+  hasSidekickClaimAccess?(automationId: string, userId: string): boolean;
   /** Hand a run to the activity Queue, whose consumer provisions it. */
   sendRunProvision(message: { workspaceId: string; automationId: string; runId: string }): Promise<void>;
 }
@@ -369,15 +381,17 @@ function scheduleDueAfter(kind: "calendar" | "interval", definitionJson: string,
  */
 export async function sidekickReaderAllows(
   row: {
+    automation_id?: string;
     scope: string; author_user_id: string; run_as_user_id: string | null; lifecycle: string;
     owning_workstream_id: string | null; owning_substream_id: string; workspace_id: string;
   },
   actor: { userId: string; actorRole: "owner" | "admin" | "member" | null },
-  host: Pick<HostedSidekickHost, "isChannelParticipant" | "readManagementAccess" | "channelViewer">,
+  host: Pick<HostedSidekickHost, "isChannelParticipant" | "readManagementAccess" | "channelViewer" | "hasSidekickClaimAccess">,
   rule: "participant" | "manager" = "participant",
 ): Promise<boolean> {
   if (row.lifecycle === "deleted") return false;
   if (row.author_user_id === actor.userId || row.run_as_user_id === actor.userId) return true;
+  if (row.automation_id && host.hasSidekickClaimAccess?.(row.automation_id, actor.userId)) return true;
   if (row.scope === "workspace") return actor.actorRole != null;
   if (row.scope !== "workstream" || row.owning_workstream_id === null) return false;
   return homeAdmits(row, actor.userId, host, rule);
@@ -585,8 +599,93 @@ export class HostedSidekick {
     return new SidekickDelegationStorage(this.storage);
   }
 
+  /** Install only established legacy claims, once; absence of creation provenance is not consent. */
+  private async migrateDelegation(): Promise<void> {
+    const row = this.row();
+    if (!row || row.legacy_account_user_id === null || row.delegation_migrated === 1) return;
+    const legacyUser = row.legacy_account_user_id;
+    const relationship = legacyUser !== row.author_user_id
+      ? await this.host.readRelationship(row.workspace_id, legacyUser) : null;
+    if (relationship?.status === "active") await rememberSidekickDelegationLocation(this.env, row.workspace_id, legacyUser);
+    this.storage.transactionSync(() => {
+      const current = this.row();
+      if (!current || current.delegation_migrated === 1) return;
+      if (relationship?.status === "active" && !this.delegations().read(this.sidekickId, legacyUser)) {
+        this.delegations().mutate({
+          sidekickId: this.sidekickId, userId: legacyUser, actorUserId: legacyUser,
+          operationId: uuidV7(), allowed: true, expectedGeneration: 0,
+          membershipIncarnation: relationship.incarnation, source: "migration", label: current.title || "Unavailable Sidekick",
+        });
+      }
+      this.sql.exec("UPDATE automation_directory SET delegation_migrated=1 WHERE automation_id=?", this.sidekickId);
+    });
+  }
+
+  /** One eventually consistent authorization view shared by admission and operation selection. */
+  async readExecutionDelegation(input: { workspaceId: string; automationId: string }): Promise<SidekickExecutionDelegation> {
+    const request = parseRpcInput(z.strictObject({ workspaceId: z.string().uuid(), automationId: z.string().uuid() }), input, "sidekick_execution_delegation");
+    this.assertSidekick(request.workspaceId, request.automationId);
+    await this.migrateDelegation();
+    const row = this.assertSidekick(request.workspaceId, request.automationId);
+    const grants = this.delegations().forSidekick(this.sidekickId);
+    const available = await Promise.all(grants.map(async (grant) => await this.delegationEligible(grant) ? grant : null));
+    return SidekickExecutionDelegationSchema.parse({
+      sidekickId: this.sidekickId, creatorUserId: row.author_user_id,
+      accountUserId: row.legacy_account_user_id ?? row.author_user_id,
+      delegates: available.flatMap((grant) => grant ? [{ userId: grant.userId, generation: grant.generation, grantedAt: grant.grantedAt! }] : []),
+    });
+  }
+
+  private async coordinator(preferredUserId: string | null = null, audienceUserIds: readonly string[] | null = null, preferSource = true): Promise<string | null> {
+    const row = this.row();
+    if (!row || row.lifecycle === "deleted") return null;
+    const authority = await this.readExecutionDelegation({ workspaceId: row.workspace_id, automationId: this.sidekickId });
+    const eligible = authority.delegates.filter((grant) => audienceUserIds === null || audienceUserIds.includes(grant.userId));
+    const bindingsByPlugin = JSON.parse(row.connector_bindings_json) as Record<string, string>;
+    const bindings = preferSource ? Object.values(JSON.parse(row.activity_source_plugin_ids_json) as Record<string, string>)
+      .flatMap((pluginId) => bindingsByPlugin[pluginId] ? [bindingsByPlugin[pluginId]!] : []) : [];
+    const owners = bindings.length === 0 ? [] : this.sql.exec<{ owner_user_id: string }>(
+      "SELECT owner_user_id FROM connector_connections WHERE id IN (SELECT value FROM json_each(?)) AND owner_user_id IS NOT NULL ORDER BY id",
+      JSON.stringify(bindings),
+    ).toArray().map((connection) => connection.owner_user_id);
+    const preferred = [preferredUserId, ...owners, authority.creatorUserId];
+    return preferred.find((userId) => userId !== null && eligible.some((grant) => grant.userId === userId)) ?? eligible[0]?.userId ?? null;
+  }
+
+  /** Both matching and delivery use the source owner's consent and the event's actual audience. */
+  async eventCoordinator(event: WorkspaceExternalEvent, registrationId: string): Promise<string | null> {
+    const stored = this.sql.exec<{
+      connection_scope: string; connection_owner_user_id: string | null; target_user_ids_json: string; visibility_json: string;
+    }>("SELECT connection_scope,connection_owner_user_id,target_user_ids_json,visibility_json FROM workspace_connector_events WHERE event_id=?", event.id).toArray()[0];
+    const source = this.sql.exec<{ scope: string; owner_user_id: string | null }>(
+      `SELECT connection.scope,connection.owner_user_id FROM workspace_external_event_registrations registration
+       JOIN connector_connections connection ON connection.id=registration.connection_id
+       WHERE registration.registration_id=? AND registration.automation_id=?`, registrationId, this.sidekickId,
+    ).toArray()[0];
+    const personal = (stored?.connection_scope ?? source?.scope ?? event.sourceConnectionScope) === "personal";
+    const owner = stored?.connection_owner_user_id ?? source?.owner_user_id ?? event.sourceConnectionOwnerUserId ?? null;
+    const audience = stored ? restrictedActivityUserIds(stored)
+      : event.audienceKind === "restricted" ? event.audienceUserIds : null;
+    if (personal) {
+      if (!owner || (audience !== null && !audience.includes(owner))) return null;
+      return this.coordinator(owner, [owner]);
+    }
+    return this.coordinator(null, audience, false);
+  }
+
   private delegationError(code: keyof typeof SIDEKICK_DELEGATION_ERRORS): ApiError {
     return new ApiError(code === "sidekick_not_found" ? 404 : 409, code, SIDEKICK_DELEGATION_ERRORS[code]);
+  }
+
+  /** Safe failure state, with no event payload or provider error retained in the directory. */
+  noteDelegationAttention(code: SidekickDelegationAttentionCode | null): void {
+    this.storage.transactionSync(() => {
+      const changed = this.sql.exec(
+        "UPDATE automation_directory SET delegation_attention_code=? WHERE automation_id=? AND delegation_attention_code IS NOT ? RETURNING automation_id",
+        code, this.sidekickId, code,
+      ).toArray().length > 0;
+      if (changed) this.touchDirectory(Date.now());
+    });
   }
 
   /** The existing membership projection may lag; grant generations do not confer human access. */
@@ -953,6 +1052,7 @@ export class HostedSidekick {
   async runNow(input: AutomationRunNowRequest): Promise<{ runId: string; reused: boolean }> {
     const request = parseRpcInput(AutomationRunNowRequestSchema, input, "run_now");
     await this.assertManager(this.assertSidekick(request.workspaceId, request.automationId), request.actor);
+    const coordinator = await this.coordinator(request.actor.userId, null, false);
     // Read after the access check's await: a revision applied or a pause
     // made meanwhile is what the run must see.
     const row = this.assertIdentity(this.withAccepted(), request.workspaceId, request.automationId);
@@ -966,6 +1066,7 @@ export class HostedSidekick {
       `manual:${request.idempotencyKey}`,
       { kind: "manual", requestedByUserId: asUserId(request.actor.userId) },
       null,
+      coordinator,
     );
     return admitted;
   }
@@ -978,6 +1079,7 @@ export class HostedSidekick {
   async runSeeded(input: AutomationRunSeededRequest): Promise<{ runId: string; reused: boolean }> {
     const request = parseRpcInput(AutomationRunSeededRequestSchema, input, "run_seeded");
     await this.assertManager(this.assertSidekick(request.workspaceId, request.automationId), request.actor);
+    const coordinator = await this.coordinator(request.actor.userId, null, false);
     // Read after the access check's await, as `runNow` does.
     const row = this.assertSidekick(request.workspaceId, request.automationId);
     if (row.lifecycle !== "active") throw new ApiError(409, "sidekick_not_active", "Only an active Sidekick can run");
@@ -989,6 +1091,7 @@ export class HostedSidekick {
       `seed:${request.seed.packVersion}:${request.seed.actionId}`,
       { kind: "manual", requestedByUserId: asUserId(request.actor.userId) },
       null,
+      coordinator,
       request.seed,
     );
     return admitted;
@@ -1032,9 +1135,17 @@ export class HostedSidekick {
     judge?: { conditions: string[]; connectorType: string | null };
   }> {
     const request = parseRpcInput(AutomationExternalEventAdmissionSchema, input, "admit_external_event");
+    const initial = this.assertIdentity(this.withAccepted(), request.workspaceId, request.automationId);
+    const initialPlan = this.externalEventPlan(request, initial);
+    if (initialPlan.kind === "refuse") return { admitted: false, outcomeCode: initialPlan.outcomeCode };
+    const coordinator = await this.eventCoordinator(request.event, request.registrationId);
     const row = this.assertIdentity(this.withAccepted(), request.workspaceId, request.automationId);
     const plan = this.externalEventPlan(request, row);
     if (plan.kind === "refuse") return { admitted: false, outcomeCode: plan.outcomeCode };
+    if (coordinator === null) {
+      this.noteDelegationAttention("event_no_eligible_delegate");
+      return { admitted: false, outcomeCode: "sidekick_no_eligible_delegate" };
+    }
     if (plan.kind === "judge") {
       // The condition the member wrote is the gate: a delivery that did not
       // bring a verdict is refused, and both halves of a verdict must agree.
@@ -1058,7 +1169,7 @@ export class HostedSidekick {
       eventType: request.event.eventType,
       occurredAt: request.event.occurredAt,
       payloadHash: request.payloadHash,
-    }, externalEventOpening(request.event));
+    }, externalEventOpening(request.event), coordinator);
     return {
       admitted: true,
       outcomeCode: admitted.reused ? "sidekick_occurrence_replayed" : "sidekick_occurrence_admitted",
@@ -1103,12 +1214,14 @@ export class HostedSidekick {
       );
       return { admitted: false, duplicate: false, outcomeCode: refusal, runId: null };
     }
+    const coordinator = await this.coordinator();
     const admitted = this.storage.transactionSync(() => {
       const run = this.admitOccurrence(
         row.accepted_definition_revision,
         `inbound_email:${request.resendEmailId}`,
         { kind: "inbound_email", receiptId: uuidV7(now), occurredAt: request.receivedAt },
         { textContent: request.textContent, structuredContent: request.structuredContent, resourceId: request.resourceId },
+        coordinator,
       );
       this.sql.exec(
         `INSERT OR IGNORE INTO sidekick_email_receipts
@@ -1172,6 +1285,8 @@ export class HostedSidekick {
       owningWorkstreamId: sidekick.owning_workstream_id,
       owningSubstreamId: sidekick.owning_substream_id,
       runAsUserId: sidekick.run_as_user_id,
+      coordinatorUserId: run.coordinator_user_id,
+      accountUserId: sidekick.legacy_account_user_id ?? sidekick.author_user_id,
       modelOverride: sidekick.model_override,
       trigger: JSON.parse(run.trigger_json),
       opening: run.opening_json ? JSON.parse(run.opening_json) : null,
@@ -1184,14 +1299,28 @@ export class HostedSidekick {
    * `stopGeneration` counts this Sidekick's stops of its open runs, so a
    * continued run can tell a stop it was approved after from one since.
    */
-  readRunState(input: AutomationRunRequest): {
-    state: RunState; lifecycle: Lifecycle; completedAt: number | null; stopGeneration: number;
-  } | null {
+  async readRunState(input: AutomationRunRequest): Promise<{
+    state: RunState; lifecycle: Lifecycle; completedAt: number | null; stopGeneration: number; coordinatorEligible: boolean;
+  } | null> {
     const request = parseRpcInput(AutomationRunRequestSchema, input, "read_run_state");
+    const authority = await this.readExecutionDelegation({ workspaceId: request.workspaceId, automationId: request.automationId });
     const { sidekick, run } = this.assertRunView(this.runView(request.runId), request.workspaceId, request.automationId);
     return run
-      ? { state: run.state, lifecycle: sidekick.lifecycle, completedAt: run.completed_at, stopGeneration: sidekick.stop_generation }
+      ? { state: run.state, lifecycle: sidekick.lifecycle, completedAt: run.completed_at, stopGeneration: sidekick.stop_generation,
+          coordinatorEligible: authority.delegates.some((grant) => grant.userId === run.coordinator_user_id) }
       : null;
+  }
+
+  /** Error-path reporting when authorization stopped execution before a model could report it. */
+  noteCoordinatorUnavailable(input: AutomationRunRequest): void {
+    const request = parseRpcInput(AutomationRunRequestSchema, input, "sidekick_coordinator_unavailable");
+    this.assertSidekick(request.workspaceId, request.automationId);
+    this.storage.transactionSync(() => {
+      this.sql.exec(`UPDATE sidekick_runs SET state='needs_input',summary=?,updated_at=?
+        WHERE sidekick_id=? AND run_id=? AND state IN ('pending','running','needs_input')`,
+      SIDEKICK_DELEGATION_ATTENTION_MESSAGES.coordinator_unavailable, Date.now(), this.sidekickId, request.runId);
+      this.noteDelegationAttention("coordinator_unavailable");
+    });
   }
 
   /**
@@ -1199,8 +1328,10 @@ export class HostedSidekick {
    * what: the `automationRun` block and run-as principal, against the
    * Sidekick's currently accepted revision. A read with no side effects.
    */
-  continueRun(input: AutomationRunRequest): SidekickRunContinuation {
+  async continueRun(input: AutomationRunRequest): Promise<SidekickRunContinuation> {
     const request = parseRpcInput(AutomationRunRequestSchema, input, "continue_run");
+    if (!this.row()) return { outcome: "refused", code: "run_not_found" };
+    const authority = await this.readExecutionDelegation({ workspaceId: request.workspaceId, automationId: request.automationId });
     const view = this.runView(request.runId);
     if (!view) return { outcome: "refused", code: "run_not_found" };
     const { sidekick, run } = view;
@@ -1210,10 +1341,9 @@ export class HostedSidekick {
     if (!run || sidekick.lifecycle !== "active" || sidekick.accepted_definition_revision === null) {
       return { outcome: "refused", code: "run_not_found" };
     }
-    // The transcript the continuation would read is the run-as user's it was
-    // provisioned for; a claim since then moves who the Sidekick runs as.
-    if (run.run_as_user_id !== null && run.run_as_user_id !== sidekick.run_as_user_id) {
-      return { outcome: "refused", code: "run_principal_changed" };
+    const coordinator = run.coordinator_user_id;
+    if (coordinator === null || !authority.delegates.some((grant) => grant.userId === coordinator)) {
+      return { outcome: "refused", code: "run_coordinator_unavailable" };
     }
     return SidekickRunContinuationSchema.parse({
       outcome: "continue",
@@ -1224,7 +1354,7 @@ export class HostedSidekick {
         definitionRevision: sidekick.accepted_definition_revision,
         trigger: JSON.parse(run.trigger_json),
       },
-      executionPrincipal: { type: "user", userId: asUserId(sidekick.run_as_user_id) },
+      executionPrincipal: { type: "user", userId: asUserId(coordinator) },
       stopGeneration: sidekick.stop_generation,
     });
   }
@@ -1243,73 +1373,30 @@ export class HostedSidekick {
     return { items: this.runSummaries(50) };
   }
 
-  /**
-   * Take over who this Sidekick runs as, and rebind what the last principal
-   * took with them. The claimant is always the caller.
-   */
+  /** Installed clients' claim is self-opt-in, preserving its explicit human access entitlement. */
   async claimExecutionPrincipal(input: AutomationActorRequest): Promise<AutomationExecutionPrincipalClaim> {
     const request = parseRpcInput(AutomationActorRequestSchema, input, "claim_execution_principal");
     await this.assertManager(this.assertSidekick(request.workspaceId, request.automationId), request.actor);
     const claimant = request.actor.userId;
-    // The bindings and the connections are this object's rows, so the read
-    // and the rebind are one transaction: nothing can move between them.
+    const operationId = uuidV7();
+    const prepared = this.delegations().prepare(this.sidekickId, claimant, operationId, true);
+    await rememberSidekickDelegationLocation(this.env, request.workspaceId, claimant);
+    const relationship = await this.host.readRelationship(request.workspaceId, claimant);
+    if (relationship?.status !== "active") throw this.delegationError("sidekick_delegation_membership_unavailable");
     const claim = this.storage.transactionSync(() => {
       const row = this.assertSidekick(request.workspaceId, request.automationId);
-      const bindings = JSON.parse(row.connector_bindings_json) as Record<string, string>;
-      // Per bound plugin: whether its connection is usable by the claimant
-      // (an Organization one, or the claimant's own), and if not, the
-      // plugin's connection when the claimant may use it (one per plugin).
-      const connections = this.sql.exec<{
-        id: string; connector_type: string; model_plugin_id: string; display_name: string; granted_scopes_json: string;
-      }>(
-        `SELECT id, connector_type, model_plugin_id, display_name, granted_scopes_json FROM connector_connections
-          WHERE workspace_id = ? AND status <> 'disabled'
-            AND (scope = 'workspace' OR owner_user_id = ?) ORDER BY id`,
-        row.workspace_id, claimant,
-      ).toArray();
-      const usableIds = new Set(connections.map((connection) => connection.id));
-      const replacements = new Map<string, string>();
-      for (const connection of connections) {
-        for (const view of connectorPluginBindingViews(
-          connection.connector_type, connection.model_plugin_id, JSON.parse(connection.granted_scopes_json) as string[], connection.display_name,
-        )) {
-          if (!replacements.has(view.modelPluginId)) replacements.set(view.modelPluginId, connection.id);
-        }
-      }
-      const decisions = Object.entries(bindings).map(([pluginId, connectionId]) => ({
-        plugin_id: pluginId,
-        usable: usableIds.has(connectionId) ? 1 : 0,
-        replacement_id: replacements.get(pluginId) ?? null,
-      }));
-      const next = { ...bindings };
-      const rebound: string[] = [];
-      const unbound: string[] = [];
-      for (const decision of decisions) {
-        if (decision.usable === 1) continue;
-        if (decision.replacement_id === null) {
-          unbound.push(decision.plugin_id);
-          continue;
-        }
-        next[decision.plugin_id] = decision.replacement_id;
-        rebound.push(decision.plugin_id);
-      }
-      const changed = row.run_as_user_id !== claimant || rebound.length > 0;
-      if (changed) {
-        const now = Date.now();
-        this.sql.exec(
-          `UPDATE automation_directory SET run_as_user_id = ?, connector_bindings_json = ?, updated_at = ?
-            WHERE automation_id = ?`,
-          claimant, JSON.stringify(next), now, this.sidekickId,
-        );
-        this.touchDirectory(now);
-      }
-      return { rebound, unbound, changed };
+      if (row.lifecycle === "deleted") throw this.delegationError("sidekick_delegation_unavailable");
+      const result = this.delegations().mutate({
+        sidekickId: this.sidekickId, userId: claimant, actorUserId: claimant, operationId,
+        allowed: true, expectedGeneration: prepared.generation, membershipIncarnation: relationship.incarnation,
+        source: "self_service", label: row.title || "Unavailable Sidekick",
+      });
+      const accessChanged = this.delegations().grantClaimAccess(this.sidekickId, claimant);
+      if (result.changed || accessChanged) this.touchDirectory(Date.now());
+      return result.changed || accessChanged;
     });
     return AutomationExecutionPrincipalClaimSchema.parse({
-      principalUserId: claimant,
-      reboundPluginIds: claim.rebound,
-      unboundProviders: claim.unbound,
-      changed: claim.changed,
+      principalUserId: claimant, reboundPluginIds: [], unboundProviders: [], changed: claim,
     });
   }
 
@@ -1340,6 +1427,7 @@ export class HostedSidekick {
   /** Who may read a Sidekick's conversations. */
   private async sidekickViewer(row: HostedSidekickRow, userId: string): Promise<boolean> {
     if (row.scope === "workspace" || row.author_user_id === userId || row.run_as_user_id === userId) return true;
+    if (this.delegations().hasClaimAccess(this.sidekickId, userId)) return true;
     if (row.scope !== "workstream") return false;
     return homeAdmits(row, userId, this.host);
   }
@@ -1386,7 +1474,8 @@ export class HostedSidekick {
     return {
       exists: true as const, scope: row.scope, owningWorkstreamId: row.owning_workstream_id,
       owningSubstreamId: row.owning_substream_id,
-      author: row.author_user_id === request.userId, executor: row.run_as_user_id === request.userId,
+      author: row.author_user_id === request.userId,
+      executor: row.run_as_user_id === request.userId || this.delegations().hasClaimAccess(this.sidekickId, request.userId),
       children: this.childRegistry().map((child) => child.substreamId),
       revision: JSON.stringify([row.authority_generation, row.updated_at]), validatedAt: Date.now(),
     };
@@ -1586,6 +1675,10 @@ export class HostedSidekick {
   // ---------------------------------------------------------------------------
 
   async runAlarm(alarm: ScheduledAlarm, innerKey: string): Promise<ScheduledAlarmOutcome> {
+    if (alarm.kind === SIDEKICK_DELEGATION_MIGRATION_ALARM_KIND) {
+      await this.migrateDelegation();
+      return { progressed: true };
+    }
     if (alarm.kind === AUTOMATION_SCHEDULE_ALARM_KIND) {
       await this.executeSchedule(innerKey);
       return { progressed: true };
@@ -1613,13 +1706,20 @@ export class HostedSidekick {
     const now = Date.now();
     const dueAt = due.next_due_at;
     const nextDueAt = scheduleDueAfter(due.schedule_kind, due.definition_json, now);
+    const coordinator = await this.coordinator();
+    if (this.row()?.lifecycle !== "active") return;
     this.storage.transactionSync(() => {
+      const stillDue = this.sql.exec(`SELECT 1 FROM sidekick_schedules schedule JOIN automation_directory directory
+        ON directory.automation_id=schedule.sidekick_id WHERE schedule.sidekick_id=? AND schedule.schedule_id=?
+        AND schedule.next_due_at=? AND directory.lifecycle='active' AND directory.accepted_definition_revision=?`,
+      this.sidekickId, scheduleId, dueAt, due.accepted_definition_revision).toArray().length > 0;
+      if (!stillDue) return;
       this.admitOccurrence(due.accepted_definition_revision, `schedule:${scheduleId}:${dueAt}`, {
         kind: "schedule",
         scheduleId,
         scheduleKind: due.schedule_kind,
         plannedFor: dueAt,
-      }, null);
+      }, null, coordinator);
       this.sql.exec(
         `UPDATE sidekick_schedules SET next_due_at = ?, updated_at = ? WHERE sidekick_id = ? AND schedule_id = ?`,
         nextDueAt, now, this.sidekickId, scheduleId,
@@ -1644,11 +1744,13 @@ export class HostedSidekick {
     occurrenceKey: string,
     trigger: AutomationRunTriggerV1,
     opening: { textContent: string; structuredContent: Record<string, unknown>; resourceId: string | null } | null,
+    coordinatorUserId: string | null,
     seed: DemoSeed | null = null,
   ): { runId: string; reused: boolean } {
     if (acceptedRevision === null) {
       throw new ApiError(409, "sidekick_not_active", "The Sidekick has no accepted definition");
     }
+    if (this.row()?.lifecycle !== "active") throw new ApiError(409, "sidekick_not_active", "Only an active Sidekick can run");
     const now = Date.now();
     const runId = uuidV7(now);
     // One statement either way: a new occurrence returns the run it made, a
@@ -1657,8 +1759,8 @@ export class HostedSidekick {
     const run = first(this.sql.exec<{ run_id: string; state: RunState }>(
       `INSERT INTO sidekick_runs
          (sidekick_id, run_id, occurrence_key, trigger_json, definition_revision, harness_run_id, state,
-          summary, opening_json, seed_json, created_at, started_at, completed_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?, ?, NULL, NULL, ?)
+          summary, opening_json, seed_json, created_at, started_at, completed_at, updated_at, coordinator_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
        ON CONFLICT(sidekick_id, occurrence_key) DO UPDATE SET occurrence_key = excluded.occurrence_key
        RETURNING run_id, state`,
       this.sidekickId,
@@ -1667,12 +1769,16 @@ export class HostedSidekick {
       JSON.stringify(trigger),
       acceptedRevision,
       uuidV7(now + 1),
-      opening ? JSON.stringify(opening) : null,
+      coordinatorUserId === null ? "needs_input" : "pending",
+      coordinatorUserId === null ? "Needs attention: no delegated user is available" : null,
+      opening && coordinatorUserId !== null ? JSON.stringify(opening) : null,
       seed ? JSON.stringify(seed) : null,
       now,
       now,
+      coordinatorUserId,
     ));
     if (!run) throw new Error("sidekick_occurrence_missing");
+    this.noteDelegationAttention(coordinatorUserId === null ? "no_eligible_delegate" : null);
     if (run.state === "pending") this.armRunStart(run.run_id, now);
     return { runId: run.run_id, reused: run.run_id !== runId };
   }
@@ -1704,10 +1810,21 @@ export class HostedSidekick {
       );
       return { progressed: true };
     }
+    const coordinator = run.coordinator_user_id ?? run.run_as_user_id ?? await this.coordinator();
+    const authority = await this.readExecutionDelegation({ workspaceId: row.workspace_id, automationId: this.sidekickId });
+    if (coordinator === null || !authority.delegates.some((grant) => grant.userId === coordinator)) {
+      this.sql.exec("UPDATE sidekick_runs SET state='needs_input',summary=?,updated_at=? WHERE sidekick_id=? AND run_id=? AND state='pending'",
+        "Needs attention: the coordinating delegate is unavailable", now, this.sidekickId, runId);
+      this.touchDirectory(now);
+      this.noteDelegationAttention("coordinator_unavailable");
+      return { progressed: true };
+    }
+    if (this.row()?.lifecycle !== "active") return { progressed: true };
     this.storage.transactionSync(() => {
       this.sql.exec(
-        `UPDATE sidekick_runs SET run_as_user_id = COALESCE(run_as_user_id, ?) WHERE sidekick_id = ? AND run_id = ?`,
-        row.run_as_user_id, this.sidekickId, runId,
+        `UPDATE sidekick_runs SET run_as_user_id=COALESCE(run_as_user_id,?),coordinator_user_id=COALESCE(coordinator_user_id,?)
+         WHERE sidekick_id=? AND run_id=?`,
+        coordinator, coordinator, this.sidekickId, runId,
       );
       this.registerChild(runId, "child", null, now);
     });
@@ -1732,18 +1849,20 @@ export class HostedSidekick {
   }
 
   /** What the provisioning consumer needs for one pending run; `null` once it is not pending. */
-  runProvisioning(input: AutomationRunRequest): SidekickRunProvisioning | null {
+  async runProvisioning(input: AutomationRunRequest): Promise<SidekickRunProvisioning | null> {
     const request = parseRpcInput(AutomationRunRequestSchema, input, "run_provisioning");
     const view = this.assertRunView(this.runView(request.runId), request.workspaceId, request.automationId);
     const { sidekick, run } = view;
     if (!run || run.state !== "pending" || sidekick.lifecycle !== "active") return null;
+    const authority = await this.readExecutionDelegation({ workspaceId: request.workspaceId, automationId: request.automationId });
+    if (!run.coordinator_user_id || !authority.delegates.some((grant) => grant.userId === run.coordinator_user_id)) return null;
     return {
       region: sidekick.region,
       workspaceId: sidekick.workspace_id,
       automationId: sidekick.automation_id,
       runId: run.run_id,
       harnessRunId: run.harness_run_id,
-      runAsUserId: run.run_as_user_id ?? sidekick.run_as_user_id,
+      runAsUserId: run.coordinator_user_id,
       modelOverride: sidekick.model_override,
       definitionRevision: run.definition_revision,
       definition: this.runDefinition(view),
@@ -1928,6 +2047,9 @@ export class HostedSidekick {
       ...selections.defaultPluginIds,
       ...Object.values(selections.activitySourcePluginIds),
     ])];
+    const authority = await this.readExecutionDelegation({ workspaceId: row.workspace_id, automationId: this.sidekickId });
+    const eligibleUsers = new Set<string>(authority.delegates.map((grant) => grant.userId));
+    const existingBindings = JSON.parse(row.connector_bindings_json) as Record<string, string>;
     // This Organization's own rows, read with `sql.exec` rather than the
     // runtime database adapter, which parses each statement and does a
     // request's bookkeeping that an in-object read does not need.
@@ -1936,26 +2058,20 @@ export class HostedSidekick {
       model_plugin_id: string; display_name: string; status: string; config_json: string | null; granted_scopes_json: string;
     }>(
       `SELECT id, connector_type, scope, owner_user_id, model_plugin_id, display_name, status, config_json, granted_scopes_json
-         FROM connector_connections WHERE workspace_id = ? AND status <> 'disabled'`,
+         FROM connector_connections WHERE workspace_id = ? AND status <> 'disabled' ORDER BY id`,
       row.workspace_id,
     ).toArray();
-    const connectionsByPlugin = new Map(connections.flatMap((connection) => connectorPluginBindingViews(
+    const connectionsByPlugin = new Map(connections.filter((connection) => connection.scope === "workspace"
+      || connection.owner_user_id === actorUserId || (connection.owner_user_id !== null && eligibleUsers.has(connection.owner_user_id))
+      || Object.values(existingBindings).includes(connection.id)).flatMap((connection) => connectorPluginBindingViews(
       connection.connector_type, connection.model_plugin_id, JSON.parse(connection.granted_scopes_json) as string[], connection.display_name,
     ).map((view) => [view.modelPluginId, { ...connection, grantedScopes: view.grantedScopes }] as const)));
     const connectorBindings: Record<string, string> = {};
     for (const pluginId of selectedPluginIds) {
       const connection = connectionsByPlugin.get(pluginId);
       if (!connection) throw new ApiError(422, "sidekick_plugin_unavailable", `No connection is available for ${pluginId}`);
-      if (row.scope === "workspace" && connection.scope !== "workspace") {
-        throw new ApiError(422, "sidekick_workspace_connection_required", "A workspace Sidekick may bind only workspace connections");
-      }
-      // A workspace connection or your own personal one, never somebody
-      // else's: binding a colleague's credentials to a standing Sidekick would
-      // lend them to something they never agreed to.
-      if (row.scope !== "workspace" && connection.scope === "personal"
-        && connection.owner_user_id !== actorUserId && connection.owner_user_id !== row.run_as_user_id) {
-        throw new ApiError(422, "sidekick_personal_connection_access_denied", "That connection belongs to somebody else");
-      }
+      // Binding records configured work, not authority to execute it. Keep an
+      // existing source while its delegate is unavailable; admission checks consent.
       connectorBindings[pluginId] = connection.id;
     }
 
@@ -2188,7 +2304,7 @@ export class HostedSidekick {
                 'run_id', run.run_id, 'occurrence_key', run.occurrence_key, 'trigger_json', run.trigger_json,
                 'definition_revision', run.definition_revision, 'harness_run_id', run.harness_run_id,
                 'state', run.state, 'summary', run.summary, 'opening_json', run.opening_json,
-                'seed_json', run.seed_json, 'run_as_user_id', run.run_as_user_id, 'created_at', run.created_at,
+                'seed_json', run.seed_json, 'run_as_user_id', run.run_as_user_id, 'coordinator_user_id', run.coordinator_user_id, 'created_at', run.created_at,
                 'started_at', run.started_at, 'completed_at', run.completed_at, 'updated_at', run.updated_at
               ) END AS run,
               CASE WHEN revision.definition_revision IS NULL THEN NULL ELSE json_object(
@@ -2257,6 +2373,7 @@ export class HostedSidekick {
 
   /** Who may change a Sidekick (`sidekickManager`). */
   private async assertManager(row: HostedSidekickRow, actor: AutomationActor): Promise<void> {
+    if (this.delegations().hasClaimAccess(this.sidekickId, actor.userId)) return;
     if (row.scope === "workstream") {
       // Whoever may manage the owning Channel manages it, as a grant or an
       // archive leaves that, and so does the person who asked for it. No
@@ -2285,6 +2402,7 @@ export class HostedSidekick {
    * participant of it, the library's rule, read from this object's own rows.
    */
   async detail(readerUserId: string): Promise<AutomationDetail> {
+    const delegation = await this.readExecutionDelegation({ workspaceId: this.row()!.workspace_id, automationId: this.sidekickId });
     // The row with both revisions and its last run in one read; the recent
     // runs are the second. `next_run_at` is kept by `touchDirectory`.
     const row = first(this.sql.exec<HostedSidekickRow & {
@@ -2332,6 +2450,11 @@ export class HostedSidekick {
       lifecycle: row.lifecycle,
       authorUserId: row.author_user_id,
       runAsUserId: row.run_as_user_id,
+      delegationStatus: delegation.delegates.length > 0 ? "available" : this.delegations().forSidekick(this.sidekickId).some((grant) => grant.allowed) ? "no_eligible_delegate" : "needs_opt_in",
+      delegationAttention: row.delegation_attention_code === null ? null : {
+        code: SidekickDelegationAttentionCodeSchema.parse(row.delegation_attention_code),
+        message: SIDEKICK_DELEGATION_ATTENTION_MESSAGES[SidekickDelegationAttentionCodeSchema.parse(row.delegation_attention_code)],
+      },
       currentDefinition: row.current_definition_json ? JSON.parse(row.current_definition_json) : null,
       currentDefinitionRevision: row.current_definition_revision,
       acceptedDefinitionRevision: row.accepted_definition_revision,
@@ -2345,7 +2468,7 @@ export class HostedSidekick {
   private runSummaries(limit: number): AutomationRun[] {
     return this.sql.exec<RunRow>(
       `SELECT run_id, occurrence_key, trigger_json, definition_revision, harness_run_id, state, summary,
-              opening_json, seed_json, run_as_user_id, created_at, started_at, completed_at, updated_at
+              opening_json, seed_json, run_as_user_id, coordinator_user_id, created_at, started_at, completed_at, updated_at
          FROM sidekick_runs WHERE sidekick_id = ? ORDER BY created_at DESC, run_id LIMIT ?`,
       this.sidekickId, limit,
     ).toArray().map((run) => {
@@ -2353,6 +2476,7 @@ export class HostedSidekick {
       return AutomationRunSchema.parse({
         id: run.run_id,
         automationId: this.sidekickId,
+        coordinatorUserId: run.coordinator_user_id,
         triggerType: trigger.kind,
         plannedFor: trigger.kind === "schedule" ? iso(trigger.plannedFor) : null,
         startedAt: iso(run.started_at),

@@ -26,6 +26,7 @@ import {
   seedCanonicalConversationTurn,
   testSubstreamAgentsBinding,
   testTerminalOperationExecutor,
+  testTerminalPortFactory,
   testWorkstreamObjectStore,
   workstreamObjectGet,
   workstreamObjectRun,
@@ -94,7 +95,7 @@ function fixture(
     WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
       extra: {
         ...workspaceObjectRpcs(workspace.instance, [
-          "terminalNetworkMode", "terminalNetworkSettings", "sidekickReadAuthorizationFacts",
+          "terminalNetworkMode", "terminalNetworkSettings", "sidekickReadAuthorizationFacts", "sidekickReadExecutionDelegation",
           "resolveConversationToolTarget", "conversationToolScope",
         ]),
         ...(options.agentOwner ? { agentOwner: options.agentOwner } : {}),
@@ -185,15 +186,25 @@ function readGateway(baseSha = BASE): TerminalGitHubReadGateway {
 }
 
 describe("Terminal Bind integration", () => {
-  it("keeps the run-as user's shared files when the wizard executes as a different editor", async () => {
-    const { objectStore, objectStores, env, input, workspace } = fixture("supported");
-    await workspace.instance.sidekickCreate({
-      workspaceId: W, automationId: S, authorUserId: U, scope: "workspace",
-      owningWorkstreamId: null, owningSubstreamId: asSubstreamId("0"), authorityGeneration: 1,
-    });
+  it.each([false, true])("shares Sidekick files across eligible delegates and withdraws cached access (personal repository %s)", async (personalRepository) => {
+    const { database, objectStore, objectStores, env, input, workspace } = fixture("supported");
+    if (personalRepository) {
+      selectRepository(database, objectStore);
+      database.prepare("UPDATE connector_connections SET scope = 'personal', owner_user_id = ? WHERE id = ?").run(U, CONNECTION);
+    }
     await workspace.instance.applyMemberStatus({ workspaceId: W, sequence: 1, removed: false, relationship: {
       workspaceId: W, userId: U, accessClass: "member", role: "owner", status: "active", incarnation: "test-member", revision: 1,
     } });
+    await workspace.instance.sidekickCreate({
+      workspaceId: W, automationId: S, authorUserId: U, scope: "workspace",
+      owningWorkstreamId: null, owningSubstreamId: asSubstreamId("0"), authorityGeneration: 1,
+      creatorConsent: { requestId: crypto.randomUUID() },
+    });
+    const consent = async (userId: typeof U, allowed: boolean) => {
+      const request = { workspaceId: W, automationId: S, userId, allowed, operationId: crypto.randomUUID() };
+      const prepared = await workspace.instance.sidekickPrepareMyDelegation(request);
+      return workspace.instance.sidekickSetMyDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
+    };
     const sandboxProvider = provider();
     vi.mocked(sandboxProvider.runUtilityCommand).mockImplementation(async (_id, request) => ({
       exitCode: 0,
@@ -202,8 +213,9 @@ describe("Terminal Bind integration", () => {
       }) : "0\n",
       stderr: "",
     }));
+    const gateway = readGateway();
     const plugin = await createAvalonTerminalPlugin(env, { ...input, parentKind: "automation" }, undefined, {
-      provider: sandboxProvider,
+      provider: sandboxProvider, readGateway: gateway,
     });
     expect(plugin?.systemMessage).toContain("Activations can overlap");
     const read = plugin!.tools.find((tool) => tool.definition.name === "read_file")!.execute!;
@@ -212,18 +224,30 @@ describe("Terminal Bind integration", () => {
       signal: new AbortController().signal };
     await expect(read({ filePath: "site/index.html" }, toolContext))
       .resolves.toMatchObject({ output: { content: "shared site" } });
-    // A claim changes execution identity without changing the author. Exercise
-    // the real HostedSidekick authorization-facts read, including cached reads.
+    if (personalRepository) {
+      // The provider mount can land before its expiry acknowledgement commits.
+      // An unknown local expiry must not hide a credential after withdrawal.
+      workstreamObjectRun(objectStore, "UPDATE terminal_repository SET read_token_expires_at = NULL");
+    }
+    // The completed import's source is no longer readable. Its bytes are
+    // already part of shared Sidekick state, so later delegates retain them.
+    await testTerminalPortFactory(objectStore)(W, S).recordImportedResource({
+      sandboxGeneration: 1, resourceId: "30000000-0000-4000-8000-000000000098",
+      destinationPath: "/workspace/site/index.html", sourceSha256: "a".repeat(64),
+      sizeBytes: 11, state: "completed", importedAt: 1, now: 1,
+    });
     const runAsUser = asUserId("30000000-0000-4000-8000-000000000099");
-    workspace.objectDatabase.prepare("UPDATE automation_directory SET run_as_user_id = ? WHERE automation_id = ?")
-      .run(runAsUser, S);
-    await expect(read({ filePath: "site/index.html" }, { ...toolContext, toolCallId: "old-editor" }))
-      .rejects.toMatchObject({ code: "sandbox_authority_mismatch" });
+    // Directory management rights alone grant no Terminal access.
+    await expect(read({ filePath: "site/index.html" }, { ...toolContext, toolCallId: "unconsented-editor",
+      executionPrincipal: { type: "user", userId: runAsUser },
+    })).rejects.toMatchObject({ code: "sandbox_authority_mismatch" });
     expect(sandboxProvider.deleteSandbox).not.toHaveBeenCalled();
 
     await workspace.instance.applyMemberStatus({ workspaceId: W, sequence: 2, removed: false, relationship: {
       workspaceId: W, userId: runAsUser, accessClass: "member", role: "member", status: "active", incarnation: "new-executor", revision: 1,
     } });
+    await consent(runAsUser, true);
+    await consent(U, false);
     const child = asSubstreamId("30000000-0000-4000-8000-000000000088");
     const childRun = asHarnessRunId("30000000-0000-4000-8000-000000000089");
     const childStore = testWorkstreamObjectStore();
@@ -234,13 +258,23 @@ describe("Terminal Bind integration", () => {
     objectStores.set(`${S}:${child}`, childStore);
     const activation = await createAvalonTerminalPlugin(env, { ...input, parentKind: "automation",
       substreamId: child, harnessRunId: childRun, executionPrincipal: { type: "user", userId: runAsUser },
-    }, undefined, { provider: sandboxProvider });
+    }, undefined, { provider: sandboxProvider, readGateway: gateway });
     await expect(activation!.tools.find((tool) => tool.definition.name === "read_file")!.execute!(
       { filePath: "site/index.html" }, { ...toolContext, toolCallId: "activation-read",
         harnessRunId: childRun, executionPrincipal: { type: "user", userId: runAsUser } },
     )).resolves.toMatchObject({ output: { content: "shared site" } });
-    // The legitimate claim rebuilds once. Returning to either the cached or a
-    // newly composed wizard must leave that new execution user's files alone.
+    if (personalRepository) {
+      expect(sandboxProvider.clearGitHubReadAccess).toHaveBeenCalledExactlyOnceWith("sandbox-1");
+      expect(gateway.mintRepositoryToken).toHaveBeenCalledTimes(1);
+      expect(workstreamObjectGet(objectStore, "SELECT read_token_expires_at FROM terminal_repository"))
+        .toEqual({ read_token_expires_at: 0 });
+      await expect(activation!.tools.find((tool) => tool.definition.name === "publish_branch_and_pr")!.execute!(
+        { title: "Ship", body: "Update" }, { ...toolContext, harnessRunId: childRun,
+          toolCallId: "publish-after-withdrawal", executionPrincipal: { type: "user", userId: runAsUser } },
+      )).rejects.toMatchObject({ code: "repository_delegate_unavailable" });
+    }
+    // Withdrawal blocks both the old cached caller and a new wizard, while
+    // the independent eligible activation retains the original files.
     const laterWizard = await createAvalonTerminalPlugin(env, { ...input, parentKind: "automation" }, undefined, {
       provider: sandboxProvider,
     });
@@ -249,9 +283,10 @@ describe("Terminal Bind integration", () => {
         { filePath: "site/index.html" }, { ...toolContext, toolCallId: "later-editor" },
       )).rejects.toMatchObject({ code: "sandbox_authority_mismatch" });
     }
-    expect(sandboxProvider.deleteSandbox).toHaveBeenCalledExactlyOnceWith("sandbox-1");
+    expect(sandboxProvider.deleteSandbox).not.toHaveBeenCalled();
+    expect(sandboxProvider.createSandbox).toHaveBeenCalledTimes(1);
     expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id FROM terminal_workspace"))
-      .toEqual({ generation: 2, sandbox_id: "sandbox-2" });
+      .toEqual({ generation: 1, sandbox_id: "sandbox-1" });
   });
 
   it("registers the complete deferred plugin without allocating a sandbox", async () => {

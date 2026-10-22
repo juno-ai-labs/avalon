@@ -81,4 +81,5 @@ export const SIDEKICK_RUN_REFUSAL_TEXT: Record<SidekickRunContinuationRefusalCod
   sidekick_deleted: "This message did not continue the run because its Sidekick was archived.",
   run_not_found: "This message did not continue the run because its Sidekick no longer knows the run.",
   run_principal_changed: "This message did not continue the run because its Sidekick now runs as somebody else.",
+  run_coordinator_unavailable: "This message did not continue the run because its coordinating user is no longer an eligible delegate. Restore their delegation and access, or start a new run with an available delegate.",
 };

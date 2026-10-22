@@ -66,13 +66,17 @@ delegated. Each shared caller records its actual execution conversation on its
 mutation lease. That lets the sandbox owner check the holder's liveness in the
 correct object. Overlapping tool mutations contend for the existing lease;
 sharing a sandbox does not make a whole multi-tool workflow atomic.
-The plugin checks the Sidekick's live execution-user facts before preparation
-and every tool call, including reads using a cached acquisition. Only its
-current run-as user may access the sandbox. Another editor can configure the
-Sidekick but cannot read or reset those files. A legitimate execution-user
-change still replaces the old generation under its new principal. A primary
-Sidekick run may replace a sandbox whose permissions changed; a background
-agent cannot destroy its owner's workspace and must wait for a primary run.
+The plugin checks current Sidekick delegation before preparation and every tool
+call, including reads using a cached acquisition. Only eligible delegates can
+use its files; management rights alone do not grant Terminal access. The
+Sidekick retains a stable file identity across coordinating users, using its
+preserved legacy account identity (or creator for a new Sidekick) to keep
+existing sandbox fingerprints compatible. This identifier confers no execution
+authority. Completed imports remain shared Sidekick state after a delegate
+withdraws or loses source access; every new import still checks current access.
+Ordinary conversations retain their principal and import-visibility fences.
+A primary run may replace a changed repository; a background agent cannot
+destroy its owner's workspace and must wait for a primary run.
 Files may need recovery after a permission reset, provider loss or expiry, so
 saved refresh instructions retain the published resource and import paths.
 The main conversation's Daytona name keeps the derivation every deployed
@@ -343,6 +347,16 @@ the mounted token before any model command runs. The typed
 `publish_branch_and_pr` operation remains available as an optional convergent
 publisher, but it is not a gate around standard Git and GitHub CLI use.
 
+A Sidekick's shell retains one explicitly selected repository connection;
+there is no cross-account shell retry. Before each tool and repository
+preparation, a personal connection's owner must still be an eligible delegate.
+After withdrawal is observed, Rally removes that connection's mounted GitHub
+secrets and invalidates its credential expiry while preserving files and local
+Terminal tools. The typed publisher refuses with `repository_delegate_unavailable`.
+A subsequent independent run can refresh credentials after restored consent;
+`checkout_repository` can explicitly select an authorized connection. This uses
+the ordinary eventual authorization view, without a global revocation barrier.
+
 ### Network policy and lifecycle
 
 Every workspace chooses Trusted only or Full internet. Trusted only compiles an
@@ -485,8 +499,9 @@ A start or recovery timeout does not establish loss. Acquisition reads metadata
 again and accepts a completed start, waits out a transition, or replaces only
 when the provider explicitly establishes loss. Failed deletion does not release
 the old generation while the sandbox still exists. Authority changes remain an
-independent reason to replace: the same files cannot cross a principal or
-resource-visibility boundary.
+independent reason to replace for ordinary conversations. Sidekick files and
+completed imports instead remain shared across eligible delegates, while a
+repository selection change still replaces its generation.
 
 `observeTerminalSandbox`, `stopTerminalSandbox`, and `deleteTerminalSandbox`
 share the metadata boundary across acquisition and task cleanup. A runner,
@@ -622,9 +637,11 @@ personless; it is not duplicated into these product events.
   Durable Object never ends the context that would release it. Sessions left
   behind every status check ran that Worker out of memory.
 - **One regional sandbox generation belongs to one conversation and one frozen
-  authority fingerprint.** Reusing it after a principal, resource visibility,
-  GitHub connection, or repository change would make old filesystem bytes a new
-  caller's unauthorized input, so a mismatch destroys and reprovisions it. The
+  authority fingerprint.** Ordinary conversations replace it after a principal
+  or imported-resource visibility change. Sidekick files and completed imports
+  stay shared across eligible coordinators, with delegation checked separately;
+  their stable file identity preserves existing generations. GitHub connection
+  and repository changes still require replacement. The
   conversation is the one that owns the sandbox rows, which for a background
   agent is the conversation that started it, never the agent's own; two
   conversations of one work stream never share a generation, and a run never
@@ -663,10 +680,11 @@ personless; it is not duplicated into these product events.
   call, so two runs never mutate at once but do interleave between calls.
   Reads are outside it by design and may see a write in progress.
 - **A background agent inherits its starter's execution principal, and that
-  is what makes the sharing sound.** The authority fingerprint is the
-  principal and the work stream's repository authority, the same for the
-  agent as for its owner, so the agent finds its owner's sandbox matching.
-  Should they ever differ, or should an import into that sandbox be revoked,
+  is checked at the same authorization boundaries.** Ordinary conversations
+  bind files to that principal; Sidekicks bind files to their stable original
+  identity and check current delegation separately. The repository authority
+  is shared by the agent and its owner. Should those fingerprints differ, or
+  should an ordinary conversation's imported resource become unreadable,
   the agent refuses with `sandbox_authority_mismatch` rather than replace a
   checkout that is not its own; only the owning conversation's run replaces
   its sandbox.
@@ -886,8 +904,12 @@ be stopped, a failed delete that keeps the sandbox, a failure with no
 recoverability verdict that deletes nothing, and a live claim waited out
 without a provider call; the port resolution rule is in
 `workstream-tool-receipt-locality.test.ts`. The coordinator also proves that a
-primary Sidekick activation can replace changed permissions while a background
-agent cannot. On real workerd, `test-workers/terminal-sidekick-sandbox.test.ts`
+Sidekick activation or worker retains a pre-delegation generation across a
+coordinator change. The plugin integration suite checks that consent withdrawal
+blocks cached callers, retained imports survive, and a withdrawn repository
+owner's mounted credentials are cleared without deleting files. Production-code
+negative controls cover the consent check, stable file identity, retained import
+rule and credential removal. On real workerd, `test-workers/terminal-sidekick-sandbox.test.ts`
 proves that the wizard and successive activations share the same persisted
 sandbox and exclusive mutation lease across eviction, while another Sidekick
 remains separate. Reverting the routing or the primary-run reset guard makes
@@ -1299,6 +1321,30 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-10-22 — Retain Sidekick files across eligible delegates
+
+**What changed:** Sidekick Terminal access follows current eligible delegation,
+including cached reads. Its file identity remains stable across coordinating
+users and retains the pre-delegation fingerprint. Completed imports remain
+shared. A selected personal GitHub connection keeps its own identity and loses
+its mounted secrets when its owner is no longer eligible; local files survive.
+
+**Why:** The old run-as fence prevented an eligible delegate from continuing
+shared work and erased retained content when coordination moved to another
+person. Reusing its old GitHub credential without checking that owner's consent
+would allow new provider operations after withdrawal.
+
+**Considered and rejected:** Rebuilding on every coordinator change, pooling
+personal credentials in the sandbox, generic cross-account command retries,
+and a synchronous revocation barrier. They respectively lose shared state,
+combine unrelated authority, risk repeating effects, or exceed the product's
+eventual authorization contract.
+
+**Consequences:** Ordinary conversation isolation and repository replacement
+rules remain. The fixed file identity is compatibility metadata, never a grant.
+New imports and publications still require current destination/source access;
+restoring delegation permits fresh credential preparation on a later run.
 
 ### 2026-10-22 — Give setup the same home publication identity as activations
 
