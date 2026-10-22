@@ -104,19 +104,48 @@ conversation, report that requirement rather than creating a replacement site.
 
 ## Keep all requested source data and report verified results
 
-For a site built from spreadsheet rows or other structured records, transform
-the returned records with code rather than manually rewriting them. Save the
-connector's returned rows as machine-readable input, such as JSON or CSV, and
-have the script parse, filter, map and write those records. A handwritten list
-of posts inside a Python or JavaScript script is still manual transcription;
-it does not satisfy this procedure. If a response is truncated, fetch the
-remaining rows or a complete supported export before transforming it. Read every
-source row that meets the request, including any additional pages or ranges.
-Compare the source row counts and IDs (or other unique row keys) with the
-converted data to catch omitted or duplicated rows. Explain any rows intentionally
-excluded. Keep the format the site's code expects, and do not invent missing
-values. Record when the data was synchronized separately from dates in the
-source; a row's date does not tell you when it was synchronized.
+For a site built from spreadsheet rows or other structured records, use this
+procedure for both the initial publication and later refreshes:
+
+1. **Read complete source data.** Inspect the source's columns and bounds, then
+   read every relevant page or range through its authorized connector. For
+   Sheets, use \`UNFORMATTED_VALUE\` when computing with numbers or dates. If a
+   response is truncated, reread smaller ranges or use a complete supported
+   export before continuing. An export failure does not invalidate a successful
+   connector read or justify reconstructing its records.
+2. **Save the raw responses before transforming them.** A connector response
+   does not automatically become a Terminal file. If an exposed tool can save
+   or export the complete response to an importable resource, use that path.
+   Otherwise call \`write_file\` for each manageable response, passing its exact
+   JSON as \`content\`. For example, after reading \`'Calendar'!A1:G10\`, use
+   \`filePath: ".rally/tmp/source-A1-G10.json"\` and save the returned \`range\`
+   and \`values\`, including blank rows and complete multiline cells. Repeat
+   for later ranges. Do not invent a save-to-file argument or assume Terminal
+   has the connector's credentials. With \`write_file\`, you still have to
+   reproduce the returned values correctly. Use smaller reads if needed; if you
+   cannot preserve the values, report which data could not be transferred.
+3. **Transform the saved input with code.** Use \`run_command\` to run a script
+   that parses those files, maps fields and writes the site's expected format.
+   Preserve source IDs and actual sheet row positions, including blank rows:
+   the third returned row of \`A1:G10\` is sheet row 3, even if row 2 is empty.
+   Normalize header whitespace or explanatory lines only to identify columns;
+   preserve cell contents, including copy, quotes, line breaks and asset values.
+   Convert dates with code and document intentional conversions or exclusions.
+   A handwritten list of selected posts inside a script is still manual
+   transcription and does not satisfy this procedure.
+4. **Validate every mapped field before publishing.** Have the script compare
+   the generated data with the saved raw records by source ID or row position,
+   checking each requested field against its source value or declared conversion.
+   Check row coverage and unique keys as well; matching row counts alone cannot
+   detect blanked copy or changed assets. A populated source cell must not become
+   empty output without an explained rule. For example, verify the complete
+   copy of each post against its source cell, not just the total number of posts.
+   Fix mismatches before publication; do not defer known data loss to a future
+   Sidekick run. These checks validate the transformation of the saved input;
+   they cannot prove you copied the connector response correctly.
+
+Do not invent missing values. Record when the data was synchronized separately
+from dates in the source; a row's date does not tell you when it was synchronized.
 
 Report these outcomes separately:
 

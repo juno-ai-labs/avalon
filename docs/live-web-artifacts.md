@@ -100,6 +100,22 @@ account-wide limit. Every writer settles before publication can continue; any
 failed asset prevents the manifest write. This preserves the assets-before-manifest
 barrier without adding each independent R2 round trip to the publication latency.
 
+### Sites built from structured data
+
+The site skill requires the same source-data procedure for initial publication
+and refreshes: complete connector reads, raw response files, scripted
+transformation, then comparison of every mapped field and source row before
+publication. Blank spreadsheet rows retain their positions; counts alone do not
+prove that copy, assets or other fields survived.
+
+A connector response is not automatically a Terminal file. Agents use an
+exposed export/import path when one exists; otherwise the skill describes
+copying each manageable raw JSON response through `write_file`. That fallback
+still passes through the model. Scripted validation proves the transformation
+against those saved inputs, not the fidelity of the transfer itself. A run that
+cannot preserve the source reports the transfer gap instead of publishing
+selected records or leaving known omissions for a future refresh.
+
 ### Revising
 
 The `building-live-sites` skill directs both interactive agents and Sidekicks
@@ -616,6 +632,21 @@ The selector and trust boundaries are owned by
 [artifact annotations](artifact-annotations.md).
 
 ## Changelog
+
+### 2026-10-22 — Preserve raw source data before building a site
+
+**What changed:** The site skill spells out raw-response transfer through
+`write_file`, source-row preservation and field-by-field validation for both
+initial builds and refreshes, including the limits of model-mediated copying.
+
+**Why:** A calendar builder read complete Sheet values but manually reconstructed
+37 posts, dropping populated copy and altering other fields while passing a
+row-count assertion. Repeating the existing instruction to transform with code
+would not explain how the returned records reach that code or what to validate.
+
+**Consequences:** Agents must fix known field loss before publication. The
+procedure does not claim a direct connector-to-file tool exists or that comparing
+against copied inputs proves the copying was lossless.
 
 ### 2026-10-21 — Site refresh guidance preserves the publication conversation
 
