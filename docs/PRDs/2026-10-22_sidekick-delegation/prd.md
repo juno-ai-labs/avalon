@@ -20,6 +20,10 @@ view the list and add or remove themselves from the Sidekick screen, or ask
 Rally to do it for them. Reading a Sidekick or joining its Thread grants no
 delegation by itself.
 
+Automatic creator opt-in applies to user-driven creation. An autonomous run
+may create a Sidekick on someone's behalf, but its inherited execution user
+does not consent by that act; the new Sidekick waits for a person to opt in.
+
 A Sidekick can use any eligible delegate for its work. The harness selects the
 identity for each operation, tries another eligible identity after a definite
 access refusal where the operation permits fallback, and records who actually
@@ -62,7 +66,8 @@ consent. Ownership, human visibility, and authority to act need distinct rules.
 
 1. People can see whose authority a Sidekick may use, grant their own authority,
    and withdraw it without editing instructions or replacing another delegate.
-2. Creation establishes the creator's delegation once, with attributable consent.
+2. User-driven creation establishes the creator's delegation once, with
+   attributable consent; autonomous creation cannot opt in an inherited user.
 3. An agent can record a person's explicit request to delegate through the same
    operation used by the UI, without enrolling someone who did not consent.
 4. Event, schedule, manual, and continued runs use one delegation policy and
@@ -108,7 +113,11 @@ account.
 
 The creation surface shows the same delegation and shared-history explanation
 as self-service opt-in; creation itself records consent without an extra
-confirmation step.
+confirmation step. The host checks that this is a direct user-driven creation
+context, including when the agent invokes `create_sidekick`. An autonomous
+Sidekick or background run cannot use creation as an alternate enrollment path;
+record the creator/on-behalf-of identity without a grant and show the normal
+no-delegate state until someone opts in.
 
 The grant applies to the Sidekick's configured work across its normal definition
 revisions. Existing Sidekick managers can change that work. This standing scope,
@@ -419,9 +428,12 @@ storage and compatibility reads before enabling delegation-aware execution;
 then expose the controls and replace both trigger paths together. Old queued
 messages remain decodable and receive current delegation checks at admission.
 
-Backfill each existing Sidekick's eligible creator and current run-as user once,
-deduplicated if they are the same person. The current run-as value is established
-authority: production writes it on creation or an authenticated self-claim.
+Backfill each existing Sidekick's current run-as user once. For a user-created
+Sidekick with no later claim, this is also its creator. A replaced creator is
+not enrolled merely because they remain the author: a legacy claim replaced
+that execution authority and rebound its connections. They need a fresh opt-in
+to become eligible again. The current run-as value is established authority:
+production writes it on creation or an authenticated self-claim.
 Do not require a separate historical consent record that does not exist, or
 silently disable a claimed Sidekick on deploy. Preserve those users' existing
 reader and manager rights independently of future coordinator selection.
@@ -443,8 +455,10 @@ withdrawals. Preserve consent and receipt records.
 ## Acceptance
 
 1. Create personal, Thread-owned, and Organization-owned Sidekicks. Each records
-   its creator once; withdrawing persists across saves, resume, reload and
-   migration replay.
+   its creator once in a direct user-driven context; autonomous creation
+   records no delegation for its inherited principal. Withdrawing persists
+   across saves, resume, reload and migration replay. A claimed legacy Sidekick
+   migrates its current principal without re-enrolling its replaced creator.
 2. In real Electron and browser windows, inspect loading, empty, populated,
    unavailable, error, offline, and pending states. Two sessions converge after
    self-opt-in and withdrawal. Joining or viewing never creates delegation.
