@@ -65,6 +65,7 @@ class StubDatabase {
 
   all(statement: RecordedStatement): unknown[] {
     const value = this.resolveAll?.(statement);
+    if (value === undefined && statement.sql.includes("FROM workspace_relationship_deliveries")) return [];
     if (value === undefined) throw new Error(`Unexpected all() query: ${statement.sql}`);
     return value;
   }

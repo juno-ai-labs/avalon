@@ -32,6 +32,7 @@ import { openLink } from '../lib/browser-rail-links';
 import { Avatar, Button, EmptyState, ErrorNotice, LoadingState, Modal, RallyAvatar } from '../components/primitives';
 import { RelativeTime } from '../components/relative-time';
 import { reportActivityEvent } from '../lib/activity-events';
+import { ApiError } from '../lib/api';
 import { useAppSession } from '../lib/app-session';
 import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
 import { copySpaceLink } from '../lib/copy-workstream-link';
@@ -273,8 +274,10 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
   const stats = channelStats.data?.find((row) => row.channelId === channelId);
   const statsAttempt = useRef<string | null>(null);
   const statsReady = stats !== undefined && !channelStats.isStale && !channelStats.isFetching && !channelStats.isError;
-  const statsUnavailable = channelStats.isError
-    || (!stats && statsAttempt.current === channelId && !channelStats.isFetching);
+  // Only an admitted feed needs a reading-position error. A stale directory
+  // row can still be here while the feed's authority refuses a private Channel.
+  const statsUnavailable = feed.isSuccess && (channelStats.isError
+    || (!stats && statsAttempt.current === channelId && !channelStats.isFetching));
   useEffect(() => {
     if (!api || !space) return;
     if (channelStats.isFetching) {
@@ -506,7 +509,9 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
   }, [highlightedId]);
 
   if (active.data === undefined) return <LoadingState label="Opening channel…" />;
-  if (!space) return <EmptyState description="It may have been archived, made private, or you may no longer have access." title="Channel not found" />;
+  if (!space || (feed.error instanceof ApiError && (feed.error.status === 403 || feed.error.status === 404))) {
+    return <EmptyState description="It may have been archived, made private, or you may no longer have access." title="Channel not found" />;
+  }
   const openThread = (threadId: string): void => void navigate(threadRoute(threadId, channelId), { state: OPEN_EXPANDED });
   // What a merge shared with the Channel opens here, beside the feed, for
   // every reader of the Channel: it is the Channel's, not only the thread's.
