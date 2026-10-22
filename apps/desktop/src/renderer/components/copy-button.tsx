@@ -2,7 +2,8 @@ import clsx from 'clsx';
 import { IconAlertCircle, IconCheck, IconCopy } from '@tabler/icons-react';
 import { forwardRef, useId, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { useCopy, type CopyState, type UseCopyOptions } from '../lib/use-copy';
-import { IconButton } from './primitives';
+import { Toast } from '@rally/ui/components/toast';
+import { ErrorNotice, IconButton } from './primitives';
 
 /** The name the control takes while it is showing an outcome; the caller's label is its idle name. */
 const stateLabel: Record<Exclude<CopyState, 'idle'>, string> = {
@@ -76,8 +77,17 @@ export function copyStateLabel(state: CopyState, label: string): string {
   return state === 'idle' ? label : stateLabel[state];
 }
 
-export function CopyStatus({ state, visible = false }: { state: CopyState; visible?: boolean }): React.JSX.Element {
-  return <span aria-live="polite" className={visible && state !== 'idle' ? 'copy-status' : 'sr-only'} role="status">{stateStatus[state]}</span>;
+export function CopyStatus({ failure = stateStatus.failed, occurrence, state, visible = false }: {
+  failure?: ReactNode;
+  occurrence?: unknown;
+  state: CopyState;
+  visible?: boolean;
+}): React.JSX.Element {
+  if (!visible) return <span aria-live="polite" className="sr-only" role="status">{stateStatus[state]}</span>;
+  return <>
+    <Toast icon={<IconCheck aria-hidden="true" size={16} stroke={1.9} />} open={state === 'copied'}>{stateStatus.copied}</Toast>
+    {state === 'failed' && <ErrorNotice occurrence={occurrence}>{failure}</ErrorNotice>}
+  </>;
 }
 
 /**

@@ -6119,6 +6119,8 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 /* A panel's header is a conversation pane's: its title pill centred and
    Close at the right, the same height as the pane beside it. */
 .rail-surface-content:has(> .panel-title-header) { grid-template-rows: 64px minmax(0, 1fr); }
+.rail-body { position:relative; display:flex; flex-direction:column; min-height:0; min-width:0; }
+.rail-body > .rail-scroll { flex:1; }
 .attachment-panel-body { display: flex; flex-direction: column; min-height: 0; min-width: 0; outline: 0; }
 .attachment-panel-superseded { align-self: flex-start; margin: 12px 16px 0; }
 .attachment-panel-content { flex: 1 1 auto; min-height: 0; overflow: auto; }
@@ -9239,11 +9241,16 @@ button.merged-into-label:hover { color: var(--av-sys-color-text-default); }
 .workspace-shell:not(.rail-expanded):not(.rail-fills-pane) .panel-title-header .title-pill-leading { display: none; }
 
 .artifact-window-panel { display:flex; flex-direction:column; flex:1; min-height:0; }
-.artifact-window-panel > .rail-scroll { flex:1; }
-.artifact-window-panel > .rail-scroll:has(> .artifact-annotation-window-body > .annotation-surface.is-image) { display:flex; flex-direction:column; overflow:hidden; }
+.artifact-window-panel > .rail-body { flex:1; }
+.artifact-window-panel .rail-scroll:has(> .artifact-annotation-window-body > .annotation-surface.is-image) { display:flex; flex-direction:column; overflow:hidden; }
 .artifact-window-panel .panel-title-header { flex:0 0 64px; }
 
-.copy-status { display:block; flex:none; padding:8px 16px; font-size:12px; color:var(--av-sys-color-text-default); background:var(--av-sys-color-surface-subtle); }
+/* Feedback floats over the preview; it must never resize the preview or its native view. */
+.site-detail, .attachment-panel-body { position:relative; }
+.toast-viewport { position:absolute; top:12px; inset-inline:12px; display:flex; justify-content:center; pointer-events:none; z-index:5; }
+.toast { align-items:center; background:var(--av-sys-color-surface-elevated); border:1px solid var(--av-sys-color-border-default); border-radius:var(--av-sys-size-radius-pill); box-shadow:var(--av-sys-elevation-shadow-sm); color:var(--av-sys-color-text-default); display:flex; gap:8px; max-width:100%; padding:10px 16px; font-size:13px; font-weight:500; line-height:20px; overflow-wrap:anywhere; }
+.toast > svg { flex:none; height:16px; width:16px; }
+.toast > span { min-width:0; }
 
 .artifact-menu-tiles .title-menu-tile { white-space:normal; line-height:1.2; }
 
