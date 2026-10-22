@@ -295,7 +295,7 @@ it or the divider is resized.
   A Channel the person cannot see (archived,
   made private, or access lost) is "Channel not found".
 - **Menu.** The Channel menu above. **Archive channel** asks first and says
-  which threads move to General
+  that exclusive threads are archived while threads in other Channels stay active
   ([`spaces.md`](spaces.md#invariants)); then the window leaves for the
   landing.
 

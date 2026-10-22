@@ -1368,10 +1368,10 @@ describe("WorkspaceDO space authority", () => {
     expect(storedItemIds(await personalOrder(OWNER), "space", second)).toBeNull();
   });
 
-  it("given a Space holding a sole-member Channel, when it is archived, then it is refused", async () => {
+  it("refuses archiving a Channel when an exclusive private thread is unreadable by the requester", async () => {
     const spaceId = await reserve("Company");
     const second = await reserve("Recruiting");
-    await publishChannel(CHANNEL_A, null);
+    await publishPersonalChannel(CHANNEL_A, MEMBER);
     await place(spaceId, CHANNEL_A);
 
     await expect(workspace().archiveSpace({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId }))
@@ -1419,7 +1419,7 @@ describe("WorkspaceDO space authority", () => {
     })).toMatchObject({ rows: [{ state: "removing" }] });
   });
 
-  it("given a Space holding a live sole-member Channel and an archived one, when it is archived, then only the live Channel blocks it", async () => {
+  it("records an archive intent only for the live exclusive thread", async () => {
     const spaceId = await reserve("Company");
     await publishChannel(CHANNEL_A, null);
     await publishChannel(CHANNEL_B, "2026-09-19T00:00:00.000Z");
@@ -1427,10 +1427,13 @@ describe("WorkspaceDO space authority", () => {
     await place(spaceId, CHANNEL_B);
 
     await expect(workspace().archiveSpace({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId })).resolves.toMatchObject({
-      ok: false,
-      code: "space_membership_final",
-      blockedWorkstreamIds: [CHANNEL_A],
+      ok: true, space: { status: "archived" },
     });
+    // This authority-only fixture has directory rows but no canonical thread:
+    // the requested archive must remain durable until that authority responds.
+    expect(await workspace().runInspectionSql({
+      sql: "SELECT workstream_id, state FROM space_intents WHERE kind = 'archive'", bindings: [],
+    })).toMatchObject({ rows: [{ workstream_id: CHANNEL_A, state: "pending" }] });
   });
 
   it("given an archived Space, when it is restored, then its memberships come back", async () => {

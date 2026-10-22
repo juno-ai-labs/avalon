@@ -842,11 +842,74 @@ describe("the other Space operations", () => {
     expect(await conversationInitialized(created.id)).toBe(false);
   });
 
+  it("archives exclusive threads without moving them to General, while shared threads stay active", async () => {
+    const opened = await workspace().openGeneralSpace({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: asSpaceId(crypto.randomUUID()),
+    });
+    if (!opened.ok || "absent" in opened) throw new Error("openGeneralSpace refused");
+    const channel = await createSpace("Blog");
+    const other = await createSpace("Editorial");
+    const exclusive = await createChannel("exclusive-calendar", [asSpaceId(channel.id)]);
+    const shared = await createChannel("shared-calendar", [asSpaceId(channel.id), asSpaceId(other.id)]);
+    await deliverEffectsToWorkspace(env, spaceConversation(exclusive));
+    await deliverEffectsToWorkspace(env, spaceConversation(shared));
+
+    expect(await request(`/spaces/${channel.id}/archive`, OWNER_AUTH, {}, "POST"))
+      .toMatchObject({ status: 200, body: { status: "archived" } });
+
+    const lifecycle = (id: string) => runInDurableObject(spaceConversation(id), (_instance, state) =>
+      state.storage.sql.exec<{ exact_state: string; archived: number }>(
+        "SELECT exact_state, archived_at IS NOT NULL AS archived FROM workstream WHERE id = 1",
+      ).one());
+    expect(await lifecycle(exclusive)).toEqual({ exact_state: "archived", archived: 1 });
+    expect(await lifecycle(shared)).toEqual({ exact_state: "idle", archived: 0 });
+    await deliverEffectsToWorkspace(env, spaceConversation(exclusive));
+    expect(await channelSpaceIds(exclusive)).not.toContain(opened.space.id);
+    expect(await channelSpaceIds(shared)).toEqual([other.id]);
+    expect(await workspace().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: exclusive, userId: OWNER }))
+      .toMatchObject({ authorized: true, archived: true });
+
+    expect(await request(`/spaces/${channel.id}/restore`, OWNER_AUTH, {}, "POST"))
+      .toMatchObject({ status: 200, body: { status: "active" } });
+    expect(await lifecycle(exclusive)).toEqual({ exact_state: "archived", archived: 1 });
+    expect(await channelSpaceIds(shared)).toEqual([channel.id, other.id].sort());
+  });
+
+  it("replays an interrupted Channel archive without re-archiving a thread restored afterwards", async () => {
+    const channel = await createSpace("Blog");
+    const thread = await createChannel("archive-receipt", [asSpaceId(channel.id)]);
+    await deliverEffectsToWorkspace(env, spaceConversation(thread));
+    expect((await request(`/spaces/${channel.id}/archive`, OWNER_AUTH, {}, "POST")).status).toBe(200);
+    await deliverEffectsToWorkspace(env, spaceConversation(thread));
+
+    const intent = await workspace().runInspectionSql({
+      sql: "SELECT operation_id, state FROM space_intents WHERE kind = 'archive' AND workstream_id = ?",
+      bindings: [thread],
+    });
+    expect(intent.rows).toEqual([{ operation_id: expect.any(String), state: "settled" }]);
+    const operationId = String(intent.rows[0]?.operation_id);
+    // The thread committed, but WorkspaceDO died before saving its receipt.
+    await workspace().runInspectionSql({
+      sql: "UPDATE space_intents SET state = 'pending' WHERE operation_id = ?", bindings: [operationId],
+    });
+    expect((await request(`/workstreams/${thread}`, OWNER_AUTH, { archived: false }, "PATCH")).status).toBe(200);
+    await deliverEffectsToWorkspace(env, spaceConversation(thread));
+
+    expect(await workspace().resumeSpaceIntent({ auth: OWNER_AUTH, operationId }))
+      .toEqual({ ok: true, outcome: "settled" });
+    expect(await runInDurableObject(spaceConversation(thread), (_instance, state) =>
+      state.storage.sql.exec<{ archived: number }>(
+        "SELECT archived_at IS NOT NULL AS archived FROM workstream WHERE id = 1",
+      ).one())).toEqual({ archived: 0 });
+    expect(await workspace().runInspectionSql({
+      sql: "SELECT state FROM space_intents WHERE operation_id = ?", bindings: [operationId],
+    })).toMatchObject({ rows: [{ state: "settled" }] });
+  });
+
   it("archives and restores a Space", async () => {
     const general = await createSpace("Everything");
     const created = await createSpace("Hiring");
-    // Two Spaces, so the archive is not refused `space_membership_final`: the
-    // Channel keeps a home when this one closes.
+    // A shared thread stays active in its other Channel.
     const workstreamId = await createChannel("two-homes", [
       asSpaceId(general.id), asSpaceId(created.id),
     ]);

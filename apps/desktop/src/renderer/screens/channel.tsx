@@ -1180,9 +1180,9 @@ function ChannelHeader({ members, space, workspace }: {
       title={`Archive ${space.name}?`}
     >
       <p className="modal-copy">
-        It leaves the Channels list for everyone. Its threads keep going, and any that live only
-        here move to General. You can restore it from <strong>Archived</strong> at the bottom of
-        the Channels list.
+        It leaves the Channels list for everyone. Threads that belong only to this channel
+        are archived too. Threads in other channels stay active. You can restore this channel
+        from <strong>Archived</strong> at the bottom of the Channels list.
       </p>
     </Modal>
     <RemoveParticipantDialog
