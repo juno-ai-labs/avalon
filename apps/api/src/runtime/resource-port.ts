@@ -5,6 +5,7 @@ import type { ResourceObjectPort, ResourceOperation } from "../durable-objects/w
 import { RESOURCE_OPERATIONS } from "../durable-objects/workstream-resource-protocol";
 import type { WorkstreamResourceStorage } from "../durable-objects/workstream-resource-storage";
 import type { Env } from "../env";
+import { AuthorizationService, requireAuthorizedRead } from "../services/authorization-service";
 import { createObjectPort, type ObjectPortContract } from "./object-port";
 import {
   conversationResourceLinks,
@@ -88,13 +89,26 @@ export function conversationResourceLinksFrom(
       });
       return sources;
     } : undefined,
+    undefined,
+    access && userId ? async (resourceIds) => {
+      const results = await new AuthorizationService(access.env).readResources(
+        { workspaceId: asWorkspaceId(workspaceId), userId, delegation: null },
+        resourceIds,
+      );
+      return new Map(results.flatMap(({ resourceId, decision, metadata }) => {
+        if (decision.status === "unavailable") requireAuthorizedRead(decision);
+        return metadata ? [[resourceId, metadata] as const] : [];
+      }));
+    } : undefined,
   );
 }
 
 /**
  * The resource links a run sees: its own and existing Breakout inheritance,
  * plus a Sidekick's live admitted home and attached conversations when a user
- * principal is supplied. All model-facing readers supply their principal.
+ * principal is supplied. Explicit ID reads may additionally use that user's
+ * canonical resource access without an attachment. All model-facing readers
+ * supply their principal.
  * `substreamId` follows {@link createResourceObjectPort}: left out, it is the
  * conversation this run executes in.
  */

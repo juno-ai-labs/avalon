@@ -87,13 +87,15 @@ IDs when context is rebuilt. Admission puts messages at safe execution boundarie
 and wakes an idle loop without waiting for completion. The live conversation
 parent refuses archived destinations even before the child projection catches up.
 Explicit forwarding to an authorized Sidekick may broaden the attachment audience;
-this was approved on 2026-09-15. Attachments must already be attached to the sender. The host normalizes repeated
+this was approved on 2026-09-15. Forwarded resources must already be attached or inherited in the
+sender's scope. Broader Sidekick read access alone does not permit forwarding
+to another conversation. The host normalizes repeated
 IDs and validates the whole list before creating a worker. The recipient prepares
 canonical descriptors without linking resources, then stores them with the admitted
 pending input. Ordinary transcript promotion commits the links with the message,
 so refused admission leaves no attachments behind. Context rebuilding uses normal
-attachment manifests and current-turn image projection. Resource IDs alone are
-not a substitute for those durable message attachments. Model-facing tools keep
+attachment manifests and current-turn image projection. A textual resource ID
+does not create an attachment or change permissions. Model-facing tools keep
 the existing composed-message and attachment limits, also enforced at admission.
 
 `sidekick_attach_resource({ sidekickId, resourceId })` shares one resource

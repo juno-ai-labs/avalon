@@ -11,12 +11,12 @@
  *
  * See `docs/live-web-artifacts.md`.
  */
-import { asArtifactId, type ExecutionPrincipal } from "@rally/contracts";
+import { asArtifactId, IdSchema, type ExecutionPrincipal } from "@rally/contracts";
 
 import { artifactHostDOName } from "../durable-objects/names";
 import type { Env } from "../env";
 import { createConversationResourceLinks } from "../runtime/resource-port";
-import { loadVisibleWorkstreamResourcePage } from "./workstream-resource-visibility";
+import { loadVisibleWorkstreamResourcesByIds } from "./workstream-resource-visibility";
 import { durableObjectStubForArtifact, workspacePlacementAffinity } from "../lib/durable-object-namespace";
 import type {
   ArtifactDataHost,
@@ -30,45 +30,34 @@ export interface ArtifactDataWiringInput {
   principal: ExecutionPrincipal;
 }
 
-/**
- * How many site resources one work stream's lookup considers.
- *
- * A page size rather than a defensive bound: the loader is paged, and this is
- * the page the reference is matched against. Sites are a handful per work
- * stream, so one page is the whole set in practice; a work stream that somehow
- * exceeded it would fail a lookup rather than reach a wrong artifact, because
- * the match is by exact id or slug.
- */
-const SITE_LOOKUP_PAGE = 50;
-
 export function createArtifactDataToolContext(
   env: Env,
   input: ArtifactDataWiringInput,
 ): ArtifactDataToolContext {
   return {
     async resolveArtifact(reference: string): Promise<ResolvedArtifact | null> {
-      // The same visibility loader every attachment tool uses, filtered to the
-      // one kind that can have data. Going through it rather than querying here
-      // is what makes nonexistent, foreign, and invisible references collapse
-      // to one answer — the property that keeps these tools from being an
-      // existence oracle.
-      const page = await loadVisibleWorkstreamResourcePage(
+      // Resolve the supplied ID or alias, then use the same point authorization
+      // as every resource reader. A Sidekick need not have this site attached.
+      const parsedId = IdSchema.safeParse(reference);
+      const candidate = parsedId.success ? { id: parsedId.data } : await env.DB.prepare(
+        "SELECT id FROM resources WHERE workspace_id = ? AND slug = ? AND resource_type = 'generated_site'",
+      ).bind(input.workspaceId, reference).first<{ id: string }>();
+      if (!candidate) return null;
+      const [match] = await loadVisibleWorkstreamResourcesByIds(
         env.DB,
         createConversationResourceLinks(env, input.workspaceId, input.workstreamId, undefined, undefined, input.principal),
         {
           workspaceId: input.workspaceId,
           workstreamId: input.workstreamId,
           principal: input.principal,
-          attachmentKind: "site",
-          limit: SITE_LOOKUP_PAGE,
+          resourceIds: [candidate.id],
         },
       );
-      const match = page.rows.find((row) => row.id === reference || row.slug === reference);
-      if (!match) return null;
+      if (!match || match.resource_type !== "generated_site") return null;
       // Read from the registry rather than the resource row: what an artifact
       // *is* — its id, its mode, whether it keeps data — lives there, and the
       // resource row deliberately records only what the path published as.
-      const row = await env.DB.prepare(
+      const row = match.artifact !== undefined ? match.artifact : await env.DB.prepare(
         `SELECT artifact_id, mode, stateful FROM artifact_registry
           WHERE workspace_id = ? AND resource_id = ?`,
       ).bind(input.workspaceId, match.id).first<{

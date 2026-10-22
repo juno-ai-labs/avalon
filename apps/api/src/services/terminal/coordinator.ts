@@ -872,10 +872,10 @@ export class TerminalSandboxCoordinator {
     // The attachment join used to ride along with the import rows. It cannot:
     // the imports are object-local and the relationship rows are not, so the
     // link check is its own statement against its own authority. Which
-    // authority is the import's own: an import was authorized by an
-    // attachment of the conversation whose run made it, the sandbox's own
-    // unless the row names another, and stays authorized while that
-    // attachment stands. Asking the acquiring run's conversation instead
+    // authority is the import's own: use the conversation whose run made it,
+    // the sandbox's own unless the row names another. Sidekicks may also use
+    // the execution user's current canonical read access without a link.
+    // Asking the acquiring run's conversation instead
     // would read a background agent's imports against its owner's
     // attachments, and the owner's against the agent's, and revoke both.
     // Read through the conversation's links, not its bare port: a Breakout
@@ -888,11 +888,11 @@ export class TerminalSandboxCoordinator {
       byConversation.set(substreamId, resourceIds);
     }
     for (const [substreamId, resourceIds] of byConversation) {
-      const attached = new Set((await conversationResourceLinksFrom(
+      const readable = new Set((await conversationResourceLinksFrom(
         this.resourcePort, context.workspaceId, context.workstreamId, substreamId, { env: this.env, principal: context.executionPrincipal },
-      ).links({ resourceIds: [...resourceIds] })).links.map((link) => link.resource_id));
+      ).links({ resourceIds: [...resourceIds] })).readableResourceIds);
       for (const resourceId of resourceIds) {
-        if (!attached.has(resourceId)) return true;
+        if (!readable.has(resourceId)) return true;
       }
     }
     const resourceIds = [...new Set(links.map((candidate) => candidate.resourceId))];

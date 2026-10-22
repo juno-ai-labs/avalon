@@ -19,7 +19,7 @@ export async function readConnectorResourceAttachment(
     createConversationResourceLinks(env, input.workspaceId, input.workstreamId, undefined, input.substreamId, input.principal),
     { ...input, resourceIds: [resourceId] },
   );
-  if (!row) throw new ConnectorError("unauthorized", "attachmentResourceIds: resource is not attached or visible to this run", { field: "attachmentResourceIds" });
+  if (!row) throw new ConnectorError("unauthorized", "attachmentResourceIds: resource is not readable by this run", { field: "attachmentResourceIds" });
   if (!row.content_ref) throw new ConnectorError("invalid_payload", "attachmentResourceIds: resource has no stored original file", { field: "attachmentResourceIds" });
   const object = await env.PAYLOADS.get(row.content_ref);
   if (!object) throw new ConnectorError("invalid_payload", "attachmentResourceIds: original file is unavailable; reattach the PDF", { field: "attachmentResourceIds" });
