@@ -894,7 +894,7 @@ describe('resource detail content preview', () => {
     expect(screen.queryByRole('heading', { name: 'literal' })).toBeNull();
   });
 
-  it('pins, copies a link to, and renames an artifact from its title pill menu', async () => {
+  it.each([false, true])('pins, copies a link to, and renames an artifact from its title pill menu (detached: %s)', async (detached) => {
     const onPin = vi.fn();
     const copy = vi.fn(async () => undefined);
     const onRenameResource = vi.fn(async () => undefined);
@@ -902,7 +902,7 @@ describe('resource detail content preview', () => {
       <Tooltip.Provider>
         <InspectorRail
           onRenameResource={onRenameResource}
-          panel={{ resourceId: note.id, onClose: vi.fn() }}
+          panel={{ resourceId: note.id, onClose: vi.fn(), detached }}
           resourceLink={() => copy}
           resourcePin={() => ({ on: false, onChange: onPin })}
           workstream={{ ...workstream, resources: [note] }}
@@ -920,6 +920,7 @@ describe('resource detail content preview', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy link' }));
     await waitFor(() => expect(copy).toHaveBeenCalledOnce());
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    expect(await screen.findByText('Copied.')).toBeVisible();
 
     openMenu();
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));

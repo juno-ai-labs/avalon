@@ -109,7 +109,12 @@ provider above it.
 
 Artifact and attachment title menus use `useCopy` for their copy tile and keep
 a `CopyStatus` live region outside the menu so the outcome survives closing it.
-Both show that status visibly above the preview; other copy controls retain
+Both show success through the shared `Toast` over the preview, without changing
+its size. In regular and detached resource panels the status lives in the
+non-scrolling `.rail-body`, beside `.rail-scroll`, so copying after scrolling
+still shows the toast below the header. Attachments keep feedback in their
+non-scrolling body, outside `.attachment-panel-content`.
+Failed copies use an acknowledged error popup. Other copy controls retain
 their screen-reader-only status because their outcome remains on the visible icon.
 An attachment gallery keys its copy scope to the selected resource, so changing
 files clears the outcome and discards feedback from a write that finishes later.
@@ -119,6 +124,25 @@ the longer failed-copy retry label.
 The surfaces' own tests — the inbound-webhook dialog, the invite link, the
 inspector rail, the run-failure notice, the site detail, the code block —
 assert on the control by its accessible name.
+
+## Changelog
+
+### 2026-10-21 — Copy confirmation floats over its preview
+
+**What changed:** Visible `CopyStatus` uses the generic shared `Toast` pill,
+with retained entrance/exit motion and the existing two-second `useCopy` lifetime.
+Failures use the acknowledged popup instead of the retired status banner.
+
+**Why:** The plain “Copied” row looked like page content and resized the preview.
+The product requested temporary animated confirmation in the existing app style.
+
+**Considered and rejected:** A second timer in the toast would compete with
+`useCopy`; a DOM-only overlay would disappear beneath Electron's native site view.
+
+**Consequences:** Keep the toast outside layout flow and its live region mounted.
+Regular and detached panels anchor feedback outside their scrolling content.
+Native sites show their existing still while an overlapping toast is present,
+including its exit. Gallery selection still owns and clears its copy feedback.
 
 ### 2026-09-13 — One icon control for every copy affordance
 

@@ -997,6 +997,8 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         </header>
       </>}
       <DetailHeaderActionsHost onActions={setDetailActions}>
+      <div className="rail-body">
+      <CopyStatus state={copyLinkState} visible={copyLinkState !== 'failed'} />
       <div className="rail-scroll">
         {downloadFailed && <ErrorNotice>
           Download failed. Please try again.
@@ -1004,7 +1006,6 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         {popOutFailed && <ErrorNotice>
           The artifact couldn’t be opened in a new window.
         </ErrorNotice>}
-        <CopyStatus state={copyLinkState} visible={copyLinkState !== 'failed'} />
         {copyLinkState === 'failed' && <ErrorNotice>The link couldn’t be copied.</ErrorNotice>}
         {props.failure && <ErrorNotice>
           {inspectorRailFailureCopy[props.failure]}
@@ -1022,6 +1023,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         ) : (
           <ContextContent {...props} />
         )}
+      </div>
       </div>
       </DetailHeaderActionsHost>
       <Modal
