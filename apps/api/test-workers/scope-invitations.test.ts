@@ -21,7 +21,7 @@ import { hostedParentStub, insertChannelRow, withHostedParent } from "./helpers/
 import { conversationObjectName } from "../src/durable-objects/names";
 import { boot, seedParticipantMessage, seedOpenWorkstreamAuthority, seedWorkstreamRoot } from "./helpers/substream-fixture";
 
-const workspaceId = asWorkspaceId("00000000-0000-4000-8000-000000000091");
+let workspaceId = asWorkspaceId("00000000-0000-4000-8000-000000000091");
 const parentId = asWorkstreamId("00000000-0000-4000-8000-000000000092");
 const actorId = asUserId("00000000-0000-4000-8000-000000000093");
 /** Already signs in with guest@example.test, so a share to that address is theirs as it is made. */
@@ -72,6 +72,11 @@ async function verifyNewcomer() {
 
 beforeEach(async () => {
   await reset();
+  // These tests arm real delivery alarms. A previous case's in-flight work can
+  // finish after reset; it must never write into the next case's object.
+  workspaceId = asWorkspaceId(crypto.randomUUID());
+  child.workspaceId = workspaceId;
+  main.workspaceId = workspaceId;
   await env.DB.batch([
     env.DB.prepare("CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT, abandoned_at TEXT, region TEXT DEFAULT 'global', placement_affinity TEXT DEFAULT 'wnam', analytics_workspace_id TEXT)"),
     env.DB.prepare("INSERT INTO workspaces (id, name) VALUES (?, 'Shared workspace')").bind(workspaceId),
@@ -185,6 +190,114 @@ it("gives a share to someone who already signs in with that address as it is mad
     .toEqual({ access_class: "guest", role: null });
   // Nothing is left to claim for that address here, so nothing points here for it.
   expect(await routes("guest@example.test")).toEqual([]);
+});
+
+it("adds known and new guests with one recipient batch and no foreground cleanup", async () => {
+  await runInDurableObject(room(), async (instance) => {
+    const target = instance as unknown as { env: Env };
+    const originalEnv = target.env;
+    const requests: string[] = [];
+    const wrap = (statement: D1PreparedStatement, sql: string): D1PreparedStatement => new Proxy(statement, {
+      get(current, property) {
+        if (property === "bind") return (...values: unknown[]) => wrap(current.bind(...values), sql);
+        const value = Reflect.get(current, property);
+        if (["first", "all", "run", "raw"].includes(String(property))) return (...args: unknown[]) => {
+          requests.push(sql);
+          return Reflect.apply(value, current, args);
+        };
+        return typeof value === "function" ? value.bind(current) : value;
+      },
+    });
+    const database = new Proxy(originalEnv.DB, {
+      get(current, property) {
+        if (property === "prepare") return (sql: string) => wrap(current.prepare(sql), sql);
+        if (property === "batch") return (statements: D1PreparedStatement[]) => {
+          requests.push("batch");
+          return current.batch(statements);
+        };
+        const value = Reflect.get(current, property);
+        return typeof value === "function" ? value.bind(current) : value;
+      },
+    });
+    target.env = new Proxy(originalEnv, { get: (current, property, receiver) => property === "DB" ? database : Reflect.get(current, property, receiver) });
+    try {
+      const created = await instance.createScopeInvitations(invitation([child], ["guest@example.test", NEWCOMER]));
+      expect(created).toMatchObject({ status: "created", invitations: [
+        { email: "guest@example.test", status: "accepted", acceptedByUserId: recipientId },
+        { email: NEWCOMER, status: "pending", acceptedByUserId: null },
+      ] });
+      // Two cosmetic name reads, two cold authority/placement reads and one
+      // recipient batch, against real D1. Warm requests omit the cold reads.
+      // This bounds network work without making wall-clock speed a flaky test.
+      expect(requests.length).toBeLessThanOrEqual(5);
+    } finally { target.env = originalEnv; }
+  });
+  expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: true, writable: true });
+  expect(await room().readScopeAccess({ userId: recipientId, target: main })).toMatchObject({ allowed: false });
+  expect(await env.DB.prepare("SELECT access_class,role FROM workspace_members WHERE user_id=?").bind(recipientId).first())
+    .toEqual({ access_class: "guest", role: null });
+  await runDurableObjectAlarm(room());
+  expect(await routes("guest@example.test")).toEqual([]);
+  expect(await routes(NEWCOMER)).toEqual([{ workspace_id: workspaceId, parent_id: parentId }]);
+});
+
+it.each(["suspension", "replacement"])("keeps a newer %s that arrives while recipient setup is in flight", async (change) => {
+  await env.DB.prepare(`INSERT INTO workspace_members (workspace_id,user_id,access_class,role,status,incarnation)
+    VALUES (?,?,'guest',NULL,'active','batch-membership')`).bind(workspaceId, recipientId).run();
+  await runInDurableObject(room(), async (instance) => {
+    const target = instance as unknown as { env: Env };
+    const originalEnv = target.env;
+    const database = new Proxy(originalEnv.DB, {
+      get(current, property) {
+        if (property === "batch") return async (statements: D1PreparedStatement[]) => {
+          const results = await current.batch(statements);
+          await current.prepare(change === "suspension"
+            ? "UPDATE workspace_members SET status='suspended',revision=revision+1 WHERE user_id=?"
+            : "UPDATE workspace_members SET incarnation='replacement',revision=1 WHERE user_id=?").bind(recipientId).run();
+          const suspended = await current.prepare(`SELECT workspace_id AS workspaceId, user_id AS userId,
+            access_class AS accessClass, role, status, incarnation, revision FROM workspace_members WHERE user_id=?`)
+            .bind(recipientId).first();
+          await instance.applyMemberStatus({ workspaceId, sequence: 1, removed: false,
+            relationship: WorkspaceRelationshipSchema.parse(suspended) });
+          return results;
+        };
+        const value = Reflect.get(current, property);
+        return typeof value === "function" ? value.bind(current) : value;
+      },
+    });
+    target.env = new Proxy(originalEnv, { get: (current, property, receiver) => property === "DB" ? database : Reflect.get(current, property, receiver) });
+    try {
+      expect(await instance.createScopeInvitations(invitation())).toMatchObject({ status: "created",
+        invitations: [{ status: change === "suspension" ? "pending" : "accepted",
+          acceptedByUserId: change === "suspension" ? null : recipientId }] });
+    } finally { target.env = originalEnv; }
+  });
+  expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: false });
+  if (change === "suspension") expect(await routes("guest@example.test")).toEqual([{ workspace_id: workspaceId, parent_id: parentId }]);
+  else await withHostedParent(room(), parentId, (parent) => {
+    // An older batch cannot bind its receipt to a newer membership learned
+    // from an event, or accidentally grant that replacement access.
+    expect(parent['scopeGrants'](child).forUser(recipientId).filter((grant) => grant.active)
+      .map((grant) => grant.membershipIncarnation)).toEqual(["batch-membership"]);
+  });
+});
+
+it("binds to the batch's replacement membership so its event admits the guest without another claim", async () => {
+  await create();
+  // D1 knows this is a new membership, but its event has not reached the
+  // Organization yet. The old live cache row cannot be ordered against it.
+  await env.DB.prepare("UPDATE workspace_members SET incarnation='replacement',revision=1 WHERE user_id=?")
+    .bind(recipientId).run();
+  const request = invitation();
+  expect(await room().createScopeInvitations(request)).toMatchObject({ status: "created",
+    invitations: [{ status: "accepted", acceptedByUserId: recipientId }] });
+  await changeRelationships(env, workspaceId, [recipientId],
+    env.DB.prepare("UPDATE workspace_members SET revision=2 WHERE user_id=?").bind(recipientId));
+  await withHostedParent(room(), parentId, (parent) => {
+    expect(parent['scopeGrants'](child).forUser(recipientId).filter((grant) => grant.active)
+      .map((grant) => grant.membershipIncarnation)).toEqual(["replacement"]);
+  });
+  expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: true });
 });
 
 it("holds a share for an address with no account, and gives it to whoever verifies that address", async () => {
@@ -342,7 +455,10 @@ it("reports a revocation as done when only its lookup-row cleanup fails", async 
 });
 
 it("never restores a revoked grant or a removed membership when a claim runs again", async () => {
-  const share = await create();
+  const request = invitation();
+  const created = await room().createScopeInvitations(request);
+  if (created.status !== "created") throw new Error("share_not_created");
+  const share = created.invitations[0]!;
   await withHostedParent(room(), parentId, (parent) => {
     const grants = parent['scopeGrants'](child);
     grants.mutateCurrent({ operationId: crypto.randomUUID(), actorUserId: actorId, userId: recipientId, target: child, active: false },
@@ -352,6 +468,9 @@ it("never restores a revoked grant or a removed membership when a claim runs aga
   expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: false });
   await changeRelationships(env, workspaceId, [recipientId], env.DB.prepare("DELETE FROM workspace_members WHERE user_id=?").bind(recipientId));
   await claimScopeInvitations(env, recipientId);
+  // Replaying the original creation must not prepare a new relationship for
+  // an already-claimed share, even after its old relationship was deleted.
+  expect(await room().createScopeInvitations(request)).toEqual(created);
   expect(await env.DB.prepare("SELECT 1 FROM workspace_members WHERE user_id=?").bind(recipientId).first()).toBeNull();
   expect((await room().listScopeInvitations({ actorUserId: actorId, target: child }))).toMatchObject({
     status: "ready", invitations: [{ id: share.id, status: "accepted", acceptedByUserId: recipientId }] });
@@ -365,6 +484,25 @@ it("never gives a revoked share to the address it was for", async () => {
   await verifyNewcomer();
   await claimScopeInvitations(env, newcomerId);
   expect(await env.DB.prepare("SELECT 1 FROM workspace_members WHERE user_id=?").bind(newcomerId).first()).toBeNull();
+});
+
+it("does not prepare another pending operation's recipient when replaying a settled invitation", async () => {
+  const settledRequest = invitation();
+  const settled = await room().createScopeInvitations(settledRequest);
+  expect(settled).toMatchObject({ status: "created", invitations: [{ status: "accepted" }] });
+  await changeRelationships(env, workspaceId, [recipientId], env.DB.prepare(
+    "UPDATE workspace_members SET status='suspended',revision=revision+1 WHERE user_id=?").bind(recipientId));
+  const pending = await create();
+  expect(pending.status).toBe("pending");
+  await changeRelationships(env, workspaceId, [recipientId], env.DB.prepare(
+    "DELETE FROM workspace_members WHERE user_id=?").bind(recipientId));
+
+  expect(await room().createScopeInvitations(settledRequest)).toEqual(settled);
+  expect(await env.DB.prepare("SELECT 1 FROM workspace_members WHERE user_id=?").bind(recipientId).first()).toBeNull();
+  expect(await room().listScopeInvitations({ actorUserId: actorId, target: child })).toMatchObject({
+    status: "ready", invitations: expect.arrayContaining([{ ...pending, status: "pending" }]),
+  });
+  expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: false });
 });
 
 it("never gives an expired share to the address it was for", async () => {

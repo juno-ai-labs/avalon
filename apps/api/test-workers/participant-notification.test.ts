@@ -42,6 +42,7 @@ import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-t
 import { processWorkstreamNotificationIntent } from "../src/services/conversation-effect-service";
 import { deliverChildEffects, pendingParentEffects } from "./helpers/conversation-effects";
 import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
+import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
 import { ConversationService } from "../src/services/conversation-service";
 import { SocketService } from "../src/services/socket-service";
 import { socketTicketProtocols } from "@rally/contracts/socket-tickets";
@@ -1205,6 +1206,55 @@ describe("mentioning a nonparticipant on an existing conversation", () => {
       .rejects.toMatchObject({ code: "conversation_not_found" });
     expect((await product(stub, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID })).status).toBe(200);
     await expectParticipantCanOpen(WORKSTREAM_ID, guest);
+  });
+
+  it.each(["0", SHARED_CHILD_ID])("email invitations give a cold guest a usable %s socket without restoring revoked access on replay", async (substreamId) => {
+    await reserveParent(WORKSTREAM_ID);
+    await provisionWorkstream(agentStub());
+    if (substreamId !== "0") {
+      await parentStub().reserveChild({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID,
+        substreamId: asSubstreamId(substreamId), kind: "child", createdByUserId: CREATOR_ID, authorityGeneration: 1 });
+      await withHostedParent(parentStub(), WORKSTREAM_ID, (_hosted, state) => {
+        state.storage.sql.exec(`INSERT INTO parent_breakout_members
+          (parent_id, substream_id, user_id, active, version, added_by_user_id, added_at, updated_at)
+          VALUES (?, ?, ?, 1, 1, ?, ?, ?)`, WORKSTREAM_ID, substreamId, CREATOR_ID, CREATOR_ID, Date.now(), Date.now());
+      });
+      await provisionWorkstream(agentStub(WORKSTREAM_ID, substreamId), WORKSTREAM_ID, { substreamId });
+    }
+    // A verified account with no Organization relationship or cached seat.
+    const guestId = asUserId(MISSING_RECIPIENT_ID);
+    await env.DB.batch([
+      ...SCOPE_SHARE_TABLES.map((sql) => env.DB.prepare(sql)),
+      env.DB.prepare("ALTER TABLE workspace_members ADD COLUMN joined_at TEXT"),
+      env.DB.prepare("INSERT INTO users(id,email,name,timezone,created_at) VALUES (?,'cold-guest@example.test','Cold guest','UTC','2026-10-22T00:00:00.000Z')").bind(guestId),
+      env.DB.prepare("INSERT INTO user_verified_emails(email,user_id) VALUES ('cold-guest@example.test',?)").bind(guestId),
+    ]);
+    const invitation = { operationId: crypto.randomUUID(), workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID,
+      actorUserId: CREATOR_ID, emails: ["cold-guest@example.test"], expiresAt: null,
+      targets: [{ kind: "conversation" as const, workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID,
+        substreamId: asSubstreamId(substreamId) }] };
+    const created = await parentStub().createScopeInvitations(invitation);
+    expect(created).toMatchObject({ status: "created", invitations: [{ status: "accepted", acceptedByUserId: guestId }] });
+    const membership = await env.DB.prepare("SELECT access_class,role,status,incarnation FROM workspace_members WHERE workspace_id=? AND user_id=?")
+      .bind(WORKSPACE_ID, guestId).first<{ access_class: string; role: string | null; status: string; incarnation: string }>();
+    expect(membership).toMatchObject({ access_class: "guest", role: null, status: "active" });
+    const sessionId = crypto.randomUUID();
+    await env.DB.prepare(`INSERT INTO sessions(id,user_id,workspace_id,region,revoked_at,expires_at,workspace_incarnation)
+      VALUES (?,?,?,'global',NULL,'2099-01-01T00:00:00.000Z',?)`).bind(sessionId, guestId, WORKSPACE_ID, membership!.incarnation).run();
+    const guest: AuthContext = { sessionId, userId: guestId, workspaceId: WORKSPACE_ID,
+      region: "global", role: null, accessClass: "guest" };
+    // No explicit alarm drain or product read repairs the claim before the
+    // recipient asks for a real ticket, upgrades it and receives a snapshot.
+    await expectParticipantCanOpen(WORKSTREAM_ID, guest, substreamId);
+    await expectParticipantCanOpen(WORKSTREAM_ID, AUTH, substreamId);
+    if (substreamId !== "0") await expect(new ConversationService(env, guest).socketTicket(WORKSTREAM_ID))
+      .rejects.toMatchObject({ code: "conversation_not_found" });
+    expect((await product(agentStub(WORKSTREAM_ID, substreamId), {
+      operation: "remove_participant", auth: AUTH, userId: guestId,
+    })).status).toBe(200);
+    expect(await parentStub().createScopeInvitations(invitation)).toEqual(created);
+    await expect(new ConversationService(env, guest).socketTicket(WORKSTREAM_ID, substreamId))
+      .rejects.toMatchObject({ code: "conversation_not_found" });
   });
 
   it.each(["member", "guest"] as const)("confirmed Breakout mentions establish parent-owned access for a %s without sharing Main", async (accessClass) => {

@@ -67,7 +67,7 @@ export async function seedWorkspaceControlPlane(
       .bind(input.workspaceId),
     database.prepare(`CREATE TABLE workspace_members (revision INTEGER NOT NULL DEFAULT 1, access_class TEXT NOT NULL DEFAULT 'member', incarnation TEXT DEFAULT 'existing-member',
       workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
-      role TEXT, last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
+      role TEXT, joined_at TEXT, last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
     )`),
     database.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
       VALUES (?, ?, 'active', 'member', '2026-08-18T20:00:00.000Z')`)
