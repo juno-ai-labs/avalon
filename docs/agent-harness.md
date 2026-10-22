@@ -673,7 +673,9 @@ transfer, scripted transformation and field-by-field validation for spreadsheets
 exports, database results and API records. It is provider-independent and unowned
 so the catalog can offer it without a particular connection or Terminal. Its
 local-file steps require loading Terminal separately; the skill grants no tools
-or access. `building-live-sites` loads this companion for source handling while
+or access. Its four steps separate direct processing from Terminal transfer:
+read completely, preserve raw input, transform with code, then validate every
+field. `building-live-sites` loads this companion for source handling while
 retaining site recovery, data-format and publication instructions. The raw JSON
 fallback through `write_file` still relies on the model preserving the response;
 validation against saved input does not prove that transfer was faithful.
