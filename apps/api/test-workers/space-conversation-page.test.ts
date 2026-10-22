@@ -598,6 +598,10 @@ describe("space dashboard conversation page", () => {
     // The Breakout the member opens lists its Channel, and so the Space, for
     // them; Main, which they cannot open, stays off their page.
     expect((await page(spaceId, MEMBER)).items.map((item) => item.title)).toEqual(["Offer letter"]);
+    // Listing through a Breakout grants no authority to archive Main.
+    expect(await workspace().archiveSpace({ workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId }))
+      .toMatchObject({ ok: false, code: "space_membership_final", blockedWorkstreamIds: [PRIVATE_CHANNEL] });
+    expect(await inspect("SELECT operation_id FROM space_intents")).toMatchObject({ rows: [] });
   });
 
   it("given a Channel this viewer reaches only through a Breakout, when their socket lists it, then it carries its name and none of Main", async () => {
