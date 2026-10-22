@@ -166,6 +166,7 @@ The host resolves stored-loadable Sidekicks against execution and conversation a
 | `apps/api/src/durable-objects/substream-agent.ts` | The post-cutover full-loop host, durable dispatcher, keep-alive, stream feed, steering, and child-local timers. |
 | `apps/api/src/services/integrations.ts` | Context assembly and `loadRunPromptContext`. |
 | `apps/api/src/services/sidekick-operation-accounts.ts` | Per-operation delegate selection, explicit account constraints, safe fallback and serving-account attribution. |
+| `apps/api/src/services/completed-tool-replay.ts` | Read-only tool-owned validation before a historical completed result is presented again. |
 | `packages/agent-harness/src/prompts/sidekick-accounts.ts` | Pure account-selection guidance with account names and IDs quoted as data. |
 | `apps/api/src/durable-objects/tool-execution-account.ts` | Private account checkpoints and completed-result resource bindings in the existing receipt ledger. |
 | `packages/contracts` — `readStructuredFailure` | The shape a tool's machine-readable failure half is read through. |
@@ -638,6 +639,21 @@ eligible consenting owner independently of its fixed coordinator; ordinary
 conversations remain limited to their own personal connections.
 
 Revalidation also says why it is asking, because the two occasions need different work. An **activation** — a `load_plugin`, a restored hint, the initial preload — happens a handful of times per run and is checked all the way to the provider. A **continuation** runs before every inference and keeps the activated tool surface visible without reading the connection row again. The model boundary makes one fresh run-authority decision. Ordinary connector calls check live run authority and the connection row before receipt replay or execution. Sidekick calls refresh delegation first, then check the actual selected connection before a new provider operation; retained completed results remain historical receipt facts. The execution carries its decision through credential preparation and the provider effect without another live check. A revoked connection can therefore remain model-visible until the model tries to use it, and a revocation during an already authorized tool call may let that call finish. The next call checks again. Provider credential refusal still surfaces on tool use.
+
+Completed receipts may have a tool-owned `validateCompletedReplay` read. The
+host runs it before loading or emitting the old success. A refusal is a typed
+`HarnessToolReplayRefusal`: Bind returns an authorization failure and records
+its rejection diagnostic, without starting execution or emitting a failure that
+would overwrite the completed historical effect. Transport failures retain the
+existing receipt-port failure behavior. Tools without this hook retain normal
+historical replay.
+
+Sidekick self-consent uses this read to match the immutable action receipt to
+the canonical speaker, target, intent and source, then compare its generation
+to current consent and check an allowed grant's current eligibility. Withdrawal
+acknowledgements remain inspectable after membership or Sidekick access loss.
+A stale acknowledgement never re-enters the consent executor or prepares a new
+grant; the model is directed to read current own grants and wait for a new request.
 
 ### Sidekick operation accounts
 
@@ -1641,6 +1657,14 @@ outputs, summaries, token content, and provider responses remain excluded.
 
 ## Testing
 
+`pnpm --filter @rally/agent-harness exec vitest run src/index.test.ts`
+checks completed replay refusals reach the model without executor calls, new
+execution plans or terminal effect events. Real workerd
+`test-workers/sidekick-delegation.test.ts` drives the consent receipt RPC and
+actual tool-owned replay validator with canonical human turns; it covers stale
+and unavailable acknowledgements, matching actor/intent and read-only withdrawal
+recovery. These prove protocol and authority behavior, not semantic model intent.
+
 `pnpm --filter @rally/api exec vitest run test/sidekick-operation-accounts.test.ts
  test/connector-resource-access.test.ts test/tool-pagination.test.ts` covers
 account ordering, refusal-only fallback, durable account pins, withdrawal,
@@ -1799,6 +1823,8 @@ provider references and private pagination. Google declares those identities;
 undeclared and hosted MCP surfaces keep one explicitly selected connection.
 Canonical activation events bind their provider references before any tool
 result exists; old run openings recover that reference from the event row.
+Completed self-consent acknowledgements also validate current receipt generation
+without repeating the mutation or rewriting their historical completion.
 
 **Why:** A Thread-owned Sidekick could have consent to read a sheet through a
 second person, but the connector executor still admitted only the coordinator's

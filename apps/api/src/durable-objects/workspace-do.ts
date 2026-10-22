@@ -6864,6 +6864,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.setMyDelegation(input));
   }
 
+  async sidekickReadMyDelegationReceipt(input: Parameters<HostedSidekick["readMyDelegationReceipt"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readMyDelegationReceipt(input));
+  }
+
   async sidekickRemoveDelegate(input: Parameters<HostedSidekick["removeDelegate"]>[0]) {
     return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.removeDelegate(input));
   }

@@ -96,6 +96,9 @@ export const SidekickSetMyDelegationRequestSchema = SidekickPrepareDelegationReq
   expectedGeneration: z.number().int().nonnegative(),
   source: z.enum(["self_service", "agent_request"]),
 });
+export const SidekickReadDelegationReceiptRequestSchema = SidekickPrepareDelegationRequestSchema.extend({
+  source: z.enum(["self_service", "agent_request"]),
+});
 export const SidekickRemoveDelegateRequestSchema = AutomationActorRequestSchema.extend({
   userId: UserIdSchema, operationId: IdSchema,
 });

@@ -95,6 +95,16 @@ Terminal authorization and desktop/web controls are tracked by the
 [implementation plan](PRDs/2026-10-22_sidekick-delegation/plan.md) until all
 acceptance evidence is complete.
 
+Consent receipt reconciliation is a read through
+`sidekickReadMyDelegationReceipt`, keyed by the host's original effect ID. It
+compares the exact self-action and source against its durable preparation and
+immutable receipt, then checks the current generation. A still-allowed result
+also needs current eligibility. It neither prepares a new intent nor mutates a
+grant. The normal harness checks this before replaying a completed consent-tool
+acknowledgement. Changed generations get the stale-action recovery sentence;
+unavailable allowed grants get the enrollment-unavailable sentence. A current
+withdrawal receipt remains readable without membership or viewer access.
+
 ## Sidekick publication and loading
 
 Authoring is conversational. A ready submission saves through `saveDefinition`,
@@ -1326,7 +1336,9 @@ share eligibility; each run persists its coordinator independently of legacy
 human access. Migration retains established task accounts and distinguishes
 proven claims from ambiguous creator attribution. Canonical event openings
 also retain authored provider reference keys and source connections, including
-compatibility reads for openings saved before that field existed.
+compatibility reads for openings saved before that field existed. Self-action
+receipt inspection prevents the outer completed-tool cache from presenting a
+withdrawn grant as current without replaying its mutation.
 
 **Why:** A mutable run-as user cannot represent several people's consent or
 independent withdrawal. Reusing that field for automatic coordination would also

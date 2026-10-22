@@ -1762,6 +1762,14 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           }),
         );
         if (completed) {
+          if ("refusal" in completed) {
+            // The prior effect is still completed. Do not emit tool_failed:
+            // that event would rewrite its immutable historical receipt.
+            await input.onToolCallRejected?.({ toolCallId: receiptId, code: completed.refusal.code });
+            return { toolMessage: toolResultMessage(toolCall.id, {
+              success: false, kind: "authz", error: completed.refusal.message, data: { code: completed.refusal.code },
+            }) };
+          }
           return harnessResultOutcome(toolCall.id, completed, () => { completedByTool = true; });
         }
         const executionPlanHash = await canonicalToolInputHash({

@@ -8,6 +8,7 @@ import { seedWorkspaceControlPlane, seedWorkstreamRoot, seedParticipantMessage, 
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { directSidekickDelegationUser, SidekickDelegationService, ownSidekickDelegationsAcrossOrganizations } from "../src/services/sidekick-delegation-service";
 import { sidekickDelegationTools } from "../src/services/sidekick-delegation-tools";
+import { validateCompletedToolReplay } from "../src/services/completed-tool-replay";
 
 const workspaceId = asWorkspaceId("00000000-0000-7000-8000-00000000de00");
 const creator = asUserId("00000000-0000-7000-8000-00000000de01");
@@ -104,6 +105,41 @@ describe("Sidekick consent authority in real workerd", () => {
     expect((await own()).delegations[0]).toMatchObject({ allowed: false, eligible: false });
   });
 
+  it("reads exact self-action receipts without reviving withdrawn or unavailable grants", async () => {
+    await create();
+    const prepared = { ...await prepare(true, other), source: "agent_request" as const };
+    const accepted = await stub().sidekickSetMyDelegation(prepared);
+    const lookup = { ...address, userId: other, operationId: prepared.operationId, allowed: true, source: "agent_request" as const };
+    expect(await stub().sidekickReadMyDelegationReceipt(lookup)).toMatchObject({ outcome: "accepted", result: accepted, grant: { generation: 1 } });
+    expect(await stub().sidekickReadMyDelegationReceipt({ ...lookup, allowed: false })).toEqual({ outcome: "stale" });
+    expect(await stub().sidekickReadMyDelegationReceipt({ ...lookup, userId: creator })).toEqual({ outcome: "stale" });
+    expect(await stub().sidekickReadMyDelegationReceipt({ ...lookup, operationId: crypto.randomUUID() })).toEqual({ outcome: "missing" });
+    await stub().applyMemberStatus({ workspaceId, sequence: 1, removed: true, relationship: {
+      workspaceId, userId: other, accessClass: "member", role: "member", status: "active", incarnation: "existing-member", revision: 1,
+    } });
+    expect(await stub().sidekickReadMyDelegationReceipt(lookup)).toEqual({ outcome: "unavailable" });
+    const withdrawal = await prepare(false, other);
+    await stub().sidekickSetMyDelegation(withdrawal);
+    expect(await stub().sidekickReadMyDelegationReceipt(lookup)).toEqual({ outcome: "stale" });
+    expect(await stub().sidekickReadMyDelegationReceipt({ ...lookup, allowed: false, source: "self_service", operationId: withdrawal.operationId }))
+      .toMatchObject({ outcome: "accepted", result: { allowed: false }, grant: { generation: 2 } });
+    expect((await own(other)).delegations).toEqual([{ sidekickId, label: "Unavailable Sidekick", allowed: false, eligible: false }]);
+  });
+
+  it("refuses an old acknowledgement after withdrawal and regrant to the same eligible person", async () => {
+    await create();
+    const original = await prepare(true, other);
+    await stub().sidekickSetMyDelegation(original);
+    await stub().sidekickSetMyDelegation(await prepare(false, other));
+    const current = await prepare(true, other);
+    await stub().sidekickSetMyDelegation(current);
+    expect((await own(other)).delegations[0]).toMatchObject({ allowed: true, eligible: true });
+    const lookup = { ...address, userId: other, allowed: true, source: "self_service" as const };
+    expect(await stub().sidekickReadMyDelegationReceipt({ ...lookup, operationId: original.operationId })).toEqual({ outcome: "stale" });
+    expect(await stub().sidekickReadMyDelegationReceipt({ ...lookup, operationId: current.operationId }))
+      .toMatchObject({ outcome: "accepted", grant: { generation: 3 } });
+  });
+
   it("lets managers remove a delegate but requires that person's new intent to regrant", async () => {
     await create(true);
     await stub().sidekickSetMyDelegation(await prepare(true, other));
@@ -185,8 +221,19 @@ describe("Sidekick consent authority in real workerd", () => {
     const context = { workspaceId, workstreamId: parentId, harnessRunId: input.harnessRunId, toolCallId: "set-1",
       effectIntentId: crypto.randomUUID(), executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
     expect((await set.execute({ sidekickId, allowed: true }, context)).output).toEqual({ sidekickId, userId: other, allowed: true, changed: true });
+    const replayPlugins = [{ canonicalId: "rally:test", modelId: "rally_test", shortWireName: "test", preload: false, description: "test", tools: room }];
+    const replayPolicy = { pluginId: "rally:test", canonicalToolName: set.definition.name, capability: set.definition.capability,
+      mode: set.definition.mode, idempotency: set.definition.idempotency };
+    expect(await validateCompletedToolReplay(replayPlugins, replayPolicy, { sidekickId, allowed: true }, context)).toBeNull();
     expect((await room[0]!.execute({}, context)).output).toEqual({ userId: other, delegations: [{ sidekickId, label: "Unavailable Sidekick", allowed: true, eligible: true }] });
     expect((await set.execute({ sidekickId, allowed: false }, { ...context, effectIntentId: crypto.randomUUID() })).output).toEqual({ sidekickId, userId: other, allowed: false, changed: true });
+    expect(await validateCompletedToolReplay(replayPlugins, replayPolicy, { sidekickId, allowed: true }, context)).toEqual({ refusal: {
+      code: "sidekick_delegation_stale_action", message: "This delegation changed after this request was prepared. Read your current grant. Only a new request from you can allow it again.",
+    } });
+    const receipts = await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
+      "SELECT count(*) AS count FROM sidekick_delegation_receipts WHERE sidekick_id=?", sidekickId).one().count);
+    expect(receipts).toBe(2);
+    expect((await own(other)).delegations[0]).toMatchObject({ allowed: false, eligible: false });
     expect((await own()).delegations).toEqual([]);
   });
 });

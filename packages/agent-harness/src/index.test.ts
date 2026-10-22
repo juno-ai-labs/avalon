@@ -7073,6 +7073,35 @@ describe("agent harness", () => {
     ]);
   });
 
+  it("reports a stale completed replay as authorization failure without executing or rewriting its old receipt", async () => {
+    const execute = vi.fn(async () => ({ output: { allowed: true }, summary: "Allowed" }));
+    const tool: HarnessTool = { definition: { name: "set_my_delegation", description: "Set delegation", capability: "test.write",
+      mode: "write", idempotency: "record_before_execute", inputSchema: { type: "object", properties: {} } }, execute };
+    const responses = [
+      streamResponse([{ choices: [{ delta: { tool_calls: [toolDelta(0, "stale-replay", "set_my_delegation")] }, finish_reason: "tool_calls" }] }]),
+      streamResponse([{ choices: [{ delta: { content: "Read your current grant before making a new request." }, finish_reason: "stop" }] }]),
+    ];
+    const requests: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(providerRequestView(JSON.parse(String(init?.body))) as typeof requests[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const events: HarnessEvent[] = [];
+    const rejected = vi.fn();
+    const persist = vi.fn();
+    await expect(runHarness({ ...runInput(fetcher), corePlugins: [testCorePlugin([tool])],
+      findCompletedToolResult: async () => ({ refusal: { code: "sidekick_delegation_stale_action", message: "Read your current grant. Only a new request can allow it again." } }),
+      onToolCallRejected: rejected, persistToolExecutionPlan: persist,
+      onEvent: (event) => { events.push(event); },
+    })).resolves.toMatchObject({ status: "completed" });
+    expect(requests[1]?.messages.find((message) => message.role === "tool")?.content)
+      .toEqual(JSON.stringify({ success: false, kind: "authz", error: "Read your current grant. Only a new request can allow it again.", data: { code: "sidekick_delegation_stale_action" } }));
+    expect(execute).not.toHaveBeenCalled();
+    expect(persist).not.toHaveBeenCalled();
+    expect(rejected).toHaveBeenCalledWith({ toolCallId: expect.any(String), code: "sidekick_delegation_stale_action" });
+    expect(events.filter((event) => ["tool_started", "tool_completed", "tool_failed"].includes(event.type))).toEqual([]);
+  });
+
   it("does not retry a truncated tool completion after its text became observable", async () => {
     const responses = [
       streamResponse([{
