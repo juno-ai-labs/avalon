@@ -53,9 +53,11 @@ export function ConversationAccessRequest({ api, parentId, substreamId, fallback
   const [reopening, setReopening] = useState<string | null>(null);
   const request = useMutation({
     mutationFn: () => api!.requestConversationAccess(parentId, substreamId),
-    onSuccess: () => {
+    onSuccess: async () => {
+      // A preview read before the write must not replace the successful result.
+      await queryClient.cancelQueries({ queryKey });
       queryClient.setQueryData<ConversationAccessPreview>(queryKey, (current) =>
-        current ? { ...current, requestPending: true } : current,
+        current ? { ...current, requestPending: true, requestEmailed: true } : current,
       );
     },
   });
@@ -82,20 +84,19 @@ export function ConversationAccessRequest({ api, parentId, substreamId, fallback
         <WorkstreamGlyph appearance={appearance ?? undefined} id={markId} size={40} />
         <h1 className="conversation-access-request-title">{title}</h1>
         {preview.data.requestPending ? (
-          <>
-            <p className="conversation-access-request-sent" role="status">
-              <Check aria-hidden="true" size={14} /> Access requested — awaiting approval
-            </p>
-            <Button onClick={onRetry}>Try again</Button>
-          </>
+          <p className="conversation-access-request-sent" role="status">
+            <Check aria-hidden="true" size={14} /> Access requested — awaiting approval
+          </p>
         ) : (
-          <>
-            <p>You’re not in this {noun}, ask for access below</p>
-            <Button className="button-primary" disabled={request.isPending} onClick={() => request.mutate()}>
-              {request.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />} Request access
-            </Button>
-          </>
+          <p>You’re not in this {noun}, ask for access below</p>
         )}
+        {(!preview.data.requestPending || !preview.data.requestEmailed) && (
+          <Button className="button-primary" disabled={request.isPending} onClick={() => request.mutate()}>
+            {request.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
+            {preview.data.requestPending ? 'Retry sending request' : 'Request access'}
+          </Button>
+        )}
+        {preview.data.requestPending && <Button onClick={onRetry}>Try again</Button>}
         {request.error && (
           <ErrorNotice>
             {request.error instanceof ApiError && request.error.code === 'access_request_no_approver'

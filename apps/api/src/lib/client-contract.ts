@@ -9,6 +9,7 @@ import {
   MINIMUM_SERVED_CLIENT_CONTRACT,
   SESSION_IMPORT_CLIENT_CONTRACT,
   RESOLUTION_SUGGESTIONS_CLIENT_CONTRACT,
+  PENDING_ACCESS_REQUESTS_CLIENT_CONTRACT,
   RALLY_HEADERS,
   readRallyHeader,
 } from "@rally/contracts/http-headers";
@@ -139,4 +140,9 @@ export function clientReadsResolutionSuggestions(header: ClientRequestHeaders): 
 /** Whether this build reads human reply Activity rows. */
 export function clientReadsNewMessages(header: ClientRequestHeaders): boolean {
   return clientReads(header, NEW_MESSAGES_CLIENT_CONTRACT);
+}
+
+/** Whether the access preview may include request lifecycle fields. */
+export function clientReadsPendingAccessRequests(header: ClientRequestHeaders): boolean {
+  return clientReads(header, PENDING_ACCESS_REQUESTS_CLIENT_CONTRACT);
 }
