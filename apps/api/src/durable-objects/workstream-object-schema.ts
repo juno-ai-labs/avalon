@@ -26,7 +26,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 80;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 81;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3595,6 +3595,14 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     ],
   },
 
+  {
+    version: 81,
+    description: "retain archive generation across conversation restores",
+    statements: [
+      `ALTER TABLE workstream ADD COLUMN archive_generation INTEGER NOT NULL DEFAULT 0 CHECK (archive_generation >= 0)`,
+      `UPDATE workstream SET archive_generation = 1 WHERE archived_at IS NOT NULL`,
+    ],
+  },
 ];
 
 /**

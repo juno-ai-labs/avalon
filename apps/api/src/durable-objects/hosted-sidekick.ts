@@ -754,23 +754,33 @@ export class HostedSidekick {
     const request = parseRpcInput(AutomationActorRequestSchema, input, "pause");
     const row = this.assertSidekick(request.workspaceId, request.automationId);
     await this.assertManager(row, request.actor);
-    if (row.lifecycle === "paused") return;
-    if (row.lifecycle !== "active") throw new ApiError(409, "sidekick_not_active", "Only an active Sidekick can be paused");
-    this.storage.transactionSync(() => this.pauseBy("person", Date.now()));
-    await this.host.afterRegistrations(this.sidekickId, null, []);
+    const changed = this.storage.transactionSync(() => {
+      const current = this.assertSidekick(request.workspaceId, request.automationId);
+      if (current.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
+      if (current.lifecycle === "paused") return false;
+      if (current.lifecycle !== "active") throw new ApiError(409, "sidekick_not_active", "Only an active Sidekick can be paused");
+      this.pauseByPerson(Date.now());
+      return true;
+    });
+    if (changed) await this.host.afterRegistrations(this.sidekickId, null, []);
   }
 
   async resume(input: AutomationActorRequest): Promise<void> {
     const request = parseRpcInput(AutomationActorRequestSchema, input, "resume");
     const row = this.assertSidekick(request.workspaceId, request.automationId);
     await this.assertManager(row, request.actor);
-    if (row.lifecycle === "active") return;
-    if (row.lifecycle !== "paused") throw new ApiError(409, "sidekick_not_paused", "Only a paused Sidekick can be resumed");
-    if (row.owning_room_archived_at !== null) {
-      throw new ApiError(409, "sidekick_room_archived", "The thread that owns this Sidekick is archived");
-    }
-    const evaluators = this.storage.transactionSync(() => this.resumeFromPause(Date.now()));
-    await this.host.afterRegistrations(this.sidekickId, row.accepted_definition_revision, evaluators);
+    const resumed = this.storage.transactionSync(() => {
+      const current = this.assertSidekick(request.workspaceId, request.automationId);
+      if (current.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
+      if (current.lifecycle === "active") return null;
+      if (current.lifecycle !== "paused") throw new ApiError(409, "sidekick_not_paused", "Only a paused Sidekick can be resumed");
+      // Retained legacy rooms can still carry this marker until reconciled.
+      if (current.owning_room_archived_at !== null) {
+        throw new ApiError(409, "sidekick_room_archived", "The thread that owns this Sidekick is archived");
+      }
+      return { revision: current.accepted_definition_revision, evaluators: this.resumeFromPause(Date.now()) };
+    });
+    if (resumed) await this.host.afterRegistrations(this.sidekickId, resumed.revision, resumed.evaluators);
   }
 
   async remove(input: AutomationActorRequest): Promise<void> {
@@ -793,21 +803,12 @@ export class HostedSidekick {
       return { changed: false, outcomeCode: "sidekick_not_owned_by_workstream" };
     }
     if (row.lifecycle === "deleted") return { changed: false, outcomeCode: "sidekick_already_archived" };
-    if (request.archived) {
-      this.sql.exec(
-        `UPDATE automation_directory SET owning_room_archived_at = ?, updated_at = ? WHERE automation_id = ?`,
-        now, now, this.sidekickId,
-      );
-      this.archive(now);
-      return { changed: true, outcomeCode: "sidekick_archived" };
+    if (!request.archived && row.owning_room_archived_at === null) {
+      return { changed: false, outcomeCode: "sidekick_room_not_archived" };
     }
-    if (row.owning_room_archived_at === null) return { changed: false, outcomeCode: "sidekick_room_not_archived" };
-    this.sql.exec(
-      `UPDATE automation_directory SET owning_room_archived_at = NULL, updated_at = ? WHERE automation_id = ?`,
-      now, this.sidekickId,
-    );
-    this.touchDirectory(now);
-    return { changed: true, outcomeCode: "sidekick_room_unarchived" };
+    // A legacy archive marker is terminal even when the next notice is restore.
+    this.archive(now, row.owning_room_archived_at ?? now);
+    return { changed: true, outcomeCode: "sidekick_archived" };
   }
 
   async runNow(input: AutomationRunNowRequest): Promise<{ runId: string; reused: boolean }> {
@@ -1656,26 +1657,27 @@ export class HostedSidekick {
   // Lifecycle helpers, each inside the caller's transaction.
   // ---------------------------------------------------------------------------
 
-  private archive(now: number): void {
+  private archive(now: number, owningRoomArchivedAt: number | null = null): void {
     this.stopOpenRuns(now);
     this.cancelSidekickAlarms();
     this.sql.exec(
       `UPDATE automation_directory
-          SET lifecycle = 'deleted', paused_by = NULL, stop_generation = stop_generation + 1, updated_at = ?
+          SET lifecycle = 'deleted', paused_by = NULL, stop_generation = stop_generation + 1,
+              owning_room_archived_at = COALESCE(?, owning_room_archived_at), updated_at = ?
         WHERE automation_id = ?`,
-      now, this.sidekickId,
+      owningRoomArchivedAt, now, this.sidekickId,
     );
     this.touchDirectory(now, this.writeRegistrations([]));
   }
 
-  private pauseBy(by: "person" | "room_archive", now: number): void {
+  private pauseByPerson(now: number): void {
     this.stopOpenRuns(now);
     this.cancelSidekickAlarms();
     this.sql.exec(
       `UPDATE automation_directory
-          SET lifecycle = 'paused', paused_by = ?, stop_generation = stop_generation + 1, updated_at = ?
+          SET lifecycle = 'paused', paused_by = 'person', stop_generation = stop_generation + 1, updated_at = ?
         WHERE automation_id = ?`,
-      by, now, this.sidekickId,
+      now, this.sidekickId,
     );
     this.touchDirectory(now, this.writeRegistrations([]));
   }
