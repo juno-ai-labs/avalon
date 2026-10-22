@@ -428,14 +428,18 @@ storage and compatibility reads before enabling delegation-aware execution;
 then expose the controls and replace both trigger paths together. Old queued
 messages remain decodable and receive current delegation checks at admission.
 
-Backfill each existing Sidekick's current run-as user once. For a user-created
-Sidekick with no later claim, this is also its creator. A replaced creator is
-not enrolled merely because they remain the author: a legacy claim replaced
-that execution authority and rebound its connections. They need a fresh opt-in
-to become eligible again. The current run-as value is established authority:
-production writes it on creation or an authenticated self-claim.
-Do not require a separate historical consent record that does not exist, or
-silently disable a claimed Sidekick on deploy. Preserve those users' existing
+Backfill a current run-as user when existing provenance establishes direct
+user-driven creation or authenticated self-claim. A current principal different
+from the creator identifies an authenticated claim under today's two production
+write paths and does not require inventing a separate historical consent ledger.
+A matching creator/run-as value alone is ambiguous because creation is also
+available to autonomous runs. Reuse existing creation/tool receipts where they
+establish direct-user provenance; otherwise show **Needs opt-in** and require
+a fresh self-service or agent-assisted grant. Do not enroll inherited autonomous
+principals. A replaced creator also needs fresh opt-in rather than regaining
+authority just because they remain the author. Surface any blocked legacy
+execution explicitly instead of silently treating it as a no-op.
+Preserve existing
 reader and manager rights independently of future coordinator selection.
 Mere room participation or provider account discovery never enrolls anyone.
 Backfill records its provenance and never overwrites a withdrawal.
@@ -458,7 +462,9 @@ withdrawals. Preserve consent and receipt records.
    its creator once in a direct user-driven context; autonomous creation
    records no delegation for its inherited principal. Withdrawing persists
    across saves, resume, reload and migration replay. A claimed legacy Sidekick
-   migrates its current principal without re-enrolling its replaced creator.
+   migrates its current principal without re-enrolling its replaced creator;
+   a legacy autonomous or ambiguous creation gets no automatic grant and
+   visibly requires opt-in.
 2. In real Electron and browser windows, inspect loading, empty, populated,
    unavailable, error, offline, and pending states. Two sessions converge after
    self-opt-in and withdrawal. Joining or viewing never creates delegation.
