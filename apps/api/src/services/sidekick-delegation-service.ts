@@ -1,6 +1,6 @@
 import {
   IdSchema, SIDEKICK_DELEGATION_ERRORS, LEGACY_WORKSTREAM_LINK_ORIGINS,
-  SidekickDelegatesResultSchema, SidekickMyDelegationsResultSchema,
+  SidekickDelegatesResultSchema, SidekickMyDelegationsResultSchema, SidekickDelegationReceiptResultSchema,
   asUserId, asWorkspaceId, parseSidekickLinkPathTarget,
   type UserId, type WorkspaceId, type WorkstreamWorkflowInput,
 } from "@rally/contracts";
@@ -77,6 +77,13 @@ export class SidekickDelegationService {
     // Preparation is durable and idempotent. A re-delivery cannot replace an old generation.
     const { generation } = await workspace.sidekickPrepareMyDelegation(request);
     return workspace.sidekickSetMyDelegation({ ...request, expectedGeneration: generation, source });
+  }
+
+  async readOwnReceipt(sidekickId: string, allowed: boolean, operationId: string, source: "self_service" | "agent_request") {
+    return SidekickDelegationReceiptResultSchema.parse(await (await this.workspace()).sidekickReadMyDelegationReceipt({
+      workspaceId: this.workspaceId, automationId: IdSchema.parse(sidekickId), userId: this.userId,
+      operationId: IdSchema.parse(operationId), allowed, source,
+    }));
   }
 
   private unavailable(): ApiError {

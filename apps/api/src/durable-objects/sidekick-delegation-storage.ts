@@ -4,6 +4,7 @@ import {
   SidekickDelegationMutationResultSchema,
   type SidekickDelegationGrant,
   type SidekickDelegationMutationResult,
+  type SidekickDelegationReceiptResult,
 } from "@rally/contracts";
 import { ApiError } from "../lib/api-error";
 
@@ -94,6 +95,22 @@ export class SidekickDelegationStorage {
     return this.storage.sql.exec<{ grant_json: string }>(
       "SELECT grant_json FROM sidekick_delegations WHERE user_id=? ORDER BY sidekick_id", userId,
     ).toArray().map((row) => SidekickDelegationGrantSchema.parse(JSON.parse(row.grant_json)));
+  }
+
+  /** Inspect an exact accepted self-action without preparing or mutating consent. */
+  receipt(input: { sidekickId: string; userId: string; operationId: string; allowed: boolean; source: "self_service" | "agent_request" }): SidekickDelegationReceiptResult {
+    const row = this.storage.sql.exec<{ intent_json: string; result_json: string; generation: number; prepared_generation: number }>(
+      `SELECT receipt.intent_json,receipt.result_json,receipt.generation,preparation.generation AS prepared_generation
+         FROM sidekick_delegation_receipts receipt
+         JOIN sidekick_delegation_preparations preparation USING(sidekick_id,operation_id)
+        WHERE receipt.sidekick_id=? AND receipt.operation_id=?`, input.sidekickId, input.operationId,
+    ).toArray()[0];
+    if (!row) return { outcome: "missing" };
+    const intent = JSON.stringify({ sidekickId: input.sidekickId, userId: input.userId, actorUserId: input.userId,
+      operationId: input.operationId, allowed: input.allowed, expectedGeneration: row.prepared_generation, source: input.source });
+    const grant = this.read(input.sidekickId, input.userId);
+    if (row.intent_json !== intent || !grant || grant.generation !== row.generation) return { outcome: "stale" };
+    return { outcome: "accepted", result: SidekickDelegationMutationResultSchema.parse(JSON.parse(row.result_json)), grant };
   }
 
   mutate(input: SidekickDelegationMutation, now = Date.now()): SidekickDelegationMutationResult {

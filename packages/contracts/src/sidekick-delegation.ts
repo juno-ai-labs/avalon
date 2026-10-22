@@ -49,6 +49,13 @@ export const SidekickDelegationGrantSchema = z.strictObject({
 });
 export type SidekickDelegationGrant = z.infer<typeof SidekickDelegationGrantSchema>;
 
+/** Host-only reconciliation; no generation or provenance enters model outputs. */
+export const SidekickDelegationReceiptResultSchema = z.discriminatedUnion("outcome", [
+  z.strictObject({ outcome: z.literal("accepted"), result: SidekickDelegationMutationResultSchema, grant: SidekickDelegationGrantSchema }),
+  z.strictObject({ outcome: z.enum(["missing", "stale", "unavailable"]) }),
+]);
+export type SidekickDelegationReceiptResult = z.infer<typeof SidekickDelegationReceiptResultSchema>;
+
 /** Host-only operation authority; no credentials or pooled principal. */
 export const SidekickExecutionDelegationSchema = z.strictObject({
   sidekickId: IdSchema,
