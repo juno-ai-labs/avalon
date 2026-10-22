@@ -1,40 +1,12 @@
-import {
-  Aperture,
-  Atom,
-  Boxes,
-  CircleDot,
-  CircuitBoard,
-  Component,
-  Dices,
-  Orbit,
-  Play,
-  Sparkles,
-  Spline,
-  WandSparkles,
-  Workflow,
-  type LucideIcon,
-} from 'lucide-react';
-import { generatedWorkstreamAppearance, type ProjectColorKey, type WorkstreamAppearance as SavedAppearance } from '@rally/contracts';
+import { Play, Sparkles, type LucideIcon } from 'lucide-react';
+import { GENERATED_WORKSTREAM_ICON_KEYS, generatedWorkstreamAppearance, type ProjectColorKey, type WorkstreamAppearance as SavedAppearance } from '@rally/contracts';
 import clsx from 'clsx';
 import { useId } from 'react';
 import { markColors } from '../lib/project-palette';
 import { APPEARANCE_ICON_COMPONENTS } from './appearance-icons';
 import type { IdentityMark } from './identity-tile';
 
-const WORKSTREAM_ICONS = [
-  Aperture,
-  Atom,
-  Boxes,
-  CircleDot,
-  CircuitBoard,
-  Component,
-  Dices,
-  Orbit,
-  Sparkles,
-  Spline,
-  WandSparkles,
-  Workflow,
-] as const satisfies readonly LucideIcon[];
+const WORKSTREAM_ICONS = GENERATED_WORKSTREAM_ICON_KEYS.map((key) => APPEARANCE_ICON_COMPONENTS[key]);
 
 /** Every storable key's glyph; see `appearance-icons.ts`. */
 export const WORKSTREAM_ICON_COMPONENTS = APPEARANCE_ICON_COMPONENTS;

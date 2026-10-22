@@ -16,7 +16,7 @@
 
 import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId, type AutomationDetail, type AutomationScope } from "@rally/contracts";
 
@@ -164,10 +164,22 @@ describe("automation directory", () => {
   it.each([
     { home: "0", storedColor: "purple", expectedColor: "purple" },
     { home: "00000000-0000-7000-8000-00000000ad25", storedColor: "black", expectedColor: "black" },
+    { home: "0", storedColor: "not-a-color", expectedColor: "lime" },
+    { home: "00000000-0000-7000-8000-00000000ad25", storedColor: "not-a-color", expectedColor: "emerald" },
     { home: "0", storedColor: null, expectedColor: "lime" },
     { home: "00000000-0000-7000-8000-00000000ad25", storedColor: null, expectedColor: "emerald" },
   ] as const)("inherits home $home color $storedColor at creation", async ({ home, storedColor, expectedColor }) => {
-    await runInDurableObject(workspaceStub(), (_instance, state) => {
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await runInDurableObject(workspaceStub(), (instance, state) => {
+      // The test Worker defaults to error-only logging. Exercise the production
+      // warning path without changing the binding for unrelated tests.
+      if (storedColor === "not-a-color") {
+        const target = instance as unknown as { env: Env };
+        target.env = new Proxy(target.env, {
+          get: (current, property, receiver) => property === "LOG_LEVEL"
+            ? "warn" : Reflect.get(current, property, receiver),
+        });
+      }
       // Deliberately different Thread and Breakout colors: the exact home wins.
       state.storage.sql.exec("UPDATE channels SET appearance_json = ? WHERE workstream_id = ?",
         JSON.stringify({ icon: "rocket", color: home === "0" ? storedColor : "orange" }), ROOM_ID);
@@ -190,16 +202,24 @@ describe("automation directory", () => {
     expect(detail.appearance).toEqual({ icon: null, color: expectedColor });
     expect(JSON.parse((await directoryRow(automationId)).appearance_json!))
       .toEqual({ icon: null, color: expectedColor });
+    if (storedColor === "not-a-color") {
+      expect(warned).toHaveBeenCalledWith(expect.objectContaining({
+        event: "sidekick_home_appearance_invalid", workspace_id: WORKSPACE_ID,
+        automation_id: automationId, workstream_id: ROOM_ID, substream_id: home,
+        code: "sidekick_home_appearance_invalid:color:invalid_value",
+      }));
+      expect(JSON.stringify(warned.mock.calls)).not.toContain("not-a-color");
+    }
   });
 
-  it("keeps a scoped Sidekick's edited appearance when creation is replayed after the home changes color", async () => {
+  it.each(["orange", "not-a-color"])("keeps edited appearance on creation replay with home color %s", async (color) => {
     const automationId = await createAndPublish("workstream");
     await workspaceStub().sidekickSetAppearance({ workspaceId: WORKSPACE_ID, automationId,
       actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: true },
       appearance: { icon: "rocket", color: "green" } });
     await runInDurableObject(workspaceStub(), (_instance, state) => {
       state.storage.sql.exec("UPDATE channels SET appearance_json = ? WHERE workstream_id = ?",
-        JSON.stringify({ icon: null, color: "orange" }), ROOM_ID);
+        JSON.stringify({ icon: null, color }), ROOM_ID);
     });
     const replay = await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID,
       scope: "workstream", owningWorkstreamId: ROOM_ID, automationId });
