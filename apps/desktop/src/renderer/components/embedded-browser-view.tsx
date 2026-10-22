@@ -62,7 +62,7 @@ export function useEmbeddedBrowser(): {
  * Keeps the native page over `pageRef`'s rectangle while `show` holds.
  *
  * The page is a native view above the renderer, so it cannot be layered under
- * a Rally dialog or menu; it is hidden while one is open instead. Hidden keeps
+ * a Rally dialog or overlapping menu; it is hidden while one is open. Hidden keeps
  * the rectangle: main parks the page out of the window at this size, so an
  * agent driving it reads, captures and clicks the same page it did in view.
  */
@@ -75,9 +75,18 @@ export function useEmbeddedBrowserPlacement(pageRef: RefObject<HTMLElement | nul
       return;
     }
     const update = (): void => {
-      const occluded = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="menu"]')]
-        .some((overlay) => !overlay.contains(page) && overlay.getAttribute('data-state') !== 'closed');
       const rect = page.getBoundingClientRect();
+      const occluded = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [role="menu"]')]
+        .some((overlay) => {
+          if (overlay.contains(page) || overlay.getAttribute('data-state') === 'closed') return false;
+          // Dialogs own the whole window, including their scrim. A menu in
+          // the conversation pane does not cover the browser beside it.
+          if (overlay.getAttribute('role') !== 'menu') return true;
+          const menu = (overlay.closest('[data-radix-popper-content-wrapper]') ?? overlay).getBoundingClientRect();
+          return menu.width > 0 && menu.height > 0
+            && menu.left < rect.right && menu.right > rect.left
+            && menu.top < rect.bottom && menu.bottom > rect.top;
+        });
       void bridge.setEmbeddedBrowserBounds({
         x: Math.round(Math.max(0, rect.left)),
         y: Math.round(Math.max(0, rect.top)),
@@ -89,7 +98,7 @@ export function useEmbeddedBrowserPlacement(pageRef: RefObject<HTMLElement | nul
     const sizes = new ResizeObserver(update);
     sizes.observe(page);
     const overlays = new MutationObserver(update);
-    overlays.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-state', 'role'] });
+    overlays.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-state', 'role', 'style'] });
     window.addEventListener('resize', update);
     update();
     return () => {
