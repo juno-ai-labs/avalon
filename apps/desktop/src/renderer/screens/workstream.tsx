@@ -1,5 +1,5 @@
 import { AcknowledgedErrorDialog } from '../components/acknowledged-error-dialog';
-import { BreakoutMenu, ChannelMenu, type ConversationRowTarget } from '@rally/ui/components/conversation-menus';
+import { BreakoutMenu, ChannelMenu, MergeDestinationLabel, type ConversationRowTarget } from '@rally/ui/components/conversation-menus';
 import type { BreakoutMark } from '@rally/ui/components/breakout-marks';
 import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
 import { TitlePillClose, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
@@ -45,7 +45,7 @@ import { openMemorySource, useMemoryFacts, type MemoryFacts } from '../component
 import { workstreamSidekickRows } from '../components/sidekick-section';
 import { useChannelRail } from '../lib/channel-rails';
 import { type LaunchingSubstream, type SubstreamLaunchProps } from '../components/substream-launch';
-import { ConversationOpeningSkeleton, ConversationSurface, mergeLabel, mergeTargetFor, workspaceMemberFromSession, type ConversationHeaderContext, type ScrollToTurnRequest } from './conversation-surface';
+import { ConversationOpeningSkeleton, ConversationSurface, mergeTargetFor, workspaceMemberFromSession, type ConversationHeaderContext, type ScrollToTurnRequest } from './conversation-surface';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 
 // The feed, composer and rail live in `conversation-surface.tsx`, shared with
@@ -859,8 +859,8 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     || directoryEntry?.conversations.find((item) => item.substreamId === openBreakoutId)?.archived);
   const mainActions = (conversationScoped ? mainVisible : parent.data) ? {
     merge: threadMerge ? {
-      label: mergeLabel(threadMerge),
-      target: threadMerge.kind === 'channel' && threadMerge.channels.length > 1 ? `${threadMerge.channels.length} Channels` : 'Channel',
+      label: <MergeDestinationLabel kind={threadMerge.kind} name={threadMerge.kind === 'channel' ? threadMerge.channels[0]!.name : threadMerge.threadTitle} />,
+      target: threadMerge.kind === 'channel' && threadMerge.channels.length > 1 ? `${threadMerge.channels.length} Channels` : undefined,
       disabled: Boolean(threadResolved),
       disabledReason: threadResolved ? 'This thread is already resolved.' : undefined,
       onSelect: () => setMergeRequest({ substreamId: '0', nonce: Date.now() }),
@@ -883,8 +883,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     // The Breakout's pane merges only when it has its Thread to merge into,
     // which a reader scoped to the Breakout alone does not.
     merge: openBreakoutId && !conversationScoped && parent.data ? {
-      label: 'Merge to thread',
-      target: parent.data.title,
+      label: <MergeDestinationLabel kind="thread" name={parent.data.title} />,
       onSelect: () => setMergeRequest({ substreamId: openBreakoutId, nonce: Date.now() }),
     } : undefined,
     onCopyLink: session?.workspace ? copyRowLink : undefined,
