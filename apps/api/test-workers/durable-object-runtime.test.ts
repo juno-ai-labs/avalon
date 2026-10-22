@@ -13,6 +13,7 @@ import {
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
   WorkspaceWorkstreamPageEventSchema,
+  ServerSocketEventSchema,
 } from "@rally/contracts";
 import {
   conversationEffectHash,
@@ -31,6 +32,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RALLY_HEADERS } from "@rally/contracts/http-headers";
 
+import { WorkspaceConversationView } from "../src/durable-objects/workspace-conversation-view";
 import { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import { type SidekickDirectoryRow, writeSidekickDirectoryRow } from "./helpers/sidekick";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS, WorkspaceDO } from "../src/durable-objects/workspace-do";
@@ -41,6 +43,7 @@ import { WorkstreamObjectProductService } from "../src/durable-objects/workstrea
 import type { WorkstreamObjectStore } from "../src/durable-objects/workstream-object-storage";
 import { WorkstreamMessageStorage } from "../src/durable-objects/workstream-message-storage";
 import {
+  WorkstreamTranscriptStorage,
   insertPreparedTranscriptFact,
   prepareTranscriptFact,
 } from "../src/durable-objects/workstream-transcript-storage";
@@ -49,6 +52,7 @@ import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting
 import {
   admitFixturePendingInput,
   seedParticipantMessage,
+  seedCanonicalMessageRecord,
   holdLoopExecuting,
 } from "./helpers/substream-fixture";
 import {
@@ -4906,6 +4910,70 @@ describe("Durable Objects in the Workers runtime", () => {
     second.webSocket!.close(1000, "test complete");
   });
 
+  it("keeps the full opening feed when the authoritative socket replaces a preview", async () => {
+    await seedOpenAuthority();
+    await seedCreatorProfile();
+    const stub = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID));
+    expect((await stub.bootstrapRuntime({ workspaceId: WORKSPACE_ID, parentKind: "workstream",
+      parentId: WORKSTREAM_ID, generation: 1 })).status).toBe(200);
+    await provisionBootstrappedWorkstream(stub, USER_ID);
+    await seatBootstrapParticipant(stub, USER_ID);
+    await runInDurableObject(stub, async (_instance, state) => {
+      await seedParticipantMessage(state, { id: "opening-request", sequence: 1, text: "Opening request" });
+      await seedParticipantMessage(state, { id: "working-reply", sequence: 2, authorType: "agent", text: "Working on it" });
+      const transcript = new WorkstreamTranscriptStorage(state.storage);
+      for (let sequence = 3; sequence <= 8; sequence += 1) {
+        await seedCanonicalMessageRecord(state, {
+          id: `plugin-only-${sequence}`, sequence, messageType: "tool", text: "Private tool output", toolName: "search",
+        });
+        const activityId = `assistant-${sequence}`;
+        transcript.upsertActivity({ activityId, parentActivityId: null, scope: "assistant_turn",
+          subjectId: `plugin-only-${sequence}`, callIndex: null, label: "Rally", action: "complete",
+          revision: 1, occurredAtUtc: "2026-10-21T12:00:01.000Z" });
+        for (const [action, revision, occurredAtUtc] of [
+          ["start", 1, "2026-10-21T12:00:00.000Z"], ["complete", 2, "2026-10-21T12:00:01.000Z"],
+        ] as const) transcript.upsertActivity({ activityId: `plugin-${sequence}`, parentActivityId: activityId,
+          scope: "plugin", subjectId: "search", callIndex: null, label: "Search", action, revision, occurredAtUtc });
+      }
+      await seedParticipantMessage(state, { id: "final-reply", sequence: 9, authorType: "agent", text: "Final answer" });
+    });
+    const workspace = env.WORKSPACE_DOS.getByName(workspaceDOName("global", WORKSPACE_ID));
+    for (const turnId of ["opening-request", "working-reply", "plugin-only-3", "plugin-only-4",
+      "plugin-only-5", "plugin-only-6", "plugin-only-7", "plugin-only-8", "final-reply"]) {
+      const projection = await stub.conversationViewProjection({ type: "conversation_view_v1", region: "global",
+        workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, substreamId: "0", turnId });
+      expect(projection).not.toBeNull();
+      await workspace.applyConversationView(projection);
+    }
+    const preview = await runInDurableObject(workspace, (_instance, state) =>
+      new WorkspaceConversationView(state.storage).opening({ requestId: "00000000-0000-7000-8000-0000000008f2",
+        parentId: WORKSTREAM_ID, substreamId: asSubstreamId("0") }));
+    expect(preview.view?.transcript.ranges[0]?.turns.map((turn) => turn.turnId)).toEqual([
+      "opening-request", "working-reply", "plugin-only-3", "plugin-only-4", "plugin-only-5",
+      "plugin-only-6", "plugin-only-7", "plugin-only-8", "final-reply",
+    ]);
+    const response = await stub.fetch("https://substream.test/socket", { headers: {
+      Upgrade: "websocket", "x-rally-workspace-id": WORKSPACE_ID, "x-rally-workstream-id": WORKSTREAM_ID,
+      "x-rally-substream-id": "0", "x-rally-user-id": USER_ID, "x-rally-session-id": SESSION_ID,
+      "x-rally-socket-ticket-id": "00000000-0000-7000-8000-0000000008f1",
+      "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+    } });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    const pending = nextMessageWhileOpen(socket);
+    socket.send(JSON.stringify({ type: "subscribe", afterSequence: 0 }));
+    const frame = ServerSocketEventSchema.parse(JSON.parse(String((await pending).data)));
+    expect(frame.type).toBe("snapshot");
+    if (frame.type !== "snapshot") throw new Error("snapshot_required");
+    expect(frame.transcript.ranges[0]?.covered).toEqual({ startInclusive: 1, endExclusive: 10 });
+    expect(frame.transcript.ranges.flatMap((range) => range.turns.flatMap((turn) =>
+      turn.blocks.flatMap((block) => block.type === "text" ? [block.text] : []))))
+      .toEqual(["Opening request", "Working on it", "Final answer"]);
+    expect(new TextEncoder().encode(JSON.stringify(frame)).byteLength).toBeLessThanOrEqual(WORKSTREAM_REALTIME_MAX_FRAME_BYTES);
+    socket.close(1000, "test complete");
+  });
+
   // These three tests deliberately hash and persist enough payload to cross the
   // platform's 1 MB socket boundary in real workerd. Fixture construction is
   // not a product latency assertion, so each gets an integration-test timeout.
@@ -4974,7 +5042,7 @@ describe("Durable Objects in the Workers runtime", () => {
         await seedParticipantMessage(state, {
           id: `00000000-0000-7000-8004-${String(sequence).padStart(12, "0")}`,
           sequence,
-          text: sequence <= 40 ? "z".repeat(120_000) : `short ${sequence}`,
+          text: sequence <= 40 ? "z".repeat(200_000) : `short ${sequence}`,
           authorType: "agent",
           now: 4_000 + sequence,
         });
@@ -4995,11 +5063,15 @@ describe("Durable Objects in the Workers runtime", () => {
     };
     expect(frame.type).toBe("snapshot");
     const delivered = frame.transcript.ranges.flatMap((range) => range.turns);
-    expect(delivered.map((turn) => turn.transcriptSequence)).toEqual([76, 77, 78, 79, 80]);
+    expect(delivered.map((turn) => turn.transcriptSequence)).toEqual([
+      37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
+      53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68,
+      69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80,
+    ]);
     expect(frame.transcript.ranges).toEqual([
       expect.objectContaining({
         purpose: "latest",
-        covered: { startInclusive: 76, endExclusive: 81 },
+        covered: { startInclusive: 37, endExclusive: 81 },
       }),
     ]);
     expect(frame).not.toHaveProperty("messageFeed");
