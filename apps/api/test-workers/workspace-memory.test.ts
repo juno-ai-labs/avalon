@@ -182,6 +182,29 @@ describe("workspace memory tables", () => {
     expect(audited).toBe((second as { resultJson: string }).resultJson);
   });
 
+  it("grants only one new-item claim to overlapping independent runs", async () => {
+    await createTable();
+    const first = insertRequest("receipt-claim-first", [{ id: "mtr_first", key: "same-event" }]);
+    const second = insertRequest("receipt-claim-second", [{ id: "mtr_second", key: "same-event" }]);
+    second.mutation.harnessRunId = "00000000-0000-7000-8000-000000000ce4";
+    const outcomes = await Promise.all([
+      workspace().insertMemoryTableRows(first),
+      workspace().insertMemoryTableRows(second),
+    ]);
+    const counts = outcomes.map((raw) => {
+      const outcome = WorkspaceMemoryTableInsertRowsResultSchema.parse(raw);
+      expect(outcome.outcome).toBe("inserted");
+      if (outcome.outcome !== "inserted") throw new Error("claim insert failed");
+      return (JSON.parse(outcome.resultJson) as { insertedCount: number }).insertedCount;
+    });
+    expect(counts.sort()).toEqual([0, 1]);
+    const rows = await runInDurableObject(workspace(), (_instance, state) =>
+      state.storage.sql.exec<{ data_json: string }>(
+        "SELECT data_json FROM memory_table_rows",
+      ).toArray().map((row) => JSON.parse(row.data_json) as { itemKey: string }));
+    expect(rows).toEqual([{ itemKey: "same-event" }]);
+  });
+
   it("serves a page and the revision it was read under from one object event", async () => {
     await createTable();
     await workspace().insertMemoryTableRows(insertRequest("receipt-i1", [

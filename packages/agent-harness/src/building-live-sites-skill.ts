@@ -223,7 +223,16 @@ that refreshes a site needs these tools for its publication step too.
    \`200\` full of undefined).
 
 10. **Revise in place, never fork.** A change request or a Sidekick refresh
-   means: recover the existing source, edit it, and republish it. If the
+   must preserve **both the original publishing conversation and directory
+   path**. Identify that conversation from the resource metadata or supplied
+   task context before promising an in-place refresh. For a site published in
+   a thread, configure a workstream-scoped Sidekick owned by that same thread.
+   Personal or workspace Sidekicks publish in their own conversation and cannot
+   redirect publication to an arbitrary thread. If this run cannot publish in
+   the original conversation, report that requirement instead of creating a
+   replacement site. Importing source does not change the publication target.
+
+   Recover the existing source, edit it, and republish it. If the
    workspace no longer holds the files, call \`import_resource\` with the
    existing site's resource ID first. A site import requires
    \`destinationPath\` relative to the workspace root: use the original
@@ -232,7 +241,7 @@ that refreshes a site needs these tools for its publication step too.
    than choosing a new path. Never assume a later run shares the original
    sandbox or rebuild the site from memory. Update the necessary files, then
    call \`publish_resource\` with **the same directory path**, relative to the
-   resource output directory. Same URL, same rail
+   resource output directory, in the original publishing conversation. Same URL, same rail
    entry, new version — viewers see it on their next load. Publishing
    a renamed or copied directory mints a second site and strands the
    URL people already have; do not do it. Keep chat narration short
