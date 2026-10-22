@@ -170,12 +170,6 @@ the approver's inbox, and it acts only as the approver.
 
 ## Testing
 
-The access-request dialog fixture explicitly unmounts and lets Radix's
-zero-delay focus-restoration callback finish before each test ends. Otherwise
-the callback can dispatch through a replaced `CustomEvent` constructor after
-jsdom teardown: every assertion passes, but Vitest reports unhandled errors.
-Keep this cleanup when adding cases, including those that leave the dialog open.
-
 ```bash
 pnpm --filter @rally/api exec vitest run test/conversation-access-approval.test.ts
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/conversation-access-requests.test.ts

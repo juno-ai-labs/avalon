@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { asSubstreamId, asUserId, asWorkstreamId, type ConversationAccessRequestItem } from '@rally/contracts';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { accessRequestsQueryKey, type AccessRequestDecisionApi } from '../lib/access-requests';
 import { AccessRequestDialog } from './access-request-dialog';
@@ -22,13 +22,6 @@ function show(api: AccessRequestDecisionApi, requestId: string, onClose = vi.fn(
 }
 
 describe('AccessRequestDialog', () => {
-  afterEach(async () => {
-    cleanup();
-    // Radix restores focus in a zero-delay timer after unmount. Finish that
-    // callback before jsdom teardown replaces the window's CustomEvent.
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-  });
-
   it('approves the request the menu bar named, then closes and drops it from the list', async () => {
     const api = { decideConversationAccess: vi.fn(async () => ({ status: 'approved' as const })) };
     const { client, onClose } = show(api, 'r1');
