@@ -20,7 +20,7 @@ function context(): ConnectorToolContext {
 function connector(fetcher: typeof fetch) {
   return createGoogleConnector({ clientId: "test", clientSecret: "test", redirectUri: "https://example.test/oauth", fetch: fetcher });
 }
-const metadata = (mimeType = "application/vnd.google-apps.document") => Response.json({ id: "file", name: "Notes", mimeType });
+const metadata = (mimeType = "application/vnd.google-apps.document", canDownload = true) => Response.json({ id: "file", name: "Notes", mimeType, capabilities: { canDownload } });
 
 describe("Google file text", () => {
   it("rejects plain-text spreadsheet exports with the field and usable alternatives before exporting", async () => {
@@ -127,5 +127,51 @@ describe("Google file text", () => {
 
   it("keeps a complete small text page independent of snapshot storage", async () => {
     expect(await readConnectorTextPage({ text: "hello", pageBytes: 128000 })).toEqual({ text: "hello", bytes: 5, startByte: 0, totalBytes: 5, hasMore: false, cursor: null });
+  });
+
+  it.each(["\uFEFFhello", "\uFEFF"])("preserves a leading U+FEFF without inventing another page", async text => {
+    expect(await readConnectorTextPage({ text, pageBytes: 128000 })).toMatchObject({ text, bytes: new TextEncoder().encode(text).byteLength, hasMore: false, cursor: null });
+  });
+
+  it("advances correctly through U+FEFF at later page boundaries", async () => {
+    const text = "x".repeat(128000) + "\uFEFF" + "y".repeat(127997) + "\uFEFF";
+    const adapter = connector(async input => String(input).includes("docs.googleapis.com")
+      ? Response.json({ documentId: "file", body: { textRun: { content: text } } }) : metadata());
+    const ctx = context();
+    const first = await adapter.executeTool("docs.read_document", { documentId: "file" }, ctx);
+    const second = await adapter.executeTool("docs.read_document", first.pagination!.continuations[0]!.input, ctx);
+    const third = await adapter.executeTool("docs.read_document", second.pagination!.continuations[0]!.input, ctx);
+    expect(second.output).toMatchObject({ textContent: "\uFEFF" + "y".repeat(127997), startByte: 128000, bytes: 128000 });
+    expect(third.output).toMatchObject({ textContent: "\uFEFF", startByte: 256000, bytes: 3, hasMore: false });
+    expect(third.pagination).toEqual({ continuations: [] });
+  });
+
+  it.each([
+    ["drive.download", { fileId: "file" }],
+    ["drive.export", { fileId: "file", mimeType: "text/plain" }],
+    ["docs.read_document", { documentId: "file" }],
+  ] as const)("refuses %s snapshot content after Google disables downloads", async (operation, input) => {
+    let canDownload = true;
+    let storedReads = 0;
+    const adapter = connector(async input => String(input).includes("docs.googleapis.com")
+      ? Response.json({ documentId: "file", body: { textRun: { content: "x".repeat(128001) } } })
+      : String(input).includes("/export") ? new Response("x".repeat(128001)) : metadata(undefined, canDownload));
+    const ctx = context();
+    const read = ctx.textPages!.read;
+    ctx.textPages!.read = async (...args) => { storedReads++; return read(...args); };
+    const first = await adapter.executeTool(operation, input, ctx);
+    canDownload = false;
+    await expect(adapter.executeTool(operation, first.pagination!.continuations[0]!.input, ctx)).rejects.toMatchObject({
+      details: { resourceAccessRefused: true, field: "fileId", reason: "download_restricted" },
+    });
+    expect(storedReads).toBe(0);
+  });
+
+  it.each(["insufficientFilePermissions", "appNotAuthorizedToFile"])("preserves alternate-connection recovery for %s", async reason => {
+    const adapter = connector(async input => String(input).includes("/export")
+      ? Response.json({ error: { code: 403, message: "PRIVATE", errors: [{ reason }] } }, { status: 403 }) : metadata());
+    const error = await adapter.executeTool("drive.export", { fileId: "file", mimeType: "text/plain" }, context()).catch(error => error);
+    expect(error).toMatchObject({ details: { resourceAccessRefused: true, reason, error: { code: 403 } } });
+    expect(JSON.stringify(error)).not.toContain("PRIVATE");
   });
 });
