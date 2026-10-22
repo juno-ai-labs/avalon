@@ -70,12 +70,13 @@ import { useUiStore } from '../lib/ui-store';
 import type { WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import type * as CollaborationSessionModule from '../lib/collaboration-session';
 import type { ClientSession } from '@rally/contracts/client-session';
-import type { SubstreamId } from '@rally/contracts';
+import { asSubstreamId } from '@rally/contracts';
 import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
 import { conversationDirectoryQueryKey } from '../lib/conversation-directory';
 import { desktopBridge } from '../lib/platform';
 
 const channelId = '00000000-0000-7000-8000-000000000801';
+const breakoutId = asSubstreamId('00000000-0000-7000-8000-000000000802');
 
 function boot(id: string, title: string, resources: WorkstreamResource[] = [], text?: string): WorkstreamBoot {
   return {
@@ -172,13 +173,13 @@ function renderScreen({ breakout, directory }: { breakout: boolean; directory?: 
   seed(queryClient, ['workstream', channelId], ['ordered-transcript', channelId],
     boot(channelId, 'Channel', breakout ? [] : [site], breakout ? undefined : reply));
   if (breakout) {
-    seed(queryClient, ['substream-workstream', channelId, 'child'], ['substream-ordered-transcript', channelId, 'child'],
+    seed(queryClient, ['substream-workstream', channelId, breakoutId], ['substream-ordered-transcript', channelId, breakoutId],
       boot(channelId, 'Breakout', [site], reply));
   }
   render(
     <Tooltip.Provider>
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={[`/workstreams/${channelId}${breakout ? '?substream=child' : ''}`]}>
+        <MemoryRouter initialEntries={[`/workstreams/${channelId}${breakout ? `?substream=${breakoutId}` : ''}`]}>
           <Routes>
             <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
           </Routes>
@@ -259,7 +260,7 @@ describe('attaching a breakout artifact to its channel', () => {
       spaces: [],
       workstreams: [{
         parentId: channelId, title: 'Channel', scope: 'personal', archived: false,
-        conversations: [{ substreamId: 'child' as SubstreamId, title: 'Breakout', scope: 'personal', archived: false }],
+        conversations: [{ substreamId: breakoutId, title: 'Breakout', scope: 'personal', archived: false }],
       }],
     } });
     await openCardMenu();
