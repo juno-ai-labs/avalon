@@ -1,3 +1,4 @@
+import { useSidekickActivity } from './use-sidekick-activity';
 import {
   ClientFeatureFlagsSchema,
   asSpaceId,
@@ -11,7 +12,7 @@ import {
 import type { SpaceDirectory } from '@rally/contracts';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { onlineManager, QueryClient, QueryClientProvider, useQuery, type InfiniteData } from '@tanstack/react-query';
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { StrictMode, useEffect, type JSX, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SpaceConversationSummary, WorkstreamSummary } from './types';
@@ -681,7 +682,6 @@ describe('WorkspaceSocketProvider', () => {
       ['automation-draft'],
       ['automation-runs'],
       ['sidekicks-library'],
-      ['sidekick-activity'],
       ['attached-sidekicks'],
       ['workstream-sidekicks'],
       ['recommended-sidekicks'],
@@ -1848,43 +1848,55 @@ describe('WorkspaceSocketProvider', () => {
     expect(screen.getByTestId('spaces-live')).toHaveTextContent('false');
   });
 
-  it('refreshes only activity on its narrow signal and Channel counts on live Space snapshots', async () => {
+  it('subscribes composer targets and consumes versioned socket counts through reconnect and unmount', async () => {
     const queryClient = new QueryClient();
-    const threadKey = ['sidekick-activity', 'workstream', 'room', '0'];
-    const breakoutKey = ['sidekick-activity', 'workstream', 'room', 'breakout'];
-    const channelKey = ['sidekick-activity', 'space', 'channel', '0'];
-    for (const key of [threadKey, breakoutKey, channelKey, ['automation'], ['automation-runs'], ['sidekicks-library']]) {
-      queryClient.setQueryData(key, 1);
-    }
+    const target = { parentKind: 'workstream' as const, parentId: '00000000-0000-7000-8000-000000000002', substreamId: '0' };
+    const other = { parentKind: 'space' as const, parentId: '00000000-0000-7000-8000-000000000003', substreamId: '0' };
+    function Count(): JSX.Element { return <div data-testid="sidekick-count">{useSidekickActivity(target) ?? 'unknown'}</div>; }
     const getWorkspaceSocketTicket = vi.fn(async () => ({
       url: 'wss://api.rally.test/socket/workspaces/workspace-1',
       ticket: 'workspace-ticket', protocols: socketTicketProtocols('workspace-ticket'),
     }));
-    render(
-      <QueryClientProvider client={queryClient}>
-        <WorkspaceSocketProvider region="global" api={{ getWorkspaceSocketTicket }}
-          workspaceId="00000000-0000-7000-8000-000000000001"><div /></WorkspaceSocketProvider>
-      </QueryClientProvider>,
-    );
+    const view = (show: boolean) => <QueryClientProvider client={queryClient}>
+      <WorkspaceSocketProvider region="global" api={{ getWorkspaceSocketTicket }}
+        workspaceId="00000000-0000-7000-8000-000000000001">{show && <Count />}</WorkspaceSocketProvider>
+    </QueryClientProvider>;
+    const rendered = render(view(true));
     await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
+    let socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
-    act(() => socket.message({
-      type: 'workspace_space_snapshot', occurredAt: '2026-08-17T20:00:00.000Z',
-      spacesReady: true, ordering: [],
-      spaces: { active: { waterline: 1, items: [] }, inactive: { waterline: 1, items: [] } },
-    }));
-    expect(queryClient.getQueryState(channelKey)?.isInvalidated).toBe(true);
-    expect(queryClient.getQueryState(threadKey)?.isInvalidated).toBe(false);
-    act(() => socket.message({
-      type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000008',
-      waterline: 8, occurredAt: '2026-08-17T20:01:00.000Z', topics: ['sidekick_activity'], reason: 'change',
-    }));
-    expect(queryClient.getQueryState(threadKey)?.isInvalidated).toBe(true);
-    expect(queryClient.getQueryState(breakoutKey)?.isInvalidated).toBe(true);
-    for (const key of [['automation'], ['automation-runs'], ['sidekicks-library']]) {
-      expect(queryClient.getQueryState(key)?.isInvalidated).toBe(false);
-    }
+    const sync = { type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000008',
+      waterline: 8, occurredAt: '2026-08-17T20:01:00.000Z', topics: ['sidekick_activity'], reason: 'initial' };
+    act(() => socket.message(sync));
+    const commands = () => socket.send.mock.calls.map(([raw]) => JSON.parse(String(raw)) as { type: string; revision: number; targets: unknown[] })
+      .filter((command) => command.type === 'sidekick_activity');
+    expect(commands().at(-1)).toMatchObject({ type: 'sidekick_activity', revision: 1, targets: [target] });
+    const event = { type: 'workspace_sidekick_activity', revision: 1, target, waterline: 8, count: 2 };
+    act(() => socket.message(event));
+    await flushPromises();
+    await waitFor(() => expect(screen.getByTestId('sidekick-count')).toHaveTextContent('2'));
+    act(() => socket.message({ ...event, waterline: 7, count: 0 }));
+    act(() => socket.message({ ...event, target: other, waterline: 9, count: 10 }));
+    await flushPromises();
+    await waitFor(() => expect(screen.getByTestId('sidekick-count')).toHaveTextContent('2'));
+    act(() => socket.message({ ...event, waterline: 10, count: 0 }));
+    await flushPromises();
+    await waitFor(() => expect(screen.getByTestId('sidekick-count')).toHaveTextContent('0'));
+    // A transport's new subscribe answer re-registers the retained composer target.
+    act(() => { socket.close(1012); window.dispatchEvent(new Event('online')); });
+    await flushPromises();
+    socket = FakeWebSocket.instances[1]!;
+    act(() => socket.open());
+    act(() => socket.message({ ...sync, waterline: 11 }));
+    expect(commands().at(-1)).toMatchObject({ revision: 2, targets: [target] });
+    act(() => socket.message({ ...event, revision: 1, waterline: 12, count: 5 }));
+    await flushPromises();
+    await waitFor(() => expect(screen.getByTestId('sidekick-count')).toHaveTextContent('0'));
+    act(() => socket.message({ ...event, revision: 2, waterline: 12, count: 1 }));
+    await flushPromises();
+    await waitFor(() => expect(screen.getByTestId('sidekick-count')).toHaveTextContent('1'));
+    rendered.rerender(view(false));
+    expect(commands().at(-1)).toMatchObject({ revision: 3, targets: [] });
   });
 
   it('refetches an open automation page when its list row is pushed', async () => {
@@ -1941,7 +1953,7 @@ describe('WorkspaceSocketProvider', () => {
     expect(queryClient.getQueryState(['automation', automationId])?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(['automation-runs', automationId])?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(['sidekicks-library'])?.isInvalidated).toBe(true);
-    expect(queryClient.getQueryState(['sidekick-activity', 'workstream', 'room', '0'])?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(['sidekick-activity', 'workstream', 'room', '0'])?.isInvalidated).toBe(false);
     expect(queryClient.getQueryState(['attached-sidekicks', 'room'])?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(['workstream-sidekicks', 'room'])?.isInvalidated).toBe(true);
   });

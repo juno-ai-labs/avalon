@@ -1,4 +1,3 @@
-import { SidekickActivitySchema, type SidekickActivityTarget } from "@rally/contracts";
 import { connectorAuthorizationStatus } from '@rally/contracts';
 import type { Annotation } from '@rally/contracts';
 import { ManagedScopeGrantsSchema, RevokeScopeGrantSchema, ScopeGrantMutationResultSchema } from "@rally/contracts/scope-grants";
@@ -1242,10 +1241,6 @@ export class RallyApi {
     })).items;
   }
 
-  async getSidekickActivity(target: SidekickActivityTarget, signal?: AbortSignal): Promise<number> {
-    const query = new URLSearchParams(target);
-    return (await this.request(`/sidekicks/activity?${query}`, { signal, schema: SidekickActivitySchema })).count;
-  }
 
   async getSidekicks(signal?: AbortSignal): Promise<AutomationSummary[]> {
     const result = await this.request('/sidekicks', { signal, schema: wireAutomationPageSchema });

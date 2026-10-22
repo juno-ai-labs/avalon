@@ -15,6 +15,7 @@ import { seedParticipantGrants } from "./helpers/hosted-parent";
 import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
 import {
+  asSpaceId,
   asSubstreamId,
   asUserId,
   asWorkspaceId,
@@ -1035,6 +1036,78 @@ describe("attached Sidekick activity", () => {
       && (frame.topics as string[]).includes("sidekick_activity"), "Attachment retry refresh");
     expect(await organization().attachSidekickConversation(request)).toMatchObject({ ok: true, alreadyAttached: true });
     await changed;
+    connection.socket.close();
+  });
+
+  it("pushes initial and changed counts only for watched targets and clears refused targets", async () => {
+    const connection = await connect(member);
+    const target = { parentKind: "workstream", parentId: channelA, substreamId: "0" };
+    const subscribe = connection.stream.next((frame) => frame.type === "workspace_sidekick_activity", "Initial activity count");
+    connection.socket.send(JSON.stringify({ type: "sidekick_activity", revision: 1, targets: [target] }));
+    expect(await subscribe).toMatchObject({ revision: 1, target, count: 0 });
+    const started = connection.stream.next((frame) => frame.type === "workspace_sidekick_activity" && frame.count === 1, "Pushed running count");
+    await sidekickEffect(skOwned, asSubstreamId("0"), "running");
+    expect(await started).toMatchObject({ target, count: 1 });
+    const stopped = connection.stream.next((frame) => frame.type === "workspace_sidekick_activity" && frame.count === 0, "Pushed stopped count");
+    await sidekickEffect(skOwned, asSubstreamId("0"), "idle");
+    await stopped;
+    const guestConnection = await connect(reader);
+    const refused = guestConnection.stream.next((frame) => frame.type === "workspace_sidekick_activity", "Refused activity target");
+    const privateTarget = { parentKind: "workstream", parentId: channelB, substreamId: "0" };
+    guestConnection.socket.send(JSON.stringify({ type: "sidekick_activity", revision: 1, targets: [privateTarget] }));
+    expect(await refused).toMatchObject({ target: privateTarget, count: 0 });
+    connection.socket.send(JSON.stringify({ type: "sidekick_activity", revision: 2, targets: [] }));
+    await vi.waitFor(async () => {
+      expect(await runInDurableObject(organization(), (_instance, state) => state.getWebSockets()
+        .some((socket) => {
+          const attached = socket.deserializeAttachment() as { userId: string; sidekickActivityRevision?: number; sidekickActivityTargets?: unknown[] };
+          return attached.userId === member && attached.sidekickActivityRevision === 2 && attached.sidekickActivityTargets?.length === 0;
+        }))).toBe(true);
+    });
+    const before = connection.stream.received.filter((frame) => frame.type === "workspace_sidekick_activity").length;
+    await sidekickEffect(skOwned, asSubstreamId("0"), "running");
+    const done = connection.stream.next((frame) => frame.type === "pong", "Push barrier");
+    connection.socket.send("ping"); await done;
+    expect(connection.stream.received.filter((frame) => frame.type === "workspace_sidekick_activity").length - before).toBe(0);
+    connection.socket.close(); guestConnection.socket.close();
+  });
+
+  it("pushes Sidekick visibility changes without requiring another execution transition", async () => {
+    await sidekickEffect(skAttached, asSubstreamId("0"), "running");
+    const connection = await connect(member);
+    const target = { parentKind: "workstream", parentId: channelA, substreamId: "0" };
+    const initial = connection.stream.next((frame) => frame.type === "workspace_sidekick_activity", "Initial visible helper");
+    connection.socket.send(JSON.stringify({ type: "sidekick_activity", revision: 1, targets: [target] }));
+    expect(await initial).toMatchObject({ count: 1 });
+    const deleted = connection.stream.next((frame) => frame.type === "workspace_sidekick_activity" && frame.count === 0, "Deleted helper count");
+    await writeSidekickDirectoryRow(env, sidekick(skAttached, { title: "Deleted", scope: "workspace", lifecycle: "deleted" }));
+    await runInDurableObject(organization(), async (instance) => {
+      await (instance as unknown as { afterParentWrite(): Promise<void> }).afterParentWrite();
+    });
+    await deleted;
+    connection.socket.close();
+  });
+
+  it("pushes Channel counts when a running default is added or removed with no member Threads", async () => {
+    await runInDurableObject(organization(), (_instance, state) => {
+      completeSpaceBootstrap(state); insertSpace(state, []);
+      state.storage.sql.exec(`INSERT INTO parent_metadata
+        (parent_id, parent_kind, workspace_id, region, authority_generation, created_at, updated_at)
+        VALUES (?, 'space', ?, 'global', 1, 0, 0)`, spaceId, workspaceId);
+    });
+    await sidekickEffect(skRecommended, asSubstreamId("0"), "running");
+    const connection = await connect(member);
+    const target = { parentKind: "space", parentId: spaceId, substreamId: "0" };
+    const initial = connection.stream.next((frame) => frame.type === "workspace_sidekick_activity", "Initial Channel count");
+    connection.socket.send(JSON.stringify({ type: "sidekick_activity", revision: 1, targets: [target] }));
+    expect(await initial).toMatchObject({ target, count: 0 });
+    const added = connection.stream.next((frame) => frame.type === "workspace_sidekick_activity" && frame.count === 1, "Added running default");
+    const request = { workspaceId, userId: member, spaceId: asSpaceId(spaceId), kind: "sidekick" as const, targetId: skRecommended };
+    expect(await organization().addSpaceDefault(request)).toMatchObject({ ok: true });
+    await added;
+    const removed = connection.stream.next((frame) => frame.type === "workspace_sidekick_activity" && frame.count === 0, "Removed running default");
+    expect(await organization().removeSpaceDefault(request)).toMatchObject({ ok: true });
+    await removed;
     connection.socket.close();
   });
 

@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const api = vi.hoisted(() => ({
   recordActivityEvents: vi.fn(async () => undefined),
-  getSidekickActivity: vi.fn(async () => 0),
   renameSubstream: vi.fn(),
   resolveConversation: vi.fn(),
   setSubstreamArchived: vi.fn(),
@@ -207,7 +206,6 @@ describe('socket-first channel open', () => {
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
   beforeEach(() => {
     vi.clearAllMocks();
-    api.getSidekickActivity.mockResolvedValue(0);
     localStorage.clear();
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(900);
     vi.stubGlobal('ResizeObserver', class {
@@ -277,18 +275,17 @@ describe('socket-first channel open', () => {
   });
 
   it('stacks running Sidekicks with background agents and clears each count independently', async () => {
-    api.getSidekickActivity.mockResolvedValue(1);
     api.getConnections.mockResolvedValue([]);
     const boot = recoveryBoot();
     const cache = renderScreen((query) => {
       query.setQueryData(['workstream', workstreamId], boot);
       query.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
       query.setQueryData(['workstream-background-agents', workstreamId], { '0': 2 });
+      query.setQueryData(['sidekick-activity', 'workstream', workstreamId, '0'], { count: 1, waterline: 1 });
     });
     expect(await screen.findByRole('status', { name: '1 Sidekick running' })).toBeInTheDocument();
     expect(screen.getByRole('status', { name: '2 background agents running' })).toBeInTheDocument();
-    api.getSidekickActivity.mockResolvedValue(0);
-    await act(() => cache.invalidateQueries({ queryKey: ['sidekick-activity'] }));
+    act(() => cache.setQueryData(['sidekick-activity', 'workstream', workstreamId, '0'], { count: 0, waterline: 2 }));
     await waitFor(() => expect(screen.queryByRole('status', { name: /Sidekicks? running/u })).not.toBeInTheDocument());
     expect(screen.getByRole('status', { name: '2 background agents running' })).toBeInTheDocument();
     act(() => cache.setQueryData(['workstream-background-agents', workstreamId], { '0': 0 }));

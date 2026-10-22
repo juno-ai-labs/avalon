@@ -221,17 +221,18 @@ sidebar renders participants as a facepile and provides attachment removal.
 
 Channel, Thread, and Breakout composers show a distinct running Sidekick count,
 covering setup, manual, and triggered executions; idle, archived, and
-waiting-for-input executions do not count. `GET /sidekicks/activity` admits the
-reader through the exact receiving conversation, then intersects its homes,
-posting attachments, defaults, recommendations, and loaded instructions with
-accepted local child/run projections. Instruction links use the shared audience
-rule; posting consent exposes activity only, not Sidekick history.
+waiting-for-input executions do not count. The composer registers its exact
+target with `sidekick_activity` on the existing workspace socket; WorkspaceDO
+admits each target and pushes initial and changed `workspace_sidekick_activity`
+counts from accepted local child/run projections. Sources are exact homes,
+posting attachments, defaults, recommendations, and loaded instructions.
+Instruction links use the shared audience rule; posting consent exposes only
+activity, not Sidekick history.
 
-Execution transitions and changed conversation attachments or audiences publish the narrow
-`sidekick_activity` topic through the existing durable post-commit lane. Channel
-defaults refresh through live Space snapshots; reconnects refresh all counts.
-Activity signals leave the Sidekick directory unchanged and refetch only the
-composer counts; ordinary conversation updates send no activity signal.
+Execution, attachment, audience, visibility, and Channel-default changes use the durable
+post-commit lane to push watched counts. Subscription revisions and snapshot
+waterlines discard obsolete targets and older snapshots; reconnect re-registers
+the open composers. Counts have no REST fetch, polling, or per-Sidekick socket.
 
 ## Where the code lives
 
@@ -1122,7 +1123,7 @@ instructions. See [Google connector guidance](connectors.md#google).
 
 **What changed:** Each receiving composer shows a count of its running Sidekicks,
 including setup, manual, and triggered executions, through one activity read and
-the existing Organization socket's narrow activity signal.
+the existing Organization socket's target-scoped count snapshots.
 
 **Why:** A Sidekick can work in its own conversation while posting to another,
 leaving that receiving conversation looking idle. Lifecycle summaries cannot
@@ -1132,8 +1133,9 @@ answer whether setup or a run is currently executing.
 history. The Organization already holds the accepted child projections and can
 answer the activity question without transferring history or adding connections.
 Reusing the full automation-list push would refetch unrelated Sidekick surfaces
-on every setup turn, so activity has its own topic and leaves the directory
-waterline unchanged.
+on every setup turn. Invalidating a REST count would spend a second round trip
+on data the socket owner already holds. Activity therefore pushes counts only
+to the composers watching them and leaves the directory waterline unchanged.
 
 **Consequences:** Association and target visibility decide where activity may
 appear; live execution decides whether it appears. Concurrent executions count
