@@ -74,42 +74,63 @@ export class WorkspaceConversationView {
     ).toArray()[0];
     const empty = { type: "workspace_conversation_view" as const, ...request, view: null };
     if (!header) return empty;
-    // Same five-turn opening window as the authoritative transcript. All older
-    // visible turns remain cached; history paging stays on the admitted socket.
-    const rows = sql.exec<{ content_json: string }>(
-      `SELECT content_json FROM conversation_view_turns
-       WHERE parent_id = ? AND substream_id = ? AND content_json IS NOT NULL
-       ORDER BY transcript_sequence DESC LIMIT 5`,
-      request.parentId, request.substreamId,
-    ).toArray().reverse().map((row) => JSON.parse(row.content_json) as ConversationViewContent);
-    const snapshotThrough = rows.at(-1)?.turn.transcriptSequence ?? 0;
+    const encoder = new TextEncoder();
     const transcript: WorkstreamTranscriptSnapshot = {
-      snapshotId: uuidV7(), snapshotThrough, eventSequence: 0, snapshotAtUtc: new Date().toISOString(),
+      snapshotId: uuidV7(), snapshotThrough: 0, eventSequence: 0, snapshotAtUtc: new Date().toISOString(),
       unreadAnchorSequence: null, unreadReason: "no_unread",
       ranges: [], activities: [], activeActivities: [], activeTurns: [], pendingInputs: [], pluginRuns: [],
     };
     const answer = { ...empty, view: { header: JSON.parse(header.header_json) as ConversationViewHeader, transcript } };
-    do {
-      transcript.ranges = rows.length ? [{
-        purpose: "latest",
-        requested: { startInclusive: rows[0]!.turn.transcriptSequence, endExclusive: snapshotThrough + 1 },
-        covered: { startInclusive: rows[0]!.turn.transcriptSequence, endExclusive: snapshotThrough + 1 },
-        turns: rows.map((row) => ({ ...row.turn, blocks: row.turn.blocks.map((block) => ({ ...block, streaming: false })) })), activities: [], pluginRuns: [],
-      }] : [];
-      transcript.activities = rows.flatMap((row) => row.activities.filter((activity) => activity.state !== "active"));
-      transcript.pluginRuns = rows.flatMap((row) => row.pluginRuns.map((run) => ({
+    const range = {
+      purpose: "latest" as const,
+      requested: { startInclusive: 1, endExclusive: 1 },
+      covered: { startInclusive: 1, endExclusive: 1 },
+      turns: [] as WorkstreamTranscriptSnapshot["ranges"][number]["turns"],
+      activities: [], pluginRuns: [],
+    };
+    // Charge the exact wire representation once per row, including array
+    // separators and range coordinates. No full-frame trim loop is needed.
+    const arrayGrowth = (items: readonly unknown[], existingCount: number): number =>
+      encoder.encode(JSON.stringify(items)).byteLength - 2 + (items.length > 0 && existingCount > 0 ? 1 : 0);
+    let bytes = 0;
+    for (const row of sql.exec<{ content_json: string }>(
+      `SELECT content_json FROM conversation_view_turns
+       WHERE parent_id = ? AND substream_id = ? AND content_json IS NOT NULL
+       ORDER BY transcript_sequence DESC`,
+      request.parentId, request.substreamId,
+    )) {
+      const content = JSON.parse(row.content_json) as ConversationViewContent;
+      const turn = { ...content.turn, blocks: content.turn.blocks.map((block) => ({ ...block, streaming: false })) };
+      const activities = content.activities.filter((activity) => activity.state !== "active");
+      // A stale cached run must not start a live timer before attachment.
+      const pluginRuns = content.pluginRuns.map((run) => ({
         ...run, toolCallIds: [],
         durationMs: run.durationMs === null ? null : run.durationMs + (run.elapsedMsAtSnapshot ?? 0),
         elapsedMsAtSnapshot: null,
-      })));
-      // A stale cached run must not start a live work timer before attachment.
-      transcript.activeActivities = [];
-      if (new TextEncoder().encode(JSON.stringify(answer)).byteLength <= WORKSTREAM_REALTIME_MAX_FRAME_BYTES) {
-        return answer;
+      }));
+      if (range.turns.length === 0) {
+        transcript.snapshotThrough = turn.transcriptSequence;
+        range.requested = { startInclusive: turn.transcriptSequence, endExclusive: turn.transcriptSequence + 1 };
+        range.covered = { ...range.requested };
+        transcript.ranges = [range];
+        bytes = encoder.encode(JSON.stringify(answer)).byteLength;
       }
-      rows.shift();
-    } while (rows.length);
-    // Oversized text never blocks the authoritative connection.
-    return empty;
+      const coordinateGrowth = 2 * (String(turn.transcriptSequence).length - String(range.covered.startInclusive).length);
+      const nextBytes = bytes + coordinateGrowth + arrayGrowth([turn], range.turns.length)
+        + arrayGrowth(activities, transcript.activities.length) + arrayGrowth(pluginRuns, transcript.pluginRuns.length);
+      if (nextBytes > WORKSTREAM_REALTIME_MAX_FRAME_BYTES) {
+        if (range.turns.length === 0) return empty;
+        break;
+      }
+      bytes = nextBytes;
+      range.requested.startInclusive = turn.transcriptSequence;
+      range.covered.startInclusive = turn.transcriptSequence;
+      range.turns.push(turn);
+      transcript.activities.push(...activities);
+      transcript.pluginRuns.push(...pluginRuns);
+    }
+    range.turns.reverse();
+    // Keep a final wire check at the boundary as the response shape evolves.
+    return encoder.encode(JSON.stringify(answer)).byteLength <= WORKSTREAM_REALTIME_MAX_FRAME_BYTES ? answer : empty;
   }
 }
