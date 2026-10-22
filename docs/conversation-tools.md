@@ -338,6 +338,8 @@ every call. Channel visibility, conversation admission and archival still narrow
 them. Duplicate titles are disambiguated only among readable candidates.
 Sidekick attachments and merge destinations keep their existing contracts.
 
+Pull request: [#1403](https://github.com/juno-ai-labs/avalon/pull/1403).
+
 ### 2026-10-19 — Thread and Breakout loops read and search their Channels, and every conversation looks the same
 
 **What changed:** A Thread's Main loop gets list, read and search beside merge,
