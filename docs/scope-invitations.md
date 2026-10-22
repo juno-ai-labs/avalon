@@ -17,6 +17,9 @@ dialog, which embeds the panel beside its own controls, stays open on an emptied
 form. Participant mutations use the
 parent grant ledger for every ready conversation; transcript execution stays in the
 conversation owner.
+The People form becomes ready when the share commits. Its lists refresh in the
+background; successful addresses are suppressed from another submission until
+both reads settle, so a quick repeat does not send another invitation email.
 
 ## Where the code lives
 
@@ -134,9 +137,12 @@ conversation only existed so a mail scanner fetching a link could not consume
 it, and with nothing in the link to consume, an email one-time code or Google
 sign-in is already a human proving they hold the mailbox.
 
-Creation writes one `scope_share_recipients` row per address in D1, naming the
+Creation writes one `scope_share_recipients` row per pending, unexpired address in
+the submitted operation, naming the
 Channel that holds the share, once the Organization object has recorded it, so
-a refused caller writes no rows. The share stays in the object, beside the
+a refused caller writes no rows. One D1 batch records those lookup rows,
+establishes guest relationships for already-verified addresses without changing
+existing relationships, and reads those recipients' relationships. The share stays in the object, beside the
 grants it becomes; the row only says where to ask. If that write fails the
 request fails, and the sharer's retry replays the same operation to it. A claim
 or revocation that deletes rows re-checks afterwards and restores any whose
@@ -163,7 +169,15 @@ points:
 **Creation also claims at once** for every address that already belongs to a
 user in this deployment. That person holds the share before the response
 returns and shows up as a participant, not a pending Guest; they still get the
-email, which is how they hear of it.
+email, which is how they hear of it. Claims bind to the batch's observed membership
+incarnation; a newer suspension of that incarnation wins. A different live row
+is left to the ordered membership events, never substituted into the receipt.
+When the event trails the batch, its arrival makes the new grant usable without
+another claim. When it leads the batch, an old-incarnation grant cannot admit
+the replacement membership. Grant authorization is still rechecked
+after the batch. The delivery alarm, or a later sign-in, removes settled lookup
+rows instead of delaying the response for cleanup. Replaying an already-settled
+creation does not recreate a deleted relationship.
 
 A claim, per pending share for one of the addresses, checks that it is usable
 (not revoked, not past `expiresAt`), that its targets have finished their
@@ -402,7 +416,8 @@ grant.
   commit without its receipt would let an interrupted claim restore a later
   revocation.
 - A lookup row is a hint, never authority. The Organization object decides; a
-  row with nothing pending behind it is removed by the next claim that reaches it.
+  row with nothing pending behind it is removed by the delivery alarm or the
+  next claim that reaches it.
 - A lookup row stays while anything is pending for its address in that Channel,
   so a share that could not be claimed yet (migration, sharer state, a failure
   mid-transaction) is retried on the next sign-in.
@@ -462,10 +477,16 @@ workerd. It obtains tickets through `ConversationService`, upgrades them through
 `SocketService`, and receives a conversation snapshot for recipient and sharer.
 It also checks that a Breakout share does not admit Main and that revocation
 refuses a fresh ticket. Guest fixtures have a null role, matching production.
+Email-invitation cases start with a verified account absent from the Organization,
+then immediately obtain real Main or Breakout sockets and snapshots after the
+batch claim. Replaying the invitation after removal cannot restore access, and
+a Breakout-only email share still cannot open Main.
 
 `pnpm --filter @rally/api test:workers test-workers/scope-invitations.test.ts`
 runs real D1, `WorkspaceDO` SQLite, RPCs, alarms and HTTP routing. The fixture
-declares the D1 columns it uses. It covers a share claimed as it is made for an
+declares the D1 columns it uses and gives each case a fresh Organization object:
+an earlier case's in-flight delivery alarm must not repopulate the next case
+after `reset()`. It covers a share claimed as it is made for an
 existing account, one held for an address with no account and claimed by a
 real browser one-time-code sign-in with no further step, that someone else's
 claim reaching the same Channel takes nothing, a Global-verified address this
@@ -503,6 +524,34 @@ handoff against real Main and child agents, including refusal to transfer for a
 nonparticipant and reconciliation of a stale child roster.
 
 ## Changelog
+
+### 2026-10-22 — Batch recipient setup on the guest-add response path
+
+**What changed:** Creation batches recipient setup for the submitted operation's
+pending invitations; the existing delivery alarm cleans settled lookup rows.
+The People form acknowledges the commit before refreshing its lists, suppressing
+repeat addresses until both reads finish.
+
+**Why:** Separate D1 trips to index addresses, look up accounts, insert and read
+relationships, then clean settled rows made two production requests take 1.9 and
+6.5 seconds. Waiting for renderer refreshes added further round trips.
+
+**Considered and rejected:** Background claims would acknowledge an add before
+the recipient could open it. Overwriting an unordered live membership snapshot
+would discard a potentially newer suspension or replacement; refusing different
+incarnations would strand otherwise valid shares until another sign-in.
+
+**Consequences:** Grants and frozen email content still commit before the
+response. A settled replay never prepares another operation's recipients.
+Receipts bind to the batch's incarnation while ordered events retain control of
+the member table. A newer same-incarnation suspension still refuses the claim.
+A batch may create
+an empty guest relationship before a later grant check refuses, as the existing
+claim saga already allowed; that relationship alone grants no conversation
+access. Preserve suspension and membership-incarnation fences, pending lookup
+rows for interrupted claims, and the rule that replay never restores access.
+
+PR: [#1408](https://github.com/juno-ai-labs/avalon/pull/1408).
 
 ### 2026-10-21 — Grants own every ready conversation's participation
 
