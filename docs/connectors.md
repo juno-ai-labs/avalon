@@ -529,6 +529,12 @@ Google identity and connector authorization are separate. Connector authorizatio
 
 The capability check is enforced for every tool invocation.
 
+Sheets value reads set `truncated` when rows, cells or cell text are shortened.
+`cellTextTruncated` distinguishes shortened text: smaller ranges cannot recover
+that cell's full value. The existing per-cell and response limits are unchanged;
+shortened text does not discard following rows.
+
+
 Every Google tool parses its arguments with a strict schema, so an undeclared key is an error naming the key rather than a silently dropped intent, and every list-shaped result returns `items` with an optional `nextPageToken` so one tool's shape generalizes to the rest. Header hydration degrades per hit: a message that cannot be fetched — deleted or refused — keeps its identifiers and reports `headersUnavailable`, so one rate-limited hit in a fan-out of up to fifty costs that row rather than the whole search. A revoked grant is the exception and is raised, because reporting it per row would read as an empty mailbox rather than a connection to reconnect. Address headers are truncated at the end of the last address that fits, never mid-address, because a fragment cut inside a domain still parses as an address and would be reported as a real correspondent.
 
 Google always exposes two logical plugins: **Google Mail + Calendar** and
@@ -1648,6 +1654,23 @@ this internal registration metadata from its existing access-only result. See [S
 and receipt replay.
 
 ## Changelog
+
+### 2026-10-22 — Report shortened Sheets cell text
+
+**What changed:** Sheets reads include shortened cell strings in `truncated` and
+expose `cellTextTruncated`, while preserving subsequent cells and rows.
+
+**Why:** The previous flag covered dropped rows and cells but silently ignored
+text shortening. An agent could accept incomplete copy as a complete source and
+pass field validation against that shortened input. Extra skill instructions
+could not detect information the connector never exposed.
+
+**Consequences:** Existing limits remain unchanged. Callers can distinguish a
+range that can be split from a shortened cell that requires a complete alternate
+source or an explicit report of missing data.
+
+Pull request: [#1421](https://github.com/juno-ai-labs/avalon/pull/1421).
+
 
 ### 2026-10-21 — Google credentials expose separate product bundles
 

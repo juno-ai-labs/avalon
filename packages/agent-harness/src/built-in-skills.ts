@@ -1,9 +1,10 @@
 import { BUILDING_LIVE_SITES_SKILL } from "./building-live-sites-skill";
 import { READING_AI_CHATS_SKILLS } from "./reading-ai-chats-skills";
 import { TRACKING_SEEN_OR_DONE_ITEMS_SKILL } from "./tracking-seen-or-done-items-skill";
+import { USING_EXTERNAL_STRUCTURED_DATA_SKILL } from "./using-external-structured-data-skill";
 import type { HarnessSkill } from "./index";
 
-export { BUILDING_LIVE_SITES_SKILL, TRACKING_SEEN_OR_DONE_ITEMS_SKILL };
+export { BUILDING_LIVE_SITES_SKILL, TRACKING_SEEN_OR_DONE_ITEMS_SKILL, USING_EXTERNAL_STRUCTURED_DATA_SKILL };
 
 /**
  * Skills the harness ships with, for a host that has no library of its own yet.
@@ -552,6 +553,7 @@ export const BUILT_IN_SKILLS: readonly HarnessSkill[] = [
   WRITING_AN_EMAIL_SKILL,
   SCHEDULING_A_CALENDAR_EVENT_SKILL,
   USING_THE_LOCAL_INAPP_BROWSER_SKILL,
+  USING_EXTERNAL_STRUCTURED_DATA_SKILL,
   // Offered only where the Sidekicks plugin is in scope, by its `ownerPlugin`:
   // the whole procedure is drafting one, and an automation occurrence is
   // deliberately never given the drafting tools.

@@ -2957,6 +2957,27 @@ describe("connectors", () => {
     expect(requests[1]?.searchParams.get("dateTimeRenderOption")).toBe("FORMATTED_STRING");
   });
 
+  it.each([50_000, 50_001])("reports whether a %i-character Sheets cell was shortened and preserves later rows", async (length) => {
+    const fetcher: typeof fetch = async () => googleJson({
+      range: "Sheet1!A1:B2", majorDimension: "ROWS",
+      values: [["x".repeat(length), "kept"], ["following"]]
+    });
+    const result = await googleAdapter(fetcher).executeTool("sheets.read_values", {
+      spreadsheetId: "sheet-1", range: "Sheet1!A1:B2"
+    }, {
+      connection: googleConnection(["sheets.read"]),
+      principal: { type: "user", userId: TEST_USER_ID },
+      signal: neverAborts()
+    });
+
+    expect(result.output).toMatchObject({
+      truncated: length > 50_000,
+      cellTextTruncated: length > 50_000,
+      rowCount: 2, cellCount: 3
+    });
+    expect(result.output).toMatchObject({ values: [[expect.any(String), "kept"], ["following"]] });
+  });
+
   it("names the tool that reads an id rather than passing a Workspace mismatch through", async () => {
     const fetcher: typeof fetch = async (input) => {
       const url = requestUrl(input);

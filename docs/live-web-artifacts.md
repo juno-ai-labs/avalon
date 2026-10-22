@@ -100,12 +100,19 @@ account-wide limit. Every writer settles before publication can continue; any
 failed asset prevents the manifest write. This preserves the assets-before-manifest
 barrier without adding each independent R2 round trip to the publication latency.
 
+### Sites built from structured data
+
+The site skill loads `using-external-structured-data` for initial builds and
+refreshes. That shared skill owns source reads, transfer, transformation and
+field validation; see [its procedure](../packages/agent-harness/src/using-external-structured-data-skill.ts).
+The site skill retains the destination's data format, recovery and publication.
+
 ### Revising
 
 The `building-live-sites` skill directs both interactive agents and Sidekicks
 refreshing a site to load Terminal for file editing, import and publication.
-Loading the skill supplies instructions without activating those tools. A later
-run must recover the existing source when its sandbox lacks the files. Preserving
+Loading the skill supplies instructions without activating those tools. Each
+refresh imports the published source because local files may be stale. Preserving
 identity requires both the original publication conversation and directory path.
 For a thread's site, only a workstream-scoped Sidekick owned by that thread
 redirects publication there; personal and workspace Sidekicks publish in their
@@ -616,6 +623,24 @@ The selector and trust boundaries are owned by
 [artifact annotations](artifact-annotations.md).
 
 ## Changelog
+
+### 2026-10-22 — Preserve raw source data before building a site
+
+**What changed:** The site skill loads `using-external-structured-data` for
+raw-response transfer, source-row preservation and field-by-field validation in
+initial builds and refreshes. The general procedure lives in that shared skill;
+the site skill retains the site's data format and publication requirements.
+
+**Why:** A calendar builder read complete Sheet values but manually reconstructed
+37 posts, dropping populated copy and altering other fields while passing a
+row-count assertion. Repeating the existing instruction to transform with code
+would not explain how the returned records reach that code or what to validate.
+
+**Consequences:** Agents must fix known field loss before publication. The
+procedure does not claim a direct connector-to-file tool exists or that comparing
+against copied inputs proves the copying was lossless.
+
+Pull request: [#1421](https://github.com/juno-ai-labs/avalon/pull/1421).
 
 ### 2026-10-21 — Site refresh guidance preserves the publication conversation
 
