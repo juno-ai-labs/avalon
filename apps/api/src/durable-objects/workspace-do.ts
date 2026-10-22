@@ -1,3 +1,4 @@
+import { SidekickActivityTargetSchema, type WorkspaceSidekickActivityEvent, type SidekickActivityTarget } from "@rally/contracts";
 import { runningSidekickCount, SidekickActivityRequestSchema, type SidekickActivityRequest } from "./sidekick-activity";
 import { RESOURCE_READ_PROJECTION_SQL } from '../services/resource-read-projection';
 import { WorkspaceConversationView, WORKSPACE_CONVERSATION_VIEW_MIGRATION } from "./workspace-conversation-view";
@@ -1375,6 +1376,8 @@ interface WorkspaceSocketAttachment extends SocketIdentity {
   subscribed: boolean;
   firstFrameReported: boolean;
   lastWaterline: number;
+  sidekickActivityRevision?: number;
+  sidekickActivityTargets?: SidekickActivityTarget[];
   presenceRevision: number;
   applicationState: "foreground" | "background";
   foregroundWorkstreamId: string | null;
@@ -4843,6 +4846,8 @@ function readAttachment(socket: WebSocket): WorkspaceSocketAttachment | null {
       // after a deployment may emit this phase once.
       firstFrameReported: z.boolean().default(false),
       lastWaterline: z.number().int().nonnegative(),
+      sidekickActivityRevision: z.number().int().nonnegative().default(0),
+      sidekickActivityTargets: z.array(SidekickActivityTargetSchema).default([]),
       // Sockets accepted by the previous deployment carry none of these fields. They
       // resume safely as backgrounded and write the explicit shape on their
       // first presence event instead of being disconnected during rollout.
@@ -6527,6 +6532,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // sends opened stop routing to them; the rows stay, suspended.
         if (deleted) this.externalBindings().suspendDeletedSidekick(automationId, new Date(now).toISOString());
         this.sidekickDirectoryMoved = true;
+        this.noteSidekickActivityChanged(this.workspaceId()!);
       },
       noteSidekickActivityChanged: (workspaceId) => this.noteSidekickActivityChanged(workspaceId),
       isChannelParticipant: async (workstreamId, userId) => {
@@ -6572,8 +6578,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /** Activity is visible through the receiving conversation, without granting Sidekick history access. */
   async readSidekickActivity(input: SidekickActivityRequest): Promise<{ count: number }> {
+    const { count } = await this.sidekickActivitySnapshot(parseRpcInput(SidekickActivityRequestSchema, input, "sidekick_activity"));
+    return { count };
+  }
+
+  private async sidekickActivitySnapshot(input: SidekickActivityRequest): Promise<{ count: number; waterline: number }> {
     await this.initialized;
-    const request = parseRpcInput(SidekickActivityRequestSchema, input, "sidekick_activity");
+    const request = input;
     this.assertWorkspace(request.workspaceId);
     let channelSidekickIds: readonly string[] = [];
     if (request.parentKind === "space") {
@@ -6585,7 +6596,39 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const decision = await this.conversationToolAdmission(request.workspaceId, request, request.userId);
       if (!decision.authorized) throw new ApiError(404, "conversation_not_found", "Conversation not found");
     }
-    return { count: runningSidekickCount(this.state.storage.sql, request, channelSidekickIds) };
+    // Count and version are read without an await between them. A slower
+    // previous publish cannot replace a newer snapshot on the client.
+    return {
+      count: runningSidekickCount(this.state.storage.sql, request, channelSidekickIds),
+      waterline: this.state.storage.sql.exec<{ waterline: number }>(
+        `SELECT COALESCE(MAX(waterline), 0) AS waterline FROM workspace_sync_events`,
+      ).one().waterline,
+    };
+  }
+
+  /** Re-admit each exact target and push only the counts this socket watches. */
+  private async pushSidekickActivity(socket: WebSocket): Promise<void> {
+    const attachment = readAttachment(socket);
+    if (!attachment?.subscribed) return;
+    const revision = attachment.sidekickActivityRevision ?? 0;
+    for (const target of attachment.sidekickActivityTargets ?? []) {
+      let snapshot: { count: number; waterline: number };
+      try {
+        snapshot = await this.sidekickActivitySnapshot({ ...target, workspaceId: attachment.workspaceId, userId: attachment.userId });
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 404) throw error;
+        snapshot = { count: 0, waterline: this.state.storage.sql.exec<{ waterline: number }>(
+          `SELECT COALESCE(MAX(waterline), 0) AS waterline FROM workspace_sync_events`,
+        ).one().waterline };
+      }
+      const current = readAttachment(socket);
+      if (!current?.subscribed || current.sidekickActivityRevision !== revision) return;
+      try {
+        socket.send(JSON.stringify({
+          type: "workspace_sidekick_activity", revision, target, ...snapshot,
+        } satisfies WorkspaceSidekickActivityEvent));
+      } catch { return; } // A closed transport refreshes its watched targets on reconnect.
+    }
   }
 
   /** Reuse the durable post-commit lane without changing any directory waterline. */
@@ -7270,6 +7313,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
       this.logWorkspaceSocketHandshake(attachment, "subscribe_authorized", parsed.data.diagnosticAttemptId);
       await this.subscribe(socket, attachment, parsed.data.afterWaterline, parsed.data.diagnosticAttemptId);
+      return;
+    }
+    if (parsed.data.type === "sidekick_activity") {
+      if (!await this.sessionAuth(attachment)) return;
+      const current = readAttachment(socket);
+      if (!current?.subscribed || parsed.data.revision <= (current.sidekickActivityRevision ?? 0)) return;
+      socket.serializeAttachment({ ...current, sidekickActivityRevision: parsed.data.revision,
+        sidekickActivityTargets: parsed.data.targets });
+      await this.pushSidekickActivity(socket);
       return;
     }
     if (parsed.data.type === "conversation_view") {
@@ -8576,6 +8628,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // The hibernation runtime owns close cleanup. A reconnect receives a
         // full invalidation or replays the bounded SQL log.
       }
+    }
+    if (requested.has("sidekick_activity") || requested.has("automations")) {
+      for (const socket of this.state.getWebSockets()) await this.pushSidekickActivity(socket);
     }
     if (requested.has('member_directory')) await this.armNextAlarm();
     return waterline;
@@ -11673,11 +11728,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // created in the Space reads from its hosted parent. Written right after
     // the default with nothing awaited between them, so both land or neither.
     const parent = request.kind === "sidekick" ? await this.hostedParent(request.spaceId, request.workspaceId) : null;
-    const result = WorkspaceSpaceDefaultResultSchema.parse(storage.addDefault(request));
-    if (result.ok) parent?.writeSidekickRecommendation(request.targetId, true);
+    const result = this.state.storage.transactionSync(() => {
+      const result = WorkspaceSpaceDefaultResultSchema.parse(storage.addDefault(request));
+      if (result.ok) {
+        parent?.writeSidekickRecommendation(request.targetId, true);
+        if (request.kind === "sidekick") this.noteSidekickActivityChanged(request.workspaceId);
+      }
+      return result;
+    });
     if (result.ok) this.publishSpaceSnapshot();
     if (result.ok && result.targets.length > 0) await this.armNextAlarm();
     await this.afterSidekickDefaultsApplied(storage, request.workspaceId);
+    if (request.kind === "sidekick") await this.afterParentWrite();
     return result;
   }
 
@@ -11688,9 +11750,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const parent = request.kind === "sidekick" ? await this.hostedParent(request.spaceId, request.workspaceId) : null;
-    const space = this.spaceStorage().removeDefault(request);
-    if (space !== false) parent?.writeSidekickRecommendation(request.targetId, false);
+    const space = this.state.storage.transactionSync(() => {
+      const space = this.spaceStorage().removeDefault(request);
+      if (space !== false) {
+        parent?.writeSidekickRecommendation(request.targetId, false);
+        if (request.kind === "sidekick") this.noteSidekickActivityChanged(request.workspaceId);
+      }
+      return space;
+    });
     if (space !== false) this.publishSpaceSnapshot();
+    if (request.kind === "sidekick") await this.afterParentWrite();
     return WorkspaceSpaceMutationResultSchema.parse(space === false
       ? { ok: false, code: "space_not_found" }
       : { ok: true, space });

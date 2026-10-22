@@ -1,4 +1,3 @@
-import { SidekickActivitySchema, type SidekickActivityTarget } from "@rally/contracts";
 import {
   asAutomationId,
   asSubstreamId,
@@ -252,12 +251,6 @@ export class AutomationService {
       automationId,
       actor: { userId: this.auth.userId, actorRole: this.auth.role, participantOfOwningWorkstream: false },
     };
-  }
-
-  async activity(target: SidekickActivityTarget): Promise<{ count: number }> {
-    return SidekickActivitySchema.parse(await (await this.workspace()).readSidekickActivity({
-      ...target, workspaceId: this.auth.workspaceId, userId: this.auth.userId,
-    }));
   }
 
   private workspace() {

@@ -135,7 +135,8 @@ kept as `failed` with its code (`directory_followup_unreadable` is logged) and
 never run again.
 
 Changed child Sidekick attachments and Sidekick execution transitions also
-record an activity-only topic in this lane. The comparison happens when the
+record an activity-only refresh in this lane, which pushes count snapshots to
+the exact targets watched on each workspace socket. The comparison happens when the
 exact child's projection is accepted, so Breakouts refresh independently of
 Main's directory waterline. Explicit posting attachments record their library
 and activity refresh in the attachment transaction, including a repeated attach.

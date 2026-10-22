@@ -2624,8 +2624,29 @@ export const WorkspaceWorkstreamCursorSchema = z.string()
  */
 export const CHANNEL_RAILS_NAMED_LIMIT = 250;
 
+/** Storage names: a Channel is a space, and a Thread or Breakout is a workstream conversation. */
+export const SidekickActivityTargetSchema = z.strictObject({
+  parentKind: z.enum(['space', 'workstream']),
+  parentId: IdSchema,
+  substreamId: z.union([z.literal('0'), IdSchema]),
+});
+export type SidekickActivityTarget = z.infer<typeof SidekickActivityTargetSchema>;
+export const WorkspaceSidekickActivityEventSchema = z.strictObject({
+  type: z.literal("workspace_sidekick_activity"),
+  revision: z.number().int().nonnegative(),
+  target: SidekickActivityTargetSchema,
+  waterline: z.number().int().nonnegative(),
+  count: z.number().int().nonnegative(),
+});
+export type WorkspaceSidekickActivityEvent = z.infer<typeof WorkspaceSidekickActivityEventSchema>;
+
 export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
   ConversationViewRequestSchema,
+  z.strictObject({
+    type: z.literal("sidekick_activity"),
+    revision: z.number().int().positive(),
+    targets: z.array(SidekickActivityTargetSchema),
+  }),
   z.strictObject({
     type: z.literal("subscribe"),
     afterWaterline: z.number().int().nonnegative(),
@@ -4735,15 +4756,6 @@ export const SidekickAttachmentSchema = z.object({
   id: IdSchema, name: z.string(), description: z.string(), available: z.boolean(),
 });
 export type SidekickAttachment = z.infer<typeof SidekickAttachmentSchema>;
-
-/** Storage names: a Channel is a space, and a Thread or Breakout is a workstream conversation. */
-export const SidekickActivityTargetSchema = z.strictObject({
-  parentKind: z.enum(['space', 'workstream']),
-  parentId: IdSchema,
-  substreamId: z.union([z.literal('0'), IdSchema]),
-});
-export type SidekickActivityTarget = z.infer<typeof SidekickActivityTargetSchema>;
-export const SidekickActivitySchema = z.strictObject({ count: z.number().int().nonnegative() });
 
 /** A resource attached to a Channel's Main conversation, as its rail lists it. */
 export const ChannelRailResourceSchema = z.strictObject({
