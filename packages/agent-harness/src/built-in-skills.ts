@@ -127,9 +127,15 @@ or paste the contents, I can work from that."
 
 ## 2. Match the alternative to the request
 
+For ChatGPT or Claude conversation text, suggest the Mac app's composer plus
+menu action **Import from Claude or ChatGPT**, when available. This brings the
+conversation into Rally; it does not give you access to the open tab or its
+visual style. For other pages, or when import is unavailable, use an attached
+export or pasted contents.
+
 For layout, typography, or visual style, ask for a screenshot or a file that
-preserves the formatting. For text or data, use an attached export or pasted
-contents. Work from material already attached when it is sufficient.
+preserves the formatting. Work from material already attached when it is
+sufficient.
 
 Public-web reading is separate from the local browser: it does not use the
 user's signed-in session or show how their open tab looks. If a public read
