@@ -1823,7 +1823,7 @@ function createAvalonAutomationsPlugin(
       };
     })];
     return { canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_skill_recommendations", shortWireName: "",
-      displayName: "Skill recommendations", description: "Recommend reusable skills for this thread's future executions.",
+      displayName: "Skill recommendations", description: "Choose which reusable skills to recommend for future runs in this thread. To use a skill now, call load_skill.",
       searchAliases: ["skill", "instructions", "knowledge", "recommend", "procedure"],
       systemMessage: "Use list_skill_recommendations, recommend_skill and unrecommend_skill to manage this thread's skill recommendations. Recommendations affect future executions; call load_skill with a name from the Skills catalog to use instructions now. To set up delegated work, use the separate sidekicks_list and create_sidekick agent tools.",
       tools, preload: false, explicit: false };
@@ -7723,7 +7723,7 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
           // unambiguously, so `core_` only lengthened the name the model reads
           // and repeated a plugin it can neither load nor unload.
           shortWireName: "",
-          description: "Use Rally's universally available core utilities.",
+          description: "Check the current time, connector connection status, and access to linked files, or pause to ask for required information.",
           systemMessage: [
             ...(coreTools.some((tool) => tool.definition.name === "current_time")
               ? ["Use current_time when exact current time or timezone matters; never infer it from transcript timestamps."]
@@ -7766,7 +7766,7 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
           canonicalId: AVALON_MEMORY_PLUGIN_ID,
           modelId: "rally_memory",
           shortWireName: "memory",
-          description: "Recall what Rally remembers for this conversation and the person you work for, and record or retract a fact when a person asks.",
+          description: "Recall saved facts, preferences, and earlier decisions for this conversation and the person you work for. Save or forget a fact when the person asks.",
           systemMessage: [
             "Remembered context attached to a message is fallible and belongs to the person who sent it: use it as hints, verify when correctness matters, and do not restate it to other people as settled fact.",
             "Use memory_recall when a task depends on something decided, preferred or promised earlier that the attached context does not cover.",
@@ -7799,7 +7799,7 @@ function createAvalonWorkstreamPlugin(tools: HarnessTool[]): HarnessPlugin | nul
     shortWireName: "",
     displayName: "Workstream",
     searchAliases: ["task", "resources", "participants", "sub-agent", "wake up", "later", "remind", "schedule"],
-    description: "Read and update the current workstream, its resources, and execution lifecycle, including waking it up later to act on a prompt.",
+    description: "Read and search this thread's attached files and artifact data, and schedule or cancel a later run to carry out a task.",
     systemMessage: [
       "Use these tools only for the current authorized workstream and its attached resources.",
       "Use schedule_wakeup when work genuinely has to happen later — waiting on an external result, or a time a person named — instead of promising it in text. Do the work now when it can be done now.",

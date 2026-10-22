@@ -296,6 +296,13 @@ user-role message, never in the system prompt.
 Catalogs turn run state into prompt text, so they are judged on determinism and
 on what they do at the budget edge — the prompt-side face of principle 7.
 
+Write each plugin description for a model that has not loaded its tools or
+instructions yet: name the actions it supports and the tasks it is useful for.
+Use familiar task words that also help keyword discovery, such as "publish a
+website" or "track completed items", rather than internal labels such as
+"execution lifecycle" or "typed durable collections". Keep execution procedures
+in the plugin's instructions or a skill.
+
 - **Sort and de-duplicate before rendering**; bound the loadable section, never
   the active one.
 - **Degrade with a recovery path and name it.** Truncate with a marker pointing

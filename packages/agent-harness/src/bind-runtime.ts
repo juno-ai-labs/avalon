@@ -2833,7 +2833,7 @@ async function createPluginRuntime(
           modelId: "rally_skills",
           // Globally unique public names, like the discovery controls.
           shortWireName: "",
-          description: "Load procedures and reference knowledge authorized for this run.",
+          description: "Load reusable instructions and reference material for a task from the Skills catalog.",
           systemMessage: AVALON_SKILLS_SYSTEM_MESSAGE,
           preload: true,
           explicit: true,
