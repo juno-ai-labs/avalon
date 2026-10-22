@@ -569,7 +569,9 @@ the `rally:sidekicks` plugin prepares itself on its first tool call too: it
 rebuilds completed plugin inspections and staged evaluator rules from the run's
 tool receipts before validating a resumed draft. Its first submission from a
 work stream creates the room's Sidekick and posts the proposal card; from a
-Sidekick's own chat it submits a revision to that Sidekick.
+Sidekick's own chat it submits a revision to that Sidekick. Authoring reads project saved
+legacy custom-MCP recommendations into the current catalog IDs, so an edit
+can load and inspect the same IDs it resubmits.
 
 `HarnessPlugin.displayName` remains trusted, code-authored prompt metadata.
 `activityDisplayName` and `connectorType` are participant-only host metadata;

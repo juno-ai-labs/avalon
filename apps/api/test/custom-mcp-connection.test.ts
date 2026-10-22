@@ -1,5 +1,5 @@
-import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId, type WorkstreamWorkflowInput } from "@rally/contracts";
-import { runHarness } from "@rally/agent-harness";
+import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId, type AutomationDraft, type WorkstreamWorkflowInput } from "@rally/contracts";
+import { executeAutomationCreatorDiscoveryTool, runHarness } from "@rally/agent-harness";
 import { providerRequestView, responsesStreamResponse } from "@rally/agent-harness/test-support/responses-stream";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -44,6 +44,59 @@ afterEach(() => {
 });
 
 describe("custom MCP connections", () => {
+  it("edits a saved legacy MCP recommendation through the current catalog ID", async () => {
+    const { auth, env, stub } = fixture();
+    stubMcpServer([READ_TOOL]);
+    await new ConnectionService(env, auth).createCustomMcp({
+      displayName: "Rally Engineering", scope: "workspace", serverUrl: SERVER_URL,
+      requestHeaders: { "X-Api-Key": "secret-value" }, toolPolicy: "all_tools",
+    });
+    const input = { ...catalogWorkflowInput(), parentKind: "automation" as const };
+    const saved: AutomationDraft = {
+      definitionVersion: 2, name: "Engineering", description: "Inspect Rally", overview: "Inspect Rally",
+      instructions: "Inspect the selected Thread.", triggers: [{ type: "manual" }], requiredCapabilities: [],
+      expectedOutputs: [], defaultBehavior: {}, memoryTables: [], suggestedScope: "personal",
+      followUpQuestion: null, elicitation: null, ready: true,
+      recommendedPlugins: [{ pluginId: "plugin_custom_mcp", recommendedTools: [], reason: "Inspect Rally" }],
+    };
+    // Only the Sidekick RPC boundary is doubled; the connection lookup executes
+    // against the real WorkspaceDO schema. Inference is not needed for this edit.
+    const saveDefinition = vi.fn(async () => ({ definitionRevision: 4 }));
+    Object.assign(stub, {
+      sidekickReadDetails: async () => [{
+        id: input.parentId, name: saved.name, description: saved.description, scope: "personal",
+        status: "active", lifecycle: "active", nextRunAt: null, lastRunAt: null,
+        updatedAt: "2026-10-22T00:00:00.000Z", currentDefinition: saved,
+        currentDefinitionRevision: 3, acceptedDefinitionRevision: 3, authorUserId: USER_ID,
+        runAsUserId: USER_ID, connectorBindings: {}, recentRuns: [],
+      }],
+      sidekickSaveDefinition: saveDefinition,
+    });
+    const runtimeEnv = withWorkspaceRuntimeDatabase(createTestEnv({ ...env,
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(testWorkstreamObjectStore()),
+    }), WORKSPACE_ID);
+    const selected = await __integrationTesting.loadHarnessTools(runtimeEnv, input);
+    const authoring = selected.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")!;
+    const tool = (name: string) => authoring.tools.find((candidate) => candidate.definition.name === name)!;
+    const listed = await tool("sidekicks_list").execute({}, { toolCallId: "read-saved" } as never);
+    const draft = (listed.output as { sidekicks: Array<{ currentDefinition: AutomationDraft }> }).sidekicks[0]!.currentDefinition;
+    expect(draft.recommendedPlugins).toEqual([
+      { pluginId: "plugin_mcp_rally_engineering_1", recommendedTools: [], reason: "Inspect Rally" },
+    ]);
+    expect(saved.recommendedPlugins[0]!.pluginId).toBe("plugin_custom_mcp");
+    const engineering = selected.plugins.find((plugin) => plugin.connectorType === "custom_mcp")!;
+    await engineering.loadTools!();
+    __integrationTesting.recordCredentialPluginActivation(engineering.canonicalId, selected.frozenConnections,
+      new Set(), selected.loadedAutomationPluginIds);
+    await tool("plugin_inspect").execute({ pluginId: "plugin_mcp_rally_engineering_1" }, { toolCallId: "inspect" } as never);
+    await expect(tool("submit_draft").execute({ ...draft, instructions: "Inspect the selected Thread and summarize it.",
+      icon: "file-text", color: "blue", sidekickId: input.parentId }, { toolCallId: "edit" } as never))
+      .resolves.toMatchObject({ output: { accepted: true } });
+    expect(saveDefinition).toHaveBeenCalledWith(expect.objectContaining({ draft: expect.objectContaining({
+      recommendedPlugins: [{ pluginId: "plugin_mcp_rally_engineering_1", recommendedTools: [], reason: "Inspect Rally" }],
+    }) }));
+  });
+
   it.each([false, true])("puts fresh server instructions in the model's system prompt (restored=%s)", async (restored) => {
     const { auth, database, env } = fixture();
     const server: { description?: string; instructions?: string } = {
@@ -143,6 +196,8 @@ describe("custom MCP connections", () => {
     expect(catalog.map((plugin) => plugin.pluginId)).toEqual([
       "plugin_mcp_cloudflare_observability_1", "plugin_mcp_rally_engineering_2",
     ]);
+    expect(executeAutomationCreatorDiscoveryTool("plugins_search", { query: "Rally Engineering" }, catalog))
+      .toMatchObject({ plugins: [{ pluginId: "plugin_mcp_rally_engineering_2" }] });
     expect(database.prepare("SELECT model_plugin_id FROM connector_connections ORDER BY created_at").all())
       .toEqual([{ model_plugin_id: "plugin_custom_mcp" }, { model_plugin_id: "plugin_custom_mcp_2" }]);
   });
@@ -565,6 +620,7 @@ function fixture() {
   return {
     database,
     auth,
+    stub,
     env: createTestEnv({
       DB: sqliteD1(regional),
       AVALON_REGION: "global",
