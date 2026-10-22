@@ -3680,7 +3680,9 @@ function ConversationSurfaceContent({
               invitations.remove.reset();
               await invitations.invite.mutateAsync([...emails].sort());
               // Someone who already had an account is claimed as they are invited, and joins the room.
-              await Promise.all([invitations.pending.refetch(), queryClient.invalidateQueries({ queryKey: workstreamDetailQueryKey(id, substreamId) })]);
+              // The committed share acknowledges the add; refreshing the lists
+              // must not hold the form busy for another pair of round trips.
+              void Promise.all([invitations.pending.refetch(), queryClient.invalidateQueries({ queryKey: workstreamDetailQueryKey(id, substreamId) })]);
             },
             onRevoke: (email) => {
               const guest = invitations.pending.data?.find((candidate) => candidate.email === email);
