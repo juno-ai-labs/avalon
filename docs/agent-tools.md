@@ -794,6 +794,24 @@ describe a parameter; never raise one. A conditional surface — one whose plugi
 is not built without credentials — is only in that walk if the walk supplies
 them, so give it a sentinel in `EXPECTED_TOOLS` too.
 
+## Sidekick delegation tools
+
+The existing `rally:sidekicks` plugin offers `sidekick_my_delegations_list`,
+`sidekick_delegates_list` and `sidekick_set_my_delegation` in direct human turns.
+Authoring's `sidekick` prefix and the room recommendation presentation's full
+canonical names produce the same wire names. The two presentations retain their
+existing discovery and recommendation tools. UUIDs, canonical Rally links and
+exact visible names resolve through viewer authority, not editing authority.
+
+Inputs and model-visible outputs are strict shared schemas in
+`packages/contracts/src/sidekick-delegation.ts`. Neither actor identity nor grant
+generation is a model input. Own lists include safe stored labels after access
+loss; withdrawal needs no viewer-only discovery. Lists return complete arrays
+and no page cursor. The runtime currently has no tool-result byte cap; no new
+numeric limit is added. [Sidekick lifecycle](automation-lifecycle.md#delegation-consent-authority)
+owns consent ordering and recovery; [the design contract](PRDs/2026-10-22_sidekick-delegation/design.md#agent-tools)
+records exact failure sentences and the required model evaluations.
+
 ## Attachment contract registry
 
 Attachment tools use the shared contracts in

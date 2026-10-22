@@ -1,4 +1,5 @@
 export * from './artifact-picker';
+export * from "./sidekick-delegation";
 import { AnnotationsSchema, validateAnnotationAttachments } from './artifact-annotations';
 export * from './artifact-annotations';
 import { ExternalPeopleSchema } from "./external-people";
