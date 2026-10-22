@@ -2047,6 +2047,8 @@ recoverable after the Channel transaction commits. Shared threads are never
 selected. A retry must reuse its original receipt, and a Channel restore must
 not undo an independent thread archive.
 
+PR: [#1398](https://github.com/juno-ai-labs/avalon/pull/1398).
+
 ### 2026-10-21 — Reuse directories for user-scoped MCP lists
 
 **What changed:** SpaceService exposes the socket's active Channel directory.
