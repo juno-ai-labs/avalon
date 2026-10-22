@@ -1824,8 +1824,17 @@ export class HostedParent {
 
   /** Resumes from canonical receipts after failure at any cross-object boundary. */
   async runParticipantMigration(substreamId: SubstreamId): Promise<void> {
-    if (substreamId === "0") return this.runMainParticipantMigration();
-    return this.runChildParticipantMigration(substreamId);
+    if (substreamId === "0") await this.runMainParticipantMigration();
+    else await this.runChildParticipantMigration(substreamId);
+    // The handoff changes socket admission for every existing participant.
+    // Finish their projections before an explicit share reports success;
+    // persisted delivery intents still recover interrupted calls.
+    const pending = this.sql.exec<{ user_id: string }>(
+      `SELECT user_id FROM parent_participant_deliveries
+        WHERE parent_id = ? AND substream_id = ? AND acknowledged_revision IS NOT revision`,
+      this.parentId, substreamId,
+    ).toArray();
+    for (const row of pending) await this.deliverParticipantProjection(substreamId, row.user_id);
   }
 
   private async runMainParticipantMigration(): Promise<void> {
@@ -2048,9 +2057,9 @@ export class HostedParent {
   }
 
   /** Cut over only addressed legacy scopes; invitation creation rechecks grants afterwards. */
-  private async prepareInvitationTargets(
-    request: z.infer<typeof CreateScopeInvitationsSchema>,
-  ): Promise<Extract<ScopeInvitationResult, { status: "denied" }> | null> {
+  private async prepareSharingTargets(
+    request: Pick<z.infer<typeof CreateScopeInvitationsSchema>, "workspaceId" | "parentId" | "actorUserId" | "targets">,
+  ): Promise<{ status: "denied"; reason: "relationship_required" | "sharing_required" | "migration_pending" } | null> {
     const inherited = request.targets.some((target) => target.kind === "workstream")
       ? this.sql.exec<{ substream_id: string }>(
         `SELECT substream_id FROM parent_children
@@ -2127,7 +2136,7 @@ export class HostedParent {
     const request = parseRpcInput(CreateScopeInvitationsSchema, input, "create_scope_invitations");
     this.assertParent(request.workspaceId, request.parentId);
     if (!scopeInvitationOrigin(this.env)) return { status: "denied", reason: "configuration_required" };
-    const denied = await this.prepareInvitationTargets(request);
+    const denied = await this.prepareSharingTargets(request);
     if (denied) return denied;
     return ScopeInvitationResultSchema.parse(await this.scopeInvitations().create(request));
   }
@@ -2229,6 +2238,11 @@ export class HostedParent {
 
   async mutateParticipantGrant(input: ParticipantGrantMutation): Promise<ScopeGrantMutationResult> {
     const request = parseRpcInput(ParticipantGrantMutationSchema, input, "participant_grant_mutation");
+    if (request.active) {
+      const denied = await this.prepareSharingTargets({ ...request.target,
+        actorUserId: request.actorUserId, targets: [request.target] });
+      if (denied) return { status: "denied", reason: denied.reason === "relationship_required" ? "sharing_required" : denied.reason };
+    }
     const result = await this.authorizedGrantMutation({ ...request, expectedRevision: 0 }, true);
     if (result.status === "committed") {
       // Converge the addressed roster before replying; the alarm is the recovery path.

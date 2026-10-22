@@ -3696,7 +3696,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         return jsonResponse({ ok: true });
       }
       if (request.operation === "add_participant") {
-        const participant = await this.product.addParticipant(current, request.userId);
+        const participant = await this.product.addParticipant(current, request.userId, request.operationId);
         await this.publishLocalProductEvent(identity, { type: "participant_added", participant });
         return jsonResponse(participant);
       }

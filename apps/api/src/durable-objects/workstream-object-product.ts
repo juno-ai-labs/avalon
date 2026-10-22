@@ -1549,10 +1549,10 @@ export class WorkstreamObjectProductService {
       ...requestedPersonIds,
     ])];
     const members = await this.env.DB.prepare(
-      `SELECT user_id FROM workspace_members
+      `SELECT user_id, access_class FROM workspace_members
         WHERE workspace_id = ? AND status = 'active'
           AND user_id IN (${candidateMemberIds.map(() => "?").join(",")})`,
-    ).bind(input.workspaceId, ...candidateMemberIds).all<{ user_id: string }>();
+    ).bind(input.workspaceId, ...candidateMemberIds).all<{ user_id: string; access_class: "member" | "guest" }>();
     if ((members.results ?? []).length !== candidateMemberIds.length) {
       throw new ApiError(422, "invalid_workspace_member", "A participant is not an active workspace member");
     }
@@ -1582,6 +1582,7 @@ export class WorkstreamObjectProductService {
     }, this.env.AVALON_REGION);
     const existingRoot = first(this.storage.sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`));
     if (existingRoot?.authority_mode === "authoritative") {
+      await this.prepareInitialParticipantAccess(auth, input.clientMessageId, members.results);
       const part = first(this.storage.sql.exec<{ id: string }>(
         `SELECT id FROM canonical_conversation_turn_details WHERE client_message_id = ?`, input.clientMessageId,
       ));
@@ -1831,6 +1832,7 @@ export class WorkstreamObjectProductService {
       });
     });
     if (initializedElsewhere) return this.initialize(auth, rawInput);
+    await this.prepareInitialParticipantAccess(auth, input.clientMessageId, members.results);
     await this.objectStore.commitWithRegionalEffects(
       () => undefined,
       () => {
@@ -3013,12 +3015,12 @@ export class WorkstreamObjectProductService {
     return { user: userFromRow(user), participationReason: row.participation_reason, joinedAt: iso(row.added_at)! };
   }
 
-  async authorizeParticipantAddition(auth: AuthContext, userId: string): Promise<void> {
+  async authorizeParticipantAddition(auth: AuthContext, userId: string): Promise<"member" | "guest"> {
     await this.authorize(auth);
     const member = await this.env.DB.prepare(
-      `SELECT 1 AS one FROM workspace_members
+      `SELECT access_class FROM workspace_members
         WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
-    ).bind(auth.workspaceId, userId).first<{ one: number }>();
+    ).bind(auth.workspaceId, userId).first<{ access_class: "member" | "guest" }>();
     if (!member) {
       throw new ApiError(422, "invalid_workspace_member", "A participant is not an active workspace member");
     }
@@ -3029,6 +3031,7 @@ export class WorkstreamObjectProductService {
         userIds: [...audience.userIds, userId],
       });
     }
+    return member.access_class;
   }
 
   /**
@@ -3083,17 +3086,29 @@ export class WorkstreamObjectProductService {
     return true;
   }
 
-  private async prepareMessageParticipants(auth: AuthContext, clientMessageId: string, missingUserIds: readonly string[]): Promise<void> {
+  private async prepareInitialParticipantAccess(auth: AuthContext, clientMessageId: string,
+    members: readonly { user_id: string; access_class: "member" | "guest" }[]): Promise<void> {
+    // Replays use the persisted, validated roster rather than raw mention IDs.
+    const guests = members.filter((member) => member.access_class === "guest" && this.isParticipant(member.user_id))
+      .map((member) => member.user_id);
+    if (guests.length) await this.prepareParticipantAccess(auth, clientMessageId, guests, { requiresGrantAuthority: true });
+  }
+
+  private async prepareParticipantAccess(auth: AuthContext, operationId: string, userIds: readonly string[],
+    options: { requiresGrantAuthority?: boolean; participationReason?: "message" } = {}): Promise<void> {
     const identity = this.objectStore.identity();
     if (identity?.parentKind !== "workstream"
-      || new ParticipantAuthorityTransferStorage(this.storage).currentTransferId() === null) return;
+      || (!options.requiresGrantAuthority && new ParticipantAuthorityTransferStorage(this.storage).currentTransferId() === null)) return;
     const target = { kind: "conversation" as const, workspaceId: identity.workspaceId,
       parentId: identity.parentId, substreamId: this.externalSubstreamId() };
     const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, identity.workspaceId,
       workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspaceId)));
-    for (const userId of missingUserIds) {
-      const request = { target, actorUserId: auth.userId, userId: asUserId(userId), active: true, participationReason: "message" as const,
-        operationId: await stableUuid(["message-participant", target, auth.userId, clientMessageId, userId]) };
+    // An explicit addition can transfer a Breakout whose author has canonical
+    // parent membership but has not posted into its local roster yet.
+    for (const userId of [...userIds.filter((id) => id !== auth.userId), ...userIds.filter((id) => id === auth.userId)]) {
+      const request = { target, actorUserId: auth.userId, userId: asUserId(userId), active: true,
+        ...(options.participationReason ? { participationReason: options.participationReason } : {}),
+        operationId: await stableUuid(["participant-access", target, auth.userId, operationId, userId]) };
       const result = userId === auth.userId
         ? await parent.joinConversation(request)
         : await parent.mutateParticipantGrant(request);
@@ -3111,8 +3126,16 @@ export class WorkstreamObjectProductService {
   async addParticipant(
     auth: AuthContext,
     userId: string,
+    operationId = uuidV7(),
   ): Promise<WorkstreamDetail["participants"][number]> {
-    await this.authorizeParticipantAddition(auth, userId);
+    const accessClass = await this.authorizeParticipantAddition(auth, userId);
+    if (accessClass === "guest" || this.externalSubstreamId() !== "0"
+      || new ParticipantAuthorityTransferStorage(this.storage).currentTransferId() !== null) {
+      await this.prepareParticipantAccess(auth, operationId, [userId], { requiresGrantAuthority: true });
+      const participant = await this.participant(userId);
+      if (!participant) throw new ApiError(409, "participant_access_changed", "Participant access changed; refresh and try again");
+      return participant;
+    }
     // Both names are read before the commit because the effects that carry
     // them are built inside it: an effect callback runs against object SQL and
     // cannot await a regional round trip.
@@ -4969,12 +4992,15 @@ export class WorkstreamObjectProductService {
       `SELECT COUNT(*) AS count FROM participants WHERE status = 'active'`,
     ))?.count ?? 0);
     const participantAddedCount = new Set(confirmedParticipantUserIds.filter((userId) => !this.isParticipant(userId))).size;
+    const guestParticipantUserIds = confirmedParticipantUserIds.filter((userId) => accessClasses.get(userId) === "guest");
     const missingParticipantUserIds = [...new Set([auth.userId, ...confirmedParticipantUserIds])]
-      .filter((userId) => !this.isParticipant(userId));
+      .filter((userId) => !this.isParticipant(userId) || guestParticipantUserIds.includes(userId));
     const structuredContent = input.merge ?? (input.annotations?.length
       ? await new ResourceService(this.env,auth).annotationContent(input.annotations) : null);
     if (missingParticipantUserIds.length > 0) {
-      await this.prepareMessageParticipants(auth, input.clientMessageId, missingParticipantUserIds);
+      await this.prepareParticipantAccess(auth, input.clientMessageId, missingParticipantUserIds,
+        { requiresGrantAuthority: guestParticipantUserIds.length > 0
+          || (this.externalSubstreamId() !== "0" && confirmedParticipantUserIds.some((id) => id !== auth.userId)), participationReason: "message" });
     }
     const attachmentRows = await this.reserveAttachmentDrafts({
       workspaceId: auth.workspaceId,
@@ -5207,7 +5233,7 @@ export class WorkstreamObjectProductService {
         }
         // Sending is participation when the message is accepted, even while
         // its turn waits behind an active run. Handoff-owned rosters were
-        // already seated through prepareMessageParticipants above.
+        // already seated through prepareParticipantAccess above.
         const authorJoined = !this.isParticipant(auth.userId);
         if (authorJoined) {
           if (new ParticipantAuthorityTransferStorage(this.storage).currentTransferId() !== null) {
