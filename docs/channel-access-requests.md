@@ -96,8 +96,9 @@ The person who asked gets an email when the request is approved or declined.
    "added you" notification by Slack, push or email.
 8. **The requester gets in.** The ordinary add's `workspace_reach_changed`
    push, or Organization socket resubscribe, replaces pending access previews
-   and reads access again. An `open` result retries the waiting conversation,
-   including after revocation. The 30-second backoff and **Try again** remain
+   and reads access again. A stored nudge permits one freshly admitted retry
+   per conversation, including after revocation or before its preview exists.
+   The 30-second backoff and **Try again** remain
    recovery paths.
 
 Outside production no mail is sent (`sendResendEmail`). In development the
@@ -193,8 +194,9 @@ pnpm --filter @rally/contracts exec vitest run src/desktop-deep-link-intent.test
 
 ### 2026-10-22 — Recover waiting conversations on an access push
 
-**What changed:** The requester uses `workspace_reach_changed` or Organization
-socket subscribe to replace pending access checks and retry when admitted.
+**What changed:** The requester stores `workspace_reach_changed` or Organization
+socket subscribe as a recovery version, replaces pending access checks, and
+claims one admitted retry per conversation for that version.
 
 **Why:** Approval previously waited for a backoff retry, and a socket stopped
 after revocation required a manual retry despite the screen promising it would
@@ -207,13 +209,15 @@ using it also covers a direct participant add.
 **Consequences:** The event remains a nudge, not an authorization result. Only
 an admitted preview retries the conversation, whose new ticket checks access
 again. Reusing a pending preview can return a pre-grant refusal after the only
-push has passed; cancellation must discard that result, and the waiting screen
-must recognize the refresh even before its first preview arrives. Recovery waits
-for the replacement check to succeed rather than trusting a cached open result.
-The screen reads the query's stored invalidation in layout before subscribing
-passively to its result, so a nudge during rendering is not lost. An initially
-admitted preview retains the ordinary error screen unless explicitly refreshed,
-so unrelated connection failures do not turn into immediate retry loops.
+push has passed; cancellation must discard that result. The nudge is stored
+independently of preview existence, because Organization and conversation socket
+events can arrive in either order. Each preview records the version when its
+read started; recovery requires a successful idle result for the current
+version. Consuming that version for the conversation survives a failed retry's
+remount, preventing a loop. An Organization subscribe can therefore permit one
+extra authorized retry of another connection failure; healthy conversations
+mount no preview and make no additional request. An offline-paused check is not
+a completed check and cannot consume the nudge.
 
 PR: [#1416](https://github.com/juno-ai-labs/avalon/pull/1416).
 

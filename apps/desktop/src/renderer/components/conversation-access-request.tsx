@@ -1,11 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { WorkstreamGlyph } from '@rally/ui/components/workstream-glyph';
 import { Check, LoaderCircle } from 'lucide-react';
-import { useEffect, useLayoutEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import type { RallyApi } from '../lib/api';
 import { ApiError } from '../lib/api';
-import { CONVERSATION_ACCESS_PREVIEW_QUERY_KEY } from '../lib/access-requests';
+import {
+  claimConversationAccessRecovery,
+  CONVERSATION_ACCESS_PREVIEW_QUERY_KEY,
+  CONVERSATION_ACCESS_RECOVERY_QUERY_KEY,
+  useConversationAccessRecovery,
+  type ConversationAccessRecovery,
+} from '../lib/access-requests';
 import { Button, ErrorNotice, OpeningState } from './primitives';
 
 /**
@@ -14,11 +20,9 @@ import { Button, ErrorNotice, OpeningState } from './primitives';
  * approval. Asked only after the socket has refused, so opening a Channel
  * somebody is in costs nothing more.
  *
- * Renders `fallback` while the preview loads, when it fails, and when the
- * person could already open it, so any other failure keeps its own screen.
- * An Organization reach-change push refreshes the preview. When access opens,
- * retry the conversation immediately, including after a revoked socket stopped
- * retrying. `docs/channel-access-requests.md`.
+ * An Organization access nudge permits one fresh admission retry, even when it
+ * arrived before this screen. Other failures keep their own screen, and a failed
+ * retry cannot loop on remount. `docs/channel-access-requests.md`.
  */
 export type ConversationAccessApi = Pick<RallyApi, 'conversationAccessPreview' | 'requestConversationAccess'>;
 
@@ -33,45 +37,34 @@ export function ConversationAccessRequest({ api, parentId, substreamId, fallback
   onRetry: () => void;
 }): React.JSX.Element {
   const queryClient = useQueryClient();
+  const recovery = useConversationAccessRecovery();
   const preview = useQuery({
     queryKey: [...CONVERSATION_ACCESS_PREVIEW_QUERY_KEY, parentId, substreamId],
-    queryFn: () => api!.conversationAccessPreview(parentId, substreamId),
+    queryFn: async () => {
+      const recoveryVersion = queryClient.getQueryData<ConversationAccessRecovery>(CONVERSATION_ACCESS_RECOVERY_QUERY_KEY)?.version ?? 0;
+      return { ...await api!.conversationAccessPreview(parentId, substreamId), recoveryVersion };
+    },
     enabled: Boolean(api),
     retry: false,
     staleTime: 30_000,
   });
   const address = `${parentId}:${substreamId}`;
-  const [waitingFor, setWaitingFor] = useState<string | null>(null);
+  const [reopening, setReopening] = useState<string | null>(null);
   const request = useMutation({
     mutationFn: () => api!.requestConversationAccess(parentId, substreamId),
   });
-  useLayoutEffect(() => {
-    const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
-      if (event.type !== 'updated' || event.action.type !== 'invalidate') return;
-      const [root, parent, substream] = event.query.queryKey;
-      if (root === CONVERSATION_ACCESS_PREVIEW_QUERY_KEY[0] && parent === parentId && substream === substreamId) {
-        setWaitingFor(address);
-      }
-    });
-    // Invalidation is stored on the query: recover a nudge delivered during
-    // rendering, before this listener existed. Layout runs before the query's
-    // passive subscription can start and settle the replacement fetch.
-    if (queryClient.getQueryState([...CONVERSATION_ACCESS_PREVIEW_QUERY_KEY, parentId, substreamId])?.isInvalidated) {
-      setWaitingFor(address);
-    }
-    return unsubscribe;
-  }, [address, parentId, queryClient, substreamId]);
+  const admitted = preview.isSuccess && preview.fetchStatus === 'idle' && preview.data?.access === 'open';
+  const canRecover = admitted && recovery !== undefined
+    && preview.data?.recoveryVersion === recovery.version && !recovery.retried.includes(address);
   useEffect(() => {
-    if (preview.data?.access === 'requestable') setWaitingFor(address);
-    // Refetching keeps cached data visible; only the completed check can
-    // confirm that an earlier open decision still applies.
-    else if (preview.isSuccess && !preview.isFetching && preview.data?.access === 'open' && waitingFor === address) onRetry();
-  }, [address, onRetry, preview.data?.access, preview.isFetching, preview.isSuccess, waitingFor]);
+    if (!canRecover || !recovery || !claimConversationAccessRecovery(queryClient, address, recovery.version)) return;
+    setReopening(address);
+    onRetry();
+  }, [address, canRecover, onRetry, queryClient, recovery]);
   // A newly admitted preview must not mount the error dialog while the retry
-  // starts. An initially open preview still belongs to the ordinary error path:
-  // retrying that on every mount would loop on unrelated connection failures.
+  // starts. The consumed nudge prevents another retry if this screen remounts.
   const noun = preview.data?.kind === 'breakout' ? 'breakout' : 'thread';
-  if (preview.isSuccess && !preview.isFetching && preview.data?.access === 'open' && waitingFor === address) {
+  if (admitted && (canRecover || reopening === address)) {
     return <OpeningState label={`Opening ${noun}…`} />;
   }
   if (!preview.data || preview.data.access !== 'requestable') return fallback;
