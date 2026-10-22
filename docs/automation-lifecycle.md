@@ -538,8 +538,9 @@ file event. The canonical registration transaction checks connection identity,
 status and required capabilities beside the resource write, including reuse of an
 existing resource. A refused connection returns `connection_unavailable`; the
 resource service maps that outcome to `resource_connection_unavailable`.
-Google folder registration is refused because binding the folder entity does not
-watch its children; folder-content restrictions use declared event filters. An
+Google folder and shortcut registration is refused: binding those entities does
+not watch their children or target files. Use declared event filters for folder
+contents and the actual target file for a shortcut. An
 existing row with a type inconsistent with provider metadata is refused rather
 than returned with relationships for a different type.
 

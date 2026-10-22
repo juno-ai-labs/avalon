@@ -2346,7 +2346,7 @@ async function registerAutomationCreatorResource(
     throw new ConnectorError("unauthorized", `resource: Cannot register this file through the selected connection (${access.reason}). Check resource access and use a connection that can read it.`);
   }
   if (!access.registration) {
-    throw new ConnectorError("unsupported_capability", "resource: This source cannot be registered as an event-bound file. Inspect the event filter fields for another way to express the requested watch.");
+    throw new ConnectorError("unsupported_capability", "resource: This source cannot be registered as an event-bound file. For a shortcut, use the target file instead. For folder contents, inspect the declared event filter fields.");
   }
   const registration = access.registration;
   const relationships = automationBindableResourceTypes(connectorActivityTriggerDescriptors(
