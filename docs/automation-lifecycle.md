@@ -19,23 +19,19 @@ The model generates internal instructions and a user-friendly description. An
 incomplete submission does not replace the accepted revision. Edits preserve a
 person's pause; an archived owning room still refuses publication.
 
-When setting up or changing executable behavior, the wizard investigates
-reusable steps: it inspects relevant resources and representative inputs, resolves
-stable identifiers, and discovers the authorized tools and skills. It validates
-the proposed workflow through available reads or non-destructive trials before
-submitting ready, leaving future deliveries and other effects to the runs unless
-requested during setup. Accepted configuration is not evidence that the workflow
-itself worked; the wizard records what it verified, checks it could not perform
-and any remaining uncertainty.
+Before submitting executable behavior as ready, the wizard discovers authorized
+tools and skills, inspects real resources and sample inputs, resolves their IDs,
+and tests the workflow with available reads or non-destructive trials. It records
+what worked, what it could not test, and remaining assumptions. Draft acceptance
+is not a workflow test. Future deliveries and other effects stay with future runs
+unless requested during setup.
 
-The saved instructions are a detailed procedure usable without the authoring
-conversation: resolved resources, required tools and skills to load, input
-formats, ordered steps and decision rules, state and duplicate handling where
-needed, delivery destinations and steps, and observable completion checks. They
-separate stable setup facts from changing data each run must fetch or revalidate,
-and cover no-op conditions, missing inputs, changed resources and failed steps.
-Runs receive the discovered method rather than repeating setup investigation;
-unresolved assumptions remain explicit.
+Saved instructions form a detailed runbook usable without the setup conversation:
+resources, tools and skills, input formats, ordered steps and decisions, state and
+duplicate handling, delivery, success checks, no-op conditions, and recovery from
+missing inputs, changed resources, or failures. Verified setup facts, untested
+assumptions, and data to refresh each run are explicit. Runs execute the discovered
+method rather than repeating setup discovery.
 
 The authoring wizard has its own model route, `sidekick_authoring`, defaulting
 to Sol independently of the ordinary Thread and activation route. Explicit model
