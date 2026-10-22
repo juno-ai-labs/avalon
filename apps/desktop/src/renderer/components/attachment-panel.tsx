@@ -9,19 +9,19 @@ import type { AttachmentPreview } from './attachments';
 import { AttachmentGalleryThumbnails, AttachmentViewBody, useAttachmentView } from './attachment-lightbox';
 import { IconButton } from './primitives';
 import { RailSurface } from './rail-surface';
-import { useCopy, type CopyState } from '../lib/use-copy';
+import { useCopy, type UseCopyResult } from '../lib/use-copy';
 import { CopyStatus, copyStateLabel } from './copy-button';
 
 /** A gallery selection owns its feedback; unmounting also discards pending writes' outcomes. */
 function AttachmentCopyScope({ copyLink, children }: {
   copyLink: (() => Promise<void>) | undefined;
-  children: (copy: () => Promise<void>, state: CopyState) => React.JSX.Element;
+  children: (feedback: UseCopyResult) => React.JSX.Element;
 }): React.JSX.Element {
-  const { copy, state } = useCopy({ value: '', copyText: async () => {
+  const feedback = useCopy({ value: '', copyText: async () => {
     if (!copyLink) throw new Error('This attachment has no link');
     await copyLink();
   } });
-  return children(copy, state);
+  return children(feedback);
 }
 
 /**
@@ -77,7 +77,7 @@ export function AttachmentPanel({ ancestors, expandAction, preview, leaving = fa
       resizeLabel="Resize attachment panel"
       width={width}
     >
-      <AttachmentCopyScope key={shownId ?? view.activeIndex} copyLink={copyLink}>{(copy, copyState) => <>
+      <AttachmentCopyScope key={shownId ?? view.activeIndex} copyLink={copyLink}>{({ copy, state: copyState, failureOccurrence }) => <>
       <TitlePillHeader
         className="panel-title-header"
         current={{
@@ -103,7 +103,7 @@ export function AttachmentPanel({ ancestors, expandAction, preview, leaving = fa
         aria-busy={view.loading || undefined}
         className={`attachment-panel-body is-${mode}${many ? ' has-gallery' : ''}`}
       >
-        <CopyStatus state={copyState} visible />
+        <CopyStatus occurrence={failureOccurrence} state={copyState} visible />
         {preview.superseded && (
           <p className="attachment-lightbox-superseded attachment-panel-superseded" role="status">
             <History aria-hidden="true" size={14} /> {preview.superseded.label}

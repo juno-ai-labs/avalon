@@ -77,11 +77,16 @@ export function copyStateLabel(state: CopyState, label: string): string {
   return state === 'idle' ? label : stateLabel[state];
 }
 
-export function CopyStatus({ state, visible = false }: { state: CopyState; visible?: boolean }): React.JSX.Element {
+export function CopyStatus({ failure = stateStatus.failed, occurrence, state, visible = false }: {
+  failure?: ReactNode;
+  occurrence?: unknown;
+  state: CopyState;
+  visible?: boolean;
+}): React.JSX.Element {
   if (!visible) return <span aria-live="polite" className="sr-only" role="status">{stateStatus[state]}</span>;
   return <>
     <Toast icon={<IconCheck aria-hidden="true" size={16} stroke={1.9} />} open={state === 'copied'}>{stateStatus.copied}</Toast>
-    {state === 'failed' && <ErrorNotice>{stateStatus.failed}</ErrorNotice>}
+    {state === 'failed' && <ErrorNotice occurrence={occurrence}>{failure}</ErrorNotice>}
   </>;
 }
 
