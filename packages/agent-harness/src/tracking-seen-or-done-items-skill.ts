@@ -35,6 +35,11 @@ world. Every key column has to be one of the table's declared \`columns\` as
 well. Rows deduplicate on those columns, which is what makes a second sighting
 cheap to ignore.
 
+Include processing state and claim ownership as well as the source key. A row
+that says work was discovered or claimed is different from one that records
+successful completion. Save the ownership identifier supplied by the execution
+context or tools so another run can distinguish its claim from yours.
+
 Choose the narrowest authorized scope that all relevant runs share. Set
 \`scopeKind: "sidekick"\` for activations of the same installed Sidekick,
 \`workstream\` for runs in one thread, \`user\` for workflows shared by one
@@ -60,12 +65,29 @@ in the chosen shared scope with the saved name, description, usage instructions,
 columns and key columns, then use the returned \`memoryTableId\`. Later runs
 find and reuse that table instead of creating one per run.
 
-## 4. Skip completed items and record successful work
+## 4. Claim work before acting and mark completion after success
 
-Read the table first, fetch what the connection reports since a little before
-the last recorded item, skip anything already recorded, act on the rest, and
-record each item **after** it has been acted on — the other order loses an item
-to any run that fails midway.
+Read the relevant rows and skip work marked completed. For new candidates,
+atomically insert rows with stable natural keys and a pending claim owned by
+this execution. Act only on rows the insert result says **this call newly
+inserted**. Querying an absent key is not a claim: another run can see the same
+absence. A row skipped as an existing key is not yours to process.
+
+After the external action succeeds, update the claimed row to completed and
+record its result or success timestamp. Complete only a claim still owned by
+this execution. Use the row ID and current revision
+returned by a read for the revision-checked update. If an update conflicts,
+reread the exact row and reconcile its ownership and state before proceeding.
+
+Keep unfinished claims recoverable: an existing pending row is not completed
+work. Reclaim it only after verifying the previous owner has stopped. Also
+verify that the action did not succeed or that replay is safe using the same
+provider idempotency key. Transfer ownership with a revision-checked update; only the
+run whose update succeeds may retry. Never steal a claim merely because it is
+old. If the owner or external outcome cannot be verified, leave it pending for
+reconciliation and report that uncertainty rather than discarding it or
+performing the action again. For safe retries, use a provider idempotency key
+derived from the source item and intended action whenever the tool supports it.
 
 Overlap the read window deliberately rather than asking for strictly-newer
 items: a "since" argument alone drops anything that arrives late or shares a
@@ -74,15 +96,22 @@ timestamp with the last thing you saw. Let the table discard the overlap.
 ## 5. Establish the first-run baseline
 
 When configuring the workflow, say what the **first** run does, because the table
-is empty and everything looks new: record what is already there and report
-nothing, unless the person asked to be caught up. A run follows that saved
-baseline policy rather than treating the whole backlog as new work.
+is empty and everything looks new. For a polling backlog, record what predates
+the watch's baseline without reporting it, unless the person asked to be caught
+up. Label those rows as baseline items rather than successful external actions.
+An event that triggered the first run is new work: process it normally even if
+the table is empty. Silent baselining applies to the pre-existing backlog, not
+the triggering event. Save that distinction in the workflow's baseline policy.
 
 ## Anti-patterns
 
 - **A key column the run invents** — a row number, a hash of a summary, the
   time it was seen — or one that expires, like a signed URL. Use stable source
   identifiers that the next run can reconstruct.
-- **Recording an item before acting on it.** A run that fails after recording
-  has silently dropped it. Record last.`,
+- **Treating an inserted claim as completed work.** Claim before acting, then
+  mark completion only after success; retain pending work for recovery.
+- **Acting after only a read.** Two runs can both read an absent key. Act only
+  after winning an atomic insert or a verified recovery claim.
+- **Silently baselining the first triggering event.** Process that event;
+  suppress only the pre-existing backlog covered by the baseline policy.`,
 };
