@@ -91,15 +91,14 @@ export function conversationResourceLinksFrom(
     } : undefined,
     undefined,
     access && userId ? async (resourceIds) => {
-      const decisions = await new AuthorizationService(access.env).checkMany(
+      const results = await new AuthorizationService(access.env).readResources(
         { workspaceId: asWorkspaceId(workspaceId), userId, delegation: null },
-        resourceIds.map((resourceId) => ({ kind: "resource", workspaceId: asWorkspaceId(workspaceId), resourceId })),
+        resourceIds,
       );
-      return resourceIds.filter((_id, index) => {
-        const decision = decisions[index]!;
+      return new Map(results.flatMap(({ resourceId, decision, metadata }) => {
         if (decision.status === "unavailable") requireAuthorizedRead(decision);
-        return decision.status === "allowed";
-      });
+        return metadata ? [[resourceId, metadata] as const] : [];
+      }));
     } : undefined,
   );
 }

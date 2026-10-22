@@ -87,9 +87,9 @@ IDs when context is rebuilt. Admission puts messages at safe execution boundarie
 and wakes an idle loop without waiting for completion. The live conversation
 parent refuses archived destinations even before the child projection catches up.
 Explicit forwarding to an authorized Sidekick may broaden the attachment audience;
-this was approved on 2026-09-15. Attachments must be readable in the sender's
-resource scope; a Sidekick may also forward a known resource its execution user
-can read through canonical authorization. The host normalizes repeated
+this was approved on 2026-09-15. Forwarded resources must already be attached or inherited in the
+sender's scope. Broader Sidekick read access alone does not permit forwarding
+to another conversation. The host normalizes repeated
 IDs and validates the whole list before creating a worker. The recipient prepares
 canonical descriptors without linking resources, then stores them with the admitted
 pending input. Ordinary transcript promotion commits the links with the message,
@@ -108,20 +108,6 @@ It returns `{ sidekickId, resourceId, alreadyAttached }`; repeats keep one link.
 The wizard and its runs use the
 [shared resource scope](agent-attachments.md#authorized-work-stream-discovery-and-text-hydration).
 This direct attachment remains until explicitly removed; it is independent of inherited home or conversation attachments.
-
-Model guidance distinguishes the two ways to forward a resource. When sending
-instructions with `start_agent`, `send_message` or `reply_to_message`, use
-`attachmentIds` as the preferred handoff even when the recipient already has
-read access, so the task clearly identifies its intended resources and preserves
-shared context.
-Use Rally resource IDs readable in the sender's resource scope. To attach a resource
-to a Sidekick without sending instructions or waking its wizard, use
-`sidekick_attach_resource`. Mentioning an ID in message text or saved instructions
-does not change permissions. Sidekick resource tools can resolve known IDs
-using the execution user's existing read access without an attachment, even
-when the resource is absent from `list_resources`. The live-site skill applies this guidance to the
-original published site and requires confirming the wizard can import it before
-considering the handoff complete.
 
 Conversation migration 60 stores the background principal and a stop timestamp.
 Migration 69 adds the root conversation: the first conversation up the

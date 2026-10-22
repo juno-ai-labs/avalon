@@ -59,7 +59,7 @@ it("reads original PDF bytes through current visibility and refuses a detached, 
   await runInDurableObject(conversation(), (_instance, state) => {
     state.storage.sql.exec("DELETE FROM workstream_resource_links WHERE resource_id = ?", RESOURCE);
   });
-  await expect(readConnectorResourceAttachment(env, scope, RESOURCE)).rejects.toThrow("not attached or visible");
+  await expect(readConnectorResourceAttachment(env, scope, RESOURCE)).rejects.toThrow("not readable by this run");
 });
 
 it("stores the field-specific terminal poll reason in WorkspaceDO after workflow replay", async () => {

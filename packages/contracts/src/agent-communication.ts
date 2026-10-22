@@ -90,7 +90,7 @@ const MessageFields = {
   message: z.string().max(MESSAGE_MAX_CHARACTERS).describe("Tell the recipient what to do or provide your response. Include the context it needs."),
   // Same identifiers, default and bound as SubstreamOpeningMessageSchema.
   attachmentIds: z.array(IdSchema).max(10).default([])
-    .describe("Prefer including the resources the task uses here, even when already readable, so the recipient clearly knows which resources to use. These Rally resource IDs are attached with the message as shared context. Use resources readable in this conversation. Sidekick resource tools can also read a known ID using the execution user's existing access, without an attachment. Mentioning an ID does not change permissions. Omit when no resources need forwarding."),
+    .describe("Prefer including the task's resources so the recipient knows which ones to use. Use Rally resource IDs already attached or inherited in this conversation. This forwards actual attachments; mentioning an ID in message text does not share it. Omit when no resources need forwarding."),
 };
 const hasContent = (value: { message: string; attachmentIds: string[] }) =>
   value.message.trim().length > 0 || value.attachmentIds.length > 0;

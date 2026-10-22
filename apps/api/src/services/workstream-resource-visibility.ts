@@ -4,6 +4,7 @@ import type { ResourceLinkRow } from "../durable-objects/workstream-resource-sto
 import { BOUND_PARAMETER_ID_CHUNK } from "../durable-objects/bound-parameters";
 import { sha256Hex } from "../lib/crypto";
 import { listedResourceVisibilitySql } from "./resource-listing";
+import type { ResourceReadMetadata } from "./authorization-service";
 
 export interface VisibleWorkstreamResourceRow extends Record<string, unknown> {
   id: string;
@@ -33,6 +34,8 @@ export interface VisibleWorkstreamResourceRow extends Record<string, unknown> {
   message_attachment: number;
   attached_watch_enabled: number;
   visibility_version: string;
+  /** Returned with authorization for a direct read; undefined for attachment-only reads. */
+  artifact?: ResourceReadMetadata["artifact"];
 }
 
 export interface VisibleWorkstreamResourceSet {
@@ -92,10 +95,11 @@ const RESOURCE_LOOKUP_BATCH = BOUND_PARAMETER_ID_CHUNK;
  * The source inventories are read live rather than copied into each run.
  */
 export interface ConversationResourceLinks {
-  links(input: { resourceIds?: readonly string[] }): Promise<{
+  links(input: { resourceIds?: readonly string[] }, options?: { resolveReadable?: boolean }): Promise<{
     links: ResourceLinkRow[];
     /** Explicit ID lookups may also admit unattached resources through user authorization. */
     readableResourceIds: string[];
+    authorizedResources: ReadonlyMap<string, ResourceReadMetadata>;
     /** The linked ids that ride on a message of the conversation holding the link. */
     onMessages: ReadonlySet<string>;
   }>;
@@ -112,7 +116,7 @@ export function conversationResourceLinks(
     key: string; resources: ConversationResourceLinks;
   }>>,
   knownContext?: Awaited<ReturnType<ResourceObjectPort["inheritanceContext"]>>,
-  resolveReadableResourceIds?: (resourceIds: readonly string[]) => Promise<string[]>,
+  resolveReadableResources?: (resourceIds: readonly string[]) => Promise<ReadonlyMap<string, ResourceReadMetadata>>,
 ): ConversationResourceLinks {
   // The object's parent and conversation identity do not change. The related
   // conversations and their admission are deliberately read again per operation.
@@ -126,7 +130,7 @@ export function conversationResourceLinks(
     return scope.kind === "sidekick" && sidekickSources ? sidekickSources(scope) : [];
   };
   return {
-    async links(selection) {
+    async links(selection, options) {
       const [sources, ownLinks, namedOnMessages] = await Promise.all([
         inherited(), own.attachedLinks(selection),
         selection.resourceIds ? own.resourceIdsOnMessages({ resourceIds: selection.resourceIds }) : null,
@@ -146,10 +150,10 @@ export function conversationResourceLinks(
       }
       const readable = new Set(links.keys());
       const missing = selection.resourceIds?.filter((id) => !readable.has(id)) ?? [];
-      if (missing.length && resolveReadableResourceIds && (await context()).kind === "sidekick") {
-        for (const id of await resolveReadableResourceIds(missing)) readable.add(id);
-      }
-      return { links: [...links.values()], onMessages, readableResourceIds: [...readable] };
+      const authorizedResources = options?.resolveReadable !== false && missing.length && resolveReadableResources && (await context()).kind === "sidekick"
+        ? await resolveReadableResources(missing) : new Map<string, ResourceReadMetadata>();
+      for (const id of authorizedResources.keys()) readable.add(id);
+      return { links: [...links.values()], onMessages, readableResourceIds: [...readable], authorizedResources };
     },
     async attachedResourceIds() {
       const sources = await inherited();
@@ -201,7 +205,7 @@ async function loadVisibleRows(
   // `EXISTS` per row, across two compatibility views over two tables in this
   // *same* object — so it is one more read of the object's own rows rather than
   // a subquery repeated per attachment.
-  const { links: local, onMessages, readableResourceIds: ids } = await attachments.links(
+  const { links: local, onMessages, readableResourceIds: ids, authorizedResources } = await attachments.links(
     input.resourceIds ? { resourceIds: input.resourceIds } : {},
   );
   if (ids.length === 0) return [];
@@ -210,9 +214,12 @@ async function loadVisibleRows(
   const listed = input.resourceIds === undefined
     ? ` AND ${listedResourceVisibilitySql("resource")}`
     : "";
-  const resources: Array<Record<string, unknown>> = [];
-  for (let offset = 0; offset < ids.length; offset += RESOURCE_LOOKUP_BATCH) {
-    const chunk = ids.slice(offset, offset + RESOURCE_LOOKUP_BATCH);
+  const resources: Array<Record<string, unknown>> = [...authorizedResources.values()].map(({ resource, artifact }) => ({
+    ...resource, artifact, visibility_version: resource.updated_at,
+  }));
+  const remainingIds = ids.filter((id) => !authorizedResources.has(id));
+  for (let offset = 0; offset < remainingIds.length; offset += RESOURCE_LOOKUP_BATCH) {
+    const chunk = remainingIds.slice(offset, offset + RESOURCE_LOOKUP_BATCH);
     const placeholders = chunk.map(() => "?").join(", ");
     const result = await database.prepare(
       `SELECT resource.*,
@@ -231,7 +238,7 @@ async function loadVisibleRows(
     return {
       ...resource,
       // A point read does not create an attachment or advertise the resource.
-      relationship_type: link?.relationship_type ?? "reference",
+      relationship_type: link?.relationship_type ?? "context",
       // ISO-8601 because that is what this row publishes and what the sort
       // below compares. The retired view converted it in SQL; the object stores
       // the instant, so the conversion moves here.

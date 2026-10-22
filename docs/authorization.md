@@ -103,8 +103,9 @@ one location does not override a valid grant from another.
 
 Sidekick resource tools reuse this canonical resource decision for supplied IDs
 outside their related conversations. The subject is the server-owned execution
-user; an ID in a tool argument supplies only the resource address. This direct
-read creates no attachment or additional permission. The
+user; an ID in a tool argument supplies only the resource address. A batch read returns resource and artifact metadata with the decision, and
+discloses metadata only for admitted resources. This direct read creates no
+attachment or additional permission. The
 [resource-tool scope](agent-attachments.md#authorized-work-stream-discovery-and-text-hydration)
 owns discovery and import revalidation.
 
