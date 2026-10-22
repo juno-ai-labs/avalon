@@ -499,7 +499,7 @@ Attached resources are exposed as an authorized index and hydrated lazily throug
 
 All base prompts are rendered by typed, dependency-free functions in `@rally/agent-harness`, and the prompt version is frozen with the run. Per-run time, reason, IDs, and trigger evidence are user-role messages rather than mutations of the system prefix, so retries and route fallbacks see stable policy. One host-rendered section follows the active skill instructions: the resident context the `residentContext` port renders from the conversation's context-residency ledger ([`resident-context.md`](resident-context.md)). It is a pure render of committed ledger state and changes only through a compaction, where the cached prefix is already lost, or a source invalidation; during an uncompacted run a block is a tail message, appended at the settled step as a derived input ahead of any participant steer. Bind validates the transcript before inference and heals dangling or orphaned tool-protocol rows; Rally records diagnostics without adding provider-controlled text to the system prompt.
 
-Prompt authority is layered as platform policy, authorized work-stream and automation configuration, current human instructions, then explicitly untrusted provider/resource/tool data. Every run receives a compact, stable-ID-sorted catalog derived only from its already-authorized plugin registry and partitioned into `Currently active` and `Available to load`. Loading a plugin adds its static code-authored guidance under `Active Plugin Instructions` and exposes its exact typed tools on the next model turn. The catalog is stated as capability rather than as a suggestion, because the tools visible on any given turn are only the ones already loaded: an available plugin can answer a question, so consulting the catalog is part of searching, and asking a person for something a listed plugin could look up is a claim that it is unavailable rather than a request for missing input. An agent drafting an automation may use those real connector tools to inspect live provider context; it prefers reads and never performs a provider write merely to test a proposed automation. Remote account labels, resources, and provider content never become trusted plugin prose. User-authored automation draft state remains user-role context.
+Prompt authority is layered as platform policy, authorized work-stream and automation configuration, current human instructions, then explicitly untrusted provider/resource/tool data. Every run receives a compact, stable-ID-sorted catalog derived only from its already-authorized plugin registry and partitioned into `Currently active` and `Available to load`. Loading a plugin adds its guidance under `Active Plugin Instructions` (static Rally policy plus optional connected-server usage instructions, subordinate to Rally policy and the user's request) and exposes its exact typed tools on the next model turn. The catalog is stated as capability rather than as a suggestion, because the tools visible on any given turn are only the ones already loaded: an available plugin can answer a question, so consulting the catalog is part of searching, and asking a person for something a listed plugin could look up is a claim that it is unavailable rather than a request for missing input. An agent drafting an automation may use those real connector tools to inspect live provider context; it prefers reads and never performs a provider write merely to test a proposed automation. Remote account labels, resources, and provider content never become trusted plugin prose. User-authored automation draft state remains user-role context.
 
 A new child substream may also begin with an immutable inherited-context seed.
 On the first canonical Bind bootstrap only, the host renders its ordered summary
@@ -578,10 +578,12 @@ instruction headings. A configured custom MCP label belongs in that activity
 field, never in `displayName`.
 
 A hosted-MCP connection may supply `HarnessPlugin.loadTools` instead of a
-code-authored tool array. It still appears through the same static trusted
-catalog entry. After `load_plugin` reauthorizes the connection, the harness
+code-authored tool array. Configured servers use their persisted discovered
+description in the catalog, normalized to one line; shipped providers retain
+their code-authored descriptions. After `load_plugin` reauthorizes the connection, the harness
 single-flights that callback, replaces the empty deferred Bind plugin with the
-returned live surface, and only then persists and exposes the activation. The
+returned live surface and refreshed plugin `systemMessage`, and only then
+persists and exposes the activation. The
 result is cached for that run in both Bind's registry and the host plugin object;
 a later run discovers again. Restored or
 preloaded dynamic hints materialize and hash this surface before their initial

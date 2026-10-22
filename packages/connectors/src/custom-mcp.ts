@@ -9,7 +9,8 @@ import { z } from "zod";
 import {
   createHostedMcpPassthrough,
   hostedMcpBearerAuth,
-  listHostedMcpTools,
+  listHostedMcpCatalog,
+  hostedMcpServerMetadata,
   HOSTED_MCP_DEFAULT_RESPONSE_BYTES,
   type HostedMcpRequestAuth,
   type HostedMcpTool,
@@ -30,6 +31,7 @@ import {
   type AuthorizedConnectorConnection,
   type ConnectorAdapter,
   type ConnectorConnectionContext,
+  type ConnectorServerMetadata,
 } from "./types";
 
 export const CUSTOM_MCP_CONNECTOR_TYPE = "custom_mcp";
@@ -371,10 +373,10 @@ export async function listCustomMcpToolInventory(
   connection: AuthorizedConnectorConnection,
   signal: AbortSignal,
   options: { fetch?: FetchLike } = {},
-): Promise<{ policy: CustomMcpToolPolicy; tools: CustomMcpToolSummary[] }> {
+): Promise<{ policy: CustomMcpToolPolicy; tools: CustomMcpToolSummary[]; server: ConnectorServerMetadata }> {
   const connectionConfig = customMcpConnectionConfig(connection);
   const policy = customMcpToolPolicy(connection);
-  const listed = await customMcpInventoryAuth(connection, (auth) => listHostedMcpTools({
+  const catalog = await customMcpInventoryAuth(connection, (auth) => listHostedMcpCatalog({
     providerName: "Custom",
     serverUrl: connectionConfig.serverUrl,
     auth,
@@ -382,9 +384,12 @@ export async function listCustomMcpToolInventory(
     fetch: options.fetch ?? globalThis.fetch,
     maxResponseBytes: HOSTED_MCP_DEFAULT_RESPONSE_BYTES,
   }));
-  const admitted = new Set(selectCustomMcpTools(listed, policy).map((tool) => tool.name));
+  const listed = catalog.tools;
+  const selected = selectCustomMcpTools(listed, policy);
+  const admitted = new Set(selected.map((tool) => tool.name));
   return {
     policy,
+    server: hostedMcpServerMetadata(catalog.server, selected),
     tools: listed.map((tool) => ({
       // Sanitized for the screen, not for the wire: `tools/call` still receives
       // the exact remote name through the discovery path. A name is untrusted

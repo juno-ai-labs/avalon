@@ -235,6 +235,26 @@ describe("connection tool counts in the connection list", () => {
     expect(storedCount(object, connection.id)).toBe(2);
   });
 
+  it("backfills server metadata once for an existing counted connection without blocking the list", async () => {
+    const { env, auth, object, providerRequests } = fixture();
+    const server = stubMcpServer([READ_TOOL], providerRequests);
+    const service = new ConnectionService(env, auth);
+    const { connection } = await createAndCount(service);
+    object.prepare("UPDATE connector_connections SET config_json = json_remove(config_json, '$.mcpServerMetadata') WHERE id = ?")
+      .run(connection.id);
+    server.toolLists = 0;
+    const [first, second] = await Promise.all([service.list(), service.list()]);
+    expect(listed(first, connection.id)).toEqual({ toolCount: 1, toolCountMissing: null });
+    expect(listed(second, connection.id)).toEqual({ toolCount: 1, toolCountMissing: null });
+    await drainWaitUntil();
+    expect(server.toolLists).toBe(1);
+    expect(object.prepare("SELECT json_extract(config_json, '$.mcpServerMetadata.description') AS description FROM connector_connections WHERE id = ?")
+      .get(connection.id)).toEqual({ description: "Available tools: search_docs: Search the corpus" });
+    await service.list();
+    await drainWaitUntil();
+    expect(server.toolLists).toBe(1);
+  });
+
   it("clears a stored count when a discovery fails, so a broken connection never shows its old number", async () => {
     const { env, auth, object, providerRequests, published, publishedConnectionIds } = fixture();
     const inventory: Record<string, unknown>[] = [READ_TOOL, WRITE_TOOL];
@@ -284,6 +304,8 @@ describe("connection tool counts in the connection list", () => {
     held.release();
     expect(await late).toEqual({ count: 2 });
     expect(storedCount(object, connection.id)).toBe(1);
+    expect(object.prepare("SELECT json_extract(config_json, '$.mcpServerMetadata.description') AS description FROM connector_connections WHERE id = ?")
+      .get(connection.id)).toEqual({ description: "Available tools: search_docs: Search the corpus" });
   });
 
   it("drops a discovery that finishes after a reconnect to another account", async () => {
@@ -297,12 +319,15 @@ describe("connection tool counts in the connection list", () => {
     await held.arrived;
     // A reconnect as someone else lands while the discovery is in flight.
     object.prepare(
-      "UPDATE connector_connections SET provider_account_id = 'another-account', discovered_tool_count = NULL WHERE id = ?",
+      `UPDATE connector_connections SET provider_account_id = 'another-account', discovered_tool_count = NULL,
+        config_json = json_set(config_json, '$.mcpServerMetadata', json('{"description":"New account guidance"}')) WHERE id = ?`,
     ).run(connection.id);
 
     held.release();
     expect(await late).toEqual({ count: 2 });
     expect(storedCount(object, connection.id)).toBeNull();
+    expect(object.prepare("SELECT json_extract(config_json, '$.mcpServerMetadata.description') AS description FROM connector_connections WHERE id = ?")
+      .get(connection.id)).toEqual({ description: "New account guidance" });
   });
 
   it("stores what the released per-row endpoint discovers, so older desktops keep the list current", async () => {
