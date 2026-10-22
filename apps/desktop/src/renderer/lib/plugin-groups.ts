@@ -276,6 +276,7 @@ const GROUPED_PLUGIN_IDS = new Map<string, PluginGroup>([
   // keeps it, so it keeps its glyph.
   ['rally:automations', AUTOMATIONS_GROUP],
   ['rally:core', RALLY_GROUP],
+  ['rally:conversations', RALLY_GROUP],
   ['rally:discovery', RALLY_GROUP],
   ['rally:memory', RALLY_GROUP],
   ['rally:multimodal-generation', MULTIMODAL_GENERATION_GROUP],

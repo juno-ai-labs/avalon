@@ -134,7 +134,7 @@ advances at the rate its own total accrues.
 
 ### What the groups are
 
-`rally:core`, `rally:discovery`, `rally:memory`, `rally:tables`, and
+`rally:core`, `rally:conversations`, `rally:discovery`, `rally:memory`, `rally:tables`, and
 `rally.skills` are all Rally reasoning about its own workspace, and are drawn as
 one **Rally** row. `rally:terminal` and `rally:workstream` are Rally operating a
 machine, and are drawn as one **Computer** row. The
