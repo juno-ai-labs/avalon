@@ -600,6 +600,7 @@ const MAX_REPLAY_BYTES = 512_000;
  */
 function narrowSocketTranscriptSnapshot(
   snapshot: WorkstreamTranscriptSnapshot,
+  excessBytes: number,
 ): WorkstreamTranscriptSnapshot | null {
   const ranked = snapshot.ranges
     .map((range, index) => ({ range, index }))
@@ -612,7 +613,14 @@ function narrowSocketTranscriptSnapshot(
     });
   const candidate = ranked[0];
   if (candidate) {
-    const remainingTurns = candidate.range.turns.slice(1);
+    let removedBytes = 0;
+    let removedCount = 0;
+    for (const turn of candidate.range.turns) {
+      removedBytes += textEncoder.encode(JSON.stringify(turn)).byteLength + 1;
+      removedCount += 1;
+      if (removedBytes >= excessBytes) break;
+    }
+    const remainingTurns = candidate.range.turns.slice(removedCount);
     const nextStart = remainingTurns[0]?.transcriptSequence
       ?? candidate.range.covered.endExclusive;
     const ranges = snapshot.ranges.flatMap((range, index) => {
@@ -8983,7 +8991,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           if (encodedBytes <= WORKSTREAM_REALTIME_MAX_FRAME_BYTES) break;
         }
       }
-      const narrowed = narrowSocketTranscriptSnapshot(transcript);
+      const narrowed = narrowSocketTranscriptSnapshot(transcript, encodedBytes - WORKSTREAM_REALTIME_MAX_FRAME_BYTES);
       if (!narrowed) throw new Error("substream_snapshot_frame_too_large");
       transcript = narrowed;
       event = snapshotEvent();

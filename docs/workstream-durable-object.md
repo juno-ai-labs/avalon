@@ -326,12 +326,17 @@ legacy-roster message still join when its turn is promoted.
 
 Participant history is read through snapshot-fenced half-open ranges. Opening
 creates one fence and returns the first-unread conversation turn with up to five
-conversation turns on either side, plus the latest five conversation turns.
+conversation turns on either side, plus the newest canonical suffix selected
+within the existing realtime frame budget. Selection hydrates one turn at a time
+and charges its range, activities and plugin summaries before reading further;
+a single oversized newest turn remains eligible for the placeholder envelope.
+A contained unread island reuses that latest range. The final socket envelope
+still narrows coverage if its metadata or active state needs additional space.
 The admitted feed socket keeps that fence in its hibernation attachment, so it
 survives object eviction but disappears with the reader session instead of
 accumulating in an append-only table or depending on an arbitrary TTL.
 Safe status entries inside either sequence span are included without counting
-against those conversation limits. Each answer reports the interval it
+against the unread conversation limits. Each answer reports the interval it
 inspected even when no row was returned, so the desktop can distinguish an
 empty covered interval from an unknown gap. Range, unread-anchor, latest-tail,
 active-activity, and exact-loop reads have query-shape indexes in the object
@@ -1919,6 +1924,27 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-10-21 — Preserve the opening feed when live authority replaces its preview
+
+**What changed:** Authoritative openings select their newest canonical suffix
+by the existing realtime frame budget, with contained unread context sharing
+that range. Frame narrowing removes enough oldest turn bytes in one pass.
+
+**Why:** A compact preview containing the conversation's earlier messages was
+replaced by a five-turn live snapshot, making those messages disappear again.
+The preview and the authoritative opening must both expose ordinary history.
+See [the conversation cache](conversation-view-cache.md) for the incident and
+preview sizing mechanism.
+
+**Considered and rejected:** Keeping preview turns outside the live snapshot
+would relabel potentially stale lifecycle and message data as authoritative.
+
+**Consequences:** Large histories remain paged under truthful snapshot coverage,
+and a single oversized turn retains its sequence-owning placeholder behavior.
+Full tool details can require a smaller live suffix than the compact preview.
+
+Pull request: [#1390](https://github.com/juno-ai-labs/avalon/pull/1390).
 
 ### 2026-10-21 — Reuse transcript hydration for Worker-side reads
 
