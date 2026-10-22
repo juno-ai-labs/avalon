@@ -163,6 +163,8 @@ describe("skills in a run", () => {
     expect(systemPrompt(bodies[1]!)).toContain("## 3. Find or create the shared table");
     expect(systemPrompt(bodies[1]!)).toContain('scopeKind: "sidekick"');
     expect(systemPrompt(bodies[1]!)).toContain("keyColumns");
+    expect(systemPrompt(bodies[1]!)).toContain("A row skipped as an existing key is not yours to process.");
+    expect(systemPrompt(bodies[1]!)).toContain("An event that triggered the first run is new work");
   });
 
   it("loads the Google meeting playbook and its storage reference without activating its connection", async () => {

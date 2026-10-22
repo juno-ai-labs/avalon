@@ -670,28 +670,11 @@ Mail + Calendar and Drive + Docs + Sheets plugins. The host freezes each view's
 capabilities and activation independently, while joining their capabilities by
 connection ID for run scope; see [Google connector views](connectors.md#google).
 
-`polling-for-events` teaches Sidekick authoring to inspect declared connector
-events before choosing a timer, resolve a specific source resource, honor the
-polling cadence floor, and stay silent when nothing changed. It composes with
-`tracking-seen-or-done-items` for durable state across runs. Its `rally:sidekicks` owner
-keeps the authoring procedure out of execution-only runs. `tracking-seen-or-done-items`
-is owned by `rally:tables`, so both authoring conversations and execution runs
-with Tables access can load it. It applies to Sidekick activations and other
-independent runs that need to share what was seen or completed. It owns loading
-Tables, choosing a shared authorized scope, stable source keys, table discovery
-and creation, overlapping reads, recording completed work, and first-run baselines.
-
-For a specific external resource, the skill defines binding as restricting an
-event rule to events associated with that resource through the selected
-connector. It directs the agent to fill `source.resourceId` with the canonical
-Rally ID and `source.suggestedSourcePluginId` with the plugin ID returned by
-discovery, using an event that supports that resource type. Resource discovery searches registered Rally
-resources; a direct connector read does not register one. The procedure checks
-`searchableResourceTypes`, confirms the source title and access through its
-connector, and uses an exposed resolution or attachment path to register a
-missing record before repeating discovery. If no such tool is exposed, it
-reports the registration gap. An empty search is not a permission denial; when
-no bindable types exist, the procedure checks declared filter fields or polling.
+`polling-for-events` owns trigger selection and source-resource lookup.
+It composes with `tracking-seen-or-done-items`, which owns shared ledgers,
+claims, recovery and baselines. The tracking skill is owned by `rally:tables`
+rather than `rally:sidekicks` so execution runs can load it without authoring
+tools. The skill bodies are the procedures; this document records their scope.
 
 All of them are offered to every production run the API starts, subject to the owner filter. Nothing is withheld by surface. A skill
 is advice, and what a surface may *do* is settled in the tool loop. Offering is
@@ -1216,15 +1199,6 @@ create a table through `rally_tables` under the Sidekick's scope when it needs
 one. Later runs find and reuse it. Table rows never enter a prompt unasked; the
 agent must query only the rows and columns needed for the current run.
 
-The `tracking-seen-or-done-items` skill defines a memory table and directs runs to load
-the Tables plugin, using its tools directly when already active. It searches
-by name or purpose, describes the returned `memoryTableId`, and queries the
-needed rows. Runs choose the narrowest authorized scope they share: `sidekick`
-for activations of one installed Sidekick, `workstream` for one thread, `user`
-for one person's workflows, or `workspace` for organization-wide workflows.
-An absent table is created from the saved declaration in that scope and reused
-across runs. Loading a table is not a separate activation operation; table
-creation and reading rows are separate operations.
 
 ### Scheduled wake-ups
 
@@ -1705,14 +1679,20 @@ as a companion when configuring a watcher.
 
 **Why:** Remembering completed work is needed by event-driven Sidekicks as well
 as timers. Keeping the procedure inside an authoring-only polling skill made
-execution runs unable to load the table-access playbook directly.
+execution runs unable to load the table-access playbook directly. Read-then-act
+also allowed overlapping runs to repeat effects before either recorded success;
+a claim must be distinct from completion, and the first triggering event must
+not be discarded as a historical baseline.
 
 **Considered and rejected:** Copying the instructions into a second skill would
 leave two definitions of stable keys, baselines and completion ordering to drift.
 
 **Consequences:** Table and deduplication guidance belongs in the shared skill;
 trigger selection and polling cadence remain in `polling-for-events`. Loading
-the skill grants no table access or Sidekick authoring tools.
+the skill grants no table access or Sidekick authoring tools. The Tables prompt
+and skill share the claim-before-action, complete-after-success ordering;
+recovery requires verified ownership and replay safety rather than an invented
+claim-expiration timeout.
 
 Pull request: [#1394](https://github.com/juno-ai-labs/avalon/pull/1394).
 

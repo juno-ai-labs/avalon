@@ -478,25 +478,18 @@ resource into registrations all ask that one function, and so does
 `resources_search`: it searches that set and nothing else, and reports it as
 `searchableResourceTypes` beside the rows.
 
-That field is what an empty answer has to be read against, because after the
-filter an empty page has two unrelated causes. With types listed, the query
-matched no registered resource of those types; another wording may find one.
-Binding those types is supported, but the source may still need a Rally resource
-record: reading it directly through a connector does not create that record.
-The `polling-for-events` skill teaches title lookup, registration through an
-exposed resolution or attachment path, and repeat discovery for the canonical ID.
-If that path is unavailable, report the missing registration step rather than a
-permission denial. With no types listed, no resource can narrow a rule in this
-workspace at all, and only then is the rule written with a filter leaf instead —
-one repository is `repository equals owner/name`, which every GitHub event
-declares a filter field for. Telling the model the second when the first is true
-is how a search miss reaches a person as "the automation system cannot bind
-this", which is the sentence the whole path exists to stop repeating.
+A search result's `searchableResourceTypes` is the union across the catalog,
+not proof that the selected event supports a particular type. The event's
+`resourceRelationships` is authoritative. A supported type with no matching
+registered row is distinct from an unsupported type; a direct connector read
+does not register a resource, and no registration tool is exposed to the model.
+The `polling-for-events` skill owns the lookup and filter/polling fallback
+procedure, including reporting a registration gap without calling it a
+permission denial.
 
 A declared relationship is not a promise that anything materializes the type:
 Granola declares `granola_folder` and writes only `granola_note`, so a Granola
-workspace searches a type that has no rows. That reads as the first case above
-and is indistinguishable from a miss from here; it is a connector-side gap, and
+workspace searches a type that has no rows. That is indistinguishable from a search miss here; it is a connector-side gap, and
 [`connectors.md`](connectors.md) carries the invariant it violates.
 
 **Inbound email** arrives at the automation's permanent address

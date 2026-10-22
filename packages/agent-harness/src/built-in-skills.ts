@@ -379,19 +379,21 @@ external provider; reading a file through its connector
 does not automatically register it. Read an empty result alongside
 \`searchableResourceTypes\`:
 
-- If the source's type is listed, binding that type is supported. Use the
+- First inspect the selected event's declared resource relationships. The
+  search types are a union across connected plugins; a nonempty list does not
+  establish that this event supports the requested resource type.
+- If that event supports the source's type and the type is listed, use the
   connector to confirm access and obtain the actual title, then search again
-  with that title instead of a sentence combining the URL, ID and task.
-- If the readable resource still cannot be found, use an available
-  resource-resolution or attachment tool to resolve or register it through its connection,
-  then repeat discovery for the canonical ID. If no such tool is exposed,
-  tell the requesting agent, or the person when working directly, that the
-  resource is readable but needs registration before it can be bound. Name
-  that missing step rather than claiming a permission denial. Never invent a
-  Rally ID or substitute the provider's ID.
-- If no types are listed, no registered resource can narrow the rule through
-  these connections. Inspect the declared filter fields for a way to express
-  the requested restriction, or use polling when the events cannot express it.
+  with that title instead of a sentence combining the URL, ID and task. If the
+  readable resource still cannot be found, report that the lookup did not
+  resolve a registered Rally resource. No connector-resource registration tool
+  is exposed here. Name that registration gap rather than a permission denial;
+  never invent a Rally ID or substitute the provider's ID.
+- If the selected event does not support the source's type or that type is
+  absent from the list, registration cannot make it bindable. Use a supported
+  container and declared filter fields to express the restriction, or use
+  polling when the events cannot express it. This applies even when other
+  resource types are listed, as well as when the list is empty.
 
 A search error is a failed lookup; an empty result is a search miss. Neither
 establishes that the provider or resource type is unsupported.
