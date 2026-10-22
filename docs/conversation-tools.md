@@ -52,11 +52,8 @@ admission still decides each candidate independently; being in a Channel grants
 no access to a private Thread or Breakout. Sidekick scopes stay at their home
 and explicit attachments.
 
-Scope discovery uses the indexed active placements to select peer ids, then one
-batch directory query supplies their facts. It performs no per-conversation
-directory reads, D1 reads or cross-object calls. Canonical list admission is
-shared per distinct hosted Thread parent; resolving an unambiguous target
-admits only that target. There is no cached permission snapshot to invalidate.
+Scope discovery and list admission stay within WorkspaceDO, without
+per-conversation cross-object calls.
 
 A loop under workspace authority gets nothing, nor a
 run child woken without its `automationRun`. The plugin is `preload: true` and
@@ -76,11 +73,11 @@ it.
 
 - **list** returns `{ conversations: [{ conversationId, title, isHome, isOwn, isParent }] }`
   and a `nextPageId`. The home (or the loop's own) comes first, then (for a
-  Breakout loop) Main, then the Threads and Breakouts in the current Thread's
-  Channels ordered by id, then those Channels' feeds. A Sidekick's home comes
-  first, then attachments in the order they were made. `isParent` marks a
-  conversation this one sits inside: a Breakout's Main, a Thread's Channel. Every call re-reads the directories for
-  the acting person and omits what they can no longer open and anything
+  Breakout loop) Main, then the Channels' feeds, then the peer Threads and
+  Breakouts ordered by id. Parents stay ahead of peers across list pages. A
+  Sidekick's home comes first, then attachments in the order they were made. `isParent` marks a
+  conversation this one sits inside: a Breakout's Main, a Thread's Channel.
+  Every call re-reads the directories for the acting person and omits what they can no longer open and anything
   archived. A Channel's id is its Space id, a UUID no Thread shares.
 - **read** takes `conversation` and `limit` and returns
   `{ conversationId, title, messages, nextPageId }`, newest first. Each message
@@ -119,8 +116,10 @@ it.
   and hits are named from those conversations. The index ranks substring
   candidates by document id, a hash, and stores `occurred_at` unindexed
   (`filterable: false`), so it cannot order by time and the newest match can be
-  on any page. `newestSearchHits` reads every candidate page and keeps the
-  newest `limit`; `MAXIMUM_SEARCH_CANDIDATE_PAGES` is the open bound on how many
+  on any page. Candidate pages use the existing maximum conversation page size
+  independently of the requested hit count, so asking for one hit does not page
+  through the index one match at a time. `newestSearchHits` reads every candidate
+  page and keeps the newest `limit`; `MAXIMUM_SEARCH_CANDIDATE_PAGES` is the open bound on how many
   pages one search reads (`LIMIT UNSET`). Indexing `occurred_at` would let the
   index sort, at an indexing cost on every row; that is the team's call. The
   tool has no continuation: a narrower query, or a read of the conversation,
@@ -177,7 +176,10 @@ full access to its parent and Breakout membership does not require the Channel.
 When titles collide, only canonically readable, unarchived candidates take part
 in disambiguation, so an ambiguity response never names an inaccessible peer.
 A guessed peer title that is inaccessible or archived returns
-`conversation_not_in_scope` without revealing its id or archive state.
+`conversation_not_in_scope` without revealing its id or archive state, even
+when the title looks like an id. Only a normalized reference equal to the target's
+id counts as an id match. Own and parent conversations retain specific archive
+and access refusals when named by title.
 Attach admits the same way and additionally refuses an archived target,
 which is the rule a write through `ConversationService.writableClient` follows:
 attaching is the consent to publish there.
@@ -241,8 +243,10 @@ other reason throws `conversation_post_refused:<code>`.
 Limits, all placeholders for the team to set per
 [`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md),
 written as the numbers the design named: `MAXIMUM_SEARCH_CANDIDATE_PAGES`, open,
-bounds how many index pages one search reads; a page of 25 by default and at most 50
-for list, read and search (`list_resources`' numbers), and a read budget of 12,000
+bounds how many index pages one search reads. The complete scan can span all
+peer conversations in the current Thread's Channels; a finite bound would make
+newest-hit results incomplete because the index is ordered by id. A page of 25
+by default and at most 50 for list, read and search (`list_resources`' numbers), and a read budget of 12,000
 characters per page (`read_resource`'s). They live as constants at the top of
 `conversation-tools.ts`. The echo of a refused value in a sentence,
 `MAXIMUM_ECHO_CHARACTERS`, is open (`LIMIT UNSET`); a reference has no length
@@ -279,11 +283,9 @@ whole rather than splitting it.
   grant, listed what a grant gives, and admitted to a Breakout-homed Sidekick
   by the Breakout's grant rather than the Channel's; and a room member outside
   the home Breakout refused by the three sites that narrow to it.
-  Thread and Breakout scopes: every peer across overlapping Channels once,
-  peer Breakouts resolved by id and title, no transitive reach through a peer's
-  other Channel, private peers refused, archives omitted, removal of a placement
-  taking effect on the next call, private Channels not supplying peers, and
-  title ambiguity naming only readable candidates.
+  Thread and Breakout scopes: one-hop peer discovery, parents before peers,
+  current placement and access, opaque peer titles (including UUID-shaped ones),
+  and specific own/parent refusal codes.
   A Breakout member outside its Channel: listed Main and admitted to it from the
   Breakout's scope, and refused it from the Channel's own. A Breakout's merge
   into its Thread (the service the tool calls): once in Main with the
@@ -335,7 +337,10 @@ Granting access from placement alone would expose private Threads and Breakouts.
 
 **Consequences:** List, read and search share the same expanded candidates on
 every call. Channel visibility, conversation admission and archival still narrow
-them. Duplicate titles are disambiguated only among readable candidates.
+them. Parent feeds precede peer conversations in paginated lists. Duplicate
+titles are disambiguated only among readable candidates; UUID-shaped peer titles
+remain opaque, while known own/parent targets retain specific refusals. Search
+fetches full candidate pages while retaining only the requested newest hits.
 Sidekick attachments and merge destinations keep their existing contracts.
 
 Pull request: [#1403](https://github.com/juno-ai-labs/avalon/pull/1403).

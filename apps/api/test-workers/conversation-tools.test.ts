@@ -255,12 +255,16 @@ describe("conversations in the current thread's Channels", () => {
     await seedRoom(outside, "Elsewhere");
     const ownBreakout = await seedBreakout("Own side work");
     const peerBreakout = await seedBreakout("Peer side work", OTHER_ROOM_ID);
-    await channel("First", [ROOM_ID, OTHER_ROOM_ID]);
-    await channel("Second", [ROOM_ID, OTHER_ROOM_ID, second]);
+    const firstChannel = await channel("First", [ROOM_ID, OTHER_ROOM_ID]);
+    const secondChannel = await channel("Second", [ROOM_ID, OTHER_ROOM_ID, second]);
     await channel("Outside", [OTHER_ROOM_ID, outside]);
 
     for (const substreamId of ["0", ownBreakout] as const) {
-      const entries = (await list(substreamId)).conversations.filter((entry) => entry.kind !== "space");
+      const listed = (await list(substreamId)).conversations;
+      const parentsFirst = substreamId === "0" ? [ROOM_ID, firstChannel, secondChannel]
+        : [`${ROOM_ID}/${ownBreakout}`, ROOM_ID, firstChannel, secondChannel];
+      expect(listed.slice(0, parentsFirst.length).map((entry) => entry.conversationId)).toEqual(parentsFirst);
+      const entries = listed.filter((entry) => entry.kind !== "space");
       expect(entries.map((entry) => entry.conversationId).sort()).toEqual([
         ROOM_ID, `${ROOM_ID}/${ownBreakout}`, OTHER_ROOM_ID, `${OTHER_ROOM_ID}/${peerBreakout}`, second,
       ].sort());
@@ -283,7 +287,7 @@ describe("conversations in the current thread's Channels", () => {
     await channel("Other home", [OTHER_ROOM_ID]);
 
     expect((await list("0", COLLEAGUE_ID)).conversations.map((entry) => entry.conversationId))
-      .toEqual([ROOM_ID, OTHER_ROOM_ID, shared]);
+      .toEqual([ROOM_ID, shared, OTHER_ROOM_ID]);
     expect(await resolve(`${OTHER_ROOM_ID}/${breakout}`, "0", COLLEAGUE_ID))
       .toMatchObject({ ok: false, code: "conversation_access_denied" });
     expect(await resolve("Private side work", "0", COLLEAGUE_ID))
@@ -293,7 +297,7 @@ describe("conversations in the current thread's Channels", () => {
       substreamId: breakout, actorUserId: AUTHOR_ID, archived: true });
     await deliverEffectsToWorkspace(TEST_ENV, conversation(OTHER_ROOM_ID, breakout));
     expect((await list()).conversations.map((entry) => entry.conversationId))
-      .toEqual([ROOM_ID, OTHER_ROOM_ID, shared]);
+      .toEqual([ROOM_ID, shared, OTHER_ROOM_ID]);
     expect(await resolve(`${OTHER_ROOM_ID}/${breakout}`)).toMatchObject({ ok: false, code: "conversation_archived" });
 
     await removeMembership(workspace(), { workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
@@ -320,6 +324,50 @@ describe("conversations in the current thread's Channels", () => {
     expect((await list("0", COLLEAGUE_ID)).conversations.map((entry) => entry.conversationId)).toEqual([ROOM_ID]);
     expect(await resolve(OTHER_ROOM_ID, "0", COLLEAGUE_ID))
       .toMatchObject({ ok: false, code: "conversation_not_in_scope" });
+  });
+
+  it.each([
+    "00000000-0000-7000-8000-0000000c0af3",
+    "00000000-0000-7000-8000-0000000c0af4/00000000-0000-7000-8000-0000000c0af5",
+  ])("keeps a private peer with UUID-shaped title %s opaque, including when archived", async (title) => {
+    await seedRoom(OTHER_ROOM_ID, title);
+    const shared = await channel("Shared", [ROOM_ID, OTHER_ROOM_ID]);
+    expect(await resolve(title, "0", COLLEAGUE_ID)).toEqual({
+      ok: false, code: "conversation_not_in_scope", resourceId: null, available: [ROOM_ID, shared],
+    });
+    // A normalized id really naming the peer keeps the specific refusal.
+    expect(await resolve(OTHER_ROOM_ID.toUpperCase(), "0", COLLEAGUE_ID))
+      .toMatchObject({ ok: false, code: "conversation_access_denied", resourceId: OTHER_ROOM_ID });
+    expect((await post(conversation(OTHER_ROOM_ID), "/internal/product", {
+      operation: "update", auth: AUTH, input: { archived: true },
+    })).status).toBe(200);
+    await deliverEffectsToWorkspace(TEST_ENV, conversation(OTHER_ROOM_ID));
+    expect(await resolve(title, "0", COLLEAGUE_ID)).toEqual({
+      ok: false, code: "conversation_not_in_scope", resourceId: null, available: [ROOM_ID, shared],
+    });
+    expect(await resolve(OTHER_ROOM_ID.toUpperCase(), "0", COLLEAGUE_ID))
+      .toMatchObject({ ok: false, code: "conversation_archived", resourceId: OTHER_ROOM_ID });
+  });
+
+  it("preserves specific refusals for own and parent conversations named by title", async () => {
+    const breakout = await seedBreakout("Own side work");
+    for (const [title, resourceId] of [["Own side work", breakout], ["Investors", ROOM_ID]] as const) {
+      expect(await resolve(title, breakout, COLLEAGUE_ID))
+        .toEqual({ ok: false, code: "conversation_access_denied", resourceId, available: [] });
+    }
+    await workspace().setPrivateChildArchived({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
+      substreamId: breakout, actorUserId: AUTHOR_ID, archived: true });
+    await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID, breakout));
+    expect(await resolve("Own side work", breakout))
+      .toEqual({ ok: false, code: "conversation_archived", resourceId: breakout, available: [] });
+    expect((await post(conversation(ROOM_ID), "/internal/product", {
+      operation: "update", auth: AUTH, input: { archived: true },
+    })).status).toBe(200);
+    await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID));
+    for (const substreamId of ["0", breakout] as const) {
+      expect(await resolve("Investors", substreamId))
+        .toEqual({ ok: false, code: "conversation_archived", resourceId: ROOM_ID, available: [] });
+    }
   });
 });
 
