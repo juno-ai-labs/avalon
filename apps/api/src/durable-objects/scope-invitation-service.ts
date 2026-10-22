@@ -165,11 +165,8 @@ export class ScopeInvitationService {
   private async claimForKnownRecipients(workspaceId: z.infer<typeof CreateScopeInvitationsSchema>["workspaceId"],
     recipients: Array<{ email: string; relationship: WorkspaceRelationship }>): Promise<void> {
     for (const { email, relationship } of recipients) {
-      // Prefer any newer event learned while D1 was in flight. A suspended or
-      // replaced relationship must never be overwritten by this batch's read.
-      this.noteRelationship(relationship);
       await this.claim({ workspaceId, parentId: this.parentId, userId: asUserId(relationship.userId), emails: [email] },
-        { membershipIncarnation: relationship.incarnation });
+        relationship);
     }
   }
 
@@ -196,13 +193,13 @@ export class ScopeInvitationService {
    * (its sharer lost the share, a migration is still running) stays pending
    * for the next sign-in; one that never can (revoked, expired) is skipped.
    */
-  async claim(input: z.infer<typeof ClaimScopeInvitationsSchema>, prepared?: { membershipIncarnation: string }): Promise<ScopeInvitationSummary[]> {
+  async claim(input: z.infer<typeof ClaimScopeInvitationsSchema>, prepared?: WorkspaceRelationship): Promise<ScopeInvitationSummary[]> {
     const request = ClaimScopeInvitationsSchema.parse(input);
     const emails = new Set(request.emails);
     const claimed: ScopeInvitationSummary[] = [];
     for (const summary of this.invitations.summaries()) {
       if (summary.status !== "pending" || !emails.has(summary.email)) continue;
-      const result = await this.claimOne(summary.id, request.workspaceId, request.userId, prepared?.membershipIncarnation);
+      const result = await this.claimOne(summary.id, request.workspaceId, request.userId, prepared);
       if (result.status === "accepted") claimed.push(result.invitation);
       // A share left pending says why, or it looks the same as one nobody tried.
       else logStructuredEvent(this.env, "warn", "scope_invitation_claim_refused", {
@@ -216,9 +213,8 @@ export class ScopeInvitationService {
   }
 
   private async claimOne(invitationId: string, workspaceId: string, userId: string,
-    preparedIncarnation?: string)
-    : Promise<{ status: "accepted"; invitation: ScopeInvitationSummary }
-      | { status: "denied"; reason: Extract<ScopeInvitationResult, { status: "denied" }>["reason"] | "membership_convergence_required" }> {
+    prepared?: WorkspaceRelationship)
+    : Promise<{ status: "accepted"; invitation: ScopeInvitationSummary } | Extract<ScopeInvitationResult, { status: "denied" }>> {
     const initial = this.invitations.read(invitationId);
     if (!initial || initial.summary.status !== "pending" || !this.usable(initial)) return { status: "denied", reason: "invitation_unavailable" };
     // A sharer whose membership was replaced can never authorize this share
@@ -233,18 +229,15 @@ export class ScopeInvitationService {
     if (blocked) return { status: "denied", reason: blocked };
     // Cross-authority saga: an interruption may leave a relationship without a
     // share. That grants no conversation access and the next claim resumes it.
-    const recipient = preparedIncarnation !== undefined ? await this.readRelationship(workspaceId, userId)
-      : await ensureGuestRelationship(this.env.DB, workspaceId, userId);
-    // This request just wrote the relationship to D1, so its checks below and
-    // the viewer checks right after it read that, not the table's older answer.
-    if (recipient) this.noteRelationship(recipient);
-    if (recipient?.status !== "active") return { status: "denied", reason: "relationship_required" };
-    // Live rows in different incarnations cannot be ordered without the
-    // membership event. Leave the share pending instead of binding its receipt
-    // to the cached old membership (or replacing a newer one with this read).
-    if (preparedIncarnation !== undefined && recipient.incarnation !== preparedIncarnation) {
-      return { status: "denied", reason: "membership_convergence_required" };
-    }
+    const observed = prepared ?? await ensureGuestRelationship(this.env.DB, workspaceId, userId);
+    this.noteRelationship(observed);
+    const retained = await this.readRelationship(workspaceId, userId);
+    // Bind to D1's observed incarnation, never to an unordered different live
+    // row. A newer suspension of this same membership still wins. If the event
+    // trails the batch, the grant becomes usable when that event converges;
+    // if it leads the batch, this old-incarnation grant cannot admit its replacement.
+    const recipient = retained?.incarnation === observed.incarnation && retained.revision >= observed.revision ? retained : observed;
+    if (recipient.status !== "active") return { status: "denied", reason: "relationship_required" };
     const currentActor = await this.readRelationship(workspaceId, initial.actorUserId);
     if (currentActor?.incarnation !== initial.actorIncarnation) return { status: "denied", reason: "sharing_required" };
     return this.storage.transactionSync(() => {
