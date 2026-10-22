@@ -8,7 +8,7 @@ import { ArchiveAutomationDialog } from './archive-automation-dialog';
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
 import type { AutomationDetail, AutomationRun } from '../lib/types';
 import { statusLabel } from '../lib/format';
-import { Badge, Button, IconButton, ErrorNotice, Modal, StatusDot } from './primitives';
+import { Badge, Button, IconButton, ErrorNotice, Modal, StatusDot, Tip } from './primitives';
 import { RelativeTime } from './relative-time';
 
 export type AutomationHeaderAction = 'pause' | 'resume' | 'archive' | 'run';
@@ -82,10 +82,28 @@ export function AutomationHeader({
   const name = definition?.name ?? automation.name;
   const description = definition?.description ?? automation.description;
   const listedRuns = runs ?? automation.recentRuns;
-  // The object runs only an active automation (`sidekick_not_active`
-  // otherwise), so a paused one is not offered a command that always fails.
+  // The object runs only an active automation with triggers. Keep unavailable
+  // commands visible and explain the same constraints without issuing them.
   const hasTriggers = automation.runnable ?? ((definition?.triggers.length ?? 0) > 0);
-  const canRun = automation.lifecycle === 'active' && hasTriggers;
+  const isPaused = automation.lifecycle === 'paused';
+  const pendingReasons: Record<AutomationHeaderAction, string> = {
+    pause: 'This Sidekick is being paused. Please wait.',
+    resume: 'This Sidekick is being resumed. Please wait.',
+    archive: 'This Sidekick is being archived. Please wait.',
+    run: 'A run is starting. Please wait.',
+  };
+  const disabledReason = pending !== null ? pendingReasons[pending]
+    : automation.lifecycle === 'draft' ? 'Finish setting up this Sidekick in the conversation before you can pause it.'
+      : automation.lifecycle === 'deleted' ? 'This Sidekick has been archived and can no longer be paused.'
+        : undefined;
+  const runDisabledReason = pending !== null ? pendingReasons[pending] : {
+    draft: 'Finish setting up this Sidekick in the conversation before starting a run.',
+    active: hasTriggers ? undefined : 'Add a trigger in the conversation before starting a run.',
+    paused: 'Resume this Sidekick before starting a run.',
+    deleted: 'This Sidekick has been archived and cannot run.',
+  }[automation.lifecycle];
+  const historyDisabledReason = hasTriggers || listedRuns.length > 0
+    ? undefined : 'This Sidekick has no triggers or previous runs.';
   const [confirmingArchive, setConfirmingArchive] = useState(false);
   const [showRunHistory, setShowRunHistory] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
@@ -120,28 +138,51 @@ export function AutomationHeader({
           </div>
         </div>
         <div className="workstream-header-actions window-no-drag">
-          {automation.lifecycle === 'active' && (
-            <Button disabled={pending !== null} onClick={onPause}>
-              <CirclePause aria-hidden="true" size={14} /> {pending === 'pause' ? 'Pausing…' : 'Pause'}
+          <Tip label={disabledReason ?? (isPaused ? 'Resume this Sidekick' : 'Pause this Sidekick')}>
+            <Button
+              className="sidekick-lifecycle-action"
+              aria-disabled={disabledReason ? true : undefined}
+              onClick={(event) => {
+                if (disabledReason) { event.preventDefault(); return; }
+                if (isPaused) onResume(); else onPause();
+              }}
+            >
+              {isPaused ? <Play aria-hidden="true" size={14} /> : <CirclePause aria-hidden="true" size={14} />}
+              {pending === 'pause' ? 'Pausing…' : pending === 'resume' ? 'Resuming…' : isPaused ? 'Resume' : 'Pause'}
             </Button>
-          )}
-          {automation.lifecycle === 'paused' && (
-            <Button disabled={pending !== null} onClick={onResume}>
-              <Play aria-hidden="true" size={14} /> {pending === 'resume' ? 'Resuming…' : 'Resume'}
-            </Button>
-          )}
+          </Tip>
           <DropdownMenu.Root>
             <DropdownMenu.Trigger asChild>
               <IconButton label="More Sidekick actions"><Ellipsis size={16} /></IconButton>
             </DropdownMenu.Trigger>
             <DropdownMenu.Portal>
               <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
-                {hasTriggers && <DropdownMenu.Item className="menu-item" disabled={!canRun || pending !== null} onSelect={onRunNow}>
-                  <Play size={14} /> {pending === 'run' ? 'Starting…' : 'Run now'}
-                </DropdownMenu.Item>}
-                {(hasTriggers || listedRuns.length > 0) && <DropdownMenu.Item className="menu-item" onSelect={() => setShowRunHistory(true)}>
-                  <History size={14} /> Run history
-                </DropdownMenu.Item>}
+                <Tip label={runDisabledReason ?? 'Start a run now'} side="right">
+                  <DropdownMenu.Item
+                    className="menu-item"
+                    aria-disabled={runDisabledReason ? true : undefined}
+                    data-disabled={runDisabledReason ? '' : undefined}
+                    onSelect={(event) => {
+                      if (runDisabledReason) { event.preventDefault(); return; }
+                      onRunNow();
+                    }}
+                  >
+                    <Play size={14} /> {pending === 'run' ? 'Starting…' : 'Run now'}
+                  </DropdownMenu.Item>
+                </Tip>
+                <Tip label={historyDisabledReason ?? 'View previous runs'} side="right">
+                  <DropdownMenu.Item
+                    className="menu-item"
+                    aria-disabled={historyDisabledReason ? true : undefined}
+                    data-disabled={historyDisabledReason ? '' : undefined}
+                    onSelect={(event) => {
+                      if (historyDisabledReason) { event.preventDefault(); return; }
+                      setShowRunHistory(true);
+                    }}
+                  >
+                    <History size={14} /> Run history
+                  </DropdownMenu.Item>
+                </Tip>
                 <DropdownMenu.Item className="menu-item" onSelect={() => {
                   setCopyFailed(false);
                   void onCopyLink().catch(() => setCopyFailed(true));
@@ -168,14 +209,13 @@ export function AutomationHeader({
         </div>
       </div>
       <div className="automation-header-details">
-        {(automation.triggerSummaries.length > 0 || automation.nextRunAt) && (
-          <section className="sidekick-profile-section"><h2>When to expect it</h2>{automation.triggerSummaries.length > 0 && <ul aria-label="Triggers" className="automation-header-triggers">
+        <section className="sidekick-profile-section">
+          <h2>When to expect it</h2>
+          {automation.triggerSummaries.length === 0 && !automation.nextRunAt && <p className="automation-timing-empty">No timing details yet.</p>}
+          {automation.triggerSummaries.length > 0 && <ul aria-label="Triggers" className="automation-header-triggers">
             {automation.triggerSummaries.map((summary) => <li key={summary}>{summary}</li>)}
-          </ul>}{automation.nextRunAt && <p className="automation-runs-next">Next <RelativeTime value={automation.nextRunAt} /></p>}</section>
-        )}
-        <section className="sidekick-profile-section sidekick-guidance">
-          <h2>Make it work for you</h2>
-          <p>Ask for changes in the conversation. Try “Keep it short” or “Use a more casual tone.”</p>
+          </ul>}
+          {automation.nextRunAt && <p className="automation-runs-next">Next <RelativeTime value={automation.nextRunAt} /></p>}
         </section>
         {automation.emailAddress && <details className="sidekick-profile-section sidekick-email-details"><summary>Email this Sidekick</summary><span className="automation-header-email"><Mail aria-hidden="true" size={14} /><span>{automation.emailAddress}</span></span></details>}
       </div>
