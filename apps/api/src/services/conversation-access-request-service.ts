@@ -40,6 +40,7 @@ interface Subject {
   appearance: ConversationAccessPreview["appearance"];
   markId: string;
   createdByUserId: string | null;
+  requestPending: boolean;
 }
 
 export type ApprovalOutcome =
@@ -69,6 +70,7 @@ export class ConversationAccessRequestService {
       appearance: subject.appearance,
       markId: subject.markId,
       access: await this.admitted(parentId, substreamId) ? "open" : "requestable",
+      requestPending: subject.requestPending,
     };
   }
 
@@ -170,7 +172,7 @@ export class ConversationAccessRequestService {
   private async subject(parentId: string, substreamId: string): Promise<Subject> {
     if (this.auth.role === null) throw new ApiError(404, "conversation_not_found", "Conversation not found");
     const subject = await (await workspaceStub(this.env, this.auth.workspaceId))
-      .accessRequestSubject({ workspaceId: this.auth.workspaceId, parentId, substreamId });
+      .accessRequestSubject({ workspaceId: this.auth.workspaceId, parentId, substreamId, requesterUserId: this.auth.userId });
     if (!subject) throw new ApiError(404, "conversation_not_found", "Conversation not found");
     return subject;
   }

@@ -9,7 +9,7 @@ const PARENT = '00000000-0000-4000-8000-0000000ac0a0';
 const BREAKOUT = '00000000-0000-4000-8000-0000000ac0a1';
 
 function preview(extra: Partial<ConversationAccessPreview> = {}): ConversationAccessPreview {
-  return { kind: 'channel', title: 'Launch plan', appearance: { icon: 'rocket', color: 'teal' }, markId: PARENT, access: 'requestable', ...extra };
+  return { kind: 'channel', title: 'Launch plan', appearance: { icon: 'rocket', color: 'teal' }, markId: PARENT, access: 'requestable', requestPending: false, ...extra };
 }
 
 function fakeApi(answer: ConversationAccessPreview, request: () => Promise<void> = async () => undefined) {
@@ -19,9 +19,9 @@ function fakeApi(answer: ConversationAccessPreview, request: () => Promise<void>
   } satisfies ConversationAccessApi;
 }
 
-function show(api: ConversationAccessApi, substreamId = '0', onRetry: () => void = () => undefined): void {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
+function show(api: ConversationAccessApi, substreamId = '0', onRetry: () => void = () => undefined,
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
+  return render(
     <QueryClientProvider client={client}>
       <ConversationAccessRequest api={api} fallback={<p>Thread could not be opened</p>} onRetry={onRetry} parentId={PARENT} substreamId={substreamId} />
     </QueryClientProvider>,
@@ -35,9 +35,45 @@ describe('ConversationAccessRequest', () => {
     expect(await screen.findByRole('heading', { name: 'Launch plan' })).toBeTruthy();
     expect(screen.queryByText('Thread could not be opened')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Request access' }));
-    expect((await screen.findByRole('status')).textContent).toContain('Request sent. This thread opens once you’re approved.');
+    expect((await screen.findByRole('status')).textContent).toContain('Access requested — awaiting approval');
     expect(api.requestConversationAccess).toHaveBeenCalledWith(PARENT, '0');
     expect(screen.queryByRole('button', { name: 'Request access' })).toBeNull();
+  });
+
+  it('shows the stored pending request on a fresh visit without sending another request', async () => {
+    const api = fakeApi(preview({ requestPending: true }));
+    const onRetry = vi.fn();
+    show(api, '0', onRetry);
+    expect((await screen.findByRole('status')).textContent).toContain('Access requested — awaiting approval');
+    expect(screen.queryByRole('button', { name: 'Request access' })).toBeNull();
+    expect(screen.queryByText('You’re not in this thread, ask for access below')).toBeNull();
+    expect(api.requestConversationAccess).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the sent state on reopening and refreshes it when the pending request was declined', async () => {
+    let answer = preview();
+    const api = {
+      conversationAccessPreview: vi.fn(async () => answer),
+      requestConversationAccess: vi.fn(async () => { answer = preview({ requestPending: true }); }),
+    } satisfies ConversationAccessApi;
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const first = show(api, '0', undefined, client);
+    fireEvent.click(await screen.findByRole('button', { name: 'Request access' }));
+    await screen.findByRole('status');
+    first.unmount();
+    const reopened = show(api, '0', undefined, client);
+    expect(screen.getByRole('status').textContent).toContain('Access requested — awaiting approval');
+    expect(screen.queryByRole('button', { name: 'Request access' })).toBeNull();
+    await vi.waitFor(() => expect(api.conversationAccessPreview).toHaveBeenCalledTimes(2), { timeout: 2_000 });
+    await vi.waitFor(() => expect(client.isFetching()).toBe(0), { timeout: 2_000 });
+    reopened.unmount();
+    answer = preview();
+    show(api, '0', undefined, client);
+    expect(await screen.findByRole('button', { name: 'Request access' })).toBeTruthy();
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(api.requestConversationAccess).toHaveBeenCalledTimes(1);
   });
 
   it('offers to dial again once the request is sent, since a revoked socket never dials back alone', async () => {
