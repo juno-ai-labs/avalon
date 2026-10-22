@@ -845,9 +845,13 @@ color must come from the ring; one outside it is accepted only as the color
 already stored. The RPC field is optional, so a seeded or scripted definition
 leaves the appearance alone.
 
-A Sidekick nobody has chosen for stores `NULL`, which is not the same as
-choosing the default: the glyph falls back to the mark derived from the
-Sidekick's id.
+A Thread- or Breakout-scoped Sidekick starts with its home conversation's
+color, copied from that exact home's directory row in the creation transaction.
+If the home has no stored color, it uses the same id-derived color as the glyph.
+Only the color is copied: the icon remains the Sidekick's own generated mark.
+This is a creation-time default; later home color changes and repeated creation
+requests do not overwrite the Sidekick's appearance. Personal and Organization
+Sidekicks still start with `NULL` appearance and use their own id-derived mark.
 
 ## Invariants
 
@@ -1155,6 +1159,16 @@ The Sidekick authoring prompt carries no Google-specific lookup or attachment
 instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
+
+### 2026-10-22 — Scoped Sidekicks start in their home's color
+
+Thread- and Breakout-scoped Sidekicks copy the exact home conversation's color
+in the creation transaction so a new Sidekick visually belongs to the room
+that created it. Leaving appearance empty derived an unrelated color from the
+Sidekick's new id. The shared generated-appearance helper covers homes without
+a stored color. This default copies only color and only on insertion; replay,
+subsequent home recoloring and explicit Sidekick appearance edits keep their
+existing behavior.
 
 ### 2026-10-22 — A room archive archives its owned Sidekicks
 

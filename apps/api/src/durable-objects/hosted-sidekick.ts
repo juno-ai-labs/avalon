@@ -13,6 +13,7 @@ import {
   AutomationSetEvaluatorRulesInputV1Schema,
   ExternalEventRegistrationProjectionV1Schema,
   PROJECT_COLOR_RING,
+  generatedWorkstreamAppearance,
   WORKSTREAM_ICON_KEYS,
   WorkstreamAppearanceSchema,
   WorkstreamAppearancePatchSchema,
@@ -491,6 +492,25 @@ export class HostedSidekick {
     // The insert is the existence check: a repeat finds the row and returns
     // nothing, and is answered from the row it found.
     return this.storage.transactionSync(() => {
+      // The home directory and the new Sidekick share this transaction. Copy
+      // only its color; the Sidekick keeps its own generated icon and later edits.
+      let appearanceJson: string | null = null;
+      if (request.owningWorkstreamId !== null) {
+        const main = request.owningSubstreamId === "0";
+        const home = main
+          ? this.sql.exec<{ appearance_json: string | null }>(
+            "SELECT appearance_json FROM channels WHERE workstream_id = ?", request.owningWorkstreamId,
+          ).toArray()[0]
+          : this.sql.exec<{ appearance_json: string | null }>(
+            "SELECT appearance_json FROM breakouts WHERE workstream_id = ? AND substream_id = ?",
+            request.owningWorkstreamId, request.owningSubstreamId,
+          ).toArray()[0];
+        const appearance = home?.appearance_json
+          ? WorkstreamAppearanceSchema.parse(JSON.parse(home.appearance_json)) : null;
+        const color = appearance?.color
+          ?? generatedWorkstreamAppearance(main ? request.owningWorkstreamId : request.owningSubstreamId).color;
+        appearanceJson = JSON.stringify({ icon: null, color });
+      }
       const created = this.sql.exec(
         `INSERT INTO automation_directory
            (automation_id, workspace_id, region, author_user_id, run_as_user_id, source_version, payload_hash,
@@ -500,7 +520,7 @@ export class HostedSidekick {
             default_plugin_ids_json, activity_source_plugin_ids_json, evaluator_projection_json,
             model_override, email_address, effective_after_event_sequence, authority_generation,
             stop_generation, chat_appearance_json, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 1, 'hosted', 'draft', NULL, ?, ?, ?, NULL, '', '', NULL, ?, 0, NULL,
+         VALUES (?, ?, ?, ?, ?, 1, 'hosted', 'draft', NULL, ?, ?, ?, NULL, '', '', NULL, ?, 0, ?,
                  0, NULL, '{}', '[]', '{}', '[]', NULL, NULL, NULL, ?, 0, NULL, ?, ?)
          ON CONFLICT(automation_id) DO NOTHING
          RETURNING automation_id`,
@@ -513,6 +533,7 @@ export class HostedSidekick {
         request.owningWorkstreamId,
         request.owningSubstreamId,
         now,
+        appearanceJson,
         request.authorityGeneration,
         now,
         now,

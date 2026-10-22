@@ -161,6 +161,54 @@ beforeEach(async () => {
 });
 
 describe("automation directory", () => {
+  it.each([
+    { home: "0", storedColor: "purple", expectedColor: "purple" },
+    { home: "00000000-0000-7000-8000-00000000ad25", storedColor: "black", expectedColor: "black" },
+    { home: "0", storedColor: null, expectedColor: "lime" },
+    { home: "00000000-0000-7000-8000-00000000ad25", storedColor: null, expectedColor: "emerald" },
+  ] as const)("inherits home $home color $storedColor at creation", async ({ home, storedColor, expectedColor }) => {
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      // Deliberately different Thread and Breakout colors: the exact home wins.
+      state.storage.sql.exec("UPDATE channels SET appearance_json = ? WHERE workstream_id = ?",
+        JSON.stringify({ icon: "rocket", color: home === "0" ? storedColor : "orange" }), ROOM_ID);
+      if (home !== "0") {
+        state.storage.sql.exec(`INSERT INTO breakouts
+          (workstream_id, substream_id, authority_generation, waterline, source_event_id,
+           payload_hash, title, description, scope, exact_state, title_status,
+           last_activity_at, latest_attention_ordinal, unread_tracking_start_ordinal,
+           source_created_at, source_updated_at, projected_at, appearance_json)
+          VALUES (?, ?, 1, 1, 'breakout-color', 'hash', 'Release breakout', '', 'personal',
+                  'idle', 'settled', 0, 0, 0, 0, 0, 0, ?)`, ROOM_ID, home,
+        storedColor === null ? null : JSON.stringify({ icon: "book", color: storedColor }));
+      }
+    });
+    const automationId = nextAutomationId();
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID,
+      scope: "workstream", owningWorkstreamId: ROOM_ID, owningSubstreamId: home, automationId });
+    const detail: AutomationDetail = await workspaceStub().sidekickReadDetail({ workspaceId: WORKSPACE_ID, automationId,
+      actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: true } });
+    expect(detail.appearance).toEqual({ icon: null, color: expectedColor });
+    expect(JSON.parse((await directoryRow(automationId)).appearance_json!))
+      .toEqual({ icon: null, color: expectedColor });
+  });
+
+  it("keeps a scoped Sidekick's edited appearance when creation is replayed after the home changes color", async () => {
+    const automationId = await createAndPublish("workstream");
+    await workspaceStub().sidekickSetAppearance({ workspaceId: WORKSPACE_ID, automationId,
+      actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: true },
+      appearance: { icon: "rocket", color: "green" } });
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE channels SET appearance_json = ? WHERE workstream_id = ?",
+        JSON.stringify({ icon: null, color: "orange" }), ROOM_ID);
+    });
+    const replay = await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID,
+      scope: "workstream", owningWorkstreamId: ROOM_ID, automationId });
+    expect(replay.created).toBe(false);
+    const listed = await workspaceStub().listWorkstreamAutomations({ workspaceId: WORKSPACE_ID,
+      workstreamId: ROOM_ID, userId: AUTHOR_ID });
+    expect(listed.items.map((item) => item.appearance)).toEqual([{ icon: "rocket", color: "green" }]);
+  });
+
   it("learns a historical participant before listing the Thread's Sidekick rail", async () => {
     const automationId = await createAndPublish("workstream");
     await runInDurableObject(workspaceStub(), (_instance, state) => {
