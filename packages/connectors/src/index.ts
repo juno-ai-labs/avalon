@@ -2605,6 +2605,14 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       if (readBoolean(metadata, "trashed") === true) return { access: "none", resourceId: fileId, reason: "trashed" };
       const name = readString(metadata, "name") ?? "Untitled file";
       const mimeType = readString(metadata, "mimeType") ?? "";
+      const resourceType = googleDriveResourceType(mimeType);
+      const registration = { resourceType, canonicalUrl: readString(metadata, "webViewLink") ?? (resourceType === "google_sheet"
+        ? `https://docs.google.com/spreadsheets/d/${encodeURIComponent(fileId)}/edit`
+        : resourceType === "google_doc"
+          ? `https://docs.google.com/document/d/${encodeURIComponent(fileId)}/edit`
+          : mimeType === "application/vnd.google-apps.folder"
+            ? `https://drive.google.com/drive/folders/${encodeURIComponent(fileId)}`
+            : `https://drive.google.com/file/d/${encodeURIComponent(fileId)}/view`) };
       // Seeing the file's details is not reading it: a connection holding only
       // `sheets.read` sees a Doc's metadata and has no tool that reads it.
       const readCapability = GOOGLE_FILE_READ_CAPABILITY[mimeType];
@@ -2614,11 +2622,11 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       const capabilities = readRecord(metadata, "capabilities");
       const canEdit = Boolean(writeCapability && connection.grantedScopes.includes(writeCapability)
         && capabilities && readBoolean(capabilities, "canEdit") === true);
-      if (canEdit && readBoolean(metadata, "isAppAuthorized") === true) return { access: "edit", resourceId: fileId, name };
+      if (canEdit && readBoolean(metadata, "isAppAuthorized") === true) return { access: "edit", resourceId: fileId, name, registration };
       if (!canRead) return { access: "none", resourceId: fileId, reason: "capability_not_granted" };
       return canEdit
-        ? { access: "read", resourceId: fileId, name, editNeedsGrant: true }
-        : { access: "read", resourceId: fileId, name };
+        ? { access: "read", resourceId: fileId, name, registration, editNeedsGrant: true }
+        : { access: "read", resourceId: fileId, name, registration };
     },
 
     async hydrateResource(connection, resource, signal) {

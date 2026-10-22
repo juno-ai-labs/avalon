@@ -1094,6 +1094,8 @@ export type ConnectorResourceAccess =
     access: "read" | "edit";
     resourceId: string;
     name: string;
+    /** Provider-verified identity usable to register this resource in Rally. */
+    registration?: { resourceType: string; canonicalUrl: string };
     /** Editable by the account, but Rally needs a one-resource grant first. */
     editNeedsGrant?: boolean;
   };
