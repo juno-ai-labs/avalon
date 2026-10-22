@@ -75,8 +75,11 @@ const GOOGLE_WORKSPACE_TOOLS = [
   "drive.search_next",
   "drive.get_metadata",
   "drive.download",
+  "drive.download_next",
   "drive.export",
+  "drive.export_next",
   "docs.read_document",
+  "docs.read_document_next",
   "docs.create_document",
   "docs.append_text",
   "docs.replace_text",
@@ -1484,6 +1487,12 @@ describe("connector tools selected for harness runs", () => {
     expect(drive?.systemMessage).toContain("writableByRally=true");
     expect(drive?.systemMessage).not.toContain("Gmail search");
     expect(drive?.tools.map((tool) => tool.definition.name)).toEqual(GOOGLE_WORKSPACE_TOOLS);
+    for (const [name, idField] of [["drive.download", "fileId"], ["drive.export", "fileId"], ["docs.read_document", "documentId"]]) {
+      const tool = drive!.tools.find(tool => tool.definition.name === name)!;
+      const args = { [idField!]: "file", ...(name === "drive.export" ? { mimeType: "text/plain" } : {}) };
+      expect(tool.validateInput?.(args)).toBeNull();
+      expect(tool.validateInput?.({ ...args, textPage: { snapshotId: "22222222-2222-4222-8222-222222222222", offset: 128000 } })).toBeInstanceOf(Error);
+    }
   });
 
   it("offers no Google meeting skill without an eligible Google read capability", async () => {
@@ -1710,8 +1719,11 @@ describe("connector tools selected for harness runs", () => {
       "drive.search_next",
       "drive.get_metadata",
       "drive.download",
+      "drive.download_next",
       "drive.export",
+      "drive.export_next",
       "docs.read_document",
+      "docs.read_document_next",
       "docs.create_document",
       "docs.append_text",
       "docs.replace_text",

@@ -193,6 +193,8 @@ export function authorizedConnection(
 }
 
 export interface ConnectorToolContext {
+  /** Receipt-scoped, immutable text snapshots. Only the authorized host supplies this store. */
+  textPages?: ConnectorTextPages;
   /** Host-authorized original bytes. Never supplied by the model or exposed in results. */
   readAttachment?: (resourceId: string) => Promise<{ fileName: string; mimeType: string; bytes: Uint8Array }>;
   connection: AuthorizedConnectorConnection;
@@ -208,6 +210,13 @@ export interface ConnectorToolContext {
     slackActionToken?: string;
   };
   signal: AbortSignal;
+}
+
+export interface ConnectorTextPages {
+  /** The existing source-file allowance, separate from the model's page budget. */
+  maxSourceBytes: number;
+  write(text: Uint8Array): Promise<string>;
+  read(id: string, offset: number, length: number): Promise<{ bytes: Uint8Array; totalBytes: number }>;
 }
 
 export interface ConnectorToolResult {
