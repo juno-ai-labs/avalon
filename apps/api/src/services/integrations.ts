@@ -2064,8 +2064,32 @@ function createAvalonAutomationsPlugin(
         const details: unknown[] = await (await hostedParentStub(env, workspaceId)).sidekickReadDetails({ workspaceId,
           actor: { userId: asUserId(authorUserId), participantOfOwningWorkstream: true },
           automationIds: [authoredAutomationId] });
-        const sidekicks = details.map((read: unknown) => {
-          const detail = AutomationDetailSchema.parse(read);
+        const parsedDetails = details.map((read) => AutomationDetailSchema.parse(read));
+        const legacyPluginIds = [...new Set(parsedDetails.flatMap((detail) =>
+          detail.currentDefinition?.recommendedPlugins.map((plugin) => plugin.pluginId)
+            .filter((id) => /^plugin_custom_mcp(?:_[1-9][0-9]*)?$/u.test(id)) ?? []))];
+        const currentPluginIds = new Map<string, string>();
+        if (legacyPluginIds.length > 0) {
+          const connections = await env.DB.prepare(
+            `SELECT model_plugin_id, display_name FROM connector_connections
+              WHERE workspace_id = ? AND connector_type = 'custom_mcp' AND status <> 'disabled'
+                AND (scope = 'workspace' OR (scope = 'personal' AND owner_user_id = ?))
+                AND model_plugin_id IN (${legacyPluginIds.map(() => "?").join(", ")})`,
+          ).bind(workspaceId, authorUserId, ...legacyPluginIds)
+            .all<{ model_plugin_id: string; display_name: string }>();
+          for (const connection of connections.results) {
+            currentPluginIds.set(connection.model_plugin_id,
+              connectorPluginViews("custom_mcp", connection.model_plugin_id, [], connection.display_name)[0]!.modelPluginId);
+          }
+        }
+        const sidekicks = parsedDetails.map((detail) => {
+          // Project saved credential IDs into the same catalog an edit can load
+          // and inspect. Durable definitions and bindings keep their identities.
+          const currentDefinition = detail.currentDefinition && { ...detail.currentDefinition,
+            recommendedPlugins: detail.currentDefinition.recommendedPlugins.map((plugin) => ({ ...plugin,
+              pluginId: currentPluginIds.get(plugin.pluginId) ?? plugin.pluginId,
+            })),
+          };
           return {
             sidekickId: detail.id,
             canEdit: true,
@@ -2078,9 +2102,9 @@ function createAvalonAutomationsPlugin(
             appearance: detail.appearance ?? null,
             currentDefinitionRevision: detail.currentDefinitionRevision,
             acceptedDefinitionRevision: detail.acceptedDefinitionRevision,
-            currentDefinition: detail.currentDefinition && detail.currentDefinition.definitionVersion !== 2
-              ? { ...detail.currentDefinition, definitionVersion: 2, triggers: [...detail.currentDefinition.triggers, { type: "inbound_email" }] }
-              : detail.currentDefinition,
+            currentDefinition: currentDefinition && currentDefinition.definitionVersion !== 2
+              ? { ...currentDefinition, definitionVersion: 2, triggers: [...currentDefinition.triggers, { type: "inbound_email" }] }
+              : currentDefinition,
           };
         });
         return { sidekicks };
@@ -2167,7 +2191,7 @@ async function loadAutomationCreatorPluginCatalog(
   const seen = new Set<string>();
   const rows = (result.results ?? []).flatMap((row) => connectorPluginViews(
     String(row.connector_type), String(row.model_plugin_id ?? ""), parseJson<string[]>(row.granted_scopes_json, []),
-    typeof row.display_name === "string" ? row.display_name : undefined,
+    String(row.display_name),
   ).map((view): Record<string, unknown> & ConnectorPluginView => ({ ...row, ...view })));
   for (const row of rows) {
     const modelPluginId = row.modelPluginId;
@@ -5615,7 +5639,7 @@ async function loadHarnessTools(
   const seenModelPluginIds = new Set<string>();
   const orderedConnectionRows = (connectionRows.results ?? []).flatMap((row) => connectorPluginViews(
     String(row.connector_type), String(row.model_plugin_id ?? ""), parseJson<string[]>(row.granted_scopes_json, []),
-    typeof row.display_name === "string" ? row.display_name : undefined,
+    String(row.display_name),
   ).map((view): Record<string, unknown> & ConnectorPluginView => ({ ...row, ...view }))).sort((left, right) => {
     const priority = connectorSelectionPriority(left, input.executionPrincipal, attached)
       - connectorSelectionPriority(right, input.executionPrincipal, attached);
@@ -5662,7 +5686,7 @@ async function loadHarnessTools(
     // `google_2_…`, and an example naming the first one would not run.
     const shortWireName = stableConnectionWireName(row.credentialModelPluginId);
     const defaultSelected = connectorPluginBindingViews(String(row.connector_type), row.credentialModelPluginId, grantedScopes,
-      typeof row.display_name === "string" ? row.display_name : undefined)
+      String(row.display_name))
       .some((view) => defaultModelPluginIds.has(view.modelPluginId));
     const basePresentation = connectorPluginPresentation(String(row.connector_type), grantedScopes, shortWireName, {
       displayName: adapter.manifest.displayName,
