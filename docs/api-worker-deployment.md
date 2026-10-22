@@ -20,9 +20,6 @@ the [WorkerEntrypoint RPC model](https://developers.cloudflare.com/workers/runti
 [RPC lifecycle and disposal](https://developers.cloudflare.com/workers/runtime-apis/rpc/lifecycle/),
 and [Versions and gradual deployments](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/gradual-deployments/).
 
-The rollout applies the dedicated `MESSAGE_ISSUES_DB` migration chain before
-promoting the API Worker that accepts Oopsie reports; see [message issues](message-issues.md).
-
 ## Where the code lives
 
 | Surface | Entrypoint and config | Responsibility |
@@ -221,6 +218,9 @@ Global is the only configured deployment. Additional deployments need configurat
 Normal production rollout is `deploy-api.yml`. It builds and profiles all
 selected service graphs, materializes Global lakehouse bindings, discovers the
 active source tags, and selects versioned promotion or a service-first direct deployment when platform changes require it. The `0106_configurable_regions.sql` migration runs after the compatible Worker because it removes retired telemetry tables.
+
+The rollout applies the dedicated `MESSAGE_ISSUES_DB` migration chain before
+promoting the API Worker that accepts Oopsie reports; see [message issues](message-issues.md).
 
 After the configured deployment is healthy, the workflow provisions and deploys the
 Access-protected engineering MCP. This ordering is also the first-release

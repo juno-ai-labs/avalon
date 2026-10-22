@@ -1,8 +1,9 @@
 # Message issues
 
 Oopsie lets a person report a problem with a sent user or assistant message on
-macOS and web. Reports live in their own regional D1 database so support can
-join stable product identities without adding feedback state to conversations.
+macOS and web. Reports live in their own D1 database in Global, the only
+configured deployment, so support can join stable product identities without
+adding feedback state to conversations.
 
 ## Where the code lives
 
@@ -38,23 +39,23 @@ the Thread their merge came from, just as their feed does not.
 
 Reports retain the canonical turn ID and the displayed block ID separately:
 assistant turns and their visible blocks have different identities. Thread
-reports also retain the canonical Channel placement when one exists. The
+reports retain the canonical Channel placement, including private-only placements.
+Visible Sidekick results and opening instructions are reportable despite their
+system storage actor; internal host events are excluded. Malformed Breakout
+addresses disable reporting without throwing during rendering. The
 Breakout ID is present for a Thread's child conversation; a Sidekick run keeps
 its substream identity without being mislabeled a Breakout.
 
 ## Invariants
 
 - The server authorizes the addressed conversation before reading provenance;
-  knowing an ID cannot create a report against a private Breakout. The workerd
-  suite exercises refusal and a valid report against that same private turn.
-- Reports write only to `MESSAGE_ISSUES_DB`. The workerd test reads the saved
-  rows and checks the product database has no report table.
+  knowing an ID cannot create a report against a private Breakout.
+- Reports write only to `MESSAGE_ISSUES_DB`.
 - A repeated report ID with the same reporter, Organization, target and text
   returns the original receipt. Reusing it with changed content returns 409.
-  The workerd suite proves both. The UI sends once per report and does not retry.
+  The UI sends once per report and does not retry.
 - The modal lives outside virtualized rows. Opening or changing a feed does
-  not remount its scrolling subtree. Verified in Channel positioning tests and
-  visually in the running client.
+  not remount its scrolling subtree.
 
 ## Boundary
 
@@ -66,8 +67,9 @@ used on macOS and web; native iOS has no Oopsie UI yet.
 
 ## Failure modes and limits
 
-Submission is best effort. A failed request is silently dropped; the modal
-stays closed and the draft is discarded. The API still awaits D1 internally
+Submission is best effort. A failed request logs its API code and request ID
+without issue text; the modal stays closed and the draft is discarded. The API
+still awaits D1 internally
 and can replay an identical report ID, but the client neither awaits delivery
 nor retries it. An unavailable message or lost access refuses the report.
 No additional size cap, cooldown, expiry, or retention deletion is imposed.
@@ -75,7 +77,8 @@ Closing the modal discards an unsent draft.
 
 ## Testing
 
-Run the API workerd file `test-workers/message-issues.test.ts`, the renderer
+Run the API workerd file `test-workers/message-issues.test.ts`, the cookie-adapter
+regression in `test/browser-sessions.test.ts`, the renderer
 `message-issue-dialog.test.tsx`, and the existing message-action, Channel, and
 composer-dictation suites. Workerd applies the checked-in issue migration to a
 real D1 binding and provisions real conversation objects. Renderer tests prove
@@ -108,7 +111,9 @@ the API deployment applies it before promoting the new Worker.
 message actions, with the existing dictation composer and a dedicated D1 store.
 The shared Thread/Breakout capsule keeps only its microphone; a footer Send
 uses the same dictation finalization path. Sending is best effort and dismisses
-the modal without waiting for storage.
+the modal without waiting for storage. Browser cookie routing, visible system
+turns and private Channel placements use the same reporting path; malformed
+Breakout addresses do not throw during render.
 
 **Why:** A report needs to identify the exact message and execution that went
 wrong without asking the person to reconstruct Organization, Thread and

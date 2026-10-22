@@ -65,7 +65,8 @@ adapter strips cookies and development identity headers from the forwarded
 request and overwrites caller-supplied Authorization. Only named product route
 families are forwarded; authentication/token issuance, internal operations and
 onboarding routes are excluded. Existing product authorization still decides
-which scopes the caller may read or mutate.
+which scopes the caller may read or mutate. Message-issue submissions use this
+same adapter; [message issues](message-issues.md) owns their access and storage.
 
 ## Invariants
 
