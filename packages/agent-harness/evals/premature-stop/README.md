@@ -3,7 +3,8 @@
 Evaluate whether JEV can recognize a final reply that promises to do requested
 work instead of delivering it. This is **not** a completeness, quality, or
 truthfulness judge. The eval itself never executes a recovery. The production
-integration now uses the baseline question with `uncertainty_fallback` at 0.70;
+integration adds explicit Rally identity and participant addressing to the
+baseline question and uses `uncertainty_fallback` at 0.70;
 see [completion verification](../../../../docs/agent-harness.md#completion-verification-before-stopping).
 
 The implemented policy favors missed-work recall: **one verification reprompt
@@ -21,6 +22,49 @@ resolved context, and lifecycle `ready`. Pending background work, cancellation,
 required input, ambiguous writes, an already-used recovery, and unknown state
 suppress continuation. The original policy lets the turn end on provider failure. The agreed evaluation
 deadline is one second, with no retries or fallback model.
+
+## Agent identity and participant addressing
+
+The production question identifies Rally as the AI author of the candidate and
+`@Rally` as a mention addressing it. It judges work assigned to Rally separately
+from work addressed to other participants, and treats an explicit request to
+wait as an acknowledgement rather than an unexpected blocker. Mixed requests
+can still leave Rally with an immediate unfinished deliverable.
+
+`addressing-cases.jsonl` adds eight authored development regressions for those
+boundaries: requested waiting, work assigned only to another participant, mixed
+assignments with a promise or delivered result, a future event, a genuine access
+dependency, a superseded wait instruction and immediate work before waiting.
+These cases are separate from the frozen 60-case synthetic corpus. Test their
+semantics against live JEV; returning an expected label from a provider double
+does not exercise the classifier.
+
+The October 21 report hashes and comparisons remain historical evidence for
+the original question. The current `baseline` variant imports the updated
+production question; its bytes no longer match that original rubric.
+
+[`agent-identity-2026-10-22.json`](agent-identity-2026-10-22.json) records a live
+comparison on the existing 60 synthetic cases, two repetitions of the eight
+addressing cases and three replays of the production decision-time snapshot.
+The updated question accepted all three production acknowledgements at 0.99–1.00
+confidence. It caught all 18 needed checks in the existing corpus and all six
+needed checks across the addressing repetitions. One addressing result still
+triggered an extra check at 0.69 confidence. The existing calendar-promise label
+was wrong but remained below the stopping threshold, so verification still ran.
+Baseline had five unavailable synthetic calls and three unavailable production
+replays; do not attribute their extra checks to rubric quality. These are
+development regressions, not a new holdout or an end-to-end recovery evaluation.
+
+Run the checked-in addressing cases through the same live runner:
+
+```bash
+cp packages/agent-harness/evals/premature-stop/addressing-cases.jsonl \
+  /workspace/jev-completion-private/addressing-cases.jsonl
+chmod 600 /workspace/jev-completion-private/addressing-cases.jsonl
+NODE_USE_ENV_PROXY=1 corepack pnpm --filter @rally/agent-harness eval:premature-stop \
+  /workspace/jev-completion-private/addressing-cases.jsonl \
+  /workspace/jev-completion-private/addressing-report.json jev-1.14.0 1000 0.70 baseline
+```
 
 ## Corpora and provenance
 
