@@ -3748,7 +3748,7 @@ describe("canonical ordered work-stream transcript", () => {
         actor: "human",
         authorUserId: "user-1",
         authorSnapshot: { displayName: "Alex at posting time", avatarUrl: null },
-        text: `Message ${index}`,
+        text: index <= 25 ? "x".repeat(200_000) : `Message ${index}`,
         createdAtUtc: new Date(NOW + index).toISOString(),
         attentionOrdinal: index,
       });
@@ -3766,12 +3766,12 @@ describe("canonical ordered work-stream transcript", () => {
     expect(snapshot.ranges.map((range) => range.turns.map((turn) => turn.transcriptSequence)))
       .toEqual([
         [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
-        [26, 27, 28, 29, 30],
+        [22, 23, 24, 25, 26, 27, 28, 29, 30],
       ]);
 
-    const gap = transcript.range(snapshot, { startInclusive: 17, endExclusive: 26 });
-    expect(gap.covered).toEqual({ startInclusive: 17, endExclusive: 26 });
-    expect(gap.turns).toHaveLength(9);
+    const gap = transcript.range(snapshot, { startInclusive: 17, endExclusive: 22 });
+    expect(gap.covered).toEqual({ startInclusive: 17, endExclusive: 22 });
+    expect(gap.turns).toHaveLength(5);
     await transcript.appendParticipantMessage({
       turnId: "message-after-fence",
       actor: "human",

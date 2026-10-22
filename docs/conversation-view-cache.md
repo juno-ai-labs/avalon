@@ -59,10 +59,13 @@ turns. Within a generation, older and duplicate writes are ignored separately
 for each turn, so an unordered Queue cannot resurrect deleted text. Every
 visible turn is retained, as requested for this projection; the initial
 response reads the compact feed up to the existing realtime frame budget.
-The read walks newest first and stops at that byte budget instead of loading
-unbounded history. Plugin-only turns do not impose a separate turn-count cutoff.
-History beyond the frame budget and unread-position reconciliation remain on
-the authoritative socket.
+The read walks newest first, charges each normalized row's wire bytes and array
+separators once, and stops at that byte budget instead of loading unbounded
+history. Authoritative opening snapshots also select a newest suffix by the
+same transport budget, so ordinary feeds survive the preview-to-live swap.
+Their full tool and activity payloads can make the live suffix smaller for
+large feeds. History beyond the frame budget and unread-position reconciliation
+remain on the authoritative socket.
 
 The subscribe answer advertises `conversationViews` support. New clients send
 no preview command to an older server that omits it, preserving the existing
@@ -196,7 +199,9 @@ retention policy or a different storage boundary is required.
 
 **What changed:** Opening previews read the retained compact feed up to the
 existing realtime frame budget, stopping the SQL cursor when that budget is
-reached. The final serialized response is still checked against the wire budget.
+reached. Each normalized row's complete wire contribution is charged once,
+including array separators and range coordinates. Authoritative snapshots also
+open a byte-bounded newest suffix, preserving ordinary history on attachment.
 
 **Why:** A first browser open showed only the final reply even though all 29
 turns had reached WorkspaceDO. Four of its newest five turns contained only
@@ -208,8 +213,10 @@ the projection. Reading all history before trimming would waste memory on large
 conversations.
 
 **Consequences:** Ordinary conversations show their compact history while the
-live socket attaches. Large feeds still show a newest suffix within the existing
-wire budget; older paging and transcript authority stay on the live socket.
+live socket attaches and after its snapshot replaces the preview. Large feeds
+still show a newest suffix within the existing wire budget; older paging and
+transcript authority stay on the live socket. Full authoritative tool details
+can reduce that suffix relative to the compact preview.
 
 Pull request: [#1390](https://github.com/juno-ai-labs/avalon/pull/1390).
 
