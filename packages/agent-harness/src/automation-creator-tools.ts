@@ -248,6 +248,22 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
       },
     },
     {
+      definition: creatorDefinition("resources_register"),
+      validateInput: (raw) => {
+        const parsed = z.strictObject({ pluginId: z.string().min(1), resource: z.string().min(1) }).safeParse(raw);
+        return parsed.success ? null : parsed.error;
+      },
+      execute: async (raw, context) => {
+        const args = z.strictObject({ pluginId: z.string().min(1), resource: z.string().min(1) }).parse(raw);
+        const plugin = catalog.find((entry) => entry.pluginId === args.pluginId);
+        if (!plugin) throw new Error("sidekick_resource_plugin_unavailable: Find the source plugin with plugins_list or plugins_search.");
+        if (!plugin.registerResource) throw new Error("sidekick_resource_registration_unsupported: This plugin cannot register external resources. Inspect its events and available filters before choosing a fallback.");
+        const output = await plugin.registerResource(args.resource, context.signal);
+        rememberAutomationResourceSearchResult(output, resolvedAutomationResources);
+        return { output, summary: "Registered an external resource for event binding" };
+      },
+    },
+    {
       definition: creatorDefinition("sidekicks_list"),
       execute: async () => {
         if (!input.automationDirectoryPort) throw new Error("sidekick_directory_host_unavailable");
@@ -487,7 +503,7 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
             issues.push({
               code: "custom",
               path: ["evaluators", index, "source", "resourceId"],
-              message: "This resource is not one this plugin can watch. Find it with resources_search and use an ID it returns for this source binding, or omit resourceId when the rule is not about one resource.",
+              message: "This resource is not one this plugin can watch. Find it with resources_search or register the external file with resources_register, then use the returned ID for this source binding. Omit resourceId only when the rule is not about one resource.",
               input: evaluator.source.resourceId,
             });
           }
@@ -566,7 +582,7 @@ export const AUTOMATIONS_PLUGIN_ID = "rally:sidekicks";
 export const AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE = [
   "Sidekicks let people delegate work or knowledge. Create and edit them through conversation; never ask users to edit system instructions.",
   "Generate both internal instructions and a clear user-friendly description of the behavior. Explain missing details through questions.",
-  "For work that should start after an external change, load polling-for-events before choosing how it starts. Save why you chose an event or a timer. Recommend an event tied to the requested resource when that fits better than repeated checks; keep an explicitly requested schedule unless the person chooses the alternative.",
+  "For work that should start after an external change, load polling-for-events and use a suitable event by default. If the source is missing from Rally's resource search, register it through its authorized connection and bind the returned resource ID without asking the person to choose registration or polling. Save why you chose an event or a timer. Preserve an explicitly requested schedule. If registration or binding fails, report the actual error and ask only for a fallback that changes the requested behavior.",
   "Each Sidekick run has a separate conversation, but its wizard, runs, and background agents share one Terminal sandbox (file workspace). Other Sidekicks and the requesting Thread have separate sandboxes. Only the Sidekick's run-as user can use its shared Terminal files; other editors can still configure it. Save resource IDs, file recovery steps, and instructions for opening shared tables so work can recover if files are missing. To update an existing site, load building-live-sites and save its import, update, and publish steps in the run instructions.",
   "Activations can overlap, and Terminal locks only one tool call at a time. For runs that update the same files or publication, load tracking-seen-or-done-items and save shared-table coordination steps for the whole update; use separate directories for independent work.",
   "A ready submission saves and activates immediately. Do not ask the person to press Create or Apply. Submit only the behavior they requested.",

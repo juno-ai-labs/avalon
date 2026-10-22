@@ -522,10 +522,23 @@ A search result's `searchableResourceTypes` is the union across the catalog,
 not proof that the selected event supports a particular type. The event's
 `resourceRelationships` is authoritative. A supported type with no matching
 registered row is distinct from an unsupported type; a direct connector read
-does not register a resource, and no registration tool is exposed to the model.
-The `polling-for-events` skill owns the lookup and filter/polling fallback
-procedure, including reporting a registration gap without calling it a
-permission denial.
+does not register a resource. The wizard's `resources_register` tool takes an
+external URL or provider file ID and an authorized `pluginId`. It verifies access
+through that connection, derives the title and type from provider metadata, and
+uses `ResourceService.resolve` to return the canonical Rally ID. Registration
+reuses the existing connection/provider identity; it neither edits the external
+file nor grants access. Currently Google Drive, Docs, and Sheets provide the
+verified identity needed for registration. Catalog discovery reports
+`resourceRegistrationSupported` for each plugin.
+
+Registration results have the same `resources` shape as search results and enter
+the same binding-validation state, including receipt replay across turns. The
+`polling-for-events` skill owns the lookup, registration, and filter/polling
+fallback procedure. For requested external changes, the wizard registers a
+missing readable source and binds a suitable event without asking the person to
+choose registration or a timer. Explicit schedules remain schedules. Actual
+registration failures are reported accurately; questions are reserved for missing
+information or a fallback that changes the requested behavior.
 
 A declared relationship is not a promise that anything materializes the type:
 Granola declares `granola_folder` and writes only `granola_note`, so a Granola
@@ -1025,6 +1038,7 @@ substreams. Harness `skills.test.ts` proves recommendations do not load bodies.
 | `apps/api/test/access-revocation.test.ts` | `pnpm --filter @rally/api test` | The workspace fan-out naming an automation and the consumer walking its children. |
 | `packages/agent-harness/src/automation-creator-tools.test.ts` | `pnpm --filter @rally/agent-harness test` | The drafting tools, the `matching` evaluator shape, the tool schema offering that spelling alone, the submission pre-check, and the sentence a scope-blocked connection carries into the catalog and into a refused rule. |
 | `packages/contracts/src/automation-evaluator-resources.test.ts` | `pnpm --filter @rally/contracts test` | Which resources a rule may name: the bindable set and its predicate, and the sentinel and structural cases that drop an id before the parse. |
+| `apps/api/test-workers/sidekick-resource-registration.test.ts` | `pnpm --filter @rally/api test:workers` | Provider-verified registration, canonical identity reuse, event binding and incoming-event resource resolution, inaccessible files, personal ownership, frozen grants, and connection revocation against real WorkspaceDO storage. |
 | `apps/api/test/automation-creator-catalog.test.ts` | `pnpm --filter @rally/api test` | The drafting catalog and its research tools against the routed workspace database: the connection a webhook earns by its triggers alone, the triggers a personal connection is not offered and the workspace one still is, people search, and `resources_search` returning only bindable containers — the fresher event resource beside them left out, and nothing at all where a connector declares no relationship. |
 
 Traps worth knowing before writing one here. The `test-workers` D1 starts with
@@ -1173,6 +1187,20 @@ freezing a delayed conversation projection's old color into the new Sidekick.
 Without a placement, missing or invalid home appearance uses the shared generated
 default; an invalid appearance reports the rejected field without blocking creation
 or replay.
+
+### 2026-10-22 — Register missing external sources during event setup
+
+**What changed:** The Sidekick wizard can register a provider-verified external
+file through its authorized source plugin and use the returned Rally ID in an
+event rule. Registration reuses the existing canonical resource operation and
+its results survive authoring receipt replay. Change-triggered setup now performs
+registration and event binding by default; explicit schedules are preserved.
+
+**Why:** The calendar experiment found the right Sheets event but could not
+register its source. The coordinator offered registration as a user choice even
+though answering could not supply the missing operation. More prompting alone
+could not remove that capability gap. The tool closes it without inventing IDs,
+loosening access, or treating routine setup as a preference question.
 
 ### 2026-10-22 — A room archive archives its owned Sidekicks
 
