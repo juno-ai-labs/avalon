@@ -5092,10 +5092,10 @@ async function loadRunPromptContext(
   }
   return {
     // The prompt prefix is intentionally pure with respect to a saved task.
-    // Volatile execution metadata stays in the durable host and does not become
-    // a synthetic model-visible user message. Trigger evidence remains explicit
-    // untrusted user data, and exact wall-clock time is available through the
-    // authoritative current_time tool.
+    // A Sidekick's run identity and trigger are a separate derived user message.
+    // Other volatile execution metadata stays in the durable host. Trigger
+    // evidence remains explicit untrusted user data, and exact wall-clock time
+    // is available through the authoritative current_time tool.
     systemPrompt: `${agentCoordinationRoleGuidance(input)}\n` + renderWorkstreamSystemPrompt({
       title: workstream.title,
       objective: workstream.objective,
