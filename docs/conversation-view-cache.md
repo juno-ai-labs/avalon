@@ -1,7 +1,7 @@
 # Conversation view cache
 
 WorkspaceDO keeps a compact display projection of its conversations. A client
-opening a conversation requests its first page over the Organization socket
+opening a conversation requests its compact feed over the Organization socket
 it already holds, while the authoritative SubstreamAgent socket connects.
 The preview is read-only and the live snapshot replaces it unconditionally.
 
@@ -58,9 +58,11 @@ deletion fence per turn. Generation advances clear the previous generation's
 turns. Within a generation, older and duplicate writes are ignored separately
 for each turn, so an unordered Queue cannot resurrect deleted text. Every
 visible turn is retained, as requested for this projection; the initial
-response reads the latest five visible
-turns, following the existing five-turn opening policy. Older history and
-unread-position reconciliation remain on the authoritative socket.
+response reads the compact feed up to the existing realtime frame budget.
+The read walks newest first and stops at that byte budget instead of loading
+unbounded history. Plugin-only turns do not impose a separate turn-count cutoff.
+History beyond the frame budget and unread-position reconciliation remain on
+the authoritative socket.
 
 The subscribe answer advertises `conversationViews` support. New clients send
 no preview command to an older server that omits it, preserving the existing
@@ -176,7 +178,8 @@ retention policy or a different storage boundary is required.
   in workerd.
 - `apps/api/test-workers/conversation-view-projection.test.ts`: real source
   projection, plugin timing, deletion and generation fences, Queue publication,
-  historical upgrades, and fenced-source backfill/activation recovery.
+  historical upgrades, fenced-source backfill/activation recovery, and complete
+  opening feeds across plugin-only turns within the realtime frame budget.
 - `apps/api/test-workers/thread-backfill.test.ts`: the Queue consumer keeps a
   backfill claimed until the source projection reaches WorkspaceDO.
 - `apps/api/test-workers/workspace-socket-fanout.test.ts`: cached reads over a
@@ -188,6 +191,25 @@ retention policy or a different storage boundary is required.
   acquisition, reconciliation, retry cancellation, and command gating.
 
 ## Changelog
+
+### 2026-10-21 — Open the compact feed without a five-turn cutoff
+
+**What changed:** Opening previews read the retained compact feed up to the
+existing realtime frame budget, stopping the SQL cursor when that budget is
+reached. The final serialized response is still checked against the wire budget.
+
+**Why:** A first browser open showed only the final reply even though all 29
+turns had reached WorkspaceDO. Four of its newest five turns contained only
+plugin work, so the five-turn opening policy hid every earlier message.
+
+**Considered and rejected:** Counting only prose toward the five-turn window
+would still hide the conversation's earlier messages despite retaining them in
+the projection. Reading all history before trimming would waste memory on large
+conversations.
+
+**Consequences:** Ordinary conversations show their compact history while the
+live socket attaches. Large feeds still show a newest suffix within the existing
+wire budget; older paging and transcript authority stay on the live socket.
 
 ### 2026-10-21 — Refresh stale device seeds and settle fenced backfill sources
 
