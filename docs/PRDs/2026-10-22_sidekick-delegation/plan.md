@@ -197,15 +197,42 @@ turn an implementation checklist into an assertion that its tests passed.
   when its generation comparison was removed. Every mutation was restored;
   the complete 12-case workerd and 245-case harness lanes then passed. Lint and
   repository-wide typecheck passed. This adds no consent table or migration;
-  interrupted response-loss recovery remains separately unfinished.
+  interrupted response-loss recovery is covered in the next evidence section.
+
+### Interrupted consent recovery
+
+- Direct-speaker consent tools reconcile accepted actions by their original
+  effect IDs. Missing or superseded acceptance refuses recovery without a new
+  preparation. Startup repair builds only the existing applicable consent
+  subset, reads the canonical speaker, and uses ordinary run/lease authority.
+- Real workerd scenarios exercise both tool presentations and executing/ambiguous
+  outer receipts after eviction and a real replacement lease claim. The accepted
+  outcome must be completed durably and readable from R2. Missing and
+  superseded actions after withdrawal must remain stale without another grant.
+- Restored real workerd consent lane: 14 passing cases, including both repair
+  scenarios. They use canonical human turns, real object ports and lease claims,
+  eviction, R2 and durable receipt settlement; no inference is activated.
+  Background contexts cannot reconstruct consent tools. After withdrawal,
+  both an unaccepted call and an accepted-but-superseded call remain named stale
+  actions and the consent receipt count does not grow through repair.
+- Three production-code negative controls removed the consent reconciler,
+  recovery dispatch and ambiguous-result settlement flag; each failed its
+  intended assertion. Without reconciliation, an unaccepted old action was
+  executed and reported completed after withdrawal. A fourth control removed
+  deadline cleanup and left a timer after both landed and unknown reconciliation.
+  All changes were restored. The final consent lane passed 14 cases; focused
+  Terminal recovery/tool-schema/presentation Node lanes passed 22, including
+  the two deadline cleanup cases. Lint and repository-wide typecheck passed.
+  Documentation checks passed. No grant
+  migration, new retry loop or authorization barrier was introduced.
 
 ### Next integration constraints
 
-The common admission policy and completed-consent replay checks are installed.
-Completed replay reads current own-grant generation and eligibility without
-executing the consent tool. Interrupted consent mutation recovery still needs
-receipt reconciliation before any re-entry; completed replay alone does not
-prove that recovery path.
+The common admission policy, completed-consent replay checks and interrupted
+consent receipt reconciliation are installed. Completed and interrupted replay
+read current own-grant generation and eligibility without repeating the consent
+mutation. Medium-model uncertain-response behavior still needs evaluation;
+storage/protocol tests are not semantic model evidence.
 
 Configured sources still need reconciliation across delegates' connection-
 specific Rally resource IDs, preserving provider resource/occurrence identity.

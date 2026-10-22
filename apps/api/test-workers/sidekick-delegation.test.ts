@@ -1,14 +1,18 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 import { env } from "cloudflare:workers";
-import { reset, runInDurableObject } from "cloudflare:test";
+import { reset, runInDurableObject, evictDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { AutomationDetailSchema, asUserId, asWorkspaceId, sidekickCanonicalUrl } from "@rally/contracts";
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
-import { seedWorkspaceControlPlane, seedWorkstreamRoot, seedParticipantMessage, runInput } from "./helpers/substream-fixture";
+import { seedWorkspaceControlPlane, seedWorkstreamRoot, seedParticipantMessage, seedExecutionReceipt, runInput } from "./helpers/substream-fixture";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { directSidekickDelegationUser, SidekickDelegationService, ownSidekickDelegationsAcrossOrganizations } from "../src/services/sidekick-delegation-service";
 import { sidekickDelegationTools } from "../src/services/sidekick-delegation-tools";
 import { validateCompletedToolReplay } from "../src/services/completed-tool-replay";
+import { reenterInterruptedWriteForRecovery } from "../src/services/integrations";
+import { createHarnessRunObjectPort } from "../src/runtime/harness-run-port";
+import { createToolReceiptObjectPort } from "../src/runtime/tool-receipt-port";
+import { claimHarnessAttempt } from "../src/runtime/harness-run-runtime";
 
 const workspaceId = asWorkspaceId("00000000-0000-7000-8000-00000000de00");
 const creator = asUserId("00000000-0000-7000-8000-00000000de01");
@@ -45,6 +49,73 @@ async function own(userId = creator) {
 }
 
 describe("Sidekick consent authority in real workerd", () => {
+  it.each([{ room: false, status: "executing" as const }, { room: true, status: "ambiguous" as const }])(
+    "recovers a lost consent response from its accepted receipt after eviction (room $room, $status)", async ({ room, status }) => {
+      // No inference: admit the execution receipt without activating its loop.
+      await create();
+      const parentId = room ? crypto.randomUUID() : sidekickId;
+      const triggerMessageId = crypto.randomUUID();
+      const child = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", workspaceId, parentId));
+      const input = runInput(crypto.randomUUID(), { workspaceId, parentId, parentKind: room ? "workstream" : "automation",
+        triggerMessageId, executionPrincipal: { type: "user", userId: other } });
+      await runInDurableObject(child, async (_instance, state) => {
+        seedWorkstreamRoot(state, Date.now(), { workspaceId, workstreamId: parentId });
+        await seedParticipantMessage(state, { id: triggerMessageId, sequence: 1, authorUserId: other, text: "Allow this Sidekick to act as me." });
+        seedExecutionReceipt(state, input.harnessRunId, input, Date.now());
+      });
+      const runs = createHarnessRunObjectPort(env, workspaceId, parentId);
+      const claim = await claimHarnessAttempt(runs, input, { attemptId: crypto.randomUUID(), owner: "first", leaseSeconds: 300 });
+      if (claim.state !== "claimed") throw new Error("consent_recovery_test_claim_failed");
+      const receipts = createToolReceiptObjectPort(env, workspaceId, parentId);
+      const tool = sidekickDelegationTools(env, input, other, room)[2]!;
+      const args = { sidekickId, allowed: true };
+      const admit = async (effectIntentId: string, toolCallId: string, lease = claim.lease) => {
+        await receipts.admit({ effectIntentId, runId: input.harnessRunId, toolCallId, toolName: tool.definition.name,
+          mode: "write", connectionId: null, requestHash: "consent-request", inputJson: JSON.stringify(args),
+          executionPlanHash: "consent-plan", executionPlanJson: JSON.stringify({ pluginId: "rally:sidekicks",
+            canonicalToolName: tool.definition.name, capability: tool.definition.capability, mode: "write", idempotency: "record_before_execute" }),
+          compatiblePriorPlanHashes: [], providerIdempotencyKey: null,
+          fence: { runId: input.harnessRunId, attemptId: lease.attemptId, owner: lease.owner }, now: Date.now() });
+        return (await receipts.receiptForCall({ runId: input.harnessRunId, toolCallId }))!;
+      };
+      const accepted = await admit(crypto.randomUUID(), "accepted");
+      await tool.execute(args, { workspaceId, workstreamId: parentId, harnessRunId: input.harnessRunId, toolCallId: "accepted",
+        effectIntentId: accepted.effectIntentId, executionPrincipal: input.executionPrincipal, signal: new AbortController().signal });
+      expect(await reenterInterruptedWriteForRecovery(env, { ...input, backgroundAgent: true }, {
+        ...accepted, startedAt: accepted.startedAt ?? 0,
+      }, claim.lease, runs)).toEqual({ outcome: "unknown", reason: "sidekick_delegation_user_context_required" });
+      if (status === "ambiguous") await runInDurableObject(child, (_instance, state) => state.storage.sql.exec(
+        "UPDATE tool_effects SET status='ambiguous' WHERE effect_intent_id=?", accepted.effectIntentId));
+      // A dead owner's lease must expire before another attempt can claim it.
+      // Stage that boundary rather than making this test wait five minutes.
+      await runInDurableObject(child, (_instance, state) => state.storage.sql.exec(
+        "UPDATE runs SET lease_expires_at=? WHERE run_id=?", Date.now() - 1, input.harnessRunId));
+      await evictDurableObject(child);
+      const replacement = await claimHarnessAttempt(runs, input, { attemptId: crypto.randomUUID(), owner: "replacement", leaseSeconds: 300 });
+      if (replacement.state !== "claimed") throw new Error(`consent_recovery_test_replacement_${replacement.state}`);
+      const interrupted = (await receipts.receiptForCall({ runId: input.harnessRunId, toolCallId: "accepted" }))!;
+      const result = await reenterInterruptedWriteForRecovery(env, input, { ...interrupted, startedAt: interrupted.startedAt ?? 0 }, replacement.lease, runs);
+      expect(result).toMatchObject({ outcome: "completed", result: { output: { sidekickId, userId: other, allowed: true, changed: true } } });
+      const completed = (await receipts.receiptForCall({ runId: input.harnessRunId, toolCallId: "accepted" }))!;
+      expect(completed.status).toBe("completed");
+      const output = await env.PAYLOADS.get(completed.outputRef!);
+      expect(await output!.json()).toEqual({ replayVersion: 1, output: { sidekickId, userId: other, allowed: true, changed: true } });
+      // A call interrupted before acceptance must not prepare the old intent
+      // again after a withdrawal has advanced its generation.
+      const missing = await admit(crypto.randomUUID(), "unaccepted", replacement.lease);
+      const stale = await admit(crypto.randomUUID(), "superseded", replacement.lease);
+      await tool.execute(args, { workspaceId, workstreamId: parentId, harnessRunId: input.harnessRunId, toolCallId: "superseded",
+        effectIntentId: stale.effectIntentId, executionPrincipal: input.executionPrincipal, signal: new AbortController().signal });
+      await stub().sidekickSetMyDelegation(await prepare(false, other));
+      expect(await reenterInterruptedWriteForRecovery(env, input, { ...missing, startedAt: missing.startedAt ?? 0 }, replacement.lease, runs))
+        .toEqual({ outcome: "unknown", reason: "sidekick_delegation_stale_action" });
+      expect(await reenterInterruptedWriteForRecovery(env, input, { ...stale, startedAt: stale.startedAt ?? 0 }, replacement.lease, runs))
+        .toEqual({ outcome: "unknown", reason: "sidekick_delegation_stale_action" });
+      expect((await own(other)).delegations[0]).toMatchObject({ allowed: false, eligible: false });
+      expect(await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
+        "SELECT count(*) AS count FROM sidekick_delegation_receipts WHERE sidekick_id=?", sidekickId).one().count)).toBe(3);
+    });
+
   it("initializes direct creators once and never recreates their withdrawn consent on creation replay", async () => {
     await create(true);
     expect(await own()).toEqual({ userId: creator, delegations: [{ sidekickId, label: "New Sidekick", allowed: true, eligible: true }] });
