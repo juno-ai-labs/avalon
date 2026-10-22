@@ -655,6 +655,17 @@ acknowledgements remain inspectable after membership or Sidekick access loss.
 A stale acknowledgement never re-enters the consent executor or prepares a new
 grant; the model is directed to read current own grants and wait for a new request.
 
+Interrupted self-consent writes reconcile against the same accepted action
+receipt before any executor re-entry. Only an exact, current accepted action
+returns its persisted outcome. Missing, superseded or unavailable acceptance
+stays named and requires current own-grant inspection and a new user request;
+recovery cannot prepare an old intent at a newer generation. Startup recovery
+reconstructs only the applicable consent subset for the canonical human speaker,
+without loading authoring tools or creating a Terminal sandbox. The result is
+stored through the normal R2/receipt path before the repaired transcript can
+claim success. A proven recovered result can settle an already-ambiguous
+receipt through its existing reconciliation flag.
+
 ### Sidekick operation accounts
 
 A Sidekick inventory includes its eligible delegates' connections. Its coordinator
@@ -1663,7 +1674,11 @@ execution plans or terminal effect events. Real workerd
 `test-workers/sidekick-delegation.test.ts` drives the consent receipt RPC and
 actual tool-owned replay validator with canonical human turns; it covers stale
 and unavailable acknowledgements, matching actor/intent and read-only withdrawal
-recovery. These prove protocol and authority behavior, not semantic model intent.
+recovery. These prove protocol and authority behavior, not semantic model intent. The same workerd lane exercises crash repair
+through real replacement leases, receipt settlement and R2 for both consent
+presentations; accepted, missing, superseded and autonomous-context recovery
+are separate assertions. `apps/api/test/terminal-command-recovery.test.ts`
+checks shared re-entry semantics and deadline cleanup on reconciliation.
 
 `pnpm --filter @rally/api exec vitest run test/sidekick-operation-accounts.test.ts
  test/connector-resource-access.test.ts test/tool-pagination.test.ts` covers
@@ -1825,6 +1840,8 @@ Canonical activation events bind their provider references before any tool
 result exists; old run openings recover that reference from the event row.
 Completed self-consent acknowledgements also validate current receipt generation
 without repeating the mutation or rewriting their historical completion.
+Interrupted consent recovery reads the accepted receipt too; missing acceptance
+never licenses a fresh preparation of an old allow.
 
 **Why:** A Thread-owned Sidekick could have consent to read a sheet through a
 second person, but the connector executor still admitted only the coordinator's

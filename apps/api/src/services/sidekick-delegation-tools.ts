@@ -59,8 +59,22 @@ export function sidekickDelegationTools(env: Env, input: WorkstreamWorkflowInput
     validateInput: (raw) => SidekickDelegatesInputSchema.safeParse(raw).error ?? null,
     execute: async (raw) => ({ output: await service.listDelegates(SidekickDelegatesInputSchema.parse(raw).sidekick), summary: "Listed Sidekick delegates" }),
   }, {
-    definition: definitions[2]!, serial: true,
+    definition: definitions[2]!, serial: true, reenterable: true,
     validateInput: (raw) => SidekickSetMyDelegationInputSchema.safeParse(raw).error ?? null,
+    reconcileEffect: async (raw, context) => {
+      if (await directSidekickDelegationUser(env, input) !== userId) {
+        throw new ApiError(409, "sidekick_delegation_user_context_required", SIDEKICK_DELEGATION_ERRORS.sidekick_delegation_user_context_required);
+      }
+      const args = SidekickSetMyDelegationInputSchema.parse(raw);
+      const target = await targetFor(args);
+      const receipt = await target.readOwnReceipt(args.sidekickId, args.allowed, IdSchema.parse(context.effectIntentId), "agent_request");
+      if (receipt.outcome === "accepted") return { outcome: "landed", result: { output: receipt.result,
+        summary: args.allowed ? "Allowed this Sidekick to act as you" : "Stopped allowing this Sidekick to act as you" } };
+      // Missing acceptance proves no consent to recover, not permission to
+      // prepare this old intent again at a newer generation.
+      const code = receipt.outcome === "unavailable" ? "sidekick_delegation_unavailable" : "sidekick_delegation_stale_action";
+      throw new ApiError(409, code, SIDEKICK_DELEGATION_ERRORS[code]);
+    },
     validateCompletedReplay: async (raw, context) => {
       if (await directSidekickDelegationUser(env, input) !== userId) {
         return { allowed: false, code: "sidekick_delegation_user_context_required", message: SIDEKICK_DELEGATION_ERRORS.sidekick_delegation_user_context_required };

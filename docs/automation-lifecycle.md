@@ -104,6 +104,12 @@ grant. The normal harness checks this before replaying a completed consent-tool
 acknowledgement. Changed generations get the stale-action recovery sentence;
 unavailable allowed grants get the enrollment-unavailable sentence. A current
 withdrawal receipt remains readable without membership or viewer access.
+An interrupted consent tool also reconciles by that original effect identity.
+The accepted action's outcome can be saved after response loss; missing or
+superseded acceptance cannot trigger a new preparation or another consent
+mutation. The existing harness repair path builds the direct speaker's consent
+subset and preserves the original action ID. It retains a named stale-action
+or unavailable reason when no current acknowledgement is safe.
 
 ## Sidekick publication and loading
 
@@ -1338,7 +1344,8 @@ proven claims from ambiguous creator attribution. Canonical event openings
 also retain authored provider reference keys and source connections, including
 compatibility reads for openings saved before that field existed. Self-action
 receipt inspection prevents the outer completed-tool cache from presenting a
-withdrawn grant as current without replaying its mutation.
+withdrawn grant as current without replaying its mutation. Interrupted actions
+are reconciled by that same receipt instead of minting a fresh consent intent.
 
 **Why:** A mutable run-as user cannot represent several people's consent or
 independent withdrawal. Reusing that field for automatic coordination would also
