@@ -42,12 +42,13 @@ rows in the sidebar.
 
 - **It acts with your authority.** A helper can do what Rally could do for you
   in that conversation, with the same tools and connections. No more, no less.
-- **It starts with a blank page.** A helper does not read the whole
-  conversation. It knows only the instructions and files Rally gives it. If a
-  helper's work misses something you said earlier, that detail probably did not
+- **It starts without your conversation history.** Rally gives a helper
+  instructions and attachments. It can read files on their shared computer,
+  but does not automatically load the skills Rally used. If its work misses
+  something you said earlier, that detail probably did not
   make it into its brief. Tell Rally, and it passes it on.
-- **It shares the conversation's computer.** Helpers use the same sandbox as
-  the conversation that started them (see
+- **It shares the computer it works on.** Helpers use the same sandbox as
+  their conversation or Sidekick (see
   [Code, data and the Terminal](03-code-files-and-the-terminal.md)). If two
   want to write to it at once, one waits a moment.
 - **It has no memory.** Helpers cannot read or save the memories from

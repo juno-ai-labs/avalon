@@ -48,9 +48,11 @@ tool or a connection it did not already have in that conversation.
 
 ### Delegated work
 
-A Sidekick with at least one trigger starts runs on its own. Each run is a
-fresh piece of work: Rally reads the Sidekick's instructions, does the job
+A Sidekick with at least one trigger starts runs on its own. Each run has a
+separate conversation: Rally reads the Sidekick's instructions, does the job
 with the tools it has, and sends the result wherever the instructions say.
+The setup conversation (the wizard), runs and helpers share the Sidekick's
+computer and files, while their conversation histories stay separate.
 [Triggers and schedules](03-triggers-and-schedules.md) lists every way to
 start one, and [Where a Sidekick's results go](05-where-results-go.md)
 covers the reporting back.

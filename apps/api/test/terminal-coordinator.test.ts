@@ -1,4 +1,4 @@
-import { asUserId } from "@rally/contracts";
+import { asSubstreamId, asUserId, asWorkspaceId } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -11,6 +11,7 @@ import {
 import { TERMINAL_OPERATION_LEASE_MS } from "../src/durable-objects/workstream-terminal-storage";
 import { TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS } from "../src/services/terminal/contract";
 import { sha256 } from "../src/lib/crypto";
+import { resolveTerminalRunScope } from "../src/services/terminal/authority";
 import type {
   TerminalSandboxProvider,
   TerminalSandboxState,
@@ -1006,7 +1007,7 @@ describe("Terminal sandbox coordinator", () => {
     const coordinator = new TerminalSandboxCoordinator(
       env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
       undefined, false, undefined,
-      { parentKind: "workstream", runSubstreamId: thread, authoritySubstreamId: thread, runsPort: () => testHarnessRunPort(objectStore) },
+      { parentKind: "workstream", backgroundAgent: false, runSubstreamId: thread, authoritySubstreamId: thread, runsPort: () => testHarnessRunPort(objectStore) },
     );
     await coordinator.acquire(context());
 
@@ -1024,7 +1025,9 @@ describe("Terminal sandbox coordinator", () => {
       const coordinator = new TerminalSandboxCoordinator(
         env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
         undefined, false, undefined,
-        { parentKind, runSubstreamId: substreamId, authoritySubstreamId: substreamId, runsPort: () => testHarnessRunPort(objectStore) },
+        { ...await resolveTerminalRunScope({ workspaceId: asWorkspaceId(WORKSPACE_ID), parentId: WORKSTREAM_ID,
+          parentKind, substreamId: asSubstreamId(substreamId), backgroundAgent: false }, async () => null),
+          runsPort: () => testHarnessRunPort(objectStore) },
       );
       await coordinator.acquire(context());
       expect(provider.createSandbox).toHaveBeenCalledOnce();
@@ -1034,7 +1037,7 @@ describe("Terminal sandbox coordinator", () => {
     // A triggered run's conversation sits under the automation, where no
     // workspace sweep projects a deadline; Daytona must retire it alone.
     expect(await created("automation", run)).toMatchObject({
-      substreamId: run,
+      substreamId: "0",
       autoDeleteAfterStoppedMinutes: AUTOMATION_SANDBOX_DELETE_AFTER_STOPPED_MINUTES,
     });
     expect(await created("workstream", "0")).not.toHaveProperty("autoDeleteAfterStoppedMinutes");
@@ -1111,7 +1114,7 @@ describe("Terminal sandbox coordinator", () => {
     const coordinator = new TerminalSandboxCoordinator(
       env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
       undefined, false, undefined,
-      { parentKind: "workstream", runSubstreamId: thread, authoritySubstreamId: thread, runsPort: () => testHarnessRunPort(objectStore) },
+      { parentKind: "workstream", backgroundAgent: false, runSubstreamId: thread, authoritySubstreamId: thread, runsPort: () => testHarnessRunPort(objectStore) },
     );
 
     // Not a sandbox a read may use, and not one readiness reuses.
@@ -1143,14 +1146,14 @@ describe("Terminal sandbox coordinator", () => {
     const owner = new TerminalSandboxCoordinator(
       env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
       undefined, false, undefined,
-      { parentKind: "workstream", runSubstreamId: "0", authoritySubstreamId: "0", runsPort },
+      { parentKind: "workstream", backgroundAgent: false, runSubstreamId: "0", authoritySubstreamId: "0", runsPort },
     );
     await owner.acquire(context());
     await owner.release(context());
     const agent = new TerminalSandboxCoordinator(
       env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
       undefined, false, undefined,
-      { parentKind: "workstream", runSubstreamId: worker, authoritySubstreamId: "0", runsPort },
+      { parentKind: "workstream", backgroundAgent: true, runSubstreamId: worker, authoritySubstreamId: "0", runsPort },
     );
 
     // An agent under another principal would, as an ordinary run, destroy
@@ -1161,6 +1164,46 @@ describe("Terminal sandbox coordinator", () => {
     expect(provider.deleteSandbox).not.toHaveBeenCalled();
     expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id FROM terminal_workspace WHERE id = 1"))
       .toEqual({ generation: 1, sandbox_id: "sandbox-1" });
+  });
+
+  it.each([false, true])("only lets a primary Sidekick run reset changed sandbox permissions (background=%s)", async (backgroundAgent) => {
+    const { objectStore, env, provider, clock } = fixture();
+    const child = "00000000-0000-4000-8000-000000000088";
+    const childRun = "00000000-0000-4000-8000-000000000089";
+    const otherUser = asUserId("00000000-0000-4000-8000-0000000000ee");
+    const childStore = testWorkstreamObjectStore();
+    openDatabases.push(childStore);
+    seedWorkstreamObjectRoot(childStore, { workstreamId: WORKSTREAM_ID, workspaceId: WORKSPACE_ID });
+    seedWorkstreamRun(childStore, { id: childRun,
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: otherUser }) });
+    const runsPort = (_workspaceId: string, _parentId: string, substreamId?: string) =>
+      testHarnessRunPort(substreamId === child ? childStore : objectStore);
+    const scope = (substreamId: string, background: boolean) => resolveTerminalRunScope({
+      workspaceId: asWorkspaceId(WORKSPACE_ID), parentId: WORKSTREAM_ID, parentKind: "automation",
+      substreamId: asSubstreamId(substreamId), backgroundAgent: background,
+    }, async () => null);
+    const wizard = new TerminalSandboxCoordinator(
+      env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
+      undefined, false, undefined, { ...await scope("0", false), runsPort },
+    );
+    await wizard.acquire(context());
+    await wizard.release(context());
+    const activation = new TerminalSandboxCoordinator(
+      env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
+      undefined, false, undefined, { ...await scope(child, backgroundAgent), runsPort },
+    );
+    const nextContext = { ...context(otherUser), harnessRunId: childRun, toolCallId: "sidekick-next" };
+    if (backgroundAgent) {
+      await expect(activation.acquire(nextContext)).rejects.toMatchObject({ code: "sandbox_authority_mismatch" });
+      expect(provider.deleteSandbox).not.toHaveBeenCalled();
+      expect(workstreamObjectGet(objectStore, "SELECT generation FROM terminal_workspace WHERE id = 1"))
+        .toEqual({ generation: 1 });
+    } else {
+      await expect(activation.acquire(nextContext)).resolves.toMatchObject({ providerSandboxId: "sandbox-2", generation: 2 });
+      expect(provider.deleteSandbox).toHaveBeenCalledWith("sandbox-1");
+      expect(workstreamObjectGet(objectStore, "SELECT generation FROM terminal_workspace WHERE id = 1"))
+        .toEqual({ generation: 2 });
+    }
   });
 
   it("judges each import by the conversation whose attachment authorized it", async () => {
@@ -1200,12 +1243,12 @@ describe("Terminal sandbox coordinator", () => {
     const owner = new TerminalSandboxCoordinator(
       env, testTerminalPortFactory(objectStore), resources, provider, clock,
       undefined, false, undefined,
-      { parentKind: "workstream", runSubstreamId: "0", authoritySubstreamId: "0", runsPort },
+      { parentKind: "workstream", backgroundAgent: false, runSubstreamId: "0", authoritySubstreamId: "0", runsPort },
     );
     const agent = new TerminalSandboxCoordinator(
       env, testTerminalPortFactory(objectStore), resources, provider, clock,
       undefined, false, undefined,
-      { parentKind: "workstream", runSubstreamId: worker, authoritySubstreamId: "0", runsPort },
+      { parentKind: "workstream", backgroundAgent: true, runSubstreamId: worker, authoritySubstreamId: "0", runsPort },
     );
     await owner.acquire(context());
     await owner.release(context());
@@ -1265,7 +1308,7 @@ describe("Terminal sandbox coordinator", () => {
     const coordinator = new TerminalSandboxCoordinator(
       env, testTerminalPortFactory(objectStore), resources, provider, clock,
       undefined, false, undefined,
-      { parentKind: "workstream", runSubstreamId: breakout, authoritySubstreamId: breakout,
+      { parentKind: "workstream", backgroundAgent: false, runSubstreamId: breakout, authoritySubstreamId: breakout,
         runsPort: () => testHarnessRunPort(objectStore) },
     );
     await coordinator.acquire(context());
@@ -1331,12 +1374,12 @@ describe("Terminal sandbox coordinator", () => {
     const owner = new TerminalSandboxCoordinator(
       env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
       undefined, false, undefined,
-      { parentKind: "workstream", runSubstreamId: "0", authoritySubstreamId: "0", runsPort },
+      { parentKind: "workstream", backgroundAgent: false, runSubstreamId: "0", authoritySubstreamId: "0", runsPort },
     );
     const agent = new TerminalSandboxCoordinator(
       env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
       undefined, false, undefined,
-      { parentKind: "workstream", runSubstreamId: worker, authoritySubstreamId: "0", runsPort },
+      { parentKind: "workstream", backgroundAgent: true, runSubstreamId: worker, authoritySubstreamId: "0", runsPort },
     );
     const workerContext = { ...context(), harnessRunId: workerRun, toolCallId: "worker-call" };
 

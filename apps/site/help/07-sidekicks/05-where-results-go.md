@@ -72,9 +72,10 @@ the run carries on with their reply in mind. More on that in
 
 ## Remembering between runs
 
-Every run starts fresh, which is a problem for any Sidekick whose job is
-"tell me what is new". Without help, it would report the same five issues
-every hour until you unplugged it.
+Every run has its own conversation, but can reuse files left by the wizard
+or earlier runs. Sharing files does not automatically tell it what work was
+completed. Without records, a Sidekick asked to "tell me what is new" could
+report the same five issues every hour.
 
 That is why a Sidekick keeps its own memory. It can write notes to itself that later
 runs read, and it can keep a small table of things it has already seen. When
