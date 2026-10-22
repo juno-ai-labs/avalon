@@ -119,6 +119,29 @@ describe('ConversationAccessRequest', () => {
     expect(send).toHaveBeenCalledTimes(2);
   });
 
+  it('updates only the submitted conversation when a request completes after navigation', async () => {
+    let finishRequest!: () => void;
+    const api = fakeApi(preview(), () => new Promise<void>((resolve) => { finishRequest = resolve; }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const target = (substreamId: string) => (
+      <QueryClientProvider client={client}>
+        <ConversationAccessRequest api={api} fallback={<p>Loading</p>} onRetry={() => undefined} parentId={PARENT} substreamId={substreamId} />
+      </QueryClientProvider>
+    );
+    const view = render(target('0'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Request access' }));
+    await vi.waitFor(() => expect(api.requestConversationAccess).toHaveBeenCalledWith(PARENT, '0'), { timeout: 2_000 });
+    view.rerender(target(BREAKOUT));
+    await screen.findByRole('heading', { name: 'Launch plan' });
+    await act(async () => { finishRequest(); });
+    await vi.waitFor(() => expect(client.getQueryData(['conversation-access-preview', PARENT, '0']))
+      .toMatchObject({ requestPending: true, requestEmailed: true }), { timeout: 2_000 });
+    expect(client.getQueryData(['conversation-access-preview', PARENT, BREAKOUT]))
+      .toMatchObject({ requestPending: false, requestEmailed: false });
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Request access' })).toBeTruthy();
+  });
+
   it('asks about the Breakout the link names', async () => {
     const api = fakeApi(preview({ kind: 'breakout', title: 'Pricing' }));
     show(api, BREAKOUT);
