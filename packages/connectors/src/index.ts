@@ -4731,6 +4731,7 @@ function sanitizeGoogleSheetValues(payload: Record<string, unknown>): Record<str
   const values: unknown[][] = [];
   let cells = 0;
   let truncated = false;
+  let cellTextTruncated = false;
   for (const rawRow of rawValues) {
     if (!Array.isArray(rawRow) || values.length >= 500) {
       truncated = true;
@@ -4742,7 +4743,9 @@ function sanitizeGoogleSheetValues(payload: Record<string, unknown>): Record<str
         truncated = true;
         break;
       }
-      row.push(typeof value === "string" ? truncateText(value, 50_000) : value);
+      const boundedValue = typeof value === "string" ? truncateText(value, 50_000) : value;
+      if (boundedValue !== value) cellTextTruncated = true;
+      row.push(boundedValue);
       cells += 1;
     }
     values.push(row);
@@ -4754,7 +4757,8 @@ function sanitizeGoogleSheetValues(payload: Record<string, unknown>): Record<str
     values,
     rowCount: values.length,
     cellCount: cells,
-    truncated: truncated || rawValues.length > values.length
+    truncated: truncated || cellTextTruncated || rawValues.length > values.length,
+    cellTextTruncated
   };
 }
 

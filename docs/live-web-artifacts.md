@@ -102,20 +102,10 @@ barrier without adding each independent R2 round trip to the publication latency
 
 ### Sites built from structured data
 
-The site skill delegates source-data handling to `using-external-structured-data`
-for both initial publication and refreshes: complete connector reads, raw
-response files, scripted transformation, then comparison of every mapped field
-and source row before publication. The shared skill owns this procedure for
-reports, imports and other outputs too. The site skill owns the destination's
-data format, recovery and publication checks.
-
-A connector response is not automatically a Terminal file. Agents use an
-exposed export/import path when one exists; otherwise the shared skill describes
-copying each manageable raw JSON response through `write_file`. That fallback
-still passes through the model. Scripted validation proves the transformation
-against those saved inputs, not the fidelity of the transfer itself. A run that
-cannot preserve the source reports the transfer gap instead of publishing
-selected records or leaving known omissions for a future refresh.
+The site skill loads `using-external-structured-data` for initial builds and
+refreshes. That shared skill owns source reads, transfer, transformation and
+field validation; see [its procedure](../packages/agent-harness/src/using-external-structured-data-skill.ts).
+The site skill retains the destination's data format, recovery and publication.
 
 ### Revising
 
@@ -649,6 +639,8 @@ would not explain how the returned records reach that code or what to validate.
 **Consequences:** Agents must fix known field loss before publication. The
 procedure does not claim a direct connector-to-file tool exists or that comparing
 against copied inputs proves the copying was lossless.
+
+Pull request: [#1421](https://github.com/juno-ai-labs/avalon/pull/1421).
 
 ### 2026-10-21 — Site refresh guidance preserves the publication conversation
 
