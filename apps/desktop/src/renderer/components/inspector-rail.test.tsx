@@ -931,6 +931,33 @@ describe('resource detail content preview', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
+  it('keeps the same live region through a failed copy and a successful retry', async () => {
+    vi.useFakeTimers();
+    try {
+      const copy = vi.fn(async () => undefined).mockRejectedValueOnce(new Error('clipboard unavailable'));
+      render(<Tooltip.Provider><InspectorRail
+        panel={{ resourceId: note.id, onClose: vi.fn() }}
+        resource={note}
+        resourceLink={() => copy}
+      /></Tooltip.Provider>);
+      const region = screen.getByRole('status');
+      const openMenu = (): void => {
+        fireEvent.pointerDown(screen.getByRole('button', { name: `Artifact menu: ${note.title}` }), { button: 0, ctrlKey: false });
+      };
+      openMenu();
+      await act(async () => { fireEvent.click(screen.getByRole('menuitem', { name: 'Copy link' })); });
+      expect(screen.getByRole('alertdialog')).toHaveTextContent('The link couldn’t be copied.');
+      fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+      expect(screen.getByRole('status')).toBe(region);
+      openMenu();
+      await act(async () => { fireEvent.click(screen.getByRole('menuitem', { name: 'Copy failed — click to retry' })); });
+      expect(screen.getByRole('status')).toBe(region);
+      expect(region).toHaveTextContent('Copied.');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('offers Unpin for a pinned artifact and leaves out what its host cannot do', async () => {
     render(
       <Tooltip.Provider>

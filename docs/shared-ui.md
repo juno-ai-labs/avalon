@@ -75,22 +75,16 @@ error copy without those markers.
 
 ## How it works
 
-`Toast` in `components/toast.tsx` is the shared, controlled confirmation pill.
-Keep it mounted inside a positioned container, pass `open`, content and an
-optional icon, and let the caller own its lifetime. It floats at the top centre
-without taking layout space, keeps a polite live region mounted before an
-announcement, and retains its content until the exit finishes. The shared
-`lib/retained-presence.ts` hook also drives conversation activity and Jump to
-latest; interrupted motion reverses in place and reduced motion skips it.
-Toast bodies carry `data-native-overlay` so native previews use their existing
-still-and-hide path while a toast overlaps them, through the end of its exit.
-Failures continue to use acknowledged error popups.
-
 Shared components receive presentation data and callbacks. They never import an
 application, fetch authority, establish sockets or call Electron. Optional actions
 represent host capabilities; omitting setup and authoring actions keeps the browser
 lite. The common feed/composer and resource/participant dialogs remain the existing
 ConversationSurface implementation.
+
+`Toast` is the controlled confirmation pill. Its shared presence hook also
+drives conversation activity and Jump to latest; native previews honour its
+`data-native-overlay` marker through the end of its exit. Operational failures
+use acknowledged error popups.
 
 The sidebar can omit Main without inventing an accessible Main route. Browser
 participants and resources belong to the selected authorized conversation; desktop

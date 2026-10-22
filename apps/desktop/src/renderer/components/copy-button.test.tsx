@@ -1,8 +1,9 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { COPY_FEEDBACK_MS } from '../lib/use-copy';
-import { CopyButton, CopyField } from './copy-button';
+import { ErrorNoticeProvider } from '@rally/ui/components/error-notice';
+import { COPY_FEEDBACK_MS, useCopy } from '../lib/use-copy';
+import { CopyButton, CopyField, CopyStatus } from './copy-button';
 
 const copyText = vi.hoisted(() => vi.fn<(text: string) => Promise<void>>(async () => undefined));
 vi.mock('../lib/platform', () => ({
@@ -19,6 +20,27 @@ afterEach(() => {
 function show(element: React.ReactNode) {
   return render(<Tooltip.Provider>{element}</Tooltip.Provider>);
 }
+
+function CopyFeedbackHarness(): React.JSX.Element {
+  const feedback = useCopy({ value: 'https://example.test/document' });
+  return <>
+    <button onClick={() => void feedback.copy()} type="button">Copy document link</button>
+    <CopyStatus occurrence={feedback.failureOccurrence} state={feedback.state} visible />
+  </>;
+}
+
+it.each([false, true])('shows every rejected copy after acknowledgement before the reset timer (provider: %s)', async (provider) => {
+  vi.useFakeTimers();
+  copyText.mockRejectedValue(new Error('clipboard unavailable'));
+  show(provider ? <ErrorNoticeProvider><CopyFeedbackHarness /></ErrorNoticeProvider> : <CopyFeedbackHarness />);
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Copy document link' })); });
+  expect(screen.getByRole('alertdialog')).toHaveTextContent('Copy failed. Try again.');
+  fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+  // No clock advancement: retry while the same failed outcome is still active.
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Copy document link' })); });
+  expect(screen.getByRole('alertdialog')).toHaveTextContent('Copy failed. Try again.');
+});
 
 describe('CopyButton', () => {
   it('is an icon named by its label, and says so in a tooltip', async () => {

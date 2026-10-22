@@ -736,7 +736,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
   const [downloading, setDownloading] = useState(false);
   const [downloadFailed, setDownloadFailed] = useState(false);
   const resourceCopy = resource && props.resourceLink?.(resource);
-  const { copy: copyResourceLink, state: copyLinkState } = useCopy({ value: '', copyText: async () => {
+  const { copy: copyResourceLink, state: copyLinkState, failureOccurrence } = useCopy({ value: '', copyText: async () => {
     if (!resourceCopy) throw new Error('This artifact has no link');
     await resourceCopy();
   } });
@@ -998,7 +998,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
       </>}
       <DetailHeaderActionsHost onActions={setDetailActions}>
       <div className="rail-body">
-      <CopyStatus state={copyLinkState} visible={copyLinkState !== 'failed'} />
+      <CopyStatus failure="The link couldn’t be copied." occurrence={failureOccurrence} state={copyLinkState} visible />
       <div className="rail-scroll">
         {downloadFailed && <ErrorNotice>
           Download failed. Please try again.
@@ -1006,7 +1006,6 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         {popOutFailed && <ErrorNotice>
           The artifact couldn’t be opened in a new window.
         </ErrorNotice>}
-        {copyLinkState === 'failed' && <ErrorNotice>The link couldn’t be copied.</ErrorNotice>}
         {props.failure && <ErrorNotice>
           {inspectorRailFailureCopy[props.failure]}
         </ErrorNotice>}
