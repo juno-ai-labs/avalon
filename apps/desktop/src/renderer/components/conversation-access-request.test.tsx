@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import type { ConversationAccessPreview } from '@rally/contracts';
 import { describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../lib/api';
@@ -9,7 +9,7 @@ const PARENT = '00000000-0000-4000-8000-0000000ac0a0';
 const BREAKOUT = '00000000-0000-4000-8000-0000000ac0a1';
 
 function preview(extra: Partial<ConversationAccessPreview> = {}): ConversationAccessPreview {
-  return { kind: 'channel', title: 'Launch plan', appearance: { icon: 'rocket', color: 'teal' }, markId: PARENT, access: 'requestable', requestPending: false, ...extra };
+  return { kind: 'channel', title: 'Launch plan', appearance: { icon: 'rocket', color: 'teal' }, markId: PARENT, access: 'requestable', requestPending: false, requestEmailed: false, ...extra };
 }
 
 function fakeApi(answer: ConversationAccessPreview, request: () => Promise<void> = async () => undefined) {
@@ -41,7 +41,7 @@ describe('ConversationAccessRequest', () => {
   });
 
   it('shows the stored pending request on a fresh visit without sending another request', async () => {
-    const api = fakeApi(preview({ requestPending: true }));
+    const api = fakeApi(preview({ requestPending: true, requestEmailed: true }));
     const onRetry = vi.fn();
     show(api, '0', onRetry);
     expect((await screen.findByRole('status')).textContent).toContain('Access requested — awaiting approval');
@@ -56,7 +56,7 @@ describe('ConversationAccessRequest', () => {
     let answer = preview();
     const api = {
       conversationAccessPreview: vi.fn(async () => answer),
-      requestConversationAccess: vi.fn(async () => { answer = preview({ requestPending: true }); }),
+      requestConversationAccess: vi.fn(async () => { answer = preview({ requestPending: true, requestEmailed: true }); }),
     } satisfies ConversationAccessApi;
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const first = show(api, '0', undefined, client);
@@ -82,6 +82,41 @@ describe('ConversationAccessRequest', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Request access' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
     expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a successful request pending when an older preview arrives afterward', async () => {
+    let release!: (answer: ConversationAccessPreview) => void;
+    const stalePreview = new Promise<ConversationAccessPreview>((resolve) => { release = resolve; });
+    const api = {
+      conversationAccessPreview: vi.fn(() => stalePreview),
+      requestConversationAccess: vi.fn(async () => undefined),
+    } satisfies ConversationAccessApi;
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(['conversation-access-preview', PARENT, '0'], preview());
+    show(api, '0', undefined, client);
+    await vi.waitFor(() => expect(api.conversationAccessPreview).toHaveBeenCalledTimes(1), { timeout: 2_000 });
+    fireEvent.click(screen.getByRole('button', { name: 'Request access' }));
+    await screen.findByRole('status');
+    await act(async () => { release(preview()); });
+    expect(screen.getByRole('status').textContent).toContain('Access requested — awaiting approval');
+    expect(screen.queryByRole('button', { name: 'Request access' })).toBeNull();
+    expect(client.getQueryData(['conversation-access-preview', PARENT, '0'])).toMatchObject({ requestPending: true });
+  });
+
+  it('lets a reopened pending request retry failed email delivery', async () => {
+    const send = vi.fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error('Email unavailable'))
+      .mockResolvedValueOnce(undefined);
+    const api = fakeApi(preview({ requestPending: true, requestEmailed: false }), send);
+    show(api);
+    expect((await screen.findByRole('status')).textContent).toContain('Access requested — awaiting approval');
+    fireEvent.click(screen.getByRole('button', { name: 'Retry sending request' }));
+    expect(await screen.findByText('The request couldn’t be sent. Try again.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry sending request' }));
+    await vi.waitFor(() => expect(screen.queryByRole('button', { name: 'Retry sending request' })).toBeNull(), { timeout: 2_000 });
+    expect(screen.getByRole('status').textContent).toContain('Access requested — awaiting approval');
+    expect(send).toHaveBeenCalledTimes(2);
   });
 
   it('asks about the Breakout the link names', async () => {

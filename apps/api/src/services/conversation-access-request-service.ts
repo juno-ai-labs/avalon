@@ -41,6 +41,7 @@ interface Subject {
   markId: string;
   createdByUserId: string | null;
   requestPending: boolean;
+  requestEmailed: boolean;
 }
 
 export type ApprovalOutcome =
@@ -71,6 +72,7 @@ export class ConversationAccessRequestService {
       markId: subject.markId,
       access: await this.admitted(parentId, substreamId) ? "open" : "requestable",
       requestPending: subject.requestPending,
+      requestEmailed: subject.requestEmailed,
     };
   }
 
