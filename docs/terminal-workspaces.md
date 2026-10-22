@@ -271,6 +271,11 @@ place, preserving its resource ID and URL, including during recovery.
 
 Imports use the [shared live resource scope](agent-attachments.md#authorized-work-stream-discovery-and-text-hydration),
 also rechecked for import revocation; a publication target grants no read access.
+A Sidekick can import any known resource its execution user can read through
+canonical authorization, without attaching it first. Later sandbox acquisition
+rechecks that access, so an authorized unattached import stays usable and a
+revoked grant cannot be kept alive by retained files. This expands reads only;
+publication still follows the destination and identity rules above.
 A known site ID missing from a list should
 still be tried with `import_resource`. The site skill
 backs up existing files and imports the current publication before each refresh
@@ -670,11 +675,12 @@ personless; it is not duplicated into these product events.
   other than its own derivation holds a legacy alias of the main
   conversation's sandbox; it is dropped, never reused, stopped or deleted
   through. The main derivation is frozen, so the rule never fires for it.
-- **An import is judged by the conversation whose attachment authorized it.**
+- **An import is judged in the conversation that authorized it.**
   The import row names that conversation when it is not the sandbox's own,
   and the revocation check asks it; asking the acquiring run's conversation
   instead would read an agent's imports against its owner's attachments and
-  revoke both.
+  revoke both. A Sidekick also accepts current canonical read access held by
+  the execution user; the import does not need a local attachment.
 - **A run's own write calls take turns, and an edit replaces only the bytes
   it read.** The lease answers a run's second claim "held", so it is the
   runtime's turn that keeps two of one run's writes apart, and the digest
