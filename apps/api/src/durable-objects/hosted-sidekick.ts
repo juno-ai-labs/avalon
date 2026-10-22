@@ -6,6 +6,7 @@ import {
   AutomationDetailSchema,
   SidekickSkillSourceSchema,
   type SidekickSkillSource,
+  type SpaceColorKey,
   AutomationDraftSchema,
   AutomationExecutionPrincipalClaimSchema,
   AutomationRunDefinitionV1Schema,
@@ -315,6 +316,8 @@ export interface HostedSidekickHost {
   noteSidekickActivityChanged(workspaceId: string): void;
   /** Whether a person is an active participant of a live Channel: a read of this object's own rows. */
   isChannelParticipant(workstreamId: string, userId: string): boolean | Promise<boolean>;
+  /** Current canonical Channel color, independent of delayed conversation projections. */
+  channelColor(workstreamId: string): SpaceColorKey | null;
   /** A Channel's or Breakout's own viewer decision, for a Sidekick homed there. */
   channelViewer(input: {
     workspaceId: string; parentId: string; substreamId: string; userId: string; requireGrantAuthority?: boolean;
@@ -511,7 +514,9 @@ export class HostedSidekick {
             workstream_id: request.owningWorkstreamId, substream_id: request.owningSubstreamId, code,
           });
         });
-        const color = appearance?.color
+        // Conversation projections may still wear the old color while the
+        // Channel's recolor job is pending. Both home kinds use its authority.
+        const color = this.host.channelColor(request.owningWorkstreamId) ?? appearance?.color
           ?? generatedWorkstreamAppearance(main ? request.owningWorkstreamId : request.owningSubstreamId).color;
         appearanceJson = JSON.stringify({ icon: null, color });
       }
