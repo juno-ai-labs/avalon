@@ -168,7 +168,7 @@ it("does not turn workspace-public member reading into sharing authority", async
     operationId: crypto.randomUUID(), emails: ["invitee@example.test"], expiresAt: null, targets: [main] }))
     .toMatchObject({ status: "denied" });
   await runInDurableObject(room(), (_instance, state) => {
-    expect(state.storage.sql.exec("SELECT 1 FROM parent_participant_migrations WHERE parent_id=? AND substream_id='0'", parentId).toArray()).toEqual([]);
+    expect(state.storage.sql.exec("SELECT phase FROM parent_participant_migrations WHERE parent_id=? AND substream_id='0'", parentId).toArray()).toEqual([{ phase: "complete" }]);
     expect(state.storage.sql.exec("SELECT 1 FROM parent_invitations WHERE parent_id=?", parentId).toArray()).toEqual([]);
   });
 });

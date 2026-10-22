@@ -1639,18 +1639,21 @@ is under test.
 
 ## Data model
 
-After first-share handoff, the Channel's hosted parent owns `parent_grants` and their operation
-receipts, scoped invitations and delivery receipts, and the Main/child participant
-transfer ledgers. Explicit guest additions and Breakout mentions also initiate
-this addressed handoff; a local roster write alone cannot establish their
-parent-authorized access. Completion delivers the addressed conversation's
-pending participant projections before returning, including the original sharer.
-The handoff is lazy per addressed scope; untouched conversations
-keep their existing authority. SubstreamAgent retains transcript execution and a
-versioned participant projection for socket admission. `scope_grant_directory`
-outbox effects update discovery without becoming a second grant authority. See
-[scoped invitations](scope-invitations.md) and [grant discovery](scope-grant-directory.md) for
-the target, inheritance, incarnation and replay rules.
+The Channel's hosted parent owns `parent_grants`, operation receipts, scoped
+invitations and delivery receipts. All ready Main and Breakout participant
+mutations use that authority. New Main creation and child publication finish the
+handoff before returning; WorkspaceDO migration 127 schedules existing scopes
+through the same durable alarms. Historical/bootstrap rosters are imported once,
+then fenced against local identity/status writes. Already-canonical scopes are
+reconciled without importing stale source membership.
+
+SubstreamAgent retains transcript execution and the versioned participant
+projection needed for local unread state and socket revision checks. It is not an
+independent admission ledger. Breakout listings read grants too. Scope changes
+deliver their existing durable common effect to the access owner before success;
+other discovery effects remain asynchronous. See [scoped invitations](scope-invitations.md)
+for the ownership decision and [grant discovery](scope-grant-directory.md) for
+target, inheritance, incarnation and replay rules.
 
 The DDL in source is authoritative. This catalog defines ownership and joins.
 Durable Object tables are SQLite `STRICT` tables. Native work-stream-down

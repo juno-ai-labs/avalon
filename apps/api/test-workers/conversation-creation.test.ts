@@ -214,7 +214,7 @@ describe("creating a work stream", () => {
     { systemKind: "digest", owned: true },
     { systemKind: null, owned: true },
     { systemKind: null, owned: false },
-  ])("keeps system creation on the local participant writer ($systemKind, owned=$owned)", async ({ systemKind, owned }) => {
+  ])("finishes system creation under parent grants ($systemKind, owned=$owned)", async ({ systemKind, owned }) => {
     const workstreamId = asWorkstreamId(crypto.randomUUID());
     await bootstrapWorkstreamRuntimeEnvironment(creationEnv(), WORKSPACE_ID, workstreamId, "workstream");
     const input = { workspaceId: WORKSPACE_ID, workstreamId, title: "System workstream", objective: "",
@@ -225,14 +225,14 @@ describe("creating a work stream", () => {
     await provisionWorkstreamObject(creationEnv(), input);
     const main = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, workstreamId));
     await runInDurableObject(main, (_instance, state) => {
-      expect(state.storage.sql.exec("SELECT 1 FROM participant_authority_transfer").toArray()).toEqual([]);
+      expect(state.storage.sql.exec("SELECT phase FROM participant_authority_transfer").toArray()).toEqual([{ phase: "projection" }]);
       expect(state.storage.sql.exec("SELECT user_id FROM participants WHERE status='active'").toArray())
         .toEqual(owned ? [{ user_id: USER_ID }] : []);
     });
     expect((await new WorkstreamObjectClient(creationEnv(), AUTH, workstreamId).boot()).workstream.title).toBe("System workstream");
   });
 
-  it("keeps creation local and transfers participants only on first sharing", async () => {
+  it("establishes grant authority at creation and preserves it through sharing and replay", async () => {
     const service = new WorkstreamObjectCreationService(creationEnv(), AUTH);
     const input = { title: "Shared from birth", clientMessageId: "initial-grant-owner", participantUserIds: [] };
     const history = { messages: [{ role: "user" as const, text: "A prepared start" }] };
@@ -240,7 +240,7 @@ describe("creating a work stream", () => {
     const parent = hostedParentStub(env, WORKSPACE_ID);
     const parentId = created.workstream.id;
     await runInDurableObject(parent, (_instance, state) => {
-      expect(state.storage.sql.exec("SELECT 1 FROM parent_participant_migrations WHERE parent_id = ? AND substream_id = '0'", parentId).toArray()).toEqual([]);
+      expect(state.storage.sql.exec("SELECT phase FROM parent_participant_migrations WHERE parent_id = ? AND substream_id = '0'", parentId).toArray()).toEqual([{ phase: "complete" }]);
     });
     expect((await service.createPrepared(input, history)).workstream.id).toBe(created.workstream.id);
     expect(await parent.createScopeInvitations({ workspaceId: WORKSPACE_ID, parentId: created.workstream.id,

@@ -104,8 +104,8 @@ async function seedParent(id: string, title: string, actorTargets: ScopeGrantTar
       VALUES (?,'workstream',?,'global',1,0,0)`, id, workspaceId);
     insertChannelRow(state, id, title);
     state.storage.sql.exec("INSERT INTO parent_children (parent_id,substream_id,kind,created_at) VALUES (?,'0','main',0), (?,?,'child',0)", id, id, childId);
-    state.storage.sql.exec("INSERT INTO parent_participant_migrations VALUES (?, '0', ?, '{}', 'complete')", id, crypto.randomUUID());
-    state.storage.sql.exec("INSERT INTO parent_participant_migrations VALUES (?, ?, ?, NULL, 'complete')", id, childId, crypto.randomUUID());
+    state.storage.sql.exec("INSERT INTO parent_participant_migrations (parent_id, substream_id, transfer_id, incarnations_json, phase) VALUES (?, '0', ?, '{}', 'complete')", id, crypto.randomUUID());
+    state.storage.sql.exec("INSERT INTO parent_participant_migrations (parent_id, substream_id, transfer_id, incarnations_json, phase) VALUES (?, ?, ?, NULL, 'complete')", id, childId, crypto.randomUUID());
     const grants = parent['scopeGrants']({ workspaceId, parentId: id });
     for (const target of actorTargets) grants.mutate({ operationId: crypto.randomUUID(), actorUserId: actorId,
       userId: actorId, target, active: true, expectedRevision: 0 }, "actor-membership");
@@ -722,11 +722,11 @@ it("preserves a full member's administrative role when a share reaches them", as
     .toMatchObject({ ...before, access_class: "member", role: "admin" });
 });
 
-it("reports missing legacy sharing authority without pretending migration is pending", async () => {
+it("refuses sharing while the addressed authority handoff is incomplete", async () => {
   await runInDurableObject(room(), (_instance, state) => {
-    state.storage.sql.exec("DELETE FROM parent_participant_migrations WHERE parent_id=? AND substream_id=?", parentId, childId);
+    state.storage.sql.exec("UPDATE parent_participant_migrations SET phase='pending' WHERE parent_id=? AND substream_id=?", parentId, childId);
   });
-  expect(await room().createScopeInvitations(invitation())).toMatchObject({ status: "denied", reason: "sharing_required" });
+  expect(await room().createScopeInvitations(invitation())).toMatchObject({ status: "denied", reason: "migration_pending" });
   await runInDurableObject(room(), (_instance, state) => {
     expect(state.storage.sql.exec("SELECT 1 FROM parent_invitations WHERE parent_id=?", parentId).toArray()).toEqual([]);
   });

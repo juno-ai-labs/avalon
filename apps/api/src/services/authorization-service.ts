@@ -213,34 +213,15 @@ class AuthorizationBatch {
       const parent = await conversationParentStub(this.env, {
         workspaceId: subject.workspaceId, parentKind: 'workstream', parentId: resource.parentId,
       }) as DurableObjectStub<WorkspaceDO>;
-      const facts = await parent.readAuthorizationFacts(request);
-      return facts.exists && facts.authority === "legacy" ? { ...facts, validatedAt: Math.min(facts.validatedAt, facts.main.validatedAt) } : facts;
+      return parent.readAuthorizationFacts(request);
     });
     if (workstream.exists) {
       const scope = workstream.scopes.find((value) => value.substreamId === resource.substreamId);
-      if (scope || workstream.authority === "grants") {
-        if (!scope) return unavailable();
-        const evidence = { owner:resource.parentId,revision:scope.revision,validatedAt:workstream.validatedAt };
-        if (!scope.access.allowed && scope.access.reason === "not_found") return { status:"not_found",resource,evidence:[evidence] };
-        if (!scope.access.allowed && scope.access.reason === "not_ready") return { status:"unavailable",reason:"projection_incomplete",retryable:true };
-        return evaluateReadPolicy(fact(scope.access.allowed,"not_participant",evidence),Date.now());
-      }
-      if (workstream.authority !== "legacy") return unavailable();
-      if (this.guest) return evaluateReadPolicy(fact(false,'not_participant',{
-        owner:resource.parentId,revision:'legacy',validatedAt:workstream.validatedAt,
-      }),Date.now());
-      const child = workstream.children.find((value) => value.substreamId === resource.substreamId);
-      const mainEvidence = { owner: `${resource.parentId}/0`, revision: workstream.main.revision, validatedAt: workstream.validatedAt };
-      const childEvidence = { owner: resource.parentId, revision: JSON.stringify([workstream.generation, child?.version]), validatedAt: workstream.validatedAt };
-      if (!child?.exists || child.failed || !workstream.main.exists) return { status: 'not_found', resource, evidence: [mainEvidence, childEvidence] };
-      if (!child.ready) return { status: 'unavailable', reason: 'projection_incomplete', retryable: true };
-      // Main is read through the work stream; a breakout through its own roster
-      // alone, so a breakout member need not be able to read Main.
-      if (resource.substreamId === '0') {
-        return evaluateReadPolicy(fact(workstream.main.scope === 'workspace' || workstream.main.participant,
-          'not_participant', mainEvidence), Date.now());
-      }
-      return evaluateReadPolicy(fact(child.member, 'private_child_membership_required', childEvidence), Date.now());
+      if (!scope) return unavailable();
+      const evidence = { owner:resource.parentId,revision:scope.revision,validatedAt:workstream.validatedAt };
+      if (!scope.access.allowed && scope.access.reason === "not_found") return { status:"not_found",resource,evidence:[evidence] };
+      if (!scope.access.allowed && scope.access.reason === "not_ready") return { status:"unavailable",reason:"projection_incomplete",retryable:true };
+      return evaluateReadPolicy(fact(scope.access.allowed,"not_participant",evidence),Date.now());
     }
     const automation = await conversationParentStub(this.env, {
       workspaceId: subject.workspaceId, parentKind: 'automation', parentId: resource.parentId,
