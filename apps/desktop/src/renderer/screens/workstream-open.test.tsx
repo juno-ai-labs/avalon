@@ -1093,13 +1093,15 @@ describe('socket-first channel open', () => {
       childId === '0' ? 'This thread is already resolved.' : 'This breakout is already resolved.',
     );
     if (childId === '0') {
-      const merge = screen.getByRole('menuitem', { name: /^Merge to Engineering/u });
+      const merge = screen.getByRole('menuitem', { name: 'Merge to Engineering' });
       expect(merge).toHaveAttribute('aria-disabled', 'true');
       fireEvent.pointerLeave(resolve, { pointerType: 'mouse' });
       fireEvent.pointerMove(merge, { pointerType: 'mouse' });
       expect(await screen.findByRole('tooltip')).toHaveTextContent('This thread is already resolved.');
       fireEvent.click(merge);
       expect(screen.queryByRole('textbox', { name: 'Merge note' })).not.toBeInTheDocument();
+    } else {
+      expect(screen.getByRole('menuitem', { name: 'Merge to Recovered channel Thread' })).toBeInTheDocument();
     }
     fireEvent.click(resolve);
     expect(api.resolveConversation).not.toHaveBeenCalled();
