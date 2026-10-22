@@ -515,7 +515,7 @@ describe("a room Sidekick's run and the room's agents", () => {
     const discovered = await service.sidekicks();
     expect(discovered.sidekicks.find((item) => item.sidekickId === sidekickId))
       .toMatchObject({ agentId: created.agentId, scope: "workstream", ownedByThisWorkstream: true, canEdit: true,
-        status: "active", nextRunAt: null, lastRunAt: null });
+        isCurrentSidekick: false, status: "active", nextRunAt: null, lastRunAt: null });
     // Another thread receives no setup candidate and is told to create one
     // locally. The host still refuses a foreign id supplied directly.
     const elsewhere = crypto.randomUUID();
@@ -541,7 +541,7 @@ describe("a room Sidekick's run and the room's agents", () => {
       .toContain(`This conversation configures Sidekick ${sidekickId}`);
   });
 
-  it("gives a conversation that acts for no thread no thread's Sidekick to change", async () => {
+  it("lists a personal Sidekick's own identity without unrelated setup candidates or self-delivery", async () => {
     const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
       parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
       harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
@@ -559,8 +559,49 @@ describe("a room Sidekick's run and the room's agents", () => {
     const own = new AgentCommunicationService(TEST_ENV, WorkstreamWorkflowInputSchema.parse({ ...input,
       parentKind: "automation", parentId: personal.sidekickId, loopId: `automation:${personal.sidekickId}:substream:0:loop`,
       harnessRunId: crypto.randomUUID() }));
-    expect(await own.sidekicks()).toEqual({ sidekicks: [],
-      next: "This conversation has no owning thread. Set up a thread-owned Sidekick from the intended thread." });
+    expect(await own.sidekicks()).toEqual({ sidekicks: [expect.objectContaining({
+      sidekickId: personal.sidekickId, isCurrentSidekick: true, scope: "personal", ownedByThisWorkstream: false,
+    })] });
+    await expect(own.send({ agentId: personal.agentId, message: "Configure this Sidekick", attachmentIds: [] },
+      { ...context, effectIntentId: crypto.randomUUID() })).rejects.toMatchObject({ code: "agent_self_message" });
+    const authoring = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, personal.sidekickId),
+    ));
+    expect(await runInDurableObject(authoring, (_instance, state) => ({
+      runs: state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM runs").one().n,
+      pending: state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM pending_loop_input_mailbox").one().n,
+    }))).toEqual({ runs: 0, pending: 0 });
+  });
+
+  it("identifies the current Sidekick in activation discovery and model context", async () => {
+    const started = await sidekickHost().sidekickRunNow({ ...addressed(), actor: manager(), idempotencyKey: "run-identity" });
+    await runSidekickAlarms(TEST_ENV, WORKSPACE_ID);
+    const child = runChild(started.runId);
+    const [run] = await settledRun(child);
+    expect(run).toMatchObject({ status: "completed", error_json: null });
+    const input = await runInDurableObject(child, (_instance, state) => WorkstreamWorkflowInputSchema.parse(JSON.parse(
+      state.storage.sql.exec<{ execution_context_json: string }>(
+        "SELECT execution_context_json FROM runs WHERE run_id = ?", run!.run_id,
+      ).one().execution_context_json,
+    )));
+    expect(await new AgentCommunicationService(TEST_ENV, input).sidekicks()).toEqual({ sidekicks: [expect.objectContaining({
+      sidekickId: AUTOMATION_ID, isCurrentSidekick: true, status: "active", ownedByThisWorkstream: true,
+    })] });
+
+    const call = provider.calls.find((candidate) => candidate.toolNames.includes("conversation_post"));
+    const system = call?.messages.find((message) => message.role === "system")?.content;
+    expect(system).toContain(`"sidekickId": "${AUTOMATION_ID}"`);
+    expect(system).toContain('"definitionRevision": 1');
+    expect(system).toContain("Rally manages its configured schedules and event triggers.");
+    expect(system).not.toContain(`"runId": "${started.runId}"`);
+    const prefix = "SIDEKICK ACTIVATION (host-provided execution context):\n";
+    const context = call?.messages.find((message) => message.role === "user"
+      && typeof message.content === "string" && message.content.startsWith(prefix))?.content;
+    if (typeof context !== "string") throw new Error("sidekick_activation_context_missing");
+    expect(JSON.parse(context.slice(prefix.length))).toEqual({
+      sidekickId: AUTOMATION_ID, runId: started.runId, definitionRevision: 1,
+      trigger: { kind: "manual", requestedByUserId: AUTHOR_ID },
+    });
   });
 
   it("resolves an explicitly named personal or organization Sidekick without widening setup discovery", async () => {
