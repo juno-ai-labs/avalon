@@ -41,7 +41,9 @@ The schedule path admits one occurrence and resolves delegation through the
 same authority. The run's coordinating user is the creator when eligible,
 otherwise the first eligible delegate in stable grant order, subject to explicit task
 identity constraints. An event's eligible source owner is preferred for its
-coordinating user. This determines runtime ownership and conversational context;
+coordinating user; a manual run prefers its eligible requester as coordinator.
+Those trigger preferences affect coordination only, not the separate tool-account
+order in the PRD. This determines runtime ownership and conversational context;
 it does not lend that person's identity to every connector operation.
 
 Changing coordinating user cannot silently expose retained transcripts or use
@@ -78,7 +80,7 @@ behavior. Its presentation differs by surface:
 | Surface | Existing presentation / target discovery | New tool presentation |
 | --- | --- | --- |
 | Sidekick authoring chat | `rally_sidekicks`, prefix `sidekick`; current Sidekick or `sidekick_sidekicks_list` | Local canonical names below receive the `sidekick_` prefix. |
-| User-driven Thread or Breakout | `rally_skill_recommendations`, no prefix; agents plugin's unprefixed `sidekicks_list` discovers Sidekicks | Add a delegation-only subset to this existing presentation. Use the full `sidekick_…` canonical names so the wire names remain identical; retain existing recommendation tools. |
+| User-driven Thread or Breakout | `rally_skill_recommendations`, no prefix; agents plugin's unprefixed `sidekicks_list` discovers editable Sidekicks local to the room | Add a delegation-only subset to this existing presentation. Use the full `sidekick_…` canonical names so the wire names remain identical; retain existing recommendation tools. Viewer-only targets resolve through `sidekick_delegates_list` by visible name or link. |
 
 This is new room availability for the delegation subset, not authoring tools.
 Loading starts no run, adds no grant and connects no account. Autonomous
@@ -111,19 +113,23 @@ not connector OAuth grants.
 | Canonical / wire name | Model-facing description | Capability | Mode / idempotency | Deadline / sequencing |
 | --- | --- | --- | --- | --- |
 | `my_delegations_list` / `sidekick_my_delegations_list` | “List your own Sidekick delegations, including unavailable Sidekicks. Use their sidekickId to inspect or withdraw your own grant.” | Signed-in actor's own grants | `read` / `safe` | Existing built-in deadline; reads may overlap. |
-| `delegates_list` / `sidekick_delegates_list` | “List the people who allow this Sidekick to act as them. Use the current Sidekick ID or the Sidekick discovery tool offered in this conversation.” | Existing Sidekick viewer authority | `read` / `safe` | Existing built-in deadline; reads may overlap. |
+| `delegates_list` / `sidekick_delegates_list` | “Find a Sidekick you can view and list its allowed users. Supply its UUID, Rally URL or exact visible name. Returns its sidekickId for self-delegation; does not require definition-edit permission.” | Existing Sidekick viewer authority | `read` / `safe` | Existing built-in deadline; reads may overlap. |
 | `set_my_delegation` / `sidekick_set_my_delegation` | “Allow or stop allowing this Sidekick to act as the person who asked in this conversation. Changes only your own grant and starts no run. You can withdraw using an ID from sidekick_my_delegations_list without opening the Sidekick.” | Authenticated self-opt-in or self-withdrawal | `write` / `record_before_execute` | Existing built-in deadline; serialize mutations in the owning authority. |
 
 The complete model inputs are strict objects:
 
 ```ts
 my_delegations_list({})
-delegates_list({ sidekickId: SidekickId })
+delegates_list({ sidekick: string })
 set_my_delegation({ sidekickId: SidekickId, allowed: boolean })
 ```
 
 Every shown property is required. Nothing is optional or nullable in inputs.
-IDs use the existing Sidekick UUID schema. Reject unknown fields, including
+The `sidekick` reference is non-empty; resolve UUIDs and Rally links with the
+existing canonical parser, and exact names through the existing viewer-authorized
+Sidekick directory. A name resolves only when one visible target matches; never
+search only editable candidates or grant editing rights through this lookup.
+Mutation IDs use the existing Sidekick UUID schema. Reject unknown fields, including
 `userId`, `connectionId`, `consent`, `source`, `expectedRevision` and `force`.
 Share the runtime and advertised schemas. The host owns actor identity,
 mutation version and receipt provenance; the model supplies target and intent.
@@ -176,9 +182,11 @@ regional authority. An absent/withdrawn grant returns `allowed: false`.
 
 ### Discovery, sequencing and withdrawal
 
-For opt-in, use the current Sidekick or the surface's discovery tool from the
-presentation table. Resolve ambiguous names, optionally inspect its delegates,
-then set `allowed: true` only when the current person asks. A successful grant
+For opt-in, use the current Sidekick or a result from the surface's discovery
+tool. For a named or linked Sidekick outside the room's editable list, call
+`sidekick_delegates_list` with that exact name or URL; its viewer-authorized
+lookup returns the canonical `sidekickId`. Resolve ambiguous names, then set
+`allowed: true` only when the current person asks. A successful grant
 gets an acknowledgement, not an activation claim.
 
 For withdrawal, a known Sidekick ID is sufficient. If it is unknown, call
@@ -225,6 +233,7 @@ appropriate. Never expose raw provider errors or untrusted rejected values.
 | Code | Model-visible error and next action |
 | --- | --- |
 | `sidekick_not_found` | “This Sidekick is unavailable to you. Use Sidekick discovery for enrollment, or sidekick_my_delegations_list to withdraw your own grant.” |
+| `sidekick_delegation_ambiguous_target` | “More than one visible Sidekick has that name. Choose the intended Sidekick from the screen and use its Rally link or UUID.” |
 | `sidekick_delegation_user_context_required` | “Delegation changes require a direct signed-in user conversation. Use the Sidekick screen or its setup conversation.” |
 | `sidekick_delegation_membership_unavailable` | “Your Organization membership is unavailable. Restore membership before allowing this Sidekick to act as you. You can still withdraw an existing grant.” |
 | `sidekick_delegation_unavailable` | “This Sidekick cannot accept enrollment. Refresh its details before trying again. You can still withdraw your own grant.” |
@@ -312,7 +321,10 @@ self-withdrawal after access loss, complete-list oversized-result refusal,
 no enrollment through a user ID or autonomous creation, and migration that
 does not enroll autonomous/ambiguous creations or re-enroll a replaced creator.
 Snapshot the wire names and discovery
-guidance for both authoring and room plugin presentations.
+guidance for both authoring and room plugin presentations. Include a viewer
+without edit rights opting into a named Organization Sidekick, ambiguous-name
+recovery, and manual requester coordination without changing the tool-account
+order.
 Prompt/tool evaluations on the configured medium fallback model cover target
 discovery, list then opt-in then withdrawal, wrong-user requests, absent consent,
 unknown target recovery, uncertain response recovery, and stopping instead of
