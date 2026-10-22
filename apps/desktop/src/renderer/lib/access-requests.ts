@@ -4,9 +4,38 @@ import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tansta
 import type { RallyApi } from './api';
 
 export const CONVERSATION_ACCESS_PREVIEW_QUERY_KEY = ['conversation-access-preview'] as const;
+export const CONVERSATION_ACCESS_RECOVERY_QUERY_KEY = ['conversation-access-recovery'] as const;
+
+export interface ConversationAccessRecovery {
+  version: number;
+  retried: readonly string[];
+}
+
+/** Kept outside the preview queries so a nudge can precede the waiting screen. */
+export function useConversationAccessRecovery(): ConversationAccessRecovery | undefined {
+  return useQuery<ConversationAccessRecovery>({
+    queryKey: CONVERSATION_ACCESS_RECOVERY_QUERY_KEY,
+    queryFn: async () => ({ version: 0, retried: [] }),
+    enabled: false,
+  }).data;
+}
+
+/** Consume a nudge once per conversation, even if a failed reopen remounts it. */
+export function claimConversationAccessRecovery(queryClient: QueryClient, address: string, version: number): boolean {
+  let claimed = false;
+  queryClient.setQueryData<ConversationAccessRecovery>(CONVERSATION_ACCESS_RECOVERY_QUERY_KEY, (current) => {
+    if (!current || current.version !== version || current.retried.includes(address)) return current;
+    claimed = true;
+    return { ...current, retried: [...current.retried, address] };
+  });
+  return claimed;
+}
 
 /** A pending first fetch otherwise reuses its pre-event promise on invalidation. */
 export async function refreshConversationAccessPreviews(queryClient: QueryClient): Promise<void> {
+  queryClient.setQueryData<ConversationAccessRecovery>(CONVERSATION_ACCESS_RECOVERY_QUERY_KEY, (current) => ({
+    version: (current?.version ?? 0) + 1, retried: [],
+  }));
   await queryClient.cancelQueries({ queryKey: CONVERSATION_ACCESS_PREVIEW_QUERY_KEY });
   await queryClient.invalidateQueries({ queryKey: CONVERSATION_ACCESS_PREVIEW_QUERY_KEY });
 }
