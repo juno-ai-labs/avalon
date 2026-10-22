@@ -1,10 +1,18 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { WorkstreamGlyph } from '@rally/ui/components/workstream-glyph';
 import { Check, LoaderCircle } from 'lucide-react';
+import { useEffect, useState } from 'react';
 
 import type { RallyApi } from '../lib/api';
 import { ApiError } from '../lib/api';
-import { Button, ErrorNotice } from './primitives';
+import {
+  claimConversationAccessRecovery,
+  CONVERSATION_ACCESS_PREVIEW_QUERY_KEY,
+  CONVERSATION_ACCESS_RECOVERY_QUERY_KEY,
+  useConversationAccessRecovery,
+  type ConversationAccessRecovery,
+} from '../lib/access-requests';
+import { Button, ErrorNotice, OpeningState } from './primitives';
 
 /**
  * What a member sees on a link to a Channel or Breakout they are not in: its
@@ -12,10 +20,9 @@ import { Button, ErrorNotice } from './primitives';
  * approval. Asked only after the socket has refused, so opening a Channel
  * somebody is in costs nothing more.
  *
- * Renders `fallback` while the preview loads, when it fails, and when the
- * person can open it after all, so any other failure keeps its own screen.
- * Once approved, the socket's own retry opens the conversation; nothing here
- * waits for it. `docs/channel-access-requests.md`.
+ * An Organization access nudge permits one fresh admission retry, even when it
+ * arrived before this screen. Other failures keep their own screen, and a failed
+ * retry cannot loop on remount. `docs/channel-access-requests.md`.
  */
 export type ConversationAccessApi = Pick<RallyApi, 'conversationAccessPreview' | 'requestConversationAccess'>;
 
@@ -25,24 +32,43 @@ export function ConversationAccessRequest({ api, parentId, substreamId, fallback
   substreamId: string;
   fallback: React.JSX.Element;
   /**
-   * Dial the conversation again. A socket closed because access was revoked
-   * never dials back by itself, so after an approval this is how it opens.
+   * Restart the conversation, including a socket stopped after revocation.
    */
   onRetry: () => void;
 }): React.JSX.Element {
+  const queryClient = useQueryClient();
+  const recovery = useConversationAccessRecovery();
   const preview = useQuery({
-    queryKey: ['conversation-access-preview', parentId, substreamId],
-    queryFn: () => api!.conversationAccessPreview(parentId, substreamId),
+    queryKey: [...CONVERSATION_ACCESS_PREVIEW_QUERY_KEY, parentId, substreamId],
+    queryFn: async () => {
+      const recoveryVersion = queryClient.getQueryData<ConversationAccessRecovery>(CONVERSATION_ACCESS_RECOVERY_QUERY_KEY)?.version ?? 0;
+      return { ...await api!.conversationAccessPreview(parentId, substreamId), recoveryVersion };
+    },
     enabled: Boolean(api),
     retry: false,
     staleTime: 30_000,
   });
+  const address = `${parentId}:${substreamId}`;
+  const [reopening, setReopening] = useState<string | null>(null);
   const request = useMutation({
     mutationFn: () => api!.requestConversationAccess(parentId, substreamId),
   });
+  const admitted = preview.isSuccess && preview.fetchStatus === 'idle' && preview.data?.access === 'open';
+  const canRecover = admitted && recovery !== undefined
+    && preview.data?.recoveryVersion === recovery.version && !recovery.retried.includes(address);
+  useEffect(() => {
+    if (!canRecover || !recovery || !claimConversationAccessRecovery(queryClient, address, recovery.version)) return;
+    setReopening(address);
+    onRetry();
+  }, [address, canRecover, onRetry, queryClient, recovery]);
+  // A newly admitted preview must not mount the error dialog while the retry
+  // starts. The consumed nudge prevents another retry if this screen remounts.
+  const noun = preview.data?.kind === 'breakout' ? 'breakout' : 'thread';
+  if (admitted && (canRecover || reopening === address)) {
+    return <OpeningState label={`Opening ${noun}…`} />;
+  }
   if (!preview.data || preview.data.access !== 'requestable') return fallback;
-  const { kind, title, appearance, markId } = preview.data;
-  const noun = kind === 'breakout' ? 'breakout' : 'thread';
+  const { title, appearance, markId } = preview.data;
   return (
     <div className="screen-error-state screen-with-titlebar">
       <div className="screen-drag-strip window-drag" />

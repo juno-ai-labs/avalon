@@ -33,6 +33,7 @@ The person who asked gets an email when the request is approved or declined.
 | `apps/api/src/routes/conversations.ts` | `GET …/substreams/:substreamId/access-preview`, `POST …/substreams/:substreamId/access-requests`, and `POST /conversations/access-requests/:requestId/{approve,decline}`. |
 | `apps/api/src/routes/conversation-access.ts` | The public `GET` and `POST /conversation-access/approve` pages behind the email's button. |
 | `apps/desktop/src/renderer/components/conversation-access-request.tsx` | The requester's screen, shown in place of "Channel could not be opened". |
+| `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Refreshes waiting access previews on `workspace_reach_changed` and on Organization socket subscribe, so newly available access immediately retries the conversation. |
 | `apps/desktop/src/renderer/lib/access-requests.ts` | The approver's list in the query cache (written only by the workspace socket) and the approve/decline mutation, which drops the row at once and restores it if refused. |
 | `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | Request rows at the top of the Activity tab, with the two icon buttons; the row opens the dialog. The Threads badge counts them. |
 | `packages/ui/src/components/conversation-menus.tsx` | The People level's **Asked to join** section (`TitleMenuPeople.requests`); a requester is left out of **Suggested**. `conversation-surface.tsx` passes the requests for the conversation on screen. |
@@ -50,7 +51,8 @@ The person who asked gets an email when the request is approved or declined.
    conversation you are in costs nothing extra.
 2. **The preview.** A guest is refused (404). For a member, the Organization
    object names the conversation, and the Worker runs the same
-   `authorizeViewer` the ticket runs: `open` keeps the old error screen,
+   `authorizeViewer` the ticket runs: an initially `open` preview keeps the old
+   error screen,
    `requestable` shows the request screen. A Breakout with no look of its own
    wears its Channel's, and `markId` is then the Channel's id.
 3. **The request.** The approver is the conversation's creator, who must be an
@@ -92,8 +94,12 @@ The person who asked gets an email when the request is approved or declined.
    `conversation_access_decision_email_failed` with its code and does not undo
    the decision. Approving also runs the ordinary add, which sends its own
    "added you" notification by Slack, push or email.
-8. **The requester gets in.** Their open screen needs nothing: the socket's
-   next retry (backoff ceiling 30 seconds) is admitted.
+8. **The requester gets in.** The ordinary add's `workspace_reach_changed`
+   push, or Organization socket resubscribe, replaces pending access previews
+   and reads access again. A stored nudge permits one freshly admitted retry
+   per conversation, including after revocation or before its preview exists.
+   The 30-second backoff and **Try again** remain
+   recovery paths.
 
 Outside production no mail is sent (`sendResendEmail`). In development the
 approve link is logged as `conversation_access_request_dev_link` and each
@@ -159,9 +165,6 @@ the approver's inbox, and it acts only as the approver.
   leaves the Breakout half out rather than aborting the connect: an unguarded
   read there stops the sidebar opening. Guard: `space-authority.test.ts`
   "given an Organization held at schema 57".
-- **After a removal, the screen dials again only by hand.** A socket closed
-  because access was revoked does not reconnect by itself, so the request
-  screen keeps a **Try again** that dials again once the request is approved.
 - **The iOS badge leaves requests out.** The APNs badge is counted by
   `readerAttentionCount` on the server, which counts conversations only. The
   macOS dock badge and the menu bar include requests.
@@ -173,7 +176,9 @@ the approver's inbox, and it acts only as the approver.
 ```bash
 pnpm --filter @rally/api exec vitest run test/conversation-access-approval.test.ts
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/conversation-access-requests.test.ts
+pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-reach-changed.test.ts
 pnpm --filter @rally/desktop exec vitest run src/renderer/components/conversation-access-request.test.tsx \
+  src/renderer/lib/workspace-socket.test.tsx \
   src/renderer/components/navigation-sidebar.test.tsx src/renderer/components/access-request-dialog.test.tsx \
   src/main/menu-bar-menu.test.ts src/main/channel-directory-watch.test.ts
 pnpm --filter @rally/contracts exec vitest run src/desktop-deep-link-intent.test.ts
@@ -186,6 +191,36 @@ pnpm --filter @rally/contracts exec vitest run src/desktop-deep-link-intent.test
 - Should requests and their links expire?
 
 ## Changelog
+
+### 2026-10-22 — Recover waiting conversations on an access push
+
+**What changed:** The requester stores `workspace_reach_changed` or Organization
+socket subscribe as a recovery version, replaces pending access checks, and
+claims one admitted retry per conversation for that version.
+
+**Why:** Approval previously waited for a backoff retry, and a socket stopped
+after revocation required a manual retry despite the screen promising it would
+open after approval.
+
+**Considered and rejected:** A second approval-only event. The ordinary add
+already publishes a targeted reach event for both threads and Breakouts, and
+using it also covers a direct participant add.
+
+**Consequences:** The event remains a nudge, not an authorization result. Only
+an admitted preview retries the conversation, whose new ticket checks access
+again. Reusing a pending preview can return a pre-grant refusal after the only
+push has passed; cancellation must discard that result. The nudge is stored
+independently of preview existence and retained by the Organization socket's
+cache lease, because the two sockets' events can arrive in either order. Each
+preview records the version when its
+read started; recovery requires a successful idle result for the current
+version. Consuming that version for the conversation survives a failed retry's
+remount, preventing a loop. An Organization subscribe can therefore permit one
+extra authorized retry of another connection failure; healthy conversations
+mount no preview and make no additional request. An offline-paused check is not
+a completed check and cannot consume the nudge.
+
+PR: [#1416](https://github.com/juno-ai-labs/avalon/pull/1416).
 
 ### 2026-10-07 — A member with a link can ask to join
 
