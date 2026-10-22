@@ -607,25 +607,28 @@ Space in an Organization now shares one SQLite database and one socket set.
 
 **What changed:** Completing Main or child participant migration now delivers
 every queued roster projection in the same invocation, the way a later grant
-mutation already does.
+mutation already does. The Organization alarm is armed before those RPCs.
 
-**Why:** `registerParticipantProjection` only queued the rows and armed the
-Organization alarm. The first share of a thread is that registration, so the
-people who were already in the room waited on a wake that nothing else had to
-take. A guest granted in the same request already got a foreground delivery.
-The conversation object then refused their positive membership ticket until
-that row landed, which is the "live connection could not be opened" notice.
+**Why:** `registerParticipantProjection` queued the rows and scheduled the
+alarm, then returned. The client opens the live socket immediately after the
+share response, which is before that `now + 1` wake runs, so original members
+were refused while a guest granted in the same request already had a
+foreground delivery. That is the "live connection could not be opened" notice
+on the first share of a personal thread.
 
-**Considered and rejected:** Leaving delivery on the alarm and asking them to
-retry. The Organization object may not take that wake if nothing else writes.
-Issuing membership version zero to grant holders would reopen workspace-scoped
-threads and leave a private thread's original members stuck.
+**Considered and rejected:** Issuing membership version zero to grant holders
+who also have implicit Organization-wide Main access. That would reopen
+workspace-scoped threads and leave a private thread's original members stuck.
+Admitting from the frozen local `participants` roster until the first
+projection lands. That ignores the ticket version, and on a private child it
+would treat a reconciliation audience as access evidence.
 
-**Consequences:** The projection alarm remains the recovery path when the
-foreground delivery throws. Socket admission on the conversation object also
-keeps the frozen local roster as last-known admission until the first
-projection lands; that companion change lives in
-[`workstream-durable-object.md`](workstream-durable-object.md).
+**Consequences:** The projection alarm remains the recovery path when a
+foreground delivery throws. Arming before the RPCs matters because migration
+is already marked complete, so a throw skips `parentWrite`'s `afterParentWrite`
+and would otherwise leave an idle Organization with no platform wake. A guest
+who was not imported still gets their row from the grant mutation, which
+already delivers before returning.
 
 ### 2026-10-06 — Hosted Sidekick SQL reads and writes as one object
 

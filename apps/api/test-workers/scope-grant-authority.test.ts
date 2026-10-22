@@ -535,25 +535,6 @@ it("does not count grants from a previous relationship as remaining participants
     expectedRevision: 1 })).toEqual({ status: "denied", reason: "participant_required" });
 });
 
-it("admits a still-active local participant after transfer before their projection lands", async () => {
-  const source = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", workspaceId, parentId));
-  await seedOpenWorkstreamAuthority(env.DB);
-  await source.bootstrapRuntime({ workspaceId, parentId, substreamId: asSubstreamId("0"), parentKind: "workstream", generation: 1 });
-  await source.executeIdentityOperation({ workspaceId, workstreamId: parentId, substreamId: asSubstreamId("0"),
-    operation: "provision", args: [{ title: "Private workstream", objective: "Share admission",
-      scope: "personal", originType: "ad_hoc", createdByUserId: actorId, participantUserIds: [actorId], harnessStatus: "idle",
-      emailAddress: null, emailRouteStatus: null, systemKind: null, automationRunId: null, plannedFor: null,
-      modelOverride: null, now: Date.now() }] });
-  const transferId = crypto.randomUUID();
-  const address = { workspaceId, parentId, substreamId: asSubstreamId("0"), transferId };
-  expect(await source.transferParticipantAuthority({ ...address, phase: "prepare" })).toMatchObject({ status: "prepared" });
-  expect(await source.transferParticipantAuthority({ ...address, phase: "commit" })).toMatchObject({ status: "committed" });
-  await runInDurableObject(source, (instance) => {
-    expect(instance["conversationMembershipAllows"](actorId, 1)).toBe(true);
-    expect(instance["conversationMembershipAllows"](recipientId, 1)).toBe(false);
-  });
-});
-
 it("retains implicit Main member admission after participant authority transfer", async () => {
   await changeRelationships(env, workspaceId, [recipientId], env.DB.prepare("UPDATE workspace_members SET access_class='member',role='member' WHERE user_id=?").bind(recipientId));
   const source = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", workspaceId, parentId));
