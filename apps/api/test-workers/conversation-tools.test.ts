@@ -978,6 +978,38 @@ describe("a Breakout's access to its Channel", () => {
     }
   });
 
+  it.each(["file", "site"] as const)("preserves a legacy wizard %s's resource identity when publishing to its home", async (kind) => {
+    await TEST_ENV.PLATFORM_DB.prepare(`CREATE TABLE IF NOT EXISTS artifact_hostname_routes (
+      hostname_stub TEXT PRIMARY KEY, region TEXT NOT NULL, artifact_id TEXT NOT NULL, created_at TEXT NOT NULL,
+      UNIQUE(region, artifact_id))`).run();
+    await seedSidekick("0");
+    const { bridge, context } = publication();
+    const legacy = createTerminalResourceBridge(withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID),
+      createTerminalPortFactory(TEST_ENV, undefined, "0"));
+    const path = kind === "file" ? "agenda.md" : "calendar";
+    const publish = async (publisher: typeof bridge, text: string) => {
+      const bytes = new TextEncoder().encode(text);
+      const attempt = { ...context, effectIntentId: crypto.randomUUID() };
+      return kind === "file" ? publisher.publishResource(attempt, { filePath: path }, bytes)
+        : publisher.publishSiteResource(attempt, { filePath: path }, { mode: "static", stateful: false,
+          files: [{ path: "index.html", bytes, sha256: await sha256Hex(bytes) }], serverModuleSha256: null });
+    };
+    const original = await publish(legacy, "Original wizard output");
+    const previousKind = await bridge.publishedKindForPath(context, path);
+    const recovered = await bridge.reconcilePublishedResource({ ...context, attemptStartedAt: 0 }, { filePath: path });
+    const refreshed = await publish(bridge, "Refreshed wizard output");
+    expect(refreshed.resourceId).toBe(original.resourceId);
+    expect(previousKind).toBe(kind);
+    expect(recovered).toMatchObject({ outcome: "landed", result: { output: { resourceId: original.resourceId } } });
+    if ("url" in original && "url" in refreshed) expect(refreshed.url).toBe(original.url);
+    expect(await runInDurableObject(workspace(), (_instance, state) =>
+      state.storage.sql.exec("SELECT COUNT(*) AS count FROM resources WHERE provider = 'avalon_generated'").one()))
+      .toEqual({ count: 1 });
+    expect(await runInDurableObject(conversation(ROOM_ID), (_instance, state) =>
+      state.storage.sql.exec("SELECT resource_id FROM workstream_resource_links").toArray()))
+      .toEqual([{ resource_id: original.resourceId }]);
+  });
+
   it("keeps Terminal available and refuses publication and recovery after home access ends", async () => {
     const home = await seedBreakout("Private calendar");
     await seedSidekick(home);
