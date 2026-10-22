@@ -205,7 +205,7 @@ prevents execution through its existing lifecycle rules.
 | Personal connector event | The bound connection's owner must be an eligible delegate and allowed to read the event. Prefer that owner for work on the event's source. |
 | Workspace connector event | Apply the event's real audience restriction. At least one eligible delegate must be allowed to receive it; prefer the saved source binding when usable. |
 | Schedule | Admit once per scheduled occurrence. Prefer saved source bindings, then the creator when eligible. |
-| Manual | Admit once under existing request permissions. The requester is preferred only if they are already an eligible delegate; pressing Run does not opt them in. |
+| Manual | Admit once under existing request permissions. Prefer an eligible requester as coordinator only; tool-account selection retains the resource/account rules below. Pressing Run does not opt the requester in. |
 | Continuation | Retain operation identities and receipts; use the normal delegation authz refresh path for new operations. |
 
 Registration, event matching, delivery admission, and harness execution all use
@@ -250,8 +250,10 @@ Healthy common-case operations add no provider access probe before execution.
 identity-dependent meanings. Resolve them to the requesting person, a named
 delegate, or an explicitly configured task account. A schedule's named account
 remains that account if it becomes unavailable: surface the failure. An empty
-result never triggers an account switch. An unqualified search uses the
-creator's account and reports whose account it searched; if that identity is
+result never triggers an account switch. In new Sidekicks, an unqualified search
+uses the creator's account. Migrated existing account-relative work retains
+the pre-migration run-as account as its task identity, without re-enrolling a
+replaced creator. The search reports whose account it used; if that identity is
 unavailable, it reports the failure rather than searching another person's
 account. Searching across delegates requires explicit task intent and preserves
 attribution.
@@ -438,9 +440,14 @@ establish direct-user provenance; otherwise show **Needs opt-in** and require
 a fresh self-service or agent-assisted grant. Do not enroll inherited autonomous
 principals. A replaced creator also needs fresh opt-in rather than regaining
 authority just because they remain the author. Surface any blocked legacy
-execution explicitly instead of silently treating it as a no-op.
-Preserve existing
-reader and manager rights independently of future coordinator selection.
+execution explicitly instead of silently treating it as a no-op. Preserve
+existing reader and manager rights independently of future coordinator selection.
+Retain the previous run-as account as the implicit account binding for existing
+account-relative work. Do not reinterpret its unqualified inbox/calendar reads
+as the creator's account on deployment. This compatibility binding grants no
+authority by itself; if its user cannot be migrated with established consent,
+show **Needs opt-in**. New Sidekicks use the creator preference, and this adds
+no user-facing identity selector.
 Mere room participation or provider account discovery never enrolls anyone.
 Backfill records its provenance and never overwrites a withdrawal.
 Existing runs retain receipts and selected operation identities; deployment
@@ -481,6 +488,8 @@ withdrawals. Preserve consent and receipt records.
    has observed the withdrawal; an in-flight or stale-snapshot attempt may finish.
 6. An empty inbox search does not switch accounts. Pagination and reply IDs
    stay with their original account. A named sender is never substituted.
+   Existing work claimed by a non-creator retains that account for unqualified
+   inbox/calendar reads after migration; it never switches to the old creator.
 7. A pre-effect access refusal permits eligible write fallback; an ambiguous
    write is reconciled with the original account and is never sent twice under
    another delegate. Cancellation does not advance the candidate list.
