@@ -1,4 +1,3 @@
-import { workstreamImportHash } from "./workstream-import-hash";
 import { RESOURCE_READ_PROJECTION_SQL } from '../services/resource-read-projection';
 import { WorkspaceConversationView, WORKSPACE_CONVERSATION_VIEW_MIGRATION } from "./workspace-conversation-view";
 import { ConversationViewProjectionSchema } from "./conversation-view-projection";
@@ -825,6 +824,7 @@ import {
   type WorkspaceSpaceIntentClaim,
   type SpaceConversationKey,
 } from "./workspace-space-storage";
+import { workstreamImportHash } from "./workstream-import-hash";
 import {
   artifactSubjectKeySql,
   artifactUpdateSql,
@@ -923,7 +923,7 @@ import {
   type HostedParentHost,
 } from "./hosted-parent";
 import { planParentEffectBatches, ReceiveChildEffectsRequestSchema } from "./conversation-parent-object";
-import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
+import { codeShaped, zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import {
   HostedParticipantProjectionAlarmSchema,
   PARTICIPANT_MIGRATION_ALARM,
@@ -11547,31 +11547,53 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * atomically with their Channel archive and replay the normal batch command.
    *
    * The intent runs as its requester, so somebody who has left the
-   * Organization has nothing run as them: the row keeps
-   * `space_intent_requester_inactive`, as the Queue consumer writes it.
+   * Organization has nothing run as them. Thread archives settle that refusal
+   * and release their hold for repair; legacy intents retain their old retry policy.
    */
   private async finishSpaceIntent(workspaceId: string, intent: WorkspaceSpaceIntentClaim): Promise<void> {
     const storage = this.spaceStorage();
+    if (intent.kind === "archive" && intent.workstreamId !== null) {
+      const abandon = (reason: string) => {
+        if (storage.abandonThreadArchive(intent, reason)) this.publishSpaceSnapshot();
+        logWarn(this.env, "space_thread_archive_refused", {
+          workspace_id: workspaceId, space_id: intent.spaceId, operation_id: intent.operationId, reason,
+        });
+      };
+      if (!storage.threadArchiveCurrent(intent.operationId)) {
+        storage.settleIntent(intent.operationId, "archive_superseded", true);
+        return;
+      }
+      if (!this.knownActiveMember(intent.requestedByUserId)) {
+        abandon("space_intent_requester_inactive");
+        return;
+      }
+      const stub = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS,
+        workspaceId, conversationObjectName(this.env.AVALON_REGION, asWorkspaceId(workspaceId),
+          intent.workstreamId, asSubstreamId("0")));
+      // Route resolution can yield to a restore or a new placement.
+      if (!storage.threadArchiveCurrent(intent.operationId)) {
+        storage.settleIntent(intent.operationId, "archive_superseded", true);
+        return;
+      }
+      const result = await stub.applyQueuedBatchUpdate({
+        kind: "workstream_batch_update", region: this.env.AVALON_REGION,
+        operationId: intent.operationId, requestHash: workstreamImportHash({ kind: "archive" }),
+        workspaceId, workstreamId: intent.workstreamId, userId: intent.requestedByUserId,
+        update: { kind: "archive" },
+      });
+      if (result.outcome === "skipped") {
+        abandon(codeShaped(result.reason ?? "space_thread_archive_refused"));
+        return;
+      }
+      storage.settleIntent(intent.operationId, "thread_archived", true);
+      return;
+    }
     if (!this.knownActiveMember(intent.requestedByUserId)) {
       storage.recordIntentFailure(intent.operationId, "space_intent_requester_inactive");
       logWarn(this.env, "space_intent_resume_failed", {
         workspace_id: workspaceId, space_id: intent.spaceId, operation_id: intent.operationId,
         kind: intent.kind, reason: "space_intent_requester_inactive",
       });
-      return;
-    }
-    if (intent.kind === "archive" && intent.workstreamId !== null) {
-      const stub = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS,
-        workspaceId, conversationObjectName(this.env.AVALON_REGION, asWorkspaceId(workspaceId),
-          intent.workstreamId, asSubstreamId("0")));
-      const result = await stub.applyQueuedBatchUpdate({
-        kind: "workstream_batch_update", region: this.env.AVALON_REGION,
-        operationId: intent.operationId, requestHash: workstreamImportHash(intent),
-        workspaceId, workstreamId: intent.workstreamId, userId: intent.requestedByUserId,
-        update: { kind: "archive" },
-      });
-      if (result.outcome === "skipped") throw new Error(result.reason ?? "space_thread_archive_refused");
-      storage.settleIntent(intent.operationId, "thread_archived", true);
       return;
     }
     const finished = storage.resumeLegacyIntent(intent);
@@ -11598,15 +11620,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const storage = this.spaceStorage();
-    const archived = storage.archive(request.userId, request.spaceId);
-    const result = WorkspaceSpaceMutationResultSchema.parse(archived.result);
+    const result = WorkspaceSpaceMutationResultSchema.parse(storage.archive(request.userId, request.spaceId));
     if (!result.ok) return result;
     this.publishSpaceSnapshot();
-    // Persist the retry alarm before reaching a thread's independent authority.
-    // Its normal archive command stops execution and publishes the canonical
-    // archive; the intent keeps the same command receipt across interrupted RPCs.
-    await this.armNextAlarm();
-    await this.resumeSpaceIntentsInPlace(request.workspaceId, archived.threadArchives);
+    // The transaction staged durable commands; the alarm delivers them without
+    // adding one cross-object round trip per thread to the request.
     // An archive takes every member Channel off this Space's dashboard and a
     // restore puts them back. `spaceIds`, which names the Space to everybody
     // who reaches it, is right here: the Space's own disappearance and return
@@ -13352,6 +13370,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       if (applied.archivalChanged
         || (applied.replayed && envelope.effect.kind === "directory_common")) {
         archivalChanges.add(envelope.parentId);
+      }
+      if (applied.archivalChanged && envelope.effect.kind === "directory_common"
+        && envelope.effect.archivedAt === null) {
+        this.spaceStorage().releaseThreadArchiveHolds([envelope.parentId]);
       }
       if (applied.changed && envelope.effect.kind === "directory_common") {
         commonChanges.add(envelope.parentId);
