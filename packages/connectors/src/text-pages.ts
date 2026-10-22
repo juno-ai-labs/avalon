@@ -6,7 +6,7 @@ export const ConnectorTextCursorSchema = z.strictObject({
   snapshotId: z.string().uuid(),
   offset: z.number().int().positive(),
   sourceTruncated: z.boolean().optional(),
-});
+}).describe("Private immutable text snapshot position supplied by receipt-owned continuation; never author it in a first-page call.");
 export type ConnectorTextCursor = z.infer<typeof ConnectorTextCursorSchema>;
 
 /** A UTF-8 page always ends on a character boundary, including at an emoji. */
