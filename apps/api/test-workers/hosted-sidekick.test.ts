@@ -1230,25 +1230,45 @@ describe("a hosted Sidekick", () => {
     expect(await automationRow()).toMatchObject({ lifecycle: "active", accepted_definition_revision: 2 });
   });
 
-  it("refuses to apply to an automation whose owning room is archived", async () => {
+  it("archives an owned Sidekick with its runs and triggers, retains its history, and never restores it with the room", async () => {
     const roomId = "00000000-0000-7000-8000-00000000ad80";
     await createDraft(roomId);
-    await submit();
+    await submit({ ...DEFINITION, triggers: [{ type: "manual" }, { type: "interval", intervalSeconds: 3_600, summary: "Every hour" }] });
     await apply();
-    // What a Channel archive does to each Sidekick it owns, applied directly:
-    // the archive walk itself is covered in conversation-tools.test.ts.
+    const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "archive-owned-run" });
     await runInDurableObject(workspaceStub(), (instance, state) => {
-      const host = (instance as unknown as { hostedSidekickHost: () => HostedSidekickHost }).hostedSidekickHost();
-      state.storage.transactionSync(() => new HostedSidekick(host, AUTOMATION_ID)
-        .setOwningRoomArchived({ ...addressed(), workstreamId: roomId, archived: true }, Date.now()));
+      const writer = instance as unknown as { writeSidekickRegistrations: (id: string, evaluators: unknown[]) => number };
+      state.storage.transactionSync(() => writer.writeSidekickRegistrations(AUTOMATION_ID, [{
+        evaluatorId: "00000000-0000-7000-8000-00000000ad40",
+        source: { connectorType: "slack", connectionId: SLACK_CONNECTION_ID, eventType: "slack.message.posted" },
+        when: { kind: "always" },
+      }]));
     });
-    expect(await automationRow()).toMatchObject({ lifecycle: "paused", paused_by: "room_archive" });
-    await submit({ ...DEFINITION, instructions: "Say hello three times." });
+    expect(await activeRegistrations()).toBe(1);
+    expect((await alarms()).filter((alarm) => alarm.kind === AUTOMATION_SCHEDULE_ALARM_KIND)).toHaveLength(1);
 
-    // The archive holds until the room comes back; `resume` refuses with this
-    // code, and apply now answers the same instead of walking around it.
-    await expect(apply()).rejects.toMatchObject({ code: "sidekick_room_archived" });
-    expect(await automationRow()).toMatchObject({ lifecycle: "paused", paused_by: "room_archive", accepted_definition_revision: 1 });
+    const archive = (archived: boolean) => runInDurableObject(workspaceStub(), (instance, state) => {
+      const host = (instance as unknown as { hostedSidekickHost: () => HostedSidekickHost }).hostedSidekickHost();
+      return state.storage.transactionSync(() => new HostedSidekick(host, AUTOMATION_ID)
+        .setOwningRoomArchived({ ...addressed(), workstreamId: roomId, archived }, Date.now()));
+    });
+    expect(await archive(true)).toEqual({ changed: true, outcomeCode: "sidekick_archived" });
+    expect(await automationRow()).toMatchObject({ lifecycle: "deleted", paused_by: null, accepted_definition_revision: 1 });
+    expect(await workspaceStub().sidekickReadRunState({ ...addressed(), runId: started.runId }))
+      .toMatchObject({ state: "stopped", lifecycle: "deleted" });
+    expect((await alarms()).filter((alarm) => alarm.kind === AUTOMATION_SCHEDULE_ALARM_KIND || alarm.kind === AUTOMATION_RUN_ALARM_KIND))
+      .toEqual([]);
+    expect(await activeRegistrations()).toBe(0);
+    await expect(runInDurableObject(workspaceStub(), (instance: WorkspaceDO) => instance.sidekickSubmitDefinition({
+      ...addressed(), draft: DEFINITION, evaluatorRules: null, submittedByRunId: null,
+    }))).rejects.toThrow("This Sidekick was archived");
+    await expect(apply()).rejects.toMatchObject({ code: "sidekick_not_found" });
+
+    expect(await archive(true)).toEqual({ changed: false, outcomeCode: "sidekick_already_archived" });
+    expect(await archive(false)).toEqual({ changed: false, outcomeCode: "sidekick_already_archived" });
+    expect((await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID })).items).toEqual([]);
+    expect(await workspaceStub().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID, userId: AUTHOR_ID }))
+      .toEqual({ authorized: false, archived: true });
   });
 
   it("creates the tables a definition declares in the automation's memory scope, once", async () => {
