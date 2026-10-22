@@ -320,6 +320,7 @@ import {
 } from "./conversation-tools";
 import { conversationIdOf } from "../durable-objects/workspace-sidekick-conversation-storage";
 import { createAvalonTerminalPlugin } from "./terminal/plugin";
+import { TerminalToolError } from "./terminal/tools";
 import type { WorkstreamRuntimeResourceAttacher } from "./workstream-object-client";
 
 const BIND_ROUTING_POLICY_VERSION = "bind-10-openrouter-v1";
@@ -4162,6 +4163,8 @@ export async function runWorkstreamHarness(
           throw error;
         }
         logStructuredEvent(env, "warn", "terminal_tool_receipt_recovery_ambiguous", {
+          code: error instanceof TerminalToolError ? error.code : diagnosticErrorCode(error, "reentry_failed"),
+          plugin_id: expectedPolicy.pluginId,
           workspace_id: input.workspaceId,
           workstream_id: input.parentId,
           harness_run_id: input.harnessRunId,
@@ -7427,17 +7430,17 @@ async function reenterInterruptedWrite(input: {
   // only licence to execute, because it says the external effect is provably
   // absent and the call below is therefore a first execution rather than a
   // second write; anything else leaves the attempt unresolved.
-  if (tool.reconcileEffect) {
-    const reconciled = await tool.reconcileEffect(recordedInput, {
-      ...callContext,
-      attemptStartedAt: input.row.attemptStartedAt,
-    });
-    if (reconciled.outcome === "landed") return reconciled.result;
-    if (reconciled.outcome === "unknown") {
-      throw new HarnessToolEffectUnresolvedError(reconciled.reason);
-    }
-  }
   try {
+    if (tool.reconcileEffect) {
+      const reconciled = await tool.reconcileEffect(recordedInput, {
+        ...callContext,
+        attemptStartedAt: input.row.attemptStartedAt,
+      });
+      if (reconciled.outcome === "landed") return reconciled.result;
+      if (reconciled.outcome === "unknown") {
+        throw new HarnessToolEffectUnresolvedError(reconciled.reason);
+      }
+    }
     return await tool.execute(recordedInput, callContext);
   } finally {
     deadline?.dispose();
@@ -7486,9 +7489,9 @@ export type InterruptedWriteReentry =
  * Crash repair runs before the run's tool registry exists, so until now it had
  * no way to ask a tool anything and classified every unsettled write as
  * unknowable. It does not need the registry: it needs the one plugin that owns
- * the one call it is repairing, and Terminal — the only plugin with
- * re-enterable tools — is already built from exactly the `(env, input)` the
- * repair path holds.
+ * the one call it is repairing. Terminal and the direct-speaker Sidekick
+ * consent subset can be built from the same `(env, input)` the repair holds.
+ * Consent reconstruction loads no authoring tools or provider clients.
  *
  * Built per call rather than cached, because it runs at most once per
  * interrupted batch and building it acquires provider clients a healthy claim
@@ -7529,7 +7532,7 @@ export async function reenterInterruptedWriteForRecovery(
     : receipt.toolName;
   const capability = typeof plan?.capability === "string" ? plan.capability : null;
   const idempotency = plan?.idempotency;
-  if (pluginId !== TERMINAL_PLUGIN_ID || capability === null) {
+  if ((pluginId !== TERMINAL_PLUGIN_ID && pluginId !== AUTOMATIONS_PLUGIN_ID) || capability === null) {
     return { outcome: "unknown", reason: "no_recovery_executor" };
   }
   if (idempotency !== "provider_key" && idempotency !== "record_before_execute") {
@@ -7557,11 +7560,20 @@ export async function reenterInterruptedWriteForRecovery(
   } catch (error) {
     return { outcome: "unknown", reason: diagnosticErrorCode(error, "run_authority_lost") };
   }
-  let plugin: Awaited<ReturnType<typeof createAvalonTerminalPlugin>>;
+  let plugin: (HarnessPlugin & Partial<Disposable>) | null;
   try {
     // Publication and reconciliation resolve the admitted home at execution,
     // so repair uses the same address and current access as a live tool call.
-    plugin = await createAvalonTerminalPlugin(env, input, inObjectResourceAttacher);
+    if (pluginId === TERMINAL_PLUGIN_ID) {
+      plugin = await createAvalonTerminalPlugin(env, input, inObjectResourceAttacher);
+    } else {
+      const userId = await directSidekickDelegationUser(env, input);
+      if (!userId) return { outcome: "unknown", reason: "sidekick_delegation_user_context_required" };
+      const room = input.parentKind !== "automation";
+      plugin = { canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: room ? "rally_skill_recommendations" : "rally_sidekicks",
+        shortWireName: room ? "" : "sidekick", description: "Sidekick consent recovery", preload: false,
+        tools: sidekickDelegationTools(env, input, userId, room) };
+    }
   } catch (error) {
     return { outcome: "unknown", reason: diagnosticErrorCode(error, "plugin_unavailable") };
   }
@@ -7623,6 +7635,7 @@ export async function reenterInterruptedWriteForRecovery(
         outputSummary: result.summary,
         ...(result.providerOperationId ? { providerOperationId: result.providerOperationId } : {}),
         memberSafePayload: { toolName: canonicalToolName, recovered: true },
+        allowAmbiguousReconciliation: receipt.status === "ambiguous",
         allowCancellationRequested: true,
       });
     } catch (error) {
@@ -7653,7 +7666,7 @@ export async function reenterInterruptedWriteForRecovery(
       reason: declared ? codeShaped(declared) : diagnosticErrorCode(error, "reentry_failed"),
     };
   } finally {
-    plugin[Symbol.dispose]();
+    plugin[Symbol.dispose]?.();
     // Never left running. A timer that outlives this call keeps renewing the
     // lease of an attempt nobody is executing, in a Worker isolate that may go
     // on to serve something else.

@@ -1087,7 +1087,11 @@ plus
 plus
 `terminal_tool_receipt_recovered` or
 `terminal_tool_receipt_recovery_ambiguous` for interrupted commands and PR
-publication. Each provider create, managed-image bootstrap, and start also emits
+publication. Ambiguous recovery diagnostics retain the safe declared reason and
+plugin identity. Once a tool proves a recovered result, startup repair can settle
+its already-ambiguous receipt through the existing reconciliation flag. Recovery
+deadlines are disposed on landed and unresolved reconciliation as well as on
+executor completion. Each provider create, managed-image bootstrap, and start also emits
 `terminal_daytona_operation_finished` and one non-blocking
 `TERMINAL_ANALYTICS` point. Create separates provider allocation from policy
 read-back; bootstrap separates directory/package installation from the complete
@@ -1329,11 +1333,15 @@ including cached reads. Its file identity remains stable across coordinating
 users and retains the pre-delegation fingerprint. Completed imports remain
 shared. A selected personal GitHub connection keeps its own identity and loses
 its mounted secrets when its owner is no longer eligible; local files survive.
+The shared recovery path also durably settles proven ambiguous results and
+cleans up its deadline when a reconciler returns or refuses before execution.
 
 **Why:** The old run-as fence prevented an eligible delegate from continuing
 shared work and erased retained content when coordination moved to another
 person. Reusing its old GitHub credential without checking that owner's consent
-would allow new provider operations after withdrawal.
+would allow new provider operations after withdrawal. A recovered effect
+without the reconciliation settlement flag stayed ambiguous despite proof of
+completion; an early reconciler return also left its deadline timer running.
 
 **Considered and rejected:** Rebuilding on every coordinator change, pooling
 personal credentials in the sandbox, generic cross-account command retries,
