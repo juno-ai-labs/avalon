@@ -220,7 +220,7 @@ async function driveDownload(
       onMedia();
       return new Response(new Blob([new Uint8Array(file.bytes)]));
     }
-    return Response.json({ id: "file-1", name: file.name, mimeType: file.mimeType, size: String(file.size ?? file.bytes.byteLength) });
+    return Response.json({ id: "file-1", name: file.name, mimeType: file.mimeType, size: String(file.size ?? file.bytes.byteLength), capabilities: { canDownload: true } });
   }) as typeof fetch;
   const adapter: ConnectorAdapter = registry(fetcher, ai).get("google");
   // This Node suite exercises the real Office/PDF converter, which cannot use

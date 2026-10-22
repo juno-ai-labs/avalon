@@ -33,7 +33,7 @@ export async function readConnectorTextPage(input: {
       snapshotId = await input.store.write(source);
     }
   }
-  const text = new TextDecoder().decode(bytes, { stream: startByte + bytes.byteLength < totalBytes });
+  const text = new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes, { stream: startByte + bytes.byteLength < totalBytes });
   const endByte = startByte + new TextEncoder().encode(text).byteLength;
   const hasMore = endByte < totalBytes;
   return {

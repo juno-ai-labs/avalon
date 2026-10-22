@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ToolDefinition } from "@rally/contracts";
 import historicalGoogleTools from "./fixtures/google-tools-before-workflows.json";
 import combinedGoogleReceipts from "./fixtures/google-combined-receipts.json";
+import preTextPageReceipts from "./fixtures/google-receipts-before-text-pages.json";
 
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
@@ -1602,6 +1603,19 @@ describe("connector tools selected for harness runs", () => {
     expect(__integrationTesting.compatiblePriorReceiptPlans({ ...receipt, pluginId,
       toolSurfaceHash: policy.toolSurfaceHash, inputHash: "same-input" }, policy))
       .toContainEqual({ ...receipt, inputHash: "same-input" });
+  });
+
+  // Captured by running the actual pre-PR host and connector at aaa417c5f3,
+  // independently of the compatibility reconstruction this test exercises.
+  it.each(preTextPageReceipts)("fences pre-text-pagination $canonicalToolName receipts by operation", async receipt => {
+    const selected = await __integrationTesting.loadHarnessTools(env(new ToolSelectionDatabase([
+      connection(OWNER_CONNECTION_ID, "personal", USER_ID, [...GOOGLE_WORKSPACE_CAPABILITIES]),
+    ])), workflowInput());
+    const policy = __integrationTesting.resolveHarnessToolReceiptPolicy({ pluginId: receipt.pluginId,
+      canonicalToolName: receipt.canonicalToolName, capability: receipt.capability,
+      mode: receipt.mode as "read" | "write", idempotency: receipt.idempotency as "safe" | "record_before_execute" }, selected);
+    expect(__integrationTesting.storedToolPolicyMatches(JSON.stringify(receipt), policy)).toBe(receipt.canonicalToolName === "docs.append_text");
+    expect(__integrationTesting.storedToolPolicyMatches(JSON.stringify({ ...receipt, toolSurfaceHash: "different-surface" }), policy)).toBe(false);
   });
 
   it.each([
