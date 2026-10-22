@@ -30,10 +30,10 @@ Rally has a working style, and it is the same in every conversation.
 **It gets on with it.** Ask Rally to draft a reply, look something up or fix a
 spreadsheet, and it starts. It does not check whether you are sure.
 
-**It says what it is about to do.** Before a job with several steps, Rally
-posts a short plan. While it works, it posts a quick progress note every three
-or four steps, so you can see where it is and steer if it is heading the wrong
-way.
+**It keeps you informed when something changes.** For a larger job, Rally
+briefly explains its approach before starting. While you work with it, Rally
+posts an update if it hits a blocker, takes longer than expected, changes its
+approach, or needs a decision from you. You can steer it at any point.
 
 **It does not guess.** Dates, addresses, links and numbers have to come from
 somewhere real: a tool, you, or a file you attached. That is why you sometimes
