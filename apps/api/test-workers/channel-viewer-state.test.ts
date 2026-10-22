@@ -42,7 +42,8 @@ import { HostedParent } from "../src/durable-objects/hosted-parent";
 import { ConversationSuggestionStorage, observeTurnDisposition } from "../src/durable-objects/conversation-suggestions";
 import { hostedParentStub } from "./helpers/hosted-parent";
 
-const workspaceId = asWorkspaceId("00000000-0000-4000-8000-0000000f0001");
+let workspaceId = asWorkspaceId("00000000-0000-4000-8000-0000000f0001");
+let workspaceSequence = 0;
 const channelA = asWorkstreamId("00000000-0000-4000-8000-0000000f00a0");
 const channelB = asWorkstreamId("00000000-0000-4000-8000-0000000f00b0");
 const breakoutA = asSubstreamId("00000000-0000-4000-8000-0000000f00a1");
@@ -198,6 +199,12 @@ function rowIn(answer: { sidebar: { workstreams: { items: Row[] } } }, channelId
 }
 
 beforeEach(async () => {
+  // A prior case's live sockets/alarms can outlast reset under worker-shard
+  // contention. These are independent fixtures, not initialization replays:
+  // keep their Organization authority separate instead of ignoring duplicate
+  // parent rows or letting old callbacks mutate the next case's roster.
+  workspaceSequence += 1;
+  workspaceId = asWorkspaceId(`00000000-0000-4000-8000-${String(workspaceSequence).padStart(8, "0")}f001`);
   await reset();
   await env.DB.batch([
     env.DB.prepare(`CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT)`),

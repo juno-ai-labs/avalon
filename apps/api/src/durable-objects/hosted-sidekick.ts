@@ -1,3 +1,4 @@
+import { sidekickProjectionRunning } from "./sidekick-activity";
 import { type SidekickAttachment, SidekickAttachmentSchema } from "@rally/contracts";
 import type { Region } from "@rally/contracts/regions";
 import { z } from "zod";
@@ -309,6 +310,8 @@ export interface HostedSidekickHost {
   afterRegistrations(automationId: string, revision: number | null, evaluators: readonly unknown[]): Promise<void>;
   /** Inside the transaction that changed a directory row: the sidebar's waterline and a deleted Sidekick's bindings. */
   noteDirectoryChanged(automationId: string, deleted: boolean, now: number): void;
+  /** Record an activity-only refresh inside the projection transaction. */
+  noteSidekickActivityChanged(workspaceId: string): void;
   /** Whether a person is an active participant of a live Channel: a read of this object's own rows. */
   isChannelParticipant(workstreamId: string, userId: string): boolean | Promise<boolean>;
   /** A Channel's or Breakout's own viewer decision, for a Sidekick homed there. */
@@ -1390,8 +1393,12 @@ export class HostedSidekick {
 
   /** Keep a child's newest common projection; `false` for one that is not newer. */
   private acceptChildProjection(substreamId: string, envelope: ConversationEffectEnvelope, now: number): boolean {
-    const existing = first(this.sql.exec<{ source_version: number; payload_hash: string }>(
-      `SELECT source_version, payload_hash FROM sidekick_child_projections WHERE sidekick_id = ? AND substream_id = ?`,
+    const existing = first(this.sql.exec<{
+      source_version: number; payload_hash: string; state: string; archived_at: string | null; background_agent: number | null;
+    }>(
+      `SELECT source_version, payload_hash, json_extract(effect_json, '$.state') AS state,
+         json_extract(effect_json, '$.archivedAt') AS archived_at,
+         json_extract(effect_json, '$.backgroundAgent') AS background_agent FROM sidekick_child_projections WHERE sidekick_id = ? AND substream_id = ?`,
       this.sidekickId, substreamId,
     ));
     if (existing && existing.source_version > envelope.sourceVersion) return false;
@@ -1410,6 +1417,14 @@ export class HostedSidekick {
          payload_hash = excluded.payload_hash, effect_json = excluded.effect_json, updated_at = excluded.updated_at`,
       this.sidekickId, substreamId, envelope.sourceVersion, envelope.payloadHash, JSON.stringify(envelope.effect), now,
     );
+    if (envelope.effect.kind === "directory_common") {
+      const wasRunning = existing ? sidekickProjectionRunning({
+        state: existing.state, archivedAt: existing.archived_at, backgroundAgent: existing.background_agent === 1,
+      }) : false;
+      if (wasRunning !== sidekickProjectionRunning(envelope.effect)) {
+        this.host.noteSidekickActivityChanged(envelope.workspaceId);
+      }
+    }
     return true;
   }
 
