@@ -456,7 +456,7 @@ export function SiteResourceDetail({
 
   // The canonical public link carries no access code or viewer identity.
   // Copying it shares the current site with anyone.
-  const { copy, state: copyState } = useCopy({ copyText: surface.copyText, value: access?.canonicalUrl ?? '' });
+  const { copy, state: copyState, failureOccurrence } = useCopy({ copyText: surface.copyText, value: access?.canonicalUrl ?? '' });
 
   /*
    * Into the host's header, beside its own controls, rather than into a row of
@@ -536,7 +536,7 @@ export function SiteResourceDetail({
   const editingSelection = annotationDraft?.selections.find((p) => p.id === editingPin);
   return (
     <div className="site-detail">
-      <CopyStatus state={copyState} visible />
+      <CopyStatus occurrence={failureOccurrence} state={copyState} visible />
       {pickError && <ErrorNotice>{pickError}</ErrorNotice>}
 
           <div className="site-detail-pane" data-testid="site-preview-pane" ref={paneRef}>
