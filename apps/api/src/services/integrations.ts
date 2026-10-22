@@ -7749,7 +7749,7 @@ function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
           canonicalId: AVALON_TABLES_PLUGIN_ID,
           modelId: "rally_tables",
           shortWireName: "table",
-          description: "Query and maintain large typed durable collections authorized for this run without loading them into context.",
+          description: "Store, search, and update records in tables that keep data between runs. Use for tracking seen or completed items, watchlists, and per-resource status. Read only the rows you need.",
           systemMessage: [
             "Use durable tables for large or evolving structured collections such as seen-item ledgers, watchlists, cursors, and per-resource status; compact facts and preferences are Rally's memory, which it records on its own.",
             "Describe or query a table before changing it. For updates or invalidation, copy each row's ID and revision exactly from the latest query result; after a revision conflict, query those exact row IDs again. Read only the matching rows and needed columns, follow nextPageId with table_query_next only when the task requires more, and use stable natural keys so table_insert_rows can deduplicate concurrent runs.",
