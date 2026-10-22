@@ -142,6 +142,11 @@ scope collapses to its newest durable row; an intervening conversation row or
 history seam starts a separate occasion. Persistence therefore never produces
 a double-stacked control.
 
+## Message issue reports
+
+The shared action row offers **Oopsie** on sent user and assistant messages;
+[message issues](message-issues.md) owns its provider, modal, provenance and storage.
+
 ## Contract
 
 The composer confirms mentions that expand access: nonparticipants in personal
@@ -219,6 +224,11 @@ plus. A
 launcher that dressed its field differently made the element a person types
 their first message into the odd one out on a screen already showing the
 conversation it becomes, and it made the hand-off a costume change.
+
+`ComposerInput.renderSubmit` lets a host place its submit control outside the
+capsule while keeping the same stop-and-send finalization and disabled state.
+Oopsie uses it for a footer Send button next to Cancel, through a portal, so a
+recording’s final words reach the report before its best-effort submission.
 
 The capsule's plus menu starts with **Attach files** when the host passes
 `onAttach`. A host may add its own entries after it through `menuActions`

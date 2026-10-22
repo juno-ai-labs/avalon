@@ -102,7 +102,7 @@ pnpm db:seed
 Both commands cover configured deployments. `db:migrate` also applies the content-free
 platform D1 migration chain into the configured local-state directories, so the
 shared `PLATFORM_DB` binding has the same route table whichever local Worker
-opens it. It also applies `TELEMETRY_DB`, `AUDIT_DB` and `USAGE_DB` schemas to Global
+opens it. It also applies `TELEMETRY_DB`, `AUDIT_DB`, `USAGE_DB` and `MESSAGE_ISSUES_DB` schemas to Global
 local state. `pnpm --filter @rally/api db:observability:migrate` applies just these two;
 CI uses `db:observability:migrate:remote` before activating the API Worker.
 Run them before starting a Worker: the migration and seed tooling

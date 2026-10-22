@@ -1,3 +1,4 @@
+import { MessageIssueProvider } from '../components/message-issue-dialog';
 import { readAnnotationVersion } from '../lib/annotation-preview';
 import { newWorkstreamDraftKey } from '../lib/draft-keys';
 import { usePeopleRanking } from '../lib/use-people-ranking';
@@ -513,7 +514,7 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
   // Only a member may start a thread in a private Channel; a thread placed
   // there is the Channel's to accept (`canEdit` on the server).
   const canStart = workspace.currentUser.accessClass !== 'guest' && space.reach !== 'through_channel';
-  return <div className="conversation-layout">
+  return <MessageIssueProvider api={api} target={{ kind: 'channel', channelId }}><div className="conversation-layout">
     <div className="channel-screen has-message-capsule">
       {/* Keyed so a confirmation still open when the route changes (a leave,
           a removal, an archive) cannot be continued against the next Channel. */}
@@ -610,7 +611,7 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
       onClose={() => void navigate(channelRoute(channelId))}
       resourceId={openArtifactId}
     />}
-  </div>;
+  </div></MessageIssueProvider>;
 }
 
 /**
