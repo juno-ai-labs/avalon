@@ -82,8 +82,9 @@ The store does not add a separate cleanup scheduler.
   checks persistence and byte ranges against real R2, connection/Breakout
   isolation, and authority loss. The persistence test must fail if the snapshot
   write is dropped.
-- `pnpm --filter @rally/api exec vitest run test/connector-tool-selection.test.ts test/tool-pagination.test.ts`
-  checks model-facing tool selection, first/next schemas and frozen receipt compatibility.
+- `pnpm --filter @rally/api exec vitest run test/connector-tool-selection.test.ts test/tool-pagination.test.ts test/tool-schema-descriptions.test.ts test/connector-documents.test.ts`
+  checks model-facing tool selection, first/next schemas, parameter descriptions,
+  frozen receipt compatibility, and real Office conversion through the last text page.
 
 ## Changelog
 
