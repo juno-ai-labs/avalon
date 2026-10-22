@@ -21,7 +21,8 @@ The action opens **Something go wrong?** with **Let us know what you expected
 so we can improve Rally.** The multiline input is `ComposerInput`, including
 the same message-capsule layout as Threads and Breakouts, with only the
 microphone inside the input. Attachments, model selection and the inline send
-arrow are absent. **Send** sits beside **Cancel** in the modal footer; it still
+arrow are absent. The modal omits its header close button. **Send** sits beside
+**Cancel** in the modal footer; it still
 uses the composer’s click/hold dictation and final-transcript submission path.
 Enter writes a newline. Send starts a best-effort background request and closes the modal immediately. There is no delivery
 confirmation or retry prompt. Cancel, Escape, and outside click discard an
