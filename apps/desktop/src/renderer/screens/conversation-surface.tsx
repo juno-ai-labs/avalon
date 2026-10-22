@@ -2509,6 +2509,7 @@ function ConversationSurfaceContent({
   // Loaded with the People level, and whenever the Organization has invitees
   // to offer: the composer needs to know who is already shared in here.
   const invitations = useScopeInvitations({ api: api!, workspaceId, parentId: id, substreamId,
+    refreshParticipants: () => queryClient.invalidateQueries({ queryKey: workstreamDetailQueryKey(id, substreamId) }),
     enabled: (invitesWanted || visibleInvitees.length > 0) && Boolean(api && session?.workspace) && parentKind === 'workstream' });
   const sharedInviteeEmails = useMemo(
     () => invitations.pending.data?.map((guest) => guest.email) ?? NO_SHARED_INVITEES,
@@ -3679,10 +3680,8 @@ function ConversationSurfaceContent({
               // A failed add earlier in the same submission stays reported.
               invitations.remove.reset();
               await invitations.invite.mutateAsync([...emails].sort());
-              // Someone who already had an account is claimed as they are invited, and joins the room.
-              // The committed share acknowledges the add; refreshing the lists
-              // must not hold the form busy for another pair of round trips.
-              void Promise.all([invitations.pending.refetch(), queryClient.invalidateQueries({ queryKey: workstreamDetailQueryKey(id, substreamId) })]);
+              // The hook refreshes both lists in the background and suppresses
+              // duplicate addresses until those reads catch up with the commit.
             },
             onRevoke: (email) => {
               const guest = invitations.pending.data?.find((candidate) => candidate.email === email);

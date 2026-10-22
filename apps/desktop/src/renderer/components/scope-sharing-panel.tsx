@@ -12,12 +12,16 @@ import { ErrorNotice, Modal } from './primitives';
  * their guest to sign in, inviting more, and taking one back. Shared by the
  * share panel and the title menu's People level, which read one cache entry.
  */
-export function useScopeInvitations({ api, workspaceId, parentId, substreamId, enabled = true }: {
+export function useScopeInvitations({ api, workspaceId, parentId, substreamId, enabled = true, refreshParticipants }: {
   api: RallyApi; workspaceId: string; parentId: string; substreamId: string; enabled?: boolean;
+  refreshParticipants?: () => Promise<unknown>;
 }) {
   // One retry identity per batch, kept until that batch is created, so a retry
   // replays the same operation even while another batch is in flight.
   const operations = useRef(new Map<string, string>());
+  // Keep successful addresses out of another submission until both sources
+  // used by the People's duplicate check have caught up with the commit.
+  const refreshing = useRef(new Set<string>());
   // Main is conversation 0: a workstream grant would also include inheriting children.
   // Built on use: a surface mounts this before it has a workspace to parse.
   const target = (): ScopeGrantTarget => ({ kind: 'conversation', workspaceId: asWorkspaceId(workspaceId),
@@ -51,6 +55,9 @@ export function useScopeInvitations({ api, workspaceId, parentId, substreamId, e
   });
   const invite = useMutation({ mutationFn: async (recipients: string[]) => {
     const targets = [target()];
+    const recipientKey = (email: string): string => JSON.stringify({ targets, email });
+    recipients = recipients.filter((email) => !refreshing.current.has(recipientKey(email)));
+    if (!recipients.length) return { status: 'created' as const, invitations: [] };
     const key = JSON.stringify({ recipients, targets });
     const operationId = operations.current.get(key) ?? crypto.randomUUID();
     operations.current.set(key, operationId);
@@ -58,6 +65,10 @@ export function useScopeInvitations({ api, workspaceId, parentId, substreamId, e
       emails: recipients, targets, completeWorkstream: false, expiresAt: null });
     if (result.status !== 'created') throw new Error('scope invitation was not created');
     operations.current.delete(key);
+    const committed = recipients.map(recipientKey);
+    for (const email of committed) refreshing.current.add(email);
+    const refreshed = (): void => { for (const email of committed) refreshing.current.delete(email); };
+    void Promise.all([pending.refetch(), refreshParticipants?.()]).then(refreshed, refreshed);
     return result;
   } });
   return { pending, invite, remove };
@@ -84,7 +95,7 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId, onS
       // runs regardless, and would close whichever dialog was opened in its
       // place, taking the newly typed addresses with it.
       invite.mutate([...new Set(parsed.data)].sort(), {
-        onSuccess: () => { setEmails(''); setFailure(null); void pending.refetch(); onShared?.(); },
+        onSuccess: () => { setEmails(''); setFailure(null); onShared?.(); },
         onError: () => { setFailure({ kind: 'share' }); },
       });
     }}>
