@@ -104,6 +104,10 @@ topic, which is all the Sidekicks window needs, since it reads the detail
 surfaces the push refetches and never the list itself. No additional broadcast
 channel or polling is involved.
 
+Composer execution counts use the separate `sidekick_activity` topic on this
+same socket and relay. It invalidates only activity queries; execution and
+attachment changes do not need a full Sidekick library refresh.
+
 ### The topology
 
 ```text

@@ -561,7 +561,7 @@ export function WorkstreamComposer({
           ))}
         </div>
       )}
-      <div className="composer-agent-activity">
+      <div>
         <ComposerAgentActivity count={backgroundAgentCount} />
         <ComposerAgentActivity count={runningSidekickCount} kind="sidekick" />
       </div>
