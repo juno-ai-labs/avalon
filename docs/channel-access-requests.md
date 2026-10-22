@@ -70,6 +70,8 @@ The person who asked gets an email when the request is approved or declined.
    even though its email failed, so the screen offers the resend action at once.
    Preview keys and submission variables include the requester identity, so
    switching accounts cannot let an old send overwrite the new person's state.
+   If a send response interrupts a check for a newer access-recovery version,
+   that check is refreshed so a fast approval push still reopens the thread.
 3. **The request.** The approver is the conversation's creator, who must be an
    active member and not the requester. The Organization object records the
    request, or returns the one already pending for this person and
@@ -221,6 +223,8 @@ preview reads when a send succeeds. Completion updates are bound to the submitte
 conversation so navigating during a request cannot mark another one as pending.
 Failed sends reconcile the stored state immediately rather than waiting for reopen.
 Cache and mutation state are scoped to the requester as well as the conversation.
+The access-push recovery version from PR #1416 is preserved when request completion
+cancels an admission check, so the two recovery paths cannot lose a fast approval.
 
 **Why:** The screen remembered only the current component's successful click.
 Reopening showed **Request access** even though the Organization still held a

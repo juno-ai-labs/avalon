@@ -476,8 +476,9 @@ describe('WorkspaceSocketProvider', () => {
         url: 'wss://api.rally.test/socket/workspaces/workspace-1', ticket: 'workspace-ticket',
         protocols: socketTicketProtocols('workspace-ticket'),
       }),
+      viewerUserId: 'viewer-1',
       conversationAccessPreview: async () => ({
-        kind: 'channel' as const, title: 'Launch plan', appearance: null, markId: 'thread-1', access: 'open' as const,
+        kind: 'channel' as const, title: 'Launch plan', appearance: null, markId: 'thread-1', access: 'open' as const, requestPending: false, requestEmailed: false,
       }),
       requestConversationAccess: async () => undefined,
     };
@@ -513,16 +514,16 @@ describe('WorkspaceSocketProvider', () => {
   it('waits for an offline-paused preview to resume before consuming its access nudge', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     await refreshConversationAccessPreviews(queryClient);
-    const key = ['conversation-access-preview', 'thread-1', '0'];
+    const key = ['conversation-access-preview', 'viewer-1', 'thread-1', '0'];
     const open: ConversationAccessPreview = {
-      kind: 'channel', title: 'Launch plan', appearance: null, markId: 'thread-1', access: 'open',
+      kind: 'channel', title: 'Launch plan', appearance: null, markId: 'thread-1', access: 'open', requestPending: false, requestEmailed: false,
     };
     queryClient.setQueryData(key, { ...open, recoveryVersion: 1 });
     await queryClient.invalidateQueries({ queryKey: key, refetchType: 'none' });
     onlineManager.setOnline(false);
     let finishPreview!: (preview: ConversationAccessPreview) => void;
     const pending = new Promise<ConversationAccessPreview>((resolve) => { finishPreview = resolve; });
-    const api = { conversationAccessPreview: vi.fn(() => pending), requestConversationAccess: async () => undefined };
+    const api = { viewerUserId: 'viewer-1', conversationAccessPreview: vi.fn(() => pending), requestConversationAccess: async () => undefined };
     const onRetry = vi.fn();
     render(<QueryClientProvider client={queryClient}>
       <ConversationAccessRequest api={api} parentId="thread-1" substreamId="0"
@@ -540,15 +541,16 @@ describe('WorkspaceSocketProvider', () => {
 
   it.each(['before-query', 'before-mount'] as const)('recovers a nudge recorded %s without retrying again after a failed reopen', async (timing) => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const key = ['conversation-access-preview', 'thread-1', '0'];
+    const key = ['conversation-access-preview', 'viewer-1', 'thread-1', '0'];
     const open: ConversationAccessPreview = {
-      kind: 'channel', title: 'Launch plan', appearance: null, markId: 'thread-1', access: 'open',
+      kind: 'channel', title: 'Launch plan', appearance: null, markId: 'thread-1', access: 'open', requestPending: false, requestEmailed: false,
     };
     if (timing === 'before-mount') queryClient.setQueryData(key, { ...open, recoveryVersion: 0 });
     await refreshConversationAccessPreviews(queryClient);
     let finishPreview!: (preview: ConversationAccessPreview) => void;
     const pending = new Promise<ConversationAccessPreview>((resolve) => { finishPreview = resolve; });
     const api = {
+      viewerUserId: 'viewer-1',
       conversationAccessPreview: vi.fn(() => pending), requestConversationAccess: async () => undefined,
     };
     const onRetry = vi.fn();
@@ -577,13 +579,14 @@ describe('WorkspaceSocketProvider', () => {
     let failPreview!: (error: Error) => void;
     const pending = new Promise<ConversationAccessPreview>((resolve, reject) => { finishPreview = resolve; failPreview = reject; });
     const open: ConversationAccessPreview = {
-      kind: 'channel', title: 'Launch plan', appearance: null, markId: 'thread-1', access: 'open',
+      kind: 'channel', title: 'Launch plan', appearance: null, markId: 'thread-1', access: 'open', requestPending: false, requestEmailed: false,
     };
     const api = {
       getWorkspaceSocketTicket: async () => ({
         url: 'wss://api.rally.test/socket/workspaces/workspace-1', ticket: 'workspace-ticket',
         protocols: socketTicketProtocols('workspace-ticket'),
       }),
+      viewerUserId: 'viewer-1',
       conversationAccessPreview: vi.fn().mockResolvedValueOnce(open).mockImplementation(() => pending),
       requestConversationAccess: async () => undefined,
     };
@@ -619,13 +622,14 @@ describe('WorkspaceSocketProvider', () => {
     let finishStalePreview!: (preview: ConversationAccessPreview) => void;
     const pending = new Promise<ConversationAccessPreview>((resolve) => { finishStalePreview = resolve; });
     const open: ConversationAccessPreview = {
-      kind: 'channel', title: 'Launch plan', appearance: null, markId: 'thread-1', access: 'open',
+      kind: 'channel', title: 'Launch plan', appearance: null, markId: 'thread-1', access: 'open', requestPending: false, requestEmailed: false,
     };
     const api = {
       getWorkspaceSocketTicket: async () => ({
         url: 'wss://api.rally.test/socket/workspaces/workspace-1', ticket: 'workspace-ticket',
         protocols: socketTicketProtocols('workspace-ticket'),
       }),
+      viewerUserId: 'viewer-1',
       conversationAccessPreview: vi.fn().mockImplementationOnce(() => pending).mockResolvedValue(open),
       requestConversationAccess: async () => undefined,
     };
@@ -2483,10 +2487,11 @@ describe('WorkspaceSocketProvider', () => {
         url: 'wss://api.rally.test/socket/workspaces/workspace-1', ticket: 'workspace-ticket',
         protocols: socketTicketProtocols('workspace-ticket'),
       }),
+      viewerUserId: 'viewer-1',
       conversationAccessPreview: vi.fn(async () => ({
         kind: substreamId === '0' ? 'channel' as const : 'breakout' as const,
         title: 'Launch plan', appearance: null, markId: 'thread-1',
-        access: admitted ? 'open' as const : 'requestable' as const,
+        access: admitted ? 'open' as const : 'requestable' as const, requestPending: false, requestEmailed: false,
       })),
       requestConversationAccess: async () => undefined,
     };
