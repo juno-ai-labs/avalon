@@ -9,10 +9,20 @@
  * the executors' own logic (key derivation, replay-first, the read budget,
  * the page continuation) can be read in isolation.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const searchProvider = vi.hoisted(() => ({ query: vi.fn() }));
+// The provider cannot run locally; exercise our real index adapter against
+// its external namespace boundary, including candidate-page continuation.
+vi.mock("@turbopuffer/turbopuffer", () => ({
+  Turbopuffer: class {
+    namespace() { return searchProvider; }
+  },
+}));
 
 import { modelToolArgumentSchema, type HarnessTool, type HarnessToolContext } from "@rally/agent-harness";
 import {
+  asSubstreamId,
   asUserId,
   asWorkstreamId,
   readStructuredFailure,
@@ -34,6 +44,7 @@ import {
   conversationIndexHit,
   conversationSearchGroups,
   conversationToolAccess,
+  conversationToolPorts,
   newestSearchHits,
   conversationsSystemMessage,
   createConversationsPlugin,
@@ -44,6 +55,7 @@ import {
 import { stableWireToolName } from "../src/services/connector-tool-inventory";
 import { ApiError } from "../src/lib/api-error";
 import { withToolPagination } from "../src/services/tool-pagination";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
 const CHANNEL_ID = "00000000-0000-4000-8000-000000000002";
@@ -672,6 +684,29 @@ describe("a conversation the loop sits inside", () => {
 });
 
 describe("conversation_search", () => {
+  it("fetches full candidate pages for a small output limit and still returns the newest hit from a later page", async () => {
+    const rows = Array.from({ length: 51 }, (_, index) => ({
+      id: `row-${String(index).padStart(3, "0")}`, source: "messages", scope_id: CHANNEL_ID,
+      source_id: `0/turn-${index}`, substream_id: "0", revision: 1, archived: false,
+      text: index === 50 ? "Newest ICP" : "Earlier ICP", occurred_at: Date.parse(index === 50
+        ? "2026-10-22T00:00:00.000Z" : "2026-10-01T00:00:00.000Z"),
+    }));
+    searchProvider.query.mockReset().mockImplementation(async (request: {
+      limit: number; filters: ["And", Array<readonly unknown[]>];
+    }) => {
+      const after = request.filters[1].find((filter) => filter[0] === "id")?.[2];
+      return { rows: rows.filter((row) => typeof after !== "string" || row.id > after).slice(0, request.limit) };
+    });
+    const env = createTestEnv({ APP_ENV: "development", AVALON_REGION: "global", TURBO_PUFFER_DEV_API_KEY: "test-only" });
+    const found = await conversationToolPorts(env, loop()).searchMessages({
+      query: "ICP", limit: 1, conversations: [{ parentId: CHANNEL_ID, kind: "channel", substreamId: asSubstreamId("0") }],
+    });
+    expect(found).toEqual([{ parentId: CHANNEL_ID, substreamId: "0", messageId: "turn-50",
+      sentAt: "2026-10-22T00:00:00.000Z", text: "Newest ICP" }]);
+    expect(searchProvider.query).toHaveBeenCalledTimes(2);
+    expect(searchProvider.query.mock.calls[0]?.[0]).toMatchObject({ limit: 50 });
+  });
+
   it("finds a merge in a Channel and a message in the Thread through one index, newest first, naming where each was said", async () => {
     const ports = new Ports();
     const own = { ...home, isHome: false, isOwn: true };
