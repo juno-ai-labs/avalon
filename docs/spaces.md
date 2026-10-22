@@ -272,17 +272,25 @@ A move and a restore are likewise one transaction each.
 transaction, `WorkspaceSpaceStorage.archive` captures live threads whose only
 active Space is this one, archives the Space, and records one durable archive
 intent per exclusive thread. Shared threads remain active in their other
-Channels. An unreadable or not-yet-projected exclusive thread refuses the whole
+Channels. An exclusive thread whose Main is unreadable or not yet projected refuses the whole
 operation without exposing its identity or partially archiving the Channel.
 General and Personal Channels remain protected.
 
 Each thread intent reuses the normal idempotent `applyQueuedBatchUpdate`
 archive command in its Main SubstreamAgent. That command stops execution and
 publishes the canonical archive through the existing parent/directory effects,
-including owned-agent and Sidekick cleanup. The request attempts delivery after
-arming the retry alarm; failures remain in `space_intents` for the existing
-alarm handler. A lost reply replays the same receipt, so a thread manually
-restored afterwards is not archived again by an old delivery.
+including owned-agent and Sidekick cleanup. The request returns after staging
+and arming the alarm; the alarm delivers the commands. Transport failures remain
+retryable. Before delivery, the Channel must still be archived at the captured
+revision and the thread still exclusive. Restore or a new active placement
+supersedes the old command. The command hash covers the archive operation rather
+than mutable intent metadata.
+
+Canonical refusals and an inactive requester settle the command with their
+reason. They release its archived placement hold so ordinary orphan repair can
+give the live thread a home in General. Independently restoring a thread does
+the same on its canonical directory transition and cancels pending old archives.
+Successful archives keep their placement in the archived Channel.
 
 An exclusive thread retains its membership under the archived Space, preventing
 the orphan-repair backstop from moving it to General while effects are in
@@ -771,9 +779,11 @@ the coordinator runs `SpaceService.ensureGeneral`, and asks again.
 
 ### Resuming an interrupted operation
 
-Every Space operation is now one WorkspaceDO transaction, so none can die half
-way and none stages an intent. The resume path is left for `space_intents` rows
-staged before that change.
+Space membership and container writes commit in one WorkspaceDO transaction.
+Channel archival additionally records per-thread `archive` intents with a
+non-null `workstream_id`, for delivery through the thread's independent authority.
+The alarm handles those current commands as described above. The same table and
+alarm also finish legacy container intents staged before migration 94.
 
 **The alarm finishes a legacy intent in place, one transaction per intent.** It
 claims unsettled intents, advancing their retry gate first, and runs each
@@ -784,13 +794,13 @@ memberships, or cancels as `move_superseded` when a competing move won; an
 `archive` finalizes the archive, or puts its memberships back and settles
 `archive_abandoned` when it cannot; a `restore` or `audience` intent only
 settles, because the Space write already happened and there is nothing to carry
-to a Channel. An intent a request or a Queue delivery is running is skipped (an
-in-memory single-flight keyed by operation id, `spaceIntentRuns`).
+to a Channel. Thread commands carry canonical receipts, so overlapping deliveries
+replay rather than repeat the mutation.
 
-A requester who has left the Organization has nothing run as them: the alarm
-and the Queue consumer both leave the intent pending with
-`space_intent_requester_inactive` on the row. Every such intent was staged
-before migration 94, and nothing stages one now. An `archive` intent still asks
+A requester who has left the Organization has nothing run as them. For legacy
+intents, the alarm and Queue consumer retain the pending row with
+`space_intent_requester_inactive`. New per-thread archive commands instead settle
+that refusal and release the placement hold for repair. A legacy `archive` intent still asks
 `canEdit` as it finishes, so one whose Space has gone private since finishes
 only for a participant and is otherwise taken back as `archive_abandoned`. A
 resume that fails for any other reason records its code on the row and
@@ -1645,11 +1655,6 @@ object refuses in ways no double reproduces.
 A behaviour that a route, a real session or a cold Durable Object could break
 belongs in the route suite as well as wherever its authority is proved.
 
-The archive route cases cover exclusive private threads, shared threads, no
-placement in General, Channel restoration retaining independent thread archives,
-and a lost reply replayed after a thread was manually restored. Authority and
-navigation cases cover unreadable-thread refusals without partial intents.
-
 | Suite | What it proves |
 | --- | --- |
 | `apps/api/test-workers/space-routes.test.ts` | The `/spaces` routes as a signed-in member drives them against real objects: creation (Organization-wide, including when a released client asks for a personal Space; a caller WorkspaceDO refuses writes no D1 anchor), audience (a participant change stages nothing for a member Channel and leaves its audience alone; a personal audience is refused), rename, archive and restore, and an equal-audience one-request Channel move whose returned summaries match the settled memberships. That a Space whose parent reservation fails commits no Space row, and that `openGeneralSpace` writes General once and is reused. `POST /workstreams` in a Space makes an Organization-wide Channel. The WorkspaceDO-driven membership calls: a private Channel added to a Space that lists somebody else stays private and settles; a private or Organization-wide Channel leaving a Space keeps every reader. A Space created without an icon gets the one the naming double answers, and keeps the icon a person picks while that call is still in flight. |
@@ -2043,9 +2048,11 @@ running and later overwrite the apparent archive. A new archive queue would
 duplicate the existing intent retries and thread-command receipts.
 
 **Consequences:** Thread archive delivery crosses an object boundary and is
-recoverable after the Channel transaction commits. Shared threads are never
-selected. A retry must reuse its original receipt, and a Channel restore must
-not undo an independent thread archive.
+recoverable after the Channel transaction commits, without holding the archive
+request open for its RPCs. Delivery rechecks the Channel revision and exclusive
+placement; a permanent refusal or independent thread restore releases the hold
+for ordinary orphan repair. A retry must reuse its original command receipt,
+and a Channel restore must not undo a completed independent thread archive.
 
 PR: [#1398](https://github.com/juno-ai-labs/avalon/pull/1398).
 
