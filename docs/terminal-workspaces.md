@@ -265,7 +265,9 @@ not commands or imports. Main retains `terminal:<thread>:<path>` identities;
 a Breakout uses `terminal:<thread>:substream:<breakout>:<path>` for files,
 sites and reconciliation. Existing publications must be attached to that
 destination before reuse, except when repairing the exact receipt that created
-them before its attachment committed.
+them before its attachment committed. If the home has no publication at the
+path, a visible legacy wizard publication under the Sidekick ID is updated in
+place, preserving its resource ID and URL, including during recovery.
 
 Imports use the [shared live resource scope](agent-attachments.md#authorized-work-stream-discovery-and-text-hydration),
 also rechecked for import revocation; a publication target grants no read access.
