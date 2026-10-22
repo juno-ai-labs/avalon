@@ -62,7 +62,6 @@ const detail = {
   scope: 'workspace' as const,
   systemKind: null,
   modelOverride: null,
-  pinnedModel: null,
   nextPendingWakeup: null,
   pinPosition: null,
   spacePins: [],
@@ -527,11 +526,6 @@ describe('Rally API wire adapter', () => {
     expect(mapWorkstreamDetail({ ...detail, modelOverride: 'deepseek/deepseek-v4-pro' }))
       .toMatchObject({ modelOverride: 'deepseek/deepseek-v4-pro' });
     expect(mapWorkstreamDetail(detail).modelOverride).toBeUndefined();
-  });
-
-  it('reads the pin from pinnedModel, including one the legacy field cannot carry', () => {
-    expect(mapWorkstreamDetail({ ...detail, pinnedModel: 'x-ai/grok-4.7', modelOverride: null }))
-      .toMatchObject({ modelOverride: 'x-ai/grok-4.7' });
   });
 
   it.each([

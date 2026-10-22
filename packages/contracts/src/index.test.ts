@@ -217,8 +217,8 @@ describe("boundary contracts", () => {
     // The selector groups by vendor, so this ordering is what a reader sees
     // under each heading — and the mistake it exists to catch is a new model
     // appended to the end of the list rather than added to the top of its
-    // family. Only a version a machine can compare is checked: the two
-    // Claude 5.5 ids share a version, as do the two `deepseek-v4.1` ids, and
+    // family. Only a version a machine can compare is checked: the three
+    // `gpt-5.6-*` ids share a version, as do the two `deepseek-v4` ids, and
     // ties are ordered by hand rather than by this rule.
     // The *first* numeric run in the model segment, which is the version in
     // every id the list carries: `grok-4.6` and `gemini-3.8-flash` match on the
@@ -236,9 +236,10 @@ describe("boundary contracts", () => {
     expect(version("google/gemini-3-flash-preview")).toEqual([3]);
     expect(version("deepseek/deepseek-v4-pro")).toEqual([4]);
     expect(AGENT_MODEL_OVERRIDES.filter((id) => version(id) === null)).toEqual([]);
-    expect(AGENT_MODEL_OVERRIDES.filter((id) => id.startsWith("deepseek/deepseek-v4.1-"))).toEqual([
-      "deepseek/deepseek-v4.1-flash-1017",
-      "deepseek/deepseek-v4.1-flash",
+    expect(AGENT_MODEL_OVERRIDES.filter((id) => id.startsWith("openai/gpt-5.6-"))).toEqual([
+      "openai/gpt-5.6-sol",
+      "openai/gpt-5.6-terra",
+      "openai/gpt-5.6-luna",
     ]);
     // Takes its two versions in the order the list mentions them, so the call
     // below reads the way the rule is stated: the id listed first must carry

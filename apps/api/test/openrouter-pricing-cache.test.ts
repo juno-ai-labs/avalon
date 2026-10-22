@@ -13,22 +13,18 @@ import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
 
 const NOW = Date.UTC(2026, 7, 30, 12);
 const EXPECTED_MODEL_IDS = [
-  "x-ai/grok-4.7",
   "x-ai/grok-4.6",
   "x-ai/grok-4.5",
-  "google/gemini-4-argon",
+  "x-ai/grok-4.3",
   "google/gemini-3.8-flash",
   "google/gemini-3.7-flash",
-  "openai/gpt-6.1-sol",
-  "openai/gpt-6-luna",
+  "google/gemini-3.6-flash",
+  "google/gemini-3.5-flash",
+  "google/gemini-3-flash-preview",
   "openai/gpt-5.6-sol",
-  "anthropic/claude-opus-5.5",
-  "anthropic/claude-sonnet-5.5",
-  "deepseek/deepseek-v4.1-flash-1017",
-  "deepseek/deepseek-v4.1-flash",
-  "deepseek/deepseek-v4-pro",
-  "x-ai/grok-4.3",
   "openai/gpt-5.6-terra",
+  "openai/gpt-5.6-luna",
+  "deepseek/deepseek-v4-pro",
   "deepseek/deepseek-v4-flash-0731",
   "openai/text-embedding-3-large",
   "openai/gpt-image-2",
@@ -217,12 +213,12 @@ describe("OpenRouter endpoint-average pricing cache", () => {
       void key;
       void value;
     });
-    const fetcher = catalogFetcher("google/gemini-3.7-flash");
+    const fetcher = catalogFetcher("google/gemini-3.5-flash");
 
     await expect(refreshOpenRouterPricingCache(
       { INFERENCE_PRICING_CACHE: createCloudflareTestBinding<KVNamespace>({ put }) },
       { fetch: fetcher, now: () => NOW },
-    )).rejects.toThrow("OpenRouter endpoint catalog failed for google/gemini-3.7-flash (503)");
+    )).rejects.toThrow("OpenRouter endpoint catalog failed for google/gemini-3.5-flash (503)");
     expect(put).not.toHaveBeenCalled();
   });
 
