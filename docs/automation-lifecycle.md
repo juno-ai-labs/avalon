@@ -19,6 +19,24 @@ The model generates internal instructions and a user-friendly description. An
 incomplete submission does not replace the accepted revision. Edits preserve a
 person's pause; an archived owning room still refuses publication.
 
+When setting up or changing executable behavior, the wizard investigates
+reusable steps: it inspects relevant resources and representative inputs, resolves
+stable identifiers, and discovers the authorized tools and skills. It validates
+the proposed workflow through available reads or non-destructive trials before
+submitting ready, leaving future deliveries and other effects to the runs unless
+requested during setup. Accepted configuration is not evidence that the workflow
+itself worked; the wizard records what it verified, checks it could not perform
+and any remaining uncertainty.
+
+The saved instructions are a detailed procedure usable without the authoring
+conversation: resolved resources, required tools and skills to load, input
+formats, ordered steps and decision rules, state and duplicate handling where
+needed, delivery destinations and steps, and observable completion checks. They
+separate stable setup facts from changing data each run must fetch or revalidate,
+and cover no-op conditions, missing inputs, changed resources and failed steps.
+Runs receive the discovered method rather than repeating setup investigation;
+unresolved assumptions remain explicit.
+
 The authoring wizard has its own model route, `sidekick_authoring`, defaulting
 to Sol independently of the ordinary Thread and activation route. Explicit model
 pins still win; see [`feature-flags.md`](feature-flags.md). For work requested
@@ -1229,6 +1247,28 @@ and rolls back even earlier declarations in the batch. Keep hashes outside the
 transaction and recheck authority fences at commit. A retry ceiling was rejected:
 it would delay and hide the same deterministic failure rather than distinguish
 it from recoverable storage errors.
+
+### 2026-10-22 — Authoring investigates the workflow and saves the execution procedure
+
+**What changed:** Executable Sidekick authoring now requires reusable discovery
+and non-destructive workflow validation during setup and revision. The saved
+instructions carry the detailed procedure, verified facts, remaining assumptions,
+per-run checks, delivery and recovery behavior.
+
+**Why:** Authoring and execution can have different reasoning capabilities. A
+brief objective leaves each independent activation to rediscover the method and
+resolve decisions the wizard could have settled once. Configuration acceptance
+checks shape and bindings, so it cannot stand in for validating the method.
+
+**Considered and rejected:** Relying on each activation to reconstruct the setup
+conversation's reasoning, or treating a successful submission as proof that the
+workflow works. Requiring a full live run during setup would also perform future
+deliveries and other effects before their requested time.
+
+**Consequences:** The wizard owns reusable investigation, while each activation
+owns current inputs and execution. The wizard records validation evidence without
+freezing changing inputs; activations still fetch current data and follow the saved
+failure and no-op rules. This is authoring guidance, not a new publication gate.
 
 ### 2026-10-22 — Keep Sidekick actions discoverable across lifecycle states
 
