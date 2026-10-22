@@ -6,6 +6,7 @@ import { ApiError } from '../lib/api';
 import { ConversationAccessRequest, type ConversationAccessApi } from './conversation-access-request';
 
 const PARENT = '00000000-0000-4000-8000-0000000ac0a0';
+const VIEWER = '00000000-0000-4000-8000-0000000ac013';
 const BREAKOUT = '00000000-0000-4000-8000-0000000ac0a1';
 
 function preview(extra: Partial<ConversationAccessPreview> = {}): ConversationAccessPreview {
@@ -14,6 +15,7 @@ function preview(extra: Partial<ConversationAccessPreview> = {}): ConversationAc
 
 function fakeApi(answer: ConversationAccessPreview, request: () => Promise<void> = async () => undefined) {
   return {
+    viewerUserId: VIEWER,
     conversationAccessPreview: vi.fn(async () => answer),
     requestConversationAccess: vi.fn(request),
   } satisfies ConversationAccessApi;
@@ -55,6 +57,7 @@ describe('ConversationAccessRequest', () => {
   it('keeps the sent state on reopening and refreshes it when the pending request was declined', async () => {
     let answer = preview();
     const api = {
+      viewerUserId: VIEWER,
       conversationAccessPreview: vi.fn(async () => answer),
       requestConversationAccess: vi.fn(async () => { answer = preview({ requestPending: true, requestEmailed: true }); }),
     } satisfies ConversationAccessApi;
@@ -88,11 +91,12 @@ describe('ConversationAccessRequest', () => {
     let release!: (answer: ConversationAccessPreview) => void;
     const stalePreview = new Promise<ConversationAccessPreview>((resolve) => { release = resolve; });
     const api = {
+      viewerUserId: VIEWER,
       conversationAccessPreview: vi.fn(() => stalePreview),
       requestConversationAccess: vi.fn(async () => undefined),
     } satisfies ConversationAccessApi;
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    client.setQueryData(['conversation-access-preview', PARENT, '0'], preview());
+    client.setQueryData(['conversation-access-preview', VIEWER, PARENT, '0'], preview());
     show(api, '0', undefined, client);
     await vi.waitFor(() => expect(api.conversationAccessPreview).toHaveBeenCalledTimes(1), { timeout: 2_000 });
     fireEvent.click(screen.getByRole('button', { name: 'Request access' }));
@@ -100,7 +104,7 @@ describe('ConversationAccessRequest', () => {
     await act(async () => { release(preview()); });
     expect(screen.getByRole('status').textContent).toContain('Access requested — awaiting approval');
     expect(screen.queryByRole('button', { name: 'Request access' })).toBeNull();
-    expect(client.getQueryData(['conversation-access-preview', PARENT, '0'])).toMatchObject({ requestPending: true });
+    expect(client.getQueryData(['conversation-access-preview', VIEWER, PARENT, '0'])).toMatchObject({ requestPending: true });
   });
 
   it('lets a reopened pending request retry failed email delivery', async () => {
@@ -134,12 +138,70 @@ describe('ConversationAccessRequest', () => {
     view.rerender(target(BREAKOUT));
     await screen.findByRole('heading', { name: 'Launch plan' });
     await act(async () => { finishRequest(); });
-    await vi.waitFor(() => expect(client.getQueryData(['conversation-access-preview', PARENT, '0']))
+    await vi.waitFor(() => expect(client.getQueryData(['conversation-access-preview', VIEWER, PARENT, '0']))
       .toMatchObject({ requestPending: true, requestEmailed: true }), { timeout: 2_000 });
-    expect(client.getQueryData(['conversation-access-preview', PARENT, BREAKOUT]))
+    expect(client.getQueryData(['conversation-access-preview', VIEWER, PARENT, BREAKOUT]))
       .toMatchObject({ requestPending: false, requestEmailed: false });
     expect(screen.queryByRole('status')).toBeNull();
     expect(screen.getByRole('button', { name: 'Request access' })).toBeTruthy();
+  });
+
+  it('refreshes a stored pending request after the first email send fails', async () => {
+    let answer = preview();
+    const api = {
+      viewerUserId: VIEWER,
+      conversationAccessPreview: vi.fn(async () => answer),
+      requestConversationAccess: vi.fn(async () => {
+        answer = preview({ requestPending: true, requestEmailed: false });
+        throw new Error('Email unavailable');
+      }),
+    } satisfies ConversationAccessApi;
+    show(api);
+    fireEvent.click(await screen.findByRole('button', { name: 'Request access' }));
+    expect(await screen.findByText('The request couldn’t be sent. Try again.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    expect((await screen.findByRole('status')).textContent).toContain('Access requested — awaiting approval');
+    expect(screen.getByRole('button', { name: 'Retry sending request' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Request access' })).toBeNull();
+  });
+
+  it('keeps an old send completion out of the next requester cache after an identity switch', async () => {
+    let finishRequest!: () => void;
+    const firstApi = fakeApi(preview(), () => new Promise<void>((resolve) => { finishRequest = resolve; }));
+    const secondApi = { ...fakeApi(preview()), viewerUserId: 'another-requester' };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const first = show(firstApi, '0', undefined, client);
+    fireEvent.click(await screen.findByRole('button', { name: 'Request access' }));
+    await vi.waitFor(() => expect(firstApi.requestConversationAccess).toHaveBeenCalledWith(PARENT, '0'), { timeout: 2_000 });
+    first.unmount();
+    client.clear();
+    show(secondApi, '0', undefined, client);
+    await screen.findByRole('button', { name: 'Request access' });
+    await act(async () => { finishRequest(); });
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Request access' })).toBeTruthy();
+    expect(client.getQueryData(['conversation-access-preview', 'another-requester', PARENT, '0']))
+      .toMatchObject({ requestPending: false, requestEmailed: false });
+    expect(secondApi.requestConversationAccess).not.toHaveBeenCalled();
+  });
+
+  it('keeps a previous conversation send failure out of the new conversation', async () => {
+    let failRequest!: (error: Error) => void;
+    const api = fakeApi(preview(), () => new Promise<void>((_resolve, reject) => { failRequest = reject; }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const target = (substreamId: string) => (
+      <QueryClientProvider client={client}>
+        <ConversationAccessRequest api={api} fallback={<p>Loading</p>} onRetry={() => undefined} parentId={PARENT} substreamId={substreamId} />
+      </QueryClientProvider>
+    );
+    const view = render(target('0'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Request access' }));
+    await vi.waitFor(() => expect(api.requestConversationAccess).toHaveBeenCalledWith(PARENT, '0'), { timeout: 2_000 });
+    view.rerender(target(BREAKOUT));
+    await screen.findByRole('button', { name: 'Request access' });
+    await act(async () => { failRequest(new Error('Email unavailable')); });
+    expect(screen.queryByText('The request couldn’t be sent. Try again.')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Request access' }).hasAttribute('disabled')).toBe(false);
   });
 
   it('asks about the Breakout the link names', async () => {

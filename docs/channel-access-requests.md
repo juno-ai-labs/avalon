@@ -66,6 +66,10 @@ The person who asked gets an email when the request is approved or declined.
    their decoders are strict. Reopening refreshes the stored state, while a
    successful send cancels older preview reads before updating the submitted
    conversation's waiting state, even if the requester has navigated elsewhere.
+   A failed send refreshes the preview too: the request may already be stored
+   even though its email failed, so the screen offers the resend action at once.
+   Preview keys and submission variables include the requester identity, so
+   switching accounts cannot let an old send overwrite the new person's state.
 3. **The request.** The approver is the conversation's creator, who must be an
    active member and not the requester. The Organization object records the
    request, or returns the one already pending for this person and
@@ -215,6 +219,8 @@ and web show **Access requested — awaiting approval** for a pending request,
 retain **Retry sending request** if email delivery failed, and discard older
 preview reads when a send succeeds. Completion updates are bound to the submitted
 conversation so navigating during a request cannot mark another one as pending.
+Failed sends reconcile the stored state immediately rather than waiting for reopen.
+Cache and mutation state are scoped to the requester as well as the conversation.
 
 **Why:** The screen remembered only the current component's successful click.
 Reopening showed **Request access** even though the Organization still held a
