@@ -8,7 +8,7 @@ import { __integrationTesting } from "../src/services/integrations";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { testSubstreamAgentsBinding, testWorkstreamObjectStore } from "./helpers/durable-authority";
 import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-object-rpcs";
-import { sqliteD1 } from "./helpers/sqlite-d1";
+import { sqliteD1, migratedSqliteDatabase } from "./helpers/sqlite-d1";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000101");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-4000-8000-000000000102");
@@ -16,14 +16,10 @@ const HARNESS_RUN_ID = asHarnessRunId("00000000-0000-4000-8000-000000000103");
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000104");
 
 /**
- * The narrow slice of workspace-authority tables this catalog's tools reach:
- * `connector_connections` and `resources` (routed to WorkspaceDO storage in
- * production, per `WORKSPACE_LOCAL_TABLES`) alongside the regional-only
- * `users`/`workspace_members`. One hand-rolled database stands in for both
- * authorities here — it is bound as `env.DB` directly for the drafting tools'
- * own regional reads, and again through `WORKSPACE_DOS.executeRuntimeSql` for
- * `ResourceService`'s workspace-routed ones — so a row seeded once is visible
- * on whichever path a tool takes to it.
+ * Existing catalog inputs, staged before being copied into WorkspaceDO's real
+ * schema. These projection tests do not prove routing. Consent uses the real
+ * WorkspaceDO and a separate migrated regional database in `env`; the assembled
+ * credential/routing case lives in connector-resource-access.test.ts.
  */
 function localDatabase(): DatabaseSync {
   const database = new DatabaseSync(":memory:");
@@ -89,10 +85,25 @@ function localDatabase(): DatabaseSync {
 
 const authorizationDatabases: DatabaseSync[] = [];
 
-function env(localDb: DatabaseSync): Env {
-  const workspace = createTestWorkspaceDO({ workspaceId: WORKSPACE_ID, regionalDatabase: localDb, register: (db) => authorizationDatabases.push(db) });
+async function env(localDb: DatabaseSync): Promise<Env> {
+  // Discovery fixtures remain provider/catalog input. Delegation uses the
+  // actual regional migrations and WorkspaceDO, rather than a canned grant.
+  const regional = migratedSqliteDatabase();
+  authorizationDatabases.push(regional);
+  const workspace = createTestWorkspaceDO({ workspaceId: WORKSPACE_ID, regionalDatabase: regional, register: (db) => authorizationDatabases.push(db) });
   localDb.exec(`CREATE TABLE IF NOT EXISTS workspace_members(workspace_id TEXT, user_id TEXT, status TEXT)`);
   localDb.prepare("INSERT OR IGNORE INTO workspace_members(workspace_id, user_id, status) VALUES (?, ?, 'active')").run(WORKSPACE_ID, USER_ID);
+  const membership = localDb.prepare("SELECT role,status,access_class FROM workspace_members WHERE workspace_id=? AND user_id=?")
+    .get(WORKSPACE_ID, USER_ID) as { role: string; status: string; access_class: string } | undefined;
+  const active = membership?.status !== "suspended";
+  await workspace.instance.applyMemberStatus({ workspaceId: WORKSPACE_ID, sequence: 1, removed: false, relationship: {
+    workspaceId: WORKSPACE_ID, userId: USER_ID, accessClass: "member", role: "owner", status: active ? "active" : "suspended",
+    incarnation: "catalog-member", revision: 1,
+  } });
+  await workspace.instance.sidekickCreate({ workspaceId: WORKSPACE_ID, automationId: WORKSTREAM_ID, authorUserId: USER_ID,
+    scope: "workspace", owningWorkstreamId: null, authorityGeneration: 1,
+    ...(active ? { creatorConsent: { requestId: crypto.randomUUID() } } : {}),
+  });
   for (const table of ['connector_connections', 'resources', 'notes']) {
     for (const row of localDb.prepare(`SELECT * FROM ${table}`).all()) {
       if (table === 'connector_connections') {
@@ -107,7 +118,7 @@ function env(localDb: DatabaseSync): Env {
   return createTestEnv({
     DB: sqliteD1(localDb),
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(testWorkstreamObjectStore()),
-    WORKSPACE_DOS: testSubstreamAgentsBinding(localDb, { extra: workspaceObjectRpcs(workspace.instance, []) }),
+    WORKSPACE_DOS: testSubstreamAgentsBinding(localDb, { extra: workspaceObjectRpcs(workspace.instance, ["sidekickReadExecutionDelegation"]) }),
     AVALON_REGION: "global",
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
   });
@@ -134,7 +145,7 @@ async function automationCreatorTool(
   input: WorkstreamWorkflowInput,
   name: string,
 ): Promise<Awaited<ReturnType<typeof __integrationTesting.loadHarnessTools>>["tools"][number]> {
-  const selected = await __integrationTesting.loadHarnessTools(env(localDb), input);
+  const selected = await __integrationTesting.loadHarnessTools(await env(localDb), input);
   const plugin = selected.plugins.find((candidate) => candidate.canonicalId === "rally:sidekicks");
   if (!plugin) throw new Error("automations_plugin_missing");
   const tool = plugin.tools.find((candidate) => candidate.definition.name === name);
@@ -440,7 +451,7 @@ describe("automation-creator plugin catalog", () => {
         id!, WORKSPACE_ID, connectionId, type!, id!, "2026-08-01T00:00:00.000Z", "2026-08-01T00:00:00.000Z",
       );
     }
-    const runtimeEnv = createTestEnv({ ...env(localDb),
+    const runtimeEnv = createTestEnv({ ...await env(localDb),
       GOOGLE_CONNECTOR_OAUTH_CLIENT_ID: "google-client", GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET: "google-secret",
     });
     const selected = await __integrationTesting.loadHarnessTools(runtimeEnv, workflowInput());

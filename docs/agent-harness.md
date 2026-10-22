@@ -165,6 +165,9 @@ The host resolves stored-loadable Sidekicks against execution and conversation a
 | `apps/api/src/runtime/harness-run-runtime.ts` | The host side: admission, the lease, run scope, receipts, terminal state. |
 | `apps/api/src/durable-objects/substream-agent.ts` | The post-cutover full-loop host, durable dispatcher, keep-alive, stream feed, steering, and child-local timers. |
 | `apps/api/src/services/integrations.ts` | Context assembly and `loadRunPromptContext`. |
+| `apps/api/src/services/sidekick-operation-accounts.ts` | Per-operation delegate selection, explicit account constraints, safe fallback and serving-account attribution. |
+| `packages/agent-harness/src/prompts/sidekick-accounts.ts` | Pure account-selection guidance with account names and IDs quoted as data. |
+| `apps/api/src/durable-objects/tool-execution-account.ts` | Private account checkpoints and completed-result resource bindings in the existing receipt ledger. |
 | `packages/contracts` — `readStructuredFailure` | The shape a tool's machine-readable failure half is read through. |
 
 ### Completion verification before stopping
@@ -630,9 +633,52 @@ pricing or usage is logged and produces no image charge rather than hiding the
 plugin or refusing the call. [`agent-tools.md`](agent-tools.md#multimodal-generation-tool-contract-registry)
 owns the exact schemas and resource result.
 
-Loading never widens the frozen scope. At run start and before each model call, Rally verifies run authority. Each connector tool call and built-in write checks again before receipt replay or execution; built-in reads use the preceding model-call decision. Connector calls also check live identity, scope, owner, grants, capability, and disablement. Revocation drops a plugin on a new activation or denies its next tool call. A stored `needs_reconnect` does not: it is a belief about a past moment, and a call it would have withheld now reaches the provider and fails on the provider's answer. Workspace calls use the workspace principal while preserving the initiating user in audit data; personal calls remain owner-only.
+Loading never widens the frozen scope. At run start and before each model call, Rally verifies run authority. Each connector tool call and built-in write checks again before receipt replay or execution; built-in reads use the preceding model-call decision. Connector calls also check live identity, scope, owner, grants, capability, and disablement. Revocation drops a plugin on a new activation or denies its next tool call. A stored `needs_reconnect` does not: it is a belief about a past moment, and a call it would have withheld now reaches the provider and fails on the provider's answer. Workspace calls use the workspace principal while preserving the initiating user in audit data; personal calls execute as the connection owner. A Sidekick may select an
+eligible consenting owner independently of its fixed coordinator; ordinary
+conversations remain limited to their own personal connections.
 
-Revalidation also says why it is asking, because the two occasions need different work. An **activation** — a `load_plugin`, a restored hint, the initial preload — happens a handful of times per run and is checked all the way to the provider. A **continuation** runs before every inference and keeps the activated tool surface visible without reading the connection row again. The model boundary makes one fresh run-authority decision. Each connector tool call checks live run authority and the connection row before receipt replay or execution, then carries that decision through credential preparation and the provider effect without a second live check. A revoked connection can therefore remain model-visible until the model tries to use it, and a revocation during an already authorized tool call may let that call finish. The next call checks again. Provider credential refusal still surfaces on tool use.
+Revalidation also says why it is asking, because the two occasions need different work. An **activation** — a `load_plugin`, a restored hint, the initial preload — happens a handful of times per run and is checked all the way to the provider. A **continuation** runs before every inference and keeps the activated tool surface visible without reading the connection row again. The model boundary makes one fresh run-authority decision. Ordinary connector calls check live run authority and the connection row before receipt replay or execution. Sidekick calls refresh delegation first, then check the actual selected connection before a new provider operation; retained completed results remain historical receipt facts. The execution carries its decision through credential preparation and the provider effect without another live check. A revoked connection can therefore remain model-visible until the model tries to use it, and a revocation during an already authorized tool call may let that call finish. The next call checks again. Provider credential refusal still surfaces on tool use.
+
+### Sidekick operation accounts
+
+A Sidekick inventory includes its eligible delegates' connections. Its coordinator
+continues to own the run, conversation and personal run preferences; selecting a
+provider account does not replace that identity or grant human access. The tool
+boundary refreshes delegation through WorkspaceDO's ordinary authorization view,
+then checks the actual serving connection and capability before credentials are
+prepared. No healthy operation adds a provider access probe or revocation barrier.
+
+Google declares which operations address portable files and which carry
+account-scoped mail/calendar references. Compatible native tools expose optional
+`rallyAccount: { userId?, connectionId? }`, removed before provider argument
+validation. An unused selector may be null; a selected user can leave its unused
+connection field null. The host strips those fields and enforces a nonempty
+explicit selector. It restricts the eligible set, rather than granting authority.
+Known files prefer a prior successful account, configured sources, the creator,
+and remaining delegates in stable grant order. Only adapter-marked pre-effect
+resource refusals permit fallback. Unqualified account-relative operations use
+the preserved task account, even when another person coordinates the run. An
+empty search, transient failure, cancellation or ambiguous write never changes
+account. A named person does not fall through to a workspace bot.
+
+The existing receipt checkpoint log records `execution_account` selections
+before dispatch, definite refusals, and the account that served the result.
+It retains both first selection and actual principal, connection and consent
+generation. No credentials or cursors enter account attribution. An unresolved
+effect can select only its recorded account; a definite refusal is the sole
+transition that permits a different account. Only completed effects establish
+bindings for replies, provider-created IDs and writes planned from reads.
+Retained serving-account evidence prevents read-receipt rebinding. Ordinary
+lease and cancellation fences apply; a completion can record an effect already
+in flight after cancellation without licensing another dispatch.
+
+Success output identifies the serving account. Authored page continuations keep
+that account privately alongside their arguments and reauthorize it on
+redemption; model page IDs do not choose a new account. Adapters without an
+authored identity contract, including hosted MCP, retain their explicitly
+selected connection and report that limitation in plugin guidance. They do not
+inherit Google's cross-account replay contract. UI activity details and
+additional source-origin reconciliation remain tracked in the delegation plan.
 
 `composeBeforeToolCallHooks` runs policies in order, stops at the first denial,
 and carries the last supplied authorization context through to execution. A
@@ -1719,6 +1765,33 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-10-22 — Select Sidekick accounts per operation and retain their identity
+
+**What changed:** Eligible personal connections enter the Sidekick inventory;
+compatible operations select a serving account independently of the coordinator.
+Existing receipt checkpoints retain selections and definite refusals, actual
+serving identity and grant generation. Completed results bind dependent writes,
+provider references and private pagination. Google declares those identities;
+undeclared and hosted MCP surfaces keep one explicitly selected connection.
+
+**Why:** A Thread-owned Sidekick could have consent to read a sheet through a
+second person, but the connector executor still admitted only the coordinator's
+personal credentials. Blind account retry would change senders, reinterpret
+private IDs or repeat an uncertain write. Rebinding a retained read could also
+erase the evidence its later write relied on.
+
+**Considered and rejected:** Running the workflow once per delegate, mounting a
+credential pool, preflighting every resource, a separate account-selection
+ledger, and retrying every provider error. The existing receipt log supplies the
+needed durable boundary without extra credentials or a global authz sequencer.
+
+**Consequences:** New operations observe delegation through normal refreshes.
+Unresolved effects and dependent writes keep their originating account; restored
+access permits authorized reconciliation, not a repeat under another user.
+Adapter identity declarations remain code-owned and credentials remain prepared
+only for the account being used. The Sidekick UI and complete replay recovery
+are separate unfinished acceptance items in the PRD implementation plan.
 
 ### 2026-10-22 — Explain unsupported local browser requests through a skill
 

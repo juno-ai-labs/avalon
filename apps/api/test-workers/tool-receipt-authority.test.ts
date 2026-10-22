@@ -14,7 +14,7 @@ import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asSubstreamId, asWorkspaceId } from "@rally/contracts";
+import { asSubstreamId, asWorkspaceId, ToolExecutionAccountSchema } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import { withToolPagination } from "../src/services/tool-pagination";
 import { z } from "zod";
@@ -129,6 +129,114 @@ function admission(effectIntentId: string, toolCallId: string, runId = RUN): Rec
 }
 
 describe("tool-receipt authority on real workerd", () => {
+  const account = (other = false) => ToolExecutionAccountSchema.parse({
+    sidekickId: "00000000-0000-7000-8000-00000000ac01",
+    connectionId: other ? "00000000-0000-7000-8000-00000000ac03" : "00000000-0000-7000-8000-00000000ac02",
+    delegatedUserId: other ? "00000000-0000-7000-8000-00000000ac05" : "00000000-0000-7000-8000-00000000ac04",
+    principal: { type: "user", userId: other ? "00000000-0000-7000-8000-00000000ac05" : "00000000-0000-7000-8000-00000000ac04" },
+    grantGeneration: other ? 9 : 7,
+  });
+  const accountRequest = (other = false, phase: "selected" | "refused" | "served" = "selected") => ({
+    effectIntentId: "account-effect", fence: { runId: RUN, attemptId: ATTEMPT, owner: OWNER },
+    account: account(other), resourceKeys: ["google:file:calendar-sheet"], phase, now: Date.now(),
+  });
+
+  it("keeps an execution account across eviction and only switches after a definite refusal", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => { seedWorkstreamRoot(state); seedLiveRun(state); });
+    await receipt(stub, "admit", admission("account-effect", "account-call"));
+    expect(await receipt(stub, "recordExecutionAccount", accountRequest())).toMatchObject({ status: 200, value: { phase: "selected" } });
+    await evictDurableObject(stub);
+    expect(await receipt(stub, "executionAccount", { runId: RUN, effectIntentId: "account-effect" }))
+      .toMatchObject({ value: { account: { connectionId: "00000000-0000-7000-8000-00000000ac02", grantGeneration: 7 } } });
+    await expect(receipt(stub, "recordExecutionAccount", accountRequest())).rejects.toThrow("tool_execution_account_ownership_lost");
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec("UPDATE runs SET lease_owner=?,lease_expires_at=? WHERE run_id=?", OWNER, Date.now()+600_000, RUN);
+    });
+    await expect(receipt(stub, "recordExecutionAccount", accountRequest(true)))
+      .rejects.toThrow("tool_execution_account_change_refused");
+    await receipt(stub, "recordExecutionAccount", accountRequest(false, "refused"));
+    expect(await receipt(stub, "recordExecutionAccount", accountRequest(true))).toMatchObject({ value: {
+      account: { connectionId: "00000000-0000-7000-8000-00000000ac03", grantGeneration: 9 },
+      originalAccount: { connectionId: "00000000-0000-7000-8000-00000000ac02", grantGeneration: 7 },
+    } });
+    await expect(receipt(stub, "recordExecutionAccount", accountRequest()))
+      .rejects.toThrow("tool_execution_account_change_refused");
+  });
+
+  it("establishes dependent resource execution accounts only from completed effects", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => { seedWorkstreamRoot(state); seedLiveRun(state); });
+    await receipt(stub, "admit", admission("account-effect", "account-call"));
+    await receipt(stub, "recordExecutionAccount", accountRequest());
+    await receipt(stub, "recordExecutionAccount", accountRequest(false, "served"));
+    const query = { runId: RUN, resourceKeys: ["google:file:calendar-sheet"] };
+    expect(await receipt(stub, "resourceExecutionAccounts", query)).toMatchObject({ value: [] });
+    await receipt(stub, "complete", {
+      effectIntentId: "account-effect", checkpointIndex: 3, outputRef: "result", outputSummary: "Read sheet",
+      providerOperationId: null, payloadJson: "{}", allowAmbiguousReconciliation: false,
+      fence: { runId: RUN, attemptId: ATTEMPT, owner: OWNER }, now: Date.now(),
+    });
+    expect(await receipt(stub, "resourceExecutionAccounts", query)).toMatchObject({ value: [{
+      phase: "served", account: { delegatedUserId: "00000000-0000-7000-8000-00000000ac04" },
+    }] });
+    expect(await receipt(stub, "admit", { ...admission("account-effect", "account-call"), requestHash: "changed-input" }))
+      .toMatchObject({ value: { state: "ambiguous_external_write" } });
+    expect(await receipt(stub, "resourceExecutionAccounts", query)).toMatchObject({ value: [{
+      account: { connectionId: "00000000-0000-7000-8000-00000000ac02" },
+    }] });
+    expect(await receipt(stub, "resourceExecutionAccounts", { ...query, runId: "another-run" })).toMatchObject({ value: [] });
+    expect(await receipt(stub, "resourceExecutionAccounts", { ...query, resourceKeys: ["google:file:another-sheet"] })).toMatchObject({ value: [] });
+  });
+
+  it("refuses execution account changes after cancellation or an uncertain provider effect", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => { seedWorkstreamRoot(state); seedLiveRun(state); });
+    await receipt(stub, "admit", admission("account-effect", "account-call"));
+    await receipt(stub, "recordExecutionAccount", accountRequest());
+    await receipt(stub, "recordExecutionAccount", accountRequest(false, "refused"));
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec("UPDATE tool_effects SET status='ambiguous' WHERE effect_intent_id='account-effect'");
+    });
+    await expect(receipt(stub, "recordExecutionAccount", accountRequest(true)))
+      .rejects.toThrow("tool_execution_account_change_refused");
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec("UPDATE runs SET cancellation_requested_at=? WHERE run_id=?", Date.now(), RUN);
+    });
+    await expect(receipt(stub, "recordExecutionAccount", accountRequest()))
+      .rejects.toThrow("tool_execution_account_ownership_lost");
+  });
+
+  it("rolls back an execution account when its receipt checkpoint cannot advance", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => { seedWorkstreamRoot(state); seedLiveRun(state); });
+    await receipt(stub, "admit", admission("account-effect", "account-call"));
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(`CREATE TRIGGER reject_account_checkpoint BEFORE UPDATE OF checkpoint_index ON tool_effects
+        BEGIN SELECT RAISE(ABORT,'account_checkpoint_test_fault'); END`);
+    });
+    await expect(receipt(stub, "recordExecutionAccount", accountRequest())).rejects.toThrow("account_checkpoint_test_fault");
+    expect(await receipt(stub, "executionAccount", { runId: RUN, effectIntentId: "account-effect" })).toMatchObject({ value: null });
+  });
+
+  it("names the rejected execution account field without recording a mismatched principal", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => { seedWorkstreamRoot(state); seedLiveRun(state); });
+    await receipt(stub, "admit", admission("account-effect", "account-call"));
+    const request = accountRequest();
+    const rejected = receipt(stub, "recordExecutionAccount", { ...request,
+      account: { ...request.account, principal: account(true).principal },
+    });
+    await expect(rejected).rejects.toThrow("account.delegatedUserId");
+    await expect(rejected).rejects.not.toThrow("00000000-0000-7000-8000-00000000ac05");
+    expect(await receipt(stub, "executionAccount", { runId: RUN, effectIntentId: "account-effect" })).toMatchObject({ value: null });
+  });
+
   it("cleans only known open Canva transactions and preserves uncertain commits across eviction", async () => {
     const stub = agent();
     await boot(stub);
@@ -188,12 +296,14 @@ describe("tool-receipt authority on real workerd", () => {
     const context = (id: string): HarnessToolContext => ({ workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID,
       harnessRunId: RUN, toolCallId: id, effectIntentId: id, executionPrincipal: principal, signal: new AbortController().signal });
     const received: unknown[] = [];
+    const receivedAccounts: unknown[] = [];
     const [first, next] = withToolPagination({
       definition: { name: "search", description: "Search", capability: "test.read", mode: "read", idempotency: "safe",
         pagination: { cursorParameter: "cursor" }, inputSchema: { type: "object", properties: { query: { type: "string" }, cursor: { type: "string" } }, required: ["query"] } },
-      execute: async (args) => {
+      execute: async (args, toolContext) => {
         received.push(args);
-        return { output: { items: ["item"] }, summary: "page", pagination: { continuations: [{
+        receivedAccounts.push(toolContext.executionAccount?.connectionId ?? null);
+        return { executionAccount: account(true), output: { items: ["item"] }, summary: "page", pagination: { continuations: [{
           operation: "search", slot: "nextPageId", input: { query: "needle", cursor: z.object({ cursor: z.string().optional() }).parse(args).cursor ? "opaque-second" : "opaque+/=cursor" },
         }] } };
       },
@@ -233,6 +343,7 @@ describe("tool-receipt authority on real workerd", () => {
       connectionId: "connection-1", principalJson: JSON.stringify(principal), fence, pageId })).rejects.toThrow("page_id_invalid");
     const secondOutput = await next!.execute({ pageId }, context("second"));
     expect(received).toEqual([{ query: "needle" }, { query: "needle", cursor: "opaque+/=cursor" }]);
+    expect(receivedAccounts).toEqual([null, "00000000-0000-7000-8000-00000000ac03"]);
     // An uncertain delivery resumes the same receipt; it does not create a
     // second consumer. The wrapper issues the same outgoing alias on replay.
     await next!.execute({ pageId }, context("second"));
@@ -254,10 +365,10 @@ describe("tool-receipt authority on real workerd", () => {
     const retry = winner === "third" ? "fourth" : "third";
     // A -> B -> A stops without discarding already-fetched provider content.
     expect((await receipt(stub, "issuePage", { ...claim, effectIntentId: winner, prefix: "google_2", slot: "nextPageId",
-      inputJson: JSON.stringify({ query: "needle", cursor: "opaque+/=cursor" }) })).value).toBeNull();
+      inputJson: JSON.stringify({ __rallyPage: { input: { query: "needle", cursor: "opaque+/=cursor" }, executionAccount: account(true) } }) })).value).toBeNull();
     await receipt(stub, "fail", { effectIntentId: winner, status: "failed", phase: "execute", errorJson: '{"code":"temporary"}', payloadJson: "{}", fence, now: Date.now() });
     expect((await receipt(stub, "claimPage", { ...claim, effectIntentId: retry })).value)
-      .toEqual({ inputJson: JSON.stringify({ query: "needle", cursor: "opaque-second" }) });
+      .toEqual({ inputJson: JSON.stringify({ __rallyPage: { input: { query: "needle", cursor: "opaque-second" }, executionAccount: account(true) } }) });
     const stopped = await next!.execute({ pageId: secondPageId }, context(retry));
     expect(stopped.output).toMatchObject({ items: ["item"], nextPageId: null, paginationWarning: expect.stringContaining("Do not claim the full result set") });
     await runInDurableObject(stub, (_instance, state) => {
@@ -686,6 +797,7 @@ describe("tool-receipt authority on real workerd", () => {
       // Read by the attachment-dependency operations, which refuse a receipt
       // whose settled ref is not this one.
       expectedOutputRef: "probe-ref",
+      resourceKeys: [],
       fence: { runId: RUN, attemptId: ATTEMPT, owner: OWNER },
       now: Date.now(),
     };
@@ -697,9 +809,11 @@ describe("tool-receipt authority on real workerd", () => {
     await receipt(stub, "admit", { ...everyField, ...admission("dispatch-probe", "dispatch-probe") });
 
     for (const operation of methods) {
-      // Pagination has an explicit refusal protocol (unknown page, lost
-      // executing receipt); the dedicated test above drives its success path.
-      if (operation === "issuePage" || operation === "claimPage") continue;
+      // Pagination and execution accounts have strict request schemas and
+      // refusal protocols. Their dedicated tests above drive actual dispatch
+      // with the exact request, rather than this intentionally overfull probe.
+      if (operation === "issuePage" || operation === "claimPage"
+        || operation === "executionAccount" || operation === "resourceExecutionAccounts" || operation === "recordExecutionAccount") continue;
       const answer = await receipt(stub, operation, everyField);
       expect(answer.error ?? "", `operation ${operation}`)
         .not.toBe("invalid_tool_receipt_operation");

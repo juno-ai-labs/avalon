@@ -1,4 +1,5 @@
 import type { RallyCheckpointPort } from "./evaluation";
+export { renderSidekickAccountGuidance } from "./prompts/sidekick-accounts";
 import type { ToolPaginationResult } from "@rally/contracts/tool-pagination";
 export { runRallyEvaluation, parseRallyCheckpoint, type RallyCheckpoint, type RallyCheckpointPort } from "./evaluation";
 import type {
@@ -9,6 +10,7 @@ import type {
   ExecutionPrincipal,
   HarnessFailureCode,
   StructuredFailureDetail,
+  ToolExecutionAccount,
   ToolDefinition
 } from "@rally/contracts";
 import { normalizedPluginSearchText } from "./prompts/plugin-catalog";
@@ -3351,6 +3353,8 @@ function parseJsonObject(value: unknown): Record<string, unknown> {
 }
 
 export interface HarnessToolContext {
+  /** Host-only account pinned by an issued continuation, never model input. */
+  executionAccount?: ToolExecutionAccount;
   workspaceId: string;
   workstreamId: string;
   harnessRunId: string;
@@ -3419,6 +3423,8 @@ export interface HarnessToolReconcileContext extends HarnessToolContext {
 }
 
 export interface HarnessToolResult {
+  /** Actual serving identity, carried privately into issued continuations. */
+  executionAccount?: ToolExecutionAccount;
   pagination?: ToolPaginationResult;
   output: unknown;
   summary: string;

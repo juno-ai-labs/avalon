@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ToolExecutionAccountSchema } from "@rally/contracts";
 import { validateToolArguments } from "@rally/agent-harness";
 import { stableWireToolName } from "./connector-tool-inventory";
 import { ObjectPortError } from "../runtime/object-port";
@@ -143,7 +144,9 @@ export function withToolPagination(tool: PaginatedHarnessTool, host: PaginationH
         ...identity(context), operation: target, prefix: host.prefix,
         slot: continuation.citationIndex !== undefined ? `citation:${continuation.citationIndex}`
           : continuation.passageIndex === undefined ? continuation.slot : `passage:${continuation.passageIndex}`,
-        inputJson: JSON.stringify(continuation.input),
+        inputJson: JSON.stringify(result.executionAccount ? {
+          __rallyPage: { input: continuation.input, executionAccount: result.executionAccount },
+        } : continuation.input),
       });
       if (pageId === null) {
         publicOutput.paginationWarning = "The provider repeated a continuation. This page was returned, but pagination stopped to avoid repeating pages. Do not claim the full result set was read.";
@@ -176,6 +179,12 @@ export function withToolPagination(tool: PaginatedHarnessTool, host: PaginationH
     },
   };
   if (nextName === undefined) return [first];
+  const resume = (inputJson: string, context: HarnessToolContext) => {
+    const saved = JSON.parse(inputJson) as Record<string, unknown>;
+    if (!saved.__rallyPage) return execute(saved, context);
+    const page = z.object({ input: z.unknown(), executionAccount: ToolExecutionAccountSchema }).parse(saved.__rallyPage);
+    return execute(page.input, { ...context, executionAccount: page.executionAccount });
+  };
   const nextInput = pageInput(host.prefix, wirePrefix, operation);
   const next: HarnessTool = {
     definition: { ...tool.definition, name: nextName,
@@ -186,7 +195,7 @@ export function withToolPagination(tool: PaginatedHarnessTool, host: PaginationH
     execute: async (raw, context) => {
       const { pageId } = nextInput.parse(raw);
       const saved = await claim(pageId, context);
-      return execute(JSON.parse(saved.inputJson), context);
+      return resume(saved.inputJson, context);
     },
   };
   if (previousName === undefined) return [first, next];
@@ -201,7 +210,7 @@ export function withToolPagination(tool: PaginatedHarnessTool, host: PaginationH
     execute: async (raw, context) => {
       const { pageId } = previousInput.parse(raw);
       const saved = await claim(pageId, context, "read_resource_previous");
-      return execute(JSON.parse(saved.inputJson), context);
+      return resume(saved.inputJson, context);
     },
   }];
 }
