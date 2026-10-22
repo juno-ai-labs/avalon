@@ -3731,6 +3731,26 @@ export const ExecutionPrincipalSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("workspace"), workspaceId: WorkspaceIdSchema })
 ]);
 
+/** Host receipt attribution. Contains no credentials or provider cursors. */
+export const ToolExecutionAccountSchema = z.strictObject({
+  sidekickId: IdSchema,
+  connectionId: IdSchema,
+  principal: ExecutionPrincipalSchema,
+  delegatedUserId: UserIdSchema,
+  grantGeneration: z.number().int().nonnegative(),
+}).refine((account) => account.principal.type !== "user" || account.principal.userId === account.delegatedUserId, {
+  path: ["delegatedUserId"], message: "A personal operation's delegate must match its serving principal",
+});
+export type ToolExecutionAccount = z.infer<typeof ToolExecutionAccountSchema>;
+
+export const ToolExecutionAccountRecordSchema = z.strictObject({
+  phase: z.enum(["selected", "refused", "served"]),
+  account: ToolExecutionAccountSchema,
+  originalAccount: ToolExecutionAccountSchema,
+  resourceKeys: z.array(z.string().min(1)),
+});
+export type ToolExecutionAccountRecord = z.infer<typeof ToolExecutionAccountRecordSchema>;
+
 export const SlackOriginAttachmentSchema = z.strictObject({
   id: z.string().min(1).max(255).nullable(),
   name: z.string().min(1).max(500),

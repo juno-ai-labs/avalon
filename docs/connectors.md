@@ -1656,13 +1656,29 @@ identity to the canonical resource transaction. `check_resource_access` omits
 this internal registration metadata from its existing access-only result. See [Sidekick resource binding](automation-lifecycle.md) for setup
 and receipt replay.
 
+### Authored operation identities
+
+An adapter may declare `operationIdentity` and `operationResultKeys`. These are
+host-owned code, never fields accepted from remote MCP inventories. Google
+marks globally addressed Drive/Docs/Sheets files as portable, while Gmail and
+Calendar queries, references and created IDs retain account semantics. A new
+unqualified search starts in the Sidekick's task account; returned mail/query,
+draft and calendar references bind follow-up operations to their serving account.
+The host uses the existing pre-effect resource-access refusal contract for
+fallback and never interprets empty results, transient failures or uncertain
+writes as permission to try another account. Undeclared and hosted MCP tools
+retain their explicitly selected connection. [Agent harness](agent-harness.md)
+owns selection and durable account receipts.
+
 ## Changelog
 
 ### 2026-10-22 — Admit Sidekick events through explicit delegation
 
 **What changed:** Matching and delivery accept a personal event for any Sidekick
 scope through the eligible source owner's consent. Restricted workspace events
-require an eligible delegate inside their actual audience.
+require an eligible delegate inside their actual audience. Authored Google
+operation identities permit known-file fallback across consenting owners;
+account-relative work and provider-created IDs retain their original account.
 
 **Why:** The ownership-scope shortcut discarded a Thread-owned Sidekick's
 authorized Sheet changes while an hourly read could proceed.
