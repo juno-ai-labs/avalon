@@ -72,7 +72,8 @@ consent. Ownership, human visibility, and authority to act need distinct rules.
 6. Every external effect and authorization-sensitive read identifies the actual
    acting user and connection; retries retain that identity when required.
 7. Revocation prevents future operations under the withdrawn authority without
-   undoing completed work or reactivating old grants.
+   undoing completed work or reactivating old grants, subject to normal authz
+   propagation and in-flight operation semantics.
 
 ## Non-goals
 
@@ -105,6 +106,10 @@ opening, saving, resuming, or migrating the Sidekick does not silently add them
 again. Becoming a delegate does not start a run, publish a draft, or connect an
 account.
 
+The creation surface shows the same delegation and shared-history explanation
+as self-service opt-in; creation itself records consent without an extra
+confirmation step.
+
 The grant applies to the Sidekick's configured work across its normal definition
 revisions. Existing Sidekick managers can change that work. This standing scope,
 including configured result sharing and existing Sidekick history visibility,
@@ -119,6 +124,12 @@ Sidekick to act as me**. A person needs access to the Sidekick, not permission
 to edit its definition, to grant their own authority. An existing delegate can
 withdraw their own grant even if they have since lost access to the Sidekick.
 This withdrawal path reveals only their own grant and safe Sidekick identity.
+It is available in **Settings → Account → Sidekick delegation**, which lists
+only the signed-in person's grants, including unavailable Sidekicks. Use the
+name recorded when they granted access, or **Unavailable Sidekick** when that
+label cannot safely be retained. This account-level surface needs no current
+Sidekick viewer or Organization membership grant. It permits withdrawal and
+own-grant reconciliation, never enrollment or reading another person's grant.
 
 The list is visible to existing authorized Sidekick viewers. It exposes no
 account inventory, tokens, or private provider errors. Other users have no
@@ -156,8 +167,13 @@ ID to substitute someone else.
 “Add Maya” from Adam does not enroll Maya. Rally explains that Maya must opt in
 herself. A direct authenticated request from Maya can enroll Maya. Quoted text,
 connector payloads, scheduled runs, delegated background agents, and a manager's
-assertion that Maya agreed are not consent evidence. The host binds a grant
-mutation to an explicit consent action from the current user turn. The complete
+assertion that Maya agreed are not consent evidence. The host binds the actor
+and request provenance to the authenticated user turn; the model interprets
+whether that person asked to allow or withdraw delegation. This is an ordinary
+authorized agent write, not a host proof of the meaning of natural language.
+A mistaken or prompt-injected interpretation can change the current speaker's
+grant; it cannot select another consenting person. Guidance and evaluations
+address that residual risk without adding a confirmation flow. The complete
 tool contract is in [design.md](design.md#agent-tools).
 
 ### One execution policy for every trigger
@@ -181,7 +197,7 @@ prevents execution through its existing lifecycle rules.
 | Workspace connector event | Apply the event's real audience restriction. At least one eligible delegate must be allowed to receive it; prefer the saved source binding when usable. |
 | Schedule | Admit once per scheduled occurrence. Prefer saved source bindings, then the creator when eligible. |
 | Manual | Admit once under existing request permissions. The requester is preferred only if they are already an eligible delegate; pressing Run does not opt them in. |
-| Continuation | Retain operation identities and receipts; re-evaluate live delegation before new operations. |
+| Continuation | Retain operation identities and receipts; use the normal delegation authz refresh path for new operations. |
 
 Registration, event matching, delivery admission, and harness execution all use
 this policy. Ownership category alone never discards an otherwise eligible
@@ -240,19 +256,21 @@ does not silently select another sender.
 
 ### Revocation, results, and visibility
 
-Grant changes are checked at existing model/tool authority boundaries, including
-before receipt replay. A grant added after admission becomes a candidate only
-at the next authoritative refresh, never halfway through an operation. An
-operation already authorized may finish; the next operation cannot use a
-withdrawn grant. Work can continue with other delegates where fallback is
-valid. Otherwise the run reports the specific blocked operation. In-flight
+Use existing authorization snapshots, invalidations and model/tool refresh
+boundaries; eventual consistency is acceptable. Grants added or withdrawn
+become effective as those views refresh. An in-flight operation or a run using
+a not-yet-refreshed authorization snapshot may still act; this feature adds
+no synchronous cross-object revocation barrier or per-call provider preflight.
+After withdrawal is observed, new operations cannot select that grant. Work
+can continue with other delegates where fallback is valid; otherwise the run
+reports the specific blocked operation. In-flight
 writes with uncertain outcomes retain their original account for authorized
 reconciliation and never move to another identity to repeat the effect.
 
 Run and tool details show the coordinating user and the actual user/connection
 that served each operation, including fallback. Background children inherit
-the same Sidekick delegation boundary and cannot keep authority after its
-withdrawal. Previously read content and completed publications are not erased
+the same Sidekick delegation boundary and observe withdrawals through the same
+authorization refresh path. Previously read content and completed publications are not erased
 by withdrawal. Sidekick memory and its existing shared Terminal sandbox remain
 Sidekick-scoped; switching account does not reset them or make earlier content
 private to the next delegate.
@@ -264,11 +282,24 @@ payload visibility and the authority to publish a result are separate decisions.
 
 ## Impact on the product contract
 
-This expands the current single-run-as model into explicit standing delegation
-to a Sidekick. It preserves typed authorized tools, existing Thread/Breakout
-access, and execution without individual tool approvals. A person's connection
-can now serve a shared Sidekick with their consent; simply joining its Thread
-still does not lend credentials. The implementation must update the durable
+This deliberately changes the existing privacy contract: restricted connector
+events currently cannot enter a non-personal Sidekick because its run history
+may be read by the owning Thread or Organization. Under this proposal, an
+eligible person's standing delegation authorizes the Sidekick's configured work,
+including retaining source-event and tool content in that existing shared
+history and publishing configured results. Other readers need not independently
+have provider access. The delegation screen must explain that history sharing
+alongside its short introductory copy before the person opts in.
+
+Organization ownership also stops implying workspace-only connections. Replace
+the authoring prompt's scope-specific connection rules with the common
+delegation policy; ownership continues to govern management and visibility.
+Selection of a coordinator never grants or revokes human access. Preserve all
+existing manager/reader entitlements independently of execution identity.
+
+The proposal preserves typed authorized tools, existing Thread/Breakout access,
+and execution without individual tool approvals. Simply joining a Thread still
+does not lend credentials. The implementation must update the durable
 Sidekick, connector, harness, conversation-tool, and security references together
 to explain selected operation identities and consent. The standing brief's
 typed-authorized-tools clause remains valid and needs no new product hierarchy.
@@ -289,8 +320,12 @@ None yet.
    cannot use independently authorized source and destination accounts. A union
    principal would lose attribution and invalidate account-dependent semantics.
 4. **Consent covers configured work and destinations.** Requiring every
-   destination reader to have provider access would contradict existing
-   publication behavior and would leave the hourly/event inconsistency intact.
+   destination reader to have provider access is a valid stricter alternative:
+   applying the current event restriction to schedules would make the paths
+   consistent too. It is rejected because the requested product is a shared
+   Sidekick carrying out work through consenting people's personal accounts.
+   Standing opt-in therefore includes the existing shared run history and
+   configured publication, rather than preserving the old event privacy gate.
 5. **Creation opt-in happens once.** Re-adding creators after withdrawal would
    make withdrawal ineffective. No tool-by-tool confirmation flow is introduced.
 
@@ -301,8 +336,12 @@ active/revoked state, grant source, consenting actor, request/turn provenance,
 timestamps, and a generation for revocation/regrant. Grant source distinguishes
 creation, self-service UI, agent request, and migration of established authority.
 The existing creator identity supplies the default preference; no separate
-default-user setting is stored. Existing `run_as_user_id` remains a compatibility
-field for the resolved coordinating identity, not the complete authority set.
+default-user setting is stored. Persist the chosen coordinator on each run,
+separately from any field that authorizes human readers or managers. Do not
+rewrite `automation_directory.run_as_user_id` during automatic resolution:
+today that field confers reader and manager rights. Preserve legacy rights in
+that field or explicit compatibility grants; candidate eligibility must consult
+independent current access, never access created by coordinator selection.
 
 Runs and tool receipts retain selected principal, connection, grant generation,
 and provider-operation identity. New active rows require a new consent action;
@@ -319,8 +358,11 @@ See [regionalization](../../regionalization.md).
 
 ## Security and trust model
 
-The host authorizes every selected delegate and connection; the model chooses
-task intent, not who consented. Grants cannot exceed provider capabilities,
+The host derives the consenting user and authorizes selected delegate/connection
+identities through the existing eventually consistent authz path. The model
+interprets a direct user's consent request; it cannot substitute the consenting
+user. This changes the old non-personal event privacy gate as stated in
+**Impact on the product contract**. Grants cannot exceed provider capabilities,
 current membership, source access or destination authorization. All Sidekick
 scopes use this same rule, including Organization-owned Sidekicks.
 
@@ -331,7 +373,8 @@ MCP tools do not gain generic cross-account replay: adapters must declare
 compatible resource identity, capabilities and safe failure semantics. Where
 that contract is unavailable, use the explicitly selected connection and report
 the limitation. Existing signed-in actions retain their session/impersonation
-audit rules and do not manufacture consent from model output.
+audit rules. Natural-language consent retains the ordinary risk of mistaken
+or prompt-injected agent writes; there is no separate semantic-proof service.
 
 ## Agent behavior
 
@@ -376,21 +419,25 @@ storage and compatibility reads before enabling delegation-aware execution;
 then expose the controls and replace both trigger paths together. Old queued
 messages remain decodable and receive current delegation checks at admission.
 
-Backfill each existing Sidekick's eligible creator once. Preserve a different
-existing run-as user only where an authenticated claim or equivalent existing
-consent record establishes their authority. Mere room participation, provider
-account discovery, or a mutable run-as value alone is not evidence. An
-unproven legacy identity is shown as requiring opt-in rather than silently
-enrolled. Backfill records its provenance and never overwrites a withdrawal.
+Backfill each existing Sidekick's eligible creator and current run-as user once,
+deduplicated if they are the same person. The current run-as value is established
+authority: production writes it on creation or an authenticated self-claim.
+Do not require a separate historical consent record that does not exist, or
+silently disable a claimed Sidekick on deploy. Preserve those users' existing
+reader and manager rights independently of future coordinator selection.
+Mere room participation or provider account discovery never enrolls anyone.
+Backfill records its provenance and never overwrites a withdrawal.
 Existing runs retain receipts and selected operation identities; deployment
 does not restart them or replay historical events automatically.
 
-Older clients retain the `runAsUserId` response field for the resolved
-coordinating identity. Their claim operation becomes authenticated self-opt-in;
+Older clients retain the `runAsUserId` response field's legacy meaning. New
+run details expose the coordinator separately. Their claim operation becomes
+authenticated self-opt-in while preserving the existing explicit management
+and reader entitlement of a successful authorized claim;
 it cannot replace the creator preference, remove other delegates or bypass the
 new authority. Rollback stops new
 delegation-aware admissions or restores a compatible single-identity executor
-that still checks live grants; it never restores an executor that ignores
+that still observes grants through normal authz propagation; it never restores an executor that ignores
 withdrawals. Preserve consent and receipt records.
 
 ## Acceptance
@@ -410,15 +457,18 @@ withdrawals. Preserve consent and receipt records.
    Google share or Organization audience.
 5. Fail the preferred account's known-resource access; the second consenting
    user serves the read. A non-delegate's working account is never tried.
-   Revoking a delegate during fallback prevents their next attempt.
+   Revoking a delegate prevents further selection once the existing authz view
+   has observed the withdrawal; an in-flight or stale-snapshot attempt may finish.
 6. An empty inbox search does not switch accounts. Pagination and reply IDs
    stay with their original account. A named sender is never substituted.
 7. A pre-effect access refusal permits eligible write fallback; an ambiguous
    write is reconciled with the original account and is never sent twice under
    another delegate. Cancellation does not advance the candidate list.
-8. Withdrawal, Organization removal/rejoin, and stale consent-request replay
-   cannot revive authority. Background children and completed-receipt replay
-   respect the same live authorization boundary.
+8. Withdrawal, Organization removal/rejoin, accepted-request replay and a delayed
+   first delivery of an old allow cannot revive authority. Authorization
+   snapshots may lag; after refresh, background children and receipt replay
+   respect withdrawal. Coordinator selection changes no manager/reader rights,
+   and migrated run-as users retain their established access.
 9. A run reads through one delegate and publishes through another permitted
    identity, with both accounts attributable. Existing destination access,
    shared Sidekick state, and human history visibility remain explicit.
