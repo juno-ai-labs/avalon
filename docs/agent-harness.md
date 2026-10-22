@@ -1766,6 +1766,8 @@ the classifier contract. The existing threshold, lifecycle gates and one-use
 recovery remain in force; prompt changes are checked with live model regressions,
 not a provider double that returns the expected label.
 
+Pull request: [#1422](https://github.com/juno-ai-labs/avalon/pull/1422).
+
 ### 2026-10-22 — Explain unsupported local browser requests through a skill
 
 **What changed:** Ordinary conversations can load `using-the-local-inapp-browser`
