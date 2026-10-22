@@ -43,6 +43,13 @@ a reset or expiry. For an existing site's refresh,
 `building-live-sites` supplies the required import/update/publish procedure and
 separates initial publication, activation and verified refresh completion.
 
+Agents can explicitly add context with
+`sidekick_attach_resource({ sidekickId, resourceId })`. This attaches a visible
+Rally resource to the wizard without sending a message or starting a run;
+repeating it reports `alreadyAttached`. Future activations inherit the wizard's
+attachments. The existing resource sharing and Sidekick access rules apply
+([`agent-communication.md`](agent-communication.md)).
+
 `automation.loadable` is a stored boolean, not a consumer-derived classification.
 The `sidekickLoadable` policy currently returns true for zero configured triggers.
 Publication writes the accepted revision and this value in one transaction;
