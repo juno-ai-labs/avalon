@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { asUserId } from "@rally/contracts";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { ListScopeInvitationsSchema, ScopeInvitationsListSchema, CreateScopeInvitationsSchema, ClaimScopeInvitationsSchema, RevokeScopeInvitationSchema,
-  type ScopeGrant, type ScopeAccessRequest, type ScopeAccessResult, type ScopeInvitationResult, type ScopeInvitationSummary } from "@rally/contracts/scope-grants";
+  WorkspaceRelationshipSchema, type ScopeGrant, type ScopeAccessRequest, type ScopeAccessResult, type ScopeInvitationResult, type ScopeInvitationSummary } from "@rally/contracts/scope-grants";
 import { workstreamAddressedUrl } from "@rally/contracts/workstream-links";
 import type { Env } from "../env";
 import { encryptString, decryptString } from "../lib/crypto";
@@ -18,6 +19,7 @@ import { ScopeGrantStorage } from "./scope-grant-storage";
 const SealedSchema = z.strictObject({ ciphertext: z.string(), iv: z.string() });
 /** `html` is optional for one reason: an invitation recorded before this email had an HTML part still delivers. */
 const DeliverySchema = z.strictObject({ recipientEmail: z.string().email(), text: z.string(), html: z.string().optional() });
+const RecipientRelationshipSchema = WorkspaceRelationshipSchema.extend({ email: z.string().email() });
 const denied = (reason: Extract<ScopeInvitationResult, { status: "denied" }>["reason"]): ScopeInvitationResult => ({ status: "denied", reason });
 
 /** Validate enablement before any forward-only participant handoff. */
@@ -106,10 +108,12 @@ export class ScopeInvitationService {
     // Only once the share is recorded, so a refused caller writes no rows. If
     // this fails the request fails, and the sharer's retry replays the same
     // operation to this line. A cleanup racing it is re-checked there.
-    await this.noteRecipients(request.workspaceId, emails);
+    const pendingEmails = result.invitations.filter((invitation) => invitation.status === "pending"
+      && (invitation.expiresAt === null || invitation.expiresAt > Date.now())).map((invitation) => invitation.email);
+    const recipients = await this.prepareRecipients(request.workspaceId, pendingEmails);
     // An existing account holds the share now. Committed already, so a failure
     // here leaves it pending for their next sign-in.
-    await this.claimForKnownRecipients(request.workspaceId, emails).catch((error: unknown) => {
+    await this.claimForKnownRecipients(request.workspaceId, recipients).catch((error: unknown) => {
       logStructuredEvent(this.env, "warn", "scope_invitation_claim_failed", {
         workspace_id: request.workspaceId, workstream_id: this.parentId,
         error: diagnosticErrorCode(error, "scope_invitation_claim_failed"),
@@ -133,11 +137,36 @@ export class ScopeInvitationService {
     ).bind(email, workspaceId, this.parentId, at)));
   }
 
-  private async claimForKnownRecipients(workspaceId: z.infer<typeof CreateScopeInvitationsSchema>["workspaceId"], emails: string[]): Promise<void> {
-    const known = await this.env.DB.batch<{ user_id: string; email: string }>(emails.map((email) =>
-      this.env.DB.prepare("SELECT user_id, email FROM user_verified_emails WHERE email = ?").bind(email)));
-    for (const row of known.flatMap((result) => result.results)) {
-      await this.claim({ workspaceId, parentId: this.parentId, userId: asUserId(row.user_id), emails: [row.email] });
+  /** One primary round trip for lookup durability, verified identities and their relationships. */
+  private async prepareRecipients(workspaceId: string, emails: string[]): Promise<Array<{ email: string; relationship: WorkspaceRelationship }>> {
+    if (!emails.length) return [];
+    const addresses = JSON.stringify(emails);
+    const at = new Date().toISOString();
+    const results = await this.env.DB.batch([
+      this.env.DB.prepare(`INSERT OR IGNORE INTO scope_share_recipients (email, workspace_id, parent_id, created_at)
+        SELECT value, ?, ?, ? FROM json_each(?)`).bind(workspaceId, this.parentId, at, addresses),
+      this.env.DB.prepare(`INSERT INTO workspace_members (workspace_id, user_id, role, access_class, status, joined_at)
+        SELECT DISTINCT ?, user_id, NULL, 'guest', 'active', ? FROM user_verified_emails
+        WHERE email IN (SELECT value FROM json_each(?))
+        ON CONFLICT(workspace_id, user_id) DO NOTHING`).bind(workspaceId, at, addresses),
+      this.env.DB.prepare(`SELECT verified.email, members.workspace_id AS workspaceId, members.user_id AS userId,
+        members.access_class AS accessClass, members.role, members.status, members.incarnation, members.revision
+        FROM user_verified_emails verified JOIN workspace_members members ON members.user_id = verified.user_id
+        JOIN workspaces workspace ON workspace.id = members.workspace_id
+        WHERE members.workspace_id = ? AND workspace.abandoned_at IS NULL
+          AND verified.email IN (SELECT value FROM json_each(?))`).bind(workspaceId, addresses),
+    ]);
+    const parsed = z.array(RecipientRelationshipSchema).safeParse(results[2]!.results);
+    if (!parsed.success) throw new Error(zodDiagnosticCode(parsed.error, "scope_invitation_recipients")!);
+    return parsed.data
+      .map(({ email, ...relationship }) => ({ email, relationship }));
+  }
+
+  private async claimForKnownRecipients(workspaceId: z.infer<typeof CreateScopeInvitationsSchema>["workspaceId"],
+    recipients: Array<{ email: string; relationship: WorkspaceRelationship }>): Promise<void> {
+    for (const { email, relationship } of recipients) {
+      await this.claim({ workspaceId, parentId: this.parentId, userId: asUserId(relationship.userId), emails: [email] },
+        relationship);
     }
   }
 
@@ -164,24 +193,27 @@ export class ScopeInvitationService {
    * (its sharer lost the share, a migration is still running) stays pending
    * for the next sign-in; one that never can (revoked, expired) is skipped.
    */
-  async claim(input: z.infer<typeof ClaimScopeInvitationsSchema>): Promise<ScopeInvitationSummary[]> {
+  async claim(input: z.infer<typeof ClaimScopeInvitationsSchema>, prepared?: WorkspaceRelationship): Promise<ScopeInvitationSummary[]> {
     const request = ClaimScopeInvitationsSchema.parse(input);
     const emails = new Set(request.emails);
     const claimed: ScopeInvitationSummary[] = [];
     for (const summary of this.invitations.summaries()) {
       if (summary.status !== "pending" || !emails.has(summary.email)) continue;
-      const result = await this.claimOne(summary.id, request.workspaceId, request.userId);
+      const result = await this.claimOne(summary.id, request.workspaceId, request.userId, prepared);
       if (result.status === "accepted") claimed.push(result.invitation);
       // A share left pending says why, or it looks the same as one nobody tried.
       else logStructuredEvent(this.env, "warn", "scope_invitation_claim_refused", {
         workspace_id: request.workspaceId, workstream_id: this.parentId, reason: result.reason,
       });
     }
-    await this.forgetSettled(request.workspaceId, [...emails]);
+    // Creation's delivery alarm (or a later sign-in) cleans these harmless
+    // lookup rows. The guest already holds the grants; cleanup cannot delay it.
+    if (!prepared) await this.forgetSettled(request.workspaceId, [...emails]);
     return claimed;
   }
 
-  private async claimOne(invitationId: string, workspaceId: string, userId: string)
+  private async claimOne(invitationId: string, workspaceId: string, userId: string,
+    prepared?: WorkspaceRelationship)
     : Promise<{ status: "accepted"; invitation: ScopeInvitationSummary } | Extract<ScopeInvitationResult, { status: "denied" }>> {
     const initial = this.invitations.read(invitationId);
     if (!initial || initial.summary.status !== "pending" || !this.usable(initial)) return { status: "denied", reason: "invitation_unavailable" };
@@ -197,11 +229,15 @@ export class ScopeInvitationService {
     if (blocked) return { status: "denied", reason: blocked };
     // Cross-authority saga: an interruption may leave a relationship without a
     // share. That grants no conversation access and the next claim resumes it.
-    const recipient = await ensureGuestRelationship(this.env.DB, workspaceId, userId);
-    // This request just wrote the relationship to D1, so its checks below and
-    // the viewer checks right after it read that, not the table's older answer.
-    if (recipient) this.noteRelationship(recipient);
-    if (recipient?.status !== "active") return { status: "denied", reason: "relationship_required" };
+    const observed = prepared ?? await ensureGuestRelationship(this.env.DB, workspaceId, userId);
+    this.noteRelationship(observed);
+    const retained = await this.readRelationship(workspaceId, userId);
+    // Bind to D1's observed incarnation, never to an unordered different live
+    // row. A newer suspension of this same membership still wins. If the event
+    // trails the batch, the grant becomes usable when that event converges;
+    // if it leads the batch, this old-incarnation grant cannot admit its replacement.
+    const recipient = retained?.incarnation === observed.incarnation && retained.revision >= observed.revision ? retained : observed;
+    if (recipient.status !== "active") return { status: "denied", reason: "relationship_required" };
     const currentActor = await this.readRelationship(workspaceId, initial.actorUserId);
     if (currentActor?.incarnation !== initial.actorIncarnation) return { status: "denied", reason: "sharing_required" };
     return this.storage.transactionSync(() => {
@@ -342,6 +378,7 @@ export class ScopeInvitationService {
 
   async deliver(id: string): Promise<void> {
     const current = this.invitations.read(id);
+    if (current) await this.forgetSettled(current.summary.targets[0]!.workspaceId, [current.summary.email]);
     // A share claimed the moment it was made, by someone who already has an
     // account, still owes them the email: it is how they hear of it.
     if (!current || current.deliveredAt !== null || !this.usable(current)) return;

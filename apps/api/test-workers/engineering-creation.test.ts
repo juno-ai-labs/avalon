@@ -96,7 +96,6 @@ beforeEach(async () => {
     env.DB.prepare("ALTER TABLE users ADD COLUMN google_subject TEXT"),
     env.DB.prepare("UPDATE users SET platform_user_id = 'platform-creator' WHERE id = ?").bind(CREATOR),
     env.DB.prepare("INSERT INTO users (id, email, name, timezone, created_at, platform_user_id) VALUES (?, 'member2@example.com', 'Member Two', 'UTC', '2026-10-21T00:00:00.000Z', 'platform-member')").bind(MEMBER),
-    env.DB.prepare("ALTER TABLE workspace_members ADD COLUMN joined_at TEXT"),
     env.DB.prepare("ALTER TABLE workspaces ADD COLUMN created_by_user_id TEXT"),
     env.DB.prepare("ALTER TABLE workspaces ADD COLUMN created_at TEXT"),
     env.DB.prepare("ALTER TABLE workspaces ADD COLUMN updated_at TEXT"),
