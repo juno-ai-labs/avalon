@@ -182,10 +182,10 @@ The question identifies Rally as the AI author of the candidate response and
 `@Rally` as a mention addressing that agent. Implicit requests and requests whose
 bot mention was removed still count; mentions may name recipients, subjects or
 connector tools rather than assignees. Work explicitly assigned only to another
-participant stays theirs. Non-message activations are judged against Rally's
-standing task, with missing task context classified as unclear. An acknowledgement
-of an explicit instruction for Rally to wait or act after another participant or future event
-is an answer/result. A separately requested immediate deliverable still has to
+participant stays theirs in human messages; that exception does not transfer
+Rally's work to people mentioned in activation content. An acknowledgement of an
+explicit instruction for Rally to wait or act after another participant or
+future event is an answer/result. A separately requested immediate deliverable still has to
 be judged, even when the same message also tells Rally to wait afterward.
 
 The check runs at Bind's `onTurnWouldEnd` hook, after the model produces a
@@ -1751,12 +1751,12 @@ Pull request: [#1421](https://github.com/juno-ai-labs/avalon/pull/1421).
 **What changed:** Completion verification identifies Rally and its mention syntax,
 scopes requested work to that agent without requiring a literal mention, and
 distinguishes requested waiting from a blocker or an unfinished immediate task.
-Connector and wakeup activity needs a resolved standing task before accepting a stop.
 
 **Why:** A production request assigned review to a person and explicitly told
 Rally to wait. The judge accepted Rally's acknowledgement at 0.55 confidence,
 below the 0.70 stopping threshold, triggering a second acknowledgement from the
-same run. The judge had the conversation but no definition of which participant was the AI.
+same run. The judge had the conversation but no definition of which participant
+was the AI.
 
 **Considered and rejected:** Lowering the stopping threshold or bypassing checks
 on messages containing `@Rally`. Neither supplies the missing identity context,

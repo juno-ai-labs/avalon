@@ -28,7 +28,8 @@ deadline is one second, with no retries or fallback model.
 `addressing-cases.jsonl` contains 15 authored development regressions, separate
 from the frozen 60-case synthetic corpus. They cover requested waiting,
 participant assignments, implicit and stripped-bot requests, connector mentions,
-and non-message activations. Test their semantics against live JEV.
+and non-message activations, including a completed saved wake-up without separate
+standing instructions. Test their semantics against live JEV.
 
 [`agent-identity-2026-10-22.json`](agent-identity-2026-10-22.json) records the
 comparisons and limitations. These are development regressions, not a new
