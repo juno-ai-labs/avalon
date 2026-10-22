@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { WorkstreamGlyph } from '@rally/ui/components/workstream-glyph';
 import { Check, LoaderCircle } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 
 import type { RallyApi } from '../lib/api';
 import { ApiError } from '../lib/api';
@@ -45,15 +45,22 @@ export function ConversationAccessRequest({ api, parentId, substreamId, fallback
   const request = useMutation({
     mutationFn: () => api!.requestConversationAccess(parentId, substreamId),
   });
-  useEffect(() => queryClient.getQueryCache().subscribe((event) => {
-    if (event.type !== 'updated' || event.action.type !== 'invalidate') return;
-    const [root, parent, substream] = event.query.queryKey;
-    if (root === CONVERSATION_ACCESS_PREVIEW_QUERY_KEY[0] && parent === parentId && substream === substreamId) {
-      // A push may replace the very first preview before it ever says
-      // requestable. Record that explicit refresh before its result arrives.
+  useLayoutEffect(() => {
+    const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
+      if (event.type !== 'updated' || event.action.type !== 'invalidate') return;
+      const [root, parent, substream] = event.query.queryKey;
+      if (root === CONVERSATION_ACCESS_PREVIEW_QUERY_KEY[0] && parent === parentId && substream === substreamId) {
+        setWaitingFor(address);
+      }
+    });
+    // Invalidation is stored on the query: recover a nudge delivered during
+    // rendering, before this listener existed. Layout runs before the query's
+    // passive subscription can start and settle the replacement fetch.
+    if (queryClient.getQueryState([...CONVERSATION_ACCESS_PREVIEW_QUERY_KEY, parentId, substreamId])?.isInvalidated) {
       setWaitingFor(address);
     }
-  }), [address, parentId, queryClient, substreamId]);
+    return unsubscribe;
+  }, [address, parentId, queryClient, substreamId]);
   useEffect(() => {
     if (preview.data?.access === 'requestable') setWaitingFor(address);
     // Refetching keeps cached data visible; only the completed check can
