@@ -24,8 +24,9 @@ microphone inside the input. Attachments, model selection and the inline send
 arrow are absent. The modal omits its header close button. **Send** sits beside
 **Cancel** in the modal footer; it still
 uses the composer’s click/hold dictation and final-transcript submission path.
-Enter writes a newline. Send starts a best-effort background request and closes the modal immediately. There is no delivery
-confirmation or retry prompt. Cancel, Escape, and outside click discard an
+Enter sends the report; Shift+Enter inserts a newline. Enter and the footer
+Send both start a best-effort background request and close the modal immediately.
+There is no delivery confirmation or retry prompt. Cancel, Escape, and outside click discard an
 unsent draft.
 
 `POST /message-issues` uses the authenticated Organization and reporter rather

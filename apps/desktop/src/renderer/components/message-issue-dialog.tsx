@@ -74,7 +74,6 @@ export function MessageIssueDialog({ api, report, onClose }: {
         onSubmit={submit}
         onValueChange={setDescription}
         placeholder="What happened, and what did you expect?"
-        shouldSubmitOnEnter={() => false}
         renderSubmit={({ disabled, pending, onClick }) => submitContainer && createPortal(
           <Button aria-busy={pending || undefined} className="button-primary" disabled={disabled} onClick={onClick}>Send</Button>,
           submitContainer,
