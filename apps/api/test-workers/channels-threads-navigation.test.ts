@@ -434,7 +434,7 @@ describe("archiving a Channel", () => {
   const placedIn = async (channelId: SpaceId) => (await feed(channelId, OWNER)).items
     .map((item) => item.thread.id);
 
-  it("given an Organization-wide thread that lives only in a Channel, when the Channel is archived, then the thread moves to General and a restore puts it back", async () => {
+  it("given an exclusive thread, archiving its Channel stages its archive without adding a General placement", async () => {
     const generalId = await openGeneral();
     const channelId = await reserveChannel("Outbound");
     await openThreadObject(OPEN_THREAD);
@@ -443,24 +443,31 @@ describe("archiving a Channel", () => {
 
     await expect(workspace().archiveSpace({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: channelId }))
       .resolves.toMatchObject({ ok: true, space: { status: "archived" } });
-    expect(await placedIn(generalId)).toEqual([OPEN_THREAD]);
+    expect(await placedIn(generalId)).toEqual([]);
+    // These navigation fixtures publish only directory state; the route suite
+    // exercises the command against the canonical conversation. Here the
+    // pending intent proves it cannot be lost while that authority is absent.
+    expect(await workspace().runInspectionSql({
+      sql: "SELECT workstream_id, kind FROM space_intents", bindings: [],
+    })).toMatchObject({ rows: [{ workstream_id: OPEN_THREAD, kind: "archive" }] });
 
     await expect(workspace().restoreSpace({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: channelId }))
       .resolves.toMatchObject({ ok: true, space: { status: "active" } });
     expect(await placedIn(channelId)).toEqual([OPEN_THREAD]);
   });
 
-  it("given a private thread that lives only in a Channel, when the Channel is archived, then the archive is refused and nothing moved to General", async () => {
+  it("given an unreadable exclusive private thread, the Channel archive is refused without moving or archiving any thread", async () => {
     const generalId = await openGeneral();
     const channelId = await channelWithThreads();
 
-    // General shows a row to every member, so a private thread never moves
-    // there; it keeps the archive refused, and the Organization-wide thread
-    // that would have moved rolls back with the refusal.
-    await expect(workspace().archiveSpace({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: channelId }))
+    // MEMBER can edit this Channel but cannot read PRIVATE_THREAD. The
+    // refusal must also leave the readable thread and intent table untouched.
+    await expect(workspace().archiveSpace({ workspaceId: WORKSPACE_ID, userId: MEMBER, spaceId: channelId }))
       .resolves.toMatchObject({ ok: false, code: "space_membership_final" });
     expect(await placedIn(generalId)).toEqual([]);
     expect(await placedIn(channelId)).toEqual(expect.arrayContaining([OPEN_THREAD, PRIVATE_THREAD]));
+    expect(await workspace().runInspectionSql({ sql: "SELECT operation_id FROM space_intents", bindings: [] }))
+      .toMatchObject({ rows: [] });
   });
 });
 
