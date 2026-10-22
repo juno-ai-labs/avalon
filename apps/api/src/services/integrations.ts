@@ -2241,7 +2241,8 @@ async function loadAutomationCreatorPluginCatalog(
       searchAliases: connectorSearchAliases(adapter),
       systemMessage: adapter.agentPlugin.systemMessage,
     });
-    const registrationCapability = staticDefinitions.find((definition) => definition.mode === "read")?.capability;
+    const registrationCapability = adapter.resourceRegistrationCapability;
+    const activityTriggers = connectorActivityTriggerDescriptors(adapter, row.config_json == null ? null : String(row.config_json), scope, grantedScopes);
     let definitions = staticDefinitions;
     if (dynamicCapability) {
       try {
@@ -2288,9 +2289,10 @@ async function loadAutomationCreatorPluginCatalog(
       scope,
       searchAliases: presentation.searchAliases,
       systemMessage: presentation.systemMessage,
-      activityTriggers: connectorActivityTriggerDescriptors(adapter, row.config_json == null ? null : String(row.config_json), scope, grantedScopes),
+      activityTriggers,
       ...(activityRequiresScope ? { activityRequiresScope } : {}),
-      ...(adapter.probeResourceAccess && registrationCapability ? {
+      ...(adapter.probeResourceAccess && registrationCapability && granted.has(registrationCapability)
+        && automationBindableResourceTypes(activityTriggers).length > 0 ? {
         registerResource: (reference: string, signal: AbortSignal) => registerAutomationCreatorResource(
           env, { workspaceId, userId }, frozen, registrationCapability, reference, signal,
         ),
@@ -2354,10 +2356,11 @@ async function registerAutomationCreatorResource(
     throw new ConnectorError("unsupported_capability", "resource: This connection's events cannot bind to this resource type. Inspect the declared filters or use a supported source.");
   }
   // Provider I/O may yield while membership or the connection is revoked.
-  await assertAutomationCreatorConnectionAuthorized(env, input, frozen, capability);
-  const membership = await env.DB.prepare(
-    "SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'",
-  ).bind(input.workspaceId, input.userId).first<{ role: "owner" | "admin" | "member" }>();
+  const [, membership] = await Promise.all([
+    assertAutomationCreatorConnectionAuthorized(env, input, frozen, capability),
+    env.DB.prepare("SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'")
+      .bind(input.workspaceId, input.userId).first<{ role: "owner" | "admin" | "member" }>(),
+  ]);
   if (!membership) throw new Error("sidekick_draft_author_unavailable");
   const resource = await new ResourceService(env, {
     sessionId: "sidekick-resource-registration",
@@ -2373,6 +2376,12 @@ async function registerAutomationCreatorResource(
     resourceType: registration.resourceType,
     title: access.name,
     canonicalUrl: registration.canonicalUrl,
+  }, {
+    connectorType: frozen.connectorType,
+    scope: frozen.scope,
+    ownerUserId: frozen.ownerUserId,
+    modelPluginId: frozen.credentialModelPluginId ?? frozen.modelPluginId,
+    requiredCapabilities: [capability],
   });
   return { resources: [{
     id: resource.id,
@@ -7977,6 +7986,10 @@ async function checkResourceAccess(
           grantedScopes: loaded.connection.grantedScopes.filter((capability) => frozen.grantedScopes.includes(capability)) };
         const access = await withAuthorizedConnection(env, { connection, adapter, signal },
           (authorized) => adapter.probeResourceAccess!(authorized, args.resource, signal));
+        if (access.access === "read" || access.access === "edit") {
+          return { ...identity, access: access.access, resourceId: access.resourceId, name: access.name,
+            ...(access.editNeedsGrant === undefined ? {} : { editNeedsGrant: access.editNeedsGrant }) };
+        }
         return { ...identity, ...access };
       } catch (error) {
         if (signal.aborted) throw error;
@@ -9161,6 +9174,7 @@ export const __integrationTesting = {
   logPluginAuthorizationFailure,
   loadWorkstreamContextCompaction,
   loadAutomationCreatorPluginCatalog,
+  createAvalonAutomationsPlugin,
   assertRunAuthorityStillValid,
   assertSafePublicUrl,
   createAvalonWorkstreamPlugin,

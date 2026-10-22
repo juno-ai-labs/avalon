@@ -883,6 +883,8 @@ export interface ConnectorAdapter {
    * provider was asked to change anything, which is what lets the host retry
    * that call on another connection.
    */
+  /** Read capability needed to register a source for this connector's events. */
+  resourceRegistrationCapability?: string;
   probeResourceAccess?(
     connection: AuthorizedConnectorConnection,
     reference: string,
@@ -1095,7 +1097,7 @@ export type ConnectorResourceAccess =
     resourceId: string;
     name: string;
     /** Provider-verified identity usable to register this resource in Rally. */
-    registration?: { resourceType: string; canonicalUrl: string };
+    registration?: { resourceType: string; canonicalUrl: string | null };
     /** Editable by the account, but Rally needs a one-resource grant first. */
     editNeedsGrant?: boolean;
   };

@@ -52,7 +52,9 @@ must hold the claim across the entire import, edit, check, and publish sequence.
 
 Save these steps for each run as well:
 
-1. Load Terminal and inspect the original site directory. If it exists, copy it
+1. Load Terminal and acquire the shared output claim before importing or
+   comparing files. Hold it until the run finishes, including a no-op. Inspect
+   the original site directory. If it exists, copy it
    to a backup outside \`.rally-output\` before replacing it, so unfinished work
    remains recoverable. Call \`import_resource\` with the site's resource ID, the
    original directory as \`destinationPath\`, and \`overwrite: true\` when that
@@ -66,10 +68,16 @@ Save these steps for each run as well:
    unfinished changes in the backup with the current source and carry forward
    only changes needed for the request. Retrieve the
    current source records through their connection; do not rebuild from memory.
-3. Transform the records and update the necessary files, following the source-row
-   checks below. Keep the format the site's code expects.
+3. Transform the complete returned records with code, following the source-row
+   checks below. Compare the transformed data with the imported published data,
+   using the fields the site consumes and ignoring synchronization timestamps.
+   Do this on the first scheduled run too: an empty tracking table is not a
+   reason to ignore changes since initial publication. If they match, record a
+   verified no-op, release the claim and finish silently without republishing.
+   Otherwise update the necessary files in the format the site's code expects.
 4. Verify the updated files, then call \`publish_resource\` with the original
-   publication path. Check its result before reporting publication.
+   publication path. Check its result before recording completion, release the
+   claim, and follow the saved reporting policy.
 
 For example, a content calendar published at \`content-calendar\` must be
 imported into \`.rally-output/content-calendar\` and republished as
@@ -88,7 +96,12 @@ conversation, report that requirement rather than creating a replacement site.
 ## Keep all requested source data and report verified results
 
 For a site built from spreadsheet rows or other structured records, transform
-the returned records with code rather than manually rewriting them. Read every
+the returned records with code rather than manually rewriting them. Save the
+connector's returned rows as machine-readable input, such as JSON or CSV, and
+have the script parse, filter, map and write those records. A handwritten list
+of posts inside a Python or JavaScript script is still manual transcription;
+it does not satisfy this procedure. If a response is truncated, fetch the
+remaining rows or a complete supported export before transforming it. Read every
 source row that meets the request, including any additional pages or ranges.
 Compare the source row counts and IDs (or other unique row keys) with the
 converted data to catch omitted or duplicated rows. Explain any rows intentionally

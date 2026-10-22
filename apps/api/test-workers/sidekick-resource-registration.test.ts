@@ -2,14 +2,15 @@
 import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { WorkstreamWorkflowInputSchema, asUserId, asWorkspaceId } from "@rally/contracts";
 import { createAutomationsPlugin, type HarnessToolContext } from "@rally/agent-harness";
-import { workspaceDOName } from "../src/durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import { resolveWorkspaceEventResources } from "../src/durable-objects/workspace-event-resources";
 import { encryptString } from "../src/lib/crypto";
+import { ResourceService } from "../src/services/resource-service";
 import { __integrationTesting } from "../src/services/integrations";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
-import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
+import { boot, seedRun, seedWorkstreamRoot, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 const WORKSPACE = asWorkspaceId("00000000-0000-7000-8000-00000000fa10");
 const USER = asUserId("00000000-0000-7000-8000-00000000fa11");
@@ -49,7 +50,7 @@ function googleFile(status = 200, file: Record<string, unknown> = {}) {
     expect(url.origin).toBe("https://www.googleapis.com");
     expect(url.pathname).toBe(`/drive/v3/files/${FILE}`);
     expect(init?.method ?? "GET").toBe("GET");
-    return Response.json({ id: FILE, name: "Content calendar", mimeType: "application/vnd.google-apps.spreadsheet", ...file }, { status });
+    return Response.json({ id: FILE, name: "Content calendar", mimeType: "application/vnd.google-apps.spreadsheet", webViewLink: LINK, ...file }, { status });
   });
   vi.stubGlobal("fetch", fetcher);
   return fetcher;
@@ -74,7 +75,7 @@ beforeEach(async () => {
     CONNECTION, WORKSPACE, USER, credentials.ciphertext, credentials.iv);
   });
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("Sidekick external resource registration", () => {
   it("registers a Sheet once, accepts its event binding and resolves incoming changes to that ID", async () => {
@@ -160,16 +161,105 @@ describe("Sidekick external resource registration", () => {
     expect(await resourceCount()).toBe(0);
   });
 
-  it("does not expand a frozen run's access when new capabilities are granted", async () => {
-    googleFile(200, { mimeType: "application/vnd.google-apps.document" });
+  it.each([["gmail.read"], ["calendar.read"], ["sheets.read"], ["docs.read"]])(
+    "does not advertise registration for unsupported grants %s", async (...grants) => {
+      await runInDurableObject(workspace(), (_instance, state) => {
+        state.storage.sql.exec("UPDATE connector_connections SET granted_scopes_json = ? WHERE id = ?", JSON.stringify(grants), CONNECTION);
+      });
+      const catalog = await __integrationTesting.loadAutomationCreatorPluginCatalog(withWorkspaceRuntimeDatabase(env, WORKSPACE), WORKSPACE, USER);
+      expect(catalog).toHaveLength(1);
+      expect(catalog[0]?.registerResource).toBeUndefined();
+    },
+  );
+
+  it("advertises registration only on the Drive view of a split Google connection", async () => {
     await runInDurableObject(workspace(), (_instance, state) => {
-      state.storage.sql.exec(`UPDATE connector_connections SET granted_scopes_json = '["sheets.read"]' WHERE id = ?`, CONNECTION);
+      state.storage.sql.exec(`UPDATE connector_connections SET granted_scopes_json = '["gmail.read","drive.read"]' WHERE id = ?`, CONNECTION);
     });
-    const { register } = await tools();
-    await runInDurableObject(workspace(), (_instance, state) => {
-      state.storage.sql.exec(`UPDATE connector_connections SET granted_scopes_json = '["sheets.read","docs.read","drive.read"]' WHERE id = ?`, CONNECTION);
-    });
-    await expect(register.execute({ pluginId: "plugin_google", resource: FILE }, context())).rejects.toThrow("capability_not_granted");
-    expect(await resourceCount()).toBe(0);
+    const catalog = await __integrationTesting.loadAutomationCreatorPluginCatalog(withWorkspaceRuntimeDatabase(env, WORKSPACE), WORKSPACE, USER);
+    expect(catalog.map((entry) => ({ plugin: entry.pluginId, registration: Boolean(entry.registerResource) }))).toEqual([
+      { plugin: "plugin_google_drive", registration: true }, { plugin: "plugin_google_mail_calendar", registration: false },
+    ]);
   });
+
+  it.each(["disabled", "grant_removed", "owner_changed"] as const)("refuses %s at the canonical write after service checks", async (change) => {
+    googleFile();
+    const { register } = await tools();
+    // Interpose the revocation at the real RPC receiver, after the service has
+    // admitted the connection but before its canonical write transaction starts.
+    await runInDurableObject(workspace(), (instance, state) => {
+      const resolve = instance.resolveConnectorResource.bind(instance);
+      const prototype: typeof instance = Object.getPrototypeOf(instance);
+      vi.spyOn(prototype, "resolveConnectorResource").mockImplementationOnce(async (request) => {
+        if (change === "disabled") state.storage.sql.exec("UPDATE connector_connections SET status = 'disabled' WHERE id = ?", CONNECTION);
+        if (change === "grant_removed") state.storage.sql.exec(`UPDATE connector_connections SET granted_scopes_json = '["sheets.read"]' WHERE id = ?`, CONNECTION);
+        if (change === "owner_changed") state.storage.sql.exec("UPDATE connector_connections SET owner_user_id = ? WHERE id = ?", "00000000-0000-7000-8000-00000000fa15", CONNECTION);
+        return resolve(request);
+      });
+    });
+    const result = await register.execute({ pluginId: "plugin_google", resource: LINK }, context()).catch((error: unknown) => error);
+    expect(await resourceCount()).toBe(0);
+    expect(result).toMatchObject({ code: "resource_connection_unavailable" });
+  });
+
+  it("preserves the frozen connection identity across the resource service read", async () => {
+    googleFile();
+    const { register } = await tools();
+    const resolve = ResourceService.prototype.resolve;
+    vi.spyOn(ResourceService.prototype, "resolve").mockImplementationOnce(async function (this: ResourceService, input, authority) {
+      await runInDurableObject(workspace(), (_instance, state) => {
+        state.storage.sql.exec("UPDATE connector_connections SET scope = 'workspace', owner_user_id = NULL WHERE id = ?", CONNECTION);
+      });
+      return resolve.call(this, input, authority);
+    });
+    const result = await register.execute({ pluginId: "plugin_google", resource: LINK }, context()).catch((error: unknown) => error);
+    expect(await resourceCount()).toBe(0);
+    expect(result).toMatchObject({ code: "resource_connection_unavailable" });
+  });
+
+  it("restores registration receipts in a later authoring turn without registering again", async () => {
+    const fetcher = googleFile();
+    const parentId = context().workstreamId;
+    const conversation = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE, parentId));
+    await boot(conversation);
+    await runInDurableObject(conversation, (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE, workstreamId: parentId });
+      seedRun(state, context().harnessRunId);
+    });
+    const makeHost = (runId: string) => __integrationTesting.createAvalonAutomationsPlugin(
+      withWorkspaceRuntimeDatabase(env, WORKSPACE), WorkstreamWorkflowInputSchema.parse({
+        region: "global", workspaceId: WORKSPACE, parentKind: "automation", parentId,
+        loopId: `workstream:${parentId}:substream:0:loop`, harnessRunId: runId,
+        triggerMessageId: null, activityId: null, executionPrincipal: { type: "user", userId: USER }, reason: "replay test",
+      }), new Set(), (tool) => [tool],
+    );
+    const first = makeHost(context().harnessRunId);
+    const registered = await first.tools.find((tool) => tool.definition.name === "resources_register")!
+      .execute({ pluginId: "plugin_google", resource: LINK }, context());
+    const id = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ id: string }>("SELECT id FROM resources").one().id);
+    const outputRef = "test/registration-replay.json";
+    await env.PAYLOADS.put(outputRef, JSON.stringify({ replayVersion: 1, output: registered.output }));
+    await runInDurableObject(conversation, (_instance, state) => {
+      for (const [position, name, capability, ref] of [
+        [0, "plugin_inspect", "rally.sidekick.plugins.inspect", null],
+        [1, "resources_register", "rally.sidekick.resources.register", outputRef],
+      ] as const) {
+        state.storage.sql.exec(`INSERT INTO tool_effects
+          (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key, tool_name, mode,
+           request_hash, authority_revision, status, tool_call_id, input_json, output_ref, execution_plan_json, settled_at)
+          VALUES (?, ?, 0, ?, ?, ?, ?, 'hash', '1', 'completed', ?, ?, ?, ?, ?)`,
+        crypto.randomUUID(), context().harnessRunId, position, `occurrence-${name}`, name, name === "resources_register" ? "write" : "read", `call-${name}`,
+        JSON.stringify({ pluginId: "plugin_google", resource: LINK }), ref, JSON.stringify({ canonicalToolName: name, capability }), position + 1);
+      }
+    });
+    const resumed = makeHost("00000000-0000-7000-8000-00000000fa16");
+    await expect(resumed.tools.find((tool) => tool.definition.name === "set_evaluator_rules")!.execute({
+      schemaVersion: 1, evaluators: [{ evaluatorKey: "sheet_changed", source: {
+        sourceBindingKey: "sheet", suggestedSourcePluginId: "plugin_google", resourceId: id,
+        event: { kind: "event_type", eventType: "sheets.spreadsheet_changed" },
+      }, when: { kind: "always" } }],
+    }, context())).resolves.toMatchObject({ output: { accepted: true } });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
 });
