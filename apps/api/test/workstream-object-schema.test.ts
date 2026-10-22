@@ -1175,6 +1175,8 @@ describe("the Workstream Durable Object relational schema", () => {
                  'workspace', 'scheduled', 'test', 1, 1, 1, 0, 0, 1, 0, 1,
                  1000, 1000, 1000, 1000)`,
       ).run(WORKSTREAM_ID, WORKSPACE_ID);
+      // Only Sidekick conversations retain this local admission authority.
+      database.exec("UPDATE workstream SET parent_kind = 'automation' WHERE id = 1");
       // Somebody who is in the work stream and has opened it.
       database.prepare(
         `INSERT INTO participants
@@ -1187,10 +1189,8 @@ describe("the Workstream Durable Object relational schema", () => {
         `SELECT status, participant_epoch, first_opened_at FROM participants WHERE user_id = ?`,
       ).get(AUTHOR_ID) as { status: string; participant_epoch: number; first_opened_at: number | null };
 
-      // Removed, then re-admitted the way `admitConnectorAudience` does it.
-      // The retired participant view's INSTEAD OF triggers used to reactivate
-      // the row; `admitParticipant` is what does it now, and this is the
-      // behaviour that had to survive the view being dropped.
+      // A Sidekick's parent-owned local policy can readmit a removed participant.
+      // Threads instead seat through canonical grants and projections.
       const identity = new WorkstreamIdentityStorage(storage);
       database.prepare(
         `UPDATE participants SET status = 'removed', removed_at = 3000 WHERE user_id = ?`,

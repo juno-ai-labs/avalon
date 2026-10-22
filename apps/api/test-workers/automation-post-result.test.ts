@@ -1006,7 +1006,7 @@ describe("a room Sidekick's run and the room's agents", () => {
     )));
     // Sidekick contact authority reads this current membership projection, not team membership.
     await runInDurableObject(workspaceStub(), (_instance, state) => {
-      state.storage.sql.exec("UPDATE channel_viewers SET is_participant = 0 WHERE workstream_id = ? AND user_id = ?", ROOM_ID, AUTHOR_ID);
+      state.storage.sql.exec("UPDATE parent_grants SET grant_json = json_set(grant_json, '$.active', json('false')) WHERE parent_id = ? AND user_id = ?", ROOM_ID, AUTHOR_ID);
     });
     expect(await workspaceStub().workstreamParticipant({ workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, userId: AUTHOR_ID })).toEqual({ participant: false });
     expect((await service.list()).agents.map(agent => agent.agentId)).not.toContain(agentId);
