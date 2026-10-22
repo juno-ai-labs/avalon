@@ -1726,6 +1726,8 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 **Consequences:** Narration remains available when expectations change, without a tool-count quota. Concision must not omit requested detail or material caveats. This changes prompt guidance only; reviewer acknowledgement loops and the feed's treatment of saved prose remain separate mechanisms.
 
+PR: [#1423](https://github.com/juno-ai-labs/avalon/pull/1423).
+
 ### 2026-10-22 — Share structured-source handling across output types
 
 **What changed:** Added the built-in `using-external-structured-data` skill for
