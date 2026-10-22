@@ -1862,7 +1862,12 @@ export class HostedParent {
     const metadata = this.metadataRow();
     if (!metadata) return;
     const store = this.scopeGrants({ workspaceId: metadata.workspace_id, parentId: this.parentId });
-    await Promise.all(store.pendingParticipantProjections(substreamId).map((delivery) =>
+    const pending = store.pendingParticipantProjections(substreamId);
+    if (!pending.length) return;
+    // The RPCs can throw after migration is already complete. Arm first so
+    // parentWrite skipping afterParentWrite still leaves a recovery wake.
+    await this.host.armNextAlarm();
+    await Promise.all(pending.map((delivery) =>
       this.deliverParticipantProjection(delivery.substreamId, delivery.projection.userId, delivery.projection.revision)));
   }
 
