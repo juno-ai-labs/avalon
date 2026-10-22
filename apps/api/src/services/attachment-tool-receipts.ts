@@ -128,7 +128,7 @@ export async function validateAttachmentToolReceiptReplay(
 
   const visible = await loadVisibleWorkstreamResourcesByIds(
     env.DB,
-    createConversationResourceLinks(env, input.workspaceId, input.workstreamId),
+    createConversationResourceLinks(env, input.workspaceId, input.workstreamId, undefined, undefined, input.principal),
     {
       workspaceId: input.workspaceId,
       workstreamId: input.workstreamId,

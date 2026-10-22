@@ -29,7 +29,7 @@ const DISPATCHED_OPERATIONS = [
   "resourceIdsOnMessages",
   "setWatchEnabled",
   "inventoryRevision",
-  "inheritsChannelLinks",
+  "inheritanceContext",
 ] as const satisfies readonly ResourceOperation[];
 
 /** Every operation the endpoint will dispatch, proven complete both ways. */
