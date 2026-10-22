@@ -22,8 +22,8 @@ export const ConversationToolScopeSchema = z.discriminatedUnion("kind", [
 ]);
 /**
  * Whose conversations a tool call reaches: a Sidekick's, or a Thread or
- * Breakout loop's own, the Thread's Main for a Breakout, and the Channels the
- * Thread is in.
+ * Breakout loop's own, the Thread's Main for a Breakout, the Channels the
+ * Thread is in, and every Thread and Breakout in those Channels.
  */
 export type ConversationToolScope = z.input<typeof ConversationToolScopeSchema>;
 
