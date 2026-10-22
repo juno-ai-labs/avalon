@@ -219,6 +219,8 @@ again. An initially admitted preview retains the ordinary error screen,
 so unrelated connection failures do not turn into immediate retry loops.
 Existing retries and the manual button remain recovery paths.
 
+PR: [#1416](https://github.com/juno-ai-labs/avalon/pull/1416).
+
 ### 2026-10-07 — A member with a link can ask to join
 
 **What changed:** A member who opens a link to a Channel or Breakout they are
