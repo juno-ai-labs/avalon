@@ -74,14 +74,26 @@ export class WorkspaceConversationView {
     ).toArray()[0];
     const empty = { type: "workspace_conversation_view" as const, ...request, view: null };
     if (!header) return empty;
-    // Same five-turn opening window as the authoritative transcript. All older
-    // visible turns remain cached; history paging stays on the admitted socket.
-    const rows = sql.exec<{ content_json: string }>(
+    // Plugin-only turns can consume an entire five-turn window. Read the
+    // compact feed up to the existing wire budget, newest first, without
+    // materializing an arbitrarily large conversation just to trim it below.
+    const rows: ConversationViewContent[] = [];
+    const encoder = new TextEncoder();
+    let contentBytes = 0;
+    for (const row of sql.exec<{ content_json: string }>(
       `SELECT content_json FROM conversation_view_turns
        WHERE parent_id = ? AND substream_id = ? AND content_json IS NOT NULL
-       ORDER BY transcript_sequence DESC LIMIT 5`,
+       ORDER BY transcript_sequence DESC`,
       request.parentId, request.substreamId,
-    ).toArray().reverse().map((row) => JSON.parse(row.content_json) as ConversationViewContent);
+    )) {
+      contentBytes += encoder.encode(row.content_json).byteLength;
+      if (contentBytes > WORKSTREAM_REALTIME_MAX_FRAME_BYTES) {
+        if (rows.length === 0) return empty;
+        break;
+      }
+      rows.push(JSON.parse(row.content_json) as ConversationViewContent);
+    }
+    rows.reverse();
     const snapshotThrough = rows.at(-1)?.turn.transcriptSequence ?? 0;
     const transcript: WorkstreamTranscriptSnapshot = {
       snapshotId: uuidV7(), snapshotThrough, eventSequence: 0, snapshotAtUtc: new Date().toISOString(),
@@ -104,7 +116,7 @@ export class WorkspaceConversationView {
       })));
       // A stale cached run must not start a live work timer before attachment.
       transcript.activeActivities = [];
-      if (new TextEncoder().encode(JSON.stringify(answer)).byteLength <= WORKSTREAM_REALTIME_MAX_FRAME_BYTES) {
+      if (encoder.encode(JSON.stringify(answer)).byteLength <= WORKSTREAM_REALTIME_MAX_FRAME_BYTES) {
         return answer;
       }
       rows.shift();

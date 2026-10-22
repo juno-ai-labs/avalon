@@ -2,7 +2,7 @@
 import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, expect, it } from "vitest";
-import { asSubstreamId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asSubstreamId, asWorkspaceId, asWorkstreamId, WORKSTREAM_REALTIME_MAX_FRAME_BYTES } from "@rally/contracts";
 import { conversationObjectName } from "../src/durable-objects/names";
 import { WorkspaceConversationView } from "../src/durable-objects/workspace-conversation-view";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
@@ -161,6 +161,60 @@ it("keeps deletion and generation fences and serves only compact opening rows", 
     expect(() => views.apply({ ...projection, revision: 200, content: {
       ...projection.content, pluginRuns: [{ toolCallIds: ["secret"] }],
     } })).toThrow();
+  });
+});
+
+it("opens the full compact feed across plugin-only turns within the realtime frame budget", async () => {
+  const stub = env.MIGRATION_PROBE_DO!.getByName("conversation-view-full-feed");
+  await stub.ping();
+  await runInDurableObject(stub, (_instance, state) => {
+    applyDurableObjectSqliteMigrations({
+      storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
+      component: "workspace_do", workerVersionId: "conversation-view-test",
+    });
+    const views = new WorkspaceConversationView(state.storage);
+    const texts = ["Opening request", "Working on it", "", "", "", "", "", "", "Final answer"];
+    for (const [index, text] of texts.entries()) {
+      const sequence = index + 1;
+      const turnId = `turn-${sequence}`;
+      views.apply({
+        ...job, generation: 1, revision: sequence, header, turnId,
+        content: {
+          turn: { transcriptSequence: sequence, turnId, entryKind: "conversation", actor: "assistant",
+            authorUserId: null, authorSnapshot: null, attentionOrdinal: null, createdAtUtc: header.createdAt,
+            revision: 1, activityId: null, blocks: text ? [
+              { type: "text", blockId: `block-${sequence}`, blockIndex: 0, text, streaming: false },
+            ] : [] },
+          activities: [], pluginRuns: text ? [] : [{
+            pluginRunId: `plugin-${sequence}`, turnId, pluginId: "terminal", displayName: "Terminal",
+            state: "completed", durationMs: 1000, elapsedMsAtSnapshot: null, timingAccuracy: "observed",
+          }],
+        },
+      });
+    }
+    const opening = views.opening({ requestId, parentId, substreamId });
+    const range = opening.view?.transcript.ranges[0];
+    expect(range?.covered).toEqual({ startInclusive: 1, endExclusive: 10 });
+    expect(range?.turns.map((turn) => turn.turnId)).toEqual([
+      "turn-1", "turn-2", "turn-3", "turn-4", "turn-5", "turn-6", "turn-7", "turn-8", "turn-9",
+    ]);
+    expect(range?.turns.flatMap((turn) => turn.blocks.flatMap((block) => block.type === "text" ? [block.text] : [])))
+      .toEqual(["Opening request", "Working on it", "Final answer"]);
+    expect(opening.view?.transcript.pluginRuns).toHaveLength(6);
+    // A large history still obeys the existing wire budget, including UTF-8
+    // expansion. It keeps a contiguous newest suffix instead of loading it all.
+    state.storage.sql.exec(`UPDATE conversation_view_turns SET content_json = json_set(
+      content_json, '$.turn.blocks', json_array(json_object('type', 'text', 'blockId', turn_id,
+        'blockIndex', 0, 'text', ?, 'streaming', json('false'))))`, "🦊".repeat(75_000));
+    const large = views.opening({ requestId, parentId, substreamId });
+    expect(large.view?.transcript.ranges[0]?.turns.map((turn) => turn.turnId))
+      .toEqual(["turn-7", "turn-8", "turn-9"]);
+    expect(new TextEncoder().encode(JSON.stringify(large)).byteLength).toBeLessThanOrEqual(WORKSTREAM_REALTIME_MAX_FRAME_BYTES);
+    // An oversized newest turn falls back to the authoritative socket rather
+    // than returning a misleading older suffix or a header-only preview.
+    state.storage.sql.exec(`UPDATE conversation_view_turns SET content_json = json_set(
+      content_json, '$.turn.blocks[0].text', ?) WHERE turn_id = 'turn-9'`, "🦊".repeat(300_000));
+    expect(views.opening({ requestId, parentId, substreamId }).view).toBeNull();
   });
 });
 
