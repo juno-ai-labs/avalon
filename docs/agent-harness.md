@@ -1714,6 +1714,8 @@ leave two definitions of stable keys, baselines and completion ordering to drift
 trigger selection and polling cadence remain in `polling-for-events`. Loading
 the skill grants no table access or Sidekick authoring tools.
 
+Pull request: [#1394](https://github.com/juno-ai-labs/avalon/pull/1394).
+
 ### 2026-10-21 — Google plugin splits preserve verified receipt identities
 
 **What changed:** Google views carry compatible prior single-family and combined
