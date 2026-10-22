@@ -24,9 +24,8 @@ to Sol independently of the ordinary Thread and activation route. Explicit model
 pins still win; see [`feature-flags.md`](feature-flags.md). For work requested
 after an external change, authoring guidance loads `polling-for-events`, inspects
 declared events and resolves the specific source before choosing a timer. When
-a supported event binding fits better, the wizard recommends it to the requester
-or coordinating agent and explains the faster reaction and avoided unchanged
-checks. An explicitly requested schedule stays in place unless the person chooses
+a suitable event can express the requested change, the wizard uses it and
+registers a missing supported source through its authorized connection. An explicitly requested schedule stays in place unless the person chooses
 the suggested alternative. A polling fallback names its actual event or resource
 resolution gap rather than claiming the connector announces no changes. The saved
 definition retains the selected event and resolved resource, or the concrete
@@ -533,12 +532,12 @@ verified identity needed for registration. Catalog discovery reports
 
 Registration results have the same `resources` shape as search results and enter
 the same binding-validation state, including receipt replay across turns. The
-`polling-for-events` skill owns the lookup, registration, and filter/polling
-fallback procedure. For requested external changes, the wizard registers a
-missing readable source and binds a suitable event without asking the person to
-choose registration or a timer. Explicit schedules remain schedules. Actual
-registration failures are reported accurately; questions are reserved for missing
-information or a fallback that changes the requested behavior.
+`polling-for-events` skill owns event selection, registration and fallback policy.
+Google advertises registration only on views holding `drive.read` and a bindable
+file event. The canonical registration transaction checks connection identity,
+status and required capabilities beside the resource write, including reuse of an
+existing resource. A refused connection returns `connection_unavailable`; the
+resource service maps that outcome to `resource_connection_unavailable`.
 
 A declared relationship is not a promise that anything materializes the type:
 Granola declares `granola_folder` and writes only `granola_note`, so a Granola
@@ -1193,8 +1192,9 @@ or replay.
 **What changed:** The Sidekick wizard can register a provider-verified external
 file through its authorized source plugin and use the returned Rally ID in an
 event rule. Registration reuses the existing canonical resource operation and
-its results survive authoring receipt replay. Change-triggered setup now performs
-registration and event binding by default; explicit schedules are preserved.
+its results survive authoring receipt replay. The connection's required grants
+and identity are checked atomically with the write. Change-triggered setup uses
+the registration/event procedure; explicit schedules are preserved.
 
 **Why:** The calendar experiment found the right Sheets event but could not
 register its source. The coordinator offered registration as a user choice even

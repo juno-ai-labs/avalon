@@ -2590,6 +2590,8 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       return pollCheckpointedActivityStreams(pollingActivity, connection, signal);
     },
 
+    resourceRegistrationCapability: "drive.read",
+
     async probeResourceAccess(connection, reference, signal): Promise<ConnectorResourceAccess> {
       const fileId = googleDriveFileIdFromReference(reference);
       if (!fileId) return { access: "unrecognized" };
@@ -2606,13 +2608,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       const name = readString(metadata, "name") ?? "Untitled file";
       const mimeType = readString(metadata, "mimeType") ?? "";
       const resourceType = googleDriveResourceType(mimeType);
-      const registration = { resourceType, canonicalUrl: readString(metadata, "webViewLink") ?? (resourceType === "google_sheet"
-        ? `https://docs.google.com/spreadsheets/d/${encodeURIComponent(fileId)}/edit`
-        : resourceType === "google_doc"
-          ? `https://docs.google.com/document/d/${encodeURIComponent(fileId)}/edit`
-          : mimeType === "application/vnd.google-apps.folder"
-            ? `https://drive.google.com/drive/folders/${encodeURIComponent(fileId)}`
-            : `https://drive.google.com/file/d/${encodeURIComponent(fileId)}/view`) };
+      const registration = { resourceType, canonicalUrl: readString(metadata, "webViewLink") };
       // Seeing the file's details is not reading it: a connection holding only
       // `sheets.read` sees a Doc's metadata and has no tool that reads it.
       const readCapability = GOOGLE_FILE_READ_CAPABILITY[mimeType];

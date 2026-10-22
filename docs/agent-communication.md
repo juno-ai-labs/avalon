@@ -228,11 +228,11 @@ messages and mutations retain their existing authorization checks. Another
 thread's, personal, and organization Sidekicks are not setup fallbacks. An empty
 list tells the agent to create one here with `scope=workstream` and send setup
 instructions to its authoring agent. A conversation acting for no thread instead
-receives guidance to set up from the intended thread. For work requested after
-an external file changes, coordination guidance tells the authoring agent to
-register the source and bind a suitable event by default. Routine registration
-through an authorized connection is not a preference question. A missing
-connection or fallback that changes the requested behavior may still need input.
+receives guidance to set up from the intended thread. The returned authoring
+agent is the Sidekick wizard: the coordinator contacts it directly rather than
+creating a relay worker. Shared role guidance applies before and after plugin
+loading and limits exchanges to new results, blockers, questions and changed
+requirements; acknowledgment-only messages end without another reply.
 
 An explicitly named edit uses `find_sidekick`, an exact, case-insensitive name
 lookup over the same authorized directory and contact ownership rule. It can
@@ -354,6 +354,18 @@ the ownership flags from a conversation that acts for no thread, and a guest's
 grant-only contact. Complete desktop behavior remains an implementation gate.
 
 ## Changelog
+
+### 2026-10-22 — Contact the wizard directly and end acknowledgment-only exchanges
+
+**What changed:** Sidekick setup uses its discovered wizard directly. Shared
+coordination guidance reports assignment results once and does not answer
+acknowledgments or repeat waiting status.
+
+**Why:** The calendar experiment added two relay helpers around one wizard,
+then spent repeated model turns acknowledging that everyone was waiting. The
+wizard already owns definition editing and normal messages deliver its result;
+a relay chain adds latency and can strengthen constraints the user never set.
+
 
 ### 2026-10-21 — Assign outcomes and carry procedures across delegation
 

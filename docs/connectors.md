@@ -1636,26 +1636,18 @@ active workspace guest is insufficient after the addressed share is revoked.
 Workspace-principal automation runs retain their separate lifecycle authority.
 
 A successful resource-access probe may also return `registration` with a
-provider-verified `resourceType` and `canonicalUrl`. Google supplies this for
+provider-verified `resourceType` and nullable `canonicalUrl`. Google supplies this for
 Drive files, Docs, and Sheets. The Sidekick registration tool uses those fields,
 the probe's external `resourceId`, and its verified name to register an existing
-readable file. It preserves the selected connection's frozen grants, checks live
-authority before storing the resource, and requires a declared event relationship
-for the type. See [Sidekick resource binding](automation-lifecycle.md) for setup
+readable file. The adapter declares `resourceRegistrationCapability`; Google requires
+`drive.read`, which also supplies file-change events. The host advertises the
+operation only when that view holds the capability and has a bindable event.
+It preserves frozen grants and sends the required capability and connection
+identity to the canonical resource transaction. `check_resource_access` omits
+this internal registration metadata from its existing access-only result. See [Sidekick resource binding](automation-lifecycle.md) for setup
 and receipt replay.
 
 ## Changelog
-
-### 2026-10-22 — Resource probes supply verified registration metadata
-
-**What changed:** Successful Google file probes include the resource type and
-canonical URL inferred from provider metadata. Sidekick authoring can register
-the file using the same access proof, without editing it or changing sharing.
-
-**Why:** Connector reads previously left an accessible Sheet outside Rally's
-resource catalog, so a suitable change event could not bind to it. Reusing the
-read-only probe avoids a second provider request or model-authored identity
-metadata; canonical registration stays with the existing resource authority.
 
 ### 2026-10-21 — Google credentials expose separate product bundles
 

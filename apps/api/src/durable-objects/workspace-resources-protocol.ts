@@ -111,13 +111,20 @@ export const WorkspaceConnectorResourceResolveRequestSchema = deferredZodSchema(
   title: z.string(),
   canonicalUrl: z.string().nullable(),
   protectedAccessJson: z.string().nullable().optional(),
+  connectionAuthority: z.strictObject({
+    connectorType: z.string(),
+    scope: z.enum(["personal", "workspace"]),
+    ownerUserId: IdSchema.nullable(),
+    modelPluginId: z.string().nullable(),
+    requiredCapabilities: z.array(z.string()),
+  }).optional(),
   at: TimestampSchema,
 }));
 
-export const WorkspaceConnectorResourceResolveResultSchema = deferredZodSchema(() => z.strictObject({
-  resourceId: IdSchema,
-  outcome: z.enum(["created", "existing"]),
-}));
+export const WorkspaceConnectorResourceResolveResultSchema = deferredZodSchema(() => z.union([
+  z.strictObject({ resourceId: IdSchema, outcome: z.enum(["created", "existing"]) }),
+  z.strictObject({ outcome: z.literal("connection_unavailable") }),
+]));
 
 /** One `resource_versions` row, in the columns the history readers consume. */
 export const WorkspaceResourceVersionSchema = deferredZodSchema(() => z.strictObject({
