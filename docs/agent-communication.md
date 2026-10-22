@@ -220,14 +220,19 @@ callers perform their own active-member check. This is a host-selected execution
 path, not a model argument, durable grant, or run-long authorization cache.
 
 Sidekick setup discovery filters the existing authorized directory to Sidekicks
-owned by the current thread, excluding the author's own Sidekick when called
-from an authoring conversation. Those candidates have `ownedByThisWorkstream`
-and `canEdit` set to true: eligibility reuses the existing access filter and
+owned by the current thread and includes the current Sidekick even when it is
+personal or organization-scoped. Every item carries `isCurrentSidekick`: true
+only for the Sidekick this conversation configures or executes. Thread-owned
+candidates have `ownedByThisWorkstream` and `canEdit` set to true: eligibility
+reuses the existing access filter and
 `sidekickOwnership`, not a new permission model or per-candidate RPC. Actual
 messages and mutations retain their existing authorization checks. Another
 thread's, personal, and organization Sidekicks are not setup fallbacks. An empty
-list tells the agent to create one here with `scope=workstream` and send setup
-instructions to its authoring agent. A conversation acting for no thread instead
+list in ordinary setup tells the agent to create one here with `scope=workstream`
+and send setup instructions to its authoring agent. An execution with no listed
+candidates instead identifies the existing Sidekick and tells the agent to
+complete that activation; it never treats an empty list as a missing installation.
+A conversation acting for no thread instead
 receives guidance to set up from the intended thread. The returned authoring
 agent is the Sidekick wizard: the coordinator contacts it directly rather than
 creating a relay worker. Shared role guidance applies before and after plugin
@@ -354,6 +359,15 @@ the ownership flags from a conversation that acts for no thread, and a guest's
 grant-only contact. Complete desktop behavior remains an implementation gate.
 
 ## Changelog
+
+### 2026-10-22 — Identify the current Sidekick in discovery
+
+Discovery includes the Sidekick this conversation configures or executes and
+marks it with `isCurrentSidekick`, while preserving the existing access filters.
+A scheduled calendar run received an empty list because discovery excluded
+itself, then followed the result’s create instruction and installed a duplicate.
+Returning its identity prevents that misleading absence without hiding valid
+Sidekick-management tools or deduplicating unrelated workflows by title.
 
 ### 2026-10-22 — Contact the wizard directly and end acknowledgment-only exchanges
 

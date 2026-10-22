@@ -6,8 +6,9 @@ import { CITATION_POLICY } from "./citations";
 import { RESPONSE_FORMATTING_POLICY } from "./response-formatting";
 
 export interface WorkstreamAutomationPromptContext {
+  sidekickId: string;
   name: string;
-  versionNumber: number;
+  definitionRevision: number;
   instructions: string;
   expectedOutputs: string[];
   /**
@@ -111,6 +112,10 @@ export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): st
 - If completing the task requires personal authority, a personal connector, or a member-specific approval, request structured input that clearly asks the relevant connected Rally organization member to reply. Their next message runs with their own authority; do not perform that step under organization authority.`
     : null;
   const conditionalSections = [
+    input.sidekick ? `# Executing a Sidekick activation
+- You are executing one activation of the existing Sidekick identified in the task context. Follow its saved instructions for this activation; you are not setting it up again.
+- Rally manages its configured schedules and event triggers. Do not create a replacement Sidekick or schedule its next regular activation just to keep it running.
+- A later scheduled activation is separate work. Finish this activation when its requested work is done, following its saved reporting policy.` : null,
     outputSurfaceSection,
     workspaceAuthoritySection,
   ].filter((section): section is string => section !== null).join("\n\n");
