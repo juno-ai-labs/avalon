@@ -259,14 +259,17 @@ stream in that identity is the **room that owns it**, not the automation's own
 conversation: its run executes under the automation, using the Sidekick's shared
 sandbox and its own transcript, but the documents it publishes are the room's, so "refresh the
 dashboard" lands on the dashboard the room already has. The sandbox belongs to the Sidekick's authoring
-conversation. Its wizard, activations and workers all resolve the same admitted
-home for publication, including its Breakout address when applicable. Resource
-imports use the shared live resource scope described in
-[`agent-attachments.md`](agent-attachments.md#authorized-work-stream-discovery-and-text-hydration):
-its own attachments, the wizard's attachments, and resources visible in its home
-and explicitly attached conversations. Imports do not copy inherited resource
-links. The same scope is read again for import revocation; a publication target
-alone grants no resource access. A known site ID missing from a list should
+conversation. Its wizard, activations and workers resolve and re-admit the
+home at each publication or recovery lookup. A refused home blocks publication,
+not commands or imports. Main retains `terminal:<thread>:<path>` identities;
+a Breakout uses `terminal:<thread>:substream:<breakout>:<path>` for files,
+sites and reconciliation. Existing publications must be attached to that
+destination before reuse, except when repairing the exact receipt that created
+them before its attachment committed.
+
+Imports use the [shared live resource scope](agent-attachments.md#authorized-work-stream-discovery-and-text-hydration),
+also rechecked for import revocation; a publication target grants no read access.
+A known site ID missing from a list should
 still be tried with `import_resource`. The site skill
 backs up existing files and imports the current publication before each refresh
 so retained files cannot silently overwrite newer layout edits. Resource links
@@ -1294,7 +1297,10 @@ update lag before changing the default.
 The wizard could neither import its home Thread's site nor publish back to that
 Thread, although scheduled activations had a narrow recovery exception. Setup,
 activations, workers and interrupted-write repair now resolve the admitted home
-through the same plugin composition. Imports and revocation use live inherited
+at each publication and recovery lookup, without taking away other Terminal
+tools on a home-access refusal. Breakout identities include the child address
+to prevent same-path outputs from overwriting another audience's publication.
+Imports and revocation use live inherited
 resource access rather than attaching a recovered site to each run. Creating a
 Sidekick-owned replacement was rejected because it changes the site's identity
 and URL. Preserve internal command captures in the producing conversation and

@@ -101,13 +101,11 @@ without a message, team membership or activation. Use the Sidekick UUID from
 creation or discovery and a Rally resource UUID visible to the calling
 conversation. The service applies the same Sidekick access and owning-thread
 rules as contacting its wizard, then uses the normal `attach_resources` product
-operation on the wizard's conversation. That operation rechecks the execution
-user's active membership and resource sharing rights, including personal
-connection ownership and the requirement to send an upload before sharing it.
+operation on the wizard's conversation with its existing sharing rules.
 It returns `{ sidekickId, resourceId, alreadyAttached }`; repeats keep one link.
-The wizard, future activations and its workers read the attachment through the
-shared resource scope. This direct attachment remains until explicitly removed;
-it is independent of inherited home or conversation attachments.
+The wizard and its runs use the
+[shared resource scope](agent-attachments.md#authorized-work-stream-discovery-and-text-hydration).
+This direct attachment remains until explicitly removed; it is independent of inherited home or conversation attachments.
 
 Conversation migration 60 stores the background principal and a stop timestamp.
 Migration 69 adds the root conversation: the first conversation up the

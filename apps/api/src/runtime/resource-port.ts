@@ -78,12 +78,13 @@ export function conversationResourceLinksFrom(
         resources: conversationResourceLinks(
           resourcePort(workspaceId, conversation.parentId, conversation.substreamId),
           () => resourcePort(workspaceId, conversation.parentId, "0"),
+          undefined, { kind: conversation.substreamId === "0" ? "none" : "breakout" },
         ),
       }));
       if (context.substreamId !== "0") sources.unshift({
         key: `${context.sidekickId}/0`,
         resources: conversationResourceLinks(resourcePort(workspaceId, context.sidekickId, "0"),
-          () => resourcePort(workspaceId, context.sidekickId, "0")),
+          () => resourcePort(workspaceId, context.sidekickId, "0"), undefined, { kind: "none" }),
       });
       return sources;
     } : undefined,
@@ -107,8 +108,9 @@ export function createConversationResourceLinks(
 ): ConversationResourceLinks {
   const own = createResourceObjectPort(env, workspaceId, workstreamId, localStorage, substreamId);
   const resources = createResourcePortFactory(env);
-  return conversationResourceLinksFrom((workspace, parent, child) =>
-    workspace === workspaceId && parent === workstreamId && child === substreamId
-      ? own : resources(workspace, parent, child), workspaceId, workstreamId,
-  substreamId, principal ? { env, principal } : undefined);
+  return conversationResourceLinksFrom(
+    (workspace, parent, child) => workspace === workspaceId && parent === workstreamId && child === substreamId
+      ? own : resources(workspace, parent, child),
+    workspaceId, workstreamId, substreamId, principal ? { env, principal } : undefined,
+  );
 }
