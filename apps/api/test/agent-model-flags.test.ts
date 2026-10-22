@@ -7,6 +7,7 @@ import {
   AGENT_MODEL_FLAG_KEYS,
   AGENT_MODEL_ROLES,
   agentModelOverride,
+  conversationModelRole,
   defaultAgentModelRouting,
   resolveAgentModelRouting,
   resolveNewWorkstreamModelRouting,
@@ -475,6 +476,47 @@ describe("agent model flags", () => {
       { workspaceId: SEEDED_WORKSPACE_ID, workstreamId: SEEDED_WORKSTREAM_ID },
     ))
       .resolves.toEqual({ model: "x-ai/grok-4.5", fallbackModels: ["google/gemini-3.6-flash"] });
+  });
+
+  it("gives only the Sidekick wizard its authoring role", () => {
+    expect(conversationModelRole({ parentKind: "automation" })).toBe("sidekick_authoring");
+    expect(conversationModelRole({ parentKind: "automation", substreamId: "0" })).toBe("sidekick_authoring");
+    expect(conversationModelRole({ parentKind: "automation", substreamId: "activation-or-worker" })).toBe("workstream");
+    expect(conversationModelRole({ parentKind: "workstream", substreamId: "0" })).toBe("workstream");
+  });
+
+  it("routes an unpinned wizard to Sol independently of the live thread flag", async () => {
+    const env = await envWithOverride(envWithFlags(async (flagKey, defaultValue) => ({
+      flagKey,
+      value: flagKey === "agent-model-workstream"
+        ? { model: "openai/gpt-5.6-terra", fallbackModels: [] }
+        : defaultValue,
+      reason: "STATIC",
+    })), null);
+    env.OPENROUTER_PRIMARY_MODEL = "openai/gpt-6.1-sol";
+    env.OPENROUTER_FALLBACK_MODELS = "google/gemini-3.8-flash";
+    const context = { workspaceId: SEEDED_WORKSPACE_ID, workstreamId: SEEDED_WORKSTREAM_ID };
+
+    await expect(resolveWorkstreamModelRouting(env, {
+      ...context, parentKind: "automation", substreamId: "0",
+    })).resolves.toEqual({ model: "openai/gpt-6.1-sol", fallbackModels: ["google/gemini-3.8-flash"] });
+    await expect(resolveWorkstreamModelRouting(env, {
+      ...context, parentKind: "automation", substreamId: "activation",
+    })).resolves.toEqual({ model: "openai/gpt-5.6-terra", fallbackModels: [] });
+    await expect(resolveWorkstreamModelRouting(env, context)).resolves.toEqual({
+      model: "openai/gpt-5.6-terra", fallbackModels: [],
+    });
+  });
+
+  it("preserves an explicitly pinned wizard model over the authoring flag", async () => {
+    const env = await envWithOverride(envWithFlags(serving({
+      model: "openai/gpt-6.1-sol", fallbackModels: ["google/gemini-3.8-flash"],
+    })), "openai/gpt-5.6-terra");
+
+    await expect(resolveWorkstreamModelRouting(env, {
+      workspaceId: SEEDED_WORKSPACE_ID, workstreamId: SEEDED_WORKSTREAM_ID,
+      parentKind: "automation", substreamId: "0",
+    })).resolves.toEqual({ model: "openai/gpt-5.6-terra", fallbackModels: [] });
   });
 
   // Retiring a model from the list is a code change, not a migration, so the

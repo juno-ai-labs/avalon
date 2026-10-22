@@ -275,6 +275,7 @@ export const AGENT_MODEL_ROLES = [
   "session_import",
   "suggestion_draft",
   "memory_sweep",
+  "sidekick_authoring",
 ] as const;
 export type AgentModelRole = (typeof AGENT_MODEL_ROLES)[number];
 
@@ -289,6 +290,7 @@ export const AGENT_MODEL_FLAG_KEYS: Readonly<Record<AgentModelRole, string>> = {
   session_import: "agent-model-session-import",
   suggestion_draft: "agent-model-suggestion-draft",
   memory_sweep: "agent-model-memory-sweep",
+  sidekick_authoring: "agent-model-sidekick-authoring",
 };
 
 /** One task's primary OpenRouter model and its ordered fallback route. */

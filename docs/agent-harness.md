@@ -670,9 +670,25 @@ Mail + Calendar and Drive + Docs + Sheets plugins. The host freezes each view's
 capabilities and activation independently, while joining their capabilities by
 connection ID for run scope; see [Google connector views](connectors.md#google).
 
-`polling-for-events` owns trigger selection and source-resource lookup.
-It composes with `tracking-seen-or-done-items`, which owns shared ledgers,
-claims, recovery and baselines. The tracking skill is owned by `rally:tables`
+The standing system prompt defines Sidekicks and their separate activation
+conversations. The Sidekicks plugin and automation-specific Terminal guidance
+explain shared files, execution-user access, and overlapping updates when those
+facts are needed. The tracking skill keeps completion records and output claims
+in durable tables. Public help also feeds the rendered manual, Markdown, search
+index and full manual for model readers; those descriptions must agree.
+
+`polling-for-events` owns trigger selection and source-resource lookup. Its
+catalog covers actions after external changes, including site refreshes. It
+branches between explicit schedules, supported events with resolved bindings,
+and polling justified by a concrete event/filter/resolution gap. Saved run
+instructions retain that rationale; a search miss does not establish an
+unsupported event. `building-live-sites` carries the saved refresh procedure:
+back up local files and import the current published source into the original directory,
+preserve its publishing conversation and consumer data format, reconcile all
+eligible source records, then verify publication. Initial publication, Sidekick
+activation and a successful refresh are distinct outcomes.
+The event skill composes with `tracking-seen-or-done-items`, which owns shared
+ledgers, claims, recovery and baselines. The tracking skill is owned by `rally:tables`
 rather than `rally:sidekicks` so execution runs can load it without authoring
 tools. The skill bodies are the procedures; this document records their scope.
 
@@ -1668,6 +1684,32 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-10-21 — Carry trigger decisions and site recovery into saved runs
+
+**What changed:** The event skill branches explicitly between requested schedules,
+resolved event watches and justified polling, and saves the choice's rationale.
+The site skill backs up existing local files and imports the current published
+source before each refresh, retaining unfinished work while preserving newer
+changes made in another sandbox.
+Saved instructions identify the resource,
+owning thread, import and publication paths, and data format. Runs account for
+every requested source row and check each stage of completion separately.
+Sandbox-specific Terminal guidance is sent only to Sidekick conversations,
+while the standing prompt describes their separate conversations. The tracking
+skill coordinates overlapping updates with a revision-checked output claim;
+the site skill holds it through import, edits and publication. Public help
+explains shared files and the current execution-user boundary.
+
+**Why:** The content-calendar experiment chose polling before resolving its event
+resource and expected a later activation to inherit the creator's files.
+Sidekick runs now
+share their wizard's sandbox, but the requesting Thread remains separate and
+files still need recovery after a reset. Skills
+present in one conversation did not make those steps durable for the next agent.
+Another reminder to load a skill was insufficient; the decisions and recovery
+steps must be saved with the work. Evaluation must observe resolution, import,
+row coverage and publication, rather than counting skill loads.
 
 ### 2026-10-21 — Seen-item tracking is shared by authoring and execution
 

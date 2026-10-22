@@ -165,7 +165,8 @@ not invent one. Peek does not lease, acknowledge, retry, or remove a message.
 Ace deliberately discards Cloudflare's returned purge reference, so this first
 Queues surface has no delete capability.
 
-`GET /api/models` reads the eight `agent-model-*` JSON flags. Ace hard-codes
+`GET /api/models` reads the managed `agent-model-*` JSON flags, including the
+Sidekick wizard's independent `agent-model-sidekick-authoring` Sol route. Ace hard-codes
 the role catalog because Flagship knows only opaque keys: each entry explains
 the code path the model serves and carries the same checked-in route the API
 Worker uses when Flagship is unavailable. The suggested model list combines
@@ -367,7 +368,7 @@ resolution, the shared TypeScript configuration, or one of the deployment-time
 scripts. Test-only changes under Ace, shared contracts/DB, or the Queue provisioner
 remain CI-only and do not redeploy production. The workflow validates the
 repository, creates all declared Queues, clones the migration Access policy,
-ensures all Enabled-named flags and all eleven JSON model flags exist from their
+ensures all Enabled-named flags and managed JSON model flags exist from their
 checked-in defaults without overwriting existing definitions, injects Ace's
 returned Access audience, uses the runtime token to list a dynamically selected Queue
 and perform a non-consuming peek, deploys the Hono Worker and assets, installs

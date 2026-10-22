@@ -79,9 +79,8 @@ export async function createAvalonTerminalPlugin(
   const configuration = parseTerminalRegionConfiguration(env);
   if (configuration.capability === "unsupported") return null;
 
-  // Which conversation's sandbox this run uses: its own, or for a background
-  // agent the conversation that started it, so the agents a conversation
-  // spawns work in its files under its lease. Decided once, here, and bound
+  // One sandbox per ordinary conversation or per Sidekick. Delegated agents
+  // share that same owner's files and mutation lease. Decided once and bound
   // into the factory so nothing below needs to know a run's Terminal address
   // can differ from its own.
   let scope: TerminalRunScope;
@@ -162,6 +161,29 @@ export async function createAvalonTerminalPlugin(
     },
   });
   const provider = options.provider ?? ownedProvider!;
+  // Shared files are an execution-user boundary, not permission to act as the
+  // editor. Read the live Sidekick facts before activation and every tool,
+  // including reads that can reuse the runtime's cached acquisition.
+  const assertSandboxPrincipal = async (context: HarnessToolContext): Promise<void> => {
+    if (input.parentKind !== "automation") return;
+    const workspace = await durableObjectStubForWorkspace(
+      env, env.WORKSPACE_DOS, asWorkspaceId(input.workspaceId),
+      workspaceDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId)),
+    );
+    const facts = context.executionPrincipal.type === "user"
+      ? await workspace.sidekickReadAuthorizationFacts({
+        workspaceId: asWorkspaceId(input.workspaceId), parentId: input.parentId,
+        userId: context.executionPrincipal.userId, substreamIds: [],
+      })
+      : null;
+    if (!facts?.exists || !facts.executor) {
+      throw new TerminalToolError(
+        "sandbox_authority_mismatch",
+        "Only the user this Sidekick runs as can use its shared Terminal files. You can still edit its definition without accessing Terminal.",
+        { reason: "Continue as the Sidekick's run-as user to use its Terminal sandbox." },
+      );
+    }
+  };
   const coordinator = new TerminalSandboxCoordinator(
     env,
     terminalPort,
@@ -301,6 +323,7 @@ export async function createAvalonTerminalPlugin(
         toolInvocationId: context.effectIntentId ?? null,
       });
       try {
+        await assertSandboxPrincipal(context);
         const result = await withTerminalToolTrace(trace, () => executors[name](toolInput, context));
         const durationMs = Date.now() - startedAt;
         logStructuredEvent(env, "info", "terminal_tool_finished", {
@@ -376,9 +399,12 @@ export async function createAvalonTerminalPlugin(
   const egressGuidance = policy.mode === "full_internet"
     ? " Current workspace egress is Full internet."
     : " Current workspace egress is Trusted only; a network failure may mean the destination is not approved, so ask a workspace owner to review Terminal network targets instead of trying to bypass it.";
+  const sidekickGuidance = input.parentKind === "automation"
+    ? " This Sidekick's wizard, activations, and background agents share one sandbox under its current run-as user. Other editors can configure its definition but cannot access those files. Activations can overlap; the mutation lease protects one tool call, not a whole workflow. Load tracking-seen-or-done-items and claim a shared output before a multi-step update; use separate directories for independent work."
+    : "";
   const plugin = createTerminalPlugin(
     observedExecutors,
-    `${TERMINAL_PLUGIN_SYSTEM_MESSAGE}${egressGuidance}`,
+    `${TERMINAL_PLUGIN_SYSTEM_MESSAGE}${sidekickGuidance}${egressGuidance}`,
     {
       // Only `publish_resource` needs one: the other re-enterable Terminal
       // writes resolve their effect from the receipt, so re-entering them is
@@ -452,6 +478,7 @@ export async function createAvalonTerminalPlugin(
       // between activation and its first Terminal tool, against an ~18s median
       // cold start — so for most runs this wait stops being visible at all.
       const preparing = withTerminalToolTrace(trace, async () => {
+        await assertSandboxPrincipal(terminalContext);
         await runtime.prepare(terminalContext, async (runtimeContext, sandbox) => {
           repositoryPreparationCode = await prepareRepositoryForActivation(runtimeContext, sandbox);
         });
