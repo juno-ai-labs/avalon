@@ -2710,11 +2710,11 @@ const automationDraftSubmissionJsonSchema = {
       enum: [...PROJECT_COLOR_KEYS_STORABLE],
       description: `The color of the Sidekick's hexagon. A Sidekick that already has one keeps it unless the person asks for another: sidekick_sidekicks_list shows the current one. A new choice is one of ${PROJECT_COLOR_RING.join(", ")}. The other values are accepted only to keep a Sidekick's current color.`,
     },
-    overview: { type: "string", description: "A few sentences for the person: what starts the work, what happens each run, and where the result goes." },
-    instructions: { type: "string", description: "Self-contained instructions; runs cannot see this conversation. For executable work, save the discovered method. Name resource IDs, tools, skills to load, and input formats. Give ordered steps, decision rules, delivery destinations and actions, and observable success checks. Include state and duplicate handling where needed. Explain when to do nothing and how to recover from missing inputs, changed resources, or failed steps. Mark verified facts, untested assumptions, and data to fetch or revalidate each run." },
+    overview: { type: "string", description: "A few sentences for the person. For an instruction-only Skill, explain when to use it and what it helps do. For triggered work, explain what starts it, what happens each run, and where the result goes." },
+    instructions: { type: "string", description: "Self-contained instructions usable without this setup conversation. For an instruction-only Skill, save the knowledge, rules or procedure itself, when to use it, and any needed context, constraints or expected output. For triggered work, save the discovered method: resource IDs, tools and skills to load, input formats, ordered steps, decisions, delivery actions and success checks. Include state and duplicate handling where needed, no-op conditions, and recovery from missing inputs, changed resources or failures. Mark verified facts, untested assumptions, and data each run must fetch or revalidate. Require tools or resources only when needed." },
     triggers: {
       type: "array",
-      description: "What starts a run, one entry per trigger. Every field of an entry is required, so set the ones the chosen type does not use to null.",
+      description: "Use [] for an instruction-only Skill. For triggered work, list what starts a run, one entry per trigger. Every field of an entry is required; set unused fields to null.",
       items: {
         type: "object",
         additionalProperties: false,
@@ -2772,7 +2772,7 @@ const automationDraftSubmissionJsonSchema = {
     expectedOutputs: {
       type: "array",
       items: { type: "string" },
-      description: "What each run should produce, one entry per output, for example [\"A summary posted to the work stream\"]. These are what a person checks the Sidekick against, so write observable results rather than steps.",
+      description: "Observable results of using these instructions, one entry per output; use [] when none are needed. For triggered work, describe what each run produces, for example [\"A summary posted to the Thread\"]. Write results rather than steps.",
     },
     defaultBehavior: {
       type: "string",
@@ -2831,7 +2831,7 @@ const automationDraftSubmissionJsonSchema = {
     },
     ready: {
       type: "boolean",
-      description: "True when the requested behavior is configured and ready to save; false when required information is missing. After submitting a partial draft, ask the requester for that information. For an agent's request, send the question to that agent."
+      description: "True when the requested instructions or behavior are complete and ready to save; false when required information is missing. Do not require triggers or a connector just to publish reusable instructions. After submitting a partial draft, ask the requester for that information. For an agent's request, send the question to that agent."
     }
   },
   required: [
