@@ -2,6 +2,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import React from 'react';
 import { TitlePill } from '@rally/ui/components/title-pill';
+import { Toast } from '@rally/ui/components/toast';
 import { describe, expect, it, vi } from 'vitest';
 
 import { AnnotationDraftProvider, useAnnotationDraft } from './artifact-annotations';
@@ -105,6 +106,22 @@ function Harness({ props }: { props: SiteResourceDetailProps }): React.JSX.Eleme
 }
 
 describe('showing a live artifact in the rail', () => {
+  it('keeps a toast above the native preview and restores the page after dismissal', async () => {
+    // Geometry and the native surface are absent in jsdom. Exercise the real
+    // Toast and detail against a measured pane; Electron verifies composition.
+    const geometry = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
+      DOMRect.fromRect({ x: 20, y: 40, width: 500, height: 320 }),
+    );
+    const { props } = setup();
+    await waitFor(() => expect(props.surface.setBounds).toHaveBeenLastCalledWith({ x: 20, y: 40, width: 500, height: 320 }), { timeout: 5_000 });
+    const toast = render(<Toast open>Copied</Toast>);
+    await waitFor(() => expect(props.surface.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 0, height: 0 }), { timeout: 5_000 });
+    expect(screen.getByTestId('site-preview-pane').querySelector('img')).toHaveAttribute('src', 'data:image/jpeg;base64,c3RpbGw=');
+    toast.rerender(<Toast open={false}>Copied</Toast>);
+    await waitFor(() => expect(props.surface.setBounds).toHaveBeenLastCalledWith({ x: 20, y: 40, width: 500, height: 320 }), { timeout: 5_000 });
+    geometry.mockRestore();
+  });
+
   it('shows an unavailable comment control for browser websites', async () => {
     setup({surface:surface({framed:true})});
     const button=await screen.findByRole('button',{name:'Comment mode'});

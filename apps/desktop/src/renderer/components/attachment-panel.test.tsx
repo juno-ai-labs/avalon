@@ -52,6 +52,7 @@ describe('AttachmentPanel', () => {
     openMenu();
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy URL' }));
     expect(await screen.findByText('Copy failed. Try again.')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     openMenu();
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy failed — click to retry' }));
     expect(await screen.findByText('Copied.')).toBeVisible();
@@ -74,6 +75,7 @@ describe('AttachmentPanel', () => {
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Attachment menu: first.png' }), { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy URL' }));
     expect(await screen.findByText(outcome === 'success' ? 'Copied.' : 'Copy failed. Try again.')).toBeVisible();
+    if (outcome === 'failure') fireEvent.click(screen.getByRole('button', { name: 'OK' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Next attachment' }));
     expect(screen.queryByText('Copied.')).toBeNull();

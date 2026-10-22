@@ -75,6 +75,17 @@ error copy without those markers.
 
 ## How it works
 
+`Toast` in `components/toast.tsx` is the shared, controlled confirmation pill.
+Keep it mounted inside a positioned container, pass `open`, content and an
+optional icon, and let the caller own its lifetime. It floats at the top centre
+without taking layout space, keeps a polite live region mounted before an
+announcement, and retains its content until the exit finishes. The shared
+`lib/retained-presence.ts` hook also drives conversation activity and Jump to
+latest; interrupted motion reverses in place and reduced motion skips it.
+Toast bodies carry `data-native-overlay` so native previews use their existing
+still-and-hide path while a toast overlaps them, through the end of its exit.
+Failures continue to use acknowledged error popups.
+
 Shared components receive presentation data and callbacks. They never import an
 application, fetch authority, establish sockets or call Electron. Optional actions
 represent host capabilities; omitting setup and authoring actions keeps the browser
@@ -208,6 +219,11 @@ apply before first render.
 Native theme reporting and cross-window IPC belong only to the desktop adapter.
 
 ## Testing
+
+`pnpm --filter @rally/desktop exec vitest run src/renderer/components/toast.test.tsx
+src/renderer/components/conversation-motion.test.tsx` covers announcements,
+retained content, interruption, reduced motion and cleanup. Real-window
+inspection covers placement, theme contrast and native preview composition.
 
 Run `pnpm lint`, `pnpm typecheck`, and `pnpm --filter @rally/desktop exec vitest run
 src/renderer/components/sidekick-picker.test.tsx
