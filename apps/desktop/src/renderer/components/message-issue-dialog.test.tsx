@@ -22,8 +22,8 @@ describe('Oopsie reports', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Oopsie' }));
     expect(screen.getByRole('dialog', { name: 'Something go wrong?' })).toBeInTheDocument();
     expect(screen.getByText('Let us know what you expected so we can improve Rally.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Click or hold to dictate' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Send report' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Start voice input' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
   });
 
   it('closes immediately while delivery is pending and stays closed if delivery fails', async () => {
@@ -35,7 +35,7 @@ describe('Oopsie reports', () => {
     </MessageIssueProvider></Tooltip.Provider>);
     fireEvent.click(screen.getByRole('button', { name: 'Oopsie' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Describe the issue' }), { target: { value: 'I expected a useful answer.' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Send report' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(client.createMessageIssue).toHaveBeenCalledExactlyOnceWith({
       id: expect.any(String), target, messageId: 'turn-1', blockId: 'turn-1:text:0', description: 'I expected a useful answer.',

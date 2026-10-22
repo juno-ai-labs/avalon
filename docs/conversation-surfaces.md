@@ -230,6 +230,11 @@ launcher that dressed its field differently made the element a person types
 their first message into the odd one out on a screen already showing the
 conversation it becomes, and it made the hand-off a costume change.
 
+`ComposerInput.renderSubmit` lets a host place its submit control outside the
+capsule while keeping the same stop-and-send finalization and disabled state.
+Oopsie uses it for a footer Send button next to Cancel, through a portal, so a
+recording’s final words reach the report before its best-effort submission.
+
 The capsule's plus menu starts with **Attach files** when the host passes
 `onAttach`. A host may add its own entries after it through `menuActions`
 (`ComposerMenuAction`), and the menu shows whenever it has any entry. The
