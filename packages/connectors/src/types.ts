@@ -769,12 +769,22 @@ export interface ConnectorAgentPluginDescriptor {
  *
  * Hosted MCP servers are the motivating case: `tools/list` is the authority on
  * what exists, so copying one observed response into a static connector
- * manifest guarantees drift. The provider adapter still owns the trusted
- * catalog prose, safety policy, and credential lifecycle; only tool names,
- * descriptions, and input schemas cross this dynamic boundary. Provider
+ * manifest guarantees drift. The provider adapter owns safety policy and
+ * credential lifecycle. Configured servers can also supply a catalog
+ * description and usage instructions beside their tool definitions. Provider
  * annotations remain untrusted transport metadata and cannot select mode or
  * idempotency.
  */
+export interface ConnectorServerMetadata {
+  description: string;
+  instructions?: string;
+}
+
+export interface ConnectorDynamicAgentCatalog {
+  tools: readonly ToolDefinition[];
+  server: ConnectorServerMetadata;
+}
+
 export interface ConnectorDynamicAgentTools {
   /** Capabilities which may authorize discovery for an existing connection. */
   readonly capabilities: readonly string[];
@@ -789,6 +799,11 @@ export interface ConnectorDynamicAgentTools {
     connection: AuthorizedConnectorConnection,
     signal: AbortSignal,
   ): Promise<readonly ToolDefinition[]>;
+  /** Tools and provider-supplied plugin guidance from the same discovery. */
+  discoverCatalog?(
+    connection: AuthorizedConnectorConnection,
+    signal: AbortSignal,
+  ): Promise<ConnectorDynamicAgentCatalog>;
 }
 
 /**

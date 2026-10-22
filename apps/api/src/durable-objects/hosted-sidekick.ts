@@ -1151,9 +1151,9 @@ export class HostedSidekick {
       // (an Organization one, or the claimant's own), and if not, the
       // plugin's connection when the claimant may use it (one per plugin).
       const connections = this.sql.exec<{
-        id: string; connector_type: string; model_plugin_id: string; granted_scopes_json: string;
+        id: string; connector_type: string; model_plugin_id: string; display_name: string; granted_scopes_json: string;
       }>(
-        `SELECT id, connector_type, model_plugin_id, granted_scopes_json FROM connector_connections
+        `SELECT id, connector_type, model_plugin_id, display_name, granted_scopes_json FROM connector_connections
           WHERE workspace_id = ? AND status <> 'disabled'
             AND (scope = 'workspace' OR owner_user_id = ?) ORDER BY id`,
         row.workspace_id, claimant,
@@ -1162,7 +1162,7 @@ export class HostedSidekick {
       const replacements = new Map<string, string>();
       for (const connection of connections) {
         for (const view of connectorPluginBindingViews(
-          connection.connector_type, connection.model_plugin_id, JSON.parse(connection.granted_scopes_json) as string[],
+          connection.connector_type, connection.model_plugin_id, JSON.parse(connection.granted_scopes_json) as string[], connection.display_name,
         )) {
           if (!replacements.has(view.modelPluginId)) replacements.set(view.modelPluginId, connection.id);
         }
@@ -1824,14 +1824,14 @@ export class HostedSidekick {
     // request's bookkeeping that an in-object read does not need.
     const connections = selectedPluginIds.length === 0 ? [] : this.sql.exec<{
       id: string; connector_type: string; scope: string; owner_user_id: string | null;
-      model_plugin_id: string; status: string; config_json: string | null; granted_scopes_json: string;
+      model_plugin_id: string; display_name: string; status: string; config_json: string | null; granted_scopes_json: string;
     }>(
-      `SELECT id, connector_type, scope, owner_user_id, model_plugin_id, status, config_json, granted_scopes_json
+      `SELECT id, connector_type, scope, owner_user_id, model_plugin_id, display_name, status, config_json, granted_scopes_json
          FROM connector_connections WHERE workspace_id = ? AND status <> 'disabled'`,
       row.workspace_id,
     ).toArray();
     const connectionsByPlugin = new Map(connections.flatMap((connection) => connectorPluginBindingViews(
-      connection.connector_type, connection.model_plugin_id, JSON.parse(connection.granted_scopes_json) as string[],
+      connection.connector_type, connection.model_plugin_id, JSON.parse(connection.granted_scopes_json) as string[], connection.display_name,
     ).map((view) => [view.modelPluginId, { ...connection, grantedScopes: view.grantedScopes }] as const)));
     const connectorBindings: Record<string, string> = {};
     for (const pluginId of selectedPluginIds) {

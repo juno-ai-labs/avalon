@@ -11,6 +11,7 @@ import type {
   StructuredFailureDetail,
   ToolDefinition
 } from "@rally/contracts";
+import { normalizedPluginSearchText } from "./prompts/plugin-catalog";
 import {
   AddressingClassificationSchema,
   AutomationSetEvaluatorRulesModelInputV1Schema,
@@ -3086,14 +3087,15 @@ export function executeAutomationCreatorDiscoveryTool(
   }
   if (toolName === "plugins_search") {
     const query = String(args.query ?? "").trim().toLocaleLowerCase();
-    const matches = catalog.filter((plugin) => JSON.stringify({
+    const normalized = normalizedPluginSearchText(query);
+    const matches = normalized ? catalog.filter((plugin) => normalizedPluginSearchText(JSON.stringify({
       pluginId: plugin.pluginId,
       displayName: plugin.displayName,
       description: plugin.description,
       aliases: plugin.searchAliases,
       tools: plugin.tools.map((tool) => ({ name: tool.name, description: tool.description, capability: tool.capability })),
       activityTriggers: plugin.activityTriggers.map((trigger) => ({ eventType: trigger.eventType, label: trigger.label })),
-    }).toLocaleLowerCase().includes(query));
+    })).includes(normalized)) : [];
     return {
       query,
       plugins: matches.map((plugin) => {
@@ -4055,8 +4057,9 @@ export interface HarnessPlugin {
   tools: HarnessTool[];
   /**
    * Resolve a provider-authored tool surface when this deferred plugin is
-   * activated. The catalog remains static and trusted; only the active tool
-   * definitions are replaced. Results are cached for the lifetime of one run.
+   * activated. The host may also refresh this object's description and
+   * systemMessage from the same provider discovery; Bind registers that
+   * updated plugin after the load. Results are cached for one run.
    */
   loadTools?: () => Promise<HarnessTool[]>;
   /**

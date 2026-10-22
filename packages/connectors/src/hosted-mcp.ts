@@ -14,6 +14,8 @@ import {
   ConnectorError,
   type AuthorizedConnectorConnection,
   type ConnectorDynamicAgentTools,
+  type ConnectorDynamicAgentCatalog,
+  type ConnectorServerMetadata,
   type ConnectorToolResult,
 } from "./types";
 
@@ -320,17 +322,17 @@ export function createHostedMcpPassthrough(config: HostedMcpPassthroughConfig): 
     fetch: fetcher,
     maxResponseBytes,
   });
-  const discover = async (
+  const discoverCatalog = async (
     connection: AuthorizedConnectorConnection,
     signal: AbortSignal,
-  ): Promise<readonly ToolDefinition[]> => {
+  ): Promise<ConnectorDynamicAgentCatalog> => {
     const capability = authorizedCapability(connection);
     const serverUrl = serverUrlFor(connection);
     return withAuth(
       connection,
       signal,
       async (auth) => {
-        const listed = await listHostedMcpTools({
+        const catalog = await listHostedMcpCatalog({
           providerName: config.providerName,
           serverUrl,
           auth,
@@ -338,11 +340,11 @@ export function createHostedMcpPassthrough(config: HostedMcpPassthroughConfig): 
           fetch: fetcher,
           maxResponseBytes,
         });
-        return hostedMcpToolDefinitions(
-          selectTools ? selectTools(listed, connection) : listed,
-          capability,
-          config.toolTimeoutMsByName,
-        );
+        const selected = selectTools ? selectTools(catalog.tools, connection) : catalog.tools;
+        return {
+          tools: hostedMcpToolDefinitions(selected, capability, config.toolTimeoutMsByName),
+          server: hostedMcpServerMetadata(catalog.server, selected),
+        };
       },
     );
   };
@@ -378,7 +380,8 @@ export function createHostedMcpPassthrough(config: HostedMcpPassthroughConfig): 
     dynamicAgentTools: {
       capabilities: [...config.capabilities],
       connectionScopes: [...config.connectionScopes],
-      discover,
+      discover: async (connection, signal) => (await discoverCatalog(connection, signal)).tools,
+      discoverCatalog,
     },
     ...(authorization ? { authorization } : {}),
     call,
@@ -658,7 +661,29 @@ async function hostedMcpTokenRequest(
 }
 
 export async function listHostedMcpTools(input: HostedMcpRequestInput): Promise<HostedMcpTool[]> {
-  return withHostedMcpSession(input, async (session) => listSessionTools(input, session));
+  return (await listHostedMcpCatalog(input)).tools;
+}
+
+export async function listHostedMcpCatalog(input: HostedMcpRequestInput): Promise<{
+  tools: HostedMcpTool[];
+  server: { description?: string; instructions?: string };
+}> {
+  return withHostedMcpSession(input, async (session) => ({
+    tools: await listSessionTools(input, session), server: session.server,
+  }));
+}
+
+/** Reuse the existing tool-description bound for the server's catalog description. */
+export function hostedMcpServerMetadata(
+  server: { description?: string; instructions?: string },
+  tools: readonly HostedMcpTool[],
+): ConnectorServerMetadata {
+  const description = server.description?.trim() || `Available tools: ${tools.map((tool) =>
+    `${tool.name}${tool.description?.trim() ? `: ${tool.description.trim()}` : ""}`).join("; ")}`;
+  return {
+    description: cleanDescription(description.replace(/[\p{Cc}\p{Cf}\s]+/gu, " "), "MCP server"),
+    ...(server.instructions?.trim() ? { instructions: server.instructions.trim() } : {}),
+  };
 }
 
 export async function callHostedMcpTool(
@@ -708,15 +733,20 @@ export interface HostedMcpRequestInput {
 interface HostedMcpSession {
   id: string | null;
   nextId: number;
+  server: { description?: string; instructions?: string };
 }
 
 async function withHostedMcpSession<T>(
   input: HostedMcpRequestInput,
   operation: (session: HostedMcpSession) => Promise<T>,
 ): Promise<T> {
-  const session: HostedMcpSession = { id: null, nextId: 1 };
+  const session: HostedMcpSession = { id: null, nextId: 1, server: {} };
   try {
-    const initialized = z.looseObject({ protocolVersion: z.string() }).parse(await mcpRequest(input, session, {
+    const initialized = z.looseObject({
+      protocolVersion: z.string(),
+      serverInfo: z.looseObject({ description: z.string().optional() }).optional(),
+      instructions: z.string().optional(),
+    }).parse(await mcpRequest(input, session, {
       jsonrpc: "2.0",
       id: session.nextId++,
       method: "initialize",
@@ -729,6 +759,10 @@ async function withHostedMcpSession<T>(
     if (initialized.protocolVersion !== HOSTED_MCP_PROTOCOL_VERSION) {
       throw new ConnectorError("unsupported_capability", `${input.providerName} MCP negotiated unsupported protocol ${initialized.protocolVersion}`);
     }
+    session.server = {
+      ...(initialized.serverInfo?.description === undefined ? {} : { description: initialized.serverInfo.description }),
+      ...(initialized.instructions === undefined ? {} : { instructions: initialized.instructions }),
+    };
     await mcpNotification(input, session, {
       jsonrpc: "2.0",
       method: "notifications/initialized",
@@ -873,7 +907,7 @@ async function closeMcpSession(input: HostedMcpRequestInput, sessionId: string):
   try {
     await fetchMcp(
       { ...input, signal: AbortSignal.timeout(2_000) },
-      { id: sessionId, nextId: 1 },
+      { id: sessionId, nextId: 1, server: {} },
       "DELETE",
       null,
       true,
