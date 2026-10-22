@@ -210,8 +210,9 @@ using it also covers a direct participant add.
 an admitted preview retries the conversation, whose new ticket checks access
 again. Reusing a pending preview can return a pre-grant refusal after the only
 push has passed; cancellation must discard that result. The nudge is stored
-independently of preview existence, because Organization and conversation socket
-events can arrive in either order. Each preview records the version when its
+independently of preview existence and retained by the Organization socket's
+cache lease, because the two sockets' events can arrive in either order. Each
+preview records the version when its
 read started; recovery requires a successful idle result for the current
 version. Consuming that version for the conversation survives a failed retry's
 remount, preventing a loop. An Organization subscribe can therefore permit one
