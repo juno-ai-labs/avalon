@@ -201,6 +201,7 @@ describe("Terminal Bind integration", () => {
     const plugin = await createAvalonTerminalPlugin(env, { ...input, parentKind: "automation" }, undefined, {
       provider: sandboxProvider,
     });
+    expect(plugin?.systemMessage).toContain("Activations can overlap");
     const read = plugin!.tools.find((tool) => tool.definition.name === "read_file")!.execute!;
     const toolContext = { workspaceId: W, workstreamId: S, harnessRunId: R,
       toolCallId: "wizard-read", executionPrincipal: input.executionPrincipal,
@@ -252,6 +253,7 @@ describe("Terminal Bind integration", () => {
     const plugin = tools.plugins.find((candidate) => candidate.canonicalId === "rally:terminal");
 
     expect(plugin).toMatchObject({ preload: false, explicit: false, shortWireName: "" });
+    expect(plugin?.systemMessage).not.toContain("Sidekick's wizard");
     expect(plugin?.tools.map((tool) => tool.definition.name)).toEqual([
       "read_file", "view_image", "edit_file", "write_file", "apply_patch", "run_command",
       "checkout_repository", "import_resource", "publish_resource", "publish_branch_and_pr",

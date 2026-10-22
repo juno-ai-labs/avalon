@@ -31,13 +31,10 @@ that refreshes a site needs these tools for its publication step too.
 
 ## Configure an existing site's refresh before writing the Sidekick
 
-A Sidekick's wizard, activations, and background agents share one Terminal
-sandbox (file workspace), accessible only to its current run-as user. Each
-activation still has its own conversation.
-The requesting Thread's sandbox is separate. Existing files may be older than
-what is published: someone can revise the site from another sandbox. Import the
-current published source before each refresh, including when local files exist.
-Using the same publication path alone neither recovers nor updates source files.
+Existing local files may be older than the published site. Import the current
+published source before each refresh, even when files exist. Other conversations
+can revise it from separate sandboxes; the publication path alone does not
+recover or update source files.
 
 Before saving the Sidekick, inspect the existing site and save these facts in
 its run instructions:
@@ -48,6 +45,10 @@ its run instructions:
 - **Publication path:** The same directory, relative to \`/workspace/.rally-output\`.
 - **Data format:** The data file names, how the rows are arranged in them, and
   the field names and types the site's code expects.
+
+For overlapping refreshes, load \`tracking-seen-or-done-items\` and save its
+shared-table coordination procedure, keyed by the site resource ID. One run
+must hold the claim across the entire import, edit, check, and publish sequence.
 
 Save these steps for each run as well:
 

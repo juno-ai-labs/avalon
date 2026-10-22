@@ -399,9 +399,12 @@ export async function createAvalonTerminalPlugin(
   const egressGuidance = policy.mode === "full_internet"
     ? " Current workspace egress is Full internet."
     : " Current workspace egress is Trusted only; a network failure may mean the destination is not approved, so ask a workspace owner to review Terminal network targets instead of trying to bypass it.";
+  const sidekickGuidance = input.parentKind === "automation"
+    ? " This Sidekick's wizard, activations, and background agents share one sandbox under its current run-as user. Other editors can configure its definition but cannot access those files. Activations can overlap; the mutation lease protects one tool call, not a whole workflow. Load tracking-seen-or-done-items and claim a shared output before a multi-step update; use separate directories for independent work."
+    : "";
   const plugin = createTerminalPlugin(
     observedExecutors,
-    `${TERMINAL_PLUGIN_SYSTEM_MESSAGE}${egressGuidance}`,
+    `${TERMINAL_PLUGIN_SYSTEM_MESSAGE}${sidekickGuidance}${egressGuidance}`,
     {
       // Only `publish_resource` needs one: the other re-enterable Terminal
       // writes resolve their effect from the receipt, so re-entering them is
