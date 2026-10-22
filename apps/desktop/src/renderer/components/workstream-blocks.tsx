@@ -1952,13 +1952,14 @@ export function AssistantMessageContent({
   text: string;
   telemetry?: MessageCopyTelemetry;
 }): React.JSX.Element {
+  const reportIssue = useReportMessageIssue();
   return (
     <>
       {text ? (
         <MarkdownBody citations={citations} collapseHeadings={collapseHeadings} mentions={mentions} streaming={streaming} telemetry={telemetry}>{text}</MarkdownBody>
       ) : null}
       {afterText}
-      {showCopy && !streaming && (text !== '' || onStartSubstream !== undefined || telemetry !== undefined) && (
+      {showCopy && !streaming && (text !== '' || onStartSubstream !== undefined || (reportIssue !== null && telemetry !== undefined)) && (
         <MessageActions
           citations={citations}
           mentions={mentions}

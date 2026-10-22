@@ -1,4 +1,4 @@
-import { asSubstreamId } from '@rally/contracts';
+import { SubstreamIdSchema } from '@rally/contracts';
 import { MessageIssueProvider } from '../components/message-issue-dialog';
 import { useSidekickActivity } from '../lib/use-sidekick-activity';
 import { validateAnnotationSend } from '../lib/use-annotation-pins';
@@ -3561,8 +3561,9 @@ function ConversationSurfaceContent({
   const latestRunFailureMessage = detail.latestHarnessRun?.error?.message
     ?? 'Rally could not complete this run. Retrying is unlikely to help — copy the request ID for support.';
 
+  const issueSubstreamId = SubstreamIdSchema.safeParse(substreamId).data;
   return (
-    <MessageIssueProvider api={api} target={{ kind: 'conversation', parentId: id, substreamId: asSubstreamId(substreamId) }}>
+    <MessageIssueProvider api={api} target={issueSubstreamId ? { kind: 'conversation', parentId: id, substreamId: issueSubstreamId } : null}>
     <EmailMentionContext.Provider value={emailMentions}>
     <ConnectorConnectionsProvider connections={visibleConnections}>
     <div className="conversation-layout" ref={layoutRef}>

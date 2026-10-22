@@ -1,7 +1,8 @@
 import type { CreateMessageIssue, MessageIssueTarget } from '@rally/contracts/message-issues';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type PropsWithChildren } from 'react';
 import { createPortal } from 'react-dom';
-import type { RallyApi } from '../lib/api';
+import { ApiError, type RallyApi } from '../lib/api';
+import { logWarn } from '../../common/logger';
 import { ComposerInput } from './composer-input';
 import { Button, Modal } from './primitives';
 
@@ -13,7 +14,7 @@ type IssueApi = Pick<RallyApi, 'createMessageIssue' | 'getTranscriptionSocketTic
 /** One dialog per feed, outside virtualized rows so scrolling cannot discard a report. */
 export function MessageIssueProvider({ api, target, children }: PropsWithChildren<{
   api: IssueApi | null | undefined;
-  target: MessageIssueTarget;
+  target: MessageIssueTarget | null;
 }>): React.JSX.Element {
   const targetKey = JSON.stringify(target);
   const [report, setReport] = useState<Omit<CreateMessageIssue, 'description'> | null>(null);
@@ -21,11 +22,12 @@ export function MessageIssueProvider({ api, target, children }: PropsWithChildre
   targetRef.current = target;
   // A streaming feed rerenders often; a stable context callback keeps every
   // settled message from rerendering just because a new token arrived.
-  const openReport = useCallback((messageId: string, blockId?: string) => setReport({
-    id: crypto.randomUUID(), target: targetRef.current, messageId, ...(blockId ? { blockId } : {}),
-  }), []);
+  const openReport = useCallback((messageId: string, blockId?: string) => {
+    if (!targetRef.current) return;
+    setReport({ id: crypto.randomUUID(), target: targetRef.current, messageId, ...(blockId ? { blockId } : {}) });
+  }, []);
   useEffect(() => setReport(null), [targetKey]);
-  return <MessageIssueContext.Provider value={api ? openReport : null}>
+  return <MessageIssueContext.Provider value={api && target ? openReport : null}>
     {children}
     {api && report && <MessageIssueDialog api={api} key={report.id} onClose={() => setReport(null)} report={report} />}
   </MessageIssueContext.Provider>;
@@ -45,7 +47,12 @@ export function MessageIssueDialog({ api, report, onClose }: {
     if (!text || submitted.current) return;
     submitted.current = true;
     // Reporting is best effort: delivery never holds the conversation open.
-    void api.createMessageIssue({ ...report, description: text }).catch(() => undefined);
+    void api.createMessageIssue({ ...report, description: text }).catch((error: unknown) => {
+      logWarn('rally', 'message_issue_delivery_failed', {
+        code: error instanceof ApiError ? error.code ?? 'request_failed' : 'request_failed',
+        ...(error instanceof ApiError ? { status: error.status, requestId: error.requestId } : {}),
+      });
+    });
     onClose();
   };
   return <Modal
