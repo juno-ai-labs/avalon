@@ -14,7 +14,7 @@ import { WorkstreamAppearanceSchema } from "./workstream-appearance";
  * crosses here: a link is routing context, not a capability
  * (`docs/channel-access-requests.md`).
  */
-export const ConversationAccessPreviewSchema = z.strictObject({
+export const ConversationAccessPreviewSchema = z.object({
   kind: z.enum(["channel", "breakout"]),
   title: z.string(),
   appearance: WorkstreamAppearanceSchema.nullable(),
@@ -23,6 +23,8 @@ export const ConversationAccessPreviewSchema = z.strictObject({
   access: z.enum(["open", "requestable"]),
   /** Whether this viewer already has a pending request for this conversation. */
   requestPending: z.boolean().default(false),
+  /** A pending request whose email failed can be sent again under the same idempotency key. */
+  requestEmailed: z.boolean().default(false),
 });
 export type ConversationAccessPreview = z.infer<typeof ConversationAccessPreviewSchema>;
 
