@@ -498,6 +498,7 @@ describe('WorkspaceSocketProvider', () => {
     });
     await vi.waitFor(() => expect(api.conversationAccessPreview).toHaveBeenCalledTimes(2), { timeout: 5_000 });
     expect(onRetry).not.toHaveBeenCalled();
+    expect(screen.queryByRole('status')).toBeNull();
     await act(async () => {
       if (outcome === 'failed') failPreview(new Error('access check failed'));
       else finishPreview({ ...open, access: 'requestable' });
