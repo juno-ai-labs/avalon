@@ -848,6 +848,8 @@ leaves the appearance alone.
 A Thread- or Breakout-scoped Sidekick starts with its home conversation's
 color, copied from that exact home's directory row in the creation transaction.
 If the home has no stored color, it uses the same id-derived color as the glyph.
+An invalid stored appearance is reported with field diagnostics and uses that
+fallback too; cosmetic data cannot block creation or a replay.
 Only the color is copied: the icon remains the Sidekick's own generated mark.
 This is a creation-time default; later home color changes and repeated creation
 requests do not overwrite the Sidekick's appearance. Personal and Organization
@@ -1162,13 +1164,11 @@ instructions. See [Google connector guidance](connectors.md#google).
 
 ### 2026-10-22 — Scoped Sidekicks start in their home's color
 
-Thread- and Breakout-scoped Sidekicks copy the exact home conversation's color
-in the creation transaction so a new Sidekick visually belongs to the room
-that created it. Leaving appearance empty derived an unrelated color from the
-Sidekick's new id. The shared generated-appearance helper covers homes without
-a stored color. This default copies only color and only on insertion; replay,
-subsequent home recoloring and explicit Sidekick appearance edits keep their
-existing behavior.
+Scoped Sidekicks start in their home's color because deriving a color from
+the new Sidekick's id gave them an unrelated visual identity. The creation-time
+copy leaves later edits independent. Missing or invalid home appearance uses
+the shared generated default; an invalid appearance reports the rejected field
+without blocking creation or replay.
 
 ### 2026-10-22 — A room archive archives its owned Sidekicks
 

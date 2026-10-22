@@ -87,6 +87,8 @@ export function generatedWorkstreamAppearance(id: string): { color: ProjectColor
   }
   const unsigned = hash >>> 0;
   return {
+    // The ring, not the full palette: `black` is the neutral somebody picks,
+    // not a color to hand out at random.
     color: PROJECT_COLOR_RING[unsigned % PROJECT_COLOR_RING.length] ?? "purple",
     iconIndex: Math.floor(unsigned / PROJECT_COLOR_RING.length) % GENERATED_WORKSTREAM_ICON_KEYS.length,
   };
