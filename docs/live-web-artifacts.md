@@ -206,6 +206,11 @@ shared scope. This does not change public content serving below.
 API read admission and its revocation contract are owned by
 [authorization](authorization.md).
 
+The agent data tools resolve a supplied resource ID or alias through the shared
+resource point lookup, rather than searching a page of attached sites. A
+Sidekick can query a site its execution user can read without attaching it;
+discovery remains limited to its related conversations.
+
 Artifact content is public by default. A direct browser, crawler, or unfurler
 can `GET` or `HEAD` the stable URL without a Rally session. The Worker reads the
 current manifest from `ArtifactHostDO`, strips any inbound cookie and viewer

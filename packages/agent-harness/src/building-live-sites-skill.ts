@@ -46,6 +46,18 @@ its run instructions:
 - **Data format:** The data file names, how the rows are arranged in them, and
   the field names and types the site's code expects.
 
+A Sidekick's resource tools can use a known Rally resource ID whenever its
+execution user can read that resource, even if it is not attached or listed.
+Have the wizard try importing the original site by ID. Resources in its home
+and attached conversations are also discovered automatically. To make the site
+easy to find in future context, forward its ID in
+\`send_message.attachmentIds\` (or \`reply_to_message.attachmentIds\` when replying).
+To keep it attached without messaging or waking the wizard, use
+\`sidekick_attach_resource({ sidekickId, resourceId })\`. These attachments are
+optional when the execution user already has read access. Mentioning or saving
+an ID does not change permissions; an access refusal requires checking the ID
+and that user's access. Confirm that the wizard can import the original site.
+
 For overlapping refreshes, load \`tracking-seen-or-done-items\` and save its
 shared-table coordination procedure, keyed by the site resource ID. One run
 must hold the claim across the entire import, edit, check, and publish sequence.
@@ -60,10 +72,9 @@ Save these steps for each run as well:
    original directory as \`destinationPath\`, and \`overwrite: true\` when that
    directory exists. If a known site ID is missing from the resource list,
    attempt \`import_resource\` with that ID before asking for reattachment.
-   A Thread-owned Sidekick can import the generated site still
-   attached to its original publishing Thread; saving an ID alone grants no
-   access to other resources. If import fails, report the recovery gap instead
-   of publishing an older local copy.
+   The execution user must be able to read the site. A known ID can
+   resolve without an attachment; it does not change that user's permissions.
+   If import fails, report the recovery gap instead of publishing an older local copy.
 2. Read the imported site files and the code that reads the data. Compare any
    unfinished changes in the backup with the current source and carry forward
    only changes needed for the request. Retrieve the

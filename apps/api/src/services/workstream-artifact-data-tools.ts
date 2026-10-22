@@ -38,7 +38,7 @@ export class ArtifactDataToolError extends Error {
 }
 
 const RESOURCE_DESCRIPTION =
-  "The site whose stored data to read, as either the `resourceId` or the `slug` list_resources returned for it — call that tool with attachmentKind \"site\" to find one. A site's title is neither.";
+  "The site's Rally resourceId or slug. Use list_resources with attachmentKind \"site\" to discover sites, or supply a known ID or slug. A Sidekick can resolve a site its execution user can read without an attachment. A site's title is not an ID or slug.";
 
 const DescribeArgumentsSchema = z.strictObject({
   resource: z.string().min(1).max(200).describe(RESOURCE_DESCRIPTION),

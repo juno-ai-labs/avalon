@@ -94,6 +94,8 @@ const RESOURCE_LOOKUP_BATCH = BOUND_PARAMETER_ID_CHUNK;
 export interface ConversationResourceLinks {
   links(input: { resourceIds?: readonly string[] }): Promise<{
     links: ResourceLinkRow[];
+    /** Explicit ID lookups may also admit unattached resources through user authorization. */
+    readableResourceIds: string[];
     /** The linked ids that ride on a message of the conversation holding the link. */
     onMessages: ReadonlySet<string>;
   }>;
@@ -110,6 +112,7 @@ export function conversationResourceLinks(
     key: string; resources: ConversationResourceLinks;
   }>>,
   knownContext?: Awaited<ReturnType<ResourceObjectPort["inheritanceContext"]>>,
+  resolveReadableResourceIds?: (resourceIds: readonly string[]) => Promise<string[]>,
 ): ConversationResourceLinks {
   // The object's parent and conversation identity do not change. The related
   // conversations and their admission are deliberately read again per operation.
@@ -141,7 +144,12 @@ export function conversationResourceLinks(
           if (other.onMessages.has(link.resource_id)) onMessages.add(link.resource_id);
         }
       }
-      return { links: [...links.values()], onMessages };
+      const readable = new Set(links.keys());
+      const missing = selection.resourceIds?.filter((id) => !readable.has(id)) ?? [];
+      if (missing.length && resolveReadableResourceIds && (await context()).kind === "sidekick") {
+        for (const id of await resolveReadableResourceIds(missing)) readable.add(id);
+      }
+      return { links: [...links.values()], onMessages, readableResourceIds: [...readable] };
     },
     async attachedResourceIds() {
       const sources = await inherited();
@@ -193,43 +201,45 @@ async function loadVisibleRows(
   // `EXISTS` per row, across two compatibility views over two tables in this
   // *same* object — so it is one more read of the object's own rows rather than
   // a subquery repeated per attachment.
-  const { links: local, onMessages } = await attachments.links(
+  const { links: local, onMessages, readableResourceIds: ids } = await attachments.links(
     input.resourceIds ? { resourceIds: input.resourceIds } : {},
   );
-  if (local.length === 0) return [];
+  if (ids.length === 0) return [];
   // Naming ids is a point lookup and answers for an unlisted resource; naming
   // none enumerates, and enumerating advertises. `docs/agent-attachments.md`.
   const listed = input.resourceIds === undefined
     ? ` AND ${listedResourceVisibilitySql("resource")}`
     : "";
   const resources: Array<Record<string, unknown>> = [];
-  for (let offset = 0; offset < local.length; offset += RESOURCE_LOOKUP_BATCH) {
-    const ids = local.slice(offset, offset + RESOURCE_LOOKUP_BATCH).map((link) => link.resource_id);
-    const placeholders = ids.map(() => "?").join(", ");
+  for (let offset = 0; offset < ids.length; offset += RESOURCE_LOOKUP_BATCH) {
+    const chunk = ids.slice(offset, offset + RESOURCE_LOOKUP_BATCH);
+    const placeholders = chunk.map(() => "?").join(", ");
     const result = await database.prepare(
       `SELECT resource.*,
               resource.updated_at AS visibility_version
          FROM resources resource
         WHERE resource.workspace_id = ? AND resource.id IN (${placeholders})
           AND resource.provider != 'avalon_note'${listed}`,
-    ).bind(input.workspaceId, ...ids)
+    ).bind(input.workspaceId, ...chunk)
       .all<Record<string, unknown>>();
     resources.push(...(result.results ?? []));
   }
-  const byId = new Map(resources.map((resource) => [String(resource.id), resource]));
-  return local.flatMap((link) => {
-    const resource = byId.get(link.resource_id);
-    return resource ? [{
+  const linksById = new Map(local.map((link) => [link.resource_id, link]));
+  return resources.map((resource) => {
+    const resourceId = String(resource.id);
+    const link = linksById.get(resourceId);
+    return {
       ...resource,
-      relationship_type: link.relationship_type,
+      // A point read does not create an attachment or advertise the resource.
+      relationship_type: link?.relationship_type ?? "reference",
       // ISO-8601 because that is what this row publishes and what the sort
       // below compares. The retired view converted it in SQL; the object stores
       // the instant, so the conversion moves here.
-      attached_at: new Date(link.attached_at).toISOString(),
-      message_attachment: onMessages.has(link.resource_id) ? 1 : 0,
-      attached_watch_enabled: Number(link.watch_enabled),
+      attached_at: link ? new Date(link.attached_at).toISOString() : String(resource.created_at),
+      message_attachment: onMessages.has(resourceId) ? 1 : 0,
+      attached_watch_enabled: Number(link?.watch_enabled ?? 0),
       visibility_version: String(resource.visibility_version ?? resource.updated_at),
-    } as VisibleWorkstreamResourceRow] : [];
+    } as VisibleWorkstreamResourceRow;
   }).sort((left, right) => (
     right.attached_at.localeCompare(left.attached_at) || left.id.localeCompare(right.id)
   ));
