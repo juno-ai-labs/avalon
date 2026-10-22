@@ -432,6 +432,30 @@ export function createTerminalResourceBridge(
       throw new TerminalToolError("resource_not_found", "The existing publication is not attached to this destination. Restore its attachment before updating it.");
     }
   };
+  const publicationSelect = `SELECT id, title, mime_type, content_ref, content_sha256, metadata_json,
+      model_content_status, created_at, slug, resource_type FROM resources
+      WHERE workspace_id = ? AND provider = 'avalon_generated' AND provider_resource_id = ?`;
+  const publicationRow = (workspaceId: string, providerResourceId: string) => workspace.prepare(publicationSelect)
+    .bind(workspaceId, providerResourceId).first<PublishedSiteRow & { resource_type: string }>();
+  const existingPublication = async (context: HarnessToolContext, target: { parentId: string; substreamId: string },
+    filePath: string, providerResourceId: string) => {
+    const current = await publicationRow(context.workspaceId, providerResourceId);
+    if (current) {
+      await assertExistingPublicationVisible(context, target, current);
+      return current;
+    }
+    // Wizards formerly published under the Sidekick ID. Keep an admitted legacy
+    // publication's resource and URL when the home has no publication at this path.
+    if (publicationHome && target.parentId !== context.workstreamId) {
+      const legacy = await publicationRow(context.workspaceId, await publishedResourceIdentity(context.workstreamId, filePath));
+      if (legacy) {
+        await assertExistingPublicationVisible(context, { parentId: context.workstreamId,
+          substreamId: importingSubstreamId ?? publicationSubstreamId }, legacy);
+        return legacy;
+      }
+    }
+    return null;
+  };
   /**
    * Link a published document to the work stream that owns it, and to the one
    * that produced it when those differ.
@@ -909,12 +933,8 @@ export function createTerminalResourceBridge(
     async reconcilePublishedResource(context, input) {
       const target = await publicationAddress(context);
       const providerResourceId = await publishedResourceIdentity(target.parentId, input.filePath, target.substreamId);
-      const document = await workspace.prepare(
-        `SELECT id, metadata_json FROM resources
-          WHERE workspace_id = ? AND provider = 'avalon_generated' AND provider_resource_id = ?`,
-      ).bind(context.workspaceId, providerResourceId).first<{ id: string; metadata_json: string }>();
+      const document = await existingPublication(context, target, input.filePath, providerResourceId);
       if (!document) return { outcome: "not_landed" as const };
-      await assertExistingPublicationVisible(context, target, document);
       const versions = await workspace.prepare(
         `SELECT title, mime_type, content_ref, content_sha256, metadata_json,
                 model_content_status, captured_at, author_run_id
@@ -962,20 +982,12 @@ export function createTerminalResourceBridge(
       // else, so a second draft of the same file became a second document.
       const providerResourceId = input.providerResourceId
         ?? await publishedResourceIdentity(target.parentId, input.filePath, target.substreamId);
-      const select = `SELECT id, title, mime_type, content_ref, content_sha256, metadata_json,
-                model_content_status, created_at
-           FROM resources
-          WHERE workspace_id = ? AND provider = 'avalon_generated' AND provider_resource_id = ?`;
-      const existing = await workspace.prepare(select)
-        .bind(context.workspaceId, providerResourceId).first<PublishedRow>();
-      // Publications that settled under the per-call identity keep it. Their
-      // attempt can still replay, and the path lookup above cannot see them, so
-      // this second lookup is what stops a replay publishing a second copy of a
-      // file this call already published.
-      const settled = existing ?? await workspace.prepare(select)
-        .bind(context.workspaceId, `terminal:${effectIntentId}`).first<PublishedRow>();
+      const existing = input.providerResourceId === undefined
+        ? await existingPublication(context, target, input.filePath, providerResourceId)
+        : await publicationRow(context.workspaceId, providerResourceId);
+      // Preserve the exact per-call identity of publications that predate path identities.
+      const settled = existing ?? await publicationRow(context.workspaceId, `terminal:${effectIntentId}`);
 
-      if (input.providerResourceId === undefined) await assertExistingPublicationVisible(context, target, existing);
       const sourceName = fileName(input.filePath);
       const mimeType = verifyAttachmentMimeType(bytes, sourceName, null);
       const attachmentKind = classifyAttachmentKind({ mimeType, fileName: sourceName });
@@ -1143,16 +1155,8 @@ export function createTerminalResourceBridge(
     async publishedKindForPath(context, filePath) {
       const target = await publicationAddress(context);
       const providerResourceId = await publishedResourceIdentity(target.parentId, filePath, target.substreamId);
-      const row = await workspace.prepare(
-        `SELECT id, metadata_json, resource_type, mime_type FROM resources
-          WHERE workspace_id = ? AND provider = 'avalon_generated' AND provider_resource_id = ?`,
-      ).bind(context.workspaceId, providerResourceId).first<{
-        id: string; metadata_json: string;
-        resource_type: string;
-        mime_type: string | null;
-      }>();
+      const row = await existingPublication(context, target, filePath, providerResourceId);
       if (!row) return null;
-      await assertExistingPublicationVisible(context, target, row);
       if (row.resource_type === "generated_site") return "site";
       // An archive and an ordinary document are the same row type; only the
       // mime type separates them, and only the site transition is guarded, so
@@ -1175,16 +1179,9 @@ export function createTerminalResourceBridge(
       const target = await publicationAddress(context);
       const effectIntentId = requireTerminalEffectIntent(context, "publication");
       const providerResourceId = await publishedResourceIdentity(target.parentId, input.filePath, target.substreamId);
-      const select = `SELECT id, title, mime_type, content_ref, content_sha256, metadata_json,
-                model_content_status, created_at, slug
-           FROM resources
-          WHERE workspace_id = ? AND provider = 'avalon_generated' AND provider_resource_id = ?`;
-      const existing = await workspace.prepare(select)
-        .bind(context.workspaceId, providerResourceId).first<PublishedSiteRow>();
-      const settled = existing ?? await workspace.prepare(select)
-        .bind(context.workspaceId, `terminal:${effectIntentId}`).first<PublishedSiteRow>();
+      const existing = await existingPublication(context, target, input.filePath, providerResourceId);
+      const settled = existing ?? await publicationRow(context.workspaceId, `terminal:${effectIntentId}`);
 
-      await assertExistingPublicationVisible(context, target, existing);
       // A republish that would turn a live site back into an archive never
       // reaches here — the runtime refuses it — but a republish that changes
       // nothing does, and it must not mint a version. The manifest carries the
