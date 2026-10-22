@@ -315,7 +315,7 @@ import { createAvalonTerminalPlugin } from "./terminal/plugin";
 import type { WorkstreamRuntimeResourceAttacher } from "./workstream-object-client";
 
 const BIND_ROUTING_POLICY_VERSION = "bind-10-openrouter-v1";
-const WORKSTREAM_PROMPT_VERSION = "workstream-v7-thread-hierarchy";
+const WORKSTREAM_PROMPT_VERSION = "workstream-v8-sidekick-activation-identity";
 
 const TOOL_REPLAY_READ_TIMEOUT_MS = 2_000;
 const TOOL_TRANSCRIPT_REPLAY_BUDGET_MS = 5_000;
@@ -4972,7 +4972,8 @@ async function loadRunPromptContext(
   let automationContext:
     | {
         name: string;
-        versionNumber: number;
+        sidekickId: string;
+        definitionRevision: number;
         instructions: string;
         expectedOutputs: string[];
         homeConversationId: string | null;
@@ -4992,8 +4993,9 @@ async function loadRunPromptContext(
       : conversationIdOf({ parentId: definition.owningWorkstreamId, substreamId: definition.owningSubstreamId });
     automationSendsOutward = definition.owningWorkstreamId === null;
     automationContext = {
+      sidekickId: input.automationRun.automationId,
       name: definition.definition.name,
-      versionNumber: definition.definitionRevision,
+      definitionRevision: definition.definitionRevision,
       instructions: definition.definition.instructions,
       expectedOutputs: definition.definition.expectedOutputs,
       homeConversationId,
@@ -5007,6 +5009,17 @@ async function loadRunPromptContext(
     };
   }
   const additionalMessages: ModelMessage[] = [];
+  if (input.automationRun) {
+    additionalMessages.push(modelDerivative({
+      role: "user",
+      content: `SIDEKICK ACTIVATION (host-provided execution context):\n${JSON.stringify({
+        sidekickId: input.automationRun.automationId,
+        runId: input.automationRun.runId,
+        definitionRevision: input.automationRun.definitionRevision,
+        trigger: input.automationRun.trigger,
+      })}`,
+    }, "run_context", input.automationRun.runId, input.automationRun.definitionRevision));
+  }
   if (input.slackOrigin) {
     additionalMessages.push(modelDerivative(
       {
