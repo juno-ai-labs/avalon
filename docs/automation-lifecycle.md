@@ -723,6 +723,14 @@ merely attached or recommended in an archived conversation remains available
 elsewhere. Restoring a Channel, Thread or Breakout never restores an archived
 Sidekick; see Lifecycle.
 
+Thread snapshots retain a monotonic archive generation across restores. The
+hosted parent applies each new generation's irreversible Sidekick cascade in
+the projection transaction, so delivering restore before archive cannot lose
+the cascade. Breakout archival commits its Sidekick cascade with the canonical
+child registry change in WorkspaceDO. A legacy `owning_room_archived_at` marker
+also becomes terminal on the next archive or restore notice. Pause and resume
+re-read lifecycle after authorization so an intervening archive stays terminal.
+
 A Sidekick reads and posts through the `rally:conversations` plugin
 ([`conversation-tools.md`](conversation-tools.md)), whose scope for a Sidekick is
 its home plus the conversations attached to it in WorkspaceDO's
@@ -1171,7 +1179,11 @@ shared attachments and Sidekicks in shared Threads that remain active survive.
 transition, including the execution stop fence and trigger cleanup. Replays
 cannot increment the stop fence again or restore a tombstone. Definitions and
 run history remain stored under the existing archive retention policy, and no
-Sidekick unarchive operation is introduced.
+Sidekick unarchive operation is introduced. Thread common snapshots retain an
+archive generation across restore, and Breakout registry archival commits the
+cascade locally; out-of-order effects cannot discard this permanent work.
+Restore notices reconcile legacy room archive markers rather than clearing
+them, and pause/resume re-read lifecycle after their authorization await.
 
 ### 2026-10-21 — Authoring has its own model and preserves activation prerequisites
 
