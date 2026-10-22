@@ -49,8 +49,9 @@ const currentDraft: AutomationDraft = {
 };
 
 const workstreamAutomation = {
+  sidekickId: "00000000-0000-7000-8000-0000000000ac",
   name: "Weekly engineering brief",
-  versionNumber: 3,
+  definitionRevision: 3,
   instructions: currentDraft.instructions,
   expectedOutputs: currentDraft.expectedOutputs,
   homeConversationId: "00000000-0000-7000-8000-0000000000aa/00000000-0000-7000-8000-0000000000ab",
@@ -206,7 +207,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           sidekick: workstreamAutomation,
         }),
-        hash: "5040bf0da9bbf72126172a3ffdb0874106bf867a97a181fc9adb8b75eabb46c2",
+        hash: "d2915e3119a727ccae1a27f598fc5a7ccd267eba2e883a5b5d7f32a693a6b4ca",
       },
       workstreamName: {
         actual: renderWorkstreamNameMessages({
@@ -405,6 +406,10 @@ describe("prompt renderers", () => {
     // names the place; the plugin's system message names the tool, because a
     // tool name in standing policy renders for runs whose plugin is absent.
     expect(prompt).toContain('"homeConversationId": "00000000-0000-7000-8000-0000000000aa/00000000-0000-7000-8000-0000000000ab"');
+    expect(prompt).toContain('"sidekickId": "00000000-0000-7000-8000-0000000000ac"');
+    expect(prompt).toContain('"definitionRevision": 3');
+    expect(prompt).toContain("You are executing one activation of the existing Sidekick");
+    expect(prompt).toContain("Do not create a replacement Sidekick or schedule its next regular activation just to keep it running.");
     expect(prompt).not.toContain("post_result");
     expect(prompt).not.toMatch(/conversation_[a-z_]+/u);
     expect(prompt).not.toContain("# Result delivery");

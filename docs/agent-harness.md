@@ -484,7 +484,16 @@ After admission Rally validates the execution principal and records the run scop
 
 ### Context and stable prompts
 
-Context is assembled for the execution principal from the work-stream title and objective, recent persisted messages, current and planned execution times, the run reason, and the selected trigger. An automation run also receives, from `AutomationDO.readRunDefinition` by its pinned revision, the definition's name, instructions, expected outputs, and default behavior, and `homeConversationId`: the Sidekick's home conversation (its Channel's Main or a Breakout) when a room owns it, null otherwise. A triggering activity or inbound email is added as explicitly untrusted user-role evidence, never promoted into the system prompt.
+Context is assembled for the execution principal from the work-stream title and objective, recent persisted messages, current and planned execution times, the run reason, and the selected trigger. An automation run also receives, from `AutomationDO.readRunDefinition` by its pinned revision, the existing Sidekick ID, definition revision, name, instructions, expected outputs, and default behavior, and `homeConversationId`: the Sidekick's home conversation (its Channel's Main or a Breakout) when a room owns it, null otherwise. A triggering activity or inbound email is added as explicitly untrusted user-role evidence, never promoted into the system prompt.
+
+Sidekick execution policy identifies this as one activation of an existing
+Sidekick, rather than a request to configure it again. Rally owns future
+scheduled and event-triggered activations; completing this run does not require
+creating a replacement or scheduling the next regular run. The host supplies
+`sidekickId`, `runId`, `definitionRevision` and the actual trigger in a derived
+user-role activation message, keeping run-specific identity out of the stable
+system prefix. A schedule trigger names the existing schedule, its kind and
+planned activation time; it does not ask the run to create another schedule.
 
 Attached resources are exposed as an authorized index and hydrated lazily through tools. Their manifests and contents remain untrusted evidence. A partial read is not represented as the whole resource: the prompt requires exact cursor continuation when more coverage is needed and requires the answer to disclose any remaining `charactersBefore` or `charactersAfter` boundary. Full workspace history, unrelated resources, and another participant's private connector data are excluded.
 
@@ -1689,6 +1698,15 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-10-22 — Distinguish a Sidekick activation from setup
+
+Run policy names the existing Sidekick and Rally’s responsibility for its regular
+schedule. The task context includes its ID and definition revision; a derived
+activation message supplies the run ID and actual trigger.
+The calendar’s first activation interpreted a completion recheck as unfinished
+automation setup and created a duplicate. Explicit execution identity addresses
+that confusion while retaining the ordinary completion check and tool authority.
 
 ### 2026-10-22 — Reconcile the first synchronization and transform actual source rows
 
