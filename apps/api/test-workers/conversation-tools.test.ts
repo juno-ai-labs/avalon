@@ -21,15 +21,17 @@ import { attachWorkstreamRuntimeResource } from "../src/services/workstream-obje
 import { createAvalonTerminalPlugin } from "../src/services/terminal/plugin";
 import { createWorkstreamAttachmentTools } from "../src/services/workstream-attachment-tools";
 import { createTerminalResourceBridge } from "../src/services/terminal/resource-bridge";
+import { TerminalSandboxCoordinator } from "../src/services/terminal/coordinator";
 import { createTerminalPortFactory } from "../src/services/terminal/object-port";
 import type { TerminalSandboxProvider } from "../src/services/terminal/provider-contract";
-import { sha256Hex } from "../src/lib/crypto";
+import { sha256, sha256Hex } from "../src/lib/crypto";
 import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   artifactAssetKey,
+  agentIdForAddress,
   asAutomationId,
   asSubstreamId,
   asUserId,
@@ -44,10 +46,13 @@ import { conversationObjectName, workspaceDOName } from "../src/durable-objects/
 import { resolveTerminalPublicationHome } from "../src/services/terminal/authority";
 import { loadVisibleWorkstreamResourcePage, loadVisibleWorkstreamResourcesByIds } from "../src/services/workstream-resource-visibility";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
-import { createConversationResourceLinks } from "../src/runtime/resource-port";
+import { createConversationResourceLinks, createResourcePortFactory } from "../src/runtime/resource-port";
 import type { AuthContext, Env } from "../src/env";
 import { AgentCommunicationService } from "../src/services/agent-communication-service";
 import { AuthorizationService } from "../src/services/authorization-service";
+import { projectAuthorization } from "../src/services/authorization-projection-service";
+import { validateAttachmentToolReceiptReplay } from "../src/services/attachment-tool-receipts";
+import { createArtifactDataToolContext } from "../src/services/workstream-artifact-data-wiring";
 import { ConversationMergeService } from "../src/services/conversation-merge-service";
 import { createAutomation } from "../src/services/automation-service";
 import {
@@ -61,6 +66,7 @@ import { listVisiblePrivateChildren, withHostedParent } from "./helpers/hosted-p
 import { applySidekick, sidekickWorkspace } from "./helpers/sidekick";
 import { post, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { placeMembership, removeMembership } from "./helpers/space-membership";
+import { countingEnv } from "./helpers/counting-namespace";
 
 /** Its own workspace: object names are shared across files, storage is not. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000c0a10");
@@ -221,6 +227,21 @@ async function seedSidekick(home: SubstreamId | "0", automationId = AUTOMATION_I
 }
 
 const sidekickScope = () => ({ kind: "sidekick" as const, automationId: AUTOMATION_ID });
+
+/** Deliver canonical attachment discovery for every parent this fixture creates. */
+async function projectResourceAccess() {
+  await workspace().beginAuthorizationBackfill({ workspaceId: WORKSPACE_ID });
+  const parents = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ parent_id: string }>(
+    "SELECT workstream_id AS parent_id FROM channels UNION SELECT automation_id AS parent_id FROM automation_directory",
+  ).toArray());
+  for (const { parent_id: parentId } of parents) {
+    const job = { type: "authorization_projection_v1" as const, region: "global" as const, workspaceId: WORKSPACE_ID, parentId };
+    await projectAuthorization(TEST_ENV, job);
+    const { substreamIds } = await workspace().listAuthorizationChildren({ workspaceId: WORKSPACE_ID, parentId });
+    for (const substreamId of substreamIds) await projectAuthorization(TEST_ENV, { ...job, substreamId: asSubstreamId(substreamId) });
+  }
+  expect(await workspace().authorizationBackfillStatus({ workspaceId: WORKSPACE_ID })).toMatchObject({ complete: true });
+}
 
 beforeEach(async () => {
   ordinal += 1;
@@ -764,6 +785,213 @@ describe("sidekick_attach_resource", () => {
   });
 });
 
+describe("Sidekick resource reads by ID", () => {
+  async function source(owner = AUTHOR_ID, status = "attached") {
+    const id = crypto.randomUUID();
+    const key = `sidekick-resource/${id}`;
+    await TEST_ENV.PAYLOADS.put(key, "October calendar: publish the launch on Friday.");
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
+         metadata_json, uploaded_by_user_id, attachment_status, created_at, updated_at)
+        VALUES (?, ?, 'document', 'avalon_upload', 'Calendar instructions', 'text/plain', ?, '{}', ?, ?, ?, ?)`,
+      id, WORKSPACE_ID, key, owner, status, NOW, NOW);
+    });
+    return id;
+  }
+
+  it.each(["wizard", "activation", "worker"])("lets a Sidekick %s read a known, unattached resource as its execution user", async (kind) => {
+    await seedSidekick("0");
+    const resourceId = await source();
+    const forbiddenId = await source(COLLEAGUE_ID, "draft");
+    const child = kind === "wizard" ? "0" : asSubstreamId(crypto.randomUUID());
+    if (child !== "0") await bootstrapConversationChildRuntime(TEST_ENV, WORKSPACE_ID, "automation", AUTOMATION_ID, child);
+    if (kind === "worker") await runInDurableObject(conversation(AUTOMATION_ID, child), (_instance, state) => {
+      state.storage.sql.exec("INSERT INTO background_agent (id, execution_principal_json) VALUES (1, ?)",
+        JSON.stringify({ type: "user", userId: AUTHOR_ID }));
+    });
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "automation", parentId: AUTOMATION_ID, substreamId: child, loopId: "resource-read-test",
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const context: HarnessToolContext = { workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID,
+      harnessRunId: input.harnessRunId, toolCallId: "read-unattached", executionPrincipal: input.executionPrincipal,
+      signal: new AbortController().signal };
+    const tools = createWorkstreamAttachmentTools(withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID), input);
+    const read = tools.find((tool) => tool.definition.name === "read_resource")!;
+    await expect(read.execute({ resourceId }, context)).resolves.toMatchObject({
+      output: { text: "October calendar: publish the launch on Friday." },
+    });
+    for (const id of [forbiddenId, crypto.randomUUID()]) {
+      await expect(read.execute({ resourceId: id }, context)).rejects.toMatchObject({ code: "resource_not_found" });
+    }
+    // Direct reads neither attach the resource nor expand the advertised inventory.
+    const resources = createConversationResourceLinks(TEST_ENV, WORKSPACE_ID, AUTOMATION_ID, undefined, child, input.executionPrincipal);
+    expect(await resources.attachedResourceIds()).toEqual([]);
+    const database = withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID).DB;
+    expect((await loadVisibleWorkstreamResourcePage(database, resources, { workspaceId: WORKSPACE_ID,
+      workstreamId: AUTOMATION_ID, principal: input.executionPrincipal, attachmentKind: null, limit: 25 })).rows).toEqual([]);
+    // The exact same read is reauthorized after the underlying permission changes.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE resources SET uploaded_by_user_id = ?, attachment_status = 'draft' WHERE id = ?",
+        COLLEAGUE_ID, resourceId);
+    });
+    await expect(read.execute({ resourceId }, context)).rejects.toMatchObject({ code: "resource_not_found" });
+    const threadResources = createConversationResourceLinks(TEST_ENV, WORKSPACE_ID, ROOM_ID, undefined, "0", input.executionPrincipal);
+    expect((await loadVisibleWorkstreamResourcesByIds(database, threadResources, { workspaceId: WORKSPACE_ID,
+      workstreamId: ROOM_ID, principal: input.executionPrincipal, resourceIds: [await source()] }))).toEqual([]);
+  });
+
+  it("uses current private-conversation access for a resource outside the Sidekick's home", async () => {
+    await seedSidekick("0");
+    const privateSource = await seedBreakout("Private source");
+    await workspace().addPrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
+      substreamId: privateSource, actorUserId: AUTHOR_ID, userId: COLLEAGUE_ID, operationId: crypto.randomUUID() });
+    const resourceId = await source(COLLEAGUE_ID);
+    await attachWorkstreamRuntimeResource(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID,
+      substreamId: privateSource, resourceId, attachedByUserId: COLLEAGUE_ID });
+    await projectResourceAccess();
+    const principal = { type: "user" as const, userId: AUTHOR_ID };
+    const resources = createConversationResourceLinks(TEST_ENV, WORKSPACE_ID, AUTOMATION_ID, undefined, "0", principal);
+    const database = withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID).DB;
+    const read = () => loadVisibleWorkstreamResourcesByIds(database, resources,
+      { workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, principal, resourceIds: [resourceId] });
+    expect((await read()).map((row) => row.title)).toEqual(["Calendar instructions"]);
+    await workspace().removePrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
+      substreamId: privateSource, actorUserId: AUTHOR_ID, userId: AUTHOR_ID, operationId: crypto.randomUUID() });
+    await projectResourceAccess();
+    expect(await read()).toEqual([]);
+    // The source still exists for its remaining member; knowing its ID alone
+    // did not preserve the former reader's access.
+    const colleague = createConversationResourceLinks(TEST_ENV, WORKSPACE_ID, AUTOMATION_ID, undefined, "0",
+      { type: "user", userId: COLLEAGUE_ID });
+    expect((await loadVisibleWorkstreamResourcesByIds(database, colleague, { workspaceId: WORKSPACE_ID,
+      workstreamId: AUTOMATION_ID, principal: { type: "user", userId: COLLEAGUE_ID }, resourceIds: [resourceId] }))
+      .map((row) => row.title)).toEqual(["Calendar instructions"]);
+  });
+
+  it("resolves an unattached site's stored data by its ID or alias", async () => {
+    await seedSidekick("0");
+    const resourceId = await source();
+    const artifactId = crypto.randomUUID();
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE resources SET resource_type = 'generated_site', slug = 'calendar' WHERE id = ?", resourceId);
+      state.storage.sql.exec(`INSERT INTO artifact_registry
+        (artifact_id, workspace_id, resource_id, workstream_id, mode, stateful, current_version, manifest_ref, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'active', 1, 1, 'test-manifest', ?, ?)`,
+      artifactId, WORKSPACE_ID, resourceId, ROOM_ID, Date.parse(NOW), Date.parse(NOW));
+    });
+    const calls: string[] = [];
+    const statements: string[] = [];
+    const runtime = withWorkspaceRuntimeDatabase(countingEnv(calls), WORKSPACE_ID);
+    const database = new Proxy(runtime.DB, { get(target, key) {
+      if (key === "prepare") return (sql: string) => { statements.push(sql); return target.prepare(sql); };
+      const value: unknown = Reflect.get(target, key);
+      return typeof value === "function" ? value.bind(target) : value;
+    } });
+    const observed = new Proxy(runtime, { get: (target, key) => key === "DB" ? database : Reflect.get(target, key) });
+    const context = createArtifactDataToolContext(observed, {
+      workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, principal: { type: "user", userId: AUTHOR_ID },
+    });
+    for (const reference of [resourceId, "calendar"]) {
+      calls.length = 0;
+      statements.length = 0;
+      await expect(context.resolveArtifact(reference)).resolves.toEqual({ artifactId, slug: "calendar", mode: "active", stateful: true });
+      expect(calls.filter((call) => call === "authorizationResourceFacts")).toEqual(["authorizationResourceFacts"]);
+      expect(statements.filter((sql) => /FROM (resources|artifact_registry)\b/u.test(sql))).toHaveLength(reference === "calendar" ? 1 : 0);
+    }
+    await expect(context.resolveArtifact(crypto.randomUUID())).resolves.toBeNull();
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE resources SET uploaded_by_user_id = ?, attachment_status = 'draft' WHERE id = ?",
+        COLLEAGUE_ID, resourceId);
+    });
+    await expect(context.resolveArtifact("calendar")).resolves.toBeNull();
+  });
+
+  it("does not turn read access to an unattached resource into permission to forward it", async () => {
+    await seedSidekick("0");
+    const resourceId = await source();
+    const principal = { type: "user" as const, userId: AUTHOR_ID };
+    const database = withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID).DB;
+    expect((await loadVisibleWorkstreamResourcesByIds(database,
+      createConversationResourceLinks(TEST_ENV, WORKSPACE_ID, AUTOMATION_ID, undefined, "0", principal),
+      { workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, principal, resourceIds: [resourceId] }))
+      .map((row) => row.title)).toEqual(["Calendar instructions"]);
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "automation", parentId: AUTOMATION_ID, substreamId: "0", loopId: "forward-private-resource",
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null, executionPrincipal: principal, reason: "test" });
+    const service = new AgentCommunicationService(TEST_ENV, input);
+    const context: HarnessToolContext = { workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID,
+      harnessRunId: input.harnessRunId, effectIntentId: crypto.randomUUID(), toolCallId: "forward-private-resource",
+      executionPrincipal: principal, signal: new AbortController().signal };
+    await expect(service.start({ name: "Reader", description: "Read the resource", message: "Read the attached resource",
+      attachmentIds: [resourceId] }, context))
+      .rejects.toMatchObject({ code: "agent_attachment_unavailable" });
+    const threadAgent = agentIdForAddress({ parentKind: "workstream", parentId: ROOM_ID, substreamId: asSubstreamId("0") });
+    const { teamId } = await workspace().ensureAgentTeam({ workspaceId: WORKSPACE_ID, originAgentId: service.senderId });
+    await workspace().joinAgentTeam({ workspaceId: WORKSPACE_ID, teamId, agentId: threadAgent });
+    await expect(service.send({ agentId: threadAgent, message: "Use this resource", attachmentIds: [resourceId] },
+      { ...context, effectIntentId: crypto.randomUUID() }))
+      .rejects.toMatchObject({ code: "agent_attachment_unavailable" });
+    expect(await createConversationResourceLinks(TEST_ENV, WORKSPACE_ID, ROOM_ID, undefined, "0", principal).attachedResourceIds()).toEqual([]);
+    await expect(service.attachSidekickResource(AUTOMATION_ID, resourceId))
+      .rejects.toMatchObject({ code: "sidekick_resource_unavailable" });
+  });
+
+  it("drops an old receipt when resource authorization is unavailable while keeping direct reads retryable", async () => {
+    await seedSidekick("0");
+    const resourceId = await source(COLLEAGUE_ID);
+    const runId = crypto.randomUUID();
+    const effectId = crypto.randomUUID();
+    await runInDurableObject(conversation(AUTOMATION_ID), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO runs (run_id, substream_id, status, budget, attempt_epoch,
+        model_iteration, next_action_cursor, input_fence_seq, revision, started_at, active_elapsed_ms,
+        idle_elapsed_ms, step_count, subrequest_count, retry_count, tool_count, input_tokens,
+        output_tokens, cost_micros, output_bytes, created_at, updated_at)
+        VALUES (?, '0', 'completed', '{}', 0, 0, '', 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1)`, runId);
+      state.storage.sql.exec(`INSERT INTO tool_effects
+        (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key, tool_name, mode,
+         request_hash, authority_revision, status, tool_call_id, input_json, output_ref)
+        VALUES (?, ?, 0, 0, ?, 'read_resource', 'read', 'request', 'runtime', 'completed', 'read-call', '{}', 'receipt/output')`,
+      effectId, runId, `runtime:${effectId}`);
+      state.storage.sql.exec(`INSERT INTO attachment_tool_receipts
+        (workspace_id, resource_id, tool_invocation_id, derivative_sha256, created_at) VALUES (?, ?, ?, 'old-digest', 1)`,
+      WORKSPACE_ID, resourceId, effectId);
+    });
+    const runtime = withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID);
+    const principal = { type: "user" as const, userId: AUTHOR_ID };
+    await expect(validateAttachmentToolReceiptReplay(runtime, { workspaceId: WORKSPACE_ID,
+      workstreamId: AUTOMATION_ID, principal, invocationId: effectId, capability: "workstream.resources.read" }))
+      .resolves.toBe("invalid");
+    await expect(loadVisibleWorkstreamResourcesByIds(runtime.DB,
+      createConversationResourceLinks(TEST_ENV, WORKSPACE_ID, AUTOMATION_ID, undefined, "0", principal),
+      { workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, principal, resourceIds: [resourceId] }))
+      .rejects.toMatchObject({ code: "authorization_unavailable" });
+  });
+
+  it("conceals foreign resources and preserves a retryable authorization lookup failure", async () => {
+    await seedSidekick("0");
+    const foreignWorkspace = asWorkspaceId(crypto.randomUUID());
+    const foreign = TEST_ENV.WORKSPACE_DOS.getByName(workspaceDOName("global", foreignWorkspace));
+    await foreign.initializeWorkspace(foreignWorkspace, "wnam");
+    const foreignId = crypto.randomUUID();
+    await runInDurableObject(foreign, (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, metadata_json, uploaded_by_user_id, attachment_status, created_at, updated_at)
+        VALUES (?, ?, 'document', 'avalon_upload', 'Foreign calendar', '{}', ?, 'attached', ?, ?)`,
+      foreignId, foreignWorkspace, AUTHOR_ID, NOW, NOW);
+    });
+    const principal = { type: "user" as const, userId: AUTHOR_ID };
+    const resources = createConversationResourceLinks(TEST_ENV, WORKSPACE_ID, AUTOMATION_ID, undefined, "0", principal);
+    const read = (resourceId: string) => loadVisibleWorkstreamResourcesByIds(withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID).DB,
+      resources, { workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, principal, resourceIds: [resourceId] });
+    expect(await read(foreignId)).toEqual([]);
+    // This resource may have an undiscovered sharing location. An incomplete
+    // authorization lookup must stay retryable instead of reporting a denial.
+    await expect(read(await source(COLLEAGUE_ID))).rejects.toMatchObject({ code: "authorization_unavailable", status: 503 });
+  });
+});
+
 describe("a Breakout's access to its Channel", () => {
   /** A link in one conversation's object, as an attach writes it. */
   async function link(target: DurableObjectStub, resourceId: string, attachedAt: number): Promise<void> {
@@ -786,6 +1014,10 @@ describe("a Breakout's access to its Channel", () => {
   it.each(["wizard", "activation", "worker"])("gives a Sidekick %s its home and attached conversations' resources without copying links", async (kind) => {
     const home = await seedBreakout("Calendar setup");
     const sibling = await seedBreakout("Private sibling");
+    await workspace().addPrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
+      substreamId: sibling, actorUserId: AUTHOR_ID, userId: COLLEAGUE_ID, operationId: crypto.randomUUID() });
+    await workspace().removePrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
+      substreamId: sibling, actorUserId: AUTHOR_ID, userId: AUTHOR_ID, operationId: crypto.randomUUID() });
     await seedRoom(OTHER_ROOM_ID, "Attached source");
     const attached = await seedBreakout("Source details", OTHER_ROOM_ID);
     await seedSidekick(home);
@@ -812,6 +1044,7 @@ describe("a Breakout's access to its Channel", () => {
         JSON.stringify({ type: "user", userId: AUTHOR_ID }));
     });
     const principal = { type: "user" as const, userId: AUTHOR_ID };
+    await projectResourceAccess();
     const resources = createConversationResourceLinks(TEST_ENV, WORKSPACE_ID, AUTOMATION_ID, undefined, child, principal);
     const database = withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID).DB;
     const before = await resources.inventoryFingerprint();
@@ -847,7 +1080,7 @@ describe("a Breakout's access to its Channel", () => {
     expect(await resources.attachedResourceIds()).toEqual([]);
   });
 
-  it("imports the original home site during setup and loses access when that site is detached", async () => {
+  it.each(["home", "unattached"])("imports and retains an authorized %s site until access is lost", async (kind) => {
     await seedSidekick("0");
     const artifactId = crypto.randomUUID();
     const bytes = new TextEncoder().encode("<h1>Original calendar</h1>");
@@ -864,8 +1097,10 @@ describe("a Breakout's access to its Channel", () => {
         VALUES (?, ?, 'generated_site', 'avalon_generated', ?, 'Calendar',
         'application/vnd.rally.site-manifest+json', ?, ?, '{"sourcePath":"content-calendar"}', 'attached', ?, ?)`,
       CHANNEL_RESOURCE_ID, WORKSPACE_ID, `terminal:${ROOM_ID}:content-calendar`, manifestKey, digest, NOW, NOW);
+      if (kind === "unattached") state.storage.sql.exec("UPDATE resources SET uploaded_by_user_id = ? WHERE id = ?",
+        AUTHOR_ID, CHANNEL_RESOURCE_ID);
     });
-    await link(conversation(ROOM_ID), CHANNEL_RESOURCE_ID, 1_000);
+    if (kind === "home") await link(conversation(ROOM_ID), CHANNEL_RESOURCE_ID, 1_000);
     const writes: string[] = [];
     const unused = async () => { throw new Error("unexpected Daytona operation"); };
     // Only Daytona is doubled: R2, resource access and durable import receipts are real.
@@ -888,9 +1123,29 @@ describe("a Breakout's access to its Channel", () => {
     expect(writes).toEqual(["<h1>Original calendar</h1>"]);
     expect(await runInDurableObject(conversation(AUTOMATION_ID), (_instance, state) =>
       state.storage.sql.exec("SELECT resource_id FROM workstream_resource_links").toArray())).toEqual([]);
+    const runtimeEnv = withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID);
+    const ports = createTerminalPortFactory(TEST_ENV, undefined, "0");
+    const terminal = ports(WORKSPACE_ID, AUTOMATION_ID);
+    const now = Date.now();
+    // Keep lifecycle alarms outside this fixture's read/revocation assertions.
+    const deadlines = { idleExpiresAt: now + 600_000, archiveDueAt: now + 1_200_000, expireDueAt: now + 1_800_000 };
+    await terminal.reserveFirstGeneration({ stableName: "imported-calendar", authorityFingerprint: await sha256(JSON.stringify({
+      principal: `user:${AUTHOR_ID}`, repository: "scratch",
+    })), networkRevision: 1, runId: context.harnessRunId, operationLeaseExpiresAt: now + 60_000, ...deadlines, now });
+    await terminal.attachProviderSandbox({ generation: 1, sandboxId: "sandbox", lifecycleState: "running", ...deadlines, now });
+    await terminal.releaseOperation({ runId: context.harnessRunId, now });
+    const coordinator = new TerminalSandboxCoordinator(runtimeEnv, ports, createResourcePortFactory(TEST_ENV), provider);
+    // The next tool call must keep a readable unattached import instead of
+    // treating the lack of a local attachment as a revoked import.
+    await expect(coordinator.peekRunning(context)).resolves.toMatchObject({ providerSandboxId: "sandbox", generation: 1 });
     await runInDurableObject(conversation(ROOM_ID), (_instance, state) => {
       state.storage.sql.exec("DELETE FROM workstream_resource_links WHERE resource_id = ?", CHANNEL_RESOURCE_ID);
     });
+    if (kind === "unattached") await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("DELETE FROM resources WHERE id = ?", CHANNEL_RESOURCE_ID);
+    });
+    await projectResourceAccess();
+    await expect(coordinator.peekRunning(context)).resolves.toBeNull();
     await expect(bridge.importResource(context, { resourceId: CHANNEL_RESOURCE_ID,
       destinationPath: ".rally-output/content-calendar" }, ".rally-output/content-calendar", 1, "sandbox", provider))
       .rejects.toMatchObject({ code: "resource_not_found" });

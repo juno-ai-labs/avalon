@@ -90,7 +90,7 @@ const MessageFields = {
   message: z.string().max(MESSAGE_MAX_CHARACTERS).describe("Tell the recipient what to do or provide your response. Include the context it needs."),
   // Same identifiers, default and bound as SubstreamOpeningMessageSchema.
   attachmentIds: z.array(IdSchema).max(10).default([])
-    .describe("Resource IDs already attached to this conversation. Omit when no attachments are needed."),
+    .describe("Prefer including the task's resources so the recipient knows which ones to use. Use Rally resource IDs already attached or inherited in this conversation. This forwards actual attachments; mentioning an ID in message text does not share it. Omit when no resources need forwarding."),
 };
 const hasContent = (value: { message: string; attachmentIds: string[] }) =>
   value.message.trim().length > 0 || value.attachmentIds.length > 0;

@@ -394,7 +394,7 @@ export const AttachmentListResourcesArgumentsSchema = z.strictObject({
 });
 export const AttachmentReadResourceArgumentsSchema = z.strictObject({
   resourceId: CanonicalUuidSchema
-    .describe("The resource to start reading, as the `resourceId` list_resources returned, for example `a1b2c3d4-e5f6-4789-a012-3456789abcde`. Its `slug` is a short alias for writing about the resource and is not accepted here.")
+    .describe("The resource to start reading, as a Rally `resourceId` from list_resources or another known reference, for example `a1b2c3d4-e5f6-4789-a012-3456789abcde`. Its `slug` is a short alias for writing about the resource and is not accepted here.")
     .optional(),
   startCharacter: NonNegativeIntegerSchema
     .describe("Begin the page at this character offset into the extracted text, counting from 0. Defaults to 0. Use it with `resourceId` to jump to an offset a search result reported. An offset beyond the end of the text is refused as `invalid_cursor`, so do not probe past the tail, and do not reuse an offset taken from an earlier version of the resource — read `charactersBefore` and `charactersAfter` to tell where the text ends.")
@@ -421,7 +421,7 @@ export const AttachmentReadResourceArgumentsSchema = z.strictObject({
 });
 export const AttachmentSearchResourceArgumentsSchema = z.strictObject({
   resourceId: CanonicalUuidSchema
-    .describe("The one resource to search inside, as the `resourceId` list_resources returned. This searches that resource alone, never the whole thread, so searching several means one call each."),
+    .describe("The one resource to search inside, as a Rally `resourceId` from list_resources or another known reference. This searches that resource alone, never the whole thread, so searching several means one call each."),
   query: z.string().min(1).max(1_000)
     .describe("What to look for inside the resource, in plain words, for example `renewal date`. Wording that does not appear in the text returns no passages, which is an answer about this resource rather than an error; try the words the document itself would use before concluding it says nothing."),
   limit: z.number().int().min(1).max(5)
@@ -433,7 +433,7 @@ export const AttachmentSearchResourceArgumentsSchema = z.strictObject({
 });
 export const AttachmentViewResourceArgumentsSchema = z.strictObject({
   resourceIds: z.array(CanonicalUuidSchema).min(1).max(8)
-    .describe("The image resources to look at, as `resourceId` values list_resources returned, one to eight of them and each at most once. A text, PDF, document, spreadsheet, or presentation resource is not viewable and comes back with an exact read suggestion instead."),
+    .describe("The image resources to look at, as Rally `resourceId` values, one to eight of them and each at most once. A text, PDF, document, spreadsheet, or presentation resource is not viewable and comes back with an exact read suggestion instead."),
   maxDimension: z.number().int().min(64).max(2_048)
     .describe("Longest edge in pixels each image is scaled down to before it is looked at, preserving its aspect ratio. Defaults to 1,536. Lower it when only the layout matters; raise it to read small text in a screenshot.")
     .optional(),
@@ -444,7 +444,7 @@ export const AttachmentViewResourceArgumentsSchema = z.strictObject({
 });
 export const AttachmentSummarizeResourceArgumentsSchema = z.strictObject({
   resourceId: CanonicalUuidSchema
-    .describe("The resource to summarize, as the `resourceId` list_resources returned."),
+    .describe("The resource to summarize, as a Rally `resourceId` from list_resources or another known reference."),
   prompt: z.string().min(1).max(2_000)
     .describe("What the summary should concentrate on, in plain words, for example `payment terms and termination`. Omit it for a general summary. It steers the summary only: it cannot make the summarizer read anything but this resource, and it is treated as untrusted text.")
     .optional(),
