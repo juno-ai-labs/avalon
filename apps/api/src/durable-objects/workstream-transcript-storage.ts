@@ -1,6 +1,7 @@
 import { AnnotatedMessageContentSchema } from "@rally/contracts";
 import { stableUuid } from "../lib/stable-uuid";
 import {
+  WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
   automationActivationName,
   PreparedConversationSchema,
   ImportedMessageProvenanceSchema,
@@ -2957,34 +2958,32 @@ export class WorkstreamTranscriptStorage {
         unreadReason: unreadAttentionOrdinal === null ? "no_unread" : "anchor_unavailable",
       };
     }
-    const latestConversation = this.sql.exec<{ transcript_sequence: number } & Record<string, SqlStorageValue>>(
+    // Hydrate only the newest suffix that fits the existing transport budget.
+    // A single oversized newest turn is retained for the socket's placeholder.
+    const latestTurns: TranscriptTurn[] = [];
+    const encoder = new TextEncoder();
+    let latestBytes = 0;
+    for (const row of this.sql.exec<{ transcript_sequence: number }>(
       `SELECT transcript_sequence FROM participant_transcript_turns
-        INDEXED BY participant_transcript_latest_conversation_idx
-        WHERE entry_kind = 'conversation' AND transcript_sequence <= ?
-        ORDER BY transcript_sequence DESC LIMIT 5`,
-      snapshotThrough,
-    ).toArray();
-    let latestRange: TranscriptRange | null = null;
-    if (latestConversation.length > 0) {
-      latestRange = {
-        startInclusive: Number(latestConversation[latestConversation.length - 1]!.transcript_sequence),
-        endExclusive: snapshotThrough + 1,
-      };
-    } else {
-      const latestStatus = this.sql.exec<{ transcript_sequence: number } & Record<string, SqlStorageValue>>(
-        `SELECT transcript_sequence FROM participant_transcript_turns
-          INDEXED BY participant_transcript_status_idx
-          WHERE entry_kind = 'status' AND transcript_sequence <= ?
-          ORDER BY transcript_sequence DESC LIMIT 5`,
-        snapshotThrough,
-      ).toArray();
-      if (latestStatus.length > 0) {
-        latestRange = {
-          startInclusive: Number(latestStatus[latestStatus.length - 1]!.transcript_sequence),
-          endExclusive: snapshotThrough + 1,
-        };
-      }
+        WHERE transcript_sequence <= ? ORDER BY transcript_sequence DESC`, snapshotThrough,
+    )) {
+      const turnRange = this.range(fence, {
+        startInclusive: row.transcript_sequence, endExclusive: row.transcript_sequence + 1,
+      });
+      const nextBytes = latestBytes + encoder.encode(JSON.stringify(turnRange)).byteLength;
+      if (latestTurns.length > 0 && nextBytes > WORKSTREAM_REALTIME_MAX_FRAME_BYTES) break;
+      latestBytes = nextBytes;
+      latestTurns.push(...turnRange.turns);
+      if (latestBytes > WORKSTREAM_REALTIME_MAX_FRAME_BYTES) break;
     }
+    latestTurns.reverse();
+    const latestRange = latestTurns.length ? {
+      startInclusive: latestTurns[0]!.transcriptSequence, endExclusive: snapshotThrough + 1,
+    } : null;
+    const latest = latestRange ? {
+      purpose: "latest" as const, requested: latestRange, covered: latestRange,
+      turns: latestTurns, activities: [], pluginRuns: [],
+    } : null;
     let unreadRange: TranscriptRange | null = null;
     let unreadAnchorSequence: number | null = null;
     if (unreadAttentionOrdinal !== null) {
@@ -3030,10 +3029,10 @@ export class WorkstreamTranscriptStorage {
       }
     }
     if (unreadRange && latestRange
-      && unreadRange.startInclusive === latestRange.startInclusive
-      && unreadRange.endExclusive === latestRange.endExclusive) {
+      && latest && unreadRange.startInclusive >= latestRange.startInclusive
+      && unreadRange.endExclusive <= latestRange.endExclusive) {
       return {
-        ranges: [this.range(fence, unreadRange, "unread_and_latest", false)],
+        ranges: [{ ...latest, purpose: "unread_and_latest" }],
         unreadAnchorSequence,
         unreadReason: null,
       };
@@ -3041,7 +3040,7 @@ export class WorkstreamTranscriptStorage {
     return {
       ranges: [
         ...(unreadRange ? [this.range(fence, unreadRange, "unread" as const, false)] : []),
-        ...(latestRange ? [this.range(fence, latestRange, "latest" as const, false)] : []),
+        ...(latest ? [latest] : []),
       ],
       unreadAnchorSequence,
       unreadReason: unreadAttentionOrdinal === null
