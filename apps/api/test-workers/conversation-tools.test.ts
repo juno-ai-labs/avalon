@@ -16,6 +16,8 @@
  */
 
 import type { HarnessToolContext } from "@rally/agent-harness";
+import { createAgentCommunicationPlugin } from "../src/services/agent-communication-plugin";
+import { attachWorkstreamRuntimeResource } from "../src/services/workstream-object-client";
 import { createTerminalResourceBridge } from "../src/services/terminal/resource-bridge";
 import { createTerminalPortFactory } from "../src/services/terminal/object-port";
 import type { TerminalSandboxProvider } from "../src/services/terminal/provider-contract";
@@ -672,6 +674,91 @@ describe("a conversation tool's scope", () => {
       .toEqual([[`${ROOM_ID}/${breakout}`, true], [ROOM_ID, false]]);
     expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
       scope, reference: OTHER_ROOM_ID })).toMatchObject({ ok: false, code: "conversation_not_in_scope" });
+  });
+});
+
+describe("sidekick_attach_resource", () => {
+  async function source(draft = false, visible = true) {
+    const resourceId = crypto.randomUUID();
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, mime_type, metadata_json,
+         uploaded_by_user_id, attachment_status, created_at, updated_at)
+        VALUES (?, ?, 'document', 'avalon_upload', 'Calendar source', 'text/plain', '{}', ?, ?, ?, ?)`,
+      resourceId, WORKSPACE_ID, AUTHOR_ID, draft ? "draft" : "attached", NOW, NOW);
+    });
+    if (visible) await attachWorkstreamRuntimeResource(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID,
+      resourceId, attachedByUserId: AUTHOR_ID });
+    return resourceId;
+  }
+  function tool(parentId: string = ROOM_ID, parentKind: "workstream" | "automation" = "workstream") {
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind, parentId, substreamId: "0", loopId: `${parentKind}:${parentId}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const plugin = createAgentCommunicationPlugin(new AgentCommunicationService(TEST_ENV, input), "");
+    const attach = plugin.tools.find((candidate) => candidate.definition.name === "sidekick_attach_resource")!;
+    const context: HarnessToolContext = { workspaceId: WORKSPACE_ID, workstreamId: parentId,
+      harnessRunId: input.harnessRunId, effectIntentId: crypto.randomUUID(), toolCallId: "attach-context",
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    return (sidekickId: string, resourceId: string) => attach.execute({ sidekickId, resourceId }, context);
+  }
+  const directLinks = () => runInDurableObject(conversation(AUTOMATION_ID), (_instance, state) =>
+    state.storage.sql.exec("SELECT resource_id FROM workstream_resource_links").toArray());
+
+  it("attaches once without a message or activation and makes the resource visible to future runs", async () => {
+    await seedSidekick("0");
+    const resourceId = await source();
+    const attach = tool();
+    await expect(attach(AUTOMATION_ID, resourceId)).resolves.toMatchObject({ output: {
+      sidekickId: AUTOMATION_ID, resourceId, alreadyAttached: false,
+    } });
+    expect(await directLinks()).toEqual([{ resource_id: resourceId }]);
+    // The wizard can attach to itself without the messaging self-address restriction.
+    await expect(tool(AUTOMATION_ID, "automation")(AUTOMATION_ID, resourceId)).resolves.toMatchObject({ output: {
+      sidekickId: AUTOMATION_ID, resourceId, alreadyAttached: true,
+    } });
+    expect(await directLinks()).toEqual([{ resource_id: resourceId }]);
+    const activation = asSubstreamId(crypto.randomUUID());
+    await bootstrapConversationChildRuntime(TEST_ENV, WORKSPACE_ID, "automation", AUTOMATION_ID, activation);
+    expect(await createConversationResourceLinks(TEST_ENV, WORKSPACE_ID, AUTOMATION_ID, undefined, activation,
+      { type: "user", userId: AUTHOR_ID }).attachedResourceIds()).toEqual([resourceId]);
+    expect(await runInDurableObject(conversation(AUTOMATION_ID), (_instance, state) => ({
+      turns: state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM participant_transcript_turns").one().n,
+      runs: state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM runs").one().n,
+      inputs: state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM pending_loop_input_mailbox").one().n,
+    }))).toEqual({ turns: 0, runs: 0, inputs: 0 });
+  });
+
+  it("refuses a resource absent from this conversation without changing the Sidekick", async () => {
+    await seedSidekick("0");
+    await expect(tool()(AUTOMATION_ID, await source(false, false)))
+      .rejects.toMatchObject({ code: "sidekick_resource_unavailable" });
+    expect(await directLinks()).toEqual([]);
+  });
+
+  it("uses the normal sharing checks to refuse an unsent upload", async () => {
+    await seedSidekick("0");
+    await expect(tool()(AUTOMATION_ID, await source(true)))
+      .rejects.toMatchObject({ code: "sidekick_attachment_draft_requires_message" });
+    expect(await directLinks()).toEqual([]);
+  });
+
+  it("refuses a Sidekick owned by another thread even when the user can open both", async () => {
+    await seedRoom(OTHER_ROOM_ID, "Another thread");
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID,
+      scope: "workstream", owningWorkstreamId: OTHER_ROOM_ID, automationId: AUTOMATION_ID });
+    await expect(tool()(AUTOMATION_ID, await source()))
+      .rejects.toMatchObject({ code: "sidekick_owned_by_another_thread" });
+    expect(await directLinks()).toEqual([]);
+  });
+
+  it("refuses an inaccessible personal Sidekick", async () => {
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: COLLEAGUE_ID,
+      scope: "personal", owningWorkstreamId: null, automationId: AUTOMATION_ID });
+    await expect(tool()(AUTOMATION_ID, await source()))
+      .rejects.toMatchObject({ code: "sidekick_contact_forbidden" });
+    expect(await directLinks()).toEqual([]);
   });
 });
 

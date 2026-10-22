@@ -96,6 +96,19 @@ attachment manifests and current-turn image projection. Resource IDs alone are
 not a substitute for those durable message attachments. Model-facing tools keep
 the existing composed-message and attachment limits, also enforced at admission.
 
+`sidekick_attach_resource({ sidekickId, resourceId })` shares one resource
+without a message, team membership or activation. Use the Sidekick UUID from
+creation or discovery and a Rally resource UUID visible to the calling
+conversation. The service applies the same Sidekick access and owning-thread
+rules as contacting its wizard, then uses the normal `attach_resources` product
+operation on the wizard's conversation. That operation rechecks the execution
+user's active membership and resource sharing rights, including personal
+connection ownership and the requirement to send an upload before sharing it.
+It returns `{ sidekickId, resourceId, alreadyAttached }`; repeats keep one link.
+The wizard, future activations and its workers read the attachment through the
+shared resource scope. This direct attachment remains until explicitly removed;
+it is independent of inherited home or conversation attachments.
+
 Conversation migration 60 stores the background principal and a stop timestamp.
 Migration 69 adds the root conversation: the first conversation up the
 delegation chain that nobody delegated. `start_agent` sets it to the starter's
@@ -361,6 +374,16 @@ the ownership flags from a conversation that acts for no thread, and a guest's
 grant-only contact. Complete desktop behavior remains an implementation gate.
 
 ## Changelog
+
+### 2026-10-22 — Attach Sidekick context without waking its wizard
+
+Agents previously had to send a message to forward a resource, coupling context
+sharing to another model execution. `sidekick_attach_resource` now reuses the
+ordinary authorized attachment operation and its unique resource link. A new
+attachment store or message-based workaround was rejected: the wizard already
+owns the attachments that its activations inherit. Preserve current source
+visibility, Sidekick access and owning-thread checks, and keep this operation
+independent of message delivery and activation.
 
 ### 2026-10-22 — Identify the current Sidekick in discovery
 
