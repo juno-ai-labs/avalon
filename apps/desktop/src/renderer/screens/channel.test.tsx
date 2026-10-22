@@ -195,6 +195,16 @@ describe('a Channel', () => {
     ] });
   });
 
+  it('keeps the Sidekicks count unknown until the library answers, then shows zero for an empty list', async () => {
+    const { client } = renderChannel();
+    fireEvent.pointerDown(await screen.findByRole('button', { name: 'Channel menu: Outbound' }), { button: 0, ctrlKey: false });
+    expect(await screen.findByRole('menuitem', { name: /^Sidekicks$/u })).toBeInTheDocument();
+
+    await act(async () => { client.setQueryData(['automations'], []); });
+
+    expect(await screen.findByRole('menuitem', { name: /^Sidekicks\s*0$/u })).toBeInTheDocument();
+  });
+
   it('lists its threads down to now, beside the composer', async () => {
     renderChannel();
     const feed = within(await screen.findByRole('list', { name: 'Outbound feed' }));
