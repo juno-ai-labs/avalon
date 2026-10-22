@@ -191,8 +191,9 @@ unreadable; an unavailable authority returns a retryable failure. Each lookup
 checks current permissions. Supplying an ID never creates permission.
 
 These direct reads create no attachment and do not expand `list_resources`,
-inventory fingerprints, or the sidebar. Attachment forwarding remains useful
-for discovery and durable shared context. Terminal import and subsequent
+inventory fingerprints, or the sidebar. Attachment forwarding remains the preferred handoff
+even when a resource is already readable: it makes the intended resource
+explicit and preserves shared context. Terminal import and subsequent
 revocation checks use the same resolution, and artifact data tools resolve a
 supplied ID or alias before applying it. Ordinary Thread and Breakout agents
 retain their existing attachment scope.
