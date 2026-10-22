@@ -61,12 +61,12 @@ export interface ConversationRowActions {
   resolveDisabledReason?: string | undefined;
   /**
    * Merge this conversation's result up: a Breakout into its Thread, a Thread
-   * into one of its Channels. The label names the target ("Merge to thread",
+   * into one of its Channels. The label names the target ("Merge to Launch Thread",
    * "Merge to GTM"); absent where nothing here can merge.
    */
-  /** `target` names where it goes, at the row's end: the Thread, or "Channel". */
+  /** Optional trailing context: a multiple-Channel count. */
   merge?: {
-    label: string;
+    label: ReactNode;
     target?: string | undefined;
     disabled?: boolean | undefined;
     disabledReason?: string | undefined;
