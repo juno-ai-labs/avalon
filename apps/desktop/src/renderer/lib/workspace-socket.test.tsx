@@ -12,7 +12,7 @@ import {
 import type { SpaceDirectory } from '@rally/contracts';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { onlineManager, QueryClient, QueryClientProvider, useQuery, type InfiniteData } from '@tanstack/react-query';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { StrictMode, useEffect, type JSX, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SpaceConversationSummary, WorkstreamSummary } from './types';
@@ -29,6 +29,7 @@ import { requestSocketTicket, SOCKET_TICKET_REQUEST_TIMEOUT_MS } from './socket-
 import { WORKSPACE_SOCKET_OPEN_TIMEOUT_MS } from '@rally/contracts/workspace-reach-watch';
 import { DIRECTORY_CACHE_KEY, workspaceDirectorySlice } from './workspace-directory-cache';
 import { useMergeChannels } from './use-merge-channels';
+import { ConversationAccessRequest } from '../components/conversation-access-request';
 import { MY_THREADS_QUERY_KEY, SPACES_QUERY_KEY, type ThreadNavigationPage } from './sidebar-list-store';
 
 import type * as TelemetryModule from './telemetry';
@@ -2271,7 +2272,77 @@ describe('WorkspaceSocketProvider', () => {
 
     // A member's Channel rows and Space pages are pushed on the same flip, so
     // the associative read a guest's sidebar is drawn from is the one to redo.
-    expect(invalidate.mock.calls.map(([filters]) => filters?.queryKey)).toEqual([['merge-channels'], ['shared-navigation']]);
+    expect(invalidate.mock.calls.map(([filters]) => filters?.queryKey)).toEqual([
+      ['conversation-access-preview'], ['merge-channels'], ['shared-navigation'],
+    ]);
+  });
+
+  it.each([
+    ['thread', '0', 'reach', true],
+    ['breakout', '00000000-0000-7000-8000-0000000000b1', 'reach', true],
+    ['thread', '0', 'reconnect', true],
+    ['breakout', '00000000-0000-7000-8000-0000000000b1', 'reconnect', true],
+    ['thread', '0', 'reach', false],
+  ] as const)('retries a waiting %s (%s) after %s (request sent: %s)', async (kind, substreamId, change, requested) => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let admitted = false;
+    const onRetry = vi.fn();
+    const api = {
+      getWorkspaceSocketTicket: async () => ({
+        url: 'wss://api.rally.test/socket/workspaces/workspace-1', ticket: 'workspace-ticket',
+        protocols: socketTicketProtocols('workspace-ticket'),
+      }),
+      conversationAccessPreview: vi.fn(async () => ({
+        kind: substreamId === '0' ? 'channel' as const : 'breakout' as const,
+        title: 'Launch plan', appearance: null, markId: 'thread-1',
+        access: admitted ? 'open' as const : 'requestable' as const,
+      })),
+      requestConversationAccess: async () => undefined,
+    };
+    render(<QueryClientProvider client={queryClient}>
+      <WorkspaceSocketProvider region="global" api={api} workspaceId="00000000-0000-7000-8000-000000000001">
+        <ConversationAccessRequest api={api} parentId="thread-1" substreamId={substreamId}
+          fallback={<p>Opening thread</p>} onRetry={onRetry} />
+      </WorkspaceSocketProvider>
+    </QueryClientProvider>);
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => { socket.open(); socket.message(initialSidebarFrame()); });
+    const requestButton = await screen.findByRole('button', { name: 'Request access' });
+    if (requested) {
+      fireEvent.click(requestButton);
+      await screen.findByRole('button', { name: 'Try again' });
+    }
+    await flushPromises();
+    api.conversationAccessPreview.mockClear();
+    const reach = {
+      type: 'workspace_reach_changed', occurredAt: '2026-10-22T00:00:00.000Z',
+      userIds: ['00000000-0000-7000-8000-000000000003'],
+    };
+    // A membership nudge for another conversation must not dial this one.
+    act(() => socket.message(reach));
+    await vi.waitFor(() => expect(api.conversationAccessPreview).toHaveBeenCalledTimes(1), { timeout: 5_000 });
+    expect(onRetry).not.toHaveBeenCalled();
+    admitted = true;
+    if (change === 'reach') {
+      act(() => socket.message(reach));
+    } else {
+      act(() => {
+        socket.close();
+        window.dispatchEvent(new Event('online'));
+      });
+      await flushPromises();
+      const reconnected = FakeWebSocket.instances.at(-1)!;
+      expect(reconnected).not.toBe(socket);
+      // The waterline did not advance while disconnected: recovery must run
+      // before the duplicate-waterline guard drops this subscribe answer.
+      act(() => { reconnected.open(); reconnected.message(initialSidebarFrame()); });
+    }
+    await vi.waitFor(() => expect(onRetry).toHaveBeenCalledTimes(1), { timeout: 5_000 });
+    expect(api.conversationAccessPreview).toHaveBeenLastCalledWith('thread-1', substreamId);
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    expect(screen.getByRole('status').textContent).toBe(`Opening ${kind}…`);
+    expect(screen.queryByText('Opening thread')).toBeNull();
   });
 
 
