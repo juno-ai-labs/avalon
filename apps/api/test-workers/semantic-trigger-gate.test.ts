@@ -106,6 +106,7 @@ function workspace() {
 
 async function activate(definition: AutomationDraft): Promise<void> {
   const created = await createAutomation(TEST_ENV, {
+    creatorConsent: { requestId: AUTOMATION_ID },
     workspaceId: WORKSPACE_ID,
     authorUserId: AUTHOR_ID,
     scope: "workspace",

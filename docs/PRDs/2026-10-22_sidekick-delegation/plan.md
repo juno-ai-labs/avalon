@@ -58,16 +58,74 @@ turn an implementation checklist into an assertion that its tests passed.
   typecheck and `pnpm docs:check` passed for the consent installation; repeat
   the applicable gates after subsequent edits.
 
+### Shared admission and run coordinators
+
+- Real workerd `sidekick-delegation-admission.test.ts` covers manual coordination
+  without implicit enrollment, fixed continuation identity, actionable blocked
+  runs, fresh later hourly occurrences, conservative legacy migration, retained
+  legacy task accounts and human management rights, installed-client self-claim,
+  restricted workspace audiences, delivery after withdrawal, and the original
+  personal Sheet shape in both Thread and Organization ownership scopes.
+- The restored admission/consent/hosted-Sidekick/semantic-trigger lanes passed
+  81 cases. Focused authority, Slack assignment, creator catalog and tool schema
+  Node suites passed 98 cases; harness prompt and creator tools passed 75 cases.
+- Negative controls reintroduced the non-personal ownership cutoff, ignored the
+  event audience, ignored coordinator withdrawal, migrated the creator instead
+  of the established claimant, and overwrote the human access field during
+  coordinator selection. Each failed for its intended behavior and was restored.
+  Dropping the blocked-run write has its own negative control and restored run.
+- Directory responses retain legacy `runAsUserId` and expose coordinator and
+  safe delegation attention separately. The legacy claim endpoint records
+  self-consent and an explicit human entitlement without rebinding sources.
+- Old task-account identities and provisioned run coordinators are snapshotted
+  in the appended WorkspaceDO migration; a durable alarm installs established
+  claims, and ambiguous creator attribution remains ungranted.
+
+### Shared Terminal state
+
+- Focused `terminal-plugin-integration.test.ts` and `terminal-coordinator.test.ts`
+  passed 55 cases. They exercise the real object-schema queries with a Daytona
+  provider double; runtime DO semantics remain covered by the existing workerd
+  Terminal suites and the delegation/membership suites above.
+- An independent eligible delegate retains the original sandbox and completed
+  imports. Cached callers lose access after observed withdrawal. A selected
+  personal GitHub connection loses its mounted secrets when its owner withdraws;
+  local files remain readable and the typed publisher refuses that connection.
+  The coordinator suite retains a generation created under the old principal
+  fingerprint for both primary activations and background workers.
+- Four production-code negative controls each failed the targeted plugin case:
+  removing the consent check admitted an unconsented editor, tying file identity
+  to the new coordinator or reauthorizing completed imports deleted retained
+  files, and dropping credential removal left the provider credential mounted.
+  All mutations were restored and the focused 55-case run passed. A fifth
+  control, treating an unknown token expiry as proof of no mount, also failed
+  its targeted credential-removal assertion; the guard was restored.
+- The fresh workerd admission plus Terminal storage lanes passed 12 cases;
+  authority/Slack/catalog/tool-schema Node lanes passed 98, and the harness
+  prompt/creator-tool lanes passed 75. These are targeted verification, not
+  evidence for remaining operation fallback or UI requirements.
+- Lint, repository-wide typecheck and documentation checks pass at this
+  checkpoint. Full-suite and real-window UI evidence remain required when the
+  remaining implementation is complete.
+
 ### Next integration constraints
 
-The consent APIs and tool executors do not enable delegation-aware execution
-yet. In particular, the normal harness can replay a completed tool receipt
+The common admission policy is installed. The normal harness can still replay a
+completed tool receipt
 without entering that tool's executor. Its delegation-specific replay must
 reconcile current self-grant state before presenting an old result as current;
 the authority's generation check alone does not cover this outer cache.
 
-The legacy claim endpoint, event/schedule policy, source registrations,
-per-operation accounts, run coordinator and receipts still need integration.
+Configured sources still need reconciliation across delegates' connection-
+specific Rally resource IDs, preserving provider resource/occurrence identity.
+Per-operation harness accounts and receipts still need integration.
+Terminal now checks eligible delegation for every operation and retains its
+original file identity across coordinators, including completed imports. Its
+single selected repository connection stays explicit; observed withdrawal
+removes mounted personal GitHub credentials without deleting files. Actual
+serving-account receipt attribution remains part of the harness work below.
+Historical direct-creation provenance still needs its final audit against any
+existing creation/tool receipts; no new historical provenance service is planned.
 Creator disclosure and all actual controls still need rendering and inspection.
 Do not land the creator enrollment UI path without that disclosure, or mark
 these foundational checks as evidence for execution, UI or model behavior.

@@ -314,6 +314,7 @@ async function createDraft(owningWorkstreamId: string | null = null): Promise<vo
     scope: owningWorkstreamId ? "workstream" : "personal",
     owningWorkstreamId,
     automationId: AUTOMATION_ID,
+    creatorConsent: { requestId: AUTOMATION_ID },
   });
   expect(created).toEqual({ automationId: AUTOMATION_ID, created: true });
 }
@@ -820,7 +821,7 @@ describe("a hosted Sidekick", () => {
   });
 
   it.each(["plugin_mcp_rally_engineering_3", "plugin_custom_mcp_3"])(
-    "binds and reclaims a named MCP connection through %s",
+    "binds a named MCP connection through %s and keeps self-consent separate from rebinding",
     async (pluginId) => {
       const customMcpConnectionId = "00000000-0000-7000-8000-00000000ad42";
       await runInDurableObject(workspaceStub(), (_instance, state) => {
@@ -840,16 +841,16 @@ describe("a hosted Sidekick", () => {
       expect(await apply()).toMatchObject({
         lifecycle: "active", connectorBindings: { [pluginId]: customMcpConnectionId },
       });
-      // A stale binding must be repaired from the same name-aware directory
-      // used when accepting a new definition.
+      // Self-consent preserves the configured source, including a stale one;
+      // changing a source is a separate definition edit.
       await runInDurableObject(workspaceStub(), (_instance, state) => {
         state.storage.sql.exec(`UPDATE automation_directory SET connector_bindings_json = ? WHERE automation_id = ?`,
           JSON.stringify({ [pluginId]: "00000000-0000-7000-8000-00000000ad41" }), AUTOMATION_ID);
       });
       expect(await workspaceStub().sidekickClaimExecutionPrincipal({ ...addressed(), actor: actor() }))
-        .toMatchObject({ reboundPluginIds: [pluginId], unboundProviders: [] });
+        .toMatchObject({ reboundPluginIds: [], unboundProviders: [] });
       expect(JSON.parse((await automationRow()).connector_bindings_json!))
-        .toEqual({ [pluginId]: customMcpConnectionId });
+        .toEqual({ [pluginId]: "00000000-0000-7000-8000-00000000ad41" });
     },
   );
 
@@ -902,9 +903,9 @@ describe("a hosted Sidekick", () => {
          FROM connector_connections WHERE id = ?`, replacementId, SLACK_CONNECTION_ID);
     });
     const claim = await workspaceStub().sidekickClaimExecutionPrincipal({ ...addressed(), actor: actor() });
-    expect(claim).toMatchObject({ reboundPluginIds: pluginIds, unboundProviders: [], changed: true });
+    expect(claim).toMatchObject({ reboundPluginIds: [], unboundProviders: [] });
     expect(JSON.parse((await automationRow()).connector_bindings_json ?? "null"))
-      .toEqual(Object.fromEntries(pluginIds.map((pluginId) => [pluginId, replacementId])));
+      .toEqual(Object.fromEntries(pluginIds.map((pluginId) => [pluginId, SLACK_CONNECTION_ID])));
   });
 
   it("applies a ready revision: binds the workspace connection, reserves the address, activates", async () => {
@@ -1111,7 +1112,7 @@ describe("a hosted Sidekick", () => {
       .toMatchObject({ state: "stopped", lifecycle: "active" });
   });
 
-  it("rebinds a plugin on a principal claim when the claimant cannot use its connection", async () => {
+  it("keeps configured source bindings when an installed client records self-consent", async () => {
     await activeAutomation();
     await seedSlackConnection();
     // Bound to a connection that is gone; the plugin's live one is the Organization's.
@@ -1125,11 +1126,11 @@ describe("a hosted Sidekick", () => {
 
     const claim = await workspaceStub().sidekickClaimExecutionPrincipal({ ...addressed(), actor: actor() });
 
-    expect(claim).toMatchObject({ reboundPluginIds: ["plugin_slack"], unboundProviders: [], changed: true });
-    expect(JSON.parse((await automationRow()).connector_bindings_json!)).toEqual({ plugin_slack: SLACK_CONNECTION_ID });
+    expect(claim).toMatchObject({ reboundPluginIds: [], unboundProviders: [] });
+    expect(JSON.parse((await automationRow()).connector_bindings_json!)).toEqual({ plugin_slack: foreign });
   });
 
-  it("unbinds a plugin on a principal claim when its one connection is somebody else's personal one", async () => {
+  it("does not substitute another person's personal source on an installed client's self-consent", async () => {
     await activeAutomation();
     // The plugin's only connection is another member's personal one, which
     // the claimant may neither use nor be handed as a replacement.
@@ -1151,7 +1152,7 @@ describe("a hosted Sidekick", () => {
 
     const claim = await workspaceStub().sidekickClaimExecutionPrincipal({ ...addressed(), actor: actor() });
 
-    expect(claim).toMatchObject({ reboundPluginIds: [], unboundProviders: ["plugin_slack"] });
+    expect(claim).toMatchObject({ reboundPluginIds: [], unboundProviders: [] });
     expect(JSON.parse((await automationRow()).connector_bindings_json!)).toEqual({ plugin_slack: theirs });
   });
 
@@ -1471,7 +1472,7 @@ describe("a hosted Sidekick", () => {
   it("pauses one Sidekick without touching another's pending run", async () => {
     await activeAutomation();
     const otherId = asAutomationId(AUTOMATION_ID.replace(/ad0$/u, "ad9"));
-    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "personal", owningWorkstreamId: null, automationId: otherId });
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "personal", owningWorkstreamId: null, automationId: otherId, creatorConsent: { requestId: otherId } });
     const other = { workspaceId: WORKSPACE_ID, automationId: otherId };
     await workspaceStub().sidekickSubmitDefinition({ ...other, draft: DEFINITION, evaluatorRules: null, submittedByRunId: null });
     await runInDurableObject(workspaceStub(), (instance: WorkspaceDO) => instance.sidekickApply({ ...other, actor: actor() }));

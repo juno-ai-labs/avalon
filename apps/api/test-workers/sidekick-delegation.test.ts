@@ -21,7 +21,6 @@ beforeEach(async () => {
   await reset();
   await seedWorkspaceControlPlane(env.DB, { workspaceId, userId: creator, sessionId: crypto.randomUUID() });
   await env.DB.batch([
-    env.DB.prepare(`CREATE TABLE sidekick_delegation_locations(user_id TEXT NOT NULL,workspace_id TEXT NOT NULL,region TEXT NOT NULL,PRIMARY KEY(user_id,workspace_id))`),
     env.DB.prepare(`INSERT INTO workspace_members(workspace_id,user_id,status,role) VALUES (?,?,'active','member')`).bind(workspaceId, other),
     env.DB.prepare(`INSERT INTO users(id,name) VALUES (?,'Other person')`).bind(other),
   ]);

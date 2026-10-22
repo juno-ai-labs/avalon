@@ -51,6 +51,9 @@ export async function seedWorkspaceControlPlane(
 ): Promise<void> {
   await ensureAuditSchema();
   await database.batch([
+    database.prepare(`CREATE TABLE IF NOT EXISTS sidekick_delegation_locations (
+      user_id TEXT NOT NULL,workspace_id TEXT NOT NULL,region TEXT NOT NULL,PRIMARY KEY(user_id,workspace_id)
+    )`),
     database.prepare(`CREATE TABLE workstream_authority_control (
       id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
       required_serving_contract_version INTEGER NOT NULL,

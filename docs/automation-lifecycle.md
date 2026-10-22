@@ -54,20 +54,46 @@ still decides whether the person requested that change. The host does not claim
 to prove the meaning of natural language. Background creation keeps author
 attribution but cannot create consent.
 
-Consent installation does not itself switch the legacy execution policy. Event
-admission, coordinated run identities, connector fallback, migration and the
-desktop/web controls are tracked by the [implementation plan](PRDs/2026-10-22_sidekick-delegation/plan.md)
-until their acceptance evidence is complete. The legacy directory run-as field
-still confers human reader/manager rights and must not be rewritten by automatic
-coordinator selection.
+Admission uses this authority for events, schedules and manual runs. A run stores
+`coordinator_user_id` independently of the directory's legacy human-access field.
+Manual Run prefers an eligible requester but never opts them in. Schedules prefer
+an eligible saved source owner, then the creator and stable grant order. Personal
+events require their source owner's eligible grant; restricted workspace events
+require an eligible delegate inside their actual audience. Matching and delivery
+both apply this policy, while preserving activation boundaries, deterministic
+filters, semantic conditions and occurrence deduplication. Ownership scope alone
+never rejects an otherwise eligible event.
+
+An occurrence with no delegate gets a `needs_input` run and safe recovery summary;
+an unauthorized event retains no private payload in the Sidekick. Its directory
+has a safe `delegationAttention` code and recovery message. New consent applies
+to future occurrences rather than replaying blocked historical work. A continued
+run retains its coordinator and refuses with `run_coordinator_unavailable` after
+an authorization refresh observes that person's consent or access loss. Other
+delegates can coordinate a later independent occurrence.
+
+Migration snapshots existing `run_as_user_id` as the implicit task account and
+retains already-provisioned run identities. A durable alarm installs consent for
+established non-creator claims once, without overwriting any grant or withdrawal.
+Matching creator/run-as identities without direct-user provenance remain
+ungranted. Current direct-user creation records its explicit provenance. The
+legacy claim endpoint now records self-consent and retains its explicit human
+entitlement in `sidekick_claim_access`, without rebinding configured sources or
+changing creator preference. Neither these grants nor coordinator selection
+replace the directory's existing reader/manager entitlements.
+
+Per-operation connector identities, completed-receipt reconciliation, shared
+Terminal authorization and desktop/web controls are tracked by the
+[implementation plan](PRDs/2026-10-22_sidekick-delegation/plan.md) until all
+acceptance evidence is complete.
 
 ## Sidekick publication and loading
 
 Authoring is conversational. A ready submission saves through `saveDefinition`,
 which checks management authority before recording and publishing a revision.
 The authoring prompt tells the model that only a refused submission blocks
-activation: a connection state check does not, and a personal or work-stream
-Sidekick may use the personal connection of the person it runs as
+activation: a connection state check does not, and every Sidekick scope can
+configure work using a consenting delegate's personal connection
 ([`agent-tools.md`](agent-tools.md#2026-10-15--the-connection-check-covers-every-scope)).
 The model generates internal instructions and a user-friendly description. An
 incomplete submission does not replace the accepted revision. Edits preserve a
@@ -711,10 +737,10 @@ one identity and one history, and can complete more than once.
    accepted** revision and the run's original trigger, plus `stopGeneration`, its
    stop counter. Continuing a run acts on today's consent, so a run started under
    revision 1 continues under revision 3. It does not continue as somebody
-   else: a run records its run-as user when it is provisioned
-   (`runs.run_as_user_id`, migration 13), and a Sidekick claimed by someone
-   else since refuses with `run_principal_changed` rather than put the old
-   principal's transcript in front of the new one's connectors. It does not
+   else: a run persists `coordinator_user_id` independently of the directory's
+   legacy human access field. A coordinator whose consent or current access is
+   unavailable refuses with `run_coordinator_unavailable`; no mid-run account
+   transfer exposes its transcript to a new runtime principal. It does not
    ask who sent the input: anyone who can reach a run may continue it.
 3. The loop input carries `automationRun`, the run-as principal, and
    `automationContinuation: {stopGeneration, senderName, source}`; the sender stays
@@ -842,9 +868,11 @@ participant of the room, because authorship is not a share in the room's
 automation. Who may view (`assertViewer`, and `authorizeViewer` for the
 conversation): a `workspace` automation by any member, otherwise the author,
 the run-as principal, or a participant of the owning room.
-`claimExecutionPrincipal` lets a manager take over `run_as_user_id` and rebinds
-every binding the last principal took with them to the claimant's own or a
-workspace connection, reporting what it could not rebind.
+`claimExecutionPrincipal` is installed-client compatibility for authenticated
+self-consent. Successful authorized claims retain their explicit human access
+in `sidekick_claim_access`; configured bindings and the creator preference stay
+independent. Granting consent through the ordinary self-service tools or UI
+never creates that management entitlement.
 
 ### The directory row
 
@@ -1089,6 +1117,15 @@ and account-recovery checks to prove the assertions observe production behavior.
 and advertised/runtime schema agreement. Harness `src/prompts.test.ts` covers
 activation permission guidance; model behavior needs the separate evaluations.
 
+`test-workers/sidekick-delegation-admission.test.ts` exercises real event matching,
+delivery, due alarms, manual admission, continuation and compatibility claims.
+The original Thread-owned personal Google Sheet shape and its Organization-owned
+variant both start an event run and an hourly run through the same delegate.
+Withdrawals, restricted audiences, coordinator identity and retained human
+management are checked independently; production-code negative controls prove
+those gates. `test/run-authority-validity.test.ts` checks the model/tool boundary's
+specific coordinator failure and error-path attention recording.
+
 `pnpm --filter @rally/desktop exec vitest run
 src/renderer/components/automation-header.test.tsx` covers persistent profile
 controls, timing and legacy email summaries, keyboard navigation to unavailable
@@ -1200,7 +1237,7 @@ only for a `workspace` automation.
 
 The conversation's readers are the parent's decision, carried to the
 conversation object on the ticket and by seating the reader; a run's
-conversation seats only the run-as principal, and its state reaches nobody but
+conversation seats its persisted coordinator, and its state reaches nobody but
 the parent.
 
 Inbound mail is untrusted: the From header can be spoofed, so the sender must
@@ -1209,7 +1246,7 @@ personal automation. That screening is the whole control; an inbound-email run
 holds the same tools as any other run, a decision
 [`security.md`](security.md) records.
 
-A continued run acts with its run-as user's authority whoever sent the input,
+A continued run retains its coordinator whoever sent the input,
 and `continueRun` does not screen the sender: anyone who can reach a run may
 continue it, including a person outside Rally in a thread bound to it. The
 control is the framing. Text from an external actor in a run child
@@ -1221,10 +1258,12 @@ carries the sender's name, is a user-role message too. The same row in a
 Channel or in a Sidekick's configuration conversation keeps the request
 framing.
 
-Binding is where credentials are lent: a personal connection may be bound only
-by its owner or the run-as principal, and a `workspace` automation binds only
-workspace connections. `claimExecutionPrincipal` is the one way a run-as
-principal changes, and the claimant is always the caller.
+Binding records configured sources and retains an existing source while its
+delegate is unavailable. An owner can configure their own connection during
+setup; execution still requires eligible delegation. Every Sidekick scope uses
+the same consent policy. `claimExecutionPrincipal` records only the authenticated
+claimant's consent and compatibility human entitlement; it cannot replace other
+delegates, configured sources or creator preference.
 
 Losing access closes an open conversation. The automation holds no socket of
 its own; the [access-revocation queue](access-revocation.md) reaches its
@@ -1272,7 +1311,10 @@ instructions. See [Google connector guidance](connectors.md#google).
 withdrawal tombstones and accepted mutation receipts. Direct human creation and
 self-service use that authority; inherited autonomous identities do not opt in.
 Signed-in account recovery retains access to a person's own grants after they
-lose Organization or Sidekick access.
+lose Organization or Sidekick access. Event, schedule, manual and continued runs
+share eligibility; each run persists its coordinator independently of legacy
+human access. Migration retains established task accounts and distinguishes
+proven claims from ambiguous creator attribution.
 
 **Why:** A mutable run-as user cannot represent several people's consent or
 independent withdrawal. Reusing that field for automatic coordination would also
@@ -1287,7 +1329,7 @@ sequencer or per-operation provider preflight would add latency for synchronous
 enforcement beyond the agreed eventual-consistency contract. Consent-write
 ordering belongs in the one existing owning object.
 
-**Consequences:** Execution consumers must adopt these grants without deriving
+**Consequences:** Execution consumers use these grants without deriving
 human access from selected accounts. Migration and creator initialization cannot
 overwrite tombstones. The regional routing index is recovery metadata only;
 consent remains in WorkspaceDO. The implementation plan tracks the remaining
