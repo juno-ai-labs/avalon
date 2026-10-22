@@ -491,8 +491,8 @@ async function loadSource(
   if (!row) {
     throw new MultimodalGenerationError(
       "resource_not_found",
-      `The ${mask ? "mask" : "source"} image is no longer attached or visible to this run.`,
-      { resourceId, reason: "List the current workstream resources and choose an attached image." },
+      `${mask ? "maskResourceId" : "resourceId"} does not identify an image this run can read.`,
+      { resourceId, reason: "Check the image resource ID and the execution user's read access. Use list_resources to discover images." },
     );
   }
   const kind = classifyAttachmentKind({ mimeType: row.mime_type, fileName: row.title });
