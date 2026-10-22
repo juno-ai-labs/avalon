@@ -1,3 +1,4 @@
+import { MessageIssueReceiptSchema, type CreateMessageIssue, type MessageIssueReceipt } from '@rally/contracts/message-issues';
 import { connectorAuthorizationStatus } from '@rally/contracts';
 import type { Annotation } from '@rally/contracts';
 import { ManagedScopeGrantsSchema, RevokeScopeGrantSchema, ScopeGrantMutationResultSchema } from "@rally/contracts/scope-grants";
@@ -2239,6 +2240,10 @@ export class RallyApi {
    * Channels. A retry with the same `clientMessageId` writes nothing again.
    */
   /** The Channels this thread can merge into, earliest placement first. */
+  async createMessageIssue(input: CreateMessageIssue): Promise<MessageIssueReceipt> {
+    return this.request('/message-issues', { method: 'POST', body: input, schema: MessageIssueReceiptSchema });
+  }
+
   async mergeChannels(threadId: string): Promise<ConversationMergeChannels> {
     return this.request(`/conversations/${encodeURIComponent(threadId)}/merge-channels`, {
       schema: ConversationMergeChannelsSchema,

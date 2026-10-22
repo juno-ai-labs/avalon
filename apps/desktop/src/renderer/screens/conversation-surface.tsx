@@ -1,3 +1,5 @@
+import { asSubstreamId } from '@rally/contracts';
+import { MessageIssueProvider } from '../components/message-issue-dialog';
 import { useSidekickActivity } from '../lib/use-sidekick-activity';
 import { validateAnnotationSend } from '../lib/use-annotation-pins';
 import { TranscriptHistoryStatus } from '../components/transcript-history-status';
@@ -3560,6 +3562,7 @@ function ConversationSurfaceContent({
     ?? 'Rally could not complete this run. Retrying is unlikely to help — copy the request ID for support.';
 
   return (
+    <MessageIssueProvider api={api} target={{ kind: 'conversation', parentId: id, substreamId: asSubstreamId(substreamId) }}>
     <EmailMentionContext.Provider value={emailMentions}>
     <ConnectorConnectionsProvider connections={visibleConnections}>
     <div className="conversation-layout" ref={layoutRef}>
@@ -4094,5 +4097,6 @@ function ConversationSurfaceContent({
     </div>
     </ConnectorConnectionsProvider>
     </EmailMentionContext.Provider>
+    </MessageIssueProvider>
   );
 }

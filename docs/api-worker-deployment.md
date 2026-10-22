@@ -20,6 +20,9 @@ the [WorkerEntrypoint RPC model](https://developers.cloudflare.com/workers/runti
 [RPC lifecycle and disposal](https://developers.cloudflare.com/workers/runtime-apis/rpc/lifecycle/),
 and [Versions and gradual deployments](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/gradual-deployments/).
 
+The rollout applies the dedicated `MESSAGE_ISSUES_DB` migration chain before
+promoting the API Worker that accepts Oopsie reports; see [message issues](message-issues.md).
+
 ## Where the code lives
 
 | Surface | Entrypoint and config | Responsibility |
