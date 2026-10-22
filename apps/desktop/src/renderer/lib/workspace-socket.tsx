@@ -82,7 +82,7 @@ import { reportTelemetryProductIntent, telemetryJourneyDuration, uuidV7 } from '
 import type { WorkstreamSummary } from './types';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import { memberPreferencesQueryKey } from './use-member-preferences';
-import { accessRequestsQueryKey } from './access-requests';
+import { accessRequestsQueryKey, CONVERSATION_ACCESS_PREVIEW_QUERY_KEY } from './access-requests';
 import { hydrateWorkspaceDirectory, mirrorWorkspaceDirectory } from './workspace-directory-cache';
 import {
   applyVersionedWorkstreamState,
@@ -1132,6 +1132,9 @@ export function WorkspaceSocketProvider({
             }
             if (!subscribed) {
               subscribed = true;
+              // Reach nudges are not replayed. Recheck a waiting conversation
+              // if access changed while this Organization socket was away.
+              void queryClient.invalidateQueries({ queryKey: CONVERSATION_ACCESS_PREVIEW_QUERY_KEY });
               sendPresence();
               sendConversationViewRequestsRef.current();
               sendSidekickActivityRef.current();
@@ -1390,6 +1393,9 @@ export function WorkspaceSocketProvider({
           }
           const reachChanged = safeParseSocketEvent(WorkspaceReachChangedEventSchema, decoded);
           if (reachChanged.success) {
+            // Approval and direct participant adds both move reach. The waiting
+            // screen retries its socket only after its own preview admits it.
+            void queryClient.invalidateQueries({ queryKey: CONVERSATION_ACCESS_PREVIEW_QUERY_KEY });
             void queryClient.invalidateQueries({ queryKey: MERGE_CHANNELS_QUERY_KEY });
             // This person joined or left a Channel or Breakout. A member's
             // sidebar already moved: the Channel row and the Space pages are

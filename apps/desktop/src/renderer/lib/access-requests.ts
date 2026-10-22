@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import type { RallyApi } from './api';
 
+export const CONVERSATION_ACCESS_PREVIEW_QUERY_KEY = ['conversation-access-preview'] as const;
+
 /**
  * The access requests waiting on this person, per Organization. Written only
  * by the workspace socket (the subscribe answer and `workspace_access_requests`),

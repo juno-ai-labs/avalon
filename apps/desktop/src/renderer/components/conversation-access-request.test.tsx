@@ -55,10 +55,12 @@ describe('ConversationAccessRequest', () => {
     expect(api.conversationAccessPreview).toHaveBeenCalledWith(PARENT, BREAKOUT);
   });
 
-  it('keeps the ordinary error when the member can open it after all', async () => {
+  it('keeps the ordinary error without a retry loop when the member can already open it', async () => {
     const api = fakeApi(preview({ access: 'open' }));
-    show(api);
+    const onRetry = vi.fn();
+    show(api, '0', onRetry);
     await vi.waitFor(() => expect(api.conversationAccessPreview).toHaveBeenCalled(), { timeout: 2_000 });
+    expect(onRetry).not.toHaveBeenCalled();
     expect(screen.getByText('Thread could not be opened')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Request access' })).toBeNull();
   });

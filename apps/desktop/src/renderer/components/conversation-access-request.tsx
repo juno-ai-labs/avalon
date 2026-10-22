@@ -1,10 +1,12 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { WorkstreamGlyph } from '@rally/ui/components/workstream-glyph';
 import { Check, LoaderCircle } from 'lucide-react';
+import { useEffect, useState } from 'react';
 
 import type { RallyApi } from '../lib/api';
 import { ApiError } from '../lib/api';
-import { Button, ErrorNotice } from './primitives';
+import { CONVERSATION_ACCESS_PREVIEW_QUERY_KEY } from '../lib/access-requests';
+import { Button, ErrorNotice, OpeningState } from './primitives';
 
 /**
  * What a member sees on a link to a Channel or Breakout they are not in: its
@@ -13,9 +15,10 @@ import { Button, ErrorNotice } from './primitives';
  * somebody is in costs nothing more.
  *
  * Renders `fallback` while the preview loads, when it fails, and when the
- * person can open it after all, so any other failure keeps its own screen.
- * Once approved, the socket's own retry opens the conversation; nothing here
- * waits for it. `docs/channel-access-requests.md`.
+ * person could already open it, so any other failure keeps its own screen.
+ * An Organization reach-change push refreshes the preview. When access opens,
+ * retry the conversation immediately, including after a revoked socket stopped
+ * retrying. `docs/channel-access-requests.md`.
  */
 export type ConversationAccessApi = Pick<RallyApi, 'conversationAccessPreview' | 'requestConversationAccess'>;
 
@@ -25,21 +28,32 @@ export function ConversationAccessRequest({ api, parentId, substreamId, fallback
   substreamId: string;
   fallback: React.JSX.Element;
   /**
-   * Dial the conversation again. A socket closed because access was revoked
-   * never dials back by itself, so after an approval this is how it opens.
+   * Restart the conversation, including a socket stopped after revocation.
    */
   onRetry: () => void;
 }): React.JSX.Element {
   const preview = useQuery({
-    queryKey: ['conversation-access-preview', parentId, substreamId],
+    queryKey: [...CONVERSATION_ACCESS_PREVIEW_QUERY_KEY, parentId, substreamId],
     queryFn: () => api!.conversationAccessPreview(parentId, substreamId),
     enabled: Boolean(api),
     retry: false,
     staleTime: 30_000,
   });
+  const address = `${parentId}:${substreamId}`;
+  const [waitingFor, setWaitingFor] = useState<string | null>(null);
   const request = useMutation({
     mutationFn: () => api!.requestConversationAccess(parentId, substreamId),
   });
+  useEffect(() => {
+    if (preview.data?.access === 'requestable') setWaitingFor(address);
+    else if (preview.data?.access === 'open' && waitingFor === address) onRetry();
+  }, [address, onRetry, preview.data?.access, waitingFor]);
+  // A newly admitted preview must not mount the error dialog while the retry
+  // starts. An initially open preview still belongs to the ordinary error path:
+  // retrying that on every mount would loop on unrelated connection failures.
+  if (preview.data?.access === 'open' && waitingFor === address) {
+    return <OpeningState label={`Opening ${preview.data.kind === 'breakout' ? 'breakout' : 'thread'}…`} />;
+  }
   if (!preview.data || preview.data.access !== 'requestable') return fallback;
   const { kind, title, appearance, markId } = preview.data;
   const noun = kind === 'breakout' ? 'breakout' : 'thread';
