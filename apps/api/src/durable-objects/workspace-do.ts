@@ -1,3 +1,4 @@
+import { runningSidekickCount, SidekickActivityRequestSchema, type SidekickActivityRequest } from "./sidekick-activity";
 import { RESOURCE_READ_PROJECTION_SQL } from '../services/resource-read-projection';
 import { WorkspaceConversationView, WORKSPACE_CONVERSATION_VIEW_MIGRATION } from "./workspace-conversation-view";
 import { ConversationViewProjectionSchema } from "./conversation-view-projection";
@@ -6446,9 +6447,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(ReceiveChildEffectsRequestSchema, input, "receive_child_effects");
     const envelope = request.envelopes[0]!;
     if (envelope.parentKind === "automation") {
-      const sidekick = await this.sidekickParent(envelope.parentId, envelope.workspaceId);
-      if (!sidekick) throw new Error("sidekick_missing");
-      return { accepted: sidekick.receiveChildEffects(request) };
+      return this.sidekickCall(envelope.parentId, envelope.workspaceId,
+        (sidekick) => ({ accepted: sidekick.receiveChildEffects(request) }));
     }
     if (envelope.parentKind !== "workstream" && envelope.parentKind !== "space") {
       throw new Error("conversation_effect_parent_kind_unhosted");
@@ -6566,6 +6566,24 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     await this.ensureParentWorkspace(workspaceId);
     return new HostedSidekick(this.hostedSidekickHost(), automationId);
+  }
+
+  /** Activity is visible through the receiving conversation, without granting Sidekick history access. */
+  async readSidekickActivity(input: SidekickActivityRequest): Promise<{ count: number }> {
+    await this.initialized;
+    const request = parseRpcInput(SidekickActivityRequestSchema, input, "sidekick_activity");
+    this.assertWorkspace(request.workspaceId);
+    let channelSidekickIds: readonly string[] = [];
+    if (request.parentKind === "space") {
+      const viewer = await this.spaceReader(request.workspaceId, request.userId);
+      const channel = viewer && this.spaceStorage().readable(viewer, request.parentId);
+      if (!channel) throw new ApiError(404, "space_not_found", "Channel not found");
+      channelSidekickIds = channel.defaultSidekickIds;
+    } else {
+      const decision = await this.conversationToolAdmission(request.workspaceId, request, request.userId);
+      if (!decision.authorized) throw new ApiError(404, "conversation_not_found", "Conversation not found");
+    }
+    return { count: runningSidekickCount(this.state.storage.sql, request, channelSidekickIds) };
   }
 
   /** Run a hosted Sidekick call, then publish the sidebar list and arm what it scheduled. */
@@ -9210,6 +9228,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       });
     });
     if (!attached) throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
+    if (!attached.alreadyAttached) {
+      await this.publishSync(["automations"], request.workspaceId, this.placementAffinity() ?? await workspacePlacementAffinity(this.env, request.workspaceId));
+    }
     const scoped = scopeConversations(sql, { kind: "sidekick", automationId: request.automationId }, request.userId)
       .find((conversation) => conversation.parentId === address!.parentId && conversation.substreamId === address!.substreamId);
     return {
