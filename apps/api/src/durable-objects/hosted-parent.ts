@@ -40,6 +40,7 @@ import {
   WorkstreamIdSchema,
   asSubstreamId,
   asWorkspaceId,
+  asUserId,
   conversationNeedsViewer,
   isUnknownSocketEvent,
   safeParseSocketEvent,
@@ -78,7 +79,6 @@ import {
   ConversationParentTerminalDeadlinesRequestSchema,
   ConversationParentTerminalDeadlinesResultSchema,
   MutatePrivateChildParticipantRequestSchema,
-  MutatePrivateChildParticipantResultSchema,
   PrivateChildPreparationOperationSchema,
   ReadPrivateChildPreparationRequestSchema,
   SavePreparedPrivateChildContextRequestSchema,
@@ -121,7 +121,6 @@ import { parseRpcInput } from "../lib/rpc-input";
 import { stableUuid } from "../lib/stable-uuid";
 import { uuidV7 } from "../lib/uuid-v7";
 import { logWarn } from "../observability/logger";
-import { createIdentityObjectPort } from "../runtime/identity-port";
 import {
   revocationClosesSession,
   SocketAccessRevocationSchema,
@@ -246,13 +245,18 @@ export function visiblePrivateChildren(
     resolved: number; parent_id: string; substream_id: string; title: string; effect_json: string | null; user_effect_json: string | null;
     created_by_user_id: string; created_at: number; updated_at: number; origin_turn_id: string | null;
   }>(
-    `SELECT child.parent_id, child.substream_id, child.title, child.resolved, directory.effect_json,
+    `SELECT DISTINCT child.parent_id, child.substream_id, child.title, child.resolved, directory.effect_json,
             viewer.effect_json AS user_effect_json,
             child.created_by_user_id, child.created_at, child.updated_at,
             json_extract(preparation.request_json, '$.sourceThroughTurnId') AS origin_turn_id
        FROM parent_children child
-       JOIN parent_breakout_members member
-         ON member.parent_id = child.parent_id AND member.substream_id = child.substream_id
+       JOIN parent_grants member ON member.parent_id = child.parent_id
+        AND (member.scope_kind = 'conversation' AND member.substream_id = child.substream_id
+          OR member.scope_kind = 'workstream' AND child.audience = 'inherits_workstream')
+       JOIN workspace_member_status relationship ON relationship.user_id = member.user_id
+        AND relationship.active = 1
+        AND json_extract(relationship.relationship_json, '$.status') = 'active'
+        AND json_extract(relationship.relationship_json, '$.incarnation') = json_extract(member.grant_json, '$.membershipIncarnation')
        LEFT JOIN parent_breakout_preparations preparation
          ON preparation.parent_id = child.parent_id AND preparation.substream_id = child.substream_id
        LEFT JOIN parent_child_projections directory
@@ -262,7 +266,7 @@ export function visiblePrivateChildren(
         AND viewer.user_id = member.user_id
       WHERE child.parent_id IN (SELECT value FROM json_each(?))
         AND child.kind = 'child' AND child.status = 'ready' AND child.archived_at IS NULL
-        AND member.user_id = ? AND member.active = 1
+        AND member.user_id = ? AND json_extract(member.grant_json, '$.active') = 1
       ORDER BY child.parent_id, child.created_at, child.substream_id`,
     JSON.stringify(parentIds), userId,
   ).toArray();
@@ -529,8 +533,6 @@ interface ConversationReadFacts {
   migrationPhases: Map<string, "pending" | "complete">;
   conversations: Map<string, ConversationReadRow>;
   grants: ScopeGrant[];
-  breakoutMemberships: Set<string>;
-  isParticipant: () => boolean;
 }
 
 interface StoredStateRow extends Record<string, SqlStorageValue> {
@@ -1016,26 +1018,13 @@ export class HostedParent {
     return projection;
   }
 
-  /**
-   * Whether this person participates in Main. Before Main has reported at all,
-   * the creator recorded at `reserveChild` stands in, so the person who just
-   * created a personal Channel can open it before its first projection lands.
-   */
-  isParticipant(userId: string): boolean {
-    const projection = this.userProjection(userId);
-    if (projection) return projection.isParticipant;
-    const mainReported = first(this.sql.exec<{ one: number }>(
-      `SELECT 1 AS one FROM parent_child_projections WHERE parent_id = ? AND substream_id = '0'`,
-      this.parentId,
-    ));
-    return mainReported === null && this.mainChildCreatedBy() === userId;
-  }
-
-  private mainChildCreatedBy(): string | null {
-    return first(this.sql.exec<{ created_by_user_id: string | null }>(
-      `SELECT created_by_user_id FROM parent_children WHERE parent_id = ? AND substream_id = '0'`,
-      this.parentId,
-    ))?.created_by_user_id ?? null;
+  /** Participant membership is a grant fact; directory rows never authorize. */
+  isParticipant(userId: string, relationship: WorkspaceRelationship | null): boolean {
+    const metadata = this.metadataRow();
+    if (!metadata) return false;
+    const access = this.resolveScopeAccess({ userId: asUserId(userId), target: { kind: "conversation",
+      workspaceId: asWorkspaceId(metadata.workspace_id), parentId: this.parentId, substreamId: asSubstreamId("0") } }, relationship);
+    return access.allowed && access.grantIds.length > 0;
   }
 
   /** Keep the child registry's title the child's own, and move the earliest Terminal deadline. */
@@ -1289,7 +1278,14 @@ export class HostedParent {
     if (!row) return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: false, archived: false });
     this.assertParent(request.workspaceId, request.parentId);
     const substreamId = request.substreamId ?? "0";
-    if (this.participantMigrationPhase(substreamId) !== null) {
+    // A historical roster is import input only. Every normal admission uses
+    // the same grant authority, regardless of the viewer's access class.
+    if (substreamId === "0" || this.sql.exec(
+      "SELECT 1 FROM parent_children WHERE parent_id = ? AND substream_id = ? AND status = 'ready'",
+      this.parentId, substreamId,
+    ).toArray().length) {
+      await this.importHistoricalParticipants({ workspaceId: request.workspaceId, parentId: request.parentId,
+        substreamId: asSubstreamId(substreamId) });
       const relationship = await this.host.readRelationship(request.workspaceId, request.userId);
       const access = this.migratedConversationAccess(request, asSubstreamId(substreamId), relationship);
       const current = this.metadataRow();
@@ -1304,9 +1300,6 @@ export class HostedParent {
         membershipVersion: substreamId === "0" && access.allowed && access.workspaceMemberAccess && !access.grantIds.length
           ? 0 : this.scopeGrants(request).participantProjection(substreamId, request.userId)?.revision ?? 0,
       });
-    }
-    if (request.requireGrantAuthority) {
-      return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: false, archived: row.archived_at !== null });
     }
     if (substreamId !== "0") {
       const child = first(this.sql.exec<{
@@ -1333,7 +1326,7 @@ export class HostedParent {
       const reservedFor = child?.status === "reserved" && !child.preparing
         && child.created_by_user_id !== null && child.created_by_user_id === request.userId;
       return ConversationParentAuthorizeViewerResultSchema.parse({
-        authorized: (child?.status === "ready" && child.version !== null) || reservedFor,
+        authorized: reservedFor,
         archived: row.archived_at !== null || child?.archived_at != null,
         childStatus: child?.status ?? null,
         // A reserved child has no roster here; its one member was seated at
@@ -1341,9 +1334,7 @@ export class HostedParent {
         membershipVersion: child?.version ?? (reservedFor ? RESERVED_CHILD_MEMBERSHIP_VERSION : 0),
       });
     }
-    // Archive is reported, not folded in: archived Channels stay readable.
-    const authorized = row.scope === "workspace" || this.isParticipant(request.userId);
-    return ConversationParentAuthorizeViewerResultSchema.parse({ authorized, archived: row.archived_at !== null });
+    return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: false, archived: row.archived_at !== null });
   }
 
   /**
@@ -1554,45 +1545,25 @@ export class HostedParent {
     const metadata = this.metadataRow();
     if (!metadata) return { exists: false as const, validatedAt: Date.now() };
     this.assertParent(request.workspaceId, request.parentId);
-    const migrated = request.substreamIds.filter((id) => this.participantMigrationPhase(id) !== null);
+    for (const substreamId of request.substreamIds) {
+      const child = this.sql.exec<{ status: string }>(
+        "SELECT status FROM parent_children WHERE parent_id = ? AND substream_id = ?", this.parentId, substreamId,
+      ).toArray()[0];
+      if (substreamId === "0" || child?.status === "ready") await this.importHistoricalParticipants({
+        workspaceId: request.workspaceId, parentId: request.parentId, substreamId,
+      });
+    }
     const observation = request.relationship;
-    const relationship = migrated.length
-      ? observation?.workspaceId === request.workspaceId && observation.userId === request.userId
-        ? observation : await this.host.readRelationship(request.workspaceId, request.userId)
-      : null;
+    const relationship = observation?.workspaceId === request.workspaceId && observation.userId === request.userId
+      ? observation : await this.host.readRelationship(request.workspaceId, request.userId);
     const store = this.scopeGrants(request);
-    const scopes = migrated.map((substreamId) => ({
+    const scopes = request.substreamIds.map((substreamId) => ({
       substreamId,
       access: this.migratedConversationAccess(request, substreamId, relationship),
       revision: JSON.stringify([relationship?.incarnation, relationship?.revision,
         store.participantProjection(substreamId, request.userId)?.revision ?? 0]),
     }));
-    if (migrated.length && migrated.length === request.substreamIds.length) {
-      return { exists: true as const, authority: "grants" as const, validatedAt: Date.now(), scopes };
-    }
-    const main = await createIdentityObjectPort(this.env, request.workspaceId, request.parentId)
-      .readAuthorizationFacts({ userId: request.userId });
-    const ids = request.substreamIds.length ? request.substreamIds : this.childRegistry().map((child) => child.substreamId);
-    const children = ids.map((substreamId) => {
-      const child = substreamId === "0" ? null : first(this.sql.exec<{
-        status: string; active: number | null; version: number | null;
-      }>(
-        `SELECT child.status, member.active, member.version FROM parent_children child
-           LEFT JOIN parent_breakout_members member
-             ON member.parent_id = child.parent_id AND member.substream_id = child.substream_id AND member.user_id = ?
-          WHERE child.parent_id = ? AND child.substream_id = ? AND child.kind = 'child'`,
-        request.userId, this.parentId, substreamId,
-      ));
-      return {
-        substreamId, exists: substreamId === "0" ? main.exists : Boolean(child),
-        ready: substreamId === "0" || child?.status === "ready", failed: child?.status === "failed",
-        member: substreamId === "0" || child?.active === 1, version: child?.version ?? 0,
-      };
-    });
-    return {
-      exists: true as const, authority: "legacy" as const, main, children, scopes, validatedAt: Date.now(),
-      generation: this.metadataRow()?.authority_generation ?? metadata.authority_generation,
-    };
+    return { exists: true as const, authority: "grants" as const, validatedAt: Date.now(), scopes };
   }
 
   // ---------------------------------------------------------------------------
@@ -1614,6 +1585,7 @@ export class HostedParent {
     const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema,
       userId: UserIdSchema }), input, "workstream_management_access");
     this.assertParent(request.workspaceId, request.parentId);
+    await this.importHistoricalParticipants({ workspaceId: request.workspaceId, parentId: request.parentId, substreamId: asSubstreamId("0") });
     const relationship = await this.host.readRelationship(request.workspaceId, request.userId);
     return this.managementAccess(request, relationship);
   }
@@ -1624,16 +1596,7 @@ export class HostedParent {
     relationship: WorkspaceRelationship | null,
   ): ScopeAccessResult {
     const target = { kind: "workstream" as const, workspaceId: request.workspaceId, parentId: request.parentId };
-    const access = this.resolveScopeAccess({ userId: request.userId, target }, relationship);
-    if (access.allowed || access.reason !== "grant_required") return access;
-    // Preserve the existing participant rule only before authority transfers.
-    if (relationship?.accessClass === "member" && this.participantMigrationPhase("0") === null
-      && this.sql.exec("SELECT 1 FROM parent_grants WHERE parent_id = ? AND scope_kind = 'workstream' LIMIT 1",
-        this.parentId).toArray().length === 0
-      && this.isParticipant(request.userId)) {
-      return { allowed: true, writable: this.metadataRow()?.archived_at === null, grantIds: [], workspaceMemberAccess: false };
-    }
-    return access;
+    return this.resolveScopeAccess({ userId: request.userId, target }, relationship);
   }
 
   async setSidekickRecommendation(input: {
@@ -1693,12 +1656,68 @@ export class HostedParent {
     ).toArray()[0]?.phase ?? null;
   }
 
+  /** Historical roster rows are consumed once; ordinary decisions read grants. */
+  private async importHistoricalParticipants(address: ConversationParentAuthorityRequest & { substreamId: SubstreamId }): Promise<void> {
+    if (this.participantMigrationPhase(address.substreamId) !== null) return;
+    const target: ScopeGrantTarget = address.substreamId === "0"
+      ? { kind: "workstream", workspaceId: address.workspaceId, parentId: address.parentId }
+      : { kind: "conversation", ...address };
+    if (this.scopeGrants(address).forTarget(target).length) return;
+    const historical = address.substreamId === "0" ? this.sql.exec(
+      "SELECT 1 FROM parent_child_projections WHERE parent_id = ? AND substream_id = '0'", this.parentId,
+    ).toArray().length : this.sql.exec(
+      "SELECT 1 FROM parent_breakout_members WHERE parent_id = ? AND substream_id = ?", this.parentId, address.substreamId,
+    ).toArray().length;
+    if (historical) await this.ensureParticipantAuthority(address);
+  }
+
+  /** One-time import of historical/bootstrap rows; grants own every admitted conversation. */
+  async ensureParticipantAuthority(input: ConversationParentAuthorityRequest & { substreamId: SubstreamId }): Promise<"ready" | "reserved"> {
+    const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema,
+      substreamId: SubstreamIdSchema }), input, "participant_authority");
+    this.assertParent(request.workspaceId, request.parentId);
+    if (this.participantMigrationPhase(request.substreamId) === "complete") {
+      await this.runParticipantMigration(request.substreamId);
+      return "ready";
+    }
+    if (request.substreamId !== "0" && this.sql.exec<{ status: string }>(
+      "SELECT status FROM parent_children WHERE parent_id = ? AND substream_id = ?", this.parentId, request.substreamId,
+    ).toArray()[0]?.status === "reserved") return "reserved";
+    if (request.substreamId === "0") this.registerChild("0", "main", null, Date.now());
+    const migration = request.substreamId === "0"
+      ? await this.beginMainParticipantMigration({ workspaceId: request.workspaceId, parentId: request.parentId })
+      : await this.beginChildParticipantMigration(request);
+    if (migration.status === "conflict") {
+      // Grants may predate projection delivery. They are already canonical:
+      // freeze and reconcile the source without importing its stale roster.
+      const target: ScopeGrantTarget = request.substreamId === "0"
+        ? { kind: "workstream", workspaceId: request.workspaceId, parentId: request.parentId }
+        : { kind: "conversation", ...request };
+      const child = this.sql.exec<{ status: string }>(
+        "SELECT status FROM parent_children WHERE parent_id = ? AND substream_id = ?", this.parentId, request.substreamId,
+      ).toArray()[0];
+      const store = this.scopeGrants(request);
+      const hasCanonicalGrants = store.forTarget(target).length > 0 || (request.substreamId === "0"
+        && store.forTarget({ kind: "conversation", ...request }).length > 0);
+      if (child?.status !== "ready" || !hasCanonicalGrants) {
+        throw new Error("participant_authority_import_conflict");
+      }
+      this.sql.exec(`INSERT OR IGNORE INTO parent_participant_migrations
+        (parent_id, substream_id, transfer_id, phase, import_roster) VALUES (?, ?, ?, 'pending', 0)`,
+      this.parentId, request.substreamId, uuidV7());
+      this.host.alarms.schedule({ kind: PARTICIPANT_MIGRATION_ALARM,
+        key: participantMigrationAlarmKey(this.parentId, request.substreamId), dueAt: Date.now() });
+    }
+    await this.runParticipantMigration(request.substreamId);
+    return "ready";
+  }
+
   private migratedConversationAccess(
     request: { workspaceId: string; parentId: string; userId: UserId },
     substreamId: SubstreamId,
     relationship: WorkspaceRelationship | null,
   ): ScopeAccessResult {
-    if (this.participantMigrationPhase(substreamId) !== "complete") return { allowed: false, reason: "not_ready" };
+    if (this.participantMigrationPhase(substreamId) === "pending") return { allowed: false, reason: "not_ready" };
     return this.resolveScopeAccess({
       userId: request.userId,
       target: { kind: "conversation", workspaceId: asWorkspaceId(request.workspaceId), parentId: request.parentId, substreamId },
@@ -1731,7 +1750,6 @@ export class HostedParent {
     const metadata = this.metadataRow();
     if (!metadata) return null;
     this.assertParent(address.workspaceId ?? metadata.workspace_id, address.parentId);
-    let participant: boolean | undefined;
     return {
       metadata,
       migrationPhases: new Map(this.sql.exec<{ substream_id: string; phase: "pending" | "complete" }>(
@@ -1741,15 +1759,11 @@ export class HostedParent {
         "SELECT substream_id, kind, status, archived_at, audience FROM parent_children WHERE parent_id = ?", this.parentId,
       ).toArray().map((row) => [row.substream_id, row])),
       grants: this.scopeGrants({ workspaceId: metadata.workspace_id, parentId: address.parentId }).forUser(address.userId),
-      breakoutMemberships: new Set(this.sql.exec<{ substream_id: string }>(
-        "SELECT substream_id FROM parent_breakout_members WHERE parent_id = ? AND user_id = ? AND active = 1",
-        this.parentId, address.userId,
-      ).toArray().map((row) => row.substream_id)),
-      isParticipant: () => participant ??= this.isParticipant(address.userId),
+
     };
   }
 
-  /** A union of the grant authority and the legacy roster; see the legacy object's comment. */
+  /** Read permission comes only from parent grants and the current relationship. */
   private canReadConversation(
     address: { workspaceId: string; parentId: string; userId: UserId },
     substreamId: SubstreamId,
@@ -1762,11 +1776,7 @@ export class HostedParent {
       workspaceId: asWorkspaceId(address.workspaceId), parentId: address.parentId, substreamId } },
     relationship, facts.metadata, conversation, facts.grants).allowed;
     const phase = facts.migrationPhases.get(substreamId) ?? null;
-    if (phase !== null) return phase === "complete" && scoped();
-    if (scoped()) return true;
-    if (relationship?.status !== "active" || relationship.accessClass !== "member") return false;
-    if (substreamId === "0") return facts.metadata.scope === "workspace" || facts.isParticipant();
-    return conversation?.kind === "child" && conversation.status === "ready" && facts.breakoutMemberships.has(substreamId);
+    return phase !== "pending" && scoped();
   }
 
   private resolveScopeAccess(request: ScopeAccessRequest, relationship: WorkspaceRelationship | null): ScopeAccessResult {
@@ -1838,8 +1848,8 @@ export class HostedParent {
   }
 
   private async runMainParticipantMigration(): Promise<void> {
-    const migration = this.sql.exec<{ transfer_id: string; phase: string; incarnations_json: string | null }>(
-      "SELECT transfer_id, phase, incarnations_json FROM parent_participant_migrations WHERE parent_id = ? AND substream_id = '0'",
+    const migration = this.sql.exec<{ transfer_id: string; phase: string; incarnations_json: string | null; import_roster: number }>(
+      "SELECT transfer_id, phase, incarnations_json, import_roster FROM parent_participant_migrations WHERE parent_id = ? AND substream_id = '0'",
       this.parentId,
     ).toArray()[0];
     if (!migration || migration.phase === "complete") return;
@@ -1852,12 +1862,12 @@ export class HostedParent {
     const prepared = await source.transferParticipantAuthority({ ...address, phase: "prepare" });
     if (prepared.status !== "prepared") throw new Error(`participant_migration_prepare_${prepared.status}`);
     const store = this.scopeGrants(address);
-    store.importParticipants({ kind: "workstream", workspaceId, parentId: this.parentId }, prepared.snapshot,
+    if (migration.import_roster) store.importParticipants({ kind: "workstream", workspaceId, parentId: this.parentId }, prepared.snapshot,
       z.record(z.string(), z.string().min(1)).parse(JSON.parse(migration.incarnations_json ?? "{}")));
     const committed = await source.transferParticipantAuthority({ ...address, phase: "commit" });
     if (committed.status !== "committed") throw new Error(`participant_migration_commit_${committed.status}`);
     this.tx(() => {
-      store.registerParticipantProjection("0", migration.transfer_id);
+      store.registerParticipantProjection("0", migration.transfer_id, prepared.snapshot.participants.map((participant) => participant.userId));
       this.sql.exec(
         "UPDATE parent_participant_migrations SET phase = 'complete' WHERE parent_id = ? AND substream_id = '0' AND transfer_id = ?",
         this.parentId, migration.transfer_id,
@@ -1878,7 +1888,7 @@ export class HostedParent {
         this.parentId,
       ).toArray()[0];
       if (existing) return { status: z.enum(["pending", "complete"]).parse(existing.phase), transferId: existing.transfer_id };
-      if (this.sql.exec("SELECT 1 FROM parent_grants WHERE parent_id = ? AND scope_kind = 'workstream' LIMIT 1",
+      if (this.sql.exec("SELECT 1 FROM parent_grants WHERE parent_id = ? AND (scope_kind = 'workstream' OR (scope_kind = 'conversation' AND substream_id = '0')) LIMIT 1",
         this.parentId).toArray().length > 0) {
         return { status: "conflict" as const };
       }
@@ -2009,13 +2019,10 @@ export class HostedParent {
     this.assertParent(request.workspaceId, request.parentId);
     let actor = await this.host.readRelationship(request.workspaceId, request.actorUserId);
     if (actor?.status !== "active") return ScopeSharingOptionsSchema.parse({ scopes: [], completeWorkstreamTargets: null });
-    let legacyMainParticipant = false;
-    if (this.participantMigrationPhase("0") === null) {
-      const main = await createIdentityObjectPort(this.env, request.workspaceId, request.parentId)
-        .readAuthorizationFacts({ userId: request.actorUserId });
-      legacyMainParticipant = main.exists && main.participant && !main.archived;
-      actor = await this.host.readRelationship(request.workspaceId, request.actorUserId);
+    for (const substreamId of this.listAuthorizationChildren({ workspaceId: request.workspaceId, parentId: request.parentId }).substreamIds) {
+      await this.importHistoricalParticipants({ workspaceId: request.workspaceId, parentId: request.parentId, substreamId });
     }
+    actor = await this.host.readRelationship(request.workspaceId, request.actorUserId);
     const metadata = this.metadataRow();
     if (!metadata || actor?.status !== "active" || metadata.archived_at !== null) {
       return ScopeSharingOptionsSchema.parse({ scopes: [], completeWorkstreamTargets: null });
@@ -2023,13 +2030,7 @@ export class HostedParent {
     const parent: ScopeGrantTarget = { kind: "workstream", workspaceId: request.workspaceId, parentId: request.parentId };
     const canShare = (target: ScopeGrantTarget) => {
       const access = this.resolveScopeAccess({ userId: request.actorUserId, target }, actor);
-      if (access.allowed && access.writable && access.grantIds.length > 0) return true;
-      const id = target.kind === "workstream" ? "0" : target.substreamId;
-      if (this.participantMigrationPhase(id) !== null) return false;
-      return id === "0" ? legacyMainParticipant : this.sql.exec(
-        "SELECT 1 FROM parent_breakout_members WHERE parent_id = ? AND substream_id = ? AND user_id = ? AND active = 1",
-        this.parentId, id, request.actorUserId,
-      ).toArray().length > 0;
+      return access.allowed && access.writable && access.grantIds.length > 0;
     };
     const scopes: Array<{ target: ScopeGrantTarget; title: string }> = [];
     if (canShare(parent)) scopes.push({ target: parent, title: "Main and inheriting substreams" });
@@ -2040,10 +2041,6 @@ export class HostedParent {
       const target: ScopeGrantTarget = { ...parent, kind: "conversation", substreamId: asSubstreamId(child.substream_id) };
       if (child.archived_at === null && canShare(target)) scopes.push({ target,
         title: child.substream_id === "0" ? "Main" : child.title ?? "Shared substream" });
-    }
-    if (legacyMainParticipant && !scopes.some((scope) => scope.target.kind === "conversation" && scope.target.substreamId === "0")
-      && !this.sql.exec("SELECT 1 FROM parent_children WHERE parent_id = ? AND substream_id = '0'", this.parentId).toArray().length) {
-      scopes.push({ target: { ...parent, kind: "conversation", substreamId: asSubstreamId("0") }, title: "Main" });
     }
     const restricted = new Set(this.sql.exec<{ substream_id: string }>(
       `SELECT substream_id FROM parent_children
@@ -2068,34 +2065,17 @@ export class HostedParent {
       ).toArray().map((child) => child.substream_id) : [];
     const substreamIds = [...new Set([...request.targets.map((target) =>
       target.kind === "workstream" ? "0" : target.substreamId), ...inherited])];
-    const legacy = substreamIds.filter((id) => this.participantMigrationPhase(id) !== "complete");
-    if (!legacy.length) return null;
-    const actor = await this.host.readRelationship(request.workspaceId, request.actorUserId);
-    if (actor?.status !== "active") return { status: "denied", reason: "relationship_required" };
-    const parentAccess = this.resolveScopeAccess({ userId: request.actorUserId,
-      target: { kind: "workstream", workspaceId: request.workspaceId, parentId: request.parentId } }, actor);
-    let sharesInherited = parentAccess.allowed && parentAccess.writable && parentAccess.grantIds.length > 0;
-    if (legacy.includes("0")) {
-      const main = await createIdentityObjectPort(this.env, request.workspaceId, request.parentId)
-        .readAuthorizationFacts({ userId: request.actorUserId });
-      if (!main.exists || !main.participant || main.archived) return { status: "denied", reason: "sharing_required" };
-      this.registerChild("0", "main", null, Date.now());
-      sharesInherited = true;
-    }
-    for (const substreamId of legacy) {
-      if (substreamId !== "0" && !(sharesInherited && inherited.includes(substreamId)) && !this.sql.exec(
-        "SELECT 1 FROM parent_breakout_members WHERE parent_id = ? AND substream_id = ? AND user_id = ? AND active = 1",
-        this.parentId, substreamId, request.actorUserId,
-      ).toArray().length) return { status: "denied", reason: "sharing_required" };
-    }
-    for (const substreamId of legacy) {
-      const address = { workspaceId: request.workspaceId, parentId: request.parentId };
-      const migration = substreamId === "0"
-        ? await this.beginMainParticipantMigration(address)
-        : await this.beginChildParticipantMigration({ ...address, substreamId });
-      if (migration.status === "conflict") return { status: "denied", reason: "migration_pending" };
-      // Foreground progress; the persisted alarm recovers any interrupted boundary.
-      await this.runParticipantMigration(asSubstreamId(substreamId));
+    for (const substreamId of substreamIds) {
+      if (this.participantMigrationPhase(substreamId) === "pending") return { status: "denied", reason: "migration_pending" };
+      const address = { workspaceId: request.workspaceId, parentId: request.parentId, substreamId: asSubstreamId(substreamId) };
+      await this.importHistoricalParticipants(address);
+      if (this.participantMigrationPhase(substreamId) === null) {
+        const actor = await this.host.readRelationship(request.workspaceId, request.actorUserId);
+        const access = this.resolveScopeAccess({ target: { kind: "conversation", ...address }, userId: request.actorUserId }, actor);
+        // An inheriting child can have no historical explicit participants.
+        // Its parent grant still authorizes registering the projection target.
+        if (access.allowed && access.writable && access.grantIds.length > 0) await this.ensureParticipantAuthority(address);
+      }
     }
     return null;
   }
@@ -2255,10 +2235,10 @@ export class HostedParent {
 
   async admitConnectorParticipants(
     input: z.infer<typeof ConnectorParticipantAdmissionSchema>,
-  ): Promise<{ status: "legacy" | "ready" | "pending" }> {
+  ): Promise<{ status: "ready" | "pending" }> {
     const request = ConnectorParticipantAdmissionSchema.parse(input);
     if (this.metadataRow()) this.assertParent(request.workspaceId, request.parentId);
-    if (this.participantMigrationPhase("0") === null) return { status: "legacy" };
+    await this.ensureParticipantAuthority({ workspaceId: request.workspaceId, parentId: request.parentId, substreamId: asSubstreamId("0") });
     const userIds = [...new Set(request.userIds)].sort();
     const canonical = JSON.stringify({ ...request, userIds });
     const receipt = this.sql.exec<{ request_json: string }>(
@@ -2378,11 +2358,8 @@ export class HostedParent {
 
   private canPreparePrivateChild(address: { workspaceId: string; parentId: string }, userId: UserId,
     relationship: WorkspaceRelationship | null): boolean {
-    if (this.participantMigrationPhase("0") !== null) {
-      const access = this.migratedConversationAccess({ ...address, userId }, asSubstreamId("0"), relationship);
-      return access.allowed && access.writable;
-    }
-    return this.canRead(userId);
+    const access = this.migratedConversationAccess({ ...address, userId }, asSubstreamId("0"), relationship);
+    return access.allowed && access.writable;
   }
 
   /** Reserve one creator-only nonzero child and its immutable preparation receipt. */
@@ -2394,9 +2371,9 @@ export class HostedParent {
       || !initialMembers.includes(request.creatorUserId)) {
       throw new Error("private_child_membership_initializer_invalid");
     }
-    const relationships = new Map(this.participantMigrationPhase("0") !== null
-      ? await Promise.all(initialMembers.map(async (userId) => [userId,
-        await this.host.readRelationship(request.workspaceId, userId)] as const)) : []);
+    await this.importHistoricalParticipants({ workspaceId: request.workspaceId, parentId: request.parentId, substreamId: asSubstreamId("0") });
+    const relationships = new Map(await Promise.all(initialMembers.map(async (userId) => [userId,
+      await this.host.readRelationship(request.workspaceId, userId)] as const)));
     if (!this.canPreparePrivateChild(request, request.creatorUserId, relationships.get(request.creatorUserId) ?? null)) {
       throw new Error("private_child_creator_not_admitted_to_parent");
     }
@@ -2457,8 +2434,7 @@ export class HostedParent {
   async claimPrivateChildConfirmation(input: ClaimPrivateChildConfirmationRequest): Promise<PrivateChildPreparationOperation> {
     const request = parseRpcInput(ClaimPrivateChildConfirmationRequestSchema, input, "private_child_confirmation");
     this.assertParent(request.workspaceId, request.parentId);
-    const relationship = this.participantMigrationPhase("0") !== null
-      ? await this.host.readRelationship(request.workspaceId, request.actorUserId) : null;
+    const relationship = await this.host.readRelationship(request.workspaceId, request.actorUserId);
     this.tx(() => {
       const operation = this.requirePrivateChildPreparation(request.operationId);
       if (operation.creatorUserId !== request.actorUserId) throw new Error("private_child_confirmation_forbidden");
@@ -2524,8 +2500,7 @@ export class HostedParent {
     this.assertParent(request.workspaceId, request.parentId);
     const json = JSON.stringify(request.preparedContext);
     const creator = this.requirePrivateChildPreparation(request.operationId).creatorUserId;
-    const relationship = this.participantMigrationPhase("0") !== null
-      ? await this.host.readRelationship(request.workspaceId, creator) : null;
+    const relationship = await this.host.readRelationship(request.workspaceId, creator);
     const operation = this.requirePrivateChildPreparation(request.operationId);
     // Re-read local grant authority after the relationship read, before commit/return.
     if (!this.canPreparePrivateChild(request, operation.creatorUserId, relationship)) throw new Error("private_child_preparation_forbidden");
@@ -2554,10 +2529,8 @@ export class HostedParent {
     if (request.status === "ready" && selectedOperation.status === "confirming") {
       await this.drainPrivateChildMembershipEffects(selectedOperation.substreamId);
     }
-    const incarnations = request.status === "ready" && this.participantMigrationPhase("0") !== null
-      ? await this.membershipIncarnations(request.workspaceId) : {};
-    const relationship = this.participantMigrationPhase("0") !== null
-      ? await this.host.readRelationship(request.workspaceId, selectedOperation.creatorUserId) : null;
+    const incarnations = request.status === "ready" ? await this.membershipIncarnations(request.workspaceId) : {};
+    const relationship = await this.host.readRelationship(request.workspaceId, selectedOperation.creatorUserId);
     this.tx(() => {
       const operation = this.requirePrivateChildPreparation(request.operationId);
       if (!this.canPreparePrivateChild(request, operation.creatorUserId, relationship)) throw new Error("private_child_preparation_forbidden");
@@ -2582,7 +2555,7 @@ export class HostedParent {
         request.status, request.title ?? null, now, this.parentId, operation.substreamId,
       );
       // Publication and durable handoff intent share one commit.
-      if (request.status === "ready" && this.participantMigrationPhase("0") !== null) {
+      if (request.status === "ready") {
         const migration = this.startChildParticipantMigration({ workspaceId: asWorkspaceId(request.workspaceId),
           parentId: request.parentId, substreamId: asSubstreamId(operation.substreamId) }, incarnations);
         if (migration.status === "conflict") throw new Error("private_child_participant_migration_conflict");
@@ -2590,10 +2563,10 @@ export class HostedParent {
     });
     if (request.status === "ready") {
       await this.host.armNextAlarm();
-      await this.runChildParticipantMigration(asSubstreamId(selectedOperation.substreamId));
+      await this.runParticipantMigration(asSubstreamId(selectedOperation.substreamId));
       const now = Date.now();
       for (const member of this.sql.exec<{ user_id: string }>(
-        `SELECT user_id FROM parent_breakout_members WHERE parent_id = ? AND substream_id = ? AND active = 1`,
+        `SELECT user_id FROM parent_participant_deliveries WHERE parent_id = ? AND substream_id = ?`,
         this.parentId, selectedOperation.substreamId,
       ).toArray()) {
         this.advancePrivateChildrenVersion(member.user_id, now);
@@ -2656,8 +2629,8 @@ export class HostedParent {
   async setPrivateChildArchived(input: SetPrivateChildArchivedRequest): Promise<SetPrivateChildArchivedResult> {
     const request = SetPrivateChildArchivedRequestSchema.parse(input);
     this.assertParent(request.workspaceId, request.parentId);
-    const relationship = this.participantMigrationPhase(request.substreamId) !== null
-      ? await this.host.readRelationship(request.workspaceId, request.actorUserId) : null;
+    await this.importHistoricalParticipants({ workspaceId: request.workspaceId, parentId: request.parentId, substreamId: request.substreamId });
+    const relationship = await this.host.readRelationship(request.workspaceId, request.actorUserId);
     const now = Date.now();
     const result = this.tx(() => {
       const child = first(this.sql.exec<{ status: string; archived_at: number | null }>(
@@ -2666,16 +2639,8 @@ export class HostedParent {
       ));
       if (!child || child.status !== "ready") throw new Error("private_child_not_ready");
       if (this.metadataRow()?.archived_at != null) throw new Error("workstream_archived");
-      if (this.participantMigrationPhase(request.substreamId) !== null) {
-        if (!this.migratedConversationAccess({ ...request, userId: request.actorUserId },
-          request.substreamId, relationship).allowed) throw new Error("private_child_participant_required");
-      } else {
-        const actor = first(this.sql.exec<{ active: number }>(
-          `SELECT active FROM parent_breakout_members WHERE parent_id = ? AND substream_id = ? AND user_id = ?`,
-          this.parentId, request.substreamId, request.actorUserId,
-        ));
-        if (actor?.active !== 1) throw new Error("private_child_participant_required");
-      }
+      if (!this.migratedConversationAccess({ ...request, userId: request.actorUserId },
+        request.substreamId, relationship).allowed) throw new Error("private_child_participant_required");
       if ((child.archived_at !== null) === request.archived) {
         return { outcome: "unchanged" as const, archivedAt: child.archived_at };
       }
@@ -2785,95 +2750,24 @@ export class HostedParent {
   ): Promise<MutatePrivateChildParticipantResult> {
     const request = MutatePrivateChildParticipantRequestSchema.parse(input);
     this.assertParent(request.workspaceId, request.parentId);
-    const migration = this.participantMigrationPhase(request.substreamId);
-    if (migration) {
-      if (migration !== "complete") throw new Error("participant_migration_pending");
-      const operationId = await stableUuid(["legacy-child-participant", request.operationId]);
-      const result = await this.mutateParticipantGrant({ operationId, actorUserId: request.actorUserId, userId: request.userId,
+    await this.ensureParticipantAuthority({ workspaceId: request.workspaceId, parentId: request.parentId, substreamId: request.substreamId });
+    const child = this.sql.exec<{ status: string; archived_at: number | null }>(
+      "SELECT status, archived_at FROM parent_children WHERE parent_id = ? AND substream_id = ? AND kind = 'child'",
+      this.parentId, request.substreamId,
+    ).toArray()[0];
+    if (!child || child.status !== "ready") throw new Error("private_child_not_ready");
+    if (this.metadataRow()?.archived_at != null) throw new Error("workstream_archived");
+    if (child.archived_at !== null) throw new Error("private_child_archived");
+    const operationId = await stableUuid(["legacy-child-participant", request.operationId]);
+    const result = await this.mutateParticipantGrant({ operationId, actorUserId: request.actorUserId, userId: request.userId,
         target: { kind: "conversation", workspaceId: request.workspaceId, parentId: request.parentId, substreamId: request.substreamId },
         active });
-      if (result.status === "denied") {
-        if (result.reason === "participant_required") throw new Error("private_child_last_participant");
-        throw new Error(result.reason === "migration_pending" ? "participant_migration_pending" : "private_child_participant_required");
-      }
-      if (result.status !== "committed") throw new Error("participant_grant_conflict");
-      return { outcome: active ? "added" : "removed", membershipVersion: result.grant.revision };
+    if (result.status === "denied") {
+      if (result.reason === "participant_required") throw new Error("private_child_last_participant");
+      throw new Error(result.reason === "migration_pending" ? "participant_migration_pending" : "private_child_participant_required");
     }
-    // A breakout's roster is its own; a guest is shared the breakout instead.
-    if (active && (await this.host.readRelationship(request.workspaceId, request.userId))?.accessClass !== "member") {
-      throw new Error("private_child_guest_requires_share");
-    }
-    const now = Date.now();
-    const result = this.tx(() => {
-      const child = first(this.sql.exec<{ status: string; archived_at: number | null }>(
-        `SELECT status, archived_at FROM parent_children WHERE parent_id = ? AND substream_id = ? AND kind = 'child'`,
-        this.parentId, request.substreamId,
-      ));
-      if (!child || child.status !== "ready") throw new Error("private_child_not_ready");
-      if (this.metadataRow()?.archived_at != null) throw new Error("workstream_archived");
-      if (child.archived_at !== null) throw new Error("private_child_archived");
-      const actor = first(this.sql.exec<{ active: number }>(
-        `SELECT active FROM parent_breakout_members WHERE parent_id = ? AND substream_id = ? AND user_id = ?`,
-        this.parentId, request.substreamId, request.actorUserId,
-      ));
-      if (actor?.active !== 1) throw new Error("private_child_participant_required");
-      const replay = first(this.sql.exec<PrivateChildMembershipEffectRow>(
-        `SELECT operation_id, substream_id, user_id, actor_user_id, active, membership_version
-           FROM parent_breakout_member_effects WHERE parent_id = ? AND operation_id = ?`,
-        this.parentId, request.operationId,
-      ));
-      if (replay) {
-        if (replay.substream_id !== request.substreamId || replay.user_id !== request.userId
-          || replay.actor_user_id !== request.actorUserId || replay.active !== Number(active)) {
-          throw new Error("private_child_membership_operation_conflict");
-        }
-        return { outcome: "unchanged" as const, membershipVersion: replay.membership_version };
-      }
-      const current = first(this.sql.exec<{ active: number; version: number }>(
-        `SELECT active, version FROM parent_breakout_members WHERE parent_id = ? AND substream_id = ? AND user_id = ?`,
-        this.parentId, request.substreamId, request.userId,
-      ));
-      if (!active && !current) {
-        this.insertPrivateChildMembershipEffect({ operationId: request.operationId, substreamId: request.substreamId,
-          userId: request.userId, actorUserId: request.actorUserId, active, membershipVersion: 1, now, state: "delivered" });
-        return { outcome: "not_found" as const, membershipVersion: 1 };
-      }
-      if (current?.active === Number(active)) {
-        this.insertPrivateChildMembershipEffect({ operationId: request.operationId, substreamId: request.substreamId,
-          userId: request.userId, actorUserId: request.actorUserId, active, membershipVersion: current.version, now,
-          state: "delivered" });
-        return { outcome: "unchanged" as const, membershipVersion: current.version };
-      }
-      if (!active) {
-        const remaining = first(this.sql.exec<{ count: number }>(
-          `SELECT COUNT(*) AS count FROM parent_breakout_members WHERE parent_id = ? AND substream_id = ? AND active = 1`,
-          this.parentId, request.substreamId,
-        ))?.count ?? 0;
-        if (remaining <= 1) throw new Error("private_child_last_participant");
-      }
-      const version = (current?.version ?? 0) + 1;
-      this.sql.exec(
-        `INSERT INTO parent_breakout_members
-           (parent_id, substream_id, user_id, active, version, added_by_user_id, added_at, removed_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(parent_id, substream_id, user_id) DO UPDATE SET
-           active = excluded.active, version = excluded.version,
-           added_by_user_id = CASE WHEN excluded.active = 1 THEN excluded.added_by_user_id
-                                   ELSE parent_breakout_members.added_by_user_id END,
-           added_at = CASE WHEN excluded.active = 1 THEN excluded.added_at ELSE parent_breakout_members.added_at END,
-           removed_at = excluded.removed_at, updated_at = excluded.updated_at`,
-        this.parentId, request.substreamId, request.userId, Number(active), version, request.actorUserId,
-        now, active ? null : now, now,
-      );
-      this.insertPrivateChildMembershipEffect({ operationId: request.operationId, substreamId: request.substreamId,
-        userId: request.userId, actorUserId: request.actorUserId, active, membershipVersion: version, now });
-      return { outcome: active ? "added" as const : "removed" as const, membershipVersion: version };
-    });
-    await this.host.armNextAlarm();
-    await this.drainPrivateChildMembershipEffects(request.substreamId);
-    this.advancePrivateChildrenVersion(request.userId, Date.now());
-    await this.broadcastMetadata();
-    return MutatePrivateChildParticipantResultSchema.parse(result);
+    if (result.status !== "committed") throw new Error("participant_grant_conflict");
+    return { outcome: active ? "added" : "removed", membershipVersion: result.grant.revision };
   }
 
   private insertPrivateChildMembershipEffect(input: {
@@ -2948,7 +2842,7 @@ export class HostedParent {
 
   private advancePrivateChildrenVersionsFor(substreamId: string, now: number): void {
     for (const row of this.sql.exec<{ user_id: string }>(
-      `SELECT user_id FROM parent_breakout_members WHERE parent_id = ? AND substream_id = ? AND active = 1`,
+      `SELECT user_id FROM parent_participant_deliveries WHERE parent_id = ? AND substream_id = ?`,
       this.parentId, substreamId,
     ).toArray()) {
       this.advancePrivateChildrenVersion(row.user_id, now);
@@ -2979,11 +2873,12 @@ export class HostedParent {
   // ---------------------------------------------------------------------------
 
   /** Whether one person may currently read this Channel's Main; archived Channels answer no. */
-  canRead(userId: string): boolean {
-    const row = this.metadataRow();
-    if (!row || row.archived_at !== null) return false;
-    if (row.scope === "workspace") return true;
-    return this.isParticipant(userId);
+  async canRead(userId: string): Promise<boolean> {
+    const metadata = this.metadataRow();
+    if (!metadata) return false;
+    const relationship = await this.host.readRelationship(metadata.workspace_id, userId);
+    return metadata.archived_at === null && this.canReadConversation({ workspaceId: metadata.workspace_id,
+      parentId: this.parentId, userId: asUserId(userId) }, asSubstreamId("0"), relationship);
   }
 
   async acceptSocket(request: Request): Promise<Response> {
@@ -3006,7 +2901,7 @@ export class HostedParent {
     }
     if (!this.consumeSocketTicket(identity.data)) return json({ error: "socket_ticket_replayed" }, 401);
     const auth = await this.sessionAuth(identity.data);
-    if (!auth || !this.canRead(identity.data.userId)) return json({ error: "forbidden" }, 403);
+    if (!auth || !await this.canRead(identity.data.userId)) return json({ error: "forbidden" }, 403);
     const [client, server] = Object.values(new WebSocketPair());
     if (!client || !server) return json({ error: "websocket_unavailable" }, 500);
     const attachment: ControlSocketAttachment = {
@@ -3086,7 +2981,7 @@ export class HostedParent {
       return;
     }
     const auth = await this.sessionAuth(attachment);
-    if (!auth || !this.canRead(attachment.userId)) {
+    if (!auth || !await this.canRead(attachment.userId)) {
       socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this work stream");
       return;
     }
@@ -3191,7 +3086,7 @@ export class HostedParent {
     for (const socket of sockets) {
       const attachment = readControlSocketAttachment(socket);
       if (!attachment?.subscribed) continue;
-      if (!this.canRead(attachment.userId)) {
+      if (!await this.canRead(attachment.userId)) {
         socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this work stream");
         continue;
       }

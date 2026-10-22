@@ -1,11 +1,10 @@
 import { ConnectorParticipantAdmissionSchema } from "@rally/contracts/scope-grants";
 import { workspaceDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { asWorkspaceId, type ExternalActor, ParticipantSchema, type Scope } from "@rally/contracts";
+import { asWorkspaceId, type ExternalActor, type Scope } from "@rally/contracts";
 
 import type { Env } from "../env";
 import { logWarn } from "../observability/logger";
-import { publishWorkstreamEvent } from "./integrations";
 import { resolveConnectorActorIdentities } from "./connector-actor-identity";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 
@@ -163,74 +162,13 @@ export async function admitConnectorAudience(
 ): Promise<void> {
   const userIds = [...new Set(input.userIds)];
   if (userIds.length === 0) return;
-  // Participant rows live with the work stream, so every statement that touches
-  // them has to run under the work stream's authority — post-cutover that is
-  // the Durable Object, and the D1 copy is fenced. User profiles stay regional,
-  // which is why the profile read below is a second query against D1 rather
-  // than a `users` join from inside the object.
-  const identity = createIdentityObjectPort(env, input.workspaceId, input.workstreamId);
-  // The upsert's `WHERE EXISTS (SELECT 1 FROM workstreams …)` is the identity
-  // check the port makes before it dispatches, and the batch's atomicity was
-  // never across work streams — every statement in it named this one. What the
-  // batch did guarantee, and what one operation per member would not, is that
-  // the whole audience lands or none of it does: a half-applied admission is
-  // one whose survivors are already on the roster when the retry recomputes
-  // who is new, so their `participant_joined` is never published.
-  const seated = await identity.admitParticipants({
-    userIds,
-    addedByUserId: input.addedByUserId,
-    reason: "explicit",
-    now: Date.now(),
-  });
-  if (seated === null) {
-    const parent = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, input.workspaceId,
-      workspaceDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId)));
-    const admission = await parent.admitConnectorParticipants(ConnectorParticipantAdmissionSchema.parse({
-      workspaceId: input.workspaceId, parentId: input.workstreamId, eventId: input.eventId,
-      userIds, addedByUserId: input.addedByUserId,
-    }));
-    if (admission.status !== "ready") throw new Error("connector_participant_admission_pending");
-    return;
-  }
-  // The `JOIN workstreams` here proved nothing the object does not already
-  // know: it re-checked that the participant's work stream belongs to this
-  // workspace, which is the identity check the port makes before dispatching.
-  // `joined_at` was the view's ISO rendering of `added_at`; the crossing is
-  // this boundary now, because a participant is about to be published. The
-  // rows come back from the write, so no second read can disagree with it.
-  const admittedRows = seated
-    .filter((row) => row.outcome !== "unchanged")
-    .map((row) => ({
-      user_id: row.userId,
-      participation_reason: row.participationReason,
-      joined_at: new Date(row.addedAt).toISOString(),
-    }));
-  if (admittedRows.length === 0) return;
-  const users = await env.DB.prepare(
-    `SELECT id, email, name, avatar_url, timezone, created_at FROM users
-     WHERE id IN (SELECT value FROM json_each(?))`,
-  ).bind(JSON.stringify(admittedRows.map((row) => row.user_id))).all<Record<string, unknown>>();
-  const usersById = new Map((users.results ?? []).map((row) => [String(row.id), row]));
-  for (const row of admittedRows) {
-    const user = usersById.get(row.user_id);
-    if (!user) continue;
-    const participant = ParticipantSchema.parse({
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        avatarUrl: user.avatar_url ?? null,
-        timezone: user.timezone,
-        createdAt: user.created_at,
-      },
-      participationReason: row.participation_reason,
-      joinedAt: row.joined_at,
-    });
-    await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, {
-      type: "participant_added",
-      participant,
-    });
-  }
+  const parent = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, input.workspaceId,
+    workspaceDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId)));
+  const admission = await parent.admitConnectorParticipants(ConnectorParticipantAdmissionSchema.parse({
+    workspaceId: input.workspaceId, parentId: input.workstreamId, eventId: input.eventId,
+    userIds, addedByUserId: input.addedByUserId,
+  }));
+  if (admission.status !== "ready") throw new Error("connector_participant_admission_pending");
 }
 
 /**
@@ -274,15 +212,13 @@ export async function reconcileConnectorWorkstreamCreator(
     mayCorrectVerifiedCreator: boolean;
   },
 ): Promise<void> {
-  const adoption = await createIdentityObjectPort(env, input.workspaceId, input.workstreamId).adoptCreator({
+  await createIdentityObjectPort(env, input.workspaceId, input.workstreamId).adoptCreator({
     userId: input.userId,
     previousAssignedUserId: input.previousAssignedUserId,
     mayCorrectVerifiedCreator: input.mayCorrectVerifiedCreator,
     now: Date.now(),
   });
-  if (adoption.participantAuthority === "grants") {
-    await admitConnectorAudience(env, { workspaceId: input.workspaceId, workstreamId: input.workstreamId,
+  await admitConnectorAudience(env, { workspaceId: input.workspaceId, workstreamId: input.workstreamId,
       eventId: JSON.stringify(["connector-creator-adoption", input.assignmentId, input.userId]),
       userIds: [input.userId], addedByUserId: input.userId });
-  }
 }

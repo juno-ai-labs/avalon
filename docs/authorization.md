@@ -34,11 +34,11 @@ child grant needs no Main grant; a Main grant does not confer parent management.
 Overlapping direct and inherited grants remain independent. Suspension overrides
 them all, while archive preserves reading and disables mutation.
 
-First-share preparation starts the addressed participant handoff after canonical
-participant checks. Once that conversation completes its handoff, parent viewer checks and canonical authorization
-reads use its scope grants. Unmigrated conversations retain the existing behavior
-below until their own handoff. [Scoped invitations](scope-invitations.md) owns
-sharing and handoff behavior; [browser sessions](browser-sessions.md) owns cookie transport.
+Every ready Channel conversation uses parent grants. Historical rosters are
+imported once; creation and child publication complete that handoff before
+returning. A local roster or directory row never supplies fallback permission.
+[Scoped invitations](scope-invitations.md) owns sharing, the upgrade backfill and
+handoff recovery; [browser sessions](browser-sessions.md) owns cookie transport.
 
 `scope-grant-storage.ts` keeps each Channel's grants in `WorkspaceDO`'s
 `parent_grant*` tables, keyed by `parent_id`
@@ -78,8 +78,8 @@ implicit workspace-member access with version zero. The private-child membership
 table no longer authorizes migrated children. Socket preparation carries the same parent-issued
 revision. Public conversation snapshots, feed tickets, read-state and child title
 changes accept guest identities only through `requireGrantAuthority` parent
-admission. Unmigrated workstreams and Sidekick authoring conversations refuse
-that requirement. Workspace-public legacy visibility never admits a guest here.
+admission. Sidekick authoring conversations retain their separate parent-owned policy.
+Organization-wide member visibility never admits a guest.
 
 Pure policy tests run with `pnpm --filter @rally/api exec vitest run
 test/scope-grant-policy.test.ts`. Storage and populated-schema upgrade tests run
@@ -110,12 +110,10 @@ server-owned; no HTTP body or header can supply it. A generic `AuthContext`, a r
 subject, and every non-request caller load the fact canonically from D1. Each
 observation is shared within one authorization batch. Each batch gathers conversation IDs from
 its requests and resource locations before loading a parent, preserving one parent
-RPC across multiple substreams. A mixed response carries migrated scope decisions
-alongside legacy facts; each conversation uses its own authority. Canonical checks reload facts. Search instead reuses a subject-and-resource decision from the regional projection.
-For member reads, a work stream's main SubstreamAgent owns its scope and roster,
-which decide Main alone. The Channel's parent adds its canonical private-child membership
-and ready-state facts, which decide a Breakout alone: a Breakout member need not
-read Main, and reading Main does not admit a Breakout.
+RPC across multiple substreams. Each response carries exact grant decisions for the requested conversations.
+Canonical checks reload facts. Main and Breakout scopes are independent: a
+Breakout member need not read Main, and reading Main does not admit a restricted
+Breakout.
 An automation supplies its own scope, author, executor and child registry; an
 owning work stream's canonical roster supplies inherited access. Archived work
 streams remain readable. Deleted automations are absent.

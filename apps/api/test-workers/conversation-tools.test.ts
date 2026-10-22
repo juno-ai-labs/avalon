@@ -587,7 +587,7 @@ describe("a guest", () => {
     } });
     await runInDurableObject(workspace(), (_instance, state) => {
       for (const substreamId of substreamIds) {
-        state.storage.sql.exec(`INSERT INTO parent_participant_migrations VALUES (?, ?, ?, NULL, 'complete')`,
+        state.storage.sql.exec(`INSERT OR IGNORE INTO parent_participant_migrations (parent_id, substream_id, transfer_id, incarnations_json, phase) VALUES (?, ?, ?, NULL, 'complete')`,
           ROOM_ID, substreamId, crypto.randomUUID());
       }
     });

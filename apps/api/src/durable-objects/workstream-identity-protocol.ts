@@ -35,7 +35,6 @@ const DISPATCHED_OPERATIONS = [
   "recolor",
   "redescribe",
   "admitParticipant",
-  "admitParticipants",
   "adoptCreator",
   "seedFromFixture",
 ] as const satisfies readonly IdentityOperation[];
@@ -63,7 +62,6 @@ const IDENTITY_WRITES = new Set<IdentityOperation>([
   "recolor",
   "redescribe",
   "admitParticipant",
-  "admitParticipants",
   "adoptCreator",
   "seedFromFixture",
 ]);

@@ -731,22 +731,12 @@ describe("adding somebody to a work stream", () => {
     expect(await participantAddedActivity()).toHaveLength(0);
   });
 
-  it("starts the cursor of somebody who seats themselves by narrowing at the latest message", async () => {
+  it("does not let an implicit public reader manufacture sharing authority by narrowing", async () => {
     const stub = agentStub();
     await openWorkstream(stub, { scope: "workspace" });
-
-    // Reading an Organization-wide Channel seats nobody; narrowing it to
-    // yourself does, and the history you could already read is not new.
-    const narrowed = await product(stub, {
-      operation: "update", auth: INVITEE_AUTH, input: { scope: "personal" },
-    });
-    expect(narrowed.status).toBe(200);
-
-    expect(await openedByInvitee(stub)).toMatchObject({
-      latestAttentionSequenceNumber: 1,
-      readThroughSequenceNumber: 1,
-      firstUnreadSequenceNumber: null,
-    });
+    const narrowed = await product(stub, { operation: "update", auth: INVITEE_AUTH, input: { scope: "personal" } });
+    expect(narrowed.status).toBe(403);
+    expect(narrowed.body).toMatchObject({ error: "workstream_scope_narrow_forbidden" });
   });
 
   it("leaves only the latest message unread for somebody added by another person", async () => {
@@ -1029,7 +1019,7 @@ describe("mentioning a nonparticipant on an existing conversation", () => {
       await withHostedParent(parent, WORKSPACE_VISIBLE_MENTION_ID, (hosted) => {
         hosted["registerChild"]("0", "main", null, Date.now());
       });
-      expect((await parent.beginMainParticipantMigration({ workspaceId: WORKSPACE_ID, parentId: WORKSPACE_VISIBLE_MENTION_ID })).status).toBe("pending");
+      expect((await parent.beginMainParticipantMigration({ workspaceId: WORKSPACE_ID, parentId: WORKSPACE_VISIBLE_MENTION_ID })).status).toBe("complete");
       await withHostedParent(parent, WORKSPACE_VISIBLE_MENTION_ID, async (hosted) => {
         await hosted["runMainParticipantMigration"]();
       });
@@ -1658,11 +1648,77 @@ describe("who a create is allowed to tell", () => {
 });
 
 
+it.each(["workstream", "conversation"] as const)("converges an existing %s grant authority without importing stale seats and uses grants for connectors", async (kind) => {
+  const stub = agentStub();
+  await provisionWorkstream(stub);
+  // A populated pre-cutover source and an already-live grant ledger. This
+  // source row must be reconciled away, never promoted into a new grant.
+  await runInDurableObject(stub, (_instance, state) => {
+    state.storage.sql.exec("DELETE FROM participant_authority_transfer");
+    state.storage.sql.exec("DELETE FROM participant_projection_revisions");
+    state.storage.sql.exec(`INSERT INTO participants
+      (user_id, participation_reason, added_by_user_id, status, participant_epoch, added_at, first_opened_at, updated_at)
+      VALUES (?, 'explicit', ?, 'active', 0, 0, NULL, 0)`, INVITEE_ID, CREATOR_ID);
+  });
+  const parent = parentStub();
+  await withHostedParent(parent, WORKSTREAM_ID, (_hosted, state) => {
+    state.storage.sql.exec("DELETE FROM parent_participant_migrations WHERE parent_id = ?", WORKSTREAM_ID);
+    state.storage.sql.exec("DELETE FROM parent_participant_targets WHERE parent_id = ?", WORKSTREAM_ID);
+    state.storage.sql.exec("DELETE FROM parent_participant_deliveries WHERE parent_id = ?", WORKSTREAM_ID);
+    if (kind === "conversation") {
+      state.storage.sql.exec("DELETE FROM parent_grants WHERE parent_id = ?", WORKSTREAM_ID);
+      const store = _hosted["scopeGrants"]({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID });
+      expect(store.mutate({ target: { kind: "conversation", workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID,
+        substreamId: asSubstreamId("0") }, userId: CREATOR_ID, actorUserId: CREATOR_ID,
+        active: true, expectedRevision: 0, operationId: crypto.randomUUID() }, "existing-member").status).toBe("committed");
+    }
+  });
+  await runInDurableObject(stub, (_instance, state) => {
+    state.storage.sql.exec(`CREATE TRIGGER refuse_initial_projection BEFORE INSERT ON participant_projection_revisions
+      BEGIN SELECT RAISE(ABORT, 'participant_projection_temporarily_unavailable'); END`);
+  });
+  await expect(runInDurableObject(parent, (instance) => instance.ensureParticipantAuthority({
+    workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, substreamId: asSubstreamId("0"),
+  }))).rejects.toThrow("participant_projection_temporarily_unavailable");
+  await runInDurableObject(stub, (_instance, state) => { state.storage.sql.exec("DROP TRIGGER refuse_initial_projection"); });
+  // A fresh product request must resume delivery, even though the source has
+  // committed its handoff and the parent already marked authority complete.
+  expect((await product(stub, { operation: "get", auth: AUTH })).status).toBe(200);
+  await expect(new ConversationService(env, INVITEE_AUTH).socketTicket(WORKSTREAM_ID, "0"))
+    .rejects.toMatchObject({ code: "conversation_not_found" });
+  await runInDurableObject(stub, (_instance, state) => {
+    expect(state.storage.sql.exec("SELECT status FROM participants WHERE user_id = ?", INVITEE_ID).one())
+      .toEqual({ status: "removed" });
+  });
+  const request = { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, eventId: "canonical-connector-event",
+    userIds: [asUserId(INVITEE_ID)], addedByUserId: CREATOR_ID };
+  expect(await parent.admitConnectorParticipants(request)).toEqual({ status: "ready" });
+  await expectParticipantCanOpen(WORKSTREAM_ID, INVITEE_AUTH);
+  const removed = await product(stub, { operation: "remove_participant", auth: AUTH, userId: INVITEE_ID });
+  expect(removed.status).toBe(200);
+  expect(await parent.admitConnectorParticipants(request)).toEqual({ status: "ready" });
+  await expect(new ConversationService(env, INVITEE_AUTH).socketTicket(WORKSTREAM_ID, "0"))
+    .rejects.toMatchObject({ code: "conversation_not_found" });
+});
+
 describe("posting subscribes the author to a conversation", () => {
   it.each(["0", "00000000-0000-7000-8000-0000000006fe"])("seats an unmentioned author posting in conversation %s", async (substreamId) => {
     const workstreamId = asWorkstreamId("00000000-0000-7000-8000-0000000006fd");
+    if (substreamId !== "0") {
+      await reserveParent(workstreamId, "workspace");
+      await withHostedParent(parentStub(), workstreamId, (hosted, state) => {
+        hosted["registerChild"](substreamId, "child", CREATOR_ID, Date.now());
+        state.storage.sql.exec(`INSERT INTO parent_breakout_members
+          (parent_id, substream_id, user_id, active, version, added_by_user_id, added_at, updated_at)
+          VALUES (?, ?, ?, 1, 1, ?, 0, 0), (?, ?, ?, 1, 1, ?, 0, 0)`,
+          workstreamId, substreamId, CREATOR_ID, CREATOR_ID, workstreamId, substreamId, INVITEE_ID, CREATOR_ID);
+      });
+    }
     const stub = agentStub(workstreamId, substreamId);
     await provisionWorkstream(stub, workstreamId, { scope: "workspace", substreamId });
+    if (substreamId !== "0") await parentStub().ensureParticipantAuthority({
+      workspaceId: WORKSPACE_ID, parentId: workstreamId, substreamId: asSubstreamId(substreamId),
+    });
     const sent = await product(stub, {
       operation: "create_message", auth: INVITEE_AUTH,
       input: { text: "I will follow up", clientMessageId: "join-by-post", mentions: [],
@@ -1673,7 +1729,7 @@ describe("posting subscribes the author to a conversation", () => {
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec<{ status: string; participation_reason: string }>(
         `SELECT status, participation_reason FROM participants WHERE user_id = ?`, INVITEE_ID,
-      ).one()).toEqual({ status: "active", participation_reason: "message" });
+      ).one()).toEqual({ status: "active", participation_reason: substreamId === "0" ? "message" : "explicit" });
     });
   });
 });

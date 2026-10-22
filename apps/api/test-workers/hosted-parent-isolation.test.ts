@@ -180,7 +180,7 @@ describe("hosted parent isolation", () => {
 });
 
 describe("a parent nothing has described yet", () => {
-  it("admits only its participants until its directory row says otherwise", async () => {
+  it("never admits a guest merely because a directory row says workspace visibility", async () => {
     // Identity only, as a child's effect ahead of Main leaves it: no
     // `channels` row, so nothing yet says who the parent is for.
     const undescribed = "00000000-0000-4000-8000-0000000e00f1";
@@ -194,7 +194,7 @@ describe("a parent nothing has described yet", () => {
     await runInDurableObject(organization(), (_instance, state) => {
       insertChannelRow(state, undescribed, "Now described", "workspace");
     });
-    expect(await withHostedParent(organization(), undescribed, (hosted) => hosted.canRead(shared))).toBe(true);
+    expect(await withHostedParent(organization(), undescribed, (hosted) => hosted.canRead(shared))).toBe(false);
   });
 });
 
