@@ -1,4 +1,12 @@
 import { sidekickProjectionRunning } from "./sidekick-activity";
+import {
+  SIDEKICK_DELEGATION_ERRORS, SidekickDelegatesResultSchema,
+  type SidekickDelegationGrant, type SidekickDelegationMutationResult, type SidekickDelegatesResult,
+} from "@rally/contracts";
+import { SidekickDelegationStorage } from "./sidekick-delegation-storage";
+import {
+  SidekickPrepareDelegationRequestSchema, SidekickSetMyDelegationRequestSchema, SidekickRemoveDelegateRequestSchema,
+} from "./automation-do-protocol";
 import { type SidekickAttachment, SidekickAttachmentSchema } from "@rally/contracts";
 import type { Region } from "@rally/contracts/regions";
 import { z } from "zod";
@@ -491,6 +499,15 @@ export class HostedSidekick {
   async create(input: AutomationCreateRequest): Promise<{ created: boolean }> {
     const request = parseRpcInput(AutomationCreateRequestSchema, input, "create");
     if (request.automationId !== this.sidekickId) throw new Error("sidekick_identity_mismatch");
+    if (this.row()) {
+      this.assertSidekick(request.workspaceId, request.automationId);
+      return { created: false };
+    }
+    const creatorRelationship = request.creatorConsent
+      ? await this.host.readRelationship(request.workspaceId, request.authorUserId) : null;
+    if (request.creatorConsent && creatorRelationship?.status !== "active") {
+      throw this.delegationError("sidekick_delegation_membership_unavailable");
+    }
     const now = Date.now();
     // The insert is the existence check: a repeat finds the row and returns
     // nothing, and is answered from the row it found.
@@ -552,8 +569,100 @@ export class HostedSidekick {
         return { created: false };
       }
       this.registerChild("0", "main", request.authorUserId, now);
+      if (request.creatorConsent && creatorRelationship && !this.delegations().read(this.sidekickId, request.authorUserId)) {
+        this.delegations().mutate({
+          sidekickId: this.sidekickId, userId: request.authorUserId, actorUserId: request.authorUserId,
+          operationId: request.creatorConsent.requestId, allowed: true, expectedGeneration: 0,
+          membershipIncarnation: creatorRelationship.incarnation, source: "creation", label: "New Sidekick",
+        }, now);
+      }
       this.host.noteDirectoryChanged(this.sidekickId, false, now);
       return { created: true };
+    });
+  }
+
+  private delegations(): SidekickDelegationStorage {
+    return new SidekickDelegationStorage(this.storage);
+  }
+
+  private delegationError(code: keyof typeof SIDEKICK_DELEGATION_ERRORS): ApiError {
+    return new ApiError(code === "sidekick_not_found" ? 404 : 409, code, SIDEKICK_DELEGATION_ERRORS[code]);
+  }
+
+  /** The existing membership projection may lag; grant generations do not confer human access. */
+  async delegationEligible(grant: SidekickDelegationGrant): Promise<boolean> {
+    if (!grant.allowed) return false;
+    const row = this.row();
+    if (!row || row.lifecycle === "deleted") return false;
+    const relationship = await this.host.readRelationship(row.workspace_id, grant.userId);
+    return relationship?.status === "active" && relationship.incarnation === grant.membershipIncarnation &&
+      await sidekickReaderAllows(row, { userId: grant.userId, actorRole: relationship.role }, this.host);
+  }
+
+  /** Capture before asynchronous dispatch. Withdrawal needs no viewer or membership access. */
+  async prepareMyDelegation(input: z.input<typeof SidekickPrepareDelegationRequestSchema>): Promise<{ generation: number }> {
+    const request = parseRpcInput(SidekickPrepareDelegationRequestSchema, input, "sidekick_delegation_prepare");
+    if (request.automationId !== this.sidekickId) throw new Error("sidekick_identity_mismatch");
+    if (request.allowed) await this.assertDelegationEnrollment(request.workspaceId, request.userId);
+    return this.delegations().prepare(this.sidekickId, request.userId, request.operationId, request.allowed);
+  }
+
+  private async assertDelegationEnrollment(workspaceId: string, userId: string): Promise<{ row: HostedSidekickRow; relationship: WorkspaceRelationship }> {
+    const row = this.row();
+    if (!row || row.workspace_id !== workspaceId || row.lifecycle === "deleted") throw this.delegationError("sidekick_not_found");
+    const relationship = await this.host.readRelationship(workspaceId, userId);
+    if (!relationship || relationship.status !== "active") throw this.delegationError("sidekick_delegation_membership_unavailable");
+    if (!await sidekickReaderAllows(row, { userId, actorRole: relationship.role }, this.host)) throw this.delegationError("sidekick_not_found");
+    return { row, relationship };
+  }
+
+  async setMyDelegation(input: z.input<typeof SidekickSetMyDelegationRequestSchema>): Promise<SidekickDelegationMutationResult> {
+    const request = parseRpcInput(SidekickSetMyDelegationRequestSchema, input, "sidekick_delegation_set");
+    if (request.automationId !== this.sidekickId) throw new Error("sidekick_identity_mismatch");
+    const enrollment = request.allowed ? await this.assertDelegationEnrollment(request.workspaceId, request.userId) : null;
+    if (request.allowed && this.row()?.lifecycle === "deleted") throw this.delegationError("sidekick_delegation_unavailable");
+    const result = this.delegations().mutate({
+      sidekickId: this.sidekickId, userId: request.userId, actorUserId: request.userId,
+      operationId: request.operationId, allowed: request.allowed, expectedGeneration: request.expectedGeneration,
+      membershipIncarnation: enrollment?.relationship.incarnation ?? null, source: request.source,
+      label: enrollment?.row.title || "Unavailable Sidekick",
+    });
+    if (this.row()) this.host.noteDirectoryChanged(this.sidekickId, false, Date.now());
+    return result;
+  }
+
+  async removeDelegate(input: z.input<typeof SidekickRemoveDelegateRequestSchema>): Promise<SidekickDelegationMutationResult> {
+    const request = parseRpcInput(SidekickRemoveDelegateRequestSchema, input, "sidekick_delegation_remove");
+    const row = this.assertSidekick(request.workspaceId, request.automationId);
+    await this.assertManager(row, request.actor);
+    const result = this.delegations().mutate({
+      sidekickId: this.sidekickId, userId: request.userId, actorUserId: request.actor.userId,
+      operationId: request.operationId, allowed: false, expectedGeneration: 0,
+      membershipIncarnation: null, source: "manager_removal", label: "Unavailable Sidekick",
+    });
+    this.host.noteDirectoryChanged(this.sidekickId, false, Date.now());
+    return result;
+  }
+
+  async readDelegation(input: AutomationActorRequest): Promise<SidekickDelegatesResult> {
+    const request = parseRpcInput(AutomationActorRequestSchema, input, "sidekick_delegation_read");
+    const row = this.row();
+    if (!row || row.workspace_id !== request.workspaceId || row.lifecycle === "deleted") throw this.delegationError("sidekick_not_found");
+    const relationship = await this.host.readRelationship(request.workspaceId, request.actor.userId);
+    if (relationship?.status !== "active" || !await sidekickReaderAllows(row, {
+      userId: request.actor.userId, actorRole: relationship.role,
+    }, this.host)) throw this.delegationError("sidekick_not_found");
+    const grants = this.delegations().forSidekick(this.sidekickId).filter((grant) => grant.allowed);
+    const names = grants.length ? await this.env.DB.prepare(
+      "SELECT id,name FROM users WHERE id IN (SELECT value FROM json_each(?))",
+    ).bind(JSON.stringify(grants.map((grant) => grant.userId))).all<{ id: string; name: string | null }>() : { results: [] };
+    const displayNames = new Map(names.results.map((person) => [person.id, person.name]));
+    return SidekickDelegatesResultSchema.parse({
+      sidekickId: this.sidekickId, creatorUserId: row.author_user_id,
+      you: { userId: request.actor.userId, allowed: this.delegations().read(this.sidekickId, request.actor.userId)?.allowed ?? false },
+      delegates: await Promise.all(grants.map(async (grant) => ({
+        userId: grant.userId, displayName: displayNames.get(grant.userId) || "Rally user", eligible: await this.delegationEligible(grant),
+      }))),
     });
   }
 

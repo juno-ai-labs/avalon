@@ -7,6 +7,60 @@ runs, through `HostedSidekick`; how it got there and how it is stored are
 The legacy `SidekickDO` that held them before is deleted.
 Substream `0` is the authoring conversation; delegated runs are child substreams.
 
+## Delegation consent authority
+
+`sidekick-delegation-storage.ts` owns consent in WorkspaceDO. The strict shared
+inputs and outputs live in `packages/contracts/src/sidekick-delegation.ts`.
+`HostedSidekick` admits enrollment through current membership and the existing
+viewer rule, independently of definition management. Each grant retains its
+membership incarnation, generation, original opt-in time, safe label and actor/
+request provenance. Eligibility requires the same current incarnation and viewer
+access. Pausing retains consent; removing a membership and rejoining never
+reactivates the old incarnation's authority.
+
+The host prepares a mutation before dispatch. Preparation durably retains that
+operation's observed generation, including across a lost response. Allow checks
+it atomically; withdrawal always advances a tombstone, even for an absent grant.
+Accepted intents and outcomes have immutable receipts. Replaying an accepted
+intent does no write, and a receipt superseded by another generation reports a
+stale action instead of presenting its old result as current. A new opt-in needs
+a new user action. This orders consent writes inside one object; it adds no
+synchronous cross-object authorization barrier or provider probe.
+
+Direct UI creation supplies `creatorConsent`; the agent path supplies it only
+when the canonical triggering message is human, authored by the execution user,
+and the run is neither autonomous, scheduled, a background worker nor an agent
+exchange. The creation transaction initializes consent only when inserting a new
+Sidekick, respecting any existing tombstone. Old callers that provide only an
+author identity establish no consent. Creation replay never initializes it again.
+
+`sidekick-delegation-service.ts` supplies signed-in self-service and exact
+viewer-authorized UUID, canonical link or name lookup. Named lookup is not limited
+to editable Sidekicks; ambiguous visible names refuse with a stable code.
+Sidekick routes serve `/sidekicks/:id/delegation`; account recovery uses
+`/account/sidekick-delegation`, under identity authentication without Organization
+membership middleware. Its list and withdrawal reveal only the signed-in
+person's own stored grants and labels. D1's `sidekick_delegation_locations` holds
+only user/Organization/region routing references, written before an opt-in can
+commit and retained after membership loss. WorkspaceDO supplies every result;
+the reference confers no access or execution authority.
+
+The `rally:sidekicks` plugin exposes `my_delegations_list`, `delegates_list` and
+`set_my_delegation` only for direct human turns. Authoring uses its normal
+`sidekick` prefix; the room's existing recommendation presentation uses the full
+`sidekick_…` canonical names. Model input supplies only target and allow/withdraw
+intent. A canonical human trigger fixes the consenting speaker; model reasoning
+still decides whether the person requested that change. The host does not claim
+to prove the meaning of natural language. Background creation keeps author
+attribution but cannot create consent.
+
+Consent installation does not itself switch the legacy execution policy. Event
+admission, coordinated run identities, connector fallback, migration and the
+desktop/web controls are tracked by the [implementation plan](PRDs/2026-10-22_sidekick-delegation/plan.md)
+until their acceptance evidence is complete. The legacy directory run-as field
+still confers human reader/manager rights and must not be rewritten by automatic
+coordinator selection.
+
 ## Sidekick publication and loading
 
 Authoring is conversational. A ready submission saves through `saveDefinition`,
@@ -1024,6 +1078,17 @@ or the memory store the automation scope lives in.
 
 ## Testing
 
+`pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts
+test-workers/sidekick-delegation.test.ts` drives the consent RPCs and services on
+real workerd, including delayed first delivery, receipt replay, tombstones,
+membership incarnations, viewer-only enrollment and own recovery after access
+loss. Its canonical human messages use real transcript storage. Negative
+controls drop the withdrawal write and bypass ordering, incarnation, speaker
+and account-recovery checks to prove the assertions observe production behavior.
+`test/sidekick-delegation-tools.test.ts` checks both actual plugin presentations
+and advertised/runtime schema agreement. Harness `src/prompts.test.ts` covers
+activation permission guidance; model behavior needs the separate evaluations.
+
 `pnpm --filter @rally/desktop exec vitest run
 src/renderer/components/automation-header.test.tsx` covers persistent profile
 controls, timing and legacy email summaries, keyboard navigation to unavailable
@@ -1200,6 +1265,35 @@ The Sidekick authoring prompt carries no Google-specific lookup or attachment
 instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
+
+### 2026-10-22 — Record consent independently of Sidekick ownership
+
+**What changed:** WorkspaceDO stores per-person grants, prepared generations,
+withdrawal tombstones and accepted mutation receipts. Direct human creation and
+self-service use that authority; inherited autonomous identities do not opt in.
+Signed-in account recovery retains access to a person's own grants after they
+lose Organization or Sidekick access.
+
+**Why:** A mutable run-as user cannot represent several people's consent or
+independent withdrawal. Reusing that field for automatic coordination would also
+change existing human access. A durable prepared generation prevents response
+loss or delayed dispatch from turning an old allow into a new opt-in. A global
+authorization barrier is unnecessary because eventual authorization propagation
+is the agreed product contract.
+
+**Considered and rejected:** Reusing directory run-as as the consent list would
+couple execution selection to human reader/manager rights. A global revocation
+sequencer or per-operation provider preflight would add latency for synchronous
+enforcement beyond the agreed eventual-consistency contract. Consent-write
+ordering belongs in the one existing owning object.
+
+**Consequences:** Execution consumers must adopt these grants without deriving
+human access from selected accounts. Migration and creator initialization cannot
+overwrite tombstones. The regional routing index is recovery metadata only;
+consent remains in WorkspaceDO. The implementation plan tracks the remaining
+execution and UI integration before the feature is complete.
+
+Related: [Sidekick delegation PRD](PRDs/2026-10-22_sidekick-delegation/prd.md).
 
 ### 2026-10-22 — Keep Sidekick actions discoverable across lifecycle states
 

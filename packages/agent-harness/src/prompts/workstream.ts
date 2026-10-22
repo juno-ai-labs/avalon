@@ -115,14 +115,14 @@ export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): st
     input.sidekick ? `# Executing a Sidekick activation
 - You are executing one activation of the existing Sidekick identified in the task context. Follow its saved instructions for this activation; you are not setting it up again.
 - Rally manages its configured schedules and event triggers. Do not create a replacement Sidekick or schedule its next regular activation just to keep it running.
-- A later scheduled activation is separate work. Finish this activation when its requested work is done, following its saved reporting policy.` : null,
+- A later scheduled activation is separate work. Finish this activation when its requested work is done, following its saved reporting policy.
+- When a permission problem prevents you from finishing, use conversation_post to tell the owning conversation what is blocked and how someone can fix it. Distinguish completed and unfinished work, and report the unresolved problem once for this run, not every failed account attempt. Successful fallback needs no permission-error message. Share only appropriate details: no private event contents, tokens or raw provider errors. Name a concrete recovery step, such as opting in, reconnecting an account, or restoring resource or destination access. If you cannot post, leave the actionable failure visible and do not claim delivery. With no owning conversation, report the blocked work on this activation.` : null,
     outputSurfaceSection,
     workspaceAuthoritySection,
   ].filter((section): section is string => section !== null).join("\n\n");
-  // A Sidekick with a home posts there with the conversation plugin, whose
-  // system message names the tool: a tool name in standing policy would render
-  // for runs whose plugin is not loaded. The prompt carries only where home is,
-  // in the task context. A Sidekick with no home runs on `self_delivery`, whose
+  // A Sidekick with a home posts there with the conversation plugin. Permission
+  // recovery is activation guidance too, even though authoring tools are absent.
+  // The task context carries where home is. A Sidekick with no home uses `self_delivery`, whose
   // section says outright that sending is part of the work: a run that only
   // *describes* emailing the result has not emailed it.
   return `

@@ -1241,7 +1241,10 @@ import {
   type ConversationToolScopeResult,
 } from "./workspace-conversation-tool-protocol";
 
+import { SIDEKICK_DELEGATION_SCHEMA_STATEMENTS, SidekickDelegationStorage } from "./sidekick-delegation-storage";
+
 const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
+  "sidekick_delegations", "sidekick_delegation_receipts", "sidekick_delegation_preparations",
   "scope_grant_directory",
   "connector_installations", "connector_installation_steps",
   ...AUTHORIZATION_STORAGE_TABLES,
@@ -4787,6 +4790,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
           AND NOT EXISTS (SELECT 1 FROM parent_children child WHERE child.parent_id = source.parent_id AND child.substream_id = '0')
           AND NOT EXISTS (SELECT 1 FROM parent_participant_migrations migration WHERE migration.parent_id = source.parent_id AND migration.substream_id = '0')`,
   ],
+}, {
+  version: 128,
+  description: "store Sidekick consent separately from human access and receipt prepared delegation changes",
+  statements: SIDEKICK_DELEGATION_SCHEMA_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {
@@ -6832,6 +6839,42 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   async sidekickClaimExecutionPrincipal(input: Parameters<HostedSidekick["claimExecutionPrincipal"]>[0]) {
     return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.claimExecutionPrincipal(input));
+  }
+
+  async sidekickPrepareMyDelegation(input: Parameters<HostedSidekick["prepareMyDelegation"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.prepareMyDelegation(input));
+  }
+
+  async sidekickSetMyDelegation(input: Parameters<HostedSidekick["setMyDelegation"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.setMyDelegation(input));
+  }
+
+  async sidekickRemoveDelegate(input: Parameters<HostedSidekick["removeDelegate"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.removeDelegate(input));
+  }
+
+  async sidekickReadDelegation(input: Parameters<HostedSidekick["readDelegation"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readDelegation(input));
+  }
+
+  /** Own consent records remain readable without membership or Sidekick viewer access. */
+  async sidekickReadMyDelegations(input: { workspaceId: string; userId: string }) {
+    await this.initialized;
+    const userId = asUserId(input.userId);
+    asWorkspaceId(input.workspaceId);
+    if (!this.workspaceId()) return { userId, delegations: [] };
+    this.assertWorkspace(input.workspaceId);
+    const grants = new SidekickDelegationStorage(this.state.storage).forUser(userId);
+    return {
+      userId,
+      delegations: await Promise.all(grants.map(async (grant) => {
+        const sidekick = await this.hostedSidekick(grant.sidekickId, input.workspaceId);
+        return {
+          sidekickId: grant.sidekickId, label: grant.label, allowed: grant.allowed,
+          eligible: await sidekick.delegationEligible(grant),
+        };
+      })),
+    };
   }
 
   async sidekickAdmitExternalEvent(input: Parameters<HostedSidekick["admitExternalEvent"]>[0]) {

@@ -14,6 +14,7 @@ import { createIdentityObjectPort } from "../runtime/identity-port";
 import { createConversationResourceLinks } from "../runtime/resource-port";
 import { conversationParentStub } from "./conversation-parent-client";
 import { createAutomation } from "./automation-service";
+import { directSidekickDelegationUser } from "./sidekick-delegation-service";
 
 // The wire names this service asks about — a message, and the delegation that
 // also counts as handing work on — are in `@rally/contracts` beside the schemas
@@ -361,9 +362,11 @@ export class AgentCommunicationService {
           substreamId: asSubstreamId(owningSubstreamId), userId })).authorized;
       if (!member) throw new AgentCommunicationError("sidekick_owning_workstream_forbidden");
     }
+    const directUser = await directSidekickDelegationUser(this.env, this.input);
+    const creationId = await this.messageId(context);
     const created = await createAutomation(this.env, { workspaceId: this.input.workspaceId,
       authorUserId: this.input.executionPrincipal.userId, scope, owningWorkstreamId, owningSubstreamId,
-      automationId: await this.messageId(context) });
+      automationId: creationId, ...(directUser ? { creatorConsent: { requestId: creationId } } : {}) });
     return { sidekickId: created.automationId, agentId: agentIdForAddress({ parentKind: "automation",
       parentId: created.automationId, substreamId: asSubstreamId("0") }) };
   }

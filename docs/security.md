@@ -41,6 +41,18 @@ bytes never serve as a permission lease.
 
 ## Sidekick authoring and loading
 
+Sidekick consent is separate from human reader/manager access. Its WorkspaceDO
+stores self-grants with membership incarnations and withdrawal tombstones;
+[Sidekick lifecycle](automation-lifecycle.md#delegation-consent-authority) owns
+the mutation ordering and rollout. Enrollment requires viewer access, whereas
+signed-in own-grant recovery and withdrawal do not require current Organization
+membership. Recovery reveals only that person's stored grant and safe label.
+Agent consent tools derive the speaker from a canonical human trigger and do
+not accept a model-supplied actor. Autonomous and background contexts receive no
+consent tools and cannot initialize creator consent by attributing authorship
+to an inherited principal. These checks bind identity, not the meaning of a
+natural-language instruction; model guidance and evaluations cover that risk.
+
 Conversational publication resolves the current workspace membership role and
 owning-workstream participation through the same actor path as management routes.
 A ready model submission publishes under that actor, while automation run contexts
