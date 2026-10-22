@@ -52,11 +52,13 @@ export function ConversationAccessRequest({ api, parentId, substreamId, fallback
   const address = `${parentId}:${substreamId}`;
   const [reopening, setReopening] = useState<string | null>(null);
   const request = useMutation({
-    mutationFn: () => api!.requestConversationAccess(parentId, substreamId),
-    onSuccess: async () => {
+    mutationFn: (target: { parentId: string; substreamId: string }) =>
+      api!.requestConversationAccess(target.parentId, target.substreamId),
+    onSuccess: async (_result, target) => {
+      const submittedQueryKey = ['conversation-access-preview', target.parentId, target.substreamId];
       // A preview read before the write must not replace the successful result.
-      await queryClient.cancelQueries({ queryKey });
-      queryClient.setQueryData<ConversationAccessPreview>(queryKey, (current) =>
+      await queryClient.cancelQueries({ queryKey: submittedQueryKey });
+      queryClient.setQueryData<ConversationAccessPreview>(submittedQueryKey, (current) =>
         current ? { ...current, requestPending: true, requestEmailed: true } : current,
       );
     },
@@ -91,7 +93,7 @@ export function ConversationAccessRequest({ api, parentId, substreamId, fallback
           <p>You’re not in this {noun}, ask for access below</p>
         )}
         {(!preview.data.requestPending || !preview.data.requestEmailed) && (
-          <Button className="button-primary" disabled={request.isPending} onClick={() => request.mutate()}>
+          <Button className="button-primary" disabled={request.isPending} onClick={() => request.mutate({ parentId, substreamId })}>
             {request.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
             {preview.data.requestPending ? 'Retry sending request' : 'Request access'}
           </Button>

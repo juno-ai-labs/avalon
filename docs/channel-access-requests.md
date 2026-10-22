@@ -64,7 +64,8 @@ The person who asked gets an email when the request is approved or declined.
    `requestEmailed`). These fields are sent only to clients at contract 12 or
    later; older browser builds receive the original preview shape because
    their decoders are strict. Reopening refreshes the stored state, while a
-   successful send cancels older preview reads before updating the waiting state.
+   successful send cancels older preview reads before updating the submitted
+   conversation's waiting state, even if the requester has navigated elsewhere.
 3. **The request.** The approver is the conversation's creator, who must be an
    active member and not the requester. The Organization object records the
    request, or returns the one already pending for this person and
@@ -212,7 +213,8 @@ pnpm --filter @rally/contracts exec vitest run src/desktop-deep-link-intent.test
 request and email-delivery state for clients at contract 12 or later. Desktop
 and web show **Access requested — awaiting approval** for a pending request,
 retain **Retry sending request** if email delivery failed, and discard older
-preview reads when a send succeeds.
+preview reads when a send succeeds. Completion updates are bound to the submitted
+conversation so navigating during a request cannot mark another one as pending.
 
 **Why:** The screen remembered only the current component's successful click.
 Reopening showed **Request access** even though the Organization still held a
