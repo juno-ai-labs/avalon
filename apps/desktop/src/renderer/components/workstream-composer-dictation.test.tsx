@@ -86,7 +86,6 @@ import { WorkstreamComposer } from './workstream-composer';
 import { MessageIssueProvider } from './message-issue-dialog';
 import { MessageActions } from './workstream-blocks';
 import { asSubstreamId } from '@rally/contracts';
-import type { CreateMessageIssue } from '@rally/contracts/message-issues';
 
 const workstream: WorkstreamDetail = {
   id: 'workstream-1',
@@ -754,7 +753,7 @@ describe('WorkstreamComposer live dictation', () => {
 
 describe('Oopsie footer dictation submission', () => {
   it('finalizes an empty recording through the footer Send before reporting', async () => {
-    const createMessageIssue = vi.fn(async (_input: CreateMessageIssue) => ({ id: 'report-id', createdAt: '2026-10-22T00:00:00.000Z' }));
+    const createMessageIssue = vi.fn(async () => ({ id: 'report-id', createdAt: '2026-10-22T00:00:00.000Z' }));
     render(<Tooltip.Provider><MessageIssueProvider
       api={{ createMessageIssue, getTranscriptionSocketTicket: vi.fn(), prefetchTranscriptionSocketTicket: vi.fn() }}
       target={{ kind: 'conversation', parentId: '00000000-0000-7000-8000-00000000db13', substreamId: asSubstreamId('0') }}
