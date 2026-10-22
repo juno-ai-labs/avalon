@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ToolDefinition } from "@rally/contracts";
 import historicalGoogleTools from "./fixtures/google-tools-before-workflows.json";
 import combinedGoogleReceipts from "./fixtures/google-combined-receipts.json";
+import preTextPageReceipts from "./fixtures/google-receipts-before-text-pages.json";
 
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
@@ -75,8 +76,11 @@ const GOOGLE_WORKSPACE_TOOLS = [
   "drive.search_next",
   "drive.get_metadata",
   "drive.download",
+  "drive.download_next",
   "drive.export",
+  "drive.export_next",
   "docs.read_document",
+  "docs.read_document_next",
   "docs.create_document",
   "docs.append_text",
   "docs.replace_text",
@@ -1484,6 +1488,12 @@ describe("connector tools selected for harness runs", () => {
     expect(drive?.systemMessage).toContain("writableByRally=true");
     expect(drive?.systemMessage).not.toContain("Gmail search");
     expect(drive?.tools.map((tool) => tool.definition.name)).toEqual(GOOGLE_WORKSPACE_TOOLS);
+    for (const [name, idField] of [["drive.download", "fileId"], ["drive.export", "fileId"], ["docs.read_document", "documentId"]]) {
+      const tool = drive!.tools.find(tool => tool.definition.name === name)!;
+      const args = { [idField!]: "file", ...(name === "drive.export" ? { mimeType: "text/plain" } : {}) };
+      expect(tool.validateInput?.(args)).toBeNull();
+      expect(tool.validateInput?.({ ...args, textPage: { snapshotId: "22222222-2222-4222-8222-222222222222", offset: 128000 } })).toBeInstanceOf(Error);
+    }
   });
 
   it("offers no Google meeting skill without an eligible Google read capability", async () => {
@@ -1593,6 +1603,19 @@ describe("connector tools selected for harness runs", () => {
     expect(__integrationTesting.compatiblePriorReceiptPlans({ ...receipt, pluginId,
       toolSurfaceHash: policy.toolSurfaceHash, inputHash: "same-input" }, policy))
       .toContainEqual({ ...receipt, inputHash: "same-input" });
+  });
+
+  // Captured by running the actual pre-PR host and connector at aaa417c5f3,
+  // independently of the compatibility reconstruction this test exercises.
+  it.each(preTextPageReceipts)("fences pre-text-pagination $canonicalToolName receipts by operation", async receipt => {
+    const selected = await __integrationTesting.loadHarnessTools(env(new ToolSelectionDatabase([
+      connection(OWNER_CONNECTION_ID, "personal", USER_ID, [...GOOGLE_WORKSPACE_CAPABILITIES]),
+    ])), workflowInput());
+    const policy = __integrationTesting.resolveHarnessToolReceiptPolicy({ pluginId: receipt.pluginId,
+      canonicalToolName: receipt.canonicalToolName, capability: receipt.capability,
+      mode: receipt.mode as "read" | "write", idempotency: receipt.idempotency as "safe" | "record_before_execute" }, selected);
+    expect(__integrationTesting.storedToolPolicyMatches(JSON.stringify(receipt), policy)).toBe(receipt.canonicalToolName === "docs.append_text");
+    expect(__integrationTesting.storedToolPolicyMatches(JSON.stringify({ ...receipt, toolSurfaceHash: "different-surface" }), policy)).toBe(false);
   });
 
   it.each([
@@ -1710,8 +1733,11 @@ describe("connector tools selected for harness runs", () => {
       "drive.search_next",
       "drive.get_metadata",
       "drive.download",
+      "drive.download_next",
       "drive.export",
+      "drive.export_next",
       "docs.read_document",
+      "docs.read_document_next",
       "docs.create_document",
       "docs.append_text",
       "docs.replace_text",

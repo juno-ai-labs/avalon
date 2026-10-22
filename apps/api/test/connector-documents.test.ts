@@ -4,10 +4,13 @@ import {
   createConnectorRegistry,
   SlackWorkspaceCapabilities,
   type ConnectorAdapter,
+  type ConnectorTextPages,
+  type ConnectorToolContext,
 } from "@rally/connectors";
 import { strToU8, zipSync } from "fflate";
 import { describe, expect, it, vi } from "vitest";
 import { connectorDocumentReader } from "../src/services/connector-document-reader";
+import { ATTACHMENT_MAX_SOURCE_BYTES } from "../src/services/attachment-derivative-service";
 import {
   buildGifStoryboard,
   decodeTiffToPng,
@@ -91,7 +94,7 @@ describe("files read through Google Drive", () => {
     });
   });
 
-  it("cuts a long workbook's text to the tool budget and says so", async () => {
+  it("pages a long workbook through its final row within the tool budget", async () => {
     const rows = Array.from({ length: 12_000 }, (_, index) =>
       `<row r="${index + 1}"><c r="A${index + 1}"><v>${1_000_000 + index}</v></c></row>`).join("");
     const result = await driveDownload({
@@ -103,9 +106,12 @@ describe("files read through Google Drive", () => {
     expect(result.contentTruncated).toBe(true);
     expect(new TextEncoder().encode(result.textContent ?? "").byteLength).toBeLessThanOrEqual(128_000);
     expect(result.textContent?.startsWith("# Sheet: Ledger\n\nA1: 1000000\nA2: 1000001")).toBe(true);
+    expect(result.pages.at(-1)).toMatchObject({ hasMore: false, sourceTruncated: false, contentTruncated: false });
+    expect(result.pages.map(page => page.textContent).join("").endsWith("A12000: 1011999")).toBe(true);
+    expect(result.pages.every(page => new TextEncoder().encode(page.textContent ?? "").byteLength <= 128_000)).toBe(true);
   });
 
-  it("cuts a workbook whose text passes the stored-attachment ceiling instead of refusing it", async () => {
+  it("pages a workbook beyond the stored-derivative ceiling without losing later rows", async () => {
     // Small on disk, huge as text: one long shared string referenced by every
     // cell expands to about 2.5 million characters.
     const rows = Array.from({ length: 12_000 }, (_, index) =>
@@ -118,6 +124,8 @@ describe("files read through Google Drive", () => {
 
     expect(result.contentTruncated).toBe(true);
     expect(result.textContent?.startsWith(`# Sheet: Export\n\nA1: ${"x".repeat(200)}\nA2: `)).toBe(true);
+    expect(result.pages.at(-1)).toMatchObject({ hasMore: false, sourceTruncated: false, contentTruncated: false });
+    expect(result.pages.map(page => page.textContent).join("").endsWith(`A12000: ${"x".repeat(200)}`)).toBe(true);
   });
 
   it("does not download a file larger than the converter accepts", async () => {
@@ -212,10 +220,23 @@ async function driveDownload(
       onMedia();
       return new Response(new Blob([new Uint8Array(file.bytes)]));
     }
-    return Response.json({ id: "file-1", name: file.name, mimeType: file.mimeType, size: String(file.size ?? file.bytes.byteLength) });
+    return Response.json({ id: "file-1", name: file.name, mimeType: file.mimeType, size: String(file.size ?? file.bytes.byteLength), capabilities: { canDownload: true } });
   }) as typeof fetch;
   const adapter: ConnectorAdapter = registry(fetcher, ai).get("google");
-  const result = await adapter.executeTool!("drive.download", { fileId: "file-1" }, {
+  // This Node suite exercises the real Office/PDF converter, which cannot use
+  // workerd's R2 binding here. The host store's persistence and isolation are
+  // exercised against real R2 in test-workers/connector-text-pages.test.ts.
+  const snapshots = new Map<string, Uint8Array>();
+  const textPages: ConnectorTextPages = {
+    maxSourceBytes: ATTACHMENT_MAX_SOURCE_BYTES,
+    async write(bytes) { const id = crypto.randomUUID(); snapshots.set(id, bytes.slice()); return id; },
+    async read(id, offset, length) {
+      const bytes = snapshots.get(id);
+      if (!bytes) throw new Error("snapshot_unavailable");
+      return { bytes: bytes.slice(offset, offset + length), totalBytes: bytes.byteLength };
+    },
+  };
+  const context: ConnectorToolContext = {
     connection: authorizedConnection({
       id: "00000000-0000-7000-8000-000000000003",
       workspaceId: "00000000-0000-7000-8000-000000000002",
@@ -228,8 +249,16 @@ async function driveDownload(
     }),
     principal: { type: "user", userId: USER_ID },
     signal: new AbortController().signal,
-  });
-  return result.output as Record<string, unknown> & { textContent: string | null; contentTruncated?: boolean };
+    textPages,
+  };
+  let result = await adapter.executeTool!("drive.download", { fileId: "file-1" }, context);
+  type Page = Record<string, unknown> & { textContent: string | null; contentTruncated?: boolean };
+  const pages = [result.output as Page];
+  while (result.pagination?.continuations.length) {
+    result = await adapter.executeTool!("drive.download", result.pagination.continuations[0]!.input, context);
+    pages.push(result.output as Page);
+  }
+  return { ...pages[0]!, pages };
 }
 
 /** Slack `read_file` of one shared file, with Slack answering files.info and the private download. */
