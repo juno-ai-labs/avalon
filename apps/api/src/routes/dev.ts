@@ -1,3 +1,4 @@
+import { ConnectorParticipantAdmissionSchema } from "@rally/contracts/scope-grants";
 import { fallbackWorkspacePlacementAffinity } from "../lib/durable-object-namespace";
 import { Hono } from "hono";
 import {
@@ -265,6 +266,12 @@ async function seedProduct(env: Env, body: z.infer<typeof SeedProductBodySchema>
     const copied: Record<string, number> = {};
 
     const identityPort = createIdentityObjectPort(env, workspaceId, workstream.id);
+    const existingIdentity = await identityPort.identity();
+    await identityPort.provision({ title: workstream.title, objective: workstream.objective,
+      scope: existingIdentity?.scope === "workspace" ? "workspace" : "personal",
+      createdByUserId: existingIdentity?.created_by_user_id ?? null, participantUserIds: [],
+      harnessStatus: "idle", emailAddress: existingIdentity?.email_address ?? null, emailRouteStatus: null,
+      systemKind: null, modelOverride: null, now: Date.now() });
     await identityPort.seedFromFixture({
       title: workstream.title,
       // The fixture speaks the published vocabulary because it was captured
@@ -274,17 +281,14 @@ async function seedProduct(env: Env, body: z.infer<typeof SeedProductBodySchema>
       now: Date.now(),
     });
 
-    // Seated through the identity authority rather than inserted: the
-    // participant view is retired, and the fixture's `joined_at` is the ISO
-    // rendering that view produced.
-    for (const participant of workstream.participants) {
-      await identityPort.admitParticipant({
-        userId: String(participant.user_id),
-        addedByUserId: String(participant.added_by_user_id ?? participant.user_id),
-        reason: String(participant.participation_reason ?? "explicit"),
-        now: Date.parse(String(participant.joined_at ?? new Date().toISOString())),
-      });
-    }
+    // Fixture hydration uses the same grant authority as other trusted
+    // producer audiences; it never reopens the source's participant writer.
+    const userIds = workstream.participants.map((participant) => String(participant.user_id));
+    const admission = await (await hostedParentStub(env, workspaceId)).admitConnectorParticipants(ConnectorParticipantAdmissionSchema.parse({
+      workspaceId, parentId: workstream.id, userIds, addedByUserId: existingIdentity?.created_by_user_id ?? null,
+      eventId: JSON.stringify(["dev-seed-participants", workstream.id, [...userIds].sort()]),
+    }));
+    if (admission.status !== "ready") throw new Error("dev_seed_participant_admission_pending");
     copied.workstream_participants = workstream.participants.length;
     const runs = createHarnessRunObjectPort(routed, workspaceId, workstream.id);
     for (const fixtureRun of workstream.harnessRuns) {

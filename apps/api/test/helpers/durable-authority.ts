@@ -1,3 +1,4 @@
+import { ParticipantAuthorityTransferStorage } from "../../src/durable-objects/participant-authority-transfer";
 import { DatabaseSync } from "node:sqlite";
 import { vi } from "vitest";
 import type { WorkstreamAppearance } from "@rally/contracts";
@@ -878,6 +879,21 @@ export function testIdentityOperationStub(
  * recorded instead of executed. Pair with
  * {@link openWorkstreamAuthorityForTest}.
  */
+/** A query fixture's already-delivered authority projection. Runtime transfer/recovery
+ * is exercised in test-workers; these Node cases exercise real object SQL. */
+export function seedProjectedParticipants(storage: DurableObjectStorage): void {
+  const authority = new ParticipantAuthorityTransferStorage(storage);
+  if (authority.currentTransferId()) return;
+  const transferId = crypto.randomUUID();
+  const prepared = authority.prepare(transferId);
+  authority.commit(transferId);
+  for (const [index, person] of prepared.participants.entries()) authority.applyProjection({
+    transferId, userId: person.userId, revision: index + 1, active: true,
+    reason: person.reason === "creator" ? "creator" : "explicit", addedByUserId: person.addedByUserId,
+    changedAt: person.addedAt,
+  });
+}
+
 export function testSubstreamAgentsBinding(
   database: DatabaseSync,
   options: SubstreamAgentsStubOptions = {},
@@ -913,6 +929,7 @@ export function testSubstreamAgentsBinding(
       transactionSync: (body: () => unknown) => body(),
       sql: objectSqlStorage(store),
     });
+    seedProjectedParticipants(storage);
     return new WorkstreamObjectProductService(
       storage,
       new WorkstreamObjectStore(storage, "test-substream-binding", "global"),
@@ -923,6 +940,9 @@ export function testSubstreamAgentsBinding(
     );
   };
   const stub = {
+    // Service tests observe admission delegation; real grants/projections and
+    // retry semantics run through workerd in participant-notification.test.ts.
+    admitConnectorParticipants: vi.fn(async () => ({ status: "ready" })),
     /**
      * The Terminal port's counterpart, run against the same object database
      * the SQL port uses. Real storage, real schema, real constraints — the

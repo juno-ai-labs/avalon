@@ -1,3 +1,4 @@
+import { seedParticipantGrants } from "./helpers/hosted-parent";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 /**
@@ -361,6 +362,10 @@ beforeEach(async () => {
     insertResource(state, breakoutOnly, "Breakout draft");
     insertResource(state, unlinked, "Somebody else's file");
   });
+  await seedParticipantGrants(env, workspaceId, channelA, [owner, member]);
+  await seedParticipantGrants(env, workspaceId, channelB, [member]);
+  await seedParticipantGrants(env, workspaceId, channelC, [owner, guest]);
+  await seedParticipantGrants(env, workspaceId, channelA, [member], breakoutA);
   await publish(channelA, [
     channelAMain(),
     viewer(owner, true, "2026-09-25T10:00:00.000Z"),

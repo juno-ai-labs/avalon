@@ -153,6 +153,7 @@ describe("workstream scope grants in real workerd", () => {
     await withHostedParent(stub, parentId, (parent, state) => {
       insertParentMetadata(state);
       state.storage.sql.exec("INSERT INTO parent_children (parent_id,substream_id,kind,created_at,status) VALUES (?,'0','main',0,'ready')", parentId);
+      state.storage.sql.exec("INSERT INTO parent_participant_migrations(parent_id,substream_id,transfer_id,phase) VALUES (?,'0',?,'complete')", parentId, crypto.randomUUID());
       // The actor's own grant is what gives them sharing authority here.
       parent['scopeGrants'](address).mutate({ operationId: crypto.randomUUID(), actorUserId: userId,
         userId, target, active: true, expectedRevision: 0 }, userId);

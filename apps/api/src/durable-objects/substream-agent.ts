@@ -1,3 +1,4 @@
+import { RESERVED_CHILD_MEMBERSHIP_VERSION } from "./hosted-parent";
 import { readCompletionVerificationSnapshot } from "./completion-verification-storage";
 import { projectConversationView } from "@rally/contracts/conversation-view";
 import { ConversationViewDeliverySchema, ConversationViewJobSchema, ConversationViewProjectionSchema, completeConversationViewDelivery, nextConversationViewAt, publishConversationViews } from "./conversation-view-projection";
@@ -524,7 +525,7 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
   productOperation({ operation: z.literal("set_appearance"),
     operationId: IdSchema, patch: WorkstreamAppearancePatchSchema }),
   productOperation({ operation: z.literal("remove_participant"), userId: IdSchema,
-    operationId: IdSchema.optional() }),
+    operationId: IdSchema.optional(), owningThread: z.boolean().optional() }),
   productOperation({ operation: z.literal("attach_resource"), resourceId: IdSchema }),
   productOperation({ operation: z.literal("attach_resources"), resourceIds: z.array(MergeResourceTokenSchema) }),
   productOperation({ operation: z.literal("detach_resource"), resourceId: IdSchema }),
@@ -1569,6 +1570,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       || identity.parentKind !== "workstream" || this.externalSubstreamId() !== request.substreamId) {
       return { status: "identity_mismatch" as const };
     }
+    const root = this.state.storage.sql.exec<{ authority_mode: string; authority_generation: number }>(
+      "SELECT authority_mode, authority_generation FROM workstream WHERE id = 1",
+    ).toArray()[0];
+    if (root?.authority_mode !== "authoritative" || root.authority_generation <= 0) return { status: "not_ready" as const };
     const store = new ParticipantAuthorityTransferStorage(this.state.storage);
     const transferId = store.currentTransferId();
     if (transferId !== null && transferId !== request.transferId) return { status: "conflict" as const };
@@ -1582,19 +1587,31 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   async applyParticipantProjection(input: {
     workspaceId: string; parentId: string; substreamId: string; projection: ParticipantProjection;
   }) {
-    await this.storageReady;
     const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema,
       parentId: IdSchema, substreamId: SubstreamIdSchema, projection: ParticipantProjectionSchema }), input, "participant_projection");
+    const { projection, ...address } = request;
+    return (await this.applyParticipantProjections({ ...address, projections: [projection] }))[0]!;
+  }
+
+  /** One RPC and one profile batch for all projections of an admission. */
+  async applyParticipantProjections(input: {
+    workspaceId: string; parentId: string; substreamId: string; projections: ParticipantProjection[];
+  }) {
+    await this.storageReady;
+    const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema,
+      parentId: IdSchema, substreamId: SubstreamIdSchema, projections: z.array(ParticipantProjectionSchema) }), input, "participant_projections");
     const identity = this.objectStore.identity();
     if (!identity || identity.workspaceId !== request.workspaceId || identity.parentId !== request.parentId
       || identity.parentKind !== "workstream" || this.externalSubstreamId() !== request.substreamId) {
-      return { status: "identity_mismatch" as const };
+      return request.projections.map(() => ({ status: "identity_mismatch" as const }));
     }
     const store = new ParticipantAuthorityTransferStorage(this.state.storage);
-    const projection = request.projection;
-    const actorUserId = projection.addedByUserId ?? projection.userId;
-    const names = await this.product.participantEffectNames(actorUserId, projection.userId);
-    const { result } = await this.objectStore.commitWithRegionalEffects(() => {
+    // Removals need no names or participant payload. Active projections share
+    // one request-local read across notification effects and realtime frames.
+    const profiles = await this.product.participantProfiles(request.projections.flatMap((projection) =>
+      projection.active && (store.projectionForUser(projection.userId)?.revision ?? 0) < projection.revision
+        ? [projection.userId, projection.addedByUserId ?? projection.userId] : []));
+    const { result: results } = await this.objectStore.commitWithRegionalEffects(() => request.projections.map((projection) => {
       const prior = this.state.storage.sql.exec<{ status: string }>(
         "SELECT status FROM participants WHERE user_id=?", projection.userId,
       ).toArray()[0];
@@ -1603,32 +1620,35 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       if (changed) enqueueSemanticRealtimeReference(this.state.storage.sql, {
         kind: "participant_changed", userId: projection.userId,
       }, projection.changedAt);
-      return { result, changed };
-    }, (_sql, outcome) => !outcome.changed ? [] : this.product.privateChildMembershipEffects({
-      substreamId: request.substreamId, userId: projection.userId, actorUserId,
-      actorName: names.actorName, recipientName: names.recipientName,
+      return { result, changed, projection };
+    }), (_sql, outcomes) => outcomes.flatMap(({ changed, projection }) => !changed ? [] : this.product.privateChildMembershipEffects({
+      substreamId: request.substreamId, userId: projection.userId,
+      actorUserId: projection.addedByUserId ?? projection.userId,
+      actorName: profiles.get(projection.addedByUserId ?? projection.userId)?.name ?? "A workspace member",
+      recipientName: profiles.get(projection.userId)?.name ?? "a workspace member",
       active: projection.active, now: projection.changedAt,
       suppressNotification: projection.reason === "message",
-    }));
-    // Effect publication can yield. Consult the latest local receipt so an old
-    // removal cannot disconnect a reader admitted by a newer projection.
-    // Also run on duplicate delivery: the previous call may have committed but
-    // lost its response before it closed the sockets.
-    if (store.projectionForUser(projection.userId)?.active === false) {
+    })));
+    // Re-read authority after yielding. Old or replayed removals must not
+    // disconnect somebody admitted by a newer projection.
+    const removed = new Set<string>(request.projections.filter((projection) =>
+      store.projectionForUser(projection.userId)?.active === false).map((projection) => projection.userId));
+    let evicted = false;
+    if (removed.size) {
       this.rememberSocketRevocation();
       for (const [ticketId, prepared] of [...this.preparedSocketAdmissions]) {
-        if (prepared.input.userId === projection.userId) this.deletePreparedSocketAdmission(ticketId);
+        if (removed.has(prepared.input.userId)) this.deletePreparedSocketAdmission(ticketId);
       }
-      let evicted = false;
       for (const socket of this.state.getWebSockets()) {
-        if (this.readAttachment(socket)?.userId !== projection.userId) continue;
+        const attachment = this.readAttachment(socket);
+        if (!attachment || !removed.has(attachment.userId)) continue;
         disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this work stream");
         evicted = true;
       }
-      if (evicted) await this.broadcastPresence(request.workspaceId, request.parentId);
     }
-    await this.flushSemanticRealtimeOutboxBestEffort();
-    return result.result;
+    await this.flushSemanticRealtimeOutboxBestEffort(profiles);
+    if (evicted) await this.broadcastPresence(request.workspaceId, request.parentId);
+    return results.map(({ result }) => result);
   }
 
   private conversationMembershipAllows(userId: string, requiredVersion: number): boolean {
@@ -1641,12 +1661,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       const projection = transfer.projectionForUser(userId);
       return projection?.active === true && projection.revision === requiredVersion;
     }
-    if (this.externalSubstreamId() === "0") return true;
-    const row = this.state.storage.sql.exec<{ version: number; active: number }>(
-      `SELECT version, active FROM private_child_membership_authority WHERE user_id = ?`,
-      userId,
+    // Unpublished import agents use the parent's creator-only reservation,
+    // never a ready conversation's roster. Its signed bootstrap version is
+    // distinct from grant registration, which advances the grant revision.
+    if (requiredVersion !== RESERVED_CHILD_MEMBERSHIP_VERSION || this.externalSubstreamId() === "0") return false;
+    const reservation = this.state.storage.sql.exec<{ active: number; version: number }>(
+      "SELECT active, version FROM private_child_membership_authority WHERE user_id = ?", userId,
     ).toArray()[0];
-    return row?.active === 1 && row.version === requiredVersion;
+    return reservation?.active === 1 && reservation.version === RESERVED_CHILD_MEMBERSHIP_VERSION;
   }
 
   /**
@@ -3370,6 +3392,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         true,
       )
       : method.apply(this.identityRows, parsed.data.args);
+    if (parsed.data.operation === "provision" && this.externalSubstreamId() === "0") await this.product.ensureParticipantAuthority();
     return { status: 200, payload: { ok: true, value: value ?? null } };
   }
 
@@ -3674,16 +3697,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         return jsonResponse(result);
       }
       if ((request.operation === "add_participant" || request.operation === "remove_participant")
-        && identity.parentKind === "workstream"
-        && new ParticipantAuthorityTransferStorage(this.state.storage).currentTransferId() !== null) {
+        && identity.parentKind === "workstream") {
         const active = request.operation === "add_participant";
         if (active) await this.product.authorizeParticipantAddition(current, request.userId);
+        else await this.product.authorize(current);
         const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
           identity.workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspaceId)));
         const substreamId = this.externalSubstreamId();
-        const result = await parent.mutateParticipantGrant({ operationId: request.operationId ?? uuidV7(),
+        const mutation = { operationId: request.operationId ?? uuidV7(),
           actorUserId: current.userId, userId: UserIdSchema.parse(request.userId), active,
-          target: { kind: "conversation", workspaceId: identity.workspaceId, parentId: identity.parentId, substreamId } });
+          target: { kind: "conversation" as const, workspaceId: identity.workspaceId, parentId: identity.parentId, substreamId } };
+        const result = !active && request.owningThread
+          ? await parent.removeThreadParticipant(mutation) : await parent.mutateParticipantGrant(mutation);
         if (result.status === "denied") {
           if (result.reason === "inherited_access") throw new ApiError(409, "participant_inherited_access", "This person has thread access. Remove that share from thread sharing first.");
           if (result.reason === "participant_required") throw new ApiError(409, "workstream_participant_required", "At least one participant must remain in this thread");
@@ -3704,7 +3729,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         return jsonResponse({ ok: true });
       }
       if (request.operation === "add_participant") {
-        const participant = await this.product.addParticipant(current, request.userId);
+        const participant = await this.product.addParticipant(current, request.userId, request.operationId);
         await this.publishLocalProductEvent(identity, { type: "participant_added", participant });
         return jsonResponse(participant);
       }
@@ -6234,6 +6259,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
   private async semanticRealtimeEvent(
     pending: SequencedSemanticRealtimeReference,
+    profiles?: ReadonlyMap<string, User>,
   ): Promise<ServerSocketEvent> {
     const base = {
       sequence: pending.sequence,
@@ -6242,7 +6268,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     switch (pending.reference.kind) {
       case "participant_changed": {
         const userId = pending.reference.userId;
-        const participant = await this.product.participant(userId);
+        const participant = await this.product.participant(userId, profiles?.has(userId) ? profiles : undefined);
         // Profile hydration yields. Recheck local authority before publishing,
         // including when a deferred join was overtaken by a removal.
         if (!this.product.isParticipant(userId)) {
@@ -6553,11 +6579,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * semantic frame has been accepted locally. Replaying the same sequence after
    * a crash is harmless at the client cursor and deduplicated in this isolate.
    */
-  private async drainSemanticRealtimeOutbox(): Promise<void> {
+  private async drainSemanticRealtimeOutbox(profiles?: ReadonlyMap<string, User>): Promise<void> {
     const pending = this.objectStore.dueSemanticRealtime();
     for (const reference of pending) {
       try {
-        const event = await this.semanticRealtimeEvent(reference);
+        const event = await this.semanticRealtimeEvent(reference, profiles);
         // Arm before attempting publication: a failed realtime delivery must
         // not hold back classification of the already committed merge.
         if (event.type === "transcript_turn_upserted" && event.turn.blocks.some((block) =>
@@ -6579,12 +6605,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   /** Accepted canonical state never reports failure because its room cache did. */
-  private async flushSemanticRealtimeOutboxBestEffort(): Promise<boolean> {
+  private async flushSemanticRealtimeOutboxBestEffort(profiles?: ReadonlyMap<string, User>): Promise<boolean> {
     // Set before the first await so an interleaving token/presence request
     // cannot allocate past a canonical predecessor this drain is discovering.
     this.semanticRealtimePending = true;
     try {
-      await this.drainSemanticRealtimeOutbox();
+      await this.drainSemanticRealtimeOutbox(profiles);
     } catch (error) {
       logWarn(this.env, "substream_semantic_realtime_deferred", {
         substream_id: this.externalSubstreamId(),

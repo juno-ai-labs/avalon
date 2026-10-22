@@ -41,12 +41,6 @@ const CREATOR_SESSION_ID = "00000000-0000-7000-8000-0000000007b4";
 const INVITEE_ID = "00000000-0000-7000-8000-0000000007b5";
 const INVITEE_SESSION_ID = "00000000-0000-7000-8000-0000000007b6";
 
-type TestableSubstreamAgent = {
-  publishLocalProductEvent(
-    attachment: { workspaceId: string; workstreamId: string },
-    event: Record<string, unknown>,
-  ): Promise<void>;
-};
 
 const AUTH = {
   sessionId: CREATOR_SESSION_ID,
@@ -381,7 +375,7 @@ describe("a work stream nobody has shown this person yet", () => {
     await startWorkstream(stub, [INVITEE_ID]);
     await product(stub, { operation: "get", auth: INVITEE_AUTH });
 
-    const removed = await product(stub, { operation: "remove_participant", auth: AUTH, userId: INVITEE_ID });
+    const removed = await product(stub, { operation: "remove_participant", owningThread: true, auth: AUTH, userId: INVITEE_ID });
     expect(removed.status).toBe(200);
     const readded = await product(stub, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID });
     expect(readded.status).toBe(200);
@@ -397,7 +391,7 @@ describe("a work stream nobody has shown this person yet", () => {
     await startWorkstream(stub, [INVITEE_ID]);
 
     const removed = await product(stub, {
-      operation: "remove_participant",
+      operation: "remove_participant", owningThread: true,
       auth: INVITEE_AUTH,
       userId: INVITEE_ID,
     });
@@ -412,7 +406,7 @@ describe("a work stream nobody has shown this person yet", () => {
     await startWorkstream(stub, [INVITEE_ID]);
 
     const removed = await product(stub, {
-      operation: "remove_participant",
+      operation: "remove_participant", owningThread: true,
       auth: INVITEE_AUTH,
       userId: CREATOR_ID,
     });
@@ -427,7 +421,7 @@ describe("a work stream nobody has shown this person yet", () => {
     await startWorkstream(stub, []);
 
     const removed = await product(stub, {
-      operation: "remove_participant",
+      operation: "remove_participant", owningThread: true,
       auth: AUTH,
       userId: CREATOR_ID,
     });
@@ -455,32 +449,30 @@ describe("a work stream nobody has shown this person yet", () => {
       "00000000-0000-7000-8000-0000000007c2",
     );
 
+    let failPublication = true;
     await runInDurableObject(stub, (instance) => {
-      const testable = instance as unknown as TestableSubstreamAgent;
-      const publish = testable.publishLocalProductEvent.bind(instance);
-      let first = true;
-      testable.publishLocalProductEvent = async (attachment, event) => {
-        if (first) {
-          first = false;
-          throw new Error("injected_local_event_failure");
-        }
-        await publish(attachment, event);
+      const publisher = instance as unknown as { deliverCommittedRealtimeEvent(event: unknown): Promise<void> };
+      const publish = publisher.deliverCommittedRealtimeEvent.bind(instance);
+      publisher.deliverCommittedRealtimeEvent = async (event) => {
+        if (failPublication) throw new Error("injected_local_event_failure");
+        await publish(event);
       };
     });
 
     const closed = nextClose(inviteeSocket);
     const first = await product(stub, {
-      operation: "remove_participant",
+      operation: "remove_participant", owningThread: true,
       auth: AUTH,
       userId: INVITEE_ID,
     });
-    expect(first.status).toBe(500);
+    expect(first.status).toBe(200);
     expect(await participantStatus(stub, INVITEE_ID)).toBe("removed");
     expect((await closed).code).toBe(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE);
 
     const replayed = nextEvent(creatorSocket, "participant_removed");
+    failPublication = false;
     const retry = await product(stub, {
-      operation: "remove_participant",
+      operation: "remove_participant", owningThread: true,
       auth: AUTH,
       userId: INVITEE_ID,
     });

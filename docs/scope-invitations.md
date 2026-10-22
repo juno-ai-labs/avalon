@@ -15,7 +15,7 @@ The panel reports a created invitation to its container rather than confirming i
 in place: the standalone share dialog dismisses itself, and the participant
 dialog, which embeds the panel beside its own controls, stays open on an emptied
 form. Participant mutations use the
-parent grant ledger after first-share handoff; transcript execution stays in the
+parent grant ledger for every ready conversation; transcript execution stays in the
 conversation owner.
 
 ## Where the code lives
@@ -48,20 +48,25 @@ workspace and actor override no caller-provided identity fields: such fields are
 rejected by the public schema. Every target must be in that workstream, and
 current direct/inherited collaborator grants must authorize sharing it. Its
 participant-authority handoff must complete before an invitation is recorded.
-For legacy targets, creation consults Main's canonical participant roster or the
-parent's canonical private-child membership, then starts/resumes the durable
-handoff in the foreground. The existing alarm recovers interrupted transfers.
-Only addressed scopes move; sharing a child does not require migrating Main.
-Older parents may list Main implicitly, without a `conversation_children` row.
-Sharing options include that real Main after canonical source authorization;
-discovery remains read-only. First-share preparation records its registration
-only after verifying source existence, participant authority and archive state,
-then transfers the roster normally. It never fabricates Main from a directory
-row or workspace-public visibility.
-Creation rechecks current relationships and grants after preparation, so the
-preparation check is never the final sharing authorization. Inactive relationships and non-shareable or archived targets report access denial. A conflicting
-handoff reports `migration_pending` instead of writing grants ahead of import.
-Workspace-public reading alone is insufficient even to start preparation.
+Grants are the only serving authority for Channels and Breakouts. New Main
+conversations finish the bootstrap handoff before creation returns; private
+children finish it when their opening content becomes durable and they become
+ready. Existing conversations import their historical rosters once, in the
+foreground when addressed or through the upgrade's durable migration alarms.
+Main imports preserve existing Channel grants; child imports use only the
+parent's historical child membership, never a stale child-local seat. If grants
+already exist, the handoff freezes and reconciles the source without importing
+its roster over those decisions. Frozen snapshots, incarnation bindings, receipts
+and alarms retain the existing recovery protocol.
+
+Sharing choices, transport, resource authorization and Breakout listings read
+grants. No serving path falls back to a directory or historical roster. Pending
+handoffs refuse admission until completion. Current relationships and grants are
+rechecked after external awaits; implicit Organization-wide reading does not
+confer sharing authority. An unpublished Breakout's local seats are bootstrap data
+only; it is not publicly readable until its parent publishes its grants. Hidden
+import agents remain creator-only reservations at the parent, with a signed
+bootstrap membership version; they are not ready Breakouts.
 
 One operation records an invitation per distinct email, with stable grant
 operation IDs and an encrypted email payload. Its transaction schedules the
@@ -76,6 +81,48 @@ notice because the canonical message sends the more specific mention notice.
 Ordinary shares and participant additions retain their existing behavior; the
 conversation admission rules are in
 [`workstream-durable-object.md`](workstream-durable-object.md).
+
+Manual adds, confirmed mentions and connector audiences all issue parent grant
+commands, for members and guests alike. Connector events retain immutable
+receipts, so replay cannot restore a participant revoked later. Correcting creator
+attribution does not itself seat anyone. Existing-conversation additions address
+only that conversation; inherited Channel shares must be managed at their owning
+scope. The owning Thread's Remove/Leave command retracts its direct parent and
+Main grants atomically; a conversation-only removal still refuses inherited
+access. Creation-time participants retain the new Thread's initial access.
+
+The conversation's `participants` table remains a versioned projection for names,
+unread state, participant epochs and socket admission. Its identity/status writes
+are frozen by SQLite triggers; only parent projections may update them. Opening
+and read-position metadata stay local. Ordinary messages whose participants are
+already seated need no grant RPC. Message admission sends all missing participants
+in one parent command and commits the entire audience without yielding, retaining
+one operation receipt per person. A migration wake is retired after its pending
+projections converge, so it cannot split a later foreground batch. Pending
+projections for a conversation travel in one callback, including connector
+admission and handoff recovery. The source hydrates active recipients and actors
+in one D1 batch and reuses those request-local profiles for notification names
+and realtime frames; profiles never authorize access. Removals need no profile
+hydration, and manual adds perform actor authorization once. First-post message
+admission seats an implicit public author before their mentioned audience.
+Visibility changes deliver the commit's exact common-effect receipt, including
+idempotent scope retries after queue delivery, so the sender cannot race an
+outbox deletion and a newly public reader can join immediately.
+
+Completing a handoff delivers the pending participant projections for the whole
+addressed conversation before returning. This includes the original sharer:
+their next socket ticket names the new projection revision too. Durable delivery
+intents and alarms recover interrupted transfers and projection calls. Recovery
+is armed before the first cross-object await; a completed migration with pending
+projections resumes delivery during ticket authorization too. Creation persists
+its opening turn, directory, notification and activity intents in one transaction
+before attempting the handoff. A failed handoff is fail-closed: it never restores
+legacy roster authority, and durable recovery or an operator must resolve an
+invalid source identity/authority before it can serve that conversation.
+
+Synchronous grant listing uses the shared current-membership SQL predicate. The
+socket, Breakout-list and Sidekick entry points learn a previously unknown
+Organization relationship before invoking it; subsequent reads stay local.
 
 ### Claiming
 
@@ -256,9 +303,7 @@ the address and a remove control that revokes it at the displayed revision.
 Claimed shares are not listed there: their recipient is a participant, labelled
 Guest in the participant list when their relationship is a guest one, and is
 managed through grant/participant management.
-The panel reads `/sharing/:parentId/options` for shareable scope choices. This is
-read-only: legacy Main uses its canonical participant facts, legacy children use
-the parent-owned private roster, and transferred scopes use canonical grants.
+The panel reads `/sharing/:parentId/options` for shareable scope choices. Choices use canonical grants after any required historical import.
 Choices are advisory; creating the invitation repeats current authority checks.
 
 Several independent scopes can be selected. The complete-workstream choice is
@@ -410,6 +455,14 @@ receipt or unavailable identity authority remains an error, never a grant.
 
 ## Testing
 
+`participant-notification.test.ts` drives confirmed guest mentions in personal
+and Organization-wide Channels, manual guest add/remove/re-add, creation-time
+participant and mention replay, and member/guest Breakout mentions through real
+workerd. It obtains tickets through `ConversationService`, upgrades them through
+`SocketService`, and receives a conversation snapshot for recipient and sharer.
+It also checks that a Breakout share does not admit Main and that revocation
+refuses a fresh ticket. Guest fixtures have a null role, matching production.
+
 `pnpm --filter @rally/api test:workers test-workers/scope-invitations.test.ts`
 runs real D1, `WorkspaceDO` SQLite, RPCs, alarms and HTTP routing. The fixture
 declares the D1 columns it uses. It covers a share claimed as it is made for an
@@ -450,6 +503,42 @@ handoff against real Main and child agents, including refusal to transfer for a
 nonparticipant and reconciliation of a stale child roster.
 
 ## Changelog
+
+### 2026-10-21 — Grants own every ready conversation's participation
+
+**What changed:** Creation and publication complete the participant handoff;
+existing conversations receive durable upgrade backfill. Manual adds, mentions,
+connector admission, viewer/resource authorization, owned-Sidekick participation
+checks and Breakout discovery use
+parent grants. Source rosters become fenced projections. A parent with grants
+already in service reconciles its source without importing stale seats. Visibility
+commands deliver their durable common effect before returning. Admission and
+handoff projection delivery are batched by conversation, sharing one profile
+read for effects and realtime output and avoiding duplicate manual authorization.
+Committed effect receipts survive outbox deletion; creation effects precede the
+handoff; ticket reads resume incomplete delivery; and recovery is armed before
+cross-object work. Cold listing boundaries learn membership before filtering
+grants, and owning-Thread removal retracts both direct Main access scopes.
+
+**Why:** A confirmed mention put a guest on a private Channel's local roster and
+published a sidebar entry, while transport required a grant and returned 404.
+Manual adds, creation, connectors and Breakout mentions exposed the same split.
+Keeping two writable admission systems would repeat it for the next caller.
+Per-person RPC callbacks and repeated profile reads also made admission latency
+grow with the roster; batching preserves the same authority and receipts without
+paying those network round trips for each recipient.
+
+**Considered and rejected:** Letting guests read the old roster would bypass grant
+incarnation and revocation fences. Patching only the mention writer would retain
+competing authorities. Dropping historical rows immediately would strand existing
+conversations; retaining them as serving fallbacks would preserve the defect.
+
+**Consequences:** Historical rows are one-time import/bootstrap input, never a
+fallback. Parent decisions converge through revisioned projections; replays cannot
+restore revoked access. Handoff success delivers every affected projection,
+including the sharer's. Unpublished child content installs before publication;
+normal posting retains its local fast path. An implicit public reader cannot
+manufacture sharing authority by narrowing visibility.
 
 ### 2026-10-08 — Offer pending Organization invitees wherever people are picked
 

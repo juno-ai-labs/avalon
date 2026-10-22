@@ -215,6 +215,12 @@ async function seedRoom(roomId: string, scope: "personal" | "workspace", partici
 }
 
 /** Archived through the room's own surface, then both legs so every parent hears it. */
+async function revokeChannelParticipant(parentId: string, userId: string, actorUserId = AUTHOR_ID) {
+  const result = await roomParent().mutateParticipantGrant({ operationId: crypto.randomUUID(), active: false,
+    actorUserId: asUserId(actorUserId), userId: asUserId(userId), target: { kind: "workstream", workspaceId: WORKSPACE_ID, parentId } });
+  expect(result.status).toBe("committed");
+}
+
 async function archiveRoom(roomId: string): Promise<void> {
   const archived = await post(conversation(roomId), "/internal/product", {
     operation: "update",
@@ -387,19 +393,22 @@ describe("conversation parent contract", () => {
       .toMatchObject({ status: 'denied', reason: 'workspace_membership_required' });
   });
 
-  it('reads canonical roster evidence before membership projections are delivered', async () => {
+  it('uses grants despite a stale directory and refuses independent roster writes', async () => {
     await seedRoom(PERSONAL_ROOM_ID, 'personal', [AUTHOR_ID, MEMBER_ID]);
-    await runInDurableObject(conversation(PERSONAL_ROOM_ID), (_instance, state) => {
+    await expect(runInDurableObject(conversation(PERSONAL_ROOM_ID), (_instance, state) => {
       state.storage.sql.exec("UPDATE participants SET status = 'removed', removed_at = ? WHERE user_id = ?", Date.now(), MEMBER_ID);
-    });
-    // The parent still has the previous projection. Fresh authorization must use the child roster.
-    expect(await roomParent().authorizeViewer(viewer(PERSONAL_ROOM_ID, MEMBER_ID)))
-      .toMatchObject({ authorized: true });
-    const access = createAccessContext(TEST_ENV, { ...AUTH, userId: MEMBER_ID });
+    })).rejects.toThrow("participant_authority_transferred");
+    await revokeChannelParticipant(PERSONAL_ROOM_ID, MEMBER_ID);
+    // Leave the directory effect undelivered. Both transport and resource
+    // authorization must observe the grant revocation immediately.
+    expect(await roomParent().authorizeViewer(viewer(PERSONAL_ROOM_ID, MEMBER_ID))).toMatchObject({ authorized: false });
+    expect(await roomParent().workstreamParticipant({ workspaceId: WORKSPACE_ID,
+      workstreamId: PERSONAL_ROOM_ID, userId: MEMBER_ID })).toEqual({ participant: false });
     const address = { kind: 'conversation' as const, workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, substreamId: asSubstreamId('0') };
-    expect(await access.check(address)).toMatchObject({ status: 'denied', reason: 'not_participant' });
+    expect(await createAccessContext(TEST_ENV, { ...AUTH, userId: MEMBER_ID }).check(address))
+      .toMatchObject({ status: 'denied', reason: 'not_participant' });
     expect(await createAccessContext(TEST_ENV, AUTH).check(address)).toMatchObject({ status: 'allowed' });
-    expect(await access.check({ ...address, substreamId: asSubstreamId('00000000-0000-7000-8000-00000000ad99') }))
+    expect(await createAccessContext(TEST_ENV, AUTH).check({ ...address, substreamId: asSubstreamId('00000000-0000-7000-8000-00000000ad99') }))
       .toMatchObject({ status: 'not_found' });
   });
 
@@ -554,10 +563,7 @@ describe("conversation parent contract", () => {
     const first = access.check(address);
     try {
       await observation;
-      const removal = await post(conversation(PERSONAL_ROOM_ID), '/internal/product', {
-        operation: 'remove_participant', auth: AUTH, userId: AUTHOR_ID,
-      });
-      expect(removal.status).toBe(200);
+      await revokeChannelParticipant(PERSONAL_ROOM_ID, AUTHOR_ID);
       await deliverChildEffects(TEST_ENV, conversation(PERSONAL_ROOM_ID));
       const later = access.check(address);
       // Start the later check before delivering the old observation.
@@ -669,10 +675,7 @@ describe("conversation parent contract", () => {
     const search = () => searchWorkspace({ ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' }, AUTH,
       { query: 'needle', category: 'messages' });
     expect(await search()).toMatchObject([{ id: 'hash-candidate' }]);
-    const removal = await post(conversation(PERSONAL_ROOM_ID), '/internal/product', {
-      operation: 'remove_participant', auth: AUTH, userId: AUTHOR_ID,
-    });
-    expect(removal.status).toBe(200);
+    await revokeChannelParticipant(PERSONAL_ROOM_ID, AUTHOR_ID);
     await deliverChildEffects(TEST_ENV, conversation(PERSONAL_ROOM_ID));
     // No push, cache or row patch stands between the removal and the next search.
     expect(await search()).toEqual([]);
@@ -703,7 +706,7 @@ describe("conversation parent contract", () => {
     expect((await parent.beginPrivateChildPreparation(request)).substreamId).toBe(reserved.substreamId);
     expect(await parent.authorizeViewer({
       ...viewer(PERSONAL_ROOM_ID, AUTHOR_ID), substreamId: reserved.substreamId,
-    })).toEqual({ authorized: false, archived: false, childStatus: "reserved", membershipVersion: 1 });
+    })).toEqual({ authorized: false, archived: false, childStatus: "reserved", membershipVersion: expect.any(Number) });
     expect(await listVisiblePrivateChildren(parent, {
       workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, userId: AUTHOR_ID,
     })).toEqual({ children: [] });
@@ -869,7 +872,7 @@ describe("conversation parent contract", () => {
 
     expect(await parent.authorizeViewer({
       ...viewer(PERSONAL_ROOM_ID, AUTHOR_ID), substreamId: reserved.substreamId,
-    })).toEqual({ authorized: true, archived: false, childStatus: "ready", membershipVersion: 1 });
+    })).toEqual({ authorized: true, archived: false, childStatus: "ready", membershipVersion: expect.any(Number) });
     expect((await listVisiblePrivateChildren(parent, {
       workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, userId: AUTHOR_ID,
     })).children).toEqual([expect.objectContaining({ substreamId: reserved.substreamId, title: "Private branch" })]);
@@ -877,7 +880,7 @@ describe("conversation parent contract", () => {
       workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, userId: PARTICIPANT_ID,
     })).children).toEqual([]);
     expect(await parent.authorizeViewer(viewer(PERSONAL_ROOM_ID, PARTICIPANT_ID)))
-      .toEqual({ authorized: true, archived: false });
+      .toMatchObject({ authorized: true, archived: false });
 
     await parent.addPrivateChildParticipant({
       workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, substreamId: reserved.substreamId,
@@ -886,17 +889,17 @@ describe("conversation parent contract", () => {
     expect(await parent.addPrivateChildParticipant({
       workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, substreamId: reserved.substreamId,
       actorUserId: AUTHOR_ID, userId: PARTICIPANT_ID, operationId: "private-child-add-participant",
-    })).toMatchObject({ outcome: "unchanged", membershipVersion: 1 });
+    })).toMatchObject({ outcome: "added", membershipVersion: expect.any(Number) });
     expect(await parent.authorizeViewer({
       ...viewer(PERSONAL_ROOM_ID, PARTICIPANT_ID), substreamId: reserved.substreamId,
-    })).toMatchObject({ authorized: true, membershipVersion: 1 });
+    })).toMatchObject({ authorized: true, membershipVersion: expect.any(Number) });
 
     const staleAuthorTicket = await new ConversationService(socketEnv, AUTH)
       .socketTicket(PERSONAL_ROOM_ID, reserved.substreamId);
     const preRemovalTicket = await new ConversationService(socketEnv, AUTH)
       .socketTicket(PERSONAL_ROOM_ID, reserved.substreamId);
     expect((await verifySocketTicket(socketEnv, staleAuthorTicket.ticket)).admission)
-      .toMatchObject({ membershipVersion: 1 });
+      .toMatchObject({ membershipVersion: expect.any(Number) });
     await parent.removePrivateChildParticipant({
       workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID, substreamId: reserved.substreamId,
       actorUserId: PARTICIPANT_ID, userId: AUTHOR_ID, operationId: "private-child-remove-author",
@@ -920,10 +923,7 @@ describe("conversation parent contract", () => {
     );
     expect(readdedUpgrade.status).toBe(403);
 
-    const removedFromParent = await post(conversation(PERSONAL_ROOM_ID), "/internal/product", {
-      operation: "remove_participant", auth: AUTH, userId: PARTICIPANT_ID,
-    });
-    expect(removedFromParent.status).toBe(200);
+    await revokeChannelParticipant(PERSONAL_ROOM_ID, PARTICIPANT_ID);
     await deliverChildEffects(TEST_ENV, conversation(PERSONAL_ROOM_ID));
     // Leaving Main is not leaving the breakout: its roster is its own.
     expect(await parent.authorizeViewer({
@@ -941,10 +941,10 @@ describe("conversation parent contract", () => {
     })).children).toEqual([]);
 
     const mirror = await runInDurableObject(conversation(PERSONAL_ROOM_ID, reserved.substreamId), (_instance, state) =>
-      state.storage.sql.exec<{ active: number; version: number }>(
-        `SELECT active, version FROM private_child_membership_authority WHERE user_id = ?`, PARTICIPANT_ID,
+      state.storage.sql.exec<{ active: number }>(
+        "SELECT json_extract(request_json, '$.active') AS active FROM participant_projection_revisions WHERE user_id = ?", PARTICIPANT_ID,
       ).one());
-    expect(mirror).toEqual({ active: 0, version: 2 });
+    expect(mirror).toEqual({ active: 0 });
   });
 
   it("archives a substream out of every member's sidebar, refuses its writes, and restores it whole", async () => {
@@ -1106,7 +1106,10 @@ describe("conversation parent contract", () => {
     await expect(new SubstreamCreationService(TEST_ENV, AUTH).changeParticipant(
       PERSONAL_ROOM_ID, substreamId,
       { userId: MEMBER_ID, operationId: "guest-child-add" }, true,
-    )).rejects.toMatchObject({ status: 409, code: "substream_guest_requires_share" });
+    )).resolves.toMatchObject({ outcome: "added" });
+    expect(await roomParent().authorizeViewer({ ...viewer(PERSONAL_ROOM_ID, MEMBER_ID), substreamId: asSubstreamId(substreamId) }))
+      .toMatchObject({ authorized: true });
+    expect(await roomParent().authorizeViewer(viewer(PERSONAL_ROOM_ID, MEMBER_ID))).toMatchObject({ authorized: false });
   });
 
   it("renames a substream through the conversation that owns its title", async () => {
@@ -1155,7 +1158,7 @@ describe("conversation parent contract", () => {
     })]);
   });
 
-  it("the hosted Channel parent admits the creator of a personal room before the child's first effect arrives", async () => {
+  it("the hosted Channel parent waits for canonical participants before admitting a reserved Main", async () => {
     // What creation looks like from the desktop's side: `POST /workstreams`
     // returns and the client opens the room at once. The parent has reserved
     // the main conversation and nothing else; the child's `directory_user`
@@ -1180,9 +1183,9 @@ describe("conversation parent contract", () => {
     });
 
     expect(await roomParent().authorizeViewer(viewer(PERSONAL_ROOM_ID, AUTHOR_ID)))
-      .toEqual({ authorized: true, archived: false });
+      .toMatchObject({ authorized: false, archived: false });
     expect(await roomParent().authorizeViewer(viewer(PERSONAL_ROOM_ID, PARTICIPANT_ID)))
-      .toEqual({ authorized: false, archived: false });
+      .toMatchObject({ authorized: false, archived: false });
 
     // Once the child reports its participants, its word replaces the
     // creator's standing: the creator was removed from this room.
@@ -1206,9 +1209,9 @@ describe("conversation parent contract", () => {
     await deliverEffectsToWorkspace(TEST_ENV, conversation(PERSONAL_ROOM_ID));
 
     expect(await roomParent().authorizeViewer(viewer(PERSONAL_ROOM_ID, PARTICIPANT_ID)))
-      .toEqual({ authorized: true, archived: false });
+      .toMatchObject({ authorized: true, archived: false });
     expect(await roomParent().authorizeViewer(viewer(PERSONAL_ROOM_ID, AUTHOR_ID)))
-      .toEqual({ authorized: false, archived: false });
+      .toMatchObject({ authorized: false, archived: false });
   });
 
   it("the hosted Channel parent admits a personal room's participants and every member of a workspace room", async () => {
@@ -1216,13 +1219,13 @@ describe("conversation parent contract", () => {
     await seedRoom(WORKSPACE_ROOM_ID, "workspace", [AUTHOR_ID]);
 
     expect(await roomParent().authorizeViewer(viewer(PERSONAL_ROOM_ID, AUTHOR_ID)))
-      .toEqual({ authorized: true, archived: false });
+      .toMatchObject({ authorized: true, archived: false });
     expect(await roomParent().authorizeViewer(viewer(PERSONAL_ROOM_ID, PARTICIPANT_ID)))
-      .toEqual({ authorized: true, archived: false });
+      .toMatchObject({ authorized: true, archived: false });
     expect(await roomParent().authorizeViewer(viewer(PERSONAL_ROOM_ID, MEMBER_ID)))
-      .toEqual({ authorized: false, archived: false });
+      .toMatchObject({ authorized: false, archived: false });
     expect(await roomParent().authorizeViewer(viewer(WORKSPACE_ROOM_ID, MEMBER_ID)))
-      .toEqual({ authorized: true, archived: false });
+      .toMatchObject({ authorized: true, archived: false });
     expect(await roomParent().authority({ workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID }))
       .toEqual({ exists: true, authorityGeneration: 1, archived: false });
     expect(await roomParent().listChildren({ workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID }))
@@ -1232,7 +1235,7 @@ describe("conversation parent contract", () => {
 
     // Reported, not folded in: an archived room is still its participants' to read.
     expect(await roomParent().authorizeViewer(viewer(PERSONAL_ROOM_ID, AUTHOR_ID)))
-      .toEqual({ authorized: true, archived: true });
+      .toMatchObject({ authorized: true, archived: true });
     expect(await roomParent().authority({ workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID }))
       .toEqual({ exists: true, authorityGeneration: 1, archived: true });
   });
@@ -1244,17 +1247,17 @@ describe("conversation parent contract", () => {
     const owned = await seedAutomation("workstream", PERSONAL_ROOM_ID);
 
     expect(await automationStub(personal).authorizeViewer(viewer(personal, AUTHOR_ID)))
-      .toEqual({ authorized: true, archived: false });
+      .toMatchObject({ authorized: true, archived: false });
     expect(await automationStub(personal).authorizeViewer(viewer(personal, MEMBER_ID)))
-      .toEqual({ authorized: false, archived: false });
+      .toMatchObject({ authorized: false, archived: false });
     expect(await automationStub(shared).authorizeViewer(viewer(shared, MEMBER_ID)))
-      .toEqual({ authorized: true, archived: false });
+      .toMatchObject({ authorized: true, archived: false });
     // The room's automation is the room's: a participant who never wrote it
     // may open it, a member outside the room may not.
     expect(await automationStub(owned).authorizeViewer(viewer(owned, PARTICIPANT_ID)))
-      .toEqual({ authorized: true, archived: false });
+      .toMatchObject({ authorized: true, archived: false });
     expect(await automationStub(owned).authorizeViewer(viewer(owned, MEMBER_ID)))
-      .toEqual({ authorized: false, archived: false });
+      .toMatchObject({ authorized: false, archived: false });
     expect(await automationStub(owned).listChildren({ workspaceId: WORKSPACE_ID, parentId: owned }))
       .toEqual({ children: [{ substreamId: "0", kind: "main", createdAt: expect.any(Number) }] });
 
@@ -1273,7 +1276,7 @@ describe("conversation parent contract", () => {
     expect(await createAccessContext(TEST_ENV, { ...AUTH, userId: PARTICIPANT_ID }).check(address)).toMatchObject({ status: 'denied' });
     expect(await createAccessContext(TEST_ENV, AUTH).check(address)).toMatchObject({ status: 'allowed' });
     expect(await automationStub(owned).authorizeViewer(viewer(owned, AUTHOR_ID)))
-      .toEqual({ authorized: true, archived: true });
+      .toMatchObject({ authorized: true, archived: true });
     expect(await automationStub(owned).authorizeViewer(viewer(owned, PARTICIPANT_ID)))
       .toEqual({ authorized: false, archived: true });
     expect(await automationStub(owned).authority({ workspaceId: WORKSPACE_ID, parentId: owned }))

@@ -1,5 +1,6 @@
 import { asWorkspaceId } from "@rally/contracts";
 import type { DatabaseSync } from "node:sqlite";
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthContext, Env } from "../src/env";
@@ -434,6 +435,8 @@ async function seededWorkspaceObject(database: DatabaseSync): Promise<{
 
 async function seededDatabase(): Promise<DatabaseSync> {
   const database = preRetirementProductSqliteDatabase();
+  database.exec("ALTER TABLE workspaces ADD COLUMN abandoned_at TEXT");
+  database.exec(readFileSync(new URL("../../../packages/db/migrations/0109_workspace_guest_relationships.sql", import.meta.url), "utf8"));
   databases.push(database);
   const encrypted = await encryptString(
     JSON.stringify({ botAccessToken: "xoxb-test" }),
