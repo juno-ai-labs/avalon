@@ -1,13 +1,19 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { describe, expect, it, vi } from 'vitest';
 import type { EmbeddedBrowserCommand, EmbeddedBrowserHostRequest, EmbeddedBrowserState, EmbeddedBrowserTab } from '../../common/embedded-browser';
 import { useRef } from 'react';
-import { EmbeddedBrowserTabs, useEmbeddedBrowserShortcuts } from './embedded-browser-view';
+import { EmbeddedBrowserTabs, useEmbeddedBrowserShortcuts, useEmbeddedBrowserPlacement } from './embedded-browser-view';
+
+const placement = vi.hoisted(() => ({
+  setEmbeddedBrowserBounds: vi.fn(async () => undefined),
+  setEmbeddedBrowserVisible: vi.fn(async () => undefined),
+}));
 
 const hostRequests = vi.hoisted(() => new Set<(request: EmbeddedBrowserHostRequest) => void>());
 vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({
+    ...placement,
     onEmbeddedBrowserHostRequest: (listener: (request: EmbeddedBrowserHostRequest) => void) => {
       hostRequests.add(listener);
       return () => hostRequests.delete(listener);
@@ -114,5 +120,60 @@ describe('the browser tab strip', () => {
     fireEvent.dragOver(gamma!, { clientX: 290 });
     fireEvent.drop(gamma!);
     expect(command).toHaveBeenLastCalledWith({ action: 'move', tabId: 'a', index: 2 });
+  });
+});
+
+// jsdom cannot composite a native page. These tests cover the placement
+// commands; native layering is also checked in a real Electron window.
+describe('browser placement around app menus', () => {
+  function Host({ menu = false, modal = false, overlaps = false, closed = false }: {
+    menu?: boolean; modal?: boolean; overlaps?: boolean; closed?: boolean;
+  }): React.JSX.Element {
+    const pageRef = useRef<HTMLDivElement>(null);
+    useEmbeddedBrowserPlacement(pageRef, true);
+    return <>
+      <div data-testid="browser-page" ref={pageRef} />
+      {menu && <div data-radix-popper-content-wrapper="" style={{ left: overlaps ? 700 : 100 }}>
+        <div data-state={closed ? 'closed' : 'open'} role="menu">Thread actions</div>
+      </div>}
+      {modal && <div role="dialog">Settings</div>}
+    </>;
+  }
+
+  function measure(): void {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.dataset['testid'] === 'browser-page') return new DOMRect(600, 100, 400, 600);
+      if (this.hasAttribute('data-radix-popper-content-wrapper')) return new DOMRect(Number.parseInt(this.style.left, 10), 100, 200, 300);
+      return new DOMRect();
+    });
+    placement.setEmbeddedBrowserVisible.mockClear();
+  }
+
+  it('keeps the page visible while a menu stays in the left pane', async () => {
+    measure();
+    const { rerender } = render(<Host />);
+    rerender(<Host menu />);
+    await waitFor(() => expect(placement.setEmbeddedBrowserVisible).toHaveBeenLastCalledWith(true), { timeout: 5_000 });
+    expect(placement.setEmbeddedBrowserVisible).not.toHaveBeenCalledWith(false);
+  });
+
+  it('hides only while a menu overlaps the page, including when its positioned wrapper moves', async () => {
+    measure();
+    const { rerender } = render(<Host menu overlaps />);
+    expect(placement.setEmbeddedBrowserVisible).toHaveBeenLastCalledWith(false);
+    rerender(<Host menu />);
+    await waitFor(() => expect(placement.setEmbeddedBrowserVisible).toHaveBeenLastCalledWith(true), { timeout: 5_000 });
+    rerender(<Host menu overlaps />);
+    await waitFor(() => expect(placement.setEmbeddedBrowserVisible).toHaveBeenLastCalledWith(false), { timeout: 5_000 });
+    rerender(<Host menu overlaps closed />);
+    await waitFor(() => expect(placement.setEmbeddedBrowserVisible).toHaveBeenLastCalledWith(true), { timeout: 5_000 });
+  });
+
+  it('still hides for a modal dialog and restores on dismissal', async () => {
+    measure();
+    const { rerender } = render(<Host modal />);
+    expect(placement.setEmbeddedBrowserVisible).toHaveBeenLastCalledWith(false);
+    rerender(<Host />);
+    await waitFor(() => expect(placement.setEmbeddedBrowserVisible).toHaveBeenLastCalledWith(true), { timeout: 5_000 });
   });
 });
