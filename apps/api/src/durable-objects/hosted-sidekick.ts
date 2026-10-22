@@ -110,7 +110,7 @@ import {
   type SidekickSkillReadRequest,
 } from "./automation-do-protocol";
 import { ReceiveChildEffectsRequestSchema, type DirectoryCommonEffect, type ReceiveChildEffectsRequest } from "./conversation-parent-object";
-import { owningThreads } from "./channel-rails";
+import { owningThreads, parsedAppearance } from "./channel-rails";
 import { sidekickAudienceAllows } from "./sidekick-audience";
 import { SCHEDULED_ALARM_RETRY_BASE_MS, scheduledAlarmRetryDelay, type ScheduledAlarm, type ScheduledAlarmOutcome, type ScheduledAlarmStore } from "./scheduled-alarms";
 
@@ -505,8 +505,12 @@ export class HostedSidekick {
             "SELECT appearance_json FROM breakouts WHERE workstream_id = ? AND substream_id = ?",
             request.owningWorkstreamId, request.owningSubstreamId,
           ).toArray()[0];
-        const appearance = home?.appearance_json
-          ? WorkstreamAppearanceSchema.parse(JSON.parse(home.appearance_json)) : null;
+        const appearance = parsedAppearance(home?.appearance_json ?? null, "sidekick_home_appearance", (code) => {
+          logWarn(this.env, "sidekick_home_appearance_invalid", {
+            workspace_id: request.workspaceId, automation_id: request.automationId,
+            workstream_id: request.owningWorkstreamId, substream_id: request.owningSubstreamId, code,
+          });
+        });
         const color = appearance?.color
           ?? generatedWorkstreamAppearance(main ? request.owningWorkstreamId : request.owningSubstreamId).color;
         appearanceJson = JSON.stringify({ icon: null, color });
