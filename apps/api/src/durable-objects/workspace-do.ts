@@ -927,6 +927,7 @@ import {
   HostedParticipantProjectionAlarmSchema,
   PARTICIPANT_MIGRATION_ALARM,
   PARTICIPANT_PROJECTION_ALARM,
+  CURRENT_MEMBER_GRANT_SQL,
 } from "./scope-grant-storage";
 import { SCOPE_INVITATION_DELIVERY_ALARM, SCOPE_INVITATION_INDEX_ALARM } from "./scope-invitation-storage";
 import {
@@ -4772,7 +4773,13 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
           AND (EXISTS (SELECT 1 FROM parent_child_projections source
                         WHERE source.parent_id = child.parent_id AND source.substream_id = child.substream_id)
             OR EXISTS (SELECT 1 FROM parent_breakout_members member
-                        WHERE member.parent_id = child.parent_id AND member.substream_id = child.substream_id))`,
+                        WHERE member.parent_id = child.parent_id AND member.substream_id = child.substream_id))
+       UNION
+       SELECT 'parent_participant_migration', source.parent_id || ':0', 0, 0, 0
+         FROM parent_child_projections source JOIN parent_metadata parent ON parent.parent_id = source.parent_id
+        WHERE source.substream_id = '0' AND parent.parent_kind = 'workstream'
+          AND NOT EXISTS (SELECT 1 FROM parent_children child WHERE child.parent_id = source.parent_id AND child.substream_id = '0')
+          AND NOT EXISTS (SELECT 1 FROM parent_participant_migrations migration WHERE migration.parent_id = source.parent_id AND migration.substream_id = '0')`,
   ],
 }];
 
@@ -6520,7 +6527,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         if (deleted) this.externalBindings().suspendDeletedSidekick(automationId, new Date(now).toISOString());
         this.sidekickDirectoryMoved = true;
       },
-      isChannelParticipant: (workstreamId, userId) => this.isWorkstreamParticipant(workstreamId, userId),
+      isChannelParticipant: async (workstreamId, userId) => {
+        await this.readRelationship(this.workspaceId()!, userId);
+        return this.isWorkstreamParticipant(workstreamId, userId);
+      },
       // A Sidekick's home is a Channel or one of its Breakouts, never another
       // Sidekick, so this asks the hosted Channel parent directly.
       channelViewer: async (input) => (await this.hostedParent(input.parentId, input.workspaceId)).authorizeViewer({
@@ -6900,6 +6910,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.parentWrite(async () => (await this.channelParent(input.parentId, input.workspaceId)).admitConnectorParticipants(input));
   }
 
+  async removeThreadParticipant(input: Parameters<HostedParent["removeThreadParticipant"]>[0]) {
+    return this.parentWrite(async () => (await this.channelParent(input.target.parentId, input.target.workspaceId)).removeThreadParticipant(input));
+  }
+
   async admitParticipants(input: Parameters<HostedParent["admitParticipants"]>[0]) {
     return this.parentWrite(async () => (await this.channelParent(input.target.parentId, input.target.workspaceId)).admitParticipants(input));
   }
@@ -6960,6 +6974,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   ) {
     await this.initialized;
     await this.ensureParentWorkspace(input.workspaceId);
+    // The synchronous listing joins current-incarnation grants to this learned relationship.
+    await this.readRelationship(input.workspaceId, input.userId);
     const children = visiblePrivateChildren(this.state.storage.sql, input.userId, input.parentIds);
     return { parents: input.parentIds.map((parentId) => ({ parentId, children: children.get(parentId) ?? [] })) };
   }
@@ -9355,9 +9371,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
          JOIN workspace_member_status relationship ON relationship.user_id = grant_row.user_id
         WHERE grant_row.parent_id = ? AND grant_row.user_id = ?
           AND (grant_row.scope_kind = 'workstream' OR (grant_row.scope_kind = 'conversation' AND grant_row.substream_id = '0'))
-          AND json_extract(grant_row.grant_json, '$.active') = 1
-          AND relationship.active = 1 AND json_extract(relationship.relationship_json, '$.status') = 'active'
-          AND json_extract(grant_row.grant_json, '$.membershipIncarnation') = json_extract(relationship.relationship_json, '$.incarnation')
+          AND ${CURRENT_MEMBER_GRANT_SQL}
           AND (? = 1 OR directory.archived_at IS NULL)`,
       workstreamId, userId, options.includeArchived ? 1 : 0,
     ).toArray().length > 0;
@@ -18610,10 +18624,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   private async activeWorkspaceMember(workspaceId: string, userId: string): Promise<boolean> {
-    return Boolean(await this.env.DB.prepare(
-      `SELECT 1 FROM workspace_members
-        WHERE workspace_id = ? AND user_id = ? AND status = 'active' LIMIT 1`,
-    ).bind(workspaceId, userId).first());
+    return (await this.readRelationship(workspaceId, userId))?.status === "active";
   }
 
   /**
@@ -18929,6 +18940,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         new Date().toISOString(),
         this.env.AVALON_REGION,
       ).first<WorkspaceAuthRoleRow>();
+    if (role) await this.readRelationship(identity.workspaceId, identity.userId);
     return role ? {
       sessionId: identity.sessionId,
       userId: identity.userId,

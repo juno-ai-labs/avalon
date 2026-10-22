@@ -133,7 +133,7 @@ export class ChannelAccessService {
   async removeDirectReader(workstreamId: string, userId: string): Promise<boolean> {
     await this.assertManages(workstreamId);
     const { channel } = await this.observation(workstreamId);
-    await this.client(workstreamId).removeParticipant(userId);
+    await this.client(workstreamId).removeParticipant(userId, { owningThread: true });
     return channel.readers.scope !== "workspace";
   }
 

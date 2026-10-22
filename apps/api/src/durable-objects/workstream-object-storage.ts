@@ -763,7 +763,7 @@ export class WorkstreamObjectStore {
    * The envelope names the parent by kind and id and this substream by id, so
    * the Queue consumer that carries it needs nothing but the message.
    */
-  enqueueEffectsInCurrentTransaction(commands: readonly RegionalEffectCommand[]): number {
+  enqueueEffectsInCurrentTransaction(commands: readonly RegionalEffectCommand[], receipts?: ConversationEffectEnvelope[]): number {
     const authority = first(this.storage.sql.exec<AuthorityRow>(
       `SELECT workstream_key, parent_workspace_key, parent_kind, region, authority_mode,
               authority_generation
@@ -787,6 +787,7 @@ export class WorkstreamObjectStore {
           : null;
       let sourceVersion: number;
       let messageId: string;
+      let duplicate = false;
       let requiredProjectionVersion: number | null = null;
       let payloadHash = conversationEffectHash(effect);
 
@@ -796,10 +797,10 @@ export class WorkstreamObjectStore {
              FROM projection_keys WHERE projection_key = ?`,
           projectionKey,
         ));
-        if (previous?.last_payload_hash === payloadHash) continue;
-        sourceVersion = previous?.next_version ?? 1;
-        messageId = messageIds[index]!;
-        this.storage.sql.exec(
+        duplicate = previous?.last_payload_hash === payloadHash;
+        sourceVersion = duplicate ? previous!.next_version - 1 : previous?.next_version ?? 1;
+        messageId = duplicate ? previous!.last_enqueued_message_id : messageIds[index]!;
+        if (!duplicate) this.storage.sql.exec(
           `INSERT INTO projection_keys
              (projection_key, next_version, last_payload_hash,
               last_enqueued_message_id, updated_at)
@@ -855,6 +856,10 @@ export class WorkstreamObjectStore {
         payloadHash,
         effect,
       });
+      // Return the exact committed projection receipt even after queue delivery
+      // deleted its outbox row. Its identity/version/hash are durable in projection_keys.
+      receipts?.push(envelope);
+      if (duplicate) continue;
       const inserted = this.storage.sql.exec<{ message_id: string }>(
         `INSERT OR IGNORE INTO durable_outbox
            (message_id, channel, destination_kind, destination_id, partition_key,
@@ -898,14 +903,15 @@ export class WorkstreamObjectStore {
     mutate: (sql: SqlStorage) => T,
     effects: readonly RegionalEffectCommand[]
       | ((sql: SqlStorage, result: T) => readonly RegionalEffectCommand[]),
-  ): Promise<{ result: T; enqueued: number }> {
+  ): Promise<{ result: T; enqueued: number; envelopes: ConversationEffectEnvelope[] }> {
     const committed = this.storage.transactionSync(() => {
       const result = mutate(this.storage.sql);
       const commands = typeof effects === "function"
         ? effects(this.storage.sql, result)
         : effects;
-      const enqueued = this.enqueueEffectsInCurrentTransaction(commands);
-      return { result, enqueued };
+      const envelopes: ConversationEffectEnvelope[] = [];
+      const enqueued = this.enqueueEffectsInCurrentTransaction(commands, envelopes);
+      return { result, enqueued, envelopes };
     });
     if (committed.enqueued > 0) await this.storage.setAlarm(Date.now());
     return committed;

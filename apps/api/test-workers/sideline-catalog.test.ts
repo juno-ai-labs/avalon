@@ -1,3 +1,4 @@
+import { seedParticipantGrants } from "./helpers/hosted-parent";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 /**
@@ -50,9 +51,10 @@ beforeEach(async () => {
     env.DB.prepare(`CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT, abandoned_at TEXT,
       region TEXT DEFAULT 'global', placement_affinity TEXT DEFAULT 'wnam')`),
     env.DB.prepare("INSERT INTO workspaces (id, name) VALUES (?, 'Rally Test')").bind(workspaceId),
-    env.DB.prepare("CREATE TABLE workspace_members (workspace_id TEXT, user_id TEXT, role TEXT, status TEXT)"),
+    env.DB.prepare(`CREATE TABLE workspace_members (workspace_id TEXT, user_id TEXT, role TEXT, status TEXT,
+      incarnation TEXT DEFAULT 'existing-member', revision INTEGER DEFAULT 1, access_class TEXT DEFAULT 'member')`),
     ...[operatorId, representedId].map((userId) => env.DB.prepare(
-      "INSERT INTO workspace_members VALUES (?, ?, 'member', 'active')",
+      "INSERT INTO workspace_members(workspace_id, user_id, role, status) VALUES (?, ?, 'member', 'active')",
     ).bind(workspaceId, userId)),
   ]);
   await organization().initializeWorkspace(workspaceId, "wnam");
@@ -74,6 +76,7 @@ beforeEach(async () => {
       }
     }
   });
+  for (const channel of channels) await seedParticipantGrants(env, workspaceId, channel.id, channel.members, channel.breakout);
   await organization().upsertImpersonationRelationships({
     workspaceId,
     relationships: [{ impersonatorUserId: operatorId, representedUserId: representedId, authorityBasis: "support:approved" }],

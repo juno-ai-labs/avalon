@@ -1,3 +1,4 @@
+import { admitConnectorAudience } from "../src/services/connector-workstream-audience";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 /**
@@ -35,6 +36,7 @@ import {
 import type { AuthContext, Env } from "../src/env";
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
+import type { WorkstreamObjectStore } from "../src/durable-objects/workstream-object-storage";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import { processWorkstreamNotificationIntent } from "../src/services/conversation-effect-service";
@@ -1765,10 +1767,17 @@ it.each(["workstream", "conversation"] as const)("converges an existing %s grant
   await expect(runInDurableObject(parent, (instance) => instance.ensureParticipantAuthority({
     workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, substreamId: asSubstreamId("0"),
   }))).rejects.toThrow("participant_projection_temporarily_unavailable");
+  // Isolate ticket-driven recovery from the alarm alternative while the
+  // destination is still refusing delivery.
+  await runInDurableObject(parent, async (_instance, state) => {
+    state.storage.sql.exec("DELETE FROM _internal_durable_alarms WHERE kind IN ('parent_participant_migration', 'parent_participant_projection')");
+    await state.storage.deleteAlarm();
+  });
   await runInDurableObject(stub, (_instance, state) => { state.storage.sql.exec("DROP TRIGGER refuse_initial_projection"); });
-  // A fresh product request must resume delivery, even though the source has
-  // committed its handoff and the parent already marked authority complete.
-  expect((await product(stub, { operation: "get", auth: AUTH })).status).toBe(200);
+  // Ticket authorization must finish outstanding projection delivery itself,
+  // without waiting for a product GET or a recovery alarm.
+  expect(await parent.authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID,
+    substreamId: asSubstreamId("0"), userId: CREATOR_ID })).toMatchObject({ authorized: true });
   await expect(new ConversationService(env, INVITEE_AUTH).socketTicket(WORKSTREAM_ID, "0"))
     .rejects.toMatchObject({ code: "conversation_not_found" });
   await runInDurableObject(stub, (_instance, state) => {
@@ -1784,6 +1793,142 @@ it.each(["workstream", "conversation"] as const)("converges an existing %s grant
   expect(await parent.admitConnectorParticipants(request)).toEqual({ status: "ready" });
   await expect(new ConversationService(env, INVITEE_AUTH).socketTicket(WORKSTREAM_ID, "0"))
     .rejects.toMatchObject({ code: "conversation_not_found" });
+});
+
+it("projects connector audience through grants and does not restore a revoked member on event replay", async () => {
+  const stub = agentStub();
+  await provisionWorkstream(stub);
+  const request = { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID,
+    eventId: "connector-admission-service", userIds: [INVITEE_ID, SECOND_INVITEE_ID], addedByUserId: CREATOR_ID };
+  await admitConnectorAudience(env, request);
+  await expectParticipantCanOpen(WORKSTREAM_ID, INVITEE_AUTH);
+  expect((await product(stub, { operation: "remove_participant", auth: AUTH, userId: INVITEE_ID })).status).toBe(200);
+  await admitConnectorAudience(env, request);
+  await expect(new ConversationService(env, INVITEE_AUTH).socketTicket(WORKSTREAM_ID, "0"))
+    .rejects.toMatchObject({ code: "conversation_not_found" });
+});
+
+it("arms durable recovery before attempting a fallible participant transfer", async () => {
+  const stub = agentStub();
+  await provisionWorkstream(stub);
+  await runInDurableObject(stub, (_instance, state) => {
+    state.storage.sql.exec("DELETE FROM participant_authority_transfer");
+    state.storage.sql.exec("DELETE FROM participant_projection_revisions");
+    state.storage.sql.exec(`CREATE TRIGGER refuse_transfer_prepare BEFORE INSERT ON participant_authority_transfer
+      BEGIN SELECT RAISE(ABORT, 'transfer_prepare_unavailable_test'); END`);
+  });
+  const result = await withHostedParent(parentStub(), WORKSTREAM_ID, async (hosted, state) => {
+    state.storage.sql.exec("DELETE FROM parent_participant_migrations WHERE parent_id = ?", WORKSTREAM_ID);
+    state.storage.sql.exec("DELETE FROM _internal_durable_alarms");
+    await state.storage.deleteAlarm();
+    const host = hosted["host"];
+    const arm = host.armNextAlarm;
+    let armed = false;
+    host.armNextAlarm = async () => { await arm(); armed = await state.storage.getAlarm() !== null; };
+    try {
+      await hosted.ensureParticipantAuthority({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, substreamId: asSubstreamId("0") });
+      throw new Error("expected_transfer_failure");
+    } catch (error) {
+      return { armed, error: error instanceof Error ? error.message : String(error) };
+    } finally { host.armNextAlarm = arm; }
+  });
+  expect(result).toMatchObject({ armed: true, error: expect.stringContaining("transfer_prepare_unavailable_test") });
+});
+
+it("converges scope receipts after outbox deletion and accepts an identical scope retry", async () => {
+  const stub = agentStub();
+  await provisionWorkstream(stub);
+  const result = await runInDurableObject(stub, async (instance, state) => {
+    const source = instance as unknown as { product: WorkstreamObjectProductService;
+      objectStore: WorkstreamObjectStore };
+    const commit = source.objectStore.commitWithRegionalEffects.bind(source.objectStore);
+    source.objectStore.commitWithRegionalEffects = async (...args) => {
+      const committed = await commit(...args);
+      // The durable sender owns deletion and may win this race before update resumes.
+      state.storage.sql.exec("DELETE FROM durable_outbox WHERE json_extract(payload_json, '$.effect.kind') = 'directory_common'");
+      return committed;
+    };
+    try {
+      const changed = await source.product.update(AUTH, { scope: "workspace" });
+      const repeated = await source.product.update(AUTH, { scope: "workspace" });
+      return { changed: changed.workstream.scope, repeated: repeated.workstream.scope,
+        repeatEvents: repeated.events, viewer: await parentStub().authorizeViewer({ workspaceId: WORKSPACE_ID,
+          parentId: WORKSTREAM_ID, substreamId: asSubstreamId("0"), userId: asUserId(INVITEE_ID) }) };
+    } finally { source.objectStore.commitWithRegionalEffects = commit; }
+  });
+  expect(result).toMatchObject({ changed: "workspace", repeated: "workspace", repeatEvents: [], viewer: { authorized: true } });
+});
+
+it("persists creation notifications and activity before a failed handoff and retains them on retry", async () => {
+  const stub = agentStub(CREATE_WITH_NOTIFY_ID);
+  await runInDurableObject(stub, (instance) => {
+    const source = instance as unknown as { product: WorkstreamObjectProductService };
+    source.product.ensureParticipantAuthority = async () => { throw new Error("handoff_unavailable_test"); };
+  });
+  const options = { workstreamId: CREATE_WITH_NOTIFY_ID, participantUserIds: [INVITEE_ID, SECOND_INVITEE_ID],
+    notifyParticipants: true, openingMessage: "Ask @Invitee to review", mentions: [
+      { type: "person" as const, userId: INVITEE_ID, connectorType: null, startOffset: 4, endOffset: 12 },
+    ] };
+  try {
+    await expect(openWorkstream(stub, options)).rejects.toThrow("handoff_unavailable_test");
+    const effects = await deliveredEffects(stub, CREATE_WITH_NOTIFY_ID);
+    expect(effects.filter(({ effect }) => effect.kind === "participant_notification")).toHaveLength(1);
+    expect(effects.filter(({ effect }) => effect.kind === "mention_notification")).toHaveLength(1);
+    expect(effects.filter(({ effect }) => effect.kind === "activity_event")).toHaveLength(1);
+  } finally {
+    await runInDurableObject(stub, (instance) => {
+      const source = instance as unknown as { product: WorkstreamObjectProductService };
+      delete (source.product as unknown as { ensureParticipantAuthority?: unknown }).ensureParticipantAuthority;
+    });
+  }
+  await openWorkstream(stub, options);
+  const effects = await deliveredEffects(stub, CREATE_WITH_NOTIFY_ID);
+  expect(effects.filter(({ effect }) => effect.kind === "participant_notification")).toHaveLength(1);
+  expect(effects.filter(({ effect }) => effect.kind === "mention_notification")).toHaveLength(1);
+});
+
+it("joins a public first-post author before granting their mentioned audience", async () => {
+  const stub = agentStub();
+  await provisionWorkstream(stub, WORKSTREAM_ID, { scope: "workspace" });
+  const sent = await product(stub, { operation: "create_message", auth: INVITEE_AUTH,
+    input: { text: "Ask @Second Invitee to review", clientMessageId: "first-post-mention",
+      mentions: [{ type: "person", userId: SECOND_INVITEE_ID, connectorType: null, startOffset: 4, endOffset: 19 }],
+      confirmedParticipantUserIds: [], attachmentIds: [], seed: { packVersion: "test", actionId: "first-post-mention", assistant: null } } });
+  expect(sent.status).toBe(200);
+  expect(sent.body.deliveryState).toBe("canonical");
+  expect(await runInDurableObject(stub, (_instance, state) => state.storage.sql.exec(
+    "SELECT user_id FROM participants WHERE status = 'active' ORDER BY user_id",
+  ).toArray())).toEqual([{ user_id: CREATOR_ID }, { user_id: INVITEE_ID }, { user_id: SECOND_INVITEE_ID }]);
+});
+
+it("removes owning-Thread grants without weakening conversation-only removal or the last-participant guard", async () => {
+  const stub = agentStub();
+  await openWorkstream(stub, { participantUserIds: [INVITEE_ID] });
+  const conversationOnly = await product(stub, { operation: "remove_participant", auth: AUTH, userId: INVITEE_ID });
+  expect(conversationOnly.status).toBe(409);
+  const removed = await product(stub, { operation: "remove_participant", auth: AUTH, userId: INVITEE_ID, owningThread: true });
+  expect(removed.status).toBe(200);
+  await expect(new ConversationService(env, INVITEE_AUTH).socketTicket(WORKSTREAM_ID, "0"))
+    .rejects.toMatchObject({ code: "conversation_not_found" });
+  const last = await product(stub, { operation: "remove_participant", auth: AUTH, userId: CREATOR_ID, owningThread: true });
+  expect(last.status).toBe(409);
+  await expectParticipantCanOpen(WORKSTREAM_ID, AUTH);
+});
+
+it("leaves a Thread atomically when the person has both owning and Main grants", async () => {
+  const stub = agentStub();
+  await openWorkstream(stub, { participantUserIds: [INVITEE_ID] });
+  const target = { kind: "conversation" as const, workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, substreamId: asSubstreamId("0") };
+  const granted = await parentStub().mutateParticipantGrant({ target, operationId: crypto.randomUUID(),
+    actorUserId: asUserId(CREATOR_ID), userId: asUserId(INVITEE_ID), active: true });
+  expect(granted.status).toBe("committed");
+  const removed = await product(stub, { operation: "remove_participant", auth: INVITEE_AUTH, userId: INVITEE_ID, owningThread: true });
+  expect(removed.status).toBe(200);
+  await expect(new ConversationService(env, INVITEE_AUTH).socketTicket(WORKSTREAM_ID, "0"))
+    .rejects.toMatchObject({ code: "conversation_not_found" });
+  expect(await runInDurableObject(parentStub(), (_instance, state) => state.storage.sql.exec(
+    "SELECT json_extract(grant_json, '$.active') AS active FROM parent_grants WHERE parent_id = ? AND user_id = ? ORDER BY scope_kind",
+    WORKSTREAM_ID, INVITEE_ID).toArray())).toEqual([{ active: 0 }, { active: 0 }]);
 });
 
 describe("posting subscribes the author to a conversation", () => {

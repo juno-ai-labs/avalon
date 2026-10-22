@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { encryptString } from "../src/lib/crypto";
 import {
-  admitConnectorAudience,
   connectorWorkstreamScope,
 } from "../src/services/connector-workstream-audience";
 import { SlackAgentService } from "../src/services/slack-agent-service";
@@ -12,12 +11,6 @@ import {
   createTestDurableObjectId,
   createTestEnv,
 } from "./helpers/cloudflare-test";
-import {
-  seedWorkstreamObjectRoot,
-  testSubstreamAgentsBinding,
-  testWorkstreamObjectStore,
-  workstreamObjectParticipantRows,
-} from "./helpers/durable-authority";
 import { legacyProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import {
   createTestWorkspaceDO,
@@ -152,68 +145,9 @@ describe("who may continue a Slack work stream", () => {
     expect(slack.methods).not.toContain("users.info");
   });
 
-  it("admits the audience through the work stream's object once the region is open", async () => {
-    // The defect this pins down: the audience upsert used to go straight to
-    // regional D1, where the post-cutover fence aborts it — so every linked
-    // member speaking in a connector conversation was refused. Post-open, the
-    // participant rows live in the work stream's Durable Object, and the only
-    // regional read left is the `users` profile join. The fences below are
-    // armed for real: any statement that leaks back to D1 fails the test.
-    const { database } = await seededDatabase();
-    // Walk the phase machine legitimately — transitions are trigger-enforced.
-    // This is deliberately the frozen pre-0090 compatibility fixture. Its
-    // historical import trigger creates the workspace cutover row that existed
-    // then, so the old phase machine must advance that row before it opens.
-    // Current migrated D1 has no such table (migration 0115).
-    const at = "2026-01-02T00:00:00.000Z";
-    database.exec(`
-      UPDATE workstream_authority_control SET phase = 'maintenance_draining', generation = 1, updated_at = '${at}' WHERE id = 1;
-      UPDATE workstream_authority_control SET phase = 'maintenance_importing', updated_at = '${at}' WHERE id = 1;
-      UPDATE workspace_product_authority_routes SET state = 'verified', updated_at = '${at}';
-      UPDATE workstream_authority_control SET phase = 'maintenance_verified', updated_at = '${at}' WHERE id = 1;
-      UPDATE workspace_product_authority_routes SET state = 'active', updated_at = '${at}';
-      UPDATE workstream_authority_control SET phase = 'durable_object_open', serving_contract_version = 1, updated_at = '${at}' WHERE id = 1;
-    `);
-    // The object's own storage — real schema, real statements — so the
-    // participant reads under test run the storage class rather than a stub of
-    // it, and the writes still travel the runtime SQL port into the same store.
-    const objectStore = testWorkstreamObjectStore();
-    databases.push(objectStore);
-    const workstreamId = "019fc4e0-0000-7000-8000-0000000000aa";
-    seedWorkstreamObjectRoot(objectStore, { workstreamId, workspaceId: WORKSPACE });
-    const roomEvents: Record<string, unknown>[] = [];
-    const env = createTestEnv({
-      DB: sqliteD1(database),
-      AVALON_REGION: "global",
-      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore, {
-        extra: {
-          publishEvent: vi.fn(async (input: { event: Record<string, unknown> }) => {
-            roomEvents.push(input.event);
-            return { status: 204, bodyJson: "null" };
-          }),
-        },
-      }),
-    });
+  // Canonical connector admission is exercised on real workerd in
+  // participant-notification.test.ts; it no longer writes a local legacy roster.
 
-    await admitConnectorAudience(env, {
-      workspaceId: WORKSPACE,
-      workstreamId,
-      eventId: "audience-event",
-      userIds: [TAYLOR],
-      addedByUserId: TAYLOR,
-    });
-
-    expect(workstreamObjectParticipantRows(objectStore, "user_id, participation_reason"))
-      .toEqual([{ user_id: TAYLOR, participation_reason: "explicit" }]);
-    // Nothing reached the fenced D1 copy — it aborts writes, it does not skip them.
-    expect(database.prepare(
-      "SELECT COUNT(*) AS count FROM workstream_participants",
-    ).get()).toEqual({ count: 0 });
-    expect(roomEvents).toMatchObject([{
-      type: "participant_added",
-      participant: { user: { id: TAYLOR }, participationReason: "explicit" },
-    }]);
-  });
 });
 
 function service(

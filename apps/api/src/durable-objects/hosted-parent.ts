@@ -144,6 +144,7 @@ import type { ScheduledAlarmStore } from "./scheduled-alarms";
 import {
   PARTICIPANT_MIGRATION_ALARM,
   ScopeGrantStorage,
+  CURRENT_MEMBER_GRANT_SQL,
   participantMigrationAlarmKey,
 } from "./scope-grant-storage";
 import { ScopeInvitationService, scopeInvitationOrigin } from "./scope-invitation-service";
@@ -246,30 +247,28 @@ export function visiblePrivateChildren(
     resolved: number; parent_id: string; substream_id: string; title: string; effect_json: string | null; user_effect_json: string | null;
     created_by_user_id: string; created_at: number; updated_at: number; origin_turn_id: string | null;
   }>(
-    `SELECT DISTINCT child.parent_id, child.substream_id, child.title, child.resolved, directory.effect_json,
+    `SELECT child.parent_id, child.substream_id, child.title, child.resolved, directory.effect_json,
             viewer.effect_json AS user_effect_json,
             child.created_by_user_id, child.created_at, child.updated_at,
             json_extract(preparation.request_json, '$.sourceThroughTurnId') AS origin_turn_id
        FROM parent_children child
-       JOIN parent_grants member ON member.parent_id = child.parent_id
-        AND (member.scope_kind = 'conversation' AND member.substream_id = child.substream_id
-          OR member.scope_kind = 'workstream' AND child.audience = 'inherits_workstream')
-       JOIN workspace_member_status relationship ON relationship.user_id = member.user_id
-        AND relationship.active = 1
-        AND json_extract(relationship.relationship_json, '$.status') = 'active'
-        AND json_extract(relationship.relationship_json, '$.incarnation') = json_extract(member.grant_json, '$.membershipIncarnation')
        LEFT JOIN parent_breakout_preparations preparation
          ON preparation.parent_id = child.parent_id AND preparation.substream_id = child.substream_id
        LEFT JOIN parent_child_projections directory
          ON directory.parent_id = child.parent_id AND directory.substream_id = child.substream_id
        LEFT JOIN parent_child_viewer_projections viewer
          ON viewer.parent_id = child.parent_id AND viewer.substream_id = child.substream_id
-        AND viewer.user_id = member.user_id
-      WHERE child.parent_id IN (SELECT value FROM json_each(?))
+        AND viewer.user_id = ?1
+      WHERE child.parent_id IN (SELECT value FROM json_each(?2))
         AND child.kind = 'child' AND child.status = 'ready' AND child.archived_at IS NULL
-        AND member.user_id = ? AND json_extract(member.grant_json, '$.active') = 1
+        AND EXISTS (SELECT 1 FROM parent_grants grant_row
+          JOIN workspace_member_status relationship ON relationship.user_id = grant_row.user_id
+          WHERE grant_row.parent_id = child.parent_id AND grant_row.user_id = ?1
+            AND (grant_row.scope_kind = 'conversation' AND grant_row.substream_id = child.substream_id
+              OR grant_row.scope_kind = 'workstream' AND child.audience = 'inherits_workstream')
+            AND ${CURRENT_MEMBER_GRANT_SQL})
       ORDER BY child.parent_id, child.created_at, child.substream_id`,
-    JSON.stringify(parentIds), userId,
+    userId, JSON.stringify(parentIds),
   ).toArray();
   for (const child of rows) {
     const list = result.get(child.parent_id) ?? [];
@@ -293,7 +292,8 @@ export function visiblePrivateChildren(
           return { unreadCount: viewer.unreadCount, youAreMentioned: viewer.youAreMentioned, unseen: viewer.unseen ?? false };
         })()
         : {}),
-      createdByUserId: UserIdSchema.parse(child.created_by_user_id),
+      createdByUserId: parseRpcInput(z.strictObject({ createdByUserId: UserIdSchema }),
+        { createdByUserId: child.created_by_user_id }, "breakout_listing").createdByUserId,
       createdAt: child.created_at,
       updatedAt: child.updated_at,
       originTurnId: child.origin_turn_id,
@@ -1586,7 +1586,7 @@ export class HostedParent {
     const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema,
       userId: UserIdSchema }), input, "workstream_management_access");
     this.assertParent(request.workspaceId, request.parentId);
-    await this.importHistoricalParticipants({ workspaceId: request.workspaceId, parentId: request.parentId, substreamId: asSubstreamId("0") });
+    if (this.role.kind === "workstream") await this.importHistoricalParticipants({ workspaceId: request.workspaceId, parentId: request.parentId, substreamId: asSubstreamId("0") });
     const relationship = await this.host.readRelationship(request.workspaceId, request.userId);
     return this.managementAccess(request, relationship);
   }
@@ -1596,6 +1596,10 @@ export class HostedParent {
     request: { workspaceId: WorkspaceId; parentId: string; userId: UserId },
     relationship: WorkspaceRelationship | null,
   ): ScopeAccessResult {
+    if (this.role.kind === "space" && relationship?.status === "active" && relationship.accessClass === "member"
+      && this.metadataRow()?.created_by_user_id === request.userId) {
+      return { allowed: true, writable: this.metadataRow()?.archived_at === null, grantIds: [], workspaceMemberAccess: false };
+    }
     const target = { kind: "workstream" as const, workspaceId: request.workspaceId, parentId: request.parentId };
     return this.resolveScopeAccess({ userId: request.userId, target }, relationship);
   }
@@ -1659,7 +1663,12 @@ export class HostedParent {
 
   /** Historical roster rows are consumed once; ordinary decisions read grants. */
   private async importHistoricalParticipants(address: ConversationParentAuthorityRequest & { substreamId: SubstreamId }): Promise<void> {
-    if (this.participantMigrationPhase(address.substreamId) !== null) return;
+    const phase = this.participantMigrationPhase(address.substreamId);
+    if (phase === "complete") {
+      await this.ensureParticipantAuthority(address);
+      return;
+    }
+    if (phase !== null) return;
     const target: ScopeGrantTarget = address.substreamId === "0"
       ? { kind: "workstream", workspaceId: address.workspaceId, parentId: address.parentId }
       : { kind: "conversation", ...address };
@@ -1709,6 +1718,7 @@ export class HostedParent {
       this.host.alarms.schedule({ kind: PARTICIPANT_MIGRATION_ALARM,
         key: participantMigrationAlarmKey(this.parentId, request.substreamId), dueAt: Date.now() });
     }
+    await this.host.armNextAlarm();
     await this.runParticipantMigration(request.substreamId);
     return "ready";
   }
@@ -1804,7 +1814,9 @@ export class HostedParent {
       parentVisibility: metadata.scope,
       conversation: conversation
         ? { status: conversation.status, archived: conversation.archived_at !== null, audience: conversation.audience }
-        : null,
+        : request.target.kind === "conversation" && request.target.substreamId === "0"
+          ? { status: "ready", archived: metadata.archived_at !== null, audience: "inherits_workstream" }
+          : null,
       grants,
     });
   }
@@ -1854,7 +1866,9 @@ export class HostedParent {
         WHERE parent_id = ? AND substream_id = ? AND acknowledged_revision IS NOT revision`,
       this.parentId, substreamId,
     ).toArray();
+    if (pending.length) await this.host.armNextAlarm();
     await this.deliverParticipantProjections(substreamId, pending.map((row) => ({ userId: row.user_id })));
+    this.host.alarms.cancel(PARTICIPANT_MIGRATION_ALARM, participantMigrationAlarmKey(this.parentId, substreamId));
   }
 
   private async runMainParticipantMigration(): Promise<void> {
@@ -2243,23 +2257,84 @@ export class HostedParent {
     return this.authorizedGrantMutation({ ...request, expectedRevision: 0 }, true);
   }
 
+  /** Thread-level Remove/Leave retracts both direct scopes that can seat Main. */
+  async removeThreadParticipant(input: ParticipantGrantMutation): Promise<ScopeGrantMutationResult | { status: "ready" }> {
+    const request = parseRpcInput(ParticipantGrantMutationSchema, input, "thread_participant_removal");
+    if (request.active || request.target.kind !== "conversation" || request.target.substreamId !== "0") {
+      throw new Error("thread_participant_removal_target_invalid");
+    }
+    const [actor, recipient, incarnations] = await Promise.all([
+      this.host.readRelationship(request.target.workspaceId, request.actorUserId),
+      this.host.readRelationship(request.target.workspaceId, request.userId),
+      this.membershipIncarnations(request.target.workspaceId),
+    ]);
+    const targets: ScopeGrantTarget[] = [
+      { kind: "workstream", workspaceId: request.target.workspaceId, parentId: request.target.parentId }, request.target,
+    ];
+    const mutations = await Promise.all(targets.map(async (target) => ({ ...request, target,
+      operationId: await stableUuid(["thread-participant-removal", request.operationId, target]) })));
+    const store = this.scopeGrants(request.target);
+    // Authorize the owning operation once, before retracting either scope.
+    // Rechecking after the first write would reject a participant leaving
+    // their own Thread, and checking each scope alone miscounts Main's audience.
+    const result = this.tx(() => {
+      if (this.sql.exec("SELECT 1 FROM parent_participant_migrations WHERE parent_id = ? AND phase = 'pending' LIMIT 1",
+        this.parentId).toArray().length) return { status: "denied" as const, reason: "migration_pending" as const };
+      const admission = this.resolveScopeAccess({ target: request.target, userId: request.actorUserId }, actor);
+      if (!admission.allowed || !admission.writable || !admission.grantIds.length) {
+        return { status: "denied" as const, reason: "sharing_required" as const };
+      }
+      const removing = mutations.filter((mutation) => store.read(request.userId, mutation.target)?.active
+        || store.hasOperation(mutation.operationId));
+      const otherParticipant = targets.some((target) => store.forTarget(target).some((grant) =>
+        grant.userId !== request.userId && grant.active && grant.membershipIncarnation === incarnations[grant.userId]));
+      if (removing.some((mutation) => !store.hasOperation(mutation.operationId)) && !otherParticipant) {
+        return { status: "denied" as const, reason: "participant_required" as const };
+      }
+      for (const mutation of removing) store.mutateCurrent(mutation, recipient?.incarnation ?? null);
+      return { status: "ready" as const };
+    });
+    if (result.status !== "ready") return result;
+    const conversations = this.sql.exec<{ substream_id: string }>(
+      "SELECT substream_id FROM parent_participant_targets WHERE parent_id = ?", this.parentId,
+    ).toArray();
+    await Promise.all(conversations.map(({ substream_id }) => this.deliverParticipantProjection(substream_id, request.userId)));
+    return { status: "ready" };
+  }
+
   async admitParticipants(input: z.infer<typeof ParticipantAdmissionBatchSchema>): Promise<{ status: "ready" | "denied" }> {
     const request = parseRpcInput(ParticipantAdmissionBatchSchema, input, "participant_admission");
+    const denied = await this.prepareSharingTargets({ ...request.target, actorUserId: request.actorUserId, targets: [request.target] });
+    if (denied) return { status: "denied" };
+    const people = [...new Set([request.actorUserId, ...request.participants.map(({ userId }) => userId)])];
+    const relationships = new Map(await Promise.all(people.map(async (userId) =>
+      [userId, await this.host.readRelationship(request.target.workspaceId, userId)] as const)));
+    const actor = relationships.get(request.actorUserId) ?? null;
     const others = request.participants.filter((person) => person.userId !== request.actorUserId);
     const self = request.participants.filter((person) => person.userId === request.actorUserId);
-    let ready = true;
-    for (const person of [...others, ...self]) {
-      const mutation = { ...person, target: request.target, actorUserId: request.actorUserId, active: true,
-        ...(request.participationReason ? { participationReason: request.participationReason } : {}) };
-      const result = person.userId === request.actorUserId
-        ? await this.commitConversationJoin(mutation) : await this.commitParticipantGrant(mutation);
-      if (result.status !== "ready" && result.status !== "committed") { ready = false; break; }
+    const refused = Symbol("participant_batch_refused");
+    try {
+      this.tx(() => {
+        // Commit the whole audience before yielding: an alarm must never
+        // observe and deliver half of this foreground admission batch.
+        for (const person of request.participationReason === "message" ? [...self, ...others] : [...others, ...self]) {
+          const mutation = { ...person, target: request.target, actorUserId: request.actorUserId, active: true,
+            ...(request.participationReason ? { participationReason: request.participationReason } : {}) };
+          const relationship = relationships.get(person.userId) ?? null;
+          const result = person.userId === request.actorUserId
+            ? this.applyConversationJoin(mutation, relationship)
+            : this.applyAuthorizedGrantMutation({ ...mutation, expectedRevision: 0 }, true, actor, relationship, null);
+          if (result.status !== "ready" && result.status !== "committed") throw refused;
+        }
+      });
+    } catch (error) {
+      if (error === refused) return { status: "denied" };
+      throw error;
     }
-    // Receipts and delivery intents remain per person, including after partial
-    // admission or a lost batch response. Recovery always projects the newest revision.
+    // Receipts/acks stay per person; response loss replays current projections.
     await this.deliverParticipantProjections(request.target.substreamId, request.participants);
     const store = this.scopeGrants(request.target);
-    return { status: ready && request.participants.every(({ userId }) =>
+    return { status: request.participants.every(({ userId }) =>
       store.participantProjection(request.target.substreamId, userId)?.active) ? "ready" : "denied" };
   }
 
@@ -2326,10 +2401,13 @@ export class HostedParent {
   }
 
   private async commitConversationJoin(request: ParticipantGrantMutation): Promise<{ status: "ready" | "denied" }> {
+    return this.applyConversationJoin(request, await this.host.readRelationship(request.target.workspaceId, request.userId));
+  }
+
+  private applyConversationJoin(request: ParticipantGrantMutation, relationship: WorkspaceRelationship | null): { status: "ready" | "denied" } {
     if (!request.active || request.userId !== request.actorUserId || request.target.kind !== "conversation") {
       return { status: "denied" };
     }
-    const relationship = await this.host.readRelationship(request.target.workspaceId, request.userId);
     const access = this.migratedConversationAccess({ ...request.target, userId: request.userId },
       request.target.substreamId, relationship);
     if (!access.allowed || !access.writable || relationship?.status !== "active") return { status: "denied" };
@@ -2348,6 +2426,12 @@ export class HostedParent {
       this.host.readRelationship(request.target.workspaceId, request.userId),
       !request.active ? this.membershipIncarnations(request.target.workspaceId) : Promise.resolve(null),
     ]);
+    return this.applyAuthorizedGrantMutation(request, useCurrentRevision, actor, recipient, activeIncarnations);
+  }
+
+  private applyAuthorizedGrantMutation(request: ScopeGrantMutation, useCurrentRevision: boolean,
+    actor: WorkspaceRelationship | null, recipient: WorkspaceRelationship | null,
+    activeIncarnations: Record<string, string> | null): ScopeGrantMutationResult {
     if (this.sql.exec("SELECT 1 FROM parent_participant_migrations WHERE parent_id = ? AND phase = 'pending' LIMIT 1",
       this.parentId).toArray().length) {
       return { status: "denied", reason: "migration_pending" };
@@ -2866,6 +2950,9 @@ export class HostedParent {
   }
 
   private advancePrivateChildrenVersion(userId: string, now: number): void {
+    // Unknown membership cannot produce a durable empty-list receipt. Learn
+    // it on the read boundary before comparing that person's derived list.
+    if (!this.sql.exec("SELECT 1 FROM workspace_member_status WHERE user_id = ?", userId).toArray().length) return;
     if (this.advanceLocalStateVersion(`children:${userId}`, this.visiblePrivateChildrenForUser(userId), now)) {
       this.childrenMovedFor.add(userId);
     }
@@ -2873,7 +2960,14 @@ export class HostedParent {
 
   private advancePrivateChildrenVersionsFor(substreamId: string, now: number): void {
     for (const row of this.sql.exec<{ user_id: string }>(
-      `SELECT user_id FROM parent_participant_deliveries WHERE parent_id = ? AND substream_id = ?`,
+      `SELECT user_id FROM parent_participant_deliveries WHERE parent_id = ?1 AND substream_id = ?2
+       UNION SELECT grant_row.user_id FROM parent_grants grant_row
+         JOIN parent_children child ON child.parent_id = grant_row.parent_id AND child.substream_id = ?2
+         JOIN workspace_member_status relationship ON relationship.user_id = grant_row.user_id
+        WHERE grant_row.parent_id = ?1
+          AND (grant_row.scope_kind = 'conversation' AND grant_row.substream_id = ?2
+            OR grant_row.scope_kind = 'workstream' AND child.audience = 'inherits_workstream')
+          AND ${CURRENT_MEMBER_GRANT_SQL}`,
       this.parentId, substreamId,
     ).toArray()) {
       this.advancePrivateChildrenVersion(row.user_id, now);

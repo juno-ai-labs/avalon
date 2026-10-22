@@ -179,6 +179,7 @@ describe("Slack workspace workstream assignment", () => {
         },
       }), { status: 200, headers: { "content-type": "application/json" } });
     }));
+    const admitAudience = vi.fn(async () => ({ status: "ready" as const }));
     const env = createTestEnv({
       DB: sqliteD1(database),
       SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
@@ -186,6 +187,7 @@ describe("Slack workspace workstream assignment", () => {
         extra: {
           ...workspaceObjectRpcs(workspaceObject, SLACK_WORKSPACE_OBJECT_METHODS),
           ...spaceCreationWorkspaceRpcs(),
+          admitConnectorParticipants: admitAudience,
         },
       }),
       AVALON_REGION: "global",
@@ -212,9 +214,14 @@ describe("Slack workspace workstream assignment", () => {
       execution_scope: "workspace",
       linked_user_id: null,
     });
-    // Creator and participant state lives in the work stream's object.
-    expect(workstreamObjectParticipantRows(objectStore, "user_id, participation_reason"))
-      .toEqual([{ user_id: "a352221e-2577-4ad0-8889-5b24421f63fb", participation_reason: "creator" }]);
+    expect(admitAudience).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: "3f88f9ca-d7b3-4714-828e-b22187914524",
+      parentId: "7a000000-0000-4000-8000-000000000001",
+      userIds: ["a352221e-2577-4ad0-8889-5b24421f63fb"],
+    }));
+    // Attribution is local. Seating is delegated to canonical admission,
+    // whose grants/projections are covered by the real-workerd connector lane.
+    expect(workstreamObjectParticipantRows(objectStore, "user_id, participation_reason")).toEqual([]);
     expect(workstreamObjectRootRow(objectStore, "created_by_user_id")).toEqual({ created_by_user_id: "a352221e-2577-4ad0-8889-5b24421f63fb" });
   });
 
@@ -876,8 +883,7 @@ describe("Slack workspace workstream assignment", () => {
     expect(workstreamObjectRootRow(guessedStore, "created_by_user_id")).toEqual({ created_by_user_id: "a352221e-2577-4ad0-8889-5b24421f63fb" });
     expect(workstreamObjectParticipantRows(guessedStore, "user_id, participation_reason"))
       .toEqual([
-        { user_id: "user-jordan", participation_reason: "explicit" },
-        { user_id: "a352221e-2577-4ad0-8889-5b24421f63fb", participation_reason: "creator" },
+        { user_id: "user-jordan", participation_reason: "creator" },
       ]);
     // A creator recorded by anything other than that guess still stands.
     expect(workstreamObjectRootRow(elsewhereStore, "created_by_user_id")).toEqual({ created_by_user_id: "user-owner" });
@@ -948,7 +954,7 @@ describe("Slack connector principal delivery", () => {
           ...workspaceObjectRpcs(instance, SLACK_WORKSPACE_OBJECT_METHODS),
           ...spaceCreationWorkspaceRpcs(),
           ...parentCreationRpcs(),
-          admitConnectorParticipants: async () => ({ status: "legacy" }),
+          admitConnectorParticipants: async () => ({ status: "ready" }),
           hasActiveExternalEventRegistration: vi.fn(async () => false),
         },
       }),
@@ -1800,7 +1806,7 @@ describe("Slack public channel membership", () => {
           ...workspaceObjectRpcs(instance, SLACK_WORKSPACE_OBJECT_METHODS),
           ...spaceCreationWorkspaceRpcs(),
           ...parentCreationRpcs(),
-          admitConnectorParticipants: async () => ({ status: "legacy" }),
+          admitConnectorParticipants: async () => ({ status: "ready" }),
           hasActiveExternalEventRegistration: vi.fn(async () => false),
         },
       }),
@@ -3813,7 +3819,7 @@ function slackMembershipEnvironment(
         ...workspaceObjectRpcs(instance, SLACK_WORKSPACE_OBJECT_METHODS),
         ...spaceCreationWorkspaceRpcs(),
         ...parentCreationRpcs(),
-        admitConnectorParticipants: async () => ({ status: "legacy" }),
+        admitConnectorParticipants: async () => ({ status: "ready" }),
         ...workspaceRpcs,
       },
     }),
