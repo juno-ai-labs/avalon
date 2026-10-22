@@ -891,28 +891,38 @@ describe("artifact pins", () => {
     expect(stored).toBe(0);
   });
 
+  type RevisionAuthor = { kind: "agent"; onBehalfOf?: UserId }
+    | { kind: "member"; userId: UserId } | { kind: "connector" };
+
   /** A new version of a stored artifact, staged the way a producer stages one. */
+  function republishSql(
+    sql: SqlStorage,
+    id: string,
+    author: RevisionAuthor,
+    cause: "published" | "refetched" = "published",
+  ): void {
+    sql.exec(
+      `UPDATE resources
+          SET revision_author_kind = ?, revision_author_run_id = ?, revision_author_user_id = ?,
+              revision_author_connection_id = ?, revision_cause = ?, revision_on_behalf_of_user_id = ?,
+              content_sha256 = lower(hex(randomblob(8))), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+1 second')
+        WHERE id = ?`,
+      author.kind,
+      author.kind === "agent" ? "00000000-0000-7000-8000-00000000e1f1" : null,
+      author.kind === "member" ? author.userId : null,
+      author.kind === "connector" ? "00000000-0000-7000-8000-00000000e1f2" : null,
+      cause,
+      author.kind === "agent" ? author.onBehalfOf ?? null : null,
+      id,
+    );
+  }
+
   async function republish(
     id: string,
-    author: { kind: "agent"; onBehalfOf?: UserId } | { kind: "member"; userId: UserId } | { kind: "connector" },
+    author: RevisionAuthor,
     cause: "published" | "refetched" = "published",
   ): Promise<void> {
-    await runInDurableObject(workspace(), (_instance, state) => {
-      state.storage.sql.exec(
-        `UPDATE resources
-            SET revision_author_kind = ?, revision_author_run_id = ?, revision_author_user_id = ?,
-                revision_author_connection_id = ?, revision_cause = ?, revision_on_behalf_of_user_id = ?,
-                content_sha256 = lower(hex(randomblob(8))), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+1 second')
-          WHERE id = ?`,
-        author.kind,
-        author.kind === "agent" ? "00000000-0000-7000-8000-00000000e1f1" : null,
-        author.kind === "member" ? author.userId : null,
-        author.kind === "connector" ? "00000000-0000-7000-8000-00000000e1f2" : null,
-        cause,
-        author.kind === "agent" ? author.onBehalfOf ?? null : null,
-        id,
-      );
-    });
+    await runInDurableObject(workspace(), (_instance, state) => republishSql(state.storage.sql, id, author, cause));
   }
 
   async function artifactRows(userId: UserId) {
@@ -1014,9 +1024,11 @@ describe("artifact pins", () => {
   it("given a republish of a pinned artifact, when the pushes are decided, then its pinner is sent that row and nobody else", async () => {
     await threadWithArtifacts();
     await pinArtifact(ARTIFACT, OPEN_THREAD);
-    await republish(ARTIFACT, { kind: "agent" });
 
     const decided = await runInDurableObject(workspace(), (_instance, state) => {
+      // The scheduled production drain must not run between the write and
+      // this test's own drain. Keep both in the same synchronous invocation.
+      republishSql(state.storage.sql, ARTIFACT, { kind: "agent" });
       // The ledger the trigger filled names the version; the drain empties it.
       const updates = drainResourceVersionChanges(state.storage.sql);
       const subjects = updates.map((update) => ({
