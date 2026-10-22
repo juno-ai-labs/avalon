@@ -55,11 +55,8 @@ session receipt; workspace relationships and grants remain separate authorities.
 
 ## Message issue reports
 
-Explicit Oopsie reports live in the separate regional `MESSAGE_ISSUES_DB`,
-created by `packages/db/message-issue-migrations/`. The `message_issues` table
-holds issue text and stable message, conversation, Organization, reporter and
-execution references. [Message issues](message-issues.md) owns the schema and
-access boundary.
+[Message issues](message-issues.md) owns the separate `MESSAGE_ISSUES_DB` schema
+for Oopsie reports and their message, conversation and reporter references.
 
 ## Signup lineage
 

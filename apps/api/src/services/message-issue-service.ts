@@ -1,4 +1,6 @@
-import { asSpaceId, asUserId, asWorkspaceId, asWorkstreamId } from '@rally/contracts';
+import { z } from 'zod';
+import type { MessageRow } from '../durable-objects/workstream-message-storage';
+import { agentMessageNotice, asSpaceId, asUserId, asWorkspaceId, asWorkstreamId } from '@rally/contracts';
 import type { CreateMessageIssue, MessageIssueReceipt } from '@rally/contracts/message-issues';
 import { workspaceDOName } from '../durable-objects/names';
 import { WorkspaceChannelMessageIssueResultSchema } from '../durable-objects/workspace-space-protocol';
@@ -25,15 +27,15 @@ export class MessageIssueService {
       const parent = await new ConversationService(this.env, this.auth).authorizeViewer(target.parentId, target.substreamId);
       const message = await createMessageObjectPort(this.env, this.auth.workspaceId, target.parentId,
         undefined, target.substreamId).message({ messageId: input.messageId });
-      if (!message || !['human', 'agent', 'external'].includes(message.author_type)) throw messageNotFound();
+      if (!message || !reportableMessage(message)) throw messageNotFound();
       parentId = parent.id;
       parentKind = parent.kind;
       if (parent.kind === 'workstream') {
         threadId = parent.id;
-        const placement = await workspace.threadMergePlacement({
+        const placement = await workspace.canonicalChannelSpace({
           workspaceId: asWorkspaceId(this.auth.workspaceId), workstreamId: asWorkstreamId(parent.id),
         });
-        if (placement.ok) channelId = placement.spaceId;
+        channelId = placement.spaceId;
       }
       metadata = {
         authorType: message.author_type, authorUserId: message.author_user_id,
@@ -79,4 +81,14 @@ export class MessageIssueService {
 
 function messageNotFound(): ApiError {
   return new ApiError(404, 'message_issue_message_not_found', 'This message is no longer available.');
+}
+
+/** System turns only expose authored prose for Sidekick results and the opening brief. */
+function reportableMessage(message: MessageRow): boolean {
+  if (['human', 'agent', 'external'].includes(message.author_type)) return true;
+  if (message.message_type === 'automation_activation') return true;
+  if (message.sequence_number !== 1 || !message.structured_content_json) return false;
+  const opening = z.looseObject({ kind: z.literal('agent_message'), notice: z.unknown().optional() })
+    .safeParse(JSON.parse(message.structured_content_json));
+  return opening.success && agentMessageNotice(opening.data) === null;
 }

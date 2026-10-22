@@ -14,6 +14,8 @@ import { deliverEffectsToWorkspace } from './helpers/conversation-effects';
 import { hostedParentStub } from './helpers/hosted-parent';
 import { useHeldEffectQueue } from './helpers/effect-queue-hold';
 import { SpaceService } from '../src/services/space-service';
+import { WorkstreamTranscriptStorage } from '../src/durable-objects/workstream-transcript-storage';
+import { placeMembership } from './helpers/space-membership';
 import { WorkspaceSpaceStorage } from '../src/durable-objects/workspace-space-storage';
 
 let WORKSPACE_ID = asWorkspaceId('00000000-0000-7000-8000-00000000db10');
@@ -101,14 +103,19 @@ beforeEach(async () => {
     systemKind: null, modelOverride: null, now: Date.now(),
   });
   await deliverEffectsToWorkspace(TEST_ENV, conversation());
+
+}, 30_000);
+
+async function seedSourceTurn(): Promise<void> {
   await runInDurableObject(conversation(), async (_instance, state) => seedParticipantMessage(state, {
     id: "source-turn-1", sequence: 1, text: "The source decision", authorUserId: CREATOR_ID,
     attentionOrdinal: 1, now: Date.now(),
   }));
-}, 30_000);
+}
 
 describe('message issue reports on real workerd', () => {
   it('stores user and assistant reports in the dedicated D1 database and replays the same receipt', async () => {
+    await seedSourceTurn();
     await runInDurableObject(conversation(), async (_instance, state) => seedParticipantMessage(state, {
       id: 'assistant-turn', sequence: 2, text: 'An answer', authorType: 'agent', now: 42,
     }));
@@ -129,7 +136,53 @@ describe('message issue reports on real workerd', () => {
     await expect(service.create({ ...user, description: 'Changed description' })).rejects.toMatchObject({ code: 'message_issue_id_conflict' });
   });
 
+  it('stores visible system-authored opening instructions and Sidekick results, excluding internal events', async () => {
+    await runInDurableObject(conversation(), async (_instance, state) => {
+      const transcript = new WorkstreamTranscriptStorage(state.storage);
+      for (const [index, message] of [
+        { id: 'opening', messageType: 'system' as const, structured: { kind: 'agent_message' } },
+        { id: 'sidekick', messageType: 'automation_activation' as const, structured: null },
+        { id: 'internal', messageType: 'system' as const, structured: { kind: 'agent_message' } },
+      ].entries()) {
+        await transcript.appendParticipantMessage({
+          turnId: message.id, actor: 'system', authorUserId: null, authorSnapshot: null,
+          clientMessageId: message.id, messageType: message.messageType, text: 'An authored result',
+          structuredContentJson: JSON.stringify(message.structured), producedByRunId: null,
+          messageSequenceNumber: index + 1, createdAtUtc: '2026-10-22T00:00:00.000Z', attentionOrdinal: null,
+        });
+      }
+    });
+    const service = new MessageIssueService(env, creatorAuth);
+    await service.create(request('opening'));
+    await service.create(request('sidekick'));
+    await expect(service.create(request('internal'))).rejects.toMatchObject({ code: 'message_issue_message_not_found' });
+    expect((await env.MESSAGE_ISSUES_DB.prepare('SELECT message_id FROM message_issues ORDER BY message_id').all()).results)
+      .toEqual([{ message_id: 'opening' }, { message_id: 'sidekick' }]);
+  });
+
+  it('retains private-only placement and follows canonical ordering across multiple Channels', async () => {
+    await seedSourceTurn();
+    const workspace = env.WORKSPACE_DOS.getByName(workspaceDOName('global', WORKSPACE_ID));
+    const service = new MessageIssueService(env, creatorAuth);
+    for (const [index, id] of ['00000000-0000-7000-8000-00000000db20',
+      '00000000-0000-7000-8000-00000000db21', '00000000-0000-7000-8000-00000000db19'].entries()) {
+      const spaceId = asSpaceId(id);
+      const result = await workspace.reserveSpace({ workspaceId: WORKSPACE_ID, userId: CREATOR_ID, spaceId,
+        space: { name: 'Placed Channel', iconKey: 'briefcase', colorKey: 'blue', scope: 'workspace' } });
+      expect(result.ok).toBe(true);
+      if (index === 0) await runInDurableObject(workspace, (_instance, state) => {
+        state.storage.sql.exec("UPDATE spaces SET scope = 'personal' WHERE space_id = ?", spaceId);
+      });
+      await placeMembership(workspace, { workspaceId: WORKSPACE_ID, userId: CREATOR_ID, spaceId, workstreamId: WORKSTREAM_ID });
+      const report = request();
+      await service.create(report);
+      expect(await env.MESSAGE_ISSUES_DB.prepare('SELECT channel_id FROM message_issues WHERE id = ?').bind(report.id).first())
+        .toEqual({ channel_id: id });
+    }
+  });
+
   it('refuses a missing message or a conversation the reporter cannot read', async () => {
+    await seedSourceTurn();
     const service = new MessageIssueService(env, creatorAuth);
     await expect(service.create(request('missing'))).rejects.toMatchObject({ code: 'message_issue_message_not_found' });
     const owner = parent();

@@ -125,6 +125,24 @@ it("adapts cookies to the ordinary API with the addressed workspace and no calle
   expect((await request("api/_/internal/access",entry.cookie)).status).toBe(404);
 });
 
+it("forwards a cookie-authenticated message issue POST with its addressed workspace",async () => {
+  const entry = await login();
+  const workspaceId = workspace(entry.session.user.id,"member");
+  await request("workspace/select",entry.cookie,{ workspaceId });
+  const api = new Hono<HonoAppEnv>();
+  api.use("*",requireIdentityAuth);
+  api.post("/message-issues",async (c) => c.json({ auth:getIdentityAuth(c),input:await c.req.json() },201));
+  const browser = new Hono<HonoAppEnv>();
+  browser.route("/browser",createBrowserRoutes((forwarded,c) => api.fetch(forwarded,c.env)));
+  browser.onError(errorHandler);
+  const input = { description:"The answer was wrong." };
+  const response = await browser.request(`${apiOrigin}/browser/api/${workspaceId}/message-issues`,{
+    method:"POST",headers:{ cookie:entry.cookie,origin,"content-type":"application/json" },body:JSON.stringify(input),
+  },bindings());
+  expect(response.status).toBe(201);
+  expect(await response.json()).toMatchObject({ auth:{ userId:entry.session.user.id,workspaceId },input });
+});
+
 it("forwards the member shell's route families and still refuses token minting and ingress",async () => {
   const entry = await login();
   const workspaceId = workspace(entry.session.user.id,"member");

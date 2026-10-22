@@ -2234,22 +2234,22 @@ export class RallyApi {
     return { items: page.items.map(mapResource), nextCursor: page.nextCursor, ...(page.complete !== undefined ? { complete: page.complete } : {}) };
   }
 
-  /**
-   * Merge-back (docs/conversation-merge.md): with `breakoutId`, that Breakout's
-   * result into this Thread; without it, this Thread's result into one of its
-   * Channels. A retry with the same `clientMessageId` writes nothing again.
-   */
-  /** The Channels this thread can merge into, earliest placement first. */
   async createMessageIssue(input: CreateMessageIssue): Promise<MessageIssueReceipt> {
     return this.request('/message-issues', { method: 'POST', body: input, schema: MessageIssueReceiptSchema });
   }
 
+  /** The Channels this thread can merge into, earliest placement first. */
   async mergeChannels(threadId: string): Promise<ConversationMergeChannels> {
     return this.request(`/conversations/${encodeURIComponent(threadId)}/merge-channels`, {
       schema: ConversationMergeChannelsSchema,
     });
   }
 
+  /**
+   * Merge-back (docs/conversation-merge.md): with `breakoutId`, that Breakout's
+   * result into this Thread; without it, this Thread's result into one of its
+   * Channels. A retry with the same `clientMessageId` writes nothing again.
+   */
   async mergeConversation(
     threadId: string,
     { mentions: selected, ...request }: Omit<ConversationMergeRequest, 'mentions'> & { mentions?: MentionIdentity[] },
