@@ -219,6 +219,7 @@ export class AgentCommunicationService {
     });
     if (!route.ok) throw new AgentCommunicationError(route.code);
     const target = route.value;
+    if (target.recipientAgentId === this.senderId) throw new AgentCommunicationError("agent_self_message");
     if ("messageId" in args) await this.authorizeSidekick(target.recipientAgentId);
     const address = agentAddressForId(target.recipientAgentId);
     const recipient = await this.conversation(target.recipientAgentId);
@@ -414,6 +415,7 @@ class AgentCommunicationError extends Error {
     super({
       agent_not_teammate: "List teammates or accessible Sidekicks, then copy a returned agentId. This recipient is not available to you.",
       agent_message_not_received: "Copy Message ID from a message you received. You cannot respond using another agent’s message ID.",
+      agent_self_message: "Do the work in this conversation. You cannot send or reply to your own agent address.",
       agent_not_owned: "Message the agent instead. You can stop only agents you own.",
       agent_attachment_unavailable: "Attach the resource to this conversation before forwarding it, or remove it from attachmentIds.",
       workstream_archived: "Stop sending work to this destination. Its workstream is archived or no longer exists.",

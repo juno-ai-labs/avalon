@@ -93,6 +93,7 @@ describe("the agents plugin", () => {
   it("keeps the rule that a thread changes only Sidekicks it may edit", () => {
     // The incident behind this line: a thread rewrote another thread's draft.
     expect(plugin.systemMessage).toContain("Use find_sidekick only when the person explicitly names an existing Sidekick to edit; never silently replace a named target.");
+    expect(tool("sidekicks_list").definition.description).toContain("editable Sidekicks owned by this thread");
     expect(tool("sidekicks_list").definition.description).toContain("the current Sidekick, marked isCurrentSidekick: true");
   });
 });
