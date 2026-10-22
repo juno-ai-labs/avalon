@@ -111,7 +111,9 @@ This direct attachment remains until explicitly removed; it is independent of in
 
 Model guidance distinguishes the two ways to forward a resource. When sending
 instructions with `start_agent`, `send_message` or `reply_to_message`, use
-`attachmentIds` to make resources discoverable and preserve shared context.
+`attachmentIds` as the preferred handoff even when the recipient already has
+read access, so the task clearly identifies its intended resources and preserves
+shared context.
 Use Rally resource IDs readable in the sender's resource scope. To attach a resource
 to a Sidekick without sending instructions or waking its wizard, use
 `sidekick_attach_resource`. Mentioning an ID in message text or saved instructions
