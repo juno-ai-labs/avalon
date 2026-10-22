@@ -1,9 +1,15 @@
 import type { ConversationAccessRequestItem } from '@rally/contracts';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 import type { RallyApi } from './api';
 
 export const CONVERSATION_ACCESS_PREVIEW_QUERY_KEY = ['conversation-access-preview'] as const;
+
+/** A pending first fetch otherwise reuses its pre-event promise on invalidation. */
+export async function refreshConversationAccessPreviews(queryClient: QueryClient): Promise<void> {
+  await queryClient.cancelQueries({ queryKey: CONVERSATION_ACCESS_PREVIEW_QUERY_KEY });
+  await queryClient.invalidateQueries({ queryKey: CONVERSATION_ACCESS_PREVIEW_QUERY_KEY });
+}
 
 /**
  * The access requests waiting on this person, per Organization. Written only

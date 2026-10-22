@@ -94,16 +94,11 @@ The person who asked gets an email when the request is approved or declined.
    `conversation_access_decision_email_failed` with its code and does not undo
    the decision. Approving also runs the ordinary add, which sends its own
    "added you" notification by Slack, push or email.
-8. **The requester gets in.** The ordinary add publishes the existing
-   `workspace_reach_changed` event to the requester's Organization socket when
-   their thread or Breakout participation projection changes. That refreshes
-   active access previews; an `open` preview immediately retries the waiting
-   conversation, including one whose socket stopped after access was revoked.
-   A direct participant add works the same way. The preview is also refreshed
-   on Organization socket subscribe, because reach events are not replayed.
-   The conversation's existing retry loop (backoff ceiling 30 seconds) remains
-   recovery if a nudge is missed. The push does not grant access: the preview
-   and the new socket ticket each use ordinary authorization.
+8. **The requester gets in.** The ordinary add's `workspace_reach_changed`
+   push, or Organization socket resubscribe, replaces pending access previews
+   and reads access again. An `open` result retries the waiting conversation,
+   including after revocation. The 30-second backoff and **Try again** remain
+   recovery paths.
 
 Outside production no mail is sent (`sendResendEmail`). In development the
 approve link is logged as `conversation_access_request_dev_link` and each
@@ -169,9 +164,6 @@ the approver's inbox, and it acts only as the approver.
   leaves the Breakout half out rather than aborting the connect: an unguarded
   read there stops the sidebar opening. Guard: `space-authority.test.ts`
   "given an Organization held at schema 57".
-- **A revoked socket stops its own retries.** A newly admitted access preview
-  restarts it after a reach push or Organization reconnect. **Try again** also
-  remains available for a manual retry.
 - **The iOS badge leaves requests out.** The APNs badge is counted by
   `readerAttentionCount` on the server, which counts conversations only. The
   macOS dock badge and the menu bar include requests.
@@ -201,9 +193,8 @@ pnpm --filter @rally/contracts exec vitest run src/desktop-deep-link-intent.test
 
 ### 2026-10-22 — Recover waiting conversations on an access push
 
-**What changed:** The requester uses `workspace_reach_changed` to refresh an
-active access preview and immediately retry when admitted. Organization socket
-subscribe performs the same refresh to recover a missed event.
+**What changed:** The requester uses `workspace_reach_changed` or Organization
+socket subscribe to replace pending access checks and retry when admitted.
 
 **Why:** Approval previously waited for a backoff retry, and a socket stopped
 after revocation required a manual retry despite the screen promising it would
@@ -215,9 +206,11 @@ using it also covers a direct participant add.
 
 **Consequences:** The event remains a nudge, not an authorization result. Only
 an admitted preview retries the conversation, whose new ticket checks access
-again. An initially admitted preview retains the ordinary error screen,
+again. Reusing a pending preview can return a pre-grant refusal after the only
+push has passed; cancellation must discard that result, and the waiting screen
+must recognize the refresh even before its first preview arrives. An initially
+admitted preview retains the ordinary error screen unless explicitly refreshed,
 so unrelated connection failures do not turn into immediate retry loops.
-Existing retries and the manual button remain recovery paths.
 
 PR: [#1416](https://github.com/juno-ai-labs/avalon/pull/1416).
 
