@@ -169,13 +169,22 @@ The host resolves stored-loadable Sidekicks against execution and conversation a
 
 ### Completion verification before stopping
 
-Ordinary persistent conversation loops use the evaluated premature-stop baseline
-question, pinned to JEV 1.14.0 with a one-second deadline. The host accepts a
+Ordinary persistent conversation loops use the premature-stop baseline question
+with explicit agent identity and participant addressing, pinned to JEV 1.14.0
+with a one-second deadline. The host accepts a
 stop only when JEV reports `answer_or_result` or `blocker_or_question` with
 confidence **strictly above 0.70**. An unfinished or unclear result, confidence
 at or below 0.70, missing trigger context, unavailable credentials, timeout, or
 malformed response causes one verification reprompt. This is a narrow judgment
 of stopping behavior, not a proof of factual correctness or task completeness.
+
+The question identifies Rally as the AI author of the candidate response and
+`@Rally` as a mention addressing that agent. Other named participants remain
+separate people or agents: their assignments do not become Rally's unfinished
+work unless Rally is also asked to act. An acknowledgement of an explicit
+instruction for Rally to wait or act after another participant or future event
+is an answer/result. A separately requested immediate deliverable still has to
+be judged, even when the same message also tells Rally to wait afterward.
 
 The check runs at Bind's `onTurnWouldEnd` hook, after the model produces a
 response that would end its turn and before the host finalizes the run. The
@@ -1594,6 +1603,11 @@ between the nudge commit and the next model call.
 Run them with `pnpm --filter @rally/api test:workers` and the respective paths;
 `-t 'completion verification'` scopes the added runtime cases.
 
+The [premature-stop evaluation](../packages/agent-harness/evals/premature-stop/README.md#agent-identity-and-participant-addressing)
+adds live JEV regressions for agent identity, participant addressing and requested
+waiting. Its eight authored cases remain separate from the frozen corpus;
+deterministic provider doubles cover recovery mechanics, not these semantics.
+
 Sidekick catalog naming is covered by `apps/api/test/sidekick-presentation.test.ts`
 (`pnpm --filter @rally/api exec vitest run test/sidekick-presentation.test.ts`).
 The load, durable attachment, and next-execution instruction restoration path is
@@ -1731,6 +1745,26 @@ encourage separate copies. Site recovery and publication remain in their
 existing skill so source-data guidance does not absorb destination behavior.
 
 Pull request: [#1421](https://github.com/juno-ai-labs/avalon/pull/1421).
+
+### 2026-10-22 — Identify the agent in completion judgments
+
+**What changed:** Completion verification identifies Rally and its mention syntax,
+scopes requested work to that agent, and distinguishes requested waiting from a
+blocker or an unfinished immediate task.
+
+**Why:** A production request assigned review to a person and explicitly told
+Rally to wait. The judge accepted Rally's acknowledgement at insufficient
+confidence, triggering a second acknowledgement from the same run. The judge
+had the conversation but no definition of which participant was the AI.
+
+**Considered and rejected:** Lowering the stopping threshold or bypassing checks
+on messages containing `@Rally`. Neither supplies the missing identity context,
+and a mixed-addressing message can still assign immediate work to Rally.
+
+**Consequences:** The question's identity and addressing semantics are part of
+the classifier contract. The existing threshold, lifecycle gates and one-use
+recovery remain in force; prompt changes are checked with live model regressions,
+not a provider double that returns the expected label.
 
 ### 2026-10-22 — Explain unsupported local browser requests through a skill
 
