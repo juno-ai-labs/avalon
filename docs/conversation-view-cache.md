@@ -211,6 +211,8 @@ conversations.
 live socket attaches. Large feeds still show a newest suffix within the existing
 wire budget; older paging and transcript authority stay on the live socket.
 
+Pull request: [#1390](https://github.com/juno-ai-labs/avalon/pull/1390).
+
 ### 2026-10-21 — Refresh stale device seeds and settle fenced backfill sources
 
 A returning device's disk row used to prevent every workspace preview request,
