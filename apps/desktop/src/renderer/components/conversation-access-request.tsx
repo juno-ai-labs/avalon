@@ -64,7 +64,7 @@ export function ConversationAccessRequest({ api, parentId, substreamId, fallback
   // starts. An initially open preview still belongs to the ordinary error path:
   // retrying that on every mount would loop on unrelated connection failures.
   const noun = preview.data?.kind === 'breakout' ? 'breakout' : 'thread';
-  if (preview.isSuccess && preview.data?.access === 'open' && waitingFor === address) {
+  if (preview.isSuccess && !preview.isFetching && preview.data?.access === 'open' && waitingFor === address) {
     return <OpeningState label={`Opening ${noun}…`} />;
   }
   if (!preview.data || preview.data.access !== 'requestable') return fallback;
