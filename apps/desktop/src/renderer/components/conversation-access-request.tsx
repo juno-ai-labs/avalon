@@ -26,6 +26,7 @@ import { Button, ErrorNotice, OpeningState } from './primitives';
  * retry cannot loop on remount. `docs/channel-access-requests.md`.
  */
 export type ConversationAccessApi = Pick<RallyApi, 'viewerUserId' | 'conversationAccessPreview' | 'requestConversationAccess'>;
+type CachedAccessPreview = ConversationAccessPreview & { recoveryVersion?: number };
 
 export function ConversationAccessRequest({ api, parentId, substreamId, fallback, onRetry }: {
   api: ConversationAccessApi | null;
@@ -51,6 +52,7 @@ export function ConversationAccessRequest({ api, parentId, substreamId, fallback
     retry: false,
   });
   const address = `${parentId}:${substreamId}`;
+  const scopedAddress = `${requesterUserId}:${address}`;
   const [reopening, setReopening] = useState<string | null>(null);
   const request = useMutation({
     mutationKey: ['conversation-access-request', requesterUserId, parentId, substreamId],
@@ -60,9 +62,16 @@ export function ConversationAccessRequest({ api, parentId, substreamId, fallback
       const submittedQueryKey = [...CONVERSATION_ACCESS_PREVIEW_QUERY_KEY, target.requesterUserId, target.parentId, target.substreamId];
       // A preview read before the write must not replace the successful result.
       await queryClient.cancelQueries({ queryKey: submittedQueryKey });
-      queryClient.setQueryData<ConversationAccessPreview>(submittedQueryKey, (current) =>
+      queryClient.setQueryData<CachedAccessPreview>(submittedQueryKey, (current) =>
         current ? { ...current, requestPending: true, requestEmailed: true } : current,
       );
+      // An approval push may have started a newer admission check while the
+      // send was returning. Replace that canceled check so its nudge survives.
+      const cached = queryClient.getQueryData<CachedAccessPreview>(submittedQueryKey);
+      const currentRecovery = queryClient.getQueryData<ConversationAccessRecovery>(CONVERSATION_ACCESS_RECOVERY_QUERY_KEY);
+      if (cached && currentRecovery && (cached.recoveryVersion ?? 0) !== currentRecovery.version) {
+        await queryClient.invalidateQueries({ queryKey: submittedQueryKey });
+      }
     },
     onError: async (_error, target) => {
       // Email can fail after the request was stored; read that outcome back.
@@ -76,13 +85,13 @@ export function ConversationAccessRequest({ api, parentId, substreamId, fallback
     && preview.data?.recoveryVersion === recovery.version && !recovery.retried.includes(address);
   useEffect(() => {
     if (!canRecover || !recovery || !claimConversationAccessRecovery(queryClient, address, recovery.version)) return;
-    setReopening(address);
+    setReopening(scopedAddress);
     onRetry();
-  }, [address, canRecover, onRetry, queryClient, recovery]);
+  }, [address, canRecover, onRetry, queryClient, recovery, scopedAddress]);
   // A newly admitted preview must not mount the error dialog while the retry
   // starts. The consumed nudge prevents another retry if this screen remounts.
   const noun = preview.data?.kind === 'breakout' ? 'breakout' : 'thread';
-  if (admitted && (canRecover || reopening === address)) {
+  if (admitted && (canRecover || reopening === scopedAddress)) {
     return <OpeningState label={`Opening ${noun}…`} />;
   }
   if (!preview.data || preview.data.access !== 'requestable') return fallback;
