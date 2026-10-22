@@ -1641,7 +1641,11 @@ is under test.
 
 After first-share handoff, the Channel's hosted parent owns `parent_grants` and their operation
 receipts, scoped invitations and delivery receipts, and the Main/child participant
-transfer ledgers. The handoff is lazy per addressed scope; untouched conversations
+transfer ledgers. Explicit guest additions and Breakout mentions also initiate
+this addressed handoff; a local roster write alone cannot establish their
+parent-authorized access. Completion delivers the addressed conversation's
+pending participant projections before returning, including the original sharer.
+The handoff is lazy per addressed scope; untouched conversations
 keep their existing authority. SubstreamAgent retains transcript execution and a
 versioned participant projection for socket admission. `scope_grant_directory`
 outbox effects update discovery without becoming a second grant authority. See

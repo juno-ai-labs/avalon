@@ -40,10 +40,14 @@ import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-t
 import { processWorkstreamNotificationIntent } from "../src/services/conversation-effect-service";
 import { deliverChildEffects, pendingParentEffects } from "./helpers/conversation-effects";
 import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
+import { ConversationService } from "../src/services/conversation-service";
+import { SocketService } from "../src/services/socket-service";
+import { socketTicketProtocols } from "@rally/contracts/socket-tickets";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000006a1");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006a2");
 const SECOND_WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006a6");
+const SHARED_CHILD_ID = asSubstreamId("00000000-0000-7000-8000-0000000006be");
 /**
  * The "who a create is allowed to tell" cases. `initialize` on an already-
  * authoritative root is a silent replay (200, no notifications), so these must
@@ -122,7 +126,7 @@ beforeEach(async () => {
     env.DB.prepare(`INSERT OR REPLACE INTO workspaces(id, name, region) VALUES (?, 'Notification test', 'global')`).bind(WORKSPACE_ID),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspace_members (access_class TEXT NOT NULL DEFAULT 'member', incarnation TEXT DEFAULT 'existing-member',
       workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
-      role TEXT NOT NULL, last_seen_at TEXT, revision INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (workspace_id, user_id)
+      role TEXT, last_seen_at TEXT, revision INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (workspace_id, user_id)
     )`),
     env.DB.prepare(`INSERT OR REPLACE INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
       VALUES (?, ?, 'active', 'owner', '2026-08-22T20:00:00.000Z')`).bind(WORKSPACE_ID, CREATOR_ID),
@@ -172,7 +176,7 @@ function agentStub(workstreamId = WORKSTREAM_ID, substreamId = "0"): DurableObje
 }
 
 /** The Organization object that hosts every Channel parent in the workspace. */
-function parentStub(): DurableObjectStub {
+function parentStub(): ReturnType<typeof hostedParentStub> {
   return hostedParentStub(env, WORKSPACE_ID);
 }
 
@@ -407,6 +411,38 @@ async function sendAndSettle(
   });
   expect(sent.status).toBe(200);
   await waitForCanonicalTurn(stub, (sent.body.turn as { turnId: string }).turnId);
+}
+
+async function makeInviteeGuest(): Promise<void> {
+  await env.DB.prepare("UPDATE workspace_members SET access_class = 'guest', role = NULL WHERE user_id = ?")
+    .bind(INVITEE_ID).run();
+}
+
+async function reserveParent(workstreamId: string, scope: "personal" | "workspace" = "personal"): Promise<void> {
+  await parentStub().reserveChild({ workspaceId: WORKSPACE_ID, parentId: workstreamId,
+    substreamId: asSubstreamId("0"), kind: "main", createdByUserId: CREATOR_ID, authorityGeneration: 1,
+    directory: { title: "Quarterly planning", description: "", scope, systemKind: null,
+      emailAddress: null, titleStatus: "settled", createdAt: new Date().toISOString() } });
+}
+
+/** Proves edge admission and the conversation's applied grant revision, including the original sharer. */
+async function expectParticipantCanOpen(workstreamId: string, auth: AuthContext, substreamId = "0"): Promise<void> {
+  const ticket = await new ConversationService(env, auth).socketTicket(workstreamId, substreamId, 0);
+  const upgraded = await new SocketService(env).upgrade(workstreamId, substreamId, undefined,
+    new Request(ticket.url.replace("wss:", "https:"), { headers: { Upgrade: "websocket", Origin: "app://rallywithai",
+      "Sec-WebSocket-Protocol": socketTicketProtocols(ticket.ticket).join(", ") } }));
+  expect(upgraded.status).toBe(101);
+  const socket = upgraded.webSocket!;
+  const snapshot = new Promise<Record<string, unknown>>((resolve, reject) => {
+    socket.addEventListener("message", (event) => resolve(JSON.parse(String(event.data))), { once: true });
+    socket.addEventListener("close", () => reject(new Error("conversation_closed_before_snapshot")), { once: true });
+  });
+  socket.accept();
+  try {
+    expect(await snapshot).toMatchObject({ type: "snapshot" });
+  } finally {
+    socket.close(1000, "test complete");
+  }
 }
 
 interface FeedActivity {
@@ -1047,10 +1083,11 @@ describe("mentioning a nonparticipant on an existing conversation", () => {
     });
   });
 
-  it("requires confirmation before a workspace-visible mention gives a guest access", async () => {
+  it.each(["personal", "workspace"] as const)("requires confirmation and establishes usable guest access for a %s mention", async (scope) => {
     const stub = agentStub(WORKSPACE_VISIBLE_MENTION_ID);
-    await provisionWorkstream(stub, WORKSPACE_VISIBLE_MENTION_ID, { scope: "workspace" });
-    await env.DB.prepare("UPDATE workspace_members SET access_class = 'guest' WHERE user_id = ?").bind(INVITEE_ID).run();
+    await reserveParent(WORKSPACE_VISIBLE_MENTION_ID, scope);
+    await provisionWorkstream(stub, WORKSPACE_VISIBLE_MENTION_ID, { scope });
+    await makeInviteeGuest();
     const input = {
       text: "Ask @Invitee to review", clientMessageId: "guest-mention",
       mentions: [{ type: "person", userId: INVITEE_ID, connectorType: null, startOffset: 4, endOffset: 12 }],
@@ -1067,6 +1104,66 @@ describe("mentioning a nonparticipant on an existing conversation", () => {
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec<{ status: string }>("SELECT status FROM participants WHERE user_id = ?", INVITEE_ID).one().status).toBe("active");
     });
+    await expectParticipantCanOpen(WORKSPACE_VISIBLE_MENTION_ID, { ...INVITEE_AUTH, role: null, accessClass: "guest" });
+    await expectParticipantCanOpen(WORKSPACE_VISIBLE_MENTION_ID, AUTH);
+    const main = { kind: "conversation" as const, workspaceId: WORKSPACE_ID,
+      parentId: WORKSPACE_VISIBLE_MENTION_ID, substreamId: asSubstreamId("0") };
+    expect(await parentStub().readScopeAccess({ target: main, userId: asUserId(INVITEE_ID) }))
+      .toMatchObject({ allowed: true, workspaceMemberAccess: false });
+    expect(await parentStub().readScopeAccess({ target: { kind: "workstream", workspaceId: WORKSPACE_ID,
+      parentId: WORKSPACE_VISIBLE_MENTION_ID }, userId: asUserId(INVITEE_ID) })).toMatchObject({ allowed: false });
+  });
+
+  it("manual guest additions establish grant access and revocation prevents reopening", async () => {
+    const stub = agentStub();
+    await reserveParent(WORKSTREAM_ID);
+    await provisionWorkstream(stub);
+    await makeInviteeGuest();
+    const guest = { ...INVITEE_AUTH, role: null, accessClass: "guest" as const };
+    expect((await product(stub, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID })).status).toBe(200);
+    await expectParticipantCanOpen(WORKSTREAM_ID, guest);
+    await expectParticipantCanOpen(WORKSTREAM_ID, AUTH);
+    expect((await product(stub, { operation: "remove_participant", auth: AUTH, userId: INVITEE_ID })).status).toBe(200);
+    await expect(new ConversationService(env, guest).socketTicket(WORKSTREAM_ID))
+      .rejects.toMatchObject({ code: "conversation_not_found" });
+    expect((await product(stub, { operation: "add_participant", auth: AUTH, userId: INVITEE_ID })).status).toBe(200);
+    await expectParticipantCanOpen(WORKSTREAM_ID, guest);
+  });
+
+  it.each(["member", "guest"] as const)("confirmed Breakout mentions establish parent-owned access for a %s without sharing Main", async (accessClass) => {
+    await reserveParent(WORKSTREAM_ID);
+    await parentStub().reserveChild({ workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID,
+      substreamId: SHARED_CHILD_ID, kind: "child", createdByUserId: CREATOR_ID, authorityGeneration: 1 });
+    await withHostedParent(parentStub(), WORKSTREAM_ID, (_hosted, state) => {
+      state.storage.sql.exec(`INSERT INTO parent_breakout_members
+        (parent_id, substream_id, user_id, active, version, added_by_user_id, added_at, updated_at)
+        VALUES (?, ?, ?, 1, 1, ?, ?, ?)`, WORKSTREAM_ID, SHARED_CHILD_ID, CREATOR_ID, CREATOR_ID, Date.now(), Date.now());
+    });
+    const stub = agentStub(WORKSTREAM_ID, SHARED_CHILD_ID);
+    await provisionWorkstream(stub, WORKSTREAM_ID, { substreamId: SHARED_CHILD_ID });
+    if (accessClass === "guest") await makeInviteeGuest();
+    await sendAndSettle(stub, { clientMessageId: "child-mention", text: "Ask @Invitee to review",
+      mentions: [{ type: "person", userId: INVITEE_ID, connectorType: null, startOffset: 4, endOffset: 12 }],
+      confirmedParticipantUserIds: [INVITEE_ID], seed: { packVersion: "test", actionId: "child-mention", assistant: null } });
+    const auth = { ...INVITEE_AUTH, role: accessClass === "guest" ? null : "member" as const, accessClass };
+    await expectParticipantCanOpen(WORKSTREAM_ID, auth, SHARED_CHILD_ID);
+    await expectParticipantCanOpen(WORKSTREAM_ID, AUTH, SHARED_CHILD_ID);
+    await expect(new ConversationService(env, auth).socketTicket(WORKSTREAM_ID))
+      .rejects.toMatchObject({ code: "conversation_not_found" });
+  });
+
+  it.each(["participant", "mention"] as const)("creation-time guest %s access survives initialization replay", async (kind) => {
+    const stub = agentStub();
+    await reserveParent(WORKSTREAM_ID);
+    await makeInviteeGuest();
+    const options = kind === "participant" ? { participantUserIds: [INVITEE_ID] } : {
+      openingMessage: "Ask @Invitee to review", mentions: [{ type: "person" as const, userId: INVITEE_ID,
+        connectorType: null, startOffset: 4, endOffset: 12 }],
+    };
+    await openWorkstream(stub, options);
+    await openWorkstream(stub, options);
+    await expectParticipantCanOpen(WORKSTREAM_ID, { ...INVITEE_AUTH, role: null, accessClass: "guest" });
+    await expectParticipantCanOpen(WORKSTREAM_ID, AUTH);
   });
 
   it("re-seats a removed Organization member when they are tagged again", async () => {

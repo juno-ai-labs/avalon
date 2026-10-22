@@ -77,6 +77,21 @@ Ordinary shares and participant additions retain their existing behavior; the
 conversation admission rules are in
 [`workstream-durable-object.md`](workstream-durable-object.md).
 
+Guest participant additions, including confirmed mentions and creation-time
+participants, establish grant authority before reporting success. Breakout
+mentions also use the parent grant authority for members: the conversation's
+local roster cannot add someone to the parent's independent child membership.
+These paths use the same addressed handoff preparation as email sharing, with
+canonical actor admission before transfer and a fresh grant decision afterwards.
+An existing Channel's mention or manual add grants only that conversation.
+Creation-time participants retain the new Channel's initial participant access.
+Member-only Main conversations retain their legacy write path until shared.
+
+Completing a handoff delivers the pending participant projections for the whole
+addressed conversation before returning. This includes the original sharer:
+their next socket ticket names the new projection revision too. Durable delivery
+intents and alarms recover interrupted transfers and projection calls.
+
 ### Claiming
 
 **A share is claimed by signing in, and by nothing else.** The address the
@@ -410,6 +425,14 @@ receipt or unavailable identity authority remains an error, never a grant.
 
 ## Testing
 
+`participant-notification.test.ts` drives confirmed guest mentions in personal
+and Organization-wide Channels, manual guest add/remove/re-add, creation-time
+participant and mention replay, and member/guest Breakout mentions through real
+workerd. It obtains tickets through `ConversationService`, upgrades them through
+`SocketService`, and receives a conversation snapshot for recipient and sharer.
+It also checks that a Breakout share does not admit Main and that revocation
+refuses a fresh ticket. Guest fixtures have a null role, matching production.
+
 `pnpm --filter @rally/api test:workers test-workers/scope-invitations.test.ts`
 runs real D1, `WorkspaceDO` SQLite, RPCs, alarms and HTTP routing. The fixture
 declares the D1 columns it uses. It covers a share claimed as it is made for an
@@ -450,6 +473,30 @@ handoff against real Main and child agents, including refusal to transfer for a
 nonparticipant and reconciliation of a stale child roster.
 
 ## Changelog
+
+### 2026-10-21 — Establish usable access whenever a participant is added
+
+**What changed:** Guest additions and Breakout mentions reuse the parent-owned
+sharing preparation and grant mutation. Creation and its replay finish guest
+access before returning; handoff completion delivers every affected participant's
+projection in the foreground, with durable alarms retained for recovery.
+
+**Why:** A confirmed mention in a private Channel added a guest to its legacy
+roster and published their sidebar row, but guest ticket admission required a
+grant. The Channel had never transferred authority, so every opening returned
+404. Manual adds and creation-time participants had the same gap. Breakout
+mentions could likewise update a local roster without the parent's child
+membership that decides admission.
+
+**Considered and rejected:** Admitting guests from the legacy roster would bypass
+the membership-incarnation and revocation fences of scoped access. Duplicating
+handoff logic in each writer would leave the next writer with the same gap.
+
+**Consequences:** Adding access must complete the recipient's canonical admission,
+not merely write a participant row. Exact-conversation additions do not grant
+parent management or sibling access. The original sharer must receive their new
+projection too; an alarm alone is insufficient for an operation reporting usable
+access. Member-only Main writes retain their existing latency.
 
 ### 2026-10-08 — Offer pending Organization invitees wherever people are picked
 
