@@ -441,6 +441,10 @@ jobs:
         if: env.APPLY_MIGRATIONS == 'true' && env.DEPLOY_GLOBAL == 'true'
         run: pnpm --filter @rally/api db:observability:migrate:remote
 
+      - name: Apply message issue D1 migrations
+        if: env.APPLY_MIGRATIONS == 'true' && env.DEPLOY_GLOBAL == 'true'
+        run: pnpm --filter @rally/api db:message-issues:migrate:remote
+
       - name: Apply usage ledger D1 migrations
         if: env.APPLY_MIGRATIONS == 'true' && env.DEPLOY_GLOBAL == 'true'
         run: pnpm --filter @rally/api db:usage:migrate:remote

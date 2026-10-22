@@ -81,6 +81,12 @@
       "migrations_dir": "../../packages/db/migrations"
     },
     {
+      "binding": "MESSAGE_ISSUES_DB",
+      "database_name": "rally-global-message-issues",
+      "database_id": "21c58ed6-e9b4-4fce-b5c1-84865a04bc75",
+      "migrations_dir": "../../packages/db/message-issue-migrations"
+    },
+    {
       "binding": "TELEMETRY_DB",
       "database_name": "avalon-global-telemetry",
       "database_id": "d0f4e537-bedf-4ce4-a22f-d80af64a52b9",

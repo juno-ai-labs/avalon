@@ -1,3 +1,4 @@
+import { messageIssueRoutes } from "./routes/message-issues";
 import { sharingRoutes } from "./routes/sharing";
 import { createBrowserRoutes } from "./routes/browser";
 import { daytonaWebhookRoutes } from "./routes/daytona";
@@ -171,6 +172,7 @@ export function createApp(): Hono<HonoAppEnv> {
   identityApi.use("/workspace/me/device-timezone", requireWorkspaceAuth, refuseSupportSession);
   identityApi.route("/workspace/me/device-timezone", deviceTimezoneRoutes);
   identityApi.route("/conversations", conversationRoutes);
+  identityApi.route("/message-issues", messageIssueRoutes);
   identityApi.route("/sharing", sharingRoutes);
   identityApi.route("/resources", resourceRoutes);
   identityApi.route("/automations", automationRoutes);
