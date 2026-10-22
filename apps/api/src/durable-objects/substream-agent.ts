@@ -525,7 +525,7 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
   productOperation({ operation: z.literal("set_appearance"),
     operationId: IdSchema, patch: WorkstreamAppearancePatchSchema }),
   productOperation({ operation: z.literal("remove_participant"), userId: IdSchema,
-    operationId: IdSchema.optional() }),
+    operationId: IdSchema.optional(), owningThread: z.boolean().optional() }),
   productOperation({ operation: z.literal("attach_resource"), resourceId: IdSchema }),
   productOperation({ operation: z.literal("attach_resources"), resourceIds: z.array(MergeResourceTokenSchema) }),
   productOperation({ operation: z.literal("detach_resource"), resourceId: IdSchema }),
@@ -3696,9 +3696,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
           identity.workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspaceId)));
         const substreamId = this.externalSubstreamId();
-        const result = await parent.mutateParticipantGrant({ operationId: request.operationId ?? uuidV7(),
+        const mutation = { operationId: request.operationId ?? uuidV7(),
           actorUserId: current.userId, userId: UserIdSchema.parse(request.userId), active,
-          target: { kind: "conversation", workspaceId: identity.workspaceId, parentId: identity.parentId, substreamId } });
+          target: { kind: "conversation" as const, workspaceId: identity.workspaceId, parentId: identity.parentId, substreamId } };
+        const result = !active && request.owningThread
+          ? await parent.removeThreadParticipant(mutation) : await parent.mutateParticipantGrant(mutation);
         if (result.status === "denied") {
           if (result.reason === "inherited_access") throw new ApiError(409, "participant_inherited_access", "This person has thread access. Remove that share from thread sharing first.");
           if (result.reason === "participant_required") throw new ApiError(409, "workstream_participant_required", "At least one participant must remain in this thread");

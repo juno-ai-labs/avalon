@@ -87,25 +87,42 @@ commands, for members and guests alike. Connector events retain immutable
 receipts, so replay cannot restore a participant revoked later. Correcting creator
 attribution does not itself seat anyone. Existing-conversation additions address
 only that conversation; inherited Channel shares must be managed at their owning
-scope. Creation-time participants retain the new Channel's initial access.
+scope. The owning Thread's Remove/Leave command retracts its direct parent and
+Main grants atomically; a conversation-only removal still refuses inherited
+access. Creation-time participants retain the new Thread's initial access.
 
 The conversation's `participants` table remains a versioned projection for names,
 unread state, participant epochs and socket admission. Its identity/status writes
 are frozen by SQLite triggers; only parent projections may update them. Opening
 and read-position metadata stay local. Ordinary messages whose participants are
 already seated need no grant RPC. Message admission sends all missing participants
-in one parent command, retaining one operation receipt per person. Pending
+in one parent command and commits the entire audience without yielding, retaining
+one operation receipt per person. A migration wake is retired after its pending
+projections converge, so it cannot split a later foreground batch. Pending
 projections for a conversation travel in one callback, including connector
 admission and handoff recovery. The source hydrates active recipients and actors
 in one D1 batch and reuses those request-local profiles for notification names
 and realtime frames; profiles never authorize access. Removals need no profile
-hydration, and manual adds perform actor authorization once. Visibility changes synchronously deliver their
-durable common effect to the parent so a newly public reader can join immediately.
+hydration, and manual adds perform actor authorization once. First-post message
+admission seats an implicit public author before their mentioned audience.
+Visibility changes deliver the commit's exact common-effect receipt, including
+idempotent scope retries after queue delivery, so the sender cannot race an
+outbox deletion and a newly public reader can join immediately.
 
 Completing a handoff delivers the pending participant projections for the whole
 addressed conversation before returning. This includes the original sharer:
 their next socket ticket names the new projection revision too. Durable delivery
-intents and alarms recover interrupted transfers and projection calls.
+intents and alarms recover interrupted transfers and projection calls. Recovery
+is armed before the first cross-object await; a completed migration with pending
+projections resumes delivery during ticket authorization too. Creation persists
+its opening turn, directory, notification and activity intents in one transaction
+before attempting the handoff. A failed handoff is fail-closed: it never restores
+legacy roster authority, and durable recovery or an operator must resolve an
+invalid source identity/authority before it can serve that conversation.
+
+Synchronous grant listing uses the shared current-membership SQL predicate. The
+socket, Breakout-list and Sidekick entry points learn a previously unknown
+Organization relationship before invoking it; subsequent reads stay local.
 
 ### Claiming
 
@@ -498,6 +515,10 @@ already in service reconciles its source without importing stale seats. Visibili
 commands deliver their durable common effect before returning. Admission and
 handoff projection delivery are batched by conversation, sharing one profile
 read for effects and realtime output and avoiding duplicate manual authorization.
+Committed effect receipts survive outbox deletion; creation effects precede the
+handoff; ticket reads resume incomplete delivery; and recovery is armed before
+cross-object work. Cold listing boundaries learn membership before filtering
+grants, and owning-Thread removal retracts both direct Main access scopes.
 
 **Why:** A confirmed mention put a guest on a private Channel's local roster and
 published a sidebar entry, while transport required a grant and returned 404.

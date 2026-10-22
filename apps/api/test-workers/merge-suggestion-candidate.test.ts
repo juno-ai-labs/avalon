@@ -21,11 +21,6 @@ async function admitMerge(queued: boolean, failRealtime = false, classifyPositiv
     state.storage.sql.exec(`INSERT INTO spaces
       (space_id, title, scope, authority_generation, source_version, payload_hash, revision, created_at, updated_at)
       VALUES (?, 'General', 'workspace', 1, 1, 'space', 1, 0, 0)`, channelId);
-    state.storage.sql.exec(`INSERT INTO channels
-      (workstream_id, authority_generation, waterline, source_event_id, payload_hash, title, description, preview,
-       scope, exact_state, last_activity_at, origin_type, title_status, latest_attention_ordinal,
-       unread_tracking_start_ordinal, source_created_at, source_updated_at, projected_at)
-      VALUES (?, 1, 1, 'source', 'hash', 'Demo launch', '', '', 'workspace', 'idle', 0, 'ad_hoc', 'settled', 0, 0, 0, 0, 0)`, workstreamId);
     state.storage.sql.exec(`INSERT INTO space_channel_memberships
       (space_id, workstream_id, state, generation, joined_at, updated_at)
       VALUES (?, ?, 'active', 1, 0, 0)`, channelId, workstreamId);
@@ -34,12 +29,10 @@ async function admitMerge(queued: boolean, failRealtime = false, classifyPositiv
     conversationObjectName("global", WORKSPACE_ID, workstreamId),
   ));
   expect((await stub.bootstrapRuntime({ workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: workstreamId, generation: 1 })).status).toBe(200);
-  await runInDurableObject(stub, (_instance, state) => {
-    state.storage.sql.exec("UPDATE workstream SET title = 'Demo launch', description = 'Prepare the demo' WHERE id = 1");
-    state.storage.sql.exec(`INSERT INTO participants
-      (user_id, participation_reason, added_by_user_id, status, participant_epoch, added_at, updated_at)
-      VALUES (?, 'creator', ?, 'active', 0, 1, 1)`, USER_ID, USER_ID);
-  });
+  expect((await stub.executeIdentityOperation({ workspaceId: WORKSPACE_ID, workstreamId,
+    operation: "provision", args: [{ title: "Demo launch", objective: "Prepare the demo", scope: "workspace",
+      createdByUserId: USER_ID, participantUserIds: [USER_ID], harnessStatus: "idle", titleStatus: "settled",
+      emailAddress: null, emailRouteStatus: null, systemKind: null, modelOverride: null, now: Date.now() }] })).status).toBe(200);
   if (classifyPositive) await runInDurableObject(stub, (instance) => {
     const runtime = instance as unknown as { env: { TYPESAFE_API_KEY?: string; OPENROUTER_STRUCTURED_MODEL?: string } };
     runtime.env = { ...runtime.env, TYPESAFE_API_KEY: "test-not-a-real-key", OPENROUTER_STRUCTURED_MODEL: "openai/gpt-5.6-terra" };

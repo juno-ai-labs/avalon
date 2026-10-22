@@ -112,7 +112,7 @@ import { substreamLoopId, workspaceDOName } from "./names";
 import { ParticipantAuthorityTransferStorage } from "./participant-authority-transfer";
 import { workstreamImportHash } from "./workstream-import-hash";
 import { WorkspaceReserveDraftAttachmentsResultSchema } from "./workspace-draft-attachment-protocol";
-import { ConversationEffectEnvelopeSchema, WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT } from "@rally/contracts/conversation-effects";
+import { type ConversationEffectEnvelope, WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT } from "@rally/contracts/conversation-effects";
 import type { RegionalEffectCommand, WorkstreamObjectStore } from "./workstream-object-storage";
 import {
   LOOP_EXECUTION_LEASE_MS,
@@ -1707,7 +1707,7 @@ export class WorkstreamObjectProductService {
     const initialMessages = conversation.messages;
     const openingWorkflowInput = startsRun ? this.workflowInput(input, runId, messageId) : null;
     let initializedElsewhere = false;
-    this.storage.transactionSync(() => {
+    await this.objectStore.commitWithRegionalEffects(() => {
       // Hashing and directory reads yield. Another delivery can initialize
       // the room while those awaits are in flight; decide against current SQL.
       if (first(this.storage.sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`))?.authority_mode === "authoritative") {
@@ -1831,12 +1831,8 @@ export class WorkstreamObjectProductService {
         bindStateRevision: 0,
         now,
       });
-    });
-    if (initializedElsewhere) return this.initialize(auth, rawInput);
-    await this.ensureParticipantAuthority();
-    await this.objectStore.commitWithRegionalEffects(
-      () => undefined,
-      () => {
+    }, () => {
+        if (initializedElsewhere) return [];
         const root = this.root();
         const occurredAt = new Date(now).toISOString();
         const activity = {
@@ -1912,6 +1908,8 @@ export class WorkstreamObjectProductService {
         ];
       },
     );
+    if (initializedElsewhere) return this.initialize(auth, rawInput);
+    await this.ensureParticipantAuthority();
     // Only the composer's create carries this journey; Slack, suggestions,
     // imports and Sidekicks open Channels with text nobody typed here.
     if (input.telemetryJourney === "workstream_create" && !history && !input.seed) {
@@ -2225,7 +2223,7 @@ export class WorkstreamObjectProductService {
     // Source membership is a projection. A new narrowing seat must come from
     // the grant owner; repeating the current scope never writes a seat.
     const seatThroughGrants = joined && await this.migratedRosterSeat(auth);
-    await this.objectStore.commitWithRegionalEffects(
+    const { envelopes } = await this.objectStore.commitWithRegionalEffects(
       (sql) => {
         // A mention's grants and canonical turn must precede narrowing. The
         // durable mailbox also covers recovery and messages waiting in the loop.
@@ -2306,7 +2304,7 @@ export class WorkstreamObjectProductService {
         ];
       },
     );
-    if (input.scope !== undefined) await this.convergeParentVisibility();
+    if (input.scope !== undefined) await this.convergeParentVisibility(envelopes);
     const root = this.root();
     const events: Record<string, unknown>[] = [];
     if (input.title !== undefined) {
@@ -3061,19 +3059,14 @@ export class WorkstreamObjectProductService {
     return true;
   }
 
-  private async convergeParentVisibility(): Promise<void> {
+  private async convergeParentVisibility(envelopes: readonly ConversationEffectEnvelope[]): Promise<void> {
     const identity = this.objectStore.identity();
     if (identity?.parentKind !== "workstream") return;
-    const row = this.storage.sql.exec<{ payload_json: string }>(
-      `SELECT payload_json FROM durable_outbox
-        WHERE json_extract(payload_json, '$.effect.kind') = 'directory_common'
-        ORDER BY source_version DESC LIMIT 1`,
-    ).toArray()[0];
-    if (!row) throw new Error("participant_authority_visibility_intent_missing");
+    const envelope = envelopes.find(({ effect }) => effect.kind === "directory_common");
+    if (!envelope) throw new Error("participant_authority_visibility_receipt_missing");
     const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, identity.workspaceId,
       workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspaceId)));
-    await parent.receiveChildEffects({ substreamId: this.externalSubstreamId(),
-      envelopes: [ConversationEffectEnvelopeSchema.parse(JSON.parse(row.payload_json))] });
+    await parent.receiveChildEffects({ substreamId: this.externalSubstreamId(), envelopes: [envelope] });
   }
 
   /** Historical and creation rows are frozen once, before normal admission. */

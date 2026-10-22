@@ -310,7 +310,7 @@ export interface HostedSidekickHost {
   /** Inside the transaction that changed a directory row: the sidebar's waterline and a deleted Sidekick's bindings. */
   noteDirectoryChanged(automationId: string, deleted: boolean, now: number): void;
   /** Whether a person is an active participant of a live Channel: a read of this object's own rows. */
-  isChannelParticipant(workstreamId: string, userId: string): boolean;
+  isChannelParticipant(workstreamId: string, userId: string): boolean | Promise<boolean>;
   /** A Channel's or Breakout's own viewer decision, for a Sidekick homed there. */
   channelViewer(input: {
     workspaceId: string; parentId: string; substreamId: string; userId: string; requireGrantAuthority?: boolean;
@@ -2134,7 +2134,7 @@ export class HostedSidekick {
    * The detail as this reader sees it. The owning Thread is named only to a
    * participant of it, the library's rule, read from this object's own rows.
    */
-  detail(readerUserId: string): AutomationDetail {
+  async detail(readerUserId: string): Promise<AutomationDetail> {
     // The row with both revisions and its last run in one read; the recent
     // runs are the second. `next_run_at` is kept by `touchDirectory`.
     const row = first(this.sql.exec<HostedSidekickRow & {
@@ -2160,7 +2160,7 @@ export class HostedSidekick {
       ? AutomationDraftSchema.parse(JSON.parse(row.accepted_definition_json))
       : null;
     const threadId = row.scope === "workstream" ? row.owning_workstream_id : null;
-    const owningThread = threadId !== null && this.host.isChannelParticipant(threadId, readerUserId)
+    const owningThread = threadId !== null && await this.host.isChannelParticipant(threadId, readerUserId)
       ? owningThreads(this.sql, [threadId], (workstreamId, code) => logWarn(this.env, "owning_thread_appearance_invalid", {
         ...this.logFields(), workstream_id: workstreamId, code,
       })).get(threadId) ?? null

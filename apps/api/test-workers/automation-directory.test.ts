@@ -116,6 +116,15 @@ async function seedRoom(): Promise<void> {
       createdAt: NOW,
     },
   });
+  const membership = await env.DB.prepare("SELECT incarnation FROM workspace_members WHERE workspace_id = ? AND user_id = ?")
+    .bind(WORKSPACE_ID, AUTHOR_ID).first<{ incarnation: string }>();
+  await withHostedParent(workspaceStub(), ROOM_ID, (parent) => {
+    parent["scopeGrants"]({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID }).mutate({
+      operationId: crypto.randomUUID(), actorUserId: AUTHOR_ID, userId: AUTHOR_ID,
+      target: { kind: "workstream", workspaceId: WORKSPACE_ID, parentId: ROOM_ID },
+      active: true, expectedRevision: 0,
+    }, membership!.incarnation);
+  });
 }
 
 /** `create`, which writes the Sidekick's directory row in the Organization object. */
@@ -152,6 +161,15 @@ beforeEach(async () => {
 });
 
 describe("automation directory", () => {
+  it("learns a historical participant before listing the Thread's Sidekick rail", async () => {
+    const automationId = await createAndPublish("workstream");
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec("DELETE FROM workspace_member_status WHERE user_id = ?", AUTHOR_ID);
+    });
+    const listed = await workspaceStub().listWorkstreamAutomations({ workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, userId: AUTHOR_ID });
+    expect(listed.items.map((item) => item.id)).toEqual([automationId]);
+  });
+
   it("lists a personal draft in its author's sidebar and in nobody else's", async () => {
     const automationId = await createAndPublish("personal");
 
@@ -241,7 +259,7 @@ describe("automation directory", () => {
     // The author leaves the Thread. They still read the Sidekick they made,
     // and it no longer names the room.
     await runInDurableObject(workspaceStub(), (_instance, state) => {
-      state.storage.sql.exec("UPDATE channel_viewers SET is_participant = 0 WHERE workstream_id = ? AND user_id = ?", ROOM_ID, AUTHOR_ID);
+      state.storage.sql.exec("UPDATE parent_grants SET grant_json = json_set(grant_json, '$.active', json('false')) WHERE parent_id = ? AND user_id = ?", ROOM_ID, AUTHOR_ID);
     });
     const after = await workspaceStub().listSidekickDirectoryForAuthorizedMember({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID });
     expect(after.items.map((item) => ({ id: item.id, owningThread: item.owningThread })))
@@ -283,7 +301,7 @@ describe("automation directory", () => {
     expect(summaries.map((summary) => summary.name)).toEqual(["D", "C", "A", "B"]);
   });
 
-  it("lists an authenticated member's library without the object re-reading their membership", async () => {
+  it("learns a cold library reader once and reuses their membership on subsequent reads", async () => {
     const personal = await createAndPublish("personal");
     const shared = await createAndPublish("workspace");
     const owned = await createAndPublish("workstream");
@@ -311,6 +329,9 @@ describe("automation directory", () => {
     // Who sees what is unchanged: the author sees all three, a member only the workspace one.
     expect((await library(AUTHOR_ID)).items.map((item) => item.id).sort()).toEqual([personal, shared, owned].sort());
     expect((await library(MEMBER_ID)).items.map((item) => item.id)).toEqual([shared]);
+    expect(objectReads.filter((sql) => sql.includes("workspace_members"))).toHaveLength(1);
+    objectReads.length = 0;
+    await library(MEMBER_ID);
     expect(objectReads.filter((sql) => sql.includes("workspace_members"))).toEqual([]);
   });
 
@@ -394,7 +415,8 @@ describe("automation directory", () => {
         target: { kind: "workstream", workspaceId: WORKSPACE_ID, parentId: ROOM_ID }, active: true, expectedRevision: 0 },
       "existing-member")).toMatchObject({ status: "committed" });
     });
-    expect(await audience(MEMBER_ID)).not.toContain(group);
+    // The canonical grant already makes them a participant and therefore a reader.
+    expect(await audience(MEMBER_ID)).toContain(group);
     const claim = await workspaceStub().sidekickClaimExecutionPrincipal({
       workspaceId: WORKSPACE_ID,
       automationId,

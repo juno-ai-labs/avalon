@@ -1,3 +1,4 @@
+import { ScopeGrantSchema } from "@rally/contracts/scope-grants";
 import "../../../tests/isolated-region";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 import { env } from "cloudflare:workers";
@@ -78,6 +79,14 @@ async function seedOrganization() {
       VALUES (?, ?, 'child', ?, 2, 'ready', 2)`, PRIVATE, BREAKOUT, BREAKOUT_MEMBER);
     sql.exec(`INSERT INTO parent_breakout_members (parent_id, substream_id, user_id, active, version, added_by_user_id, added_at, updated_at)
       VALUES (?, ?, ?, 1, 1, ?, 2, 2)`, PRIVATE, BREAKOUT, BREAKOUT_MEMBER, BREAKOUT_MEMBER);
+    for (const [parentId, substreamId, userId] of [[OPEN, null, PARTICIPANT], [PRIVATE, null, PARTICIPANT], [PRIVATE, BREAKOUT, BREAKOUT_MEMBER]] as const) {
+      const grant = ScopeGrantSchema.parse({ id: crypto.randomUUID(), userId,
+        target: substreamId === null ? { kind: "workstream", workspaceId: WORKSPACE_ID, parentId }
+          : { kind: "conversation", workspaceId: WORKSPACE_ID, parentId, substreamId },
+        active: true, revision: 1, membershipIncarnation: `incarnation-${userId}` });
+      sql.exec("INSERT INTO parent_grants(parent_id,user_id,scope_kind,substream_id,grant_json) VALUES (?,?,?,?,?)",
+        parentId, userId, grant.target.kind, substreamId ?? "", JSON.stringify(grant));
+    }
     // A Channel whose Main has moved to grant authority: only a grant bound to
     // the reader's current membership admits them. The guest holds one; the
     // re-added member holds one from an earlier membership.
