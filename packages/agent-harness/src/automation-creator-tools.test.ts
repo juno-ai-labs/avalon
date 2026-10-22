@@ -74,13 +74,6 @@ function toolNamed(tools: ReturnType<typeof createAutomationsPlugin>["tools"], n
 }
 
 describe("the automations plugin", () => {
-  it("tells the authoring agent to read the attached transcript before searching or blocking", () => {
-    const plugin = createAutomationsPlugin(host());
-    expect(plugin.systemMessage).toContain("load reading-google-meeting-notes");
-    expect(plugin.systemMessage).toContain("before any Drive search or blocked conclusion");
-    expect(plugin.systemMessage).toContain("read an attached Doc");
-  });
-
   it("keeps recommendation mutations out of the authoring tools", () => {
     const names = createAutomationsPlugin(host()).tools.map((tool) => tool.definition.name);
     expect(names).not.toContain("attach");

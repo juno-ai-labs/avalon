@@ -139,6 +139,32 @@ describe("skills in a run", () => {
     expect(second).toContain(`<skill_content name="${triage.name}">`);
   });
 
+  it("offers seen-item tracking with Tables without requiring Sidekick authoring tools", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const responses = [
+      toolCallResponse("load_skill", { name: "tracking-seen-or-done-items" }),
+      textResponse("Ready to read the ledger."),
+    ];
+    const fetcher: typeof fetch = async (_request, init) => {
+      bodies.push(providerRequestView(JSON.parse(String(init?.body))) as Record<string, unknown>);
+      return responses.shift()!;
+    };
+    await expect(runHarness({
+      ...runInput(fetcher),
+      skills: [...BUILT_IN_SKILLS],
+      plugins: [{
+        canonicalId: "rally:tables", modelId: "rally_tables", shortWireName: "table",
+        description: "Durable tables", tools: [], preload: true,
+      }],
+    })).resolves.toMatchObject({ status: "completed" });
+    expect(systemPrompt(bodies[0]!)).toContain("tracking-seen-or-done-items:");
+    expect(systemPrompt(bodies[0]!)).not.toContain("polling-for-events:");
+    expect(systemPrompt(bodies[1]!)).toContain("## 1. Load the Tables plugin");
+    expect(systemPrompt(bodies[1]!)).toContain("## 3. Find or create the shared table");
+    expect(systemPrompt(bodies[1]!)).toContain('scopeKind: "sidekick"');
+    expect(systemPrompt(bodies[1]!)).toContain("keyColumns");
+  });
+
   it("loads the Google meeting playbook and its storage reference without activating its connection", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     const responses = [
@@ -621,14 +647,6 @@ describe("built-in skills", () => {
     expect(POLLING_FOR_EVENTS_SKILL.ownerPlugin).toBe(AUTOMATIONS_PLUGIN_ID);
   });
 
-  it("teaches transcript polling to read an attached Doc before Drive discovery", () => {
-    const body = POLLING_FOR_EVENTS_SKILL.body;
-    expect(body).toContain("load reading-google-meeting-notes");
-    expect(body).toContain("read an attached Doc");
-    expect(body).toContain("before any Drive search or blocked conclusion");
-
-  });
-
   it("states the polling floor the team set, and the rule that keeps a run honest", () => {
     const body = POLLING_FOR_EVENTS_SKILL.body;
     // The whole sentence, not "600" and "ten minutes" separately: "3600" in the
@@ -638,8 +656,8 @@ describe("built-in skills", () => {
     // Slower is fine and the person's own cadence wins — without this the floor
     // reads as the interval.
     expect(body).toContain("**the person's own cadence wins**");
-    // Dedupe is the other half: a timer with no memory re-reports forever.
-    expect(body).toContain("keyColumns");
+    // The shared ledger procedure is loaded separately instead of copied here.
+    expect(body).toContain("Load `tracking-seen-or-done-items`");
     expect(body).toContain("## Anti-patterns");
     // `webhook` is a submittable trigger on the very draft tool this skill
     // drives, so a body that names only the other two event kinds sends a

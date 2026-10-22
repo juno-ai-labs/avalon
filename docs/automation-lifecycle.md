@@ -480,8 +480,13 @@ resource into registrations all ask that one function, and so does
 
 That field is what an empty answer has to be read against, because after the
 filter an empty page has two unrelated causes. With types listed, the query
-matched none of them and another wording may: the container exists and the rule
-should still name it. With no types listed, no resource can narrow a rule in this
+matched no registered resource of those types; another wording may find one.
+Binding those types is supported, but the source may still need a Rally resource
+record: reading it directly through a connector does not create that record.
+The `polling-for-events` skill teaches title lookup, registration through an
+exposed resolution or attachment path, and repeat discovery for the canonical ID.
+If that path is unavailable, report the missing registration step rather than a
+permission denial. With no types listed, no resource can narrow a rule in this
 workspace at all, and only then is the rule written with a filter leaf instead —
 one repository is `repository equals owner/name`, which every GitHub event
 declares a filter field for. Telling the model the second when the first is true
@@ -1093,18 +1098,13 @@ candidate summaries without recursively invoking other public service entrypoint
 Desktop and browser request management options only when their controls open, not
 on every transcript update.
 
-Sidekick authoring must compose authorized plugins before reporting a capability
-blocker. For Meet-note follow-ups, inspect Drive + Docs as well as Mail + Calendar:
-load `reading-google-meeting-notes` for the shared storage and lookup procedure,
-inspect Calendar activity `metadata.attachments` or read the event first, then
-read its attached transcript or notes Doc through the authorized Docs connection
-before any Drive search or blocked conclusion. Pass the attachment's `fileId` as
-`documentId`, or extract it from the Docs `fileUrl`. Drive discovery is the
-fallback when there is no relevant attachment or its read cannot supply the
-notes; preserve the specific read failure. Choose a declared document event or polling when Calendar changes do
-not cover notes availability. Gmail draft PDF attachments use Rally resource IDs.
-A missing connection or unshared notes document is an access requirement to
-report specifically, not evidence that the provider lacks the capability.
+Sidekick authoring uses the shared plugin-discovery guidance to check authorized
+capabilities before reporting a blocker. Provider-specific procedures stay with
+their owners: the Google plugin prompts point to `reading-google-meeting-notes`
+for meeting-document lookup and describe Gmail draft PDF resource attachments.
+That reading skill composes with `polling-for-events` for a recurring workflow.
+The Sidekick authoring prompt carries no Google-specific lookup or attachment
+instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
 
