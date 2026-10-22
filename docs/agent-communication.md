@@ -228,7 +228,11 @@ messages and mutations retain their existing authorization checks. Another
 thread's, personal, and organization Sidekicks are not setup fallbacks. An empty
 list tells the agent to create one here with `scope=workstream` and send setup
 instructions to its authoring agent. A conversation acting for no thread instead
-receives guidance to set up from the intended thread.
+receives guidance to set up from the intended thread. For work requested after
+an external file changes, coordination guidance tells the authoring agent to
+register the source and bind a suitable event by default. Routine registration
+through an authorized connection is not a preference question. A missing
+connection or fallback that changes the requested behavior may still need input.
 
 An explicitly named edit uses `find_sidekick`, an exact, case-insensitive name
 lookup over the same authorized directory and contact ownership rule. It can

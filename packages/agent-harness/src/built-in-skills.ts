@@ -330,9 +330,9 @@ The whole procedure runs through the Sidekicks plugin; load it before you start.
 
 - **Event:** A message from a connected service saying that something changed.
 - **Polling:** Checking the source on a timer for new or changed items.
-- **Rally resource ID:** The ID returned by Rally's resource search for a file
-  or other resource recorded in Rally's resource catalog. It differs from the external service's URL or
-  file ID.
+- **Rally resource ID:** The ID returned by Rally's resource search or
+  registration for a file or other source recorded in Rally's resource catalog.
+  It differs from the external service's URL or file ID.
 - **Binding:** Limiting an event rule to changes associated with one resource
   through the selected connection. For example, a rule bound to one spreadsheet
   ignores changes to other spreadsheets on that connection. Binding does not
@@ -361,10 +361,11 @@ also needs to be checked against a written condition. Use \`webhook\` when the
 event belongs to a webhook connection the Organization has already set up.
 Inspect which resource types and filter fields the event supports.
 
-If event binding fits better than polling, recommend it to the requester or
-coordinating agent: it reacts to the matching change and avoids repeated
-unchanged checks. Preserve an explicitly requested schedule unless the person
-chooses the alternative.
+For a change-triggered request, use a suitable event by default: it reacts to
+the matching change and avoids repeated unchanged checks. Registering the
+requested source through an authorized connection is part of setup; do it
+without asking the person to choose registration or polling. Preserve an
+explicitly requested schedule unless the person chooses the alternative.
 
 Save a short explanation of the trigger choice in the Sidekick definition's
 run instructions:
@@ -394,14 +395,22 @@ register it. Read an empty result alongside
 - First inspect which resource types the selected event can bind to. The search
   types cover all connected plugins; a nonempty list does not establish that
   this particular event supports the requested type.
-- If that event supports the source's type and the type is listed, use the
-  connector to confirm access and obtain the actual title, then search again
-  with that title instead of a sentence combining the URL, ID and task. If the
-  readable resource still cannot be found, report that the lookup did not
-  resolve a registered Rally resource. No connector-resource registration tool
-  is available here. Explain that it needs registration in Rally; do not claim
-  that access was denied. Never invent a Rally ID or substitute the external
-  service's file ID.
+- If that event supports the source's type and the type is listed, register a
+  missing external file through the Sidekicks plugin using its URL or external
+  file ID and a source plugin that supports registration. Registration verifies
+  access and returns the new or existing Rally resource ID and source plugin;
+  no second search is needed. Bind that result to the suitable event and submit
+  the ready definition without asking for confirmation. Never invent a Rally
+  ID or substitute the external service's file ID.
+- For a plugin without registration support, use its connector to confirm
+  access and obtain the actual title, then search Rally again with that title.
+  If the readable source still cannot be found, report that it has no resolved
+  Rally resource ID and this connection cannot register it. Do not call that
+  a permission denial.
+- If registration or binding fails, report the actual failure. Ask only if a
+  missing connection, ambiguous source, or fallback would change the requested
+  behavior. Offer only actions that the available tools can perform; a search
+  miss alone is not a reason to ask for polling or reattachment.
 - If the selected event does not support the source's type or that type is
   absent from the list, registration cannot make it bindable. Use a supported
   parent resource, such as a folder, and the event's filter fields to limit
