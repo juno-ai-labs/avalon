@@ -11,12 +11,9 @@ import { z } from 'zod';
 
 export const MODEL_CHOICES = [
   ...AGENT_MODEL_OVERRIDES,
-  // Fleet routes the work-stream pin selector above no longer offers but Ace
-  // still must: the small classifier/structured default, the naming default,
-  // and the older Azure-deployed Grok.
+  // The small classifier/structured default is not in the work-stream pin
+  // selector above, but it is a first-class option for Ace's fleet routing.
   'google/gemini-2.5-flash-lite',
-  'openai/gpt-5.6-terra',
-  'x-ai/grok-4.3',
 ] as const;
 
 export const GPT_5_6_SOL_MODEL_ID = 'openai/gpt-5.6-sol' as const;
