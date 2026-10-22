@@ -89,6 +89,13 @@ describe("the conversation whose Terminal a run uses", () => {
       .rejects.toThrow("terminal_authority_parent_mismatch");
   });
 
+  it("validates a Sidekick worker's parent even though its sandbox address is always zero", async () => {
+    const child = agentIdForAddress({ parentKind: "automation", parentId: WORKSTREAM, substreamId: asSubstreamId(WORKER) });
+    const ownerOf = owners([[child, agent(OTHER_WORKSTREAM, "0")]]);
+    await expect(resolveTerminalRunScope({ ...input(WORKER, true), parentKind: "automation" }, ownerOf))
+      .rejects.toThrow("terminal_authority_parent_mismatch");
+  });
+
   it("refuses an ownership cycle rather than walking it forever", async () => {
     const ownerOf = owners([
       [agent(WORKSTREAM, WORKER), agent(WORKSTREAM, NESTED_WORKER)],

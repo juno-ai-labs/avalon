@@ -670,13 +670,12 @@ Mail + Calendar and Drive + Docs + Sheets plugins. The host freezes each view's
 capabilities and activation independently, while joining their capabilities by
 connection ID for run scope; see [Google connector views](connectors.md#google).
 
-The standing system prompt distinguishes conversation state from Terminal
-files: Sidekick activations have separate conversations, while their wizard,
-activations and background agents share one sandbox. The coordination prompt
-makes the same distinction when handing work to another agent. The tracking
-skill keeps completion records in durable tables even though files are shared.
-The public help source also feeds the rendered manual, Markdown, search index
-and full manual for model readers; those descriptions must agree.
+The standing system prompt defines Sidekicks and their separate activation
+conversations. The Sidekicks plugin and automation-specific Terminal guidance
+explain shared files, execution-user access, and overlapping updates when those
+facts are needed. The tracking skill keeps completion records and output claims
+in durable tables. Public help also feeds the rendered manual, Markdown, search
+index and full manual for model readers; those descriptions must agree.
 
 `polling-for-events` owns trigger selection and source-resource lookup. Its
 catalog covers actions after external changes, including site refreshes. It
@@ -684,7 +683,7 @@ branches between explicit schedules, supported events with resolved bindings,
 and polling justified by a concrete event/filter/resolution gap. Saved run
 instructions retain that rationale; a search miss does not establish an
 unsupported event. `building-live-sites` carries the saved refresh procedure:
-reuse the Sidekick's shared files or recover missing source into the original directory,
+back up local files and import the current published source into the original directory,
 preserve its publishing conversation and consumer data format, reconcile all
 eligible source records, then verify publication. Initial publication, Sidekick
 activation and a successful refresh are distinct outcomes.
@@ -1696,8 +1695,11 @@ changes made in another sandbox.
 Saved instructions identify the resource,
 owning thread, import and publication paths, and data format. Runs account for
 every requested source row and check each stage of completion separately.
-Standing prompts, delegation guidance, the tracking skill and public help all
-distinguish separate conversation history from shared Sidekick files.
+Sandbox-specific Terminal guidance is sent only to Sidekick conversations,
+while the standing prompt describes their separate conversations. The tracking
+skill coordinates overlapping updates with a revision-checked output claim;
+the site skill holds it through import, edits and publication. Public help
+explains shared files and the current execution-user boundary.
 
 **Why:** The content-calendar experiment chose polling before resolving its event
 resource and expected a later activation to inherit the creator's files.

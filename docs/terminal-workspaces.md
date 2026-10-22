@@ -1289,7 +1289,11 @@ update lag before changing the default.
 **What changed:** Terminal resolves every primary Sidekick run and delegated worker
 to its authoring conversation's sandbox. Run records and resource permissions
 stay in the execution conversation. Existing foreign-run mutation leases serialize
-shared writes. Primary activations may rebuild changed authority; background
+shared writes. Shared-output workflows claim a durable coordination row across
+multiple tool calls, rather than treating that per-call lease as a workflow lock.
+Reimports of the same resource and destination replace their authorizing
+activation, so provenance checks follow retained source paths, not run history.
+Primary activations may rebuild changed authority; background
 agents still cannot replace their owner's files. Every plugin activation and
 tool call checks the live run-as user, so another editor cannot repeatedly
 replace the shared sandbox. Generated sites can be recovered from the configured
