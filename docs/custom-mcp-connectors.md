@@ -43,7 +43,7 @@ string a reconnect is matched against is the string the adapter dials.
   than the one whose consent screen the person saw.
 
 **Both paths prove the server before reporting success**, through the adapter's
-own health check — the same discovery an activation runs, so the connection's
+own discovery — also used by its health check and activation, so the connection's
 tool policy, the model-facing name normalization, the schema bounds, and the
 collision checks all decide it. A connection whose only symptom is a plugin that
 fails to load inside somebody's run three days later is the failure this avoids,
@@ -95,6 +95,29 @@ more: a personal connection acts with its owner's own identity on that server
 and is usable by nobody else, so it exposes exactly what that person can already
 do. The policy exists because a workspace connection hands one credential to
 every member.
+
+### Descriptions and server instructions
+
+Discovery prefers the server's nonblank `serverInfo.description`; when absent,
+it builds an extractive description from the tool names and descriptions that
+this connection's policy admits. It uses the existing 4,000-character description
+bound and normalizes controls and whitespace to one line. Optional `instructions`
+from initialization join the plugin's `systemMessage`, under Rally's policy and
+the user's request, and appear in `Active Plugin Instructions` after activation.
+They are refreshed before explicit and restored loads reach inference; a server
+that stops returning instructions clears the previous value.
+
+`config_json.mcpServerMetadata` stores the description and optional instructions
+so the next conversation's initial catalog requires no network request. Setup,
+settings inventory, Test/count discovery, activation and Sidekick catalog reads
+refresh it. Writes check the provider account, owner, scope, grants and config
+excluding derived metadata: a late discovery cannot overwrite a new endpoint,
+policy, account or owner. Count writes ignore this derived field under their
+otherwise unchanged fence. Existing connections with no metadata receive one
+background discovery when listed, even if their tool count is already known;
+a claimed marker prevents concurrent lists or a failed backfill from repeatedly
+calling the server. A later explicit discovery can still repair missing metadata.
+No new schema migration or model inference is required.
 
 ### Looking at what a server offers
 
@@ -158,8 +181,8 @@ additional authority.
   the saved name after removing controls, bidi formatting, and line breaks while preserving
   Unicode joiners, falling back
   to `Custom MCP server` when empty. `HarnessPlugin.activityDisplayName` is
-  separate from the static model-facing `displayName`, descriptions, aliases,
-  and system messages. Automation catalogs also retain the static display name.
+  separate from the static model-facing `displayName` and aliases. Descriptions
+  and usage instructions come from the separately discovered server metadata. Automation catalogs also retain the static display name.
   Transcript activities carry `connectorType` independently so a custom server
   named Slack keeps the Model Context Protocol mark and a connection-specific row.
 
@@ -267,7 +290,7 @@ the endpoint and the header are one decision and are captured together.
 
 ## Changelog
 
-### 2026-10-22 — Identify configured servers in the model catalog
+### 2026-10-22 — Identify and describe configured servers in the model catalog
 
 A run asked to use Rally Engineering loaded Cloudflare Observability instead:
 all four configured servers appeared as “Custom MCP server” with identical
@@ -278,6 +301,14 @@ makes the name searchable without inserting raw configuration into trusted
 prompt prose. Rewriting stored IDs or tool prefixes was rejected because saved
 bindings and historical receipts depend on them. Keep those identities stable,
 retain legacy binding aliases, and preserve the ordinal through truncation.
+Conversation and Sidekick searches share punctuation normalization, so a
+multiword name also matches its underscore-separated identifier.
+The same change uses initialization descriptions or an extractive tool fallback
+and retains server instructions in the authorized active-plugin system section.
+Persisting that discovery avoids a provider round trip just to build the initial
+catalog; refreshing the shared plugin at activation prevents stale instructions
+from surviving a server update. Derived metadata must not bypass the connection's
+configuration, account, ownership or grant fence.
 
 ### 2026-09-11 — Name the server in participant activity
 

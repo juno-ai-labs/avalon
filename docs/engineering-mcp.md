@@ -51,6 +51,14 @@ available to Rally users by virtue of product membership.
 
 ## How it works
 
+The initialization response advertises the server's purpose through
+`serverInfo.description` and includes usage instructions for resolving product
+and storage names, selecting exact users and conversations, paging participant
+reads, inspecting schemas, respecting requested mutation scope, retrying with
+stable operation IDs, and keeping diagnostic credentials out of output. Clients
+can use this metadata for discovery and active-plugin instructions without
+inventing a capability summary from individual tools.
+
 Cloudflare Access terminates MCP OAuth and Dynamic Client Registration at the
 custom hostname. Dynamic registration accepts installed-client loopback
 callbacks and hosted callbacks under the supported Claude, ChatGPT, and Cursor
@@ -589,6 +597,16 @@ each selected model's configured default; an explicit value applies to the
 primary and fallbacks. Ace owns validation and the atomic write.
 
 ## Changelog
+
+### 2026-10-22 — Advertise purpose and operator guidance in initialization
+
+The Engineering MCP supplied individual tool descriptions but no server-level
+purpose or instructions. Clients could therefore connect successfully and still
+lack the context for selecting it or mapping Channels, Threads and Breakouts to
+storage IDs. Initialization now describes its investigation and administration
+capabilities and supplies concise operator guidance. Preserve normal app access
+checks and idempotent operation IDs; metadata describes usage and grants no
+additional authority.
 
 ### 2026-10-21 — Exercise product workflows as a named user
 

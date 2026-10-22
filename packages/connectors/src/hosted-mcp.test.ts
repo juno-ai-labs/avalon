@@ -8,6 +8,30 @@ import type { FetchLike } from "./provider-utils";
 import { authorizedConnection } from "./types";
 
 describe("hosted MCP abstraction", () => {
+  it.each(["Inspect production logs", undefined, "   "])("discovers server guidance and a tool-derived fallback for %s", async (description) => {
+    const passthrough = createHostedMcpPassthrough({
+      providerName: "Metadata", serverUrl: "https://mcp.example.test/mcp",
+      capabilities: ["provider.personal.mcp"], connectionScopes: ["personal"],
+      capabilityForConnection: () => "provider.personal.mcp",
+      withAccessToken: async (_connection, _signal, operation) => operation("token"),
+      fetch: async (_url, init) => {
+        if (init?.method === "DELETE") return new Response(null, { status: 204 });
+        const request = JSON.parse(String(init?.body));
+        if (request.method === "notifications/initialized") return new Response(null, { status: 202 });
+        return rpc(request.id, request.method === "initialize"
+          ? { protocolVersion: "2025-06-18", serverInfo: { name: "Example", version: "1", description },
+              instructions: "Choose an account first.\nThen inspect the exact Worker." }
+          : { tools: [{ name: "query_logs", description: "Query Worker logs", inputSchema: { type: "object" } }] });
+      },
+    });
+    const connection = authorizedConnection({ id: "metadata", workspaceId: "workspace", scope: "personal",
+      ownerUserId: "user", grantedScopes: ["provider.personal.mcp"], credentials: {}, config: {}, cursor: {} });
+    expect((await passthrough.dynamicAgentTools.discoverCatalog!(connection, neverAborts())).server).toEqual({
+      description: description?.trim() || "Available tools: query_logs: Query Worker logs",
+      instructions: "Choose an account first.\nThen inspect the exact Worker.",
+    });
+  });
+
   it("preserves the live schema and treats remote annotations only as hints", () => {
     expect(hostedMcpToolDefinitions([
       {

@@ -119,6 +119,20 @@ async function rpc(
 }
 
 describe("Rally engineering MCP tools", () => {
+  it("advertises its purpose and usage instructions in initialization", async () => {
+    const response = await rpc(testEnv({ GLOBAL_INSPECTION: regionalBinding("global") }), "initialize", {
+      protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "Rally", version: "1" },
+    });
+    expect(response.result).toMatchObject({ serverInfo: {
+      name: "Rally engineering",
+      description: "Inspect and administer Rally organizations, Channels, Threads, Breakouts, Sidekicks and artifacts. Read production databases, inference data and Worker logs; manage feature flags and model routing; create organizations and conversations and send messages as a selected Rally user.",
+    } });
+    const instructions = (response.result as { instructions: string }).instructions;
+    expect(instructions).toContain("Main is substream 0.");
+    expect(instructions).toContain("reuse the same operationId and arguments after an uncertain outcome");
+    expect(instructions).toContain("Never expose credentials");
+  });
+
   it.each(["list_channels", "list_threads", "list_breakouts"])("routes %s as the selected user through the authoritative region", async (name) => {
     const global = regionalBinding("global");
     const enterprise = regionalBinding("enterprise");
