@@ -27,10 +27,12 @@ import {
   type ScheduledAlarmRun,
 } from "../src/durable-objects/scheduled-alarms";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
+import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import { ensureAuditSchema } from "./helpers/audit-fixture";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000000a1");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000000a2");
+let breakoutAlarmForCleanup: DurableObjectStub | undefined;
 
 /**
  * The base's protected surface.
@@ -128,6 +130,10 @@ afterEach(async () => {
     await runInDurableObject(agent, (_instance, state) => state.storage.deleteAlarm());
   } catch {
     // The root conversation may never have been created, or may be gone.
+  }
+  if (breakoutAlarmForCleanup) {
+    await runInDurableObject(breakoutAlarmForCleanup, (_instance, state) => state.storage.deleteAlarm());
+    breakoutAlarmForCleanup = undefined;
   }
 });
 
@@ -1240,12 +1246,17 @@ describe("an agent's own wake-ups", () => {
     const breakout = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID, breakoutId),
     ));
+    breakoutAlarmForCleanup = breakout;
     for (const [stub, substreamId] of [[main, undefined], [breakout, breakoutId]] as const) {
-      await stub.bootstrapRuntime({
-        workspaceId: WORKSPACE_ID,
-        parentKind: "workstream" as const, parentId: WORKSTREAM_ID,
-        generation: 1,
-        ...(substreamId ? { substreamId } : {}),
+      await runInDurableObject(stub, async (instance: SubstreamAgent, state) => {
+        await instance.bootstrapRuntime({
+          workspaceId: WORKSPACE_ID,
+          parentKind: "workstream" as const, parentId: WORKSTREAM_ID,
+          generation: 1,
+          ...(substreamId ? { substreamId } : {}),
+        });
+        // Bootstrap projections must not start an alarm while this test sets up its timer.
+        await state.storage.deleteAlarm();
       });
     }
     await runInDurableObject(breakout, (_instance, state) => {
@@ -1265,13 +1276,14 @@ describe("an agent's own wake-ups", () => {
         Date.now() - 120_000,
       );
     });
-    await breakout.refreshTimerAlarm({
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      substreamId: breakoutId,
+    await runInDurableObject(breakout, async (instance: SubstreamAgent, state) => {
+      await instance.refreshTimerAlarm({ workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, substreamId: breakoutId });
+      // Park in the same invocation that arms it: an overdue native alarm can
+      // otherwise beat the manual trigger and leave that trigger with no alarm.
+      await state.storage.setAlarm(Date.now() + 120_000);
     });
 
-    await runDurableObjectAlarm(breakout);
+    expect(await runDurableObjectAlarm(breakout)).toBe(true);
 
     await runInDurableObject(breakout, (_instance, state) => {
       // Claimed and settled. A timer that read Main's empty table left this
