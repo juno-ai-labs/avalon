@@ -54,7 +54,7 @@ export function createArtifactDataToolContext(
       // existence oracle.
       const page = await loadVisibleWorkstreamResourcePage(
         env.DB,
-        createConversationResourceLinks(env, input.workspaceId, input.workstreamId),
+        createConversationResourceLinks(env, input.workspaceId, input.workstreamId, undefined, undefined, input.principal),
         {
           workspaceId: input.workspaceId,
           workstreamId: input.workstreamId,

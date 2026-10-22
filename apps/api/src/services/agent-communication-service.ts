@@ -78,7 +78,7 @@ export class AgentCommunicationService {
     if (attachmentIds.length === 0) return attachmentIds;
     // What the sender can see, which for a Breakout includes its Channel's.
     const { links } = await createConversationResourceLinks(this.env, this.input.workspaceId, this.input.parentId,
-      undefined, this.input.substreamId ?? "0").links({ resourceIds: attachmentIds });
+      undefined, this.input.substreamId ?? "0", this.input.executionPrincipal).links({ resourceIds: attachmentIds });
     const attached = new Set(links.map((link) => link.resource_id));
     if (attachmentIds.some((resourceId) => !attached.has(resourceId))) {
       throw new AgentCommunicationError("agent_attachment_unavailable");

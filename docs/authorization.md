@@ -173,6 +173,12 @@ does not reach.
 Guest admission observations are shared only within the current authorization
 batch, like other owner observations. Skill visibility alone does not expose a
 Sidekick's resources; existing member authorization remains on its original path.
+For an executing Sidekick, resource tools inherit only its home and explicitly
+attached conversations, using the same current execution-user admission as the
+conversation tools. A Breakout contributes its existing Main resource access;
+sibling conversations contribute nothing. Resource scopes are recomputed on
+subsequent reads, including after detachment or access removal. Connector write
+capabilities are not granted by this inheritance.
 
 Explicit resource refresh and artifact open/error/data routes also admit guests.
 Refresh runs the existing resource read proof before loading metadata or invoking

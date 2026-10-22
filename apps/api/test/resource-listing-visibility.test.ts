@@ -370,20 +370,20 @@ describe("a Breakout's resource links", () => {
       .toEqual([[PUBLISHED, "attachment"], [BACKUP, "generated"]]);
   });
 
-  it("inherits only as a Breakout of a Channel", async ({ onTestFinished }) => {
+  it("identifies Breakouts, Sidekicks and ordinary workers for resource inheritance", async ({ onTestFinished }) => {
     const close = (fn: () => void) => onTestFinished(fn);
-    const inherits = (store: DatabaseSync) => testResourcePort(store).inheritsChannelLinks();
-    await expect(inherits(conversationStore(close, [], BREAKOUT))).resolves.toBe(true);
+    const inherits = (store: DatabaseSync) => testResourcePort(store).inheritanceContext();
+    await expect(inherits(conversationStore(close, [], BREAKOUT))).resolves.toEqual({ kind: "breakout" });
     // A Channel's own conversation.
-    await expect(inherits(conversationStore(close, []))).resolves.toBe(false);
+    await expect(inherits(conversationStore(close, []))).resolves.toEqual({ kind: "none" });
     // A Sidekick's run child is a substream of an automation parent.
     const run = conversationStore(close, [], BREAKOUT);
     run.prepare(`UPDATE workstream SET parent_kind = 'automation' WHERE id = 1`).run();
-    await expect(inherits(run)).resolves.toBe(false);
+    await expect(inherits(run)).resolves.toEqual({ kind: "sidekick", sidekickId: WORKSTREAM, substreamId: BREAKOUT });
     // A start_agent worker is a substream of the Channel, and sees only what it was handed.
     const worker = conversationStore(close, [], BREAKOUT);
     worker.prepare(`INSERT INTO background_agent (id, execution_principal_json) VALUES (1, '{}')`).run();
-    await expect(inherits(worker)).resolves.toBe(false);
+    await expect(inherits(worker)).resolves.toEqual({ kind: "none" });
   });
 
   it("reads its own revision back from either fingerprint", () => {
