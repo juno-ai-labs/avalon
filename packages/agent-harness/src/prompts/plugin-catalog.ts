@@ -1,5 +1,9 @@
 const DEFAULT_PLUGIN_CATALOG_TOKENS = 2_500;
 
+export function normalizedPluginSearchText(value: string): string {
+  return value.normalize("NFKC").toLowerCase().match(/[\p{L}\p{N}]+/gu)?.join(" ") ?? "";
+}
+
 export interface PromptPluginSummary {
   pluginId: string;
   description: string;

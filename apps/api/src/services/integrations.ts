@@ -16,7 +16,7 @@ import { createAgentCommunicationPlugin } from "./agent-communication-plugin";
 import { continueSidekickRun } from "./sidekick-run-continuation";
 import { AgentMessageContentSchema, renderAgentMessage } from "./agent-message-content";
 import { ObjectPortError } from "../runtime/object-port";
-import { dynamicConnectorCapability, stableConnectionWireName, stableWireToolName, validateDynamicConnectorTools } from "./connector-tool-inventory";
+import { dynamicConnectorCapability, stableConnectionWireName, stableWireToolName, validateDynamicConnectorTools, discoverDynamicConnectorTools, connectorServerPresentation, storedConnectorServerMetadata } from "./connector-tool-inventory";
 import { ApiError } from "../lib/api-error";
 import { connectorPluginViews, connectorPluginBindingViews, connectorPluginCanonicalId, type GooglePluginBundle, type ConnectorPluginView } from "../lib/connector-plugin-views";
 import { resolveSidekickSkills, sidekickSkillCatalog, sidekickSkillRef, recommendedSidekickRefs } from "./sidekick-skills";
@@ -2236,18 +2236,19 @@ async function loadAutomationCreatorPluginCatalog(
       && row.display_name.trim() !== adapter.manifest.displayName
       ? `${adapter.manifest.displayName}: ${row.display_name.trim()}`
       : adapter.manifest.displayName;
-    const presentation = connectorPluginPresentation(String(row.connector_type), grantedScopes, wirePrefix, {
+    const basePresentation = connectorPluginPresentation(String(row.connector_type), grantedScopes, wirePrefix, {
       displayName: row.connector_type === "custom_mcp" ? adapter.manifest.displayName : connectionName,
       description: adapter.agentPlugin.description,
       searchAliases: connectorSearchAliases(adapter),
       systemMessage: adapter.agentPlugin.systemMessage,
     });
+    let presentation = connectorServerPresentation(basePresentation, storedConnectorServerMetadata(row.config_json));
     const registrationCapability = adapter.resourceRegistrationCapability;
     const activityTriggers = connectorActivityTriggerDescriptors(adapter, row.config_json == null ? null : String(row.config_json), scope, grantedScopes);
     let definitions = staticDefinitions;
     if (dynamicCapability) {
       try {
-        definitions = await withDeadline(30_000, async (signal) => {
+        const discovered = await withDeadline(30_000, async (signal) => {
           const { connection } = await loadAutomationCreatorConnectionContext(
             env,
             { workspaceId, userId },
@@ -2258,16 +2259,12 @@ async function loadAutomationCreatorPluginCatalog(
           return withAuthorizedConnection(
             env,
             { connection, adapter, signal },
-            async (authorized) => validateDynamicConnectorTools(
-              env,
-              adapter,
-              scope,
-              grantedScopes,
-              wirePrefix,
-              await adapter.dynamicAgentTools!.discover(authorized, signal),
-            ),
+            (authorized) => discoverDynamicConnectorTools(env, adapter, authorized, wirePrefix, signal,
+              row.provider_account_id == null ? null : String(row.provider_account_id)),
           );
         });
+        definitions = discovered.tools;
+        presentation = connectorServerPresentation(basePresentation, discovered.server);
       } catch (error) {
         logStructuredEvent(env, "warn", "dynamic_connector_tools_unavailable", {
           connector_type: connectorType,
@@ -5667,12 +5664,13 @@ async function loadHarnessTools(
     const defaultSelected = connectorPluginBindingViews(String(row.connector_type), row.credentialModelPluginId, grantedScopes,
       typeof row.display_name === "string" ? row.display_name : undefined)
       .some((view) => defaultModelPluginIds.has(view.modelPluginId));
-    const presentation = connectorPluginPresentation(String(row.connector_type), grantedScopes, shortWireName, {
+    const basePresentation = connectorPluginPresentation(String(row.connector_type), grantedScopes, shortWireName, {
       displayName: adapter.manifest.displayName,
       description: adapter.agentPlugin.description,
       searchAliases: connectorSearchAliases(adapter),
       systemMessage: adapter.agentPlugin.systemMessage,
     });
+    let presentation = connectorServerPresentation(basePresentation, storedConnectorServerMetadata(row.config_json));
     const dynamicCapability = dynamicConnectorCapability(adapter, scope, grantedScopes);
     const staticDefinitions = dynamicCapability
       ? []
@@ -5806,19 +5804,16 @@ async function loadHarnessTools(
                 dynamicCapability,
                 signal,
               );
-              const definitions = await withAuthorizedConnection(
+              const discovered = await withAuthorizedConnection(
                 env,
                 { connection, adapter, signal },
-                async (authorized) => validateDynamicConnectorTools(
-                  env,
-                  adapter,
-                  scope,
-                  grantedScopes,
-                  shortWireName,
-                  await adapter.dynamicAgentTools!.discover(authorized, signal),
-                ),
+                (authorized) => discoverDynamicConnectorTools(env, adapter, authorized, shortWireName, signal,
+                  row.provider_account_id == null ? null : String(row.provider_account_id)),
               );
-              const discoveredTools = definitions
+              presentation = connectorServerPresentation(basePresentation, discovered.server);
+              connectorPlugin.description = presentation.description;
+              connectorPlugin.systemMessage = presentation.systemMessage;
+              const discoveredTools = discovered.tools
                 .flatMap((definition) => addPluginTool(definition));
               if (!discoveredTools.length) {
                 throw new ConnectorError("unsupported_capability", `${adapter.manifest.displayName} MCP exposed no usable tools`);
@@ -5844,7 +5839,7 @@ async function loadHarnessTools(
           }
         }
       : undefined;
-    plugins.push({
+    const connectorPlugin: HarnessPlugin = {
       canonicalId: pluginId,
       modelId: modelPluginId,
       shortWireName,
@@ -5860,7 +5855,8 @@ async function loadHarnessTools(
       ...(loadTools ? { loadTools } : {}),
       preload: defaultSelected || attached.has(connectionId),
       explicit: defaultSelected || attached.has(connectionId),
-    });
+    };
+    plugins.push(connectorPlugin);
   }
   // Verify former Google identities against their complete, unchanged tool
   // surfaces. Identity aliases alone must never make a stale receipt replayable.

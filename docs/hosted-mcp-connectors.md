@@ -22,6 +22,7 @@ was incorrect and must not be used to introduce confirmations.
 | --- | --- |
 | `packages/connectors/src/hosted-mcp.ts` | The reusable OAuth discovery/DCR/PKCE helpers, Streamable HTTP client, paginated `tools/list`, exact `tools/call` forwarding, and live `ToolDefinition` conversion. |
 | `packages/connectors/src/types.ts` | `ConnectorDynamicAgentTools`, the adapter facet that declares which grants and connection scopes use a live tool surface. |
+| `apps/api/src/services/connector-tool-inventory.ts` | Validates discovery, persists configured-server metadata with connection fences, and composes plugin descriptions and instructions. |
 | `apps/api/src/services/integrations.ts` | Converts a dynamic connector facet into one connection-specific `HarnessPlugin.loadTools`, validates the live surface against the frozen grant, and routes execution back to the adapter. |
 | `packages/agent-harness/src/bind-runtime.ts` | Loads the tools after authorization at `load_plugin`, replaces the empty deferred plugin in the Bind registry, and caches that surface for the run. |
 | `packages/connectors/src/{apollo,ashby,fireflies,granola,slack,notion}.ts` | Small provider declarations: endpoint, accepted capability, token accessor/refresh wrapper, and the personal-versus-workspace branch. |
@@ -85,7 +86,9 @@ resource URL, with no verified provider user. See
 
 ### Discovery and activation
 
-The model first sees only Rally's trusted connector catalog entry. The API
+The model first sees the connector catalog entry. Shipped providers use Rally's
+code-authored description; configured servers use their last discovered description
+(see [custom MCP connectors](custom-mcp-connectors.md)). The API
 creates the deferred credential plugin with no model tools and a `loadTools`
 callback. When the model calls `load_plugin`, the harness reauthorizes the
 connection, calls the callback, and only then persists activation and exposes
@@ -96,7 +99,25 @@ restoration stays inactive instead of aborting the run with a missing hash.
 
 The callback enters the credential door, refreshes when necessary, initializes
 one MCP session, sends `notifications/initialized`, follows every `tools/list`
-cursor, and closes the session when the server assigned an ID. Rally preserves
+cursor, and closes the session when the server assigned an ID. The same session
+retains optional `initialize.serverInfo.description` and `initialize.instructions`.
+`discoverCatalog` returns those beside the validated tools; `discover` remains the
+compatible tools-only adapter method. An absent or blank description becomes an
+extractive description of the admitted tool names and descriptions, under the
+existing 4,000-character description bound. Instructions retain their full text
+within the existing MCP response bound; description whitespace and formatting
+controls normalize to one line so remote prose cannot create catalog headings.
+There is no model inference or second provider request for this fallback.
+
+For configured servers, the host updates its shared plugin object's description
+and `systemMessage` before Bind replaces the deferred registry entry. The latter
+combines Rally's static connector policy with server-provided usage instructions,
+explicitly subordinate to Rally policy and the user's request. Explicit loads,
+restored activations, inline children, and Sidekick catalogs use that same
+metadata. A subsequent discovery with no instructions removes the prior text.
+Shipped provider adapters retain their code-authored plugin guidance.
+
+ Rally preserves
 the server's object-shaped input schema. Remote annotations are parsed as bounded metadata but
 never lower Rally's safety policy. A remote name already valid under Rally's lowercase
 canonical-name contract stays unchanged; any other name gets a deterministic
@@ -266,11 +287,12 @@ the owning region before token exchange and storage.
 ## Security and trust model
 
 Provider tool descriptions, JSON Schemas, annotations, and results are
-untrusted remote input. They may shape only the bounded active tool definition
-and result; annotations cannot select Rally mode or idempotency, and none of
-them enter Rally's standing system policy or connector catalog prose. Provider
-content returned by a tool remains untrusted evidence under the connector's
-static system message.
+untrusted remote input. Annotations cannot select Rally mode or idempotency.
+Configured-server descriptions may enter the normalized plugin catalog, and
+server-provided usage instructions enter only that authorized plugin's active
+system-prompt section. They do not replace Rally policy or authorize tools,
+credentials, or activity beyond the connection's grants. Ordinary tool results
+remain untrusted evidence under the connector's static system message.
 
 OAuth metadata is accepted only over HTTPS and every advertised authorization,
 token, and registration endpoint must share an explicitly allowed origin.
@@ -289,6 +311,18 @@ current `tools/list` response when a formerly working prompt loses a tool—do n
 patch a historical snapshot into Rally.
 
 ## Changelog
+
+### 2026-10-22 — Carry configured-server guidance through discovery
+
+A named custom MCP plugin still had the same generic capability description as
+every other configured server, while initialization descriptions and usage
+instructions were discarded. Discovery now retains both alongside the tools,
+uses tool text when no description was supplied, and refreshes the host plugin
+before Bind registers it. A separate metadata fetch or model call was rejected:
+initialization and tool discovery already have the evidence, and activation
+latency matters. Keep the tools-only adapter method compatible, descriptions
+single-line, and server instructions in their authorized active-plugin section
+under Rally policy; do not turn tool results into standing instructions.
 
 ### 2026-10-19 — Apollo.io uses the provider's OAuth and live MCP catalog
 

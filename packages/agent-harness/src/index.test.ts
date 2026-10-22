@@ -754,6 +754,15 @@ describe("agent harness", () => {
     });
   });
 
+  it.each(["Rally Engineering", "RALLY-ENGINEERING", "rally_engineering"])("finds a configured server in Sidekick search by %s", (query) => {
+    const result = __testing.executeAutomationCreatorDiscoveryTool("plugins_search", { query }, [{
+      pluginId: "plugin_mcp_rally_engineering_3", displayName: "Custom MCP server", icon: "plug", scope: "workspace",
+      description: "Inspect production logs", searchAliases: ["mcp"], systemMessage: "Use this connection.",
+      tools: [], activityTriggers: [],
+    }]) as { plugins: Array<{ pluginId: string }> };
+    expect(result.plugins.map((plugin) => plugin.pluginId)).toEqual(["plugin_mcp_rally_engineering_3"]);
+  });
+
   it("canonicalizes tool inputs for stable hashes", () => {
     expect(__testing.canonicalJson({ "é": 3, a: 2, "😀": 4, Z: 1 })).toBe(
       '{"Z":1,"a":2,"é":3,"😀":4}'
