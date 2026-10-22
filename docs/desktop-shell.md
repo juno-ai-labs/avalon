@@ -374,7 +374,8 @@ is described in [conversation merge](conversation-merge.md#the-client).
 Each menu has a root and levels. The root is a row of action tiles (Add people,
 Rename, Copy link, More), under a header on a Breakout, followed by People,
 Sidekicks and Memory rows. A thread also has Artifacts directly below People
-and Breakouts below Sidekicks. Counts sit beside each row. A row, or the
+and Breakouts below Sidekicks. Counts sit beside each row, including **0** for
+an empty list; an unknown count stays blank while loading. A row, or the
 Add people and More tiles, opens its level in place (`useTitleMenuNav`), and the
 pill becomes a breadcrumb, the title quietened and the level after it. The
 title, Escape or the left arrow step back to the root before anything closes,
