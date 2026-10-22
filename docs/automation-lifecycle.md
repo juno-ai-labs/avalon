@@ -18,6 +18,13 @@ Sidekick may use the personal connection of the person it runs as
 The model generates internal instructions and a user-friendly description. An
 incomplete submission does not replace the accepted revision. Edits preserve a
 person's pause; an archived owning room still refuses publication.
+Authoring has two paths. An instruction-only Sidekick is a reusable Skill loaded
+into another conversation: its instructions contain the actual knowledge, rules
+or procedure, when to use it, and any needed context, constraints or expected
+output. It has no triggers or dedicated runs. Tools, resources and delivery steps
+are included only when its method needs them. Triggered work instead starts
+independent runs and needs a runbook.
+Saving a Skill makes its instructions available to load without starting a run.
 The authoring guidance follows the setup sequence: preserve scope and read the
 current definition, discover resources and capabilities, choose triggers and
 test the method, write the runbook, then save and report. Missing required
@@ -37,7 +44,8 @@ what worked, what it could not test, and remaining assumptions. Draft acceptance
 is not a workflow test. Future deliveries and other effects stay with future runs
 unless requested during setup.
 
-Saved instructions form a detailed runbook usable without the setup conversation:
+For triggered work, saved instructions form a runbook usable without the setup
+conversation:
 resources, tools and skills, input formats, ordered steps and decisions, state and
 duplicate handling, delivery, success checks, no-op conditions, and recovery from
 missing inputs, changed resources, or failures. Verified setup facts, untested
@@ -1264,6 +1272,8 @@ revision. Saved instructions carry the procedure, verified facts, remaining
 assumptions, per-run checks, delivery and recovery behavior. Missing required
 information and publication refusals have distinct next steps. Tool descriptions
 share the same scope, requester and immediate-publication rules.
+Instruction-only authoring has its own reusable-guidance path without imposing
+triggered-run requirements.
 
 **Why:** Authoring and execution can have different reasoning capabilities. A
 brief objective leaves each independent activation to rediscover the method and
