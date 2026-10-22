@@ -46,17 +46,20 @@ its run instructions:
 - **Data format:** The data file names, how the rows are arranged in them, and
   the field names and types the site's code expects.
 
-A Sidekick's resource tools can use a known Rally resource ID whenever its
-execution user can read that resource, even if it is not attached or listed.
-Have the wizard try importing the original site by ID. Resources in its home
-and attached conversations are also discovered automatically. To make the site
-easy to find in future context, forward its ID in
-\`send_message.attachmentIds\` (or \`reply_to_message.attachmentIds\` when replying).
-To keep it attached without messaging or waking the wizard, use
-\`sidekick_attach_resource({ sidekickId, resourceId })\`. These attachments are
-optional when the execution user already has read access. Mentioning or saving
-an ID does not change permissions; an access refusal requires checking the ID
-and that user's access. Confirm that the wizard can import the original site.
+When assigning a site refresh, prefer attaching the exact published site with
+the setup instructions, even when the Sidekick can already read it. This makes
+it clear which site the wizard and future runs should update. Include its Rally
+resource ID in \`send_message.attachmentIds\` (or
+\`reply_to_message.attachmentIds\` when replying). To add the site as context
+without messaging or waking the wizard, use
+\`sidekick_attach_resource({ sidekickId, resourceId })\`.
+
+A missing attachment must not block an authorized read: Sidekick resource tools
+can use a known Rally resource ID whenever the execution user can read it,
+even if it is not attached or listed. Have the wizard try importing the original
+site by ID. Mentioning or saving an ID does not change permissions; an access
+refusal requires checking the ID and that user's access. Confirm that the wizard
+can import the original site.
 
 For overlapping refreshes, load \`tracking-seen-or-done-items\` and save its
 shared-table coordination procedure, keyed by the site resource ID. One run
