@@ -108,6 +108,50 @@ turn an implementation checklist into an assertion that its tests passed.
   checkpoint. Full-suite and real-window UI evidence remain required when the
   remaining implementation is complete.
 
+### Per-operation accounts and durable references
+
+- The assembled connector loader admits eligible delegates' personal connections
+  independently of its coordinator. Provider execution uses the selected owner,
+  preserving the coordinator's run identity and existing workspace principals.
+  Google declares portable file operations and account-scoped mail/calendar IDs;
+  undeclared and hosted MCP operations retain their selected connection and
+  expose that limitation rather than gaining generic cross-account replay.
+- Existing receipt checkpoints record selected/refused/served accounts,
+  first selection, actual principal/connection and grant generation. Selection
+  commits before provider dispatch. Unresolved effects cannot change account;
+  only completed results establish dependent references. Retained attribution
+  prevents a completed read from being rebound to another input.
+- `tool-receipt-authority.test.ts`: 21 passing real workerd cases, including
+  five new account/eviction/lease/rollback/field-diagnostic cases and private serving-account
+  continuation across eviction. No new account-selection table or migration.
+- Focused API Node lanes passed 126 cases, including 14 resolver cases and
+  the final nullable-selector contract checks. They cover creator/source ordering,
+  deduplicated fallback, explicit account restrictions, empty searches, named
+  senders and replies, provider-reference ambiguity, continuation identity,
+  planned writes and observed withdrawal, uncertain effects, workspace
+  principals, receipt reuse and existing authoring catalog behavior. The actual
+  assembled Google test reads a Sheet after creator refusal, then writes using
+  the consenting other owner's credentials and refuses that owner's later
+  withdrawal; provider HTTP doubles observe the requests.
+- Connector identity projection: 9 passing cases. The pure account-guidance
+  renderer's two passing cases distinguish supported selectors from
+  fixed-connection tools and quote profile names as data. The combined existing
+  prompt/creator-tool lanes and these new cases pass 77 tests. These are assembly/unit evidence, not the
+  required configured medium-model behavior evaluations.
+- Ten production-code negative controls failed their targeted assertions:
+  allowing an unresolved account switch, removing transaction rollback,
+  accepting uncompleted bindings, permitting read-receipt rebinding, dropping
+  continuation identity, retrying transient/timeout/cancelled effects, changing
+  a planned write's account after withdrawal, ignoring explicit account scope,
+  omitting pre-dispatch selection, and passing the coordinator rather than the
+  selected owner to Google's adapter. All temporary mutations were restored;
+  restored workerd and scoped Node lanes passed. An eleventh negative control
+  removed RPC account validation; its mismatched-principal request was wrongly
+  accepted, and the field-diagnostic test failed. That validation was restored.
+  Lint, repository-wide typecheck and documentation checks passed after
+  the final nullable-selector input edit. Full-suite and model/UI evidence
+  remain required for completion.
+
 ### Next integration constraints
 
 The common admission policy is installed. The normal harness can still replay a
@@ -118,12 +162,19 @@ the authority's generation check alone does not cover this outer cache.
 
 Configured sources still need reconciliation across delegates' connection-
 specific Rally resource IDs, preserving provider resource/occurrence identity.
-Per-operation harness accounts and receipts still need integration.
+Account-scoped references originating in an activation event still need
+canonical source-account seeding before their first tool read; source preference
+alone must not reinterpret a Gmail/Calendar reference as the creator's. Verify
+origin context through background-child handoff and resumed inventory snapshots.
+Normal activity details still need actual serving-account fields wired from the
+receipt checkpoints, alongside the coordinating user. Authorized uncertain-write
+reconciliation still needs end-to-end recovery verification; pinning an account
+alone is not evidence that an uncertain provider effect was reconciled.
 Terminal now checks eligible delegation for every operation and retains its
 original file identity across coordinators, including completed imports. Its
 single selected repository connection stays explicit; observed withdrawal
 removes mounted personal GitHub credentials without deleting files. Actual
-serving-account receipt attribution remains part of the harness work below.
+serving-account activity presentation remains part of the remaining UI work.
 Historical direct-creation provenance still needs its final audit against any
 existing creation/tool receipts; no new historical provenance service is planned.
 Creator disclosure and all actual controls still need rendering and inspection.

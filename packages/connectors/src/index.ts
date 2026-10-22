@@ -11,6 +11,7 @@ import { createCanvaConnector, type CanvaConnectorConfig } from "./canva";
 export { createCanvaConnector, CanvaCapabilities, CanvaAgentPluginDescriptor, type CanvaConnectorConfig } from "./canva";
 import { RegionSchema } from "@rally/contracts/regions";
 import { paginatedResult } from "./tool-pagination";
+import { googleOperationIdentity, googleOperationResultKeys } from "./google-operation-identity";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   ConnectorManifestSchema,
@@ -152,6 +153,7 @@ export {
   type ResolvedConnectorAdapter,
   type ConnectorToolContext,
   type ConnectorToolResult,
+  type ConnectorOperationIdentity,
   type ConnectorNativeAgentAdapter,
   type ConnectorNativeAgentExecutionContext,
   type ConnectorMessagingAgentAdapter,
@@ -2595,6 +2597,8 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
     },
 
     resourceRegistrationCapability: "drive.read",
+    operationIdentity: googleOperationIdentity,
+    operationResultKeys: googleOperationResultKeys,
 
     async probeResourceAccess(connection, reference, signal): Promise<ConnectorResourceAccess> {
       const fileId = googleDriveFileIdFromReference(reference);

@@ -14,6 +14,10 @@ import { conversationParentStub, hostedParentStub } from "./conversation-parent-
 import { AgentCommunicationService } from "./agent-communication-service";
 import { createAgentCommunicationPlugin } from "./agent-communication-plugin";
 import { continueSidekickRun } from "./sidekick-run-continuation";
+import {
+  executeSidekickAccountOperation, readSidekickOperationDelegation, sidekickAccountToolDefinition, splitSidekickAccount,
+} from "./sidekick-operation-accounts";
+import type { SidekickExecutionDelegation } from "@rally/contracts";
 import { AgentMessageContentSchema, renderAgentMessage } from "./agent-message-content";
 import { ObjectPortError } from "../runtime/object-port";
 import { dynamicConnectorCapability, stableConnectionWireName, stableWireToolName, validateDynamicConnectorTools, discoverDynamicConnectorTools, connectorServerPresentation, storedConnectorServerMetadata } from "./connector-tool-inventory";
@@ -48,6 +52,7 @@ import {
   createTextDeltaBatcher,
   memberSafeHarnessFailureMessage,
   renderScheduledWakeupMessage,
+  renderSidekickAccountGuidance,
   renderWorkstreamSystemPrompt,
   renderCompactionCheckpointContent,
   rememberAutomationPeopleSearchResult,
@@ -3827,6 +3832,17 @@ export async function runWorkstreamHarness(
           ]);
           return { allowed: true };
         }
+        if (input.parentKind === "automation") {
+          const [, , delegation] = await Promise.all([
+            liveness.pulse("before_tool", true),
+            assertRunAuthorityStillValid(env, input, runAuthoritySnapshot),
+            readSidekickOperationDelegation(env, input),
+          ]);
+          // The requested plugin identifies the authored operation. Its serving
+          // account is selected below; authorizing its old owner here would
+          // prevent a known-resource read from using another eligible delegate.
+          return { allowed: true, authorizationContext: { delegation } };
+        }
         const [, , row] = await Promise.all([
           liveness.pulse("before_tool", true),
           assertRunAuthorityStillValid(env, input, runAuthoritySnapshot),
@@ -5504,8 +5520,13 @@ async function loadHarnessTools(
   idempotencyByTool: Map<string, "safe" | "provider_key" | "record_before_execute">;
   modeByTool: Map<string, "read" | "write">;
 }> {
-  const [attachedLinks, connectionRows] = await inventoryPreparation.get();
-  const runDefinition = await runDefinitionPreparation.get();
+  const [[attachedLinks, connectionRows], runDefinition, delegation] = await Promise.all([
+    inventoryPreparation.get(), runDefinitionPreparation.get(), readSidekickOperationDelegation(env, input),
+  ]);
+  const delegatedUsers = new Set(delegation?.delegates.map((grant) => grant.userId));
+  const delegateNames = delegation ? await env.DB.prepare("SELECT id,name FROM users WHERE id IN (SELECT value FROM json_each(?))")
+    .bind(JSON.stringify([...new Set([...delegatedUsers, delegation.accountUserId])])).all<{ id: string; name: string }>() : null;
+  const delegateName = (userId: string) => delegateNames?.results.find((user) => user.id === userId)?.name || userId;
   const defaultModelPluginIds = new Set(runDefinition?.defaultPluginIds ?? []);
   // Two reads, one per authority, where the retired statement was a join.
   // Which resources this work stream has attached is the object's, and which
@@ -5656,9 +5677,12 @@ async function loadHarnessTools(
     const connectionId = String(row.id);
     const scope = row.scope === "workspace" ? "workspace" : "personal";
     const eligible = scope === "workspace" ||
+      (delegation && row.owner_user_id != null && delegatedUsers.has(asUserId(String(row.owner_user_id)))) ||
       (input.executionPrincipal.type === "user" && scope === "personal" && row.owner_user_id === input.executionPrincipal.userId);
     if (!eligible) continue;
-    if (scope === "personal" && (input.executionPrincipal.type !== "user" || row.owner_user_id !== input.executionPrincipal.userId)) continue;
+    if (scope === "personal" && (delegation
+      ? !delegatedUsers.has(asUserId(String(row.owner_user_id)))
+      : input.executionPrincipal.type !== "user" || row.owner_user_id !== input.executionPrincipal.userId)) continue;
     // A connection whose connector this deployment does not configure is
     // skipped, not a throw. A rollout gate turned back off leaves its rows in
     // place deliberately, and `registry.get` throws on an unregistered type —
@@ -5699,8 +5723,18 @@ async function loadHarnessTools(
       searchAliases: connectorSearchAliases(adapter),
       systemMessage: adapter.agentPlugin.systemMessage,
     });
-    let presentation = connectorServerPresentation(basePresentation, storedConnectorServerMetadata(row.config_json));
     const dynamicCapability = dynamicConnectorCapability(adapter, scope, grantedScopes);
+    const supportsAccountSelection = !dynamicCapability && Boolean(adapter.operationIdentity);
+    let presentation = connectorServerPresentation(basePresentation, storedConnectorServerMetadata(row.config_json));
+    const withAccountGuidance = (message: string) => !delegation ? message : `${message} ${renderSidekickAccountGuidance({
+      taskAccount: { userId: delegation.accountUserId, name: delegateName(delegation.accountUserId) },
+      connection: { connectionId, scope, owner: scope === "personal"
+        ? { userId: String(row.owner_user_id), name: delegateName(String(row.owner_user_id)) } : null },
+      supportsAccountSelection,
+    })}`;
+    presentation = { ...presentation, systemMessage: withAccountGuidance(presentation.systemMessage),
+      searchAliases: [...presentation.searchAliases, ...(scope === "personal" ? [delegateName(String(row.owner_user_id))] : [])],
+    };
     const staticDefinitions = dynamicCapability
       ? []
       : adapter.agentPlugin.tools.filter((definition) => (
@@ -5744,16 +5778,53 @@ async function loadHarnessTools(
       if (!grantedScopes.includes(definition.capability)) return [];
       if (!connectorCapabilitySupportsScope(adapter, definition.capability, scope)) return [];
       const tool: HarnessTool = {
-        definition,
-        ...(includeStaticInputValidator && adapter.validateToolInput
+        definition: delegation && supportsAccountSelection ? sidekickAccountToolDefinition(definition) : definition,
+        ...(includeStaticInputValidator && (adapter.validateToolInput || (delegation && supportsAccountSelection))
           ? {
-              validateInput: (toolInput) => adapter.validateToolInput!(
-                definition.providerOperationName ?? definition.name,
-                toolInput,
-              ),
+              validateInput: (toolInput) => {
+                try {
+                  const providerInput = delegation && supportsAccountSelection ? splitSidekickAccount(toolInput).input : toolInput;
+                  return adapter.validateToolInput?.(definition.providerOperationName ?? definition.name, providerInput) ?? null;
+                } catch (error) {
+                  if (error instanceof z.ZodError) return error;
+                  throw error;
+                }
+              },
             }
           : {}),
-        execute: (toolInput, context) => executeAuthorizedConnectorTool(
+        execute: async (toolInput, context) => {
+          if (delegation) {
+            const prepared = context.authorizationContext as PreparedConnectorAuthorization | undefined;
+            const authority = prepared?.delegation ?? await readSidekickOperationDelegation(env, input);
+            if (!authority || !paginationLease) throw new ConnectorError("unauthorized", "Sidekick account execution requires current delegation and a durable run receipt.");
+            if (!prepared?.delegation) await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
+            const parsed = supportsAccountSelection ? splitSidekickAccount(toolInput)
+              : { input: toolInput, selection: { connectionId: frozen.connectionId } };
+            const operation = definition.providerOperationName ?? definition.name;
+            const invalid = adapter.validateToolInput?.(operation, parsed.input);
+            if (invalid) throw invalid;
+            const candidates = [...frozenConnections.values()].filter((candidate) => candidate.connectorType === frozen.connectorType
+              && candidate.grantedScopes.includes(definition.capability)
+              && connectorCapabilitySupportsScope(adapter, definition.capability, candidate.scope));
+            const identity = adapter.operationIdentity?.(operation, parsed.input) ?? { kind: "account" as const, resourceKeys: [] };
+            const selection = parsed.selection;
+            return executeSidekickAccountOperation({
+              authority, workspaceId: input.workspaceId,
+              coordinatorUserId: input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null,
+              requested: frozen, candidates, identity,
+              ...(selection ? { selection } : {}), mode: definition.mode,
+              sourceConnectionIds: runDefinition ? Object.values(runDefinition.activitySourcePluginIds)
+                .flatMap((pluginId) => runDefinition.connectorBindings[pluginId] ? [runDefinition.connectorBindings[pluginId]!] : []) : [],
+              canFallback: Boolean(adapter.operationIdentity && adapter.probeResourceAccess),
+              context, receipts: pageReceipts,
+              fence: { runId: input.harnessRunId, attemptId: paginationLease.attemptId, owner: paginationLease.owner },
+              execute: (candidate) => executeConnectorToolOnConnection(env, input, candidate, operation, definition.capability,
+                parsed.input, context.signal, context.providerIdempotencyKey, undefined, context.effectIntentId,
+                { delegation: authority } satisfies PreparedConnectorAuthorization),
+              ...(adapter.operationResultKeys ? { resultKeys: (result) => adapter.operationResultKeys!(operation, parsed.input, result) } : {}),
+            });
+          }
+          return executeAuthorizedConnectorTool(
           env,
           input,
           frozen,
@@ -5773,7 +5844,8 @@ async function loadHarnessTools(
             && candidate.grantedScopes.includes(definition.capability)
             && connectorCapabilitySupportsScope(adapter, definition.capability, candidate.scope)
           )),
-        ),
+          );
+        },
       };
       const expanded = includeStaticInputValidator ? expandPages(tool, shortWireName, connectionId) : [tool];
       for (const expandedTool of expanded) {
@@ -5841,7 +5913,7 @@ async function loadHarnessTools(
               );
               presentation = connectorServerPresentation(basePresentation, discovered.server);
               connectorPlugin.description = presentation.description;
-              connectorPlugin.systemMessage = presentation.systemMessage;
+              connectorPlugin.systemMessage = withAccountGuidance(presentation.systemMessage);
               const discoveredTools = discovered.tools
                 .flatMap((definition) => addPluginTool(definition));
               if (!discoveredTools.length) {
@@ -6424,9 +6496,10 @@ function toolSurfaceJson(
 }
 
 type PreparedConnectorAuthorization = {
-  frozen: FrozenConnectorPlugin;
-  capability: string;
-  row: Record<string, unknown>;
+  frozen?: FrozenConnectorPlugin;
+  capability?: string;
+  row?: Record<string, unknown>;
+  delegation?: SidekickExecutionDelegation | null;
 };
 
 /**
@@ -6559,12 +6632,13 @@ async function executeConnectorToolOnConnection(
     signal,
     ownershipGuard,
     preparedRow,
+    prepared?.delegation ?? undefined,
   );
   return withAuthorizedConnection(env, { connection, adapter, signal }, async (authorized) => {
     await ownershipGuard?.();
     const effectivePrincipal = authorized.scope === "workspace"
       ? { type: "workspace" as const, workspaceId: input.workspaceId }
-      : input.executionPrincipal;
+      : { type: "user" as const, userId: asUserId(frozen.ownerUserId!) };
     if (frozen.connectorType === "canva") {
       const transaction = z.object({ transaction_id: z.string().optional() }).parse(toolInput);
       if (transaction.transaction_id && !await createToolReceiptObjectPort(
@@ -6584,6 +6658,8 @@ async function executeConnectorToolOnConnection(
           signal,
           providerIdempotencyKey,
           frozen.connectorType === "slack"
+            && (input.parentKind !== "automation" || (effectivePrincipal.type === "user"
+              && input.executionPrincipal.type === "user" && effectivePrincipal.userId === input.executionPrincipal.userId))
             && input.slackSearchAuthorization
             && input.slackOrigin
             && (authorized.config.providerAccountId === input.slackOrigin.teamId
@@ -6619,9 +6695,10 @@ async function loadAuthorizedConnectionContext(
   signal: AbortSignal,
   ownershipGuard?: () => Promise<void>,
   preparedRow?: Record<string, unknown>,
+  delegation?: SidekickExecutionDelegation,
 ): Promise<{ connection: ConnectorConnectionContext; adapter: ResolvedConnectorAdapter }> {
   await ownershipGuard?.();
-  const row = preparedRow ?? await assertFrozenConnectionAuthorized(env, input, frozen, capability);
+  const row = preparedRow ?? await assertFrozenConnectionAuthorized(env, input, frozen, capability, !delegation, delegation);
   let credentials: Record<string, unknown> = {};
   if (typeof row.encrypted_credentials === "string" && typeof row.credential_iv === "string") {
     credentials = JSON.parse(await decryptVersionedConnectorCredentials(env, {
@@ -6655,6 +6732,7 @@ async function assertFrozenConnectionAuthorized(
   frozen: FrozenConnectorPlugin,
   capability?: string,
   verifyRunAuthority = true,
+  delegation?: SidekickExecutionDelegation,
 ): Promise<Record<string, unknown>> {
   if (frozen.workspaceId !== input.workspaceId || frozen.pluginId !== connectorPluginCanonicalId(frozen.connectionId, frozen.googleBundle)) {
     throw new ConnectorError("unauthorized", "Connector is outside this immutable run scope");
@@ -6674,10 +6752,11 @@ async function assertFrozenConnectionAuthorized(
   ) {
     throw new ConnectorError("unauthorized", "Connector is no longer authorized for this run");
   }
-  if (frozen.scope === "personal" && (
-    input.executionPrincipal.type !== "user" || input.executionPrincipal.userId !== frozen.ownerUserId
-  )) {
-    throw new ConnectorError("unauthorized", "Personal connector ownership changed");
+  if (frozen.scope === "personal") {
+    const authority = delegation ?? await readSidekickOperationDelegation(env, input);
+    const allowed = authority ? authority.delegates.some((grant) => grant.userId === frozen.ownerUserId)
+      : input.executionPrincipal.type === "user" && input.executionPrincipal.userId === frozen.ownerUserId;
+    if (!allowed) throw new ConnectorError("unauthorized", "The personal connection's owner is not an eligible delegate for this operation");
   }
   const currentScopes = parseJson<string[]>(row.granted_scopes_json, []);
   if (capability && (!frozen.grantedScopes.includes(capability) || !currentScopes.includes(capability))) {

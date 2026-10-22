@@ -224,6 +224,13 @@ export interface ConnectorToolResult {
   externalConversation?: { installationId: string; path: string[] };
 }
 
+/** Code-authored account semantics; remote MCP declarations cannot supply this. */
+export interface ConnectorOperationIdentity {
+  /** Only a provider-stable resource can move between accounts after a safe refusal. */
+  kind: "resource" | "account";
+  resourceKeys: string[];
+}
+
 export interface ConnectorPollResult {
   activities: Omit<NormalizedActivity, "id">[];
   cursor: Record<string, unknown>;
@@ -900,6 +907,8 @@ export interface ConnectorAdapter {
    */
   /** Read capability needed to register a source for this connector's events. */
   resourceRegistrationCapability?: string;
+  operationIdentity?(toolName: string, input: unknown): ConnectorOperationIdentity;
+  operationResultKeys?(toolName: string, input: unknown, result: ConnectorToolResult): string[];
   probeResourceAccess?(
     connection: AuthorizedConnectorConnection,
     reference: string,
