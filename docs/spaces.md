@@ -2054,6 +2054,8 @@ refusals use the unavailable state.
 failed dispatches retain the existing scheduled recovery. The server's feed
 refusal wins over a cached directory row; transport failures still report errors.
 
+PR: [#1426](https://github.com/juno-ai-labs/avalon/pull/1426).
+
 ### 2026-10-21 — Archive exclusive threads with their Channel
 
 **What changed:** A Channel archive records durable archive commands for its
