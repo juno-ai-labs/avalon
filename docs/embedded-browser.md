@@ -44,10 +44,12 @@ The renderer creates a blank tab on first use, measures the page rectangle, and
 sends its CSS-pixel bounds to main. Main converts them using the Rally window's
 zoom factor before placing the active tab's native `WebContentsView`. Closing
 the rail hides the view but keeps its tabs and page
-state. Reopening the rail restores them. Modal dialogs hide the native view
+state. Reopening the rail restores them. Dialogs hide the native view
 while they are open. Menus hide it only when their positioned bounds overlap
 the page, so a thread menu in the left pane leaves the browser visible. The
-placement observer also tracks style changes as Radix positions its menu.
+placement observer tracks positioning and sizing styles only within menus and
+their positioned wrappers, so unrelated composer or transcript styles do not
+trigger browser placement.
 
 The address field navigates to an HTTP or HTTPS URL. Tabs, back, forward, and
 reload use the same typed command entry point as DOM inspection, screenshots,
@@ -114,7 +116,7 @@ as Google Chrome.
   browsing session.
 - A browser partition belongs to one Rally user. Reusing a partition across
   users would expose one person's website sessions to another.
-- Native page bounds follow the rail and are hidden behind modal dialogs and
+- Native page bounds follow the rail and are hidden behind dialogs and
   overlapping Rally menus.
   Otherwise a guest page can paint above a dialog or outside the browser rail.
 - In a browser an agent drives — the import window's, `agentDriven` — every
@@ -168,7 +170,7 @@ A page that calls `navigator.credentials.get({ publicKey })` without checking
 for `PublicKeyCredential` still waits forever.
 
 The native view cannot be layered under renderer dialogs, so the renderer hides
-it for modal dialogs and overlapping menus, and CSS — a blur, a scrim — cannot
+it for dialogs and overlapping menus, and CSS — a blur, a scrim — cannot
 reach it. A surface that wants the page visible behind an overlay draws a capture of it instead, as
 the import window's run does. In the import window a parked active tab renders
 at full speed, so a covered page costs what a visible one does; the rail's
@@ -199,8 +201,9 @@ or when the owning renderer reloads or loses its process.
 ### 2026-10-22 — Leave the browser visible beside a thread menu
 
 **What changed:** Browser placement measures a menu's positioned wrapper and
-parks the native page only while the menu overlaps it. Positioning style changes
-trigger a fresh placement check. Modal dialogs still park the page globally.
+parks the native page only while the menu overlaps it. Positioning and sizing
+style changes within menus and their wrappers trigger a fresh placement check;
+unrelated inline styles are ignored. Dialogs still park the page globally.
 
 **Why:** Opening the thread menu in the conversation pane blanked the browser
 beside it: the global overlay check treated any menu as covering the window.
@@ -208,7 +211,8 @@ Keeping the native view visible for all menus would let it cover menus that
 actually reach into the browser, so the decision follows their geometry.
 
 **Consequences:** Menu positioning must remain observable by the placement hook.
-Modal dialogs retain their window-wide ownership, including the scrim.
+The existing window-wide treatment of dialogs is preserved, including non-modal
+`role="dialog"` popovers; this change only narrows menu occlusion.
 
 ### 2026-10-19 — Closing the only tab closes the rail, whatever it holds
 
