@@ -121,8 +121,8 @@ selected records or leaving known omissions for a future refresh.
 
 The `building-live-sites` skill directs both interactive agents and Sidekicks
 refreshing a site to load Terminal for file editing, import and publication.
-Loading the skill supplies instructions without activating those tools. A later
-run must recover the existing source when its sandbox lacks the files. Preserving
+Loading the skill supplies instructions without activating those tools. Each
+refresh imports the published source because local files may be stale. Preserving
 identity requires both the original publication conversation and directory path.
 For a thread's site, only a workstream-scoped Sidekick owned by that thread
 redirects publication there; personal and workspace Sidekicks publish in their
