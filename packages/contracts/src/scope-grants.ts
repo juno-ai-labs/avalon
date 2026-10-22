@@ -61,6 +61,15 @@ export type ScopeGrantMutation = z.infer<typeof ScopeGrantMutationSchema>;
 export const ParticipantGrantMutationSchema = ScopeGrantMutationSchema.omit({ expectedRevision: true });
 export type ParticipantGrantMutation = z.infer<typeof ParticipantGrantMutationSchema>;
 
+/** One conversation admission, retaining one durable operation receipt per person. */
+export const ParticipantAdmissionBatchSchema = z.strictObject({
+  target: ScopeGrantTargetSchema.options[1],
+  actorUserId: UserIdSchema,
+  participants: z.array(z.strictObject({ userId: UserIdSchema, operationId: IdSchema })),
+  participationReason: z.literal("message").optional(),
+});
+
+
 export const ScopeGrantMutationResultSchema = z.discriminatedUnion("status", [
   z.strictObject({ status: z.literal("denied"), reason: z.enum(["sharing_required", "recipient_relationship_required", "migration_pending", "participant_required", "inherited_access"]) }),
   z.strictObject({ status: z.literal("committed"), grant: ScopeGrantSchema }),

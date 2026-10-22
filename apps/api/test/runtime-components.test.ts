@@ -1,3 +1,4 @@
+import { seedProjectedParticipants } from "./helpers/durable-authority";
 import "../../../tests/isolated-region";
 import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -174,6 +175,7 @@ describe("runtime component invariants", () => {
       }
       return executeRuntimeSql(input);
     };
+    seedProjectedParticipants(storage);
     const product = new WorkstreamObjectProductService(
       storage,
       store,
@@ -315,12 +317,13 @@ describe("runtime component invariants", () => {
     );
     const regional = new DatabaseSync(":memory:");
     regional.exec(`CREATE TABLE workspace_members (
-      workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL, role TEXT NOT NULL
+      workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL, role TEXT NOT NULL, access_class TEXT NOT NULL DEFAULT 'member'
     )`);
     regional.prepare(
       `INSERT INTO workspace_members (workspace_id, user_id, status, role)
        VALUES (?, ?, 'active', 'member')`,
     ).run(workspaceId, userId);
+    seedProjectedParticipants(storage);
     const product = new WorkstreamObjectProductService(
       storage,
       store,
@@ -421,7 +424,7 @@ describe("runtime component invariants", () => {
     );
     const regional = new DatabaseSync(":memory:");
     regional.exec(`CREATE TABLE workspace_members (
-      workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL, role TEXT NOT NULL
+      workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL, role TEXT NOT NULL, access_class TEXT NOT NULL DEFAULT 'member'
     )`);
     regional.prepare(
       `INSERT INTO workspace_members (workspace_id, user_id, status, role)
@@ -431,6 +434,7 @@ describe("runtime component invariants", () => {
       `INSERT INTO workspace_members (workspace_id, user_id, status, role)
        VALUES (?, ?, 'active', 'member')`,
     ).run(workspaceId, outsiderId);
+    seedProjectedParticipants(storage);
     const product = new WorkstreamObjectProductService(
       storage,
       store,

@@ -98,8 +98,8 @@ beforeEach(async () => {
   await room().initializeWorkspace(workspaceId, "wnam");
   await runInDurableObject(room(), (_instance, state) => {
     insertParentMetadata(state, parentId, "Private parent");
-    state.storage.sql.exec("INSERT INTO parent_children (parent_id,substream_id,kind,created_at) VALUES (?,'0','main',0), (?,?,'child',0)",
-      parentId, parentId, childId);
+    state.storage.sql.exec("INSERT INTO parent_children (parent_id,substream_id,kind,created_at,created_by_user_id) VALUES (?,'0','main',0,?), (?,?,'child',0,?)",
+      parentId, actorId, parentId, childId, actorId);
   });
 });
 
@@ -168,7 +168,7 @@ it("does not turn workspace-public member reading into sharing authority", async
     operationId: crypto.randomUUID(), emails: ["invitee@example.test"], expiresAt: null, targets: [main] }))
     .toMatchObject({ status: "denied" });
   await runInDurableObject(room(), (_instance, state) => {
-    expect(state.storage.sql.exec("SELECT 1 FROM parent_participant_migrations WHERE parent_id=? AND substream_id='0'", parentId).toArray()).toEqual([]);
+    expect(state.storage.sql.exec("SELECT phase FROM parent_participant_migrations WHERE parent_id=? AND substream_id='0'", parentId).toArray()).toEqual([{ phase: "complete" }]);
     expect(state.storage.sql.exec("SELECT 1 FROM parent_invitations WHERE parent_id=?", parentId).toArray()).toEqual([]);
   });
 });
@@ -212,6 +212,7 @@ it("serves migrated child grants without reading Main and retains admission revi
     store.registerParticipantProjection(childId,transferId);
     const projection = store.participantProjection(childId,recipientId)!;
     store.acknowledgeParticipantProjection(childId,recipientId,projection.revision);
+    store.acknowledgeParticipantProjection(childId,actorId,store.participantProjection(childId,actorId)!.revision);
     return projection.revision;
   });
   const request = { workspaceId,parentId,userId:recipientId,substreamId:childId };
@@ -554,4 +555,21 @@ it("retains implicit Main member admission after participant authority transfer"
     expect(instance['conversationMembershipAllows'](recipientId, admission.membershipVersion ?? 0)).toBe(true);
     expect(instance['conversationMembershipAllows'](recipientId, 999)).toBe(false);
   });
+});
+
+
+it("lists inherited Breakouts for a cold member once and fences their membership incarnation", async () => {
+  await seedActorGrant(parent);
+  await exec("UPDATE parent_children SET audience = 'inherits_workstream', title = 'Inherited', created_by_user_id = ? WHERE parent_id = ? AND substream_id = ?", actorId, parentId, childId);
+  expect((await room().mutateScopeGrant(mutation(parent))).status).toBe("committed");
+  await exec("DELETE FROM workspace_member_status WHERE user_id = ?", recipientId);
+  const listed = () => room().listVisiblePrivateChildrenForParents({ workspaceId, userId: recipientId, parentIds: [parentId] });
+  expect((await listed()).parents[0]!.children.map((item) => item.substreamId)).toEqual([childId]);
+  // Both applicable scopes still yield one row, and the SQL validity rule
+  // rejects a grant from an earlier Organization membership incarnation.
+  expect((await room().mutateScopeGrant(mutation(child))).status).toBe("committed");
+  expect((await listed()).parents[0]!.children.map((item) => item.substreamId)).toEqual([childId]);
+  await env.DB.prepare("UPDATE workspace_members SET incarnation = 'replacement', revision = 2 WHERE user_id = ?").bind(recipientId).run();
+  await exec("DELETE FROM workspace_member_status WHERE user_id = ?", recipientId);
+  expect((await listed()).parents[0]!.children).toEqual([]);
 });

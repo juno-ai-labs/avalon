@@ -31,6 +31,7 @@ import {
   type ConversationMergeV1,
   type Elicitation,
   type Message,
+  type User,
   type ResourceRelationshipType,
   type WorkstreamResource,
   type Workstream,
@@ -110,7 +111,7 @@ import { substreamLoopId, workspaceDOName } from "./names";
 import { ParticipantAuthorityTransferStorage } from "./participant-authority-transfer";
 import { workstreamImportHash } from "./workstream-import-hash";
 import { WorkspaceReserveDraftAttachmentsResultSchema } from "./workspace-draft-attachment-protocol";
-import { WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT } from "@rally/contracts/conversation-effects";
+import { type ConversationEffectEnvelope, WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT } from "@rally/contracts/conversation-effects";
 import type { RegionalEffectCommand, WorkstreamObjectStore } from "./workstream-object-storage";
 import {
   LOOP_EXECUTION_LEASE_MS,
@@ -1548,10 +1549,10 @@ export class WorkstreamObjectProductService {
       ...requestedPersonIds,
     ])];
     const members = await this.env.DB.prepare(
-      `SELECT user_id FROM workspace_members
+      `SELECT user_id, access_class FROM workspace_members
         WHERE workspace_id = ? AND status = 'active'
           AND user_id IN (${candidateMemberIds.map(() => "?").join(",")})`,
-    ).bind(input.workspaceId, ...candidateMemberIds).all<{ user_id: string }>();
+    ).bind(input.workspaceId, ...candidateMemberIds).all<{ user_id: string; access_class: "member" | "guest" }>();
     if ((members.results ?? []).length !== candidateMemberIds.length) {
       throw new ApiError(422, "invalid_workspace_member", "A participant is not an active workspace member");
     }
@@ -1581,6 +1582,7 @@ export class WorkstreamObjectProductService {
     }, this.env.AVALON_REGION);
     const existingRoot = first(this.storage.sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`));
     if (existingRoot?.authority_mode === "authoritative") {
+      await this.ensureParticipantAuthority();
       const part = first(this.storage.sql.exec<{ id: string }>(
         `SELECT id FROM canonical_conversation_turn_details WHERE client_message_id = ?`, input.clientMessageId,
       ));
@@ -1704,7 +1706,7 @@ export class WorkstreamObjectProductService {
     const initialMessages = conversation.messages;
     const openingWorkflowInput = startsRun ? this.workflowInput(input, runId, messageId) : null;
     let initializedElsewhere = false;
-    this.storage.transactionSync(() => {
+    await this.objectStore.commitWithRegionalEffects(() => {
       // Hashing and directory reads yield. Another delivery can initialize
       // the room while those awaits are in flight; decide against current SQL.
       if (first(this.storage.sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`))?.authority_mode === "authoritative") {
@@ -1828,11 +1830,8 @@ export class WorkstreamObjectProductService {
         bindStateRevision: 0,
         now,
       });
-    });
-    if (initializedElsewhere) return this.initialize(auth, rawInput);
-    await this.objectStore.commitWithRegionalEffects(
-      () => undefined,
-      () => {
+    }, () => {
+        if (initializedElsewhere) return [];
         const root = this.root();
         const occurredAt = new Date(now).toISOString();
         const activity = {
@@ -1908,6 +1907,8 @@ export class WorkstreamObjectProductService {
         ];
       },
     );
+    if (initializedElsewhere) return this.initialize(auth, rawInput);
+    await this.ensureParticipantAuthority();
     // Only the composer's create carries this journey; Slack, suggestions,
     // imports and Sidekicks open Channels with text nobody typed here.
     if (input.telemetryJourney === "workstream_create" && !history && !input.seed) {
@@ -2050,7 +2051,8 @@ export class WorkstreamObjectProductService {
 
   canRead(userId: string): boolean {
     const root = this.root();
-    return participantVisible(root, this.isParticipant(userId));
+    return this.objectStore.identity()?.parentKind === "workstream" && this.externalSubstreamId() !== "0"
+      ? this.isParticipant(userId) : participantVisible(root, this.isParticipant(userId));
   }
 
   activeParticipantIds(): string[] {
@@ -2071,7 +2073,7 @@ export class WorkstreamObjectProductService {
     if (root.parent_workspace_key !== auth.workspaceId || root.workstream_key === "") {
       throw new ApiError(404, "workstream_not_found", "Thread not found");
     }
-    if (!participantVisible(root, this.isParticipant(auth.userId))) {
+    if (!this.canRead(auth.userId)) {
       throw new ApiError(404, "workstream_not_found", "Thread not found");
     }
     if (!includeArchived && root.archived_at !== null) {
@@ -2081,12 +2083,13 @@ export class WorkstreamObjectProductService {
   }
 
   async authorize(auth: AuthContext, includeArchived = false): Promise<RootRow> {
+    await this.ensureParticipantAuthority(auth.userId);
     const root = this.locallyAuthorizedRoot(auth, includeArchived);
     const membership = await this.env.DB.prepare(
-      `SELECT 1 AS one FROM workspace_members
+      `SELECT access_class FROM workspace_members
         WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
-    ).bind(auth.workspaceId, auth.userId).first<{ one: number }>();
-    if (!membership) {
+    ).bind(auth.workspaceId, auth.userId).first<{ access_class: "member" | "guest" }>();
+    if (!membership || (membership.access_class === "guest" && !this.isParticipant(auth.userId))) {
       throw new ApiError(404, "workstream_not_found", "Thread not found");
     }
     return root;
@@ -2212,26 +2215,10 @@ export class WorkstreamObjectProductService {
       this.assertRetainedContentContains({ scope: "workspace" });
     }
     const joined = scopeChanged && input.scope === "personal" && !this.isParticipant(auth.userId);
-    // Narrowing takes away the reading everybody in the Organization had, so
-    // whoever narrows is seated — otherwise they lock themselves out of the
-    // Channel they just made private. Where that seat is *written* depends on
-    // which authority owns the roster.
-    //
-    // On a Channel whose participants have moved to the grant ledger, the
-    // roster is a projection and `participants` is frozen by
-    // `participant_authority_freeze_insert`. The seat therefore goes through
-    // the same grant mutation `add_participant` takes on a migrated Channel,
-    // and the projection puts the row back. Writing it here instead aborted the
-    // whole narrowing — which is how a shared Channel that had ever been shared
-    // could not be made private at all, and how a Space retraction whose plan
-    // narrows the scope failed on a trigger rather than on a decision.
-    //
-    // And the seat is written only when it is *needed*. The upsert below used
-    // to run on every `scope: "personal"` update, so re-stating a scope that
-    // had not changed fired the same frozen insert for a row that was already
-    // active.
+    // Source membership is a projection. A new narrowing seat must come from
+    // the grant owner; repeating the current scope never writes a seat.
     const seatThroughGrants = joined && await this.migratedRosterSeat(auth);
-    await this.objectStore.commitWithRegionalEffects(
+    const { envelopes } = await this.objectStore.commitWithRegionalEffects(
       (sql) => {
         // A mention's grants and canonical turn must precede narrowing. The
         // durable mailbox also covers recovery and messages waiting in the loop.
@@ -2312,6 +2299,7 @@ export class WorkstreamObjectProductService {
         ];
       },
     );
+    if (input.scope !== undefined) await this.convergeParentVisibility(envelopes);
     const root = this.root();
     const events: Record<string, unknown>[] = [];
     if (input.title !== undefined) {
@@ -2993,10 +2981,11 @@ export class WorkstreamObjectProductService {
     }));
   }
 
-  async participant(userId: string): Promise<WorkstreamDetail["participants"][number] | null> {
-    const user = await this.env.DB.prepare(
+  async participant(userId: string, profiles?: ReadonlyMap<string, User>): Promise<WorkstreamDetail["participants"][number] | null> {
+    if (!this.isParticipant(userId)) return null;
+    const user = profiles ? profiles.get(userId) : await this.env.DB.prepare(
       `SELECT id, email, name, avatar_url, timezone, created_at FROM users WHERE id = ?`,
-    ).bind(userId).first<UserRow>();
+    ).bind(userId).first<UserRow>().then((row) => row ? userFromRow(row) : undefined);
     // Hydrating the profile yields; read membership afterward so a concurrent
     // removal or re-add cannot publish the roster we observed before that await.
     const row = first(this.storage.sql.exec<{
@@ -3005,15 +2994,15 @@ export class WorkstreamObjectProductService {
     }>(`SELECT participation_reason, added_at FROM participants WHERE user_id = ? AND status = 'active'`, userId));
     if (!row) return null;
     if (!user) throw new Error("participant_user_missing");
-    return { user: userFromRow(user), participationReason: row.participation_reason, joinedAt: iso(row.added_at)! };
+    return { user, participationReason: row.participation_reason, joinedAt: iso(row.added_at)! };
   }
 
-  async authorizeParticipantAddition(auth: AuthContext, userId: string): Promise<void> {
+  async authorizeParticipantAddition(auth: AuthContext, userId: string): Promise<"member" | "guest"> {
     await this.authorize(auth);
     const member = await this.env.DB.prepare(
-      `SELECT 1 AS one FROM workspace_members
+      `SELECT access_class FROM workspace_members
         WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
-    ).bind(auth.workspaceId, userId).first<{ one: number }>();
+    ).bind(auth.workspaceId, userId).first<{ access_class: "member" | "guest" }>();
     if (!member) {
       throw new ApiError(422, "invalid_workspace_member", "A participant is not an active workspace member");
     }
@@ -3024,27 +3013,14 @@ export class WorkstreamObjectProductService {
         userIds: [...audience.userIds, userId],
       });
     }
+    return member.access_class;
   }
 
-  /**
-   * Seat the person narrowing this Channel through the grant authority, when
-   * that is where its roster lives.
-   *
-   * Answers `false` for a Channel that has never been shared — `participants`
-   * is still the authority there and the caller writes the row itself — and
-   * `true` once the seat has been written as a grant and projected back.
-   *
-   * A refusal is named rather than swallowed. Narrowing to yourself is a share
-   * decision, and the grant authority is what decides whether this person may
-   * make one: somebody who reads the Channel only because it is
-   * Organization-wide holds no grant, so they have nothing to narrow it *from*
-   * and the ledger refuses them. Returning `false` there would send the write
-   * back to the frozen table and abort on the trigger with no reason attached.
-   */
+  /** Narrowing must seat through the same grant authority as any explicit add. */
   private async migratedRosterSeat(auth: AuthContext): Promise<boolean> {
     const identity = this.objectStore.identity();
     if (identity?.parentKind !== "workstream" || this.externalSubstreamId() !== "0") return false;
-    if (new ParticipantAuthorityTransferStorage(this.storage).currentTransferId() === null) return false;
+    await this.ensureParticipantAuthority(auth.userId);
     const parent = await durableObjectStubForWorkspace(
       this.env, this.env.WORKSPACE_DOS, identity.workspaceId,
       workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspaceId)),
@@ -3078,36 +3054,80 @@ export class WorkstreamObjectProductService {
     return true;
   }
 
-  private async prepareMessageParticipants(auth: AuthContext, clientMessageId: string, missingUserIds: readonly string[]): Promise<void> {
+  private async convergeParentVisibility(envelopes: readonly ConversationEffectEnvelope[]): Promise<void> {
     const identity = this.objectStore.identity();
-    if (identity?.parentKind !== "workstream"
-      || new ParticipantAuthorityTransferStorage(this.storage).currentTransferId() === null) return;
+    if (identity?.parentKind !== "workstream") return;
+    const envelope = envelopes.find(({ effect }) => effect.kind === "directory_common");
+    if (!envelope) throw new Error("participant_authority_visibility_receipt_missing");
+    const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, identity.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspaceId)));
+    await parent.receiveChildEffects({ substreamId: this.externalSubstreamId(), envelopes: [envelope] });
+  }
+
+  /** Historical and creation rows are frozen once, before normal admission. */
+  async ensureParticipantAuthority(userId?: string): Promise<boolean> {
+    const identity = this.objectStore.identity();
+    if (identity?.parentKind !== "workstream") return true;
+    // A source commit can precede a failed parent delivery. Resume that
+    // handoff on retry instead of serving its still-unprojected bootstrap rows.
+    if (this.storage.sql.exec(`SELECT 1 FROM participant_authority_transfer WHERE phase = 'projection'
+      AND NOT EXISTS (SELECT 1 FROM participants participant WHERE participant.status = 'active'
+        ${userId === undefined ? "" : "AND participant.user_id = ?"}
+        AND NOT EXISTS (SELECT 1 FROM participant_projection_revisions revision WHERE revision.user_id = participant.user_id))`,
+    ...(userId === undefined ? [] : [userId])).toArray().length) return true;
+    const root = this.root();
+    const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, identity.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspaceId)));
+    const substreamId = this.externalSubstreamId();
+    if (substreamId === "0") {
+      // System provisioning and historical imports may precede the directory
+      // effect. Reservation is idempotent and never overwrites a live parent.
+      await parent.reserveChild({ workspaceId: identity.workspaceId, parentId: identity.parentId,
+        substreamId, kind: "main", createdByUserId: root.created_by_user_id ? asUserId(root.created_by_user_id) : null,
+        authorityGeneration: root.authority_generation, directory: {
+          title: root.title, description: root.description, scope: root.scope, systemKind: root.system_kind,
+          emailAddress: root.email_address, titleStatus: root.title_status, createdAt: new Date(root.created_at).toISOString(),
+        } });
+    }
+    return await parent.ensureParticipantAuthority({ workspaceId: identity.workspaceId, parentId: identity.parentId, substreamId }) === "ready";
+  }
+
+  private async prepareParticipantAccess(auth: AuthContext, operationId: string, userIds: readonly string[],
+    options: { participationReason?: "message" } = {}): Promise<void> {
+    const identity = this.objectStore.identity();
+    if (identity?.parentKind !== "workstream") return;
+    // An unpublished child is still installing its bootstrap content. Its
+    // parent imports the approved bootstrap audience atomically at publication.
+    if (!await this.ensureParticipantAuthority(auth.userId)) return;
     const target = { kind: "conversation" as const, workspaceId: identity.workspaceId,
       parentId: identity.parentId, substreamId: this.externalSubstreamId() };
     const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, identity.workspaceId,
       workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspaceId)));
-    for (const userId of missingUserIds) {
-      const request = { target, actorUserId: auth.userId, userId: asUserId(userId), active: true, participationReason: "message" as const,
-        operationId: await stableUuid(["message-participant", target, auth.userId, clientMessageId, userId]) };
-      const result = userId === auth.userId
-        ? await parent.joinConversation(request)
-        : await parent.mutateParticipantGrant(request);
-      if (result.status !== "ready" && result.status !== "committed") {
-        throw new ApiError(409, "participant_access_changed", "Participant access changed; refresh and try again");
-      }
-      // A retried receipt must not restore a later revocation. The owner
-      // delivers its newest projection, so check the resulting local roster.
-      if (!this.isParticipant(userId)) {
-        throw new ApiError(409, "participant_access_changed", "Participant access changed; refresh and try again");
-      }
+    const participants = await Promise.all([...new Set(userIds)].map(async (userId) => ({
+      userId: asUserId(userId),
+      operationId: await stableUuid(["participant-access", target, auth.userId, operationId, userId]),
+    })));
+    const result = await parent.admitParticipants({ target, actorUserId: auth.userId, participants,
+      ...(options.participationReason ? { participationReason: options.participationReason } : {}) });
+    // The callback applies current revisions before replying. A receipt replay
+    // cannot restore a later revocation; inspect the resulting local projection.
+    if (result.status !== "ready" || participants.some(({ userId }) => !this.isParticipant(userId))) {
+      throw new ApiError(409, "participant_access_changed", "Participant access changed; refresh and try again");
     }
   }
 
   async addParticipant(
     auth: AuthContext,
     userId: string,
+    operationId = uuidV7(),
   ): Promise<WorkstreamDetail["participants"][number]> {
     await this.authorizeParticipantAddition(auth, userId);
+    if (this.objectStore.identity()?.parentKind === "workstream") {
+      await this.prepareParticipantAccess(auth, operationId, [userId]);
+      const participant = await this.participant(userId);
+      if (!participant) throw new ApiError(409, "participant_access_changed", "Participant access changed; refresh and try again");
+      return participant;
+    }
     // Both names are read before the commit because the effects that carry
     // them are built inside it: an effect callback runs against object SQL and
     // cannot await a regional round trip.
@@ -3237,6 +3257,12 @@ export class WorkstreamObjectProductService {
         substreamId: input.substreamId,
       }),
     ];
+  }
+
+  /** Request-local profiles shared by effects and realtime hydration; never access evidence. */
+  async participantProfiles(userIds: readonly string[]): Promise<ReadonlyMap<string, User>> {
+    const rows = await this.messageUsers([...new Set(userIds)]);
+    return new Map([...rows].map(([userId, row]) => [userId, userFromRow(row)]));
   }
 
   /** Names for an effect payload, read before a commit that cannot await. */
@@ -4969,7 +4995,8 @@ export class WorkstreamObjectProductService {
     const structuredContent = input.merge ?? (input.annotations?.length
       ? await new ResourceService(this.env,auth).annotationContent(input.annotations) : null);
     if (missingParticipantUserIds.length > 0) {
-      await this.prepareMessageParticipants(auth, input.clientMessageId, missingParticipantUserIds);
+      await this.prepareParticipantAccess(auth, input.clientMessageId, missingParticipantUserIds,
+        { participationReason: "message" });
     }
     const attachmentRows = await this.reserveAttachmentDrafts({
       workspaceId: auth.workspaceId,
@@ -5202,7 +5229,7 @@ export class WorkstreamObjectProductService {
         }
         // Sending is participation when the message is accepted, even while
         // its turn waits behind an active run. Handoff-owned rosters were
-        // already seated through prepareMessageParticipants above.
+        // already seated through prepareParticipantAccess above.
         const authorJoined = !this.isParticipant(auth.userId);
         if (authorJoined) {
           if (new ParticipantAuthorityTransferStorage(this.storage).currentTransferId() !== null) {

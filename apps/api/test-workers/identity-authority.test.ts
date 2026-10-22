@@ -11,7 +11,7 @@
  */
 
 import { env } from "cloudflare:workers";
-import { runInDurableObject } from "cloudflare:test";
+import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { asSubstreamId } from "@rally/contracts";
@@ -22,12 +22,13 @@ import {
   WORKSTREAM_ID,
   boot,
   post,
-  seedOpenWorkstreamAuthority,
+  seedWorkspaceControlPlane,
   seedWorkstreamRoot,
 } from "./helpers/substream-fixture";
 
 beforeEach(async () => {
-  await seedOpenWorkstreamAuthority(env.DB);
+  await reset();
+  await seedWorkspaceControlPlane(env.DB, { workspaceId: WORKSPACE_ID, userId: TAYLOR, sessionId: crypto.randomUUID() });
   // Generous, and only because of the interleave: a sibling file's `reset()`
   // takes every object's input gate, so this hook can wait out a full reset
   // before it gets to run at all. The seed itself takes milliseconds — a
@@ -37,18 +38,9 @@ beforeEach(async () => {
 const TAYLOR = "00000000-0000-7000-8000-0000000000a1";
 const JORDAN = "00000000-0000-7000-8000-0000000000a2";
 
-let unique = 0;
-/** A fresh object per test; a reused id would carry the last test's rows. */
+/** The real Main address: parent-driven handoff routes back to this object. */
 function agent(): DurableObjectStub {
-  unique += 1;
-  return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-    conversationObjectName(
-      "global",
-      WORKSPACE_ID,
-      WORKSTREAM_ID,
-      asSubstreamId(`00000000-0000-7000-8000-${String(unique).padStart(12, "3")}`),
-    ),
-  ));
+  return env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID, asSubstreamId("0")));
 }
 
 /** Call the real endpoint, exactly as the Worker's port does. */
@@ -152,26 +144,17 @@ describe("identity authority on real workerd", () => {
     });
   });
 
-  it("stores a thread's Channel colour at provision, and keeps an appearance already stored", async () => {
-    const born = agent();
-    await boot(born);
-    await runInDurableObject(born, (_instance, state) => seedBootstrappedRoot(state));
-    const kept = agent();
-    await boot(kept);
-    await runInDurableObject(kept, (_instance, state) => {
+  it.each([false, true])("stores the Channel colour and preserves an existing appearance (existing=%s)", async (existing) => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => {
       seedBootstrappedRoot(state);
-      state.storage.sql.exec(
-        `UPDATE workstream SET appearance_json = '{"icon":"database","color":"blue"}' WHERE id = 1`,
-      );
+      if (existing) state.storage.sql.exec(`UPDATE workstream SET appearance_json = '{"icon":"database","color":"blue"}' WHERE id = 1`);
     });
-
-    await identity(born, "provision", provisionInput({ color: "purple" }));
-    await identity(kept, "provision", provisionInput({ color: "purple" }));
-
-    const appearance = (stub: DurableObjectStub) => runInDurableObject(stub, (_instance, state) =>
-      JSON.parse(String(state.storage.sql.exec(`SELECT appearance_json FROM workstream WHERE id = 1`).one().appearance_json)));
-    expect(await appearance(born)).toEqual({ icon: null, color: "purple" });
-    expect(await appearance(kept)).toEqual({ icon: "database", color: "blue" });
+    await identity(stub, "provision", provisionInput({ color: "purple" }));
+    const appearance = await runInDurableObject(stub, (_instance, state) =>
+      JSON.parse(String(state.storage.sql.exec("SELECT appearance_json FROM workstream WHERE id = 1").one().appearance_json)));
+    expect(appearance).toEqual(existing ? { icon: "database", color: "blue" } : { icon: null, color: "purple" });
   });
 
   it("leaves no projection behind for a read", async () => {
@@ -256,7 +239,7 @@ describe("identity authority on real workerd", () => {
   it("readmits a removed participant with this admission's reason and adder", async () => {
     const stub = agent();
     await boot(stub);
-    await runInDurableObject(stub, (_instance, state) => seedWorkstreamRoot(state));
+    await runInDurableObject(stub, (_instance, state) => { seedWorkstreamRoot(state); state.storage.sql.exec("UPDATE workstream SET parent_kind = 'automation'"); });
     await identity(stub, "admitParticipant", {
       userId: TAYLOR, addedByUserId: TAYLOR, reason: "creator", now: 3,
     });
@@ -299,6 +282,7 @@ describe("identity authority on real workerd", () => {
     await boot(stub);
     await runInDurableObject(stub, (_instance, state) => {
       seedWorkstreamRoot(state);
+      state.storage.sql.exec("UPDATE workstream SET parent_kind = 'automation'");
       // Four messages with attention ordinals 1 to 4.
       state.storage.sql.exec(`UPDATE workstream SET next_attention_ordinal = 5 WHERE id = 1`);
     });
@@ -307,8 +291,8 @@ describe("identity authority on real workerd", () => {
       userId: TAYLOR, addedByUserId: JORDAN, reason: "explicit", now: 3,
     });
     // A null adder is each member seating themselves.
-    await identity(stub, "admitParticipants", {
-      userIds: [JORDAN], addedByUserId: null, reason: "explicit", now: 4,
+    await identity(stub, "admitParticipant", {
+      userId: JORDAN, addedByUserId: JORDAN, reason: "explicit", now: 4,
     });
 
     await runInDurableObject(stub, (_instance, state) => {
@@ -321,71 +305,22 @@ describe("identity authority on real workerd", () => {
     });
   });
 
-  it("seats a whole audience or none of it, and reports what each seating did", async () => {
+  it("refuses Channel admission through the identity roster writer", async () => {
     const stub = agent();
     await boot(stub);
     await runInDurableObject(stub, (_instance, state) => seedWorkstreamRoot(state));
-    await identity(stub, "admitParticipant", {
-      userId: TAYLOR, addedByUserId: TAYLOR, reason: "creator", now: 3,
-    });
-
-    const seated = await identity(stub, "admitParticipants", {
-      userIds: [TAYLOR, JORDAN],
-      addedByUserId: null,
-      reason: "explicit",
-      now: 7,
-    });
-
-    // The rows come back from the write, so the caller that publishes a
-    // `participant_joined` for each new seating never asks a second time — and
-    // `unchanged` is how it tells an arrival from somebody already in the room.
-    expect(seated.value).toEqual([
-      { userId: TAYLOR, outcome: "unchanged", participationReason: "creator", addedAt: 3 },
-      { userId: JORDAN, outcome: "admitted", participationReason: "explicit", addedAt: 7 },
-    ]);
-    // `addedByUserId: null` is the arriving-member case: nobody else is
-    // credited, so each member is recorded as having seated themselves.
+    await expect(identity(stub, "admitParticipant", {
+      userId: TAYLOR, addedByUserId: TAYLOR, reason: "explicit", now: 7,
+    })).rejects.toThrow("channel_participant_grant_required");
+    expect((await identity(stub, "admitParticipants", {
+      userIds: [TAYLOR], addedByUserId: TAYLOR, reason: "explicit", now: 7,
+    })).status).toBe(400);
     await runInDurableObject(stub, (_instance, state) => {
-      expect(state.storage.sql.exec(
-        `SELECT user_id, added_by_user_id, added_at FROM participants ORDER BY user_id`,
-      ).toArray()).toEqual([
-        { user_id: TAYLOR, added_by_user_id: TAYLOR, added_at: 3 },
-        { user_id: JORDAN, added_by_user_id: JORDAN, added_at: 7 },
-      ]);
+      expect(state.storage.sql.exec("SELECT user_id FROM participants").toArray()).toEqual([]);
     });
   });
 
-  it("leaves the whole audience unseated when one of its members cannot be", async () => {
-    const stub = agent();
-    await boot(stub);
-    await runInDurableObject(stub, (_instance, state) => {
-      seedWorkstreamRoot(state);
-      // A row the insert cannot satisfy: the seating below reaches it second,
-      // after the first member has already been written in the same
-      // transaction. Without that transaction the first would survive the
-      // throw, and the retry — recomputing who is new against a roster that
-      // now holds them — would never publish their arrival.
-      state.storage.sql.exec(
-        `CREATE TRIGGER refuse_jordan BEFORE INSERT ON participants
-           WHEN NEW.user_id = '${JORDAN}'
-           BEGIN SELECT RAISE(ABORT, 'refused'); END`,
-      );
-    });
-
-    await expect(identity(stub, "admitParticipants", {
-      userIds: [TAYLOR, JORDAN],
-      addedByUserId: null,
-      reason: "explicit",
-      now: 7,
-    })).rejects.toThrow(/refused/u);
-
-    await runInDurableObject(stub, (_instance, state) => {
-      expect(state.storage.sql.exec(`SELECT COUNT(*) AS n FROM participants`).one())
-        .toEqual({ n: 0 });
-    });
-  });
-
-  it("moves the creator seat and the reason that goes with it together", async () => {
+  it("updates creator attribution without independently granting participants", async () => {
     const stub = agent();
     await boot(stub);
     await runInDurableObject(stub, (_instance, state) => seedWorkstreamRoot(state));
@@ -405,17 +340,14 @@ describe("identity authority on real workerd", () => {
 
     // The promotion and the demotion are one fact about who this work stream
     // belongs to. Two creators, or none, is what a partial batch leaves behind.
-    expect(corrected.value).toEqual({ outcome: "adopted", participantAuthority: "legacy" });
+    expect(corrected.value).toEqual({ outcome: "adopted" });
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec(
         `SELECT created_by_user_id FROM workstream WHERE id = 1`,
       ).one().created_by_user_id).toBe(JORDAN);
       expect(state.storage.sql.exec(
         `SELECT user_id, participation_reason FROM participants ORDER BY user_id`,
-      ).toArray()).toEqual([
-        { user_id: TAYLOR, participation_reason: "explicit" },
-        { user_id: JORDAN, participation_reason: "creator" },
-      ]);
+      ).toArray()).toEqual([]);
     });
   });
 

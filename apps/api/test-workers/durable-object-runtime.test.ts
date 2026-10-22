@@ -74,7 +74,7 @@ import {
 } from "../src/durable-objects/workspace-opportunity-protocol";
 import { WORKSPACE_LOCAL_TABLES } from "../src/services/workspace-runtime-database";
 import { workspaceConnectorEventQueueMessage } from "../src/services/workspace-connector-event-ingress";
-import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
+import { hostedParentStub, withHostedParent, seedParticipantGrants } from "./helpers/hosted-parent";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000101");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-000000000102");
@@ -160,10 +160,10 @@ async function enableWorkspaceInfoLogs(stub: DurableObjectStub<WorkspaceDO>): Pr
 
 async function seedCreatorProfile(): Promise<void> {
   await env.DB.batch([
-    env.DB.prepare(`CREATE TABLE users (
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
     )`),
-    env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
+    env.DB.prepare(`INSERT OR IGNORE INTO users(id, email, name, avatar_url, timezone, created_at)
       VALUES (?, 'creator@example.com', 'Creator', NULL, 'UTC', '2026-01-01T00:00:00.000Z')`)
       .bind(USER_ID),
   ]);
@@ -442,6 +442,7 @@ async function seatBootstrapParticipant(
   userId: string,
 ): Promise<void> {
   await runInDurableObject(stub, (_instance, state) => {
+    if (state.storage.sql.exec("SELECT 1 FROM participants WHERE user_id = ? AND status = 'active'", userId).toArray().length) return;
     state.storage.sql.exec(
       `INSERT OR REPLACE INTO participants
          (user_id, participation_reason, added_by_user_id, status, participant_epoch,
@@ -466,6 +467,7 @@ async function provisionBootstrappedWorkstream(
   stub: DurableObjectStub<SubstreamAgent>,
   userId: string,
 ): Promise<void> {
+  await seedCreatorProfile();
   const provisioned = await stub.executeIdentityOperation({
     workspaceId: WORKSPACE_ID,
     workstreamId: WORKSTREAM_ID,
@@ -4658,6 +4660,7 @@ describe("Durable Objects in the Workers runtime", () => {
       }, "00000000-0000-7000-8000-000000000702")],
     });
 
+    await seedParticipantGrants(env, WORKSPACE_ID, WORKSTREAM_ID, [USER_ID]);
     const response = await stub.fetch("https://workspace.test/parent-socket", {
       headers: {
         Upgrade: "websocket",
@@ -4694,6 +4697,9 @@ describe("Durable Objects in the Workers runtime", () => {
       const closed = nextClose(socket);
       // Creator metadata is not authority. Once the participant projection is
       // removed, the private work stream must close this creator's socket too.
+      await runInDurableObject(stub, (_instance, state) => {
+        state.storage.sql.exec("UPDATE parent_grants SET grant_json = json_set(grant_json, '$.active', json('false')) WHERE parent_id = ? AND user_id = ?", WORKSTREAM_ID, USER_ID);
+      });
       await stub.receiveChildEffects({
         substreamId: "0",
         envelopes: [childEffectEnvelope({
@@ -7199,6 +7205,7 @@ describe("Durable Objects in the Workers runtime", () => {
           ROOM_ID, USER_ID, `00000000-0000-7000-800c-000000000001`,
         );
       });
+      await seedParticipantGrants(env, WORKSPACE_ID, ROOM_ID, [USER_ID]);
       return stub;
     }
 

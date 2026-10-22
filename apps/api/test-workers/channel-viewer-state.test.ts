@@ -1,3 +1,4 @@
+import { seedParticipantGrants } from "./helpers/hosted-parent";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 /**
@@ -242,6 +243,10 @@ beforeEach(async () => {
         VALUES (?, ?, ?, 1, 1, ?, 1, 1)`, parentId, breakout, member, member);
     }
   });
+  await seedParticipantGrants(env, workspaceId, channelA, [member]);
+  await seedParticipantGrants(env, workspaceId, channelB, [member]);
+  await seedParticipantGrants(env, workspaceId, channelA, [member], breakoutA);
+  await seedParticipantGrants(env, workspaceId, channelB, [member], breakoutB);
   await publishMain(channelA, "Channel A");
   await publishMain(channelB, "Channel B");
 });
