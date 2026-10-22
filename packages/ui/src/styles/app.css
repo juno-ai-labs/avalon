@@ -8214,6 +8214,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   padding: 0 10px;
 }
 .title-menu-item-copy { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.title-menu-merge-row .title-menu-item-copy strong { font-weight: 600; }
 .title-menu-item-age { color: var(--av-sys-color-text-muted); flex: none; font-size: 11.5px; }
 .title-menu-item-dot { background: var(--av-sys-color-accent-base); border-radius: 50%; flex: none; height: 8px; width: 8px; }
 .title-menu-breakout { color: var(--av-sys-color-text-default); min-height: 36px; }

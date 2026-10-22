@@ -281,8 +281,13 @@ Channel is in their directory. A private thread's target says so
 quote line, as the Channel's other readers will see it, and the audience line
 says the thread's name stays hidden. "Merge to thread" or "Merge to <first
 Channel>" is the second hover action on every settled text message, after
-**New breakout**, and a row in the title menu that names the target at its
-end (the Thread, or "Channel"). A resolved Thread keeps this title-menu row
+**New breakout**, and a row in the title menu. A Breakout's title-menu row reads
+"Merge to <name> Thread", with no separate name at the right. Both title-menu
+rows bold the destination's name, leaving "Merge to", a trailing "Channel" in
+the Channel's name, and the "Thread" suffix in regular weight.
+A Thread's row shows a Channel count only when it has multiple
+targets, with no redundant "Channel" suffix for a single target.
+A resolved Thread keeps this title-menu row
 visible but disabled, with a tooltip explaining that the thread is already resolved.
 Its resolved state falls back to the loaded conversation detail when a deep link
 opens a Thread outside the cached directory page, so the action is disabled on

@@ -857,10 +857,13 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const breakoutResolved = railChildren?.find((child) => child.substreamId === openBreakoutId)?.resolved;
   const breakoutArchived = Boolean(openChild.data?.archivedAt
     || directoryEntry?.conversations.find((item) => item.substreamId === openBreakoutId)?.archived);
+  const mergeChannelName = threadMerge?.kind === 'channel' ? threadMerge.channels[0]!.name : '';
   const mainActions = (conversationScoped ? mainVisible : parent.data) ? {
     merge: threadMerge ? {
-      label: mergeLabel(threadMerge),
-      target: threadMerge.kind === 'channel' && threadMerge.channels.length > 1 ? `${threadMerge.channels.length} Channels` : 'Channel',
+      label: threadMerge.kind === 'channel'
+        ? <>Merge to <strong>{mergeChannelName.replace(/ Channel$/u, '')}</strong>{mergeChannelName.endsWith(' Channel') ? ' Channel' : ''}</>
+        : mergeLabel(threadMerge),
+      target: threadMerge.kind === 'channel' && threadMerge.channels.length > 1 ? `${threadMerge.channels.length} Channels` : undefined,
       disabled: Boolean(threadResolved),
       disabledReason: threadResolved ? 'This thread is already resolved.' : undefined,
       onSelect: () => setMergeRequest({ substreamId: '0', nonce: Date.now() }),
@@ -883,8 +886,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     // The Breakout's pane merges only when it has its Thread to merge into,
     // which a reader scoped to the Breakout alone does not.
     merge: openBreakoutId && !conversationScoped && parent.data ? {
-      label: 'Merge to thread',
-      target: parent.data.title,
+      label: <>Merge to <strong>{parent.data.title}</strong> Thread</>,
       onSelect: () => setMergeRequest({ substreamId: openBreakoutId, nonce: Date.now() }),
     } : undefined,
     onCopyLink: session?.workspace ? copyRowLink : undefined,
