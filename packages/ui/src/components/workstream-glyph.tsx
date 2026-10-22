@@ -14,7 +14,7 @@ import {
   Workflow,
   type LucideIcon,
 } from 'lucide-react';
-import { PROJECT_COLOR_RING, type ProjectColorKey, type WorkstreamAppearance as SavedAppearance } from '@rally/contracts';
+import { generatedWorkstreamAppearance, type ProjectColorKey, type WorkstreamAppearance as SavedAppearance } from '@rally/contracts';
 import clsx from 'clsx';
 import { useId } from 'react';
 import { markColors } from '../lib/project-palette';
@@ -49,20 +49,7 @@ export interface WorkstreamAppearance {
  * deliberately deterministic: an identity that changed on every launch would
  * make the sidebar harder to scan even though it looked more random.
  */
-export function workstreamAppearance(id: string): WorkstreamAppearance {
-  let hash = 2_166_136_261;
-  for (let index = 0; index < id.length; index += 1) {
-    hash ^= id.charCodeAt(index);
-    hash = Math.imul(hash, 16_777_619);
-  }
-  const unsigned = hash >>> 0;
-  return {
-    // The ring, not the full palette: `black` is the neutral somebody picks, not
-    // a colour to hand out at random.
-    color: PROJECT_COLOR_RING[unsigned % PROJECT_COLOR_RING.length] ?? 'purple',
-    iconIndex: Math.floor(unsigned / PROJECT_COLOR_RING.length) % WORKSTREAM_ICONS.length,
-  };
-}
+export const workstreamAppearance = generatedWorkstreamAppearance;
 
 /** Shared identity symbol for stream glyphs and automation hexagons. */
 export function WorkstreamSymbol({ id, size, className }: { id: string; size: number; className?: string }): React.JSX.Element {
