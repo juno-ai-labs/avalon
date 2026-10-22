@@ -4,7 +4,7 @@ import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:tes
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   AutomationDetailSchema, AutomationRunDefinitionV1Schema, AutomationSetEvaluatorRulesInputV1Schema,
-  SidekickExecutionDelegationSchema, asUserId, asWorkspaceId, type AutomationDraft,
+  SidekickExecutionDelegationSchema, asUserId, asWorkspaceId, asHarnessRunId, type AutomationDraft,
   WorkspaceExternalEventMatchResultSchema,
 } from "@rally/contracts";
 import { workspaceDOName } from "../src/durable-objects/names";
@@ -12,6 +12,7 @@ import { AUTOMATION_SCHEDULE_ALARM_KIND } from "../src/durable-objects/automatio
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { insertChannelRow } from "./helpers/hosted-parent";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
+import { readSidekickOperationSource } from "../src/services/sidekick-operation-accounts";
 
 const workspaceId = asWorkspaceId("00000000-0000-7000-8000-00000000da00");
 const creator = asUserId("00000000-0000-7000-8000-00000000da01");
@@ -89,6 +90,56 @@ async function webhook() {
 }
 
 describe("shared Sidekick delegation admission", () => {
+  it("retains canonical event account references on admission and when reading an older run opening", async () => {
+    // The held effect queue keeps these assertions before inference.
+    await create();
+    await consent(other, true);
+    await runInDurableObject(stub(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO connector_connections(id,workspace_id,connector_type,scope,owner_user_id,
+        display_name,model_plugin_id,granted_scopes_json,status,created_at,updated_at)
+        VALUES (?,?,'google','personal',?,'Maya mail','plugin_google','["gmail.read"]','healthy',?,?)`, connectionId, workspaceId, other, now, now);
+    });
+    const eventType = "email.received";
+    await activate({ ...definition, triggers: [{ type: "connector_activity", connectorType: "google", sourceBindingKey: "mail",
+      suggestedSourcePluginId: "plugin_google", eventTypes: [eventType], deterministicFilters: {} }] },
+    AutomationSetEvaluatorRulesInputV1Schema.parse({ schemaVersion: 1, evaluators: [{ evaluatorKey: "received", source: {
+      sourceBindingKey: "mail", suggestedSourcePluginId: "plugin_google", event: { kind: "event_type", eventType },
+    }, when: { kind: "always" } }] }));
+    const eventId = crypto.randomUUID();
+    await stub().ingestConnectorEvent({ workspaceId, ingressEventId: eventId, payloadHash: `sha256:${"b".repeat(64)}`, event: {
+      connectorType: "google", activity: { id: eventId, workspaceId, region: "global", connectionId, connectionScope: "personal", connectionOwnerUserId: other,
+        provider: "google", providerEventId: "mail-change", eventType, resourceType: "gmail_thread", providerResourceId: "source-thread",
+        actor: {}, subject: { messageId: "source-message", threadId: "source-thread" }, occurredAt: now, receivedAt: now,
+        title: "Mail received", summary: "New mail", textSnippet: "Read the source-message", payloadRef: null,
+        visibility: { kind: "personal" }, targetUserIds: [], entityKeys: [], dedupeKey: "mail-change", rawContentHash: null,
+        metadata: { sourceAccount: { connectionId: "forged", resourceKeys: ["google:message:other"] } }, externalPeople: [],
+      },
+    } });
+    const matched = WorkspaceExternalEventMatchResultSchema.parse(await stub().matchExternalEventDestinations({ workspaceId, eventId }));
+    const delivery = matched.deliveries[0]!;
+    expect(delivery).toBeDefined();
+    // An older queue envelope omits source identity. The event row still owns it.
+    const oldEvent = { ...delivery.event };
+    delete oldEvent.sourceConnectionId;
+    delete oldEvent.sourceConnectionScope;
+    delete oldEvent.sourceConnectionOwnerUserId;
+    expect(await stub().sidekickAdmitExternalEvent({ ...address, registrationId: delivery.registrationId, event: oldEvent, payloadHash: delivery.payloadHash }))
+      .toMatchObject({ admitted: true });
+    const run = (await runs())[0]!;
+    const source = { connectionId, resourceKeys: ["google:thread:source-thread", "google:message:source-message"] };
+    expect(JSON.parse(run.opening_json!).sourceAccount).toEqual(source);
+    expect(AutomationRunDefinitionV1Schema.parse(await stub().sidekickReadRunDefinition({ ...address, runId: run.run_id })).opening?.sourceAccount).toEqual(source);
+    expect(await readSidekickOperationSource(env, {
+      region: "global", workspaceId, parentKind: "automation", parentId: automationId,
+      loopId: "background-origin", harnessRunId: asHarnessRunId(crypto.randomUUID()), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: other }, reason: "Read the event's message",
+      backgroundAgent: true, automationDelegation: { runId: run.run_id, stopGeneration: 0 },
+    })).toEqual(source);
+    await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec(
+      "UPDATE sidekick_runs SET opening_json=json_remove(opening_json,'$.sourceAccount') WHERE run_id=?", run.run_id));
+    expect(AutomationRunDefinitionV1Schema.parse(await stub().sidekickReadRunDefinition({ ...address, runId: run.run_id })).opening?.sourceAccount).toEqual(source);
+  });
+
   it("manual Run prefers an eligible requester as coordinator without opting in or replacing legacy access", async () => {
     await create();
     await activate();

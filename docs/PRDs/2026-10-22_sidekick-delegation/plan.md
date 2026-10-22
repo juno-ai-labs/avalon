@@ -152,6 +152,29 @@ turn an implementation checklist into an assertion that its tests passed.
   the final nullable-selector input edit. Full-suite and model/UI evidence
   remain required for completion.
 
+### Canonical activation references
+
+- The run opening stores an authored adapter projection of provider IDs with the
+  canonical event's source connection. The host reads normalized subject and
+  resource columns, never an account or reference list from event metadata.
+  Old run openings can recover the reference from the canonical event row;
+  old queue deliveries do not need the new source fields to retain this origin.
+- Account-scoped first reads/replies remain with that source. Portable file reads
+  prefer it and retain safe refusal fallback. New inbox searches still use the
+  task account. Background children load only origin references through their
+  existing root-run authority, not the root's instruction or tool configuration.
+- Restored real workerd admission lane: 12 passing cases, including the canonical
+  source, forged metadata, old queue/opening and root-child reference behavior.
+  Focused Node resolver/assembled Google/opening lanes: 26 passing cases.
+  Authored Google reference projections: 10 passing cases.
+- Five production-code negative controls failed at the intended assertions:
+  dropping admission's source capture, old-opening recovery, account-reference
+  pinning, assembled loader propagation, and rooted child origin loading. All
+  mutations were restored; the complete 12-case workerd and 26-case Node lanes
+  then passed. Lint and repository-wide typecheck passed on restored sources;
+  documentation checks also passed. No new migration, provider preflight or
+  cross-object revocation barrier was added. UI and model evidence remain open.
+
 ### Next integration constraints
 
 The common admission policy is installed. The normal harness can still replay a
@@ -162,10 +185,11 @@ the authority's generation check alone does not cover this outer cache.
 
 Configured sources still need reconciliation across delegates' connection-
 specific Rally resource IDs, preserving provider resource/occurrence identity.
-Account-scoped references originating in an activation event still need
-canonical source-account seeding before their first tool read; source preference
-alone must not reinterpret a Gmail/Calendar reference as the creator's. Verify
-origin context through background-child handoff and resumed inventory snapshots.
+Canonical activation-event references now retain their source account before
+the first tool read. Rooted background children read that host-derived reference
+from their existing root-run authority without inheriting instructions or tools.
+Provider references produced by later tool results still need explicit origin
+context through background-child handoff and resumed inventory snapshots.
 Normal activity details still need actual serving-account fields wired from the
 receipt checkpoints, alongside the coordinating user. Authorized uncertain-write
 reconciliation still needs end-to-end recovery verification; pinning an account

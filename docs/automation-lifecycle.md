@@ -82,6 +82,14 @@ entitlement in `sidekick_claim_access`, without rebinding configured sources or
 changing creator preference. Neither these grants nor coordinator selection
 replace the directory's existing reader/manager entitlements.
 
+External-event openings retain the source connection and code-projected provider
+reference keys from the canonical event row. This host-only field is separate
+from untrusted event metadata and needs no extra ledger. The harness uses it to
+keep the first read/reply/update of an account-scoped ID on the originating
+account; a new unrelated search retains its configured task account. Existing
+openings missing the field can read the same source from their canonical event.
+Adapters without a declared activity-reference projection add no reference.
+
 Per-operation connector identities, completed-receipt reconciliation, shared
 Terminal authorization and desktop/web controls are tracked by the
 [implementation plan](PRDs/2026-10-22_sidekick-delegation/plan.md) until all
@@ -1123,7 +1131,9 @@ The original Thread-owned personal Google Sheet shape and its Organization-owned
 variant both start an event run and an hourly run through the same delegate.
 Withdrawals, restricted audiences, coordinator identity and retained human
 management are checked independently; production-code negative controls prove
-those gates. `test/run-authority-validity.test.ts` checks the model/tool boundary's
+those gates. The same workerd lane verifies canonical source-account capture,
+legacy-opening recovery and rooted background origin reads; metadata cannot
+forge that projection. `test/run-authority-validity.test.ts` checks the model/tool boundary's
 specific coordinator failure and error-path attention recording.
 
 `pnpm --filter @rally/desktop exec vitest run
@@ -1314,7 +1324,9 @@ Signed-in account recovery retains access to a person's own grants after they
 lose Organization or Sidekick access. Event, schedule, manual and continued runs
 share eligibility; each run persists its coordinator independently of legacy
 human access. Migration retains established task accounts and distinguishes
-proven claims from ambiguous creator attribution.
+proven claims from ambiguous creator attribution. Canonical event openings
+also retain authored provider reference keys and source connections, including
+compatibility reads for openings saved before that field existed.
 
 **Why:** A mutable run-as user cannot represent several people's consent or
 independent withdrawal. Reusing that field for automatic coordination would also

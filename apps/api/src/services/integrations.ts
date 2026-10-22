@@ -15,7 +15,7 @@ import { AgentCommunicationService } from "./agent-communication-service";
 import { createAgentCommunicationPlugin } from "./agent-communication-plugin";
 import { continueSidekickRun } from "./sidekick-run-continuation";
 import {
-  executeSidekickAccountOperation, readSidekickOperationDelegation, sidekickAccountToolDefinition, splitSidekickAccount,
+  executeSidekickAccountOperation, readSidekickOperationDelegation, readSidekickOperationSource, sidekickAccountToolDefinition, splitSidekickAccount,
 } from "./sidekick-operation-accounts";
 import type { SidekickExecutionDelegation } from "@rally/contracts";
 import { AgentMessageContentSchema, renderAgentMessage } from "./agent-message-content";
@@ -5520,8 +5520,8 @@ async function loadHarnessTools(
   idempotencyByTool: Map<string, "safe" | "provider_key" | "record_before_execute">;
   modeByTool: Map<string, "read" | "write">;
 }> {
-  const [[attachedLinks, connectionRows], runDefinition, delegation] = await Promise.all([
-    inventoryPreparation.get(), runDefinitionPreparation.get(), readSidekickOperationDelegation(env, input),
+  const [[attachedLinks, connectionRows], runDefinition, delegation, backgroundSource] = await Promise.all([
+    inventoryPreparation.get(), runDefinitionPreparation.get(), readSidekickOperationDelegation(env, input), readSidekickOperationSource(env, input),
   ]);
   const delegatedUsers = new Set(delegation?.delegates.map((grant) => grant.userId));
   const delegateNames = delegation ? await env.DB.prepare("SELECT id,name FROM users WHERE id IN (SELECT value FROM json_each(?))")
@@ -5812,6 +5812,7 @@ async function loadHarnessTools(
               authority, workspaceId: input.workspaceId,
               coordinatorUserId: input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null,
               requested: frozen, candidates, identity,
+              sourceAccount: runDefinition?.opening?.sourceAccount ?? backgroundSource,
               ...(selection ? { selection } : {}), mode: definition.mode,
               sourceConnectionIds: runDefinition ? Object.values(runDefinition.activitySourcePluginIds)
                 .flatMap((pluginId) => runDefinition.connectorBindings[pluginId] ? [runDefinition.connectorBindings[pluginId]!] : []) : [],
