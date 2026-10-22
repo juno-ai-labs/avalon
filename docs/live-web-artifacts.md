@@ -102,6 +102,12 @@ barrier without adding each independent R2 round trip to the publication latency
 
 ### Revising
 
+The `building-live-sites` skill directs both interactive agents and Sidekicks
+refreshing a site to load Terminal for file editing, import and publication.
+Loading the skill supplies instructions without activating those tools. A later
+run must recover the existing source when its sandbox lacks the files, then
+republish the same directory path to preserve the site's identity.
+
 A run asked to change a site it did not build — or built in a session that has
 since ended — brings the files back first, through `import_resource`
 on the site's own resource id. The manifest is the index, and `index.js` is

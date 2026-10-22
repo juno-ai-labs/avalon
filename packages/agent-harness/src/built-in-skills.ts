@@ -1,8 +1,9 @@
 import { BUILDING_LIVE_SITES_SKILL } from "./building-live-sites-skill";
 import { READING_AI_CHATS_SKILLS } from "./reading-ai-chats-skills";
+import { TRACKING_SEEN_OR_DONE_ITEMS_SKILL } from "./tracking-seen-or-done-items-skill";
 import type { HarnessSkill } from "./index";
 
-export { BUILDING_LIVE_SITES_SKILL };
+export { BUILDING_LIVE_SITES_SKILL, TRACKING_SEEN_OR_DONE_ITEMS_SKILL };
 
 /**
  * Skills the harness ships with, for a host that has no library of its own yet.
@@ -331,9 +332,16 @@ the most common way to get this wrong.
 
 The whole procedure runs through the Sidekicks plugin; load it before you start.
 
-## 1. Look for a real event before you settle for a timer
+## Terms used in this skill
 
-Before declaring a workflow blocked by a missing tool, inspect other authorized plugins that can supply the step. For Google Meet transcripts and notes, load reading-google-meeting-notes and read an attached Doc before any Drive search or blocked conclusion. Use the plugin that actually declares the source event, or poll when no suitable event exists.
+- **Canonical Rally resource ID:** Rally's identifier for a registered resource,
+  distinct from its provider URL or file ID.
+- **Binding:** Restricting an event rule to events associated with one resource
+  through the selected connector. For example, a rule bound to one spreadsheet
+  ignores changes to other spreadsheets on that connection. Binding does not
+  grant access to the file.
+
+## 1. Look for a real event before you settle for a timer
 
 Inspect the plugin for the connector the person named and read the event types
 it declares. If one of them covers what they described, trigger on that instead
@@ -357,11 +365,42 @@ Poll only when inspection shows no event type that fits. When you propose the
 Sidekick, say in one line that it checks on a timer because that connection does
 not announce this — otherwise the person reads the delay as a bug.
 
-## 2. Choose the cadence, no faster than every ten minutes
+## 2. Resolve the specific external resource before binding it
+
+To bind the rule, find the resource's **canonical Rally resource ID** through
+resource discovery. When setting evaluator rules, put the returned \`id\` in
+\`source.resourceId\` and its \`pluginId\` in \`source.suggestedSourcePluginId\`.
+Choose an event whose declared resource relationships include that resource's
+type. A provider URL or file ID cannot replace the Rally resource ID.
+
+Search Rally's registered resources for the external file or resource the
+Sidekick should monitor. This searches **registered Rally resources**, not the
+external provider; reading a file through its connector
+does not automatically register it. Read an empty result alongside
+\`searchableResourceTypes\`:
+
+- If the source's type is listed, binding that type is supported. Use the
+  connector to confirm access and obtain the actual title, then search again
+  with that title instead of a sentence combining the URL, ID and task.
+- If the readable resource still cannot be found, use an available
+  resource-resolution or attachment tool to resolve or register it through its connection,
+  then repeat discovery for the canonical ID. If no such tool is exposed,
+  tell the requesting agent, or the person when working directly, that the
+  resource is readable but needs registration before it can be bound. Name
+  that missing step rather than claiming a permission denial. Never invent a
+  Rally ID or substitute the provider's ID.
+- If no types are listed, no registered resource can narrow the rule through
+  these connections. Inspect the declared filter fields for a way to express
+  the requested restriction, or use polling when the events cannot express it.
+
+A search error is a failed lookup; an empty result is a search miss. Neither
+establishes that the provider or resource type is unsupported.
+
+## 3. Choose the cadence, no faster than every ten minutes
 
 First, if what they described is a time of day rather than a frequency — "every
 morning", "at 5pm on Fridays" — use a \`calendar\` trigger with a recurrence rule
-instead of an interval, then carry on through steps 3 and 4, which a timed
+instead of an interval, then carry on through steps 4 and 5, which a timed
 watcher needs exactly as much.
 
 Otherwise poll with an \`interval\` trigger and set \`intervalSeconds\`.
@@ -382,34 +421,13 @@ hour", "Each weekday morning". It is the line they read on the proposal and
 under **When to expect it**, and leaving it out puts a generic phrase there
 instead of the cadence they just agreed to.
 
-## 3. Give each run a way to know what it has already seen
+## 4. Give each run a way to know what it has already seen
 
-A timer has no memory. Without one, every run reports the same three items
-again, and the person turns the Sidekick off.
+Load \`tracking-seen-or-done-items\` to define the memory table, its stable keys, access
+steps and first-run baseline. Save that procedure in the Sidekick's run
+instructions so both event-triggered and timed runs skip work already completed.
 
-Declare a memory table on the draft whose \`keyColumns\` are the item's own
-stable identity from the source — a message id, a meeting id, an issue key —
-never a value the run makes up and never one that expires, because a later run
-has to rebuild the same value from the outside world. Every key column has to be
-one of the table's declared \`columns\` as well, or the draft is refused. Rows
-deduplicate on those columns, which is what makes a second sighting cheap to
-ignore.
-
-Then write into the instructions, as steps a run that has never seen this
-conversation can follow: read the table first, fetch what the connection
-reports since a little before the last recorded item, skip anything already
-recorded, act on the rest, and record each item **after** it has been acted on
-— the other order loses an item to any run that fails midway.
-
-Overlap the read window deliberately rather than asking for strictly-newer
-items: a "since" argument alone drops anything that arrives late or shares a
-timestamp with the last thing you saw. Let the table discard the overlap.
-
-Say what the **first** run does, because the table is empty and everything looks
-new: record what is already there and report nothing, unless the person asked to
-be caught up. Nobody wants a watcher's first act to be their whole backlog.
-
-## 4. Write the run so that finding nothing is normal
+## 5. Write the run so that finding nothing is normal
 
 Most runs will find nothing. Say explicitly in the instructions what such a run
 does: finish without posting, sending, or messaging anybody. A Sidekick that
@@ -429,18 +447,13 @@ all of them is almost always what the person wanted, not one message each.
   say that wiring one up is a conversation with the team.
 - **Reaching for \`resource_watch\`.** Nothing starts a Sidekick from it. Use the
   source's declared events, or an interval.
-- **A key column the run invents** — a row number, a hash of a summary, the
-  time it was seen — or one that expires, like a signed URL. The next run cannot
-  reconstruct it, so nothing deduplicates.
-- **Recording an item before acting on it.** A run that fails after recording
-  has silently dropped it. Record last.
 - **A run that posts to say it found nothing.** Finish silently instead.`;
 
 /**
  * How to satisfy "tell me when X happens" for a connection with no webhook.
  *
  * Deliberately a loaded skill rather than standing policy: it is irrelevant to
- * almost every turn, and the cadence floor plus the seen-item discipline are
+ * almost every turn, and trigger selection plus the cadence floor are
  * too long to carry in the prompt for the few turns that need them.
  *
  * `ownerPlugin` is the Sidekicks plugin, because the procedure is entirely
@@ -450,7 +463,7 @@ all of them is almost always what the person wanted, not one message each.
 export const POLLING_FOR_EVENTS_SKILL: HarnessSkill = {
   name: "polling-for-events",
   description:
-    "How to set up a Sidekick that watches for something: check the connector's own declared events first, fall back to an interval no faster than every ten minutes, and keep a keyed memory table so a run skips what an earlier one already handled.",
+    "How to set up a Sidekick that watches for something: inspect declared events, resolve the source resource, choose a polling cadence only when needed, and compose tracking-seen-or-done-items to avoid repeated work.",
   whenToUse:
     "When someone asks to be told whenever something happens — new mail, a finished meeting, a note or ticket added — and you are setting up a Sidekick to watch for it.",
   body: POLLING_FOR_EVENTS_BODY,
@@ -469,6 +482,8 @@ export const BUILT_IN_SKILLS: readonly HarnessSkill[] = [
   // the whole procedure is drafting one, and an automation occurrence is
   // deliberately never given the drafting tools.
   POLLING_FOR_EVENTS_SKILL,
+  // Available during authoring and execution wherever durable Tables are in scope.
+  TRACKING_SEEN_OR_DONE_ITEMS_SKILL,
   // Offered only where the Terminal plugin is in scope, by its `ownerPlugin`:
   // the whole procedure ends in publishing a directory from a sandbox.
   BUILDING_LIVE_SITES_SKILL,
