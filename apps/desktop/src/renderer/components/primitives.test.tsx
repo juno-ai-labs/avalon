@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEVICE_PREFERENCES_STORAGE_KEY } from '../lib/device-preferences';
 import { MemberPresentationContext } from '../lib/member-presentation';
 import { installWindowActivationTracking } from '../lib/window-activation';
-import { AvatarStack, ConnectorMark, DragHint, RallyMark, DropdownSelect, Meter, Modal, OpeningState, SegmentedControl, SocketStatusIndicator, StatusDot, Tip, TipGroup } from './primitives';
+import { AvatarStack, Button, ConnectorMark, DragHint, RallyMark, DropdownSelect, Meter, Modal, OpeningState, SegmentedControl, SocketStatusIndicator, StatusDot, Tip, TipGroup } from './primitives';
 
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ size, state, theme }: { size: number; state: string; theme?: string }) => (
@@ -26,6 +26,35 @@ function stubResizeObserver(): void {
     disconnect(): void {}
   });
 }
+
+describe('Button', () => {
+  it('keeps an explained disabled action focusable, explains it, and blocks clicks', async () => {
+    const onClick = vi.fn();
+    render(<Tooltip.Provider><Button disabled disabledReason="Choose an organization first." onClick={onClick}>Continue</Button></Tooltip.Provider>);
+    const button = screen.getByRole('button', { name: 'Continue' });
+    expect(button).not.toBeDisabled();
+    expect(button).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.keyDown(document.body, { key: 'Tab' });
+    act(() => button.focus());
+    expect(button).toHaveFocus();
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Choose an organization first.');
+    fireEvent.click(button);
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it('preserves native disabling and enables the callback once available', () => {
+    const onClick = vi.fn();
+    const { rerender } = render(<Button disabled onClick={onClick}>Continue</Button>);
+    const button = screen.getByRole('button', { name: 'Continue' });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(onClick).not.toHaveBeenCalled();
+    rerender(<Button onClick={onClick}>Continue</Button>);
+    expect(button).not.toBeDisabled();
+    fireEvent.click(button);
+    expect(onClick).toHaveBeenCalledOnce();
+  });
+});
 
 describe('RallyMark', () => {
   it('renders the shared mask-backed brand mark without the retired starburst SVG', () => {

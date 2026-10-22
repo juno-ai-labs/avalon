@@ -225,9 +225,23 @@ export function TipGroup({ children }: PropsWithChildren): React.JSX.Element {
   );
 }
 
-export const Button = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLButtonElement>>(
-  function Button({ className, type = 'button', ...props }, ref) {
-    return <button ref={ref} className={clsx('button', className)} type={type} {...props} />;
+interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+  /** Keep unavailable controls focusable so their explanation can be read. */
+  disabledReason?: string | undefined;
+}
+
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
+  function Button({ className, type = 'button', disabledReason, disabled, onClick, ...props }, ref) {
+    const button = <button
+      ref={ref}
+      className={clsx('button', className)}
+      type={type}
+      {...props}
+      aria-disabled={disabledReason ? true : props['aria-disabled']}
+      disabled={disabled && !disabledReason}
+      onClick={disabledReason ? (event) => event.preventDefault() : onClick}
+    />;
+    return disabledReason ? <Tip label={disabledReason}>{button}</Tip> : button;
   },
 );
 
