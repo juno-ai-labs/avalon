@@ -3253,19 +3253,20 @@ describe("connectors", () => {
       return googleJson(file);
     };
     const sheet = { id: "sheet-file-id-01", name: "Creator Content Intake",
-      mimeType: "application/vnd.google-apps.spreadsheet" };
+      mimeType: "application/vnd.google-apps.spreadsheet", webViewLink: "https://docs.google.com/spreadsheets/d/sheet-file-id-01/edit" };
+    const registration = { resourceType: "google_sheet", canonicalUrl: "https://docs.google.com/spreadsheets/d/sheet-file-id-01/edit" };
     const link = "https://docs.google.com/spreadsheets/d/sheet-file-id-01/edit";
 
     await expect(googleAdapter(metadata({ ...sheet, isAppAuthorized: true, capabilities: { canEdit: true } }))
       .probeResourceAccess!(googleConnection(["drive.read", "sheets.write"]), link, neverAborts()))
-      .resolves.toEqual({ access: "edit", resourceId: "sheet-file-id-01", name: "Creator Content Intake" });
+      .resolves.toEqual({ access: "edit", resourceId: "sheet-file-id-01", name: "Creator Content Intake", registration });
     await expect(googleAdapter(metadata({ ...sheet, isAppAuthorized: false, capabilities: { canEdit: true } }))
       .probeResourceAccess!(googleConnection(["drive.read", "sheets.write"]), link, neverAborts()))
-      .resolves.toEqual({ access: "read", resourceId: "sheet-file-id-01", name: "Creator Content Intake", editNeedsGrant: true });
+      .resolves.toEqual({ access: "read", resourceId: "sheet-file-id-01", name: "Creator Content Intake", registration, editNeedsGrant: true });
     // Editable by the account, but this connection holds no Sheets write.
     await expect(googleAdapter(metadata({ ...sheet, isAppAuthorized: true, capabilities: { canEdit: true } }))
       .probeResourceAccess!(googleConnection(["drive.read"]), link, neverAborts()))
-      .resolves.toEqual({ access: "read", resourceId: "sheet-file-id-01", name: "Creator Content Intake" });
+      .resolves.toEqual({ access: "read", resourceId: "sheet-file-id-01", name: "Creator Content Intake", registration });
     await expect(googleAdapter(async () => googleJson({ error: { code: 404 } }, 404))
       .probeResourceAccess!(googleConnection(["drive.read"]), link, neverAborts()))
       .resolves.toEqual({ access: "none", resourceId: "sheet-file-id-01", reason: "not_found_or_not_shared" });
@@ -3282,6 +3283,17 @@ describe("connectors", () => {
       .resolves.toEqual({ access: "none", resourceId: "sheet-file-id-01", reason: "capability_not_granted" });
     await expect(unused.probeResourceAccess!(googleConnection(["drive.read"]), "https://x.com/a/status/1", neverAborts()))
       .resolves.toEqual({ access: "unrecognized" });
+  });
+
+  it.each([
+    ["application/vnd.google-apps.document", "google_doc", "https://docs.google.com/document/d/doc-file-id-0001/edit"],
+    ["application/pdf", "drive_file", "https://drive.google.com/file/d/doc-file-id-0001/view"],
+  ])("returns verified registration metadata for %s", async (mimeType, resourceType, canonicalUrl) => {
+    const adapter = googleAdapter(async () => googleJson({
+      id: "doc-file-id-0001", name: "Source", mimeType, webViewLink: canonicalUrl,
+    }));
+    await expect(adapter.probeResourceAccess!(googleConnection(["drive.read"]), "doc-file-id-0001", neverAborts()))
+      .resolves.toEqual({ access: "read", resourceId: "doc-file-id-0001", name: "Source", registration: { resourceType, canonicalUrl } });
   });
 
   it("marks only refusals that came before any write as safe to try on another connection", async () => {

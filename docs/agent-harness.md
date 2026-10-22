@@ -685,10 +685,15 @@ instructions retain that rationale; a search miss does not establish an
 unsupported event. `building-live-sites` carries the saved refresh procedure:
 back up local files and import the current published source into the original directory,
 preserve its publishing conversation and consumer data format, reconcile all
-eligible source records, then verify publication. Initial publication, Sidekick
+eligible source records, then verify publication. Each refresh claims the shared
+output before import and compares complete, programmatically transformed source
+records against the current publication, including on the first run. A handwritten
+record array inside a script is not a source transformation. Initial publication, Sidekick
 activation and a successful refresh are distinct outcomes.
 The event skill composes with `tracking-seen-or-done-items`, which owns shared
-ledgers, claims, recovery and baselines. The tracking skill is owned by `rally:tables`
+ledgers, claims, recovery and baselines. Notification backlogs may be baselined
+from the watch's start, but synchronization must first reconcile the real output;
+an empty tracking table is not evidence that output is current. The tracking skill is owned by `rally:tables`
 rather than `rally:sidekicks` so execution runs can load it without authoring
 tools. The skill bodies are the procedures; this document records their scope.
 
@@ -1684,6 +1689,20 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-10-22 — Reconcile the first synchronization and transform actual source rows
+
+**What changed:** Tracking distinguishes historical notification suppression from
+synchronizing an existing output. Site refresh instructions claim and import the
+current publication before comparison, reconcile first-run differences, and parse
+complete machine-readable connector records rather than handwritten row lists.
+
+**Why:** The calendar setup applied notification baselining to a site mirror and
+placed comparison before recovery of the published data. That could discard
+changes before the first timer or compare against missing files. The builder also
+copied rows manually despite loading the skill. Explicit input and completion
+boundaries address those concrete failures without adding a second sync system.
+
 
 ### 2026-10-21 — Carry trigger decisions and site recovery into saved runs
 
