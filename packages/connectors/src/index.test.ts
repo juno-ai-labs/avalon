@@ -1280,6 +1280,7 @@ describe("connectors", () => {
     const fetcher: typeof fetch = async (input) => {
       const url = requestUrl(input);
       requested.push(url);
+      if (url.pathname === "/drive/v3/files/file-1") return googleJson({ id: "file-1", mimeType: "application/vnd.google-apps.document" });
       if (url.pathname.endsWith("/messages/message-1")) {
         return googleJson({
           id: "message-1",
@@ -1338,7 +1339,8 @@ describe("connectors", () => {
     );
     expect(pdf.output).toMatchObject({ contentIncluded: false, mimeType: "application/pdf" });
     expect(pdf.output).not.toHaveProperty("base64");
-    expect(requested).toHaveLength(callsBeforePdf);
+    expect(requested).toHaveLength(callsBeforePdf + 1);
+    expect(requested.at(-1)!.pathname).toBe("/drive/v3/files/file-1");
   });
 
   it("reads the connected Gmail account's own address rather than leaving it to be inferred", async () => {
