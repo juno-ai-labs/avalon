@@ -7434,8 +7434,8 @@ export async function reenterInterruptedWriteForRecovery(
   }
   let plugin: Awaited<ReturnType<typeof createAvalonTerminalPlugin>>;
   try {
-    // Plugin composition resolves the same admitted home for setup, execution
-    // and repair, so reconciliation looks under the original publication identity.
+    // Publication and reconciliation resolve the admitted home at execution,
+    // so repair uses the same address and current access as a live tool call.
     plugin = await createAvalonTerminalPlugin(env, input, inObjectResourceAttacher);
   } catch (error) {
     return { outcome: "unknown", reason: diagnosticErrorCode(error, "plugin_unavailable") };

@@ -2,6 +2,7 @@ import { classifyAttachmentKind, type AttachmentKind, type ExecutionPrincipal } 
 import type { ResourceObjectPort } from "../durable-objects/workstream-resource-protocol";
 import type { ResourceLinkRow } from "../durable-objects/workstream-resource-storage";
 import { BOUND_PARAMETER_ID_CHUNK } from "../durable-objects/bound-parameters";
+import { sha256Hex } from "../lib/crypto";
 import { listedResourceVisibilitySql } from "./resource-listing";
 
 export interface VisibleWorkstreamResourceRow extends Record<string, unknown> {
@@ -108,23 +109,27 @@ export function conversationResourceLinks(
   sidekickSources?: (context: { sidekickId: string; substreamId: string }) => Promise<Array<{
     key: string; resources: ConversationResourceLinks;
   }>>,
+  knownContext?: Awaited<ReturnType<ResourceObjectPort["inheritanceContext"]>>,
 ): ConversationResourceLinks {
   // The object's parent and conversation identity do not change. The related
   // conversations and their admission are deliberately read again per operation.
   let identity: ReturnType<ResourceObjectPort["inheritanceContext"]> | null = null;
-  const context = () => (identity ??= own.inheritanceContext());
+  const context = () => (identity ??= knownContext ? Promise.resolve(knownContext) : own.inheritanceContext());
   const inherited = async () => {
     const scope = await context();
     if (scope.kind === "breakout") {
-      return [{ key: "thread", resources: conversationResourceLinks(channel(), channel) }];
+      return [{ key: "thread", resources: conversationResourceLinks(channel(), channel, undefined, { kind: "none" }) }];
     }
     return scope.kind === "sidekick" && sidekickSources ? sidekickSources(scope) : [];
   };
   return {
     async links(selection) {
-      const [sources, ownLinks] = await Promise.all([inherited(), own.attachedLinks(selection)]);
+      const [sources, ownLinks, namedOnMessages] = await Promise.all([
+        inherited(), own.attachedLinks(selection),
+        selection.resourceIds ? own.resourceIdsOnMessages({ resourceIds: selection.resourceIds }) : null,
+      ]);
       const [ownOnMessages, others] = await Promise.all([
-        ownLinks.length ? own.resourceIdsOnMessages({ resourceIds: ownLinks.map((link) => link.resource_id) }) : [],
+        namedOnMessages ?? (ownLinks.length ? own.resourceIdsOnMessages({ resourceIds: ownLinks.map((link) => link.resource_id) }) : []),
         Promise.all(sources.map((source) => source.resources.links(selection))),
       ]);
       const links = new Map(ownLinks.map((link) => [link.resource_id, link]));
@@ -152,7 +157,7 @@ export function conversationResourceLinks(
       if ((await context()).kind === "breakout") {
         return `inventory:${revision}/${fingerprints[0]![1]!.slice("inventory:".length)}`;
       }
-      return sources.length ? `inventory:${revision}/${JSON.stringify(fingerprints)}` : `inventory:${revision}`;
+      return sources.length ? `inventory:${revision}/${await sha256Hex(JSON.stringify(fingerprints))}` : `inventory:${revision}`;
     },
   };
 }

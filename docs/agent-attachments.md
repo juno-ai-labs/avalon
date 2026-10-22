@@ -191,9 +191,10 @@ replay. The sidebar continues to show its conversation's own attachments.
 filtered by one of the eight natural-language kinds. Continuations bind the
 principal, work stream, filters, size, ordering key, and an inventory
 fingerprint: `inventory:<revision>` for a Channel, `inventory:<own>/<channel>`
-for a Breakout. A Sidekick adds the admitted source conversation addresses
-and their inventory fingerprints, so a scope change invalidates a cursor even
-when the old and new sources have equal revision numbers. Each revision is
+for a Breakout. A Sidekick appends a SHA-256 digest of its admitted source
+conversation addresses and inventory fingerprints, keeping the cursor bounded
+while a scope change still invalidates it even when the old and new sources
+have equal revision numbers. Each revision is
 monotonic. SubstreamAgent advances that revision for relationship, message-
 attachment, classification/content identity, and note-visibility mutations, but
 not hydration timestamps or derivative processing bookkeeping. A continuation
