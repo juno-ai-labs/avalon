@@ -1,3 +1,4 @@
+import { WorkspaceSidekickActivityEventSchema, type SidekickActivityTarget } from "@rally/contracts";
 import { WorkspaceConversationViewEventSchema, type WorkspaceConversationViewEvent } from '@rally/contracts/conversation-view';
 import { MERGE_CHANNELS_QUERY_KEY } from './use-merge-channels';
 import {
@@ -226,6 +227,7 @@ interface PendingDirectoryRequest {
 }
 
 interface WorkspaceSocketContextValue {
+  watchSidekickActivity(target: SidekickActivityTarget): () => void;
   requestConversationView(parentId: string, substreamId: string,
     receive: (event: WorkspaceConversationViewEvent) => void): () => void;
   state: WorkspaceSocketState;
@@ -297,6 +299,7 @@ function invalidateTopic(
       // pushed sidebar list, so this topic is what tells its rails to re-read.
       ['attached-sidekicks'], ['workstream-sidekicks'], ['recommended-sidekicks'],
     ],
+    sidekick_activity: [],
     notes: [['note']],
     // Projects are gone and Spaces replaced them; Space state is carried by the
     // connect snapshot and every later `workspace_space_snapshot`. This topic
@@ -420,6 +423,24 @@ export function WorkspaceSocketProvider({
       if (conversationViewRequests.current.delete(requestId)) cancelRelayedConversationViewRef.current(requestId);
     };
   }, []);
+  const sidekickActivityTargets = useRef(new Map<string, { target: SidekickActivityTarget; observers: number }>());
+  const sidekickActivityRevision = useRef(0);
+  const sendSidekickActivityRef = useRef<() => void>(() => undefined);
+  const watchSidekickActivity = useCallback((target: SidekickActivityTarget): (() => void) => {
+    const key = JSON.stringify(target);
+    const existing = sidekickActivityTargets.current.get(key);
+    if (existing) existing.observers += 1;
+    else {
+      sidekickActivityTargets.current.set(key, { target, observers: 1 });
+      sendSidekickActivityRef.current();
+    }
+    return () => {
+      const entry = sidekickActivityTargets.current.get(key);
+      if (!entry || --entry.observers > 0) return;
+      sidekickActivityTargets.current.delete(key);
+      sendSidekickActivityRef.current();
+    };
+  }, []);
   const foregroundWorkstreamIdRef = useRef<WorkstreamId | null>(null);
   const reportPresenceRef = useRef<() => void>(() => undefined);
   const scheduleRailPrefetchRef = useRef<() => void>(() => undefined);
@@ -506,6 +527,16 @@ export function WorkspaceSocketProvider({
     let applicationForegrounded = false;
     let applicationFocusObservation = 0;
     let windowForegrounded = document.visibilityState === 'visible' && document.hasFocus();
+
+    let activitySentOn: WebSocket | null = null;
+    sendSidekickActivityRef.current = () => {
+      if (!subscribed || socket?.readyState !== WebSocket.OPEN) return;
+      if (sidekickActivityTargets.current.size === 0 && activitySentOn !== socket) return;
+      activitySentOn = socket;
+      sidekickActivityRevision.current += 1;
+      socket.send(JSON.stringify({ type: 'sidekick_activity', revision: sidekickActivityRevision.current,
+        targets: [...sidekickActivityTargets.current.values()].map(({ target }) => target) }));
+    };
 
     sendConversationViewRequestsRef.current = () => {
       if (!subscribed || !conversationViewsAvailable || socket?.readyState !== WebSocket.OPEN) return;
@@ -1071,6 +1102,17 @@ export function WorkspaceSocketProvider({
           } catch {
             return;
           }
+          const sidekickActivity = safeParseSocketEvent(WorkspaceSidekickActivityEventSchema, decoded);
+          if (sidekickActivity.success) {
+            const event = sidekickActivity.data;
+            if (event.revision === sidekickActivityRevision.current
+              && sidekickActivityTargets.current.has(JSON.stringify(event.target))) {
+              const key = ['sidekick-activity', event.target.parentKind, event.target.parentId, event.target.substreamId];
+              queryClient.setQueryData<{ count: number; waterline: number }>(key, (current) =>
+                current && current.waterline > event.waterline ? current : { count: event.count, waterline: event.waterline });
+            }
+            return;
+          }
           const conversationView = safeParseSocketEvent(WorkspaceConversationViewEventSchema, decoded);
           if (conversationView.success) {
             const event = conversationView.data;
@@ -1092,6 +1134,7 @@ export function WorkspaceSocketProvider({
               subscribed = true;
               sendPresence();
               sendConversationViewRequestsRef.current();
+              sendSidekickActivityRef.current();
             }
             if (sync.data.accessRequests) {
               queryClient.setQueryData(accessRequestsQueryKey(workspaceId), sync.data.accessRequests);
@@ -1429,6 +1472,7 @@ export function WorkspaceSocketProvider({
               ['workspace_workstream_recency', 'channel recency', recency],
               ['workspace_workstream_page', 'channel page', workstreamPage],
               ['workspace_channel_rails', 'channel rails', channelRails],
+              ['workspace_sidekick_activity', 'sidekick activity', sidekickActivity],
               ['workspace_space_channels', 'space channels', spaceChannels],
               ['workspace_workstream_state', 'channel state', workstreamState],
               ['workspace_sidebar_list', 'sidebar list', sidebarList],
@@ -1628,6 +1672,7 @@ export function WorkspaceSocketProvider({
       walkSpaceNowRef.current = () => undefined;
       scheduleRailPrefetchRef.current = () => undefined;
       sendConversationViewRequestsRef.current = () => undefined;
+      sendSidekickActivityRef.current = () => undefined;
       refreshChannelRailsRef.current = () => Promise.reject(new ApiError('The organization closed.', 409, 'workspace_socket_closed'));
       window.removeEventListener('online', online);
       window.removeEventListener('offline', offline);
@@ -1827,6 +1872,7 @@ export function WorkspaceSocketProvider({
       loadedSpaceIds,
       refreshChannelRails,
       requestConversationView,
+      watchSidekickActivity,
     }),
     [
       listWorkstreams,
@@ -1835,6 +1881,7 @@ export function WorkspaceSocketProvider({
       walkSpaceChannels,
       refreshChannelRails,
       requestConversationView,
+      watchSidekickActivity,
       presenceUserIdsByWorkstream,
       setForegroundWorkstreamId,
       sidebarConnect,

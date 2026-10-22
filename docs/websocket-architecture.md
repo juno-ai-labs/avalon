@@ -104,6 +104,16 @@ topic, which is all the Sidekicks window needs, since it reads the detail
 surfaces the push refetches and never the list itself. No additional broadcast
 channel or polling is involved.
 
+Composer execution counts stay on the workspace socket as data. The
+`sidekick_activity` client command replaces the socket's exact target set;
+WorkspaceDO stores that set and its revision in the hibernating attachment,
+re-admits each target, and sends `workspace_sidekick_activity` count snapshots.
+The initial registration and every durable activity/default change push the
+same shape. Reconnect re-registers open composers, unmount removes them, and
+revision/waterline fences discard obsolete responses. Background-agent counts
+already arrive in Thread viewer-state rows; neither composer indicator fetches
+counts over REST.
+
 ### The topology
 
 ```text
@@ -932,6 +942,20 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-10-21 — Push exact-target Sidekick counts to open composers
+
+Composer Sidekick activity registers its receiving targets on the existing
+workspace socket and receives count snapshots, just as background-agent counts
+already arrive as socket-owned state. WorkspaceDO holds the execution
+projections and target admission, so invalidating a REST query would spend an
+extra round trip to the same authority on every transition. Watched targets and
+their revision survive hibernation in the socket attachment; reconnect
+re-registers, unmount removes targets, and snapshot waterlines fence stale
+responses. The durable post-commit lane covers execution, attachment, audience,
+and Channel-default changes without a new socket or directory-list fan-out.
+
+Pull request: [#1399](https://github.com/juno-ai-labs/avalon/pull/1399).
 
 ### 2026-10-20 — Relay conversation previews into Sidekick windows
 

@@ -274,6 +274,24 @@ describe('socket-first channel open', () => {
     expect(await screen.findByRole('status', { name: '2 background agents running' })).toBeInTheDocument();
   });
 
+  it('stacks running Sidekicks with background agents and clears each count independently', async () => {
+    api.getConnections.mockResolvedValue([]);
+    const boot = recoveryBoot();
+    const cache = renderScreen((query) => {
+      query.setQueryData(['workstream', workstreamId], boot);
+      query.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
+      query.setQueryData(['workstream-background-agents', workstreamId], { '0': 2 });
+      query.setQueryData(['sidekick-activity', 'workstream', workstreamId, '0'], { count: 1, waterline: 1 });
+    });
+    expect(await screen.findByRole('status', { name: '1 Sidekick running' })).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: '2 background agents running' })).toBeInTheDocument();
+    act(() => cache.setQueryData(['sidekick-activity', 'workstream', workstreamId, '0'], { count: 0, waterline: 2 }));
+    await waitFor(() => expect(screen.queryByRole('status', { name: /Sidekicks? running/u })).not.toBeInTheDocument());
+    expect(screen.getByRole('status', { name: '2 background agents running' })).toBeInTheDocument();
+    act(() => cache.setQueryData(['workstream-background-agents', workstreamId], { '0': 0 }));
+    await waitFor(() => expect(screen.queryByRole('status', { name: /background agents? running/u })).not.toBeInTheDocument());
+  });
+
   it('uses only the selected guest conversation roster despite a cached organization directory', async () => {
     const member = { id: '00000000-0000-7000-8000-000000000661', name: 'Shared person', email: 'shared@example.test', timezone: 'UTC' };
     session.current = { user: member, workspace: { id: '00000000-0000-7000-8000-000000000672', region: 'global', role: null, accessClass: 'guest' } };

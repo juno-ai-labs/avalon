@@ -29,6 +29,11 @@ and availability changes visible without navigation.
 
 Sidekick authoring uses the shared conversation surface in a separate library window. Generated descriptions summarize instructions; ready submissions save immediately. The center workstream sidebar replaces participant rows with a facepile and keeps a **Sidekicks** section below it, including while the list is loading or empty. When present, its rows are this work stream's Sidekicks: the ones it owns and the ones its main conversation has loaded, with access-checked removal of an attachment affecting future executions. `ConversationSurface` owns both queries and hands the merged rows to the sidebar and the inspector rail, so the two rails cannot disagree about what a room has.
 
+Running Sidekicks share background agents' animated indicator above the input.
+The host supplies independent counts to `WorkstreamComposer`, so both rows can
+stack and clear independently. [Sidekick lifecycle](automation-lifecycle.md#activity-above-the-composer)
+owns the activity read and update signal.
+
 ## Where the code lives
 
 - `apps/desktop/src/renderer/components/conversation-follow.tsx` owns the
