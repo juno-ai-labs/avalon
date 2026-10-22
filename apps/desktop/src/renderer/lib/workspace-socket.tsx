@@ -297,6 +297,7 @@ function invalidateTopic(
       // pushed sidebar list, so this topic is what tells its rails to re-read.
       ['attached-sidekicks'], ['workstream-sidekicks'], ['recommended-sidekicks'], ['sidekick-activity'],
     ],
+    sidekick_activity: [['sidekick-activity']],
     notes: [['note']],
     // Projects are gone and Spaces replaced them; Space state is carried by the
     // connect snapshot and every later `workspace_space_snapshot`. This topic
@@ -1264,9 +1265,6 @@ export function WorkspaceSocketProvider({
               }
             }
             if (applied.commonApplied) {
-              // Accepted conversation projections can change loaded Sidekick
-              // links even while the Sidekick itself keeps running.
-              void queryClient.invalidateQueries({ queryKey: ['sidekick-activity', 'workstream', workstreamState.data.workstreamId] });
               void queryClient.invalidateQueries({
                 queryKey: ['terminal-workstream', workstreamState.data.workstreamId],
                 exact: true,
@@ -1327,6 +1325,7 @@ export function WorkspaceSocketProvider({
               spaceSnapshot.data.pinnedOrder,
               { pins: spaceSnapshot.data.pins, channelStats: spaceSnapshot.data.channelStats },
             );
+            void queryClient.invalidateQueries({ queryKey: ['sidekick-activity', 'space'] });
             setSidebarConnect((current) => current ? { ...current, spacesLive: true } : current);
             // Guest hierarchy is a separately authorized associative read.
             // The snapshot is still the realtime nudge for a membership

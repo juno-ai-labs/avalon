@@ -2587,6 +2587,7 @@ export const WORKSPACE_SYNC_TOPICS = [
   "terminal_policy",
   "digest_schedule",
   "automations",
+  "sidekick_activity",
   "notes",
   "projects",
   "resources",

@@ -134,6 +134,12 @@ not finish. A row is parsed when it is read back; one that does not parse is
 kept as `failed` with its code (`directory_followup_unreadable` is logged) and
 never run again.
 
+Changed child Sidekick attachments and Sidekick execution transitions also
+record an activity-only topic in this lane. The comparison happens when the
+exact child's projection is accepted, so Breakouts refresh independently of
+Main's directory waterline. Explicit posting attachments record their library
+and activity refresh in the attachment transaction, including a repeated attach.
+
 ### People the member table has never heard of
 
 The directory filters viewer rows by the Organization's own member table (see

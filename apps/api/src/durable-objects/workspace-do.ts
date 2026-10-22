@@ -5921,6 +5921,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         return Promise.resolve();
       },
       applyLocalEffects: (envelopes) => this.applyLocalEffects(envelopes),
+      noteSidekickActivityChanged: (workspaceId) => this.noteSidekickActivityChanged(workspaceId),
       readRelationship: (workspaceId, userId) => this.readRelationship(workspaceId, userId),
       noteRelationship: (relationship) => this.noteRelationship(relationship),
     };
@@ -6527,6 +6528,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         if (deleted) this.externalBindings().suspendDeletedSidekick(automationId, new Date(now).toISOString());
         this.sidekickDirectoryMoved = true;
       },
+      noteSidekickActivityChanged: (workspaceId) => this.noteSidekickActivityChanged(workspaceId),
       isChannelParticipant: async (workstreamId, userId) => {
         await this.readRelationship(this.workspaceId()!, userId);
         return this.isWorkstreamParticipant(workstreamId, userId);
@@ -6586,6 +6588,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return { count: runningSidekickCount(this.state.storage.sql, request, channelSidekickIds) };
   }
 
+  /** Reuse the durable post-commit lane without changing any directory waterline. */
+  private noteSidekickActivityChanged(workspaceId: string): void {
+    const followUp = WorkspaceDO.emptyDirectoryFollowUp(workspaceId);
+    followUp.syncTopics = ["sidekick_activity"];
+    const recorded = this.recordDirectoryFollowUp(followUp);
+    if (recorded !== null) this.pendingParentFollowUps.push(recorded);
+  }
+
   /** Run a hosted Sidekick call, then publish the sidebar list and arm what it scheduled. */
   private async sidekickCall<T>(automationId: string, workspaceId: string, run: (sidekick: HostedSidekick) => Promise<T> | T): Promise<T> {
     const sidekick = await this.hostedSidekick(automationId, workspaceId);
@@ -6596,7 +6606,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         this.sidekickDirectoryMoved = false;
         this.publishSidebarList("automations");
       }
-      await this.armNextAlarm();
+      await this.afterParentWrite();
     }
   }
 
@@ -9223,14 +9233,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const attached = this.state.storage.transactionSync(() => {
       if (sql.exec(`SELECT 1 FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
         request.automationId).toArray().length === 0) return null;
-      return attachSidekickConversation(sql, {
+      const result = attachSidekickConversation(sql, {
         automationId: request.automationId, address: address!, userId: request.userId, now: Date.now(),
       });
+      const followUp = WorkspaceDO.emptyDirectoryFollowUp(request.workspaceId);
+      followUp.syncTopics = ["automations", "sidekick_activity"];
+      const recorded = this.recordDirectoryFollowUp(followUp);
+      if (recorded !== null) this.pendingParentFollowUps.push(recorded);
+      return result;
     });
     if (!attached) throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
-    if (!attached.alreadyAttached) {
-      await this.publishSync(["automations"], request.workspaceId, this.placementAffinity() ?? await workspacePlacementAffinity(this.env, request.workspaceId));
-    }
+    // A notification failure must not turn a committed attachment into a
+    // failed tool call. The normal post-commit lane retries the signal.
+    await this.afterParentWrite();
     const scoped = scopeConversations(sql, { kind: "sidekick", automationId: request.automationId }, request.userId)
       .find((conversation) => conversation.parentId === address!.parentId && conversation.substreamId === address!.substreamId);
     return {

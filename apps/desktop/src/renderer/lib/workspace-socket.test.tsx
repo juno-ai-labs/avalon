@@ -1848,6 +1848,45 @@ describe('WorkspaceSocketProvider', () => {
     expect(screen.getByTestId('spaces-live')).toHaveTextContent('false');
   });
 
+  it('refreshes only activity on its narrow signal and Channel counts on live Space snapshots', async () => {
+    const queryClient = new QueryClient();
+    const threadKey = ['sidekick-activity', 'workstream', 'room', '0'];
+    const breakoutKey = ['sidekick-activity', 'workstream', 'room', 'breakout'];
+    const channelKey = ['sidekick-activity', 'space', 'channel', '0'];
+    for (const key of [threadKey, breakoutKey, channelKey, ['automation'], ['automation-runs'], ['sidekicks-library']]) {
+      queryClient.setQueryData(key, 1);
+    }
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket', protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider region="global" api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"><div /></WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({
+      type: 'workspace_space_snapshot', occurredAt: '2026-08-17T20:00:00.000Z',
+      spacesReady: true, ordering: [],
+      spaces: { active: { waterline: 1, items: [] }, inactive: { waterline: 1, items: [] } },
+    }));
+    expect(queryClient.getQueryState(channelKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(threadKey)?.isInvalidated).toBe(false);
+    act(() => socket.message({
+      type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000008',
+      waterline: 8, occurredAt: '2026-08-17T20:01:00.000Z', topics: ['sidekick_activity'], reason: 'change',
+    }));
+    expect(queryClient.getQueryState(threadKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(breakoutKey)?.isInvalidated).toBe(true);
+    for (const key of [['automation'], ['automation-runs'], ['sidekicks-library']]) {
+      expect(queryClient.getQueryState(key)?.isInvalidated).toBe(false);
+    }
+  });
+
   it('refetches an open automation page when its list row is pushed', async () => {
     const queryClient = new QueryClient();
     const automationId = '00000000-0000-7000-8000-000000000005';
