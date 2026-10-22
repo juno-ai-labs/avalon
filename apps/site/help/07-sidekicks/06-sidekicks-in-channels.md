@@ -12,7 +12,7 @@ which ones the team recommends.
 
 Open a Thread or Breakout, click its name in the title pill (introduced in
 [Names, icons and colours](../02-working-in-a-channel/07-name-icon-and-colour.md#the-title-pill))
-and choose **Sidekicks**. The row shows how many there are, or **None yet**. The
+and choose **Sidekicks**. The row shows how many there are, including **0**. The
 list it opens shows:
 
 - **Sidekicks the Thread owns**: the ones made from inside it, with the

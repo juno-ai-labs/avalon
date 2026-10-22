@@ -1056,8 +1056,8 @@ function ChannelHeader({ members, space, workspace }: {
   </TitlePillAction> : undefined;
   const pinned = pinnedChannels.has(space.id);
   const recommended = new Set(space.defaultSidekickIds);
-  const sidekicks: SidekickRow[] = (library.data ?? [])
-    .filter((sidekick) => recommended.has(sidekick.id))
+  const sidekicks: SidekickRow[] | undefined = library.data
+    ?.filter((sidekick) => recommended.has(sidekick.id))
     .map((sidekick) => ({
       id: sidekick.id,
       name: sidekick.name,
