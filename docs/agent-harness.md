@@ -540,6 +540,15 @@ Every connector adapter supplies a static agent-plugin descriptor whose provider
 
 Bound connections, attached resources, and previously used plugins are activation hints, not extra authority. Hints are filtered through the frozen scope and reauthorized before restoration. Other eligible plugins appear only in a bounded catalog and are discovered and activated with the always-active `rally_discovery` tools: `list_plugins`, `search_plugins`, and `load_plugin`. Search normalizes case and punctuation, ranks exact field matches ahead of distinct keyword overlap across ids, names, aliases, and descriptions, and returns at most twenty matches plus `totalMatches` so a truncated result can be narrowed. It uses OR discovery rather than requiring the entire query to occur in one catalog field. An explicit load may run a convergent host-owned `onActivate` preparation hook after reauthorization and dynamic tool loading. Successful preparation is single-flighted for the run, then activation is durably recorded before the plugin's tools or trusted guidance become visible. Failed preparation remains retryable only when the host returns model-safe retry guidance; provider details are not exposed.
 
+The shared discovery instructions require checking both active and loadable
+plugins, including built-ins, before reporting a missing capability. The Sidekick
+connector catalog describes connected integrations and may omit built-in tools;
+the run's plugin catalog and discovery tools provide the complete inventory.
+The agent loads the relevant plugin, inspects its tools, and names a missing tool
+or actual rejection when reporting a blocker, distinguishing an unattempted
+operation from a failed one. This rule belongs to discovery rather than to an
+individual workflow's skill.
+
 When that durable activation belongs to a credential plugin, the host also
 records its model-facing `plugin_*` ID in the automation-drafting state for the
 run. Explicit loads, preloads, and restored hints all cross the same bridge.
@@ -644,7 +653,7 @@ The always-active `rally_skills` plugin owns two globally named controls. `load_
 
 Three bounds keep a looping model from loading its way into a context-limit error: a count cap, a budget over the total tokens of loaded bodies, and a byte cap on a single `read_skill_resource` response. Bind judges the first two (`admitSkillLoad`); Rally measures the token half by resolving the bodies the load would actually inject, and applies the third itself — an unbounded Tier-3 read would otherwise route around the Tier-2 budget, since a skill whose body fits can bundle a reference that does not. All three are configurable, through `maxActiveSkills`, `maxActiveSkillBodyTokens`, and `maxSkillResourceBytes`.
 
-The package ships eight skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet. Three are unowned and offered to every run: `deep-research`, `writing-an-email`, and `scheduling-a-calendar-event`. The other five each set an `ownerPlugin` and are offered only to a run whose scope already carries that plugin: `polling-for-events` below, `building-live-sites` above, and the three AI-chat readers — `reading-an-ai-chat`, `reading-chatgpt-conversations` and `reading-claude-conversations` (`reading-ai-chats-skills.ts`) — owned by Rally's browser plugin, `avalon:browser`. The generic reader is written against what every chat page must have (conversation data the page loaded, messages with authors, ids and parent links) rather than any markup, and ends in a self-check against the page; the provider companions carry routes and shapes as hints to verify, so a provider redesign degrades to the generic procedure instead of a wrong import. The latter two of the unowned three are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
+The package ships nine skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet. Three are unowned and offered to every run: `deep-research`, `writing-an-email`, and `scheduling-a-calendar-event`. The other six each set an `ownerPlugin` and are offered only to a run whose scope already carries that plugin: `polling-for-events` below, `tracking-seen-or-done-items` owned by `rally:tables`, `building-live-sites` above, and the three AI-chat readers — `reading-an-ai-chat`, `reading-chatgpt-conversations` and `reading-claude-conversations` (`reading-ai-chats-skills.ts`) — owned by Rally's browser plugin, `avalon:browser`. The generic reader is written against what every chat page must have (conversation data the page loaded, messages with authors, ids and parent links) rather than any markup, and ends in a self-check against the page; the provider companions carry routes and shapes as hints to verify, so a provider redesign degrades to the generic procedure instead of a wrong import. The latter two of the unowned three are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
 
 The API also offers `reading-google-meeting-notes`
 (`google-meeting-notes-skill.ts`) when the frozen catalog contains a Google
@@ -661,7 +670,28 @@ Mail + Calendar and Drive + Docs + Sheets plugins. The host freezes each view's
 capabilities and activation independently, while joining their capabilities by
 connection ID for run scope; see [Google connector views](connectors.md#google).
 
-`polling-for-events` is what a run reads when somebody asks to be told whenever something happens. Its first instruction is to *not* poll: most connectors declare events Rally can trigger on, so the skill sends the model to `plugin_inspect` before it reaches for a timer, and the interval is the fallback for what inspection rules out. It then carries the three things a model gets wrong unaided: the cadence floor (no `interval` trigger faster than every ten minutes, slower is fine, and the person's own stated cadence wins), the keyed memory table that stops a run re-reporting what the last one already saw, and the steer away from `resource_watch`, which a model reaches for when told to watch one document and which `SidekickDO` builds neither a schedule nor an evaluator for. It sets `ownerPlugin: "rally:sidekicks"` because the whole procedure is drafting a Sidekick, which also keeps it out of an automation occurrence's catalog — an occurrence is deliberately never given the drafting tools.
+`polling-for-events` teaches Sidekick authoring to inspect declared connector
+events before choosing a timer, resolve a specific source resource, honor the
+polling cadence floor, and stay silent when nothing changed. It composes with
+`tracking-seen-or-done-items` for durable state across runs. Its `rally:sidekicks` owner
+keeps the authoring procedure out of execution-only runs. `tracking-seen-or-done-items`
+is owned by `rally:tables`, so both authoring conversations and execution runs
+with Tables access can load it. It applies to Sidekick activations and other
+independent runs that need to share what was seen or completed. It owns loading
+Tables, choosing a shared authorized scope, stable source keys, table discovery
+and creation, overlapping reads, recording completed work, and first-run baselines.
+
+For a specific external resource, the skill defines binding as restricting an
+event rule to events associated with that resource through the selected
+connector. It directs the agent to fill `source.resourceId` with the canonical
+Rally ID and `source.suggestedSourcePluginId` with the plugin ID returned by
+discovery, using an event that supports that resource type. Resource discovery searches registered Rally
+resources; a direct connector read does not register one. The procedure checks
+`searchableResourceTypes`, confirms the source title and access through its
+connector, and uses an exposed resolution or attachment path to register a
+missing record before repeating discovery. If no such tool is exposed, it
+reports the registration gap. An empty search is not a permission denial; when
+no bindable types exist, the procedure checks declared filter fields or polling.
 
 All of them are offered to every production run the API starts, subject to the owner filter. Nothing is withheld by surface. A skill
 is advice, and what a surface may *do* is settled in the tool loop. Offering is
@@ -1177,7 +1207,24 @@ insert contention is a separate typed failure because inserts do not have an
 `expectedRevision`; after bounded host retries it directs the model to query by
 the declared natural key and retry only the rows that remain absent.
 
-An automation's definition may describe the tables it keeps (`memoryTables`), and a run receives that description from `readRunDefinition`. Nothing materializes them at apply time: a run creates the table it needs with the `rally_tables` plugin's `create` tool under the automation's scope the first time it needs one, and every later run of that automation finds it there. Table rows never enter a prompt unasked; the agent must query only the rows and columns needed for the current run.
+An automation's definition may describe the tables it keeps (`memoryTables`),
+and a run receives that description from `readRunDefinition`. Publishing an
+accepted definition with triggers creates or reopens those tables in the
+Sidekick's scope. A stored alarm retries materialization if it is deferred;
+table creation does not roll back the published definition. A run can also
+create a table through `rally_tables` under the Sidekick's scope when it needs
+one. Later runs find and reuse it. Table rows never enter a prompt unasked; the
+agent must query only the rows and columns needed for the current run.
+
+The `tracking-seen-or-done-items` skill defines a memory table and directs runs to load
+the Tables plugin, using its tools directly when already active. It searches
+by name or purpose, describes the returned `memoryTableId`, and queries the
+needed rows. Runs choose the narrowest authorized scope they share: `sidekick`
+for activations of one installed Sidekick, `workstream` for one thread, `user`
+for one person's workflows, or `workspace` for organization-wide workflows.
+An absent table is created from the saved declaration in that scope and reused
+across runs. Loading a table is not a separate activation operation; table
+creation and reading rows are separate operations.
 
 ### Scheduled wake-ups
 
@@ -1647,6 +1694,25 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-10-21 — Seen-item tracking is shared by authoring and execution
+
+**What changed:** `tracking-seen-or-done-items` owns the durable-table procedure formerly
+inside `polling-for-events`. It is scoped to Tables access and applies to any
+workflow whose independent runs need shared state. It directs runs to load
+Tables and select an authorized scope they share; the polling skill loads it
+as a companion when configuring a watcher.
+
+**Why:** Remembering completed work is needed by event-driven Sidekicks as well
+as timers. Keeping the procedure inside an authoring-only polling skill made
+execution runs unable to load the table-access playbook directly.
+
+**Considered and rejected:** Copying the instructions into a second skill would
+leave two definitions of stable keys, baselines and completion ordering to drift.
+
+**Consequences:** Table and deduplication guidance belongs in the shared skill;
+trigger selection and polling cadence remain in `polling-for-events`. Loading
+the skill grants no table access or Sidekick authoring tools.
 
 ### 2026-10-21 — Google plugin splits preserve verified receipt identities
 

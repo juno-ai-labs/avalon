@@ -24,6 +24,11 @@ serve publicly at a stable URL. The standing
 guidance told you *when* to build one; this skill is *how* to build one
 that works the first time.
 
+Load the **Terminal** plugin before building or revising the site. Loading this
+skill supplies instructions, not tools; Terminal supplies the file-editing,
+\`import_resource\` and \`publish_resource\` tools the procedure uses. A Sidekick
+that refreshes a site needs these tools for its publication step too.
+
 1. **Decide the site's kind by what the request needs, and express it
    only in files.** There is no mode setting anywhere — the layout is
    the decision:
@@ -217,10 +222,17 @@ that works the first time.
    return real HTTP statuses (\`400\` with a short JSON body beats a
    \`200\` full of undefined).
 
-10. **Revise in place, never fork.** A change request means: edit the
-   files in the workspace (re-import the site's source from the
-   published resource first if the workspace no longer has it), then
-   publish **the same directory path** again. Same URL, same rail
+10. **Revise in place, never fork.** A change request or a Sidekick refresh
+   means: recover the existing source, edit it, and republish it. If the
+   workspace no longer holds the files, call \`import_resource\` with the
+   existing site's resource ID first. A site import requires
+   \`destinationPath\` relative to the workspace root: use the original
+   publication directory beneath the resource output directory. If you do
+   not know it, use the required destination the import tool reports rather
+   than choosing a new path. Never assume a later run shares the original
+   sandbox or rebuild the site from memory. Update the necessary files, then
+   call \`publish_resource\` with **the same directory path**, relative to the
+   resource output directory. Same URL, same rail
    entry, new version — viewers see it on their next load. Publishing
    a renamed or copied directory mints a second site and strands the
    URL people already have; do not do it. Keep chat narration short
