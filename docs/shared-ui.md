@@ -81,6 +81,11 @@ represent host capabilities; omitting setup and authoring actions keeps the brow
 lite. The common feed/composer and resource/participant dialogs remain the existing
 ConversationSurface implementation.
 
+`Toast` is the controlled confirmation pill. Its shared presence hook also
+drives conversation activity and Jump to latest; native previews honour its
+`data-native-overlay` marker through the end of its exit. Operational failures
+use acknowledged error popups.
+
 The sidebar can omit Main without inventing an accessible Main route. Browser
 participants and resources belong to the selected authorized conversation; desktop
 can continue supplying parent-owned workstream context. Directory appearance comes
@@ -208,6 +213,11 @@ apply before first render.
 Native theme reporting and cross-window IPC belong only to the desktop adapter.
 
 ## Testing
+
+`pnpm --filter @rally/desktop exec vitest run src/renderer/components/toast.test.tsx
+src/renderer/components/conversation-motion.test.tsx` covers announcements,
+retained content, interruption, reduced motion and cleanup. Real-window
+inspection covers placement, theme contrast and native preview composition.
 
 Run `pnpm lint`, `pnpm typecheck`, and `pnpm --filter @rally/desktop exec vitest run
 src/renderer/components/sidekick-picker.test.tsx

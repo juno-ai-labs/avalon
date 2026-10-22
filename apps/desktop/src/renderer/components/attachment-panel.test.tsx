@@ -45,17 +45,21 @@ describe('AttachmentPanel', () => {
     expect(screen.queryByRole('menuitem', { name: 'Download' })).toBeNull();
   });
 
-  it('shows a failed copy and lets the attachment menu retry it', async () => {
-    copyText.mockRejectedValueOnce(new Error('clipboard unavailable'));
+  it('reports consecutive failed copies and lets the attachment menu retry them before reset', async () => {
+    vi.useFakeTimers();
+    copyText.mockRejectedValueOnce(new Error('clipboard unavailable')).mockRejectedValueOnce(new Error('clipboard unavailable'));
     renderPanel({ resourceId: firstResourceId, name: 'first.png', mimeType: 'image/png', src: 'https://example.test/first.png' });
     const openMenu = () => fireEvent.pointerDown(screen.getByRole('button', { name: 'Attachment menu: first.png' }), { button: 0, ctrlKey: false });
+    for (const label of ['Copy URL', 'Copy failed — click to retry']) {
+      openMenu();
+      await act(async () => { fireEvent.click(screen.getByRole('menuitem', { name: label })); });
+      expect(screen.getByRole('alertdialog')).toHaveTextContent('Copy failed. Try again.');
+      fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+    }
     openMenu();
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy URL' }));
-    expect(await screen.findByText('Copy failed. Try again.')).toBeVisible();
-    openMenu();
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy failed — click to retry' }));
-    expect(await screen.findByText('Copied.')).toBeVisible();
-    expect(copyText).toHaveBeenCalledTimes(2);
+    await act(async () => { fireEvent.click(screen.getByRole('menuitem', { name: 'Copy failed — click to retry' })); });
+    expect(screen.getByText('Copied.')).toBeVisible();
+    expect(copyText).toHaveBeenCalledTimes(3);
   });
 
   it('does not offer a URL for a local preview', async () => {
@@ -74,6 +78,7 @@ describe('AttachmentPanel', () => {
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Attachment menu: first.png' }), { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy URL' }));
     expect(await screen.findByText(outcome === 'success' ? 'Copied.' : 'Copy failed. Try again.')).toBeVisible();
+    if (outcome === 'failure') fireEvent.click(screen.getByRole('button', { name: 'OK' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Next attachment' }));
     expect(screen.queryByText('Copied.')).toBeNull();
@@ -115,6 +120,7 @@ describe('AttachmentPanel', () => {
 
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
