@@ -75,6 +75,14 @@ error copy without those markers.
 
 ## How it works
 
+`Button` accepts `disabledReason` for an unavailable action that must remain
+focusable; it sets `aria-disabled`, blocks activation and shows `Tip` only for
+that explanation. `MenuActionItem` in `components/menu-action-item.tsx` owns the
+equivalent dropdown behavior, keeping explained items in the arrow-key path and
+preventing disabled selections from closing the menu. Conversation Merge/Resolve
+and Sidekick actions use this same primitive. Ordinary disabled controls still
+use native disabling, and enabled text controls add no redundant tooltip.
+
 Shared components receive presentation data and callbacks. They never import an
 application, fetch authority, establish sockets or call Electron. Optional actions
 represent host capabilities; omitting setup and authoring actions keeps the browser
@@ -214,6 +222,12 @@ Native theme reporting and cross-window IPC belong only to the desktop adapter.
 
 ## Testing
 
+`pnpm --filter @rally/desktop exec vitest run
+src/renderer/components/primitives.test.tsx
+src/renderer/components/title-pill-menu.test.tsx
+src/renderer/components/automation-header.test.tsx` covers explained disabled
+buttons and the shared menu action's keyboard focus, tooltip and selection guards.
+
 `pnpm --filter @rally/desktop exec vitest run src/renderer/components/toast.test.tsx
 src/renderer/components/conversation-motion.test.tsx` covers announcements,
 retained content, interruption, reduced motion and cleanup. Real-window
@@ -235,6 +249,26 @@ surfaces in Electron. The browser host in #825 adds Chrome verification; no seco
 component test runner is needed for the same implementations.
 
 ## Changelog
+
+### 2026-10-22 — Share explained disabled controls
+
+**What changed:** `Button.disabledReason` and `MenuActionItem` own the focusable,
+inert action and its explanatory tooltip. Conversation Merge/Resolve and Sidekick
+menus use the same menu item; disabled button hover styling is shared too.
+
+**Why:** Sidekick actions must remain discoverable even when unavailable
+([the product decision](automation-lifecycle.md#2026-10-22--keep-sidekick-actions-discoverable-across-lifecycle-states)).
+Copying the menu's existing guards at each use would let focus and activation
+behavior diverge.
+
+**Considered and rejected:** Surface-specific wrappers duplicate selection and
+tooltip policy. Native disabling alone removes an explanation from keyboard users.
+
+**Consequences:** Explained actions must remain focusable and prevent activation.
+Enabled text actions must not acquire redundant tooltips, and disabled actions
+must retain disabled styling on hover.
+
+PR: [#1409](https://github.com/juno-ai-labs/avalon/pull/1409).
 
 ### 2026-10-21 — Failures require acknowledgement
 

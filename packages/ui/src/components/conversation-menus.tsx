@@ -35,6 +35,7 @@ import {
 import type { SidebarPresentation, WorkspaceMember } from '../lib/types';
 import { breakoutHasActivity, type BreakoutMark } from './breakout-marks';
 import { MemoryFactRows, type MemoryFactsState } from './memory-fact-rows';
+import { MenuActionItem } from './menu-action-item';
 import { Avatar, Tip } from './primitives';
 import { ResourceIcon } from './resource-icon';
 import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
@@ -74,28 +75,6 @@ export interface ConversationRowActions {
   } | undefined;
 }
 
-/** Explained disabled actions stay in the menu's keyboard path without selecting. */
-function ConversationActionRow({ children, className, disabled = false, disabledReason, onSelect }: {
-  children: ReactNode;
-  className: string;
-  disabled?: boolean | undefined;
-  disabledReason?: string | undefined;
-  onSelect: () => void;
-}): React.JSX.Element {
-  const explained = disabled && Boolean(disabledReason);
-  const row = <DropdownMenu.Item
-    aria-disabled={disabled || undefined}
-    className={className}
-    data-disabled={disabled ? '' : undefined}
-    disabled={disabled && !explained}
-    onSelect={(event) => {
-      if (disabled) event.preventDefault();
-      else onSelect();
-    }}
-  >{children}</DropdownMenu.Item>;
-  return explained ? <Tip label={disabledReason}>{row}</Tip> : row;
-}
-
 /** Keep a destination's type word regular, with an unnamed-target fallback. */
 export function MergeDestinationLabel({ name, kind }: { name: string; kind: 'channel' | 'thread' }): React.JSX.Element {
   const noun = kind === 'thread' ? 'Thread' : 'Channel';
@@ -111,11 +90,11 @@ function MergeRow({ actions }: { actions?: ConversationRowActions | undefined })
   if (!actions?.merge) return null;
   // Drawn as the rows under it are, so it reads as one of the menu's rows:
   // the target where they show their count, and no chevron, since it acts.
-  return <ConversationActionRow className="menu-item title-menu-level-row title-menu-merge-row" disabled={actions.merge.disabled} disabledReason={actions.merge.disabledReason} onSelect={actions.merge.onSelect}>
+  return <MenuActionItem className="menu-item title-menu-level-row title-menu-merge-row" disabled={actions.merge.disabled} disabledReason={actions.merge.disabledReason} onSelect={actions.merge.onSelect}>
     <IconCornerUpLeft aria-hidden="true" size={17} stroke={1.7} />
     <span className="title-menu-item-copy">{actions.merge.label}</span>
     {actions.merge.target && <span className="title-menu-level-meta">{actions.merge.target}</span>}
-  </ConversationActionRow>;
+  </MenuActionItem>;
 }
 
 /** Resolution is independent of publishing a result or archiving the conversation. */
@@ -123,10 +102,10 @@ function ResolveRow({ actions, target, noun }: {
   actions?: ConversationRowActions | undefined; target: ConversationRowTarget; noun: 'Thread' | 'Breakout';
 }): React.JSX.Element | null {
   if (!actions?.onResolve) return null;
-  return <ConversationActionRow className="menu-item title-menu-level-row" disabled={actions.resolveDisabled} disabledReason={actions.resolveDisabledReason} onSelect={() => actions.onResolve?.(target)}>
+  return <MenuActionItem className="menu-item title-menu-level-row" disabled={actions.resolveDisabled} disabledReason={actions.resolveDisabledReason} onSelect={() => actions.onResolve?.(target)}>
     <IconCheck aria-hidden="true" size={17} stroke={1.7} />
     <span className="title-menu-item-copy">Resolve {noun}</span>
-  </ConversationActionRow>;
+  </MenuActionItem>;
 }
 
 /** How many Breakouts the Breakouts view lists before "Show N more". */
