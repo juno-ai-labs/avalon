@@ -850,7 +850,9 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       if (routeRef.current.id === parentId && routeRef.current.visit === visit) setSubstreamPending(false);
     }
   };
-  const threadResolved = row?.resolved ?? directoryEntry?.conversations.find((item) => item.substreamId === '0')?.resolved;
+  const threadResolved = row?.resolved
+    ?? directoryEntry?.conversations.find((item) => item.substreamId === '0')?.resolved
+    ?? parent.data?.resolved;
   const threadArchived = Boolean(parent.data?.archivedAt || row?.archivedAt || directoryEntry?.archived);
   const breakoutResolved = railChildren?.find((child) => child.substreamId === openBreakoutId)?.resolved;
   const breakoutArchived = Boolean(openChild.data?.archivedAt
@@ -859,10 +861,13 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     merge: threadMerge ? {
       label: mergeLabel(threadMerge),
       target: threadMerge.kind === 'channel' && threadMerge.channels.length > 1 ? `${threadMerge.channels.length} Channels` : 'Channel',
+      disabled: Boolean(threadResolved),
+      disabledReason: threadResolved ? 'This thread is already resolved.' : undefined,
       onSelect: () => setMergeRequest({ substreamId: '0', nonce: Date.now() }),
     } : undefined,
     onResolve: !threadArchived && !conversationScoped ? (target: ConversationRowTarget) => { void resolve(target); } : undefined,
     resolveDisabled: substreamPending || Boolean(threadResolved),
+    resolveDisabledReason: threadResolved ? 'This thread is already resolved.' : undefined,
     isPublic: parent.data?.scope === 'workspace',
     onSetPublic: !channelWritable || parent.data?.systemKind ? undefined : setPublic,
     publicDisabled: substreamPending,
@@ -874,6 +879,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     onResolve: !breakoutArchived && !threadArchived
       ? (target: ConversationRowTarget) => { void resolve(target); } : undefined,
     resolveDisabled: substreamPending || Boolean(breakoutResolved),
+    resolveDisabledReason: breakoutResolved ? 'This breakout is already resolved.' : undefined,
     // The Breakout's pane merges only when it has its Thread to merge into,
     // which a reader scoped to the Breakout alone does not.
     merge: openBreakoutId && !conversationScoped && parent.data ? {
