@@ -133,6 +133,7 @@ describe('browser placement around app menus', () => {
     useEmbeddedBrowserPlacement(pageRef, true);
     return <>
       <div data-testid="browser-page" ref={pageRef} />
+      <div data-testid="composer" />
       {menu && <div data-radix-popper-content-wrapper="" style={{ left: overlaps ? 700 : 100 }}>
         <div data-state={closed ? 'closed' : 'open'} role="menu">Thread actions</div>
       </div>}
@@ -167,6 +168,22 @@ describe('browser placement around app menus', () => {
     await waitFor(() => expect(placement.setEmbeddedBrowserVisible).toHaveBeenLastCalledWith(false), { timeout: 5_000 });
     rerender(<Host menu overlaps closed />);
     await waitFor(() => expect(placement.setEmbeddedBrowserVisible).toHaveBeenLastCalledWith(true), { timeout: 5_000 });
+  });
+
+  it('ignores unrelated inline styles without measuring or sending placement commands', async () => {
+    measure();
+    render(<Host menu />);
+    const geometry = vi.mocked(HTMLElement.prototype.getBoundingClientRect);
+    geometry.mockClear();
+    placement.setEmbeddedBrowserBounds.mockClear();
+    placement.setEmbeddedBrowserVisible.mockClear();
+    const composer = screen.getByTestId('composer');
+    composer.style.setProperty('--dictation-level', '0.8');
+    // Deliver MutationObserver records before checking that they did no work.
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    expect(geometry).not.toHaveBeenCalled();
+    expect(placement.setEmbeddedBrowserBounds).not.toHaveBeenCalled();
+    expect(placement.setEmbeddedBrowserVisible).not.toHaveBeenCalled();
   });
 
   it('still hides for a modal dialog and restores on dismissal', async () => {
