@@ -18,6 +18,17 @@ Sidekick may use the personal connection of the person it runs as
 The model generates internal instructions and a user-friendly description. An
 incomplete submission does not replace the accepted revision. Edits preserve a
 person's pause; an archived owning room still refuses publication.
+The authoring guidance follows the setup sequence: preserve scope and read the
+current definition, discover resources and capabilities, choose triggers and
+test the method, write the runbook, then save and report. Missing required
+information calls for a partial draft and a question to the requester; connection
+status and another agent's blocker claim are not themselves publication refusals.
+The tool descriptions follow the same rules: keep the selected scope, ask the
+requesting agent for missing information on delegated setup, and describe saved
+behavior without implying a separate approval step.
+The legacy `resource_watch` trigger remains in the schema for compatibility;
+authoring uses declared connector events or polling because that trigger has no
+Sidekick activation path, as `polling-for-events` also explains.
 
 Before submitting executable behavior as ready, the wizard discovers authorized
 tools and skills, inspects real resources and sample inputs, resolves their IDs,
@@ -1246,10 +1257,13 @@ it from recoverable storage errors.
 
 ### 2026-10-22 — Authoring investigates the workflow and saves the execution procedure
 
-**What changed:** Executable Sidekick authoring now requires reusable discovery
-and non-destructive workflow validation during setup and revision. The saved
-instructions carry the detailed procedure, verified facts, remaining assumptions,
-per-run checks, delivery and recovery behavior.
+**What changed:** Sidekick authoring follows an ordered setup guide, from scope
+and discovery through workflow testing, the runbook, and publication. Executable
+work requires reusable discovery and non-destructive validation during setup and
+revision. Saved instructions carry the procedure, verified facts, remaining
+assumptions, per-run checks, delivery and recovery behavior. Missing required
+information and publication refusals have distinct next steps. Tool descriptions
+share the same scope, requester and immediate-publication rules.
 
 **Why:** Authoring and execution can have different reasoning capabilities. A
 brief objective leaves each independent activation to rediscover the method and

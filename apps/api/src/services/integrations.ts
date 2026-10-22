@@ -2157,7 +2157,7 @@ function createAvalonAutomationsPlugin(
   });
   return {
     ...plugin,
-    systemMessage: `${plugin.systemMessage} This conversation configures Sidekick ${authoredAutomationId}. Read its current definition before revising it.`,
+    systemMessage: `${plugin.systemMessage}\n\nThis conversation configures Sidekick ${authoredAutomationId}.`,
     // An automation's own conversation exists to draft and edit it, so the
     // tools are in hand from the first turn there. In a room they stay
     // discoverable behind `list_plugins`, where most turns never need them.
