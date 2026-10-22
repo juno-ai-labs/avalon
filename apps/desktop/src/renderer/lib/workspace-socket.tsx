@@ -82,7 +82,7 @@ import { reportTelemetryProductIntent, telemetryJourneyDuration, uuidV7 } from '
 import type { WorkstreamSummary } from './types';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import { memberPreferencesQueryKey } from './use-member-preferences';
-import { accessRequestsQueryKey, refreshConversationAccessPreviews } from './access-requests';
+import { accessRequestsQueryKey, CONVERSATION_ACCESS_RECOVERY_QUERY_KEY, refreshConversationAccessPreviews } from './access-requests';
 import { hydrateWorkspaceDirectory, mirrorWorkspaceDirectory } from './workspace-directory-cache';
 import {
   applyVersionedWorkstreamState,
@@ -467,6 +467,7 @@ export function WorkspaceSocketProvider({
       SPACES_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, SPACES_READY_QUERY_KEY,
       PERSONAL_ORDER_QUERY_KEY, PINNED_ORDER_QUERY_KEY,
       CLIENT_FEATURE_FLAGS_QUERY_KEY,
+      CONVERSATION_ACCESS_RECOVERY_QUERY_KEY,
       WORKSTREAM_STATE_WATERLINES_KEY, WORKSPACE_DIRECTORY_WATERLINES_KEY,
     ]);
     let stopped = false;
