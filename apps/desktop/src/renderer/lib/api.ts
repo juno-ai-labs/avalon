@@ -500,10 +500,7 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
     connections: workstream.connections.map(mapConnection),
     backgroundTasks: (workstream.backgroundTasks ?? []).map(mapBackgroundTask),
     openElicitations: workstream.openElicitations.map(mapElicitation),
-    // `modelOverride` alone is what a server from before `pinnedModel` sends.
-    ...((workstream.pinnedModel ?? workstream.modelOverride)
-      ? { modelOverride: workstream.pinnedModel ?? workstream.modelOverride }
-      : {}),
+    ...(workstream.modelOverride ? { modelOverride: workstream.modelOverride } : {}),
     ...(workstream.latestHarnessRunId ? { latestHarnessRunId: workstream.latestHarnessRunId } : {}),
     ...(workstream.latestHarnessRun
       ? {
