@@ -13,8 +13,8 @@ import type { ConversationToolScope } from "./workspace-conversation-tool-protoc
  *   `sidekick_conversation_attachments`. The home is always attached, so it is
  *   never a row there.
  * - A **Thread or Breakout loop** reaches its own conversation and, for a
- *   Breakout, its Thread's Main conversation. The Channels the Thread is in
- *   are added by WorkspaceDO from its Space storage, not here.
+ *   Breakout, its Thread's Main conversation, plus every Thread and Breakout
+ *   in the readable Channels supplied by WorkspaceDO's Space storage.
  *
  * This is not `sidekick_attachments` (per conversation) or `parent_sidekicks`
  * (per Channel). Those record that a conversation may load a Sidekick as a
@@ -23,7 +23,7 @@ import type { ConversationToolScope } from "./workspace-conversation-tool-protoc
  * that ever used it.
  *
  * Everything here is a local read of `channels`, `breakouts`,
- * `channel_viewers` and `breakout_viewers`, so a list costs no call to a
+ * `channel_viewers`, `breakout_viewers` and Channel placements, so a list costs no call to a
  * Channel object and no D1 read. The rows are projections; the canonical
  * admission of a single target is still the hosted parent's `authorizeViewer`,
  * which the caller runs before a read or a post.
@@ -100,40 +100,45 @@ export function describeConversation(
   address: Pick<ConversationAddress, "parentId" | "substreamId">,
   userId: string,
 ): DirectoryFacts | null {
-  const channel = sql.exec<{ title: string; scope: string; archived_at: number | null; participant: number | null }>(
-    `SELECT channel.title, channel.scope, channel.archived_at, viewer.is_participant AS participant
-       FROM channels channel
+  return describeConversations(sql, [address], userId).get(conversationIdOf(address)) ?? null;
+}
+
+/** One directory read for any number of addresses; canonical admission stays with the caller. */
+function describeConversations(
+  sql: SqlStorage,
+  addresses: readonly Pick<ConversationAddress, "parentId" | "substreamId">[],
+  userId: string,
+): Map<string, DirectoryFacts> {
+  if (addresses.length === 0) return new Map();
+  const rows = sql.exec<{
+    parent_id: string; substream_id: string; title: string; archived: number; readable: number;
+  }>(
+    `WITH requested AS (
+       SELECT json_extract(value, '$[0]') AS parent_id, json_extract(value, '$[1]') AS substream_id
+         FROM json_each(?1)
+     )
+     SELECT requested.parent_id, requested.substream_id,
+            CASE WHEN requested.substream_id = '0' THEN channel.title ELSE breakout.title END AS title,
+            (channel.archived_at IS NOT NULL OR breakout.archived_at IS NOT NULL) AS archived,
+            COALESCE(CASE WHEN requested.substream_id = '0'
+              THEN channel.scope = 'workspace' OR viewer.is_participant = 1
+              ELSE breakout_viewer.is_participant = 1 END, 0) AS readable
+       FROM requested
+       JOIN channels channel ON channel.workstream_id = requested.parent_id
        LEFT JOIN channel_viewers viewer
-         ON viewer.workstream_id = channel.workstream_id AND viewer.user_id = ?
-      WHERE channel.workstream_id = ?`,
-    userId, address.parentId,
-  ).toArray()[0];
-  if (!channel) return null;
-  if (address.substreamId === "0") {
-    return {
-      kind: "channel",
-      title: channel.title,
-      archived: channel.archived_at !== null,
-      readable: channel.scope === "workspace" || channel.participant === 1,
-    };
-  }
-  const breakout = sql.exec<{ title: string; archived_at: number | null; participant: number | null }>(
-    `SELECT breakout.title, breakout.archived_at, viewer.is_participant AS participant
-       FROM breakouts breakout
-       LEFT JOIN breakout_viewers viewer
-         ON viewer.workstream_id = breakout.workstream_id
-        AND viewer.substream_id = breakout.substream_id
-        AND viewer.user_id = ?
-      WHERE breakout.workstream_id = ? AND breakout.substream_id = ?`,
-    userId, address.parentId, address.substreamId,
-  ).toArray()[0];
-  if (!breakout) return null;
-  return {
-    kind: "breakout",
-    title: breakout.title,
-    archived: breakout.archived_at !== null || channel.archived_at !== null,
-    readable: breakout.participant === 1,
-  };
+         ON viewer.workstream_id = requested.parent_id AND viewer.user_id = ?2
+       LEFT JOIN breakouts breakout
+         ON breakout.workstream_id = requested.parent_id AND breakout.substream_id = requested.substream_id
+       LEFT JOIN breakout_viewers breakout_viewer
+         ON breakout_viewer.workstream_id = requested.parent_id
+        AND breakout_viewer.substream_id = requested.substream_id AND breakout_viewer.user_id = ?2
+      WHERE requested.substream_id = '0' OR breakout.substream_id IS NOT NULL`,
+    JSON.stringify(addresses.map((address) => [address.parentId, address.substreamId])), userId,
+  ).toArray();
+  return new Map(rows.map((row) => [conversationIdOf({ parentId: row.parent_id, substreamId: row.substream_id }), {
+    kind: row.substream_id === "0" ? "channel" : "breakout",
+    title: row.title, archived: row.archived === 1, readable: row.readable === 1,
+  }]));
 }
 
 /** A Sidekick's home, or null for one no room owns (or one that was deleted). */
@@ -160,10 +165,15 @@ function sidekickExists(sql: SqlStorage, automationId: string): boolean {
  *
  * Nothing is filtered on those two flags here: `conversation_list` omits both,
  * while a read or a post names the reason it refuses. Home (or own) comes
- * first, then Main for a Breakout loop, then attachments in the order they
- * were made.
+ * first, then Main for a Breakout loop, then Channel peers by id. A Sidekick
+ * puts its home first and attachments in the order they were made.
  */
-export function scopeConversations(sql: SqlStorage, scope: ConversationToolScope, userId: string): ScopedConversation[] {
+export function scopeConversations(
+  sql: SqlStorage,
+  scope: ConversationToolScope,
+  userId: string,
+  channelIds: readonly string[] = [],
+): ScopedConversation[] {
   const addresses: Array<ConversationAddress & { isHome: boolean; isOwn: boolean; isParent: boolean }> = [];
   if (scope.kind === "conversation") {
     addresses.push({ parentKind: "workstream", parentId: scope.parentId, substreamId: scope.substreamId,
@@ -171,6 +181,25 @@ export function scopeConversations(sql: SqlStorage, scope: ConversationToolScope
     if (scope.substreamId !== "0") {
       addresses.push({ parentKind: "workstream", parentId: scope.parentId, substreamId: "0",
         isHome: false, isOwn: false, isParent: true });
+    }
+    // One hop from the current thread's Channels. A sibling's other Channel
+    // never expands the scope again. UNION deduplicates shared placements.
+    const ownIds = new Set(addresses.map(conversationIdOf));
+    for (const row of channelIds.length === 0 ? [] : sql.exec<{ workstream_id: string; substream_id: string }>(
+      `WITH threads AS (
+         SELECT DISTINCT workstream_id FROM space_channel_memberships
+          WHERE state = 'active' AND space_id IN (SELECT value FROM json_each(?))
+       )
+       SELECT workstream_id, '0' AS substream_id FROM threads
+       UNION
+       SELECT breakout.workstream_id, breakout.substream_id
+         FROM breakouts breakout JOIN threads USING (workstream_id)
+       ORDER BY 1, 2`,
+      JSON.stringify(channelIds),
+    ).toArray()) {
+      if (ownIds.has(conversationIdOf({ parentId: row.workstream_id, substreamId: row.substream_id }))) continue;
+      addresses.push({ parentKind: "workstream", parentId: row.workstream_id, substreamId: row.substream_id,
+        isHome: false, isOwn: false, isParent: false });
     }
   } else {
     if (!sidekickExists(sql, scope.automationId)) return [];
@@ -186,9 +215,10 @@ export function scopeConversations(sql: SqlStorage, scope: ConversationToolScope
         isHome: false, isOwn: false, isParent: false });
     }
   }
+  const descriptions = describeConversations(sql, addresses, userId);
   const scoped: ScopedConversation[] = [];
   for (const address of addresses) {
-    const facts = describeConversation(sql, address, userId);
+    const facts = descriptions.get(conversationIdOf(address));
     if (!facts) continue;
     scoped.push({ ...address, conversationId: conversationIdOf(address), ...facts });
   }

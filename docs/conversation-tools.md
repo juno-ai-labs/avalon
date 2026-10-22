@@ -24,7 +24,7 @@ attachments are [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 | `apps/api/src/services/conversation-tools.ts` | The plugin: `conversationToolAccess` (the one place a scope and tool set are derived from a loop), the tools, the refusal table (`conversationRefusalError`), a Channel's feed rendered as messages (`channelItemText`), the system message, the page-size and character-budget placeholders, and `conversationToolPorts`, the calls the tools make, `searchMessages` among them. |
 | `apps/api/src/services/integrations.ts` | `loadHarnessTools` builds the plugin next to the Sidekick plugin and passes the pagination wrapper under the `conversation` prefix. |
 | `apps/api/src/durable-objects/workspace-conversation-tool-protocol.ts` | The scope, the WorkspaceDO request schemas and discriminated outcomes with the refusal codes, and the post request `appendConversationPost` takes. |
-| `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts` | Conversation ids, the scope read over `channels`, `breakouts` and their viewer rows, title lookup, and the attachment write. |
+| `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts` | Conversation ids, the scope read over `channels`, `breakouts`, their viewer rows and active Channel placements, title lookup, and the attachment write. |
 | `apps/api/src/durable-objects/workspace-do.ts` | `conversationToolScope`, `resolveConversationToolTarget`, `attachSidekickConversation`: scope from the directories, then admission through the hosted parent's `authorizeViewer`. `conversationToolChannels`: the Channels a Thread or Breakout loop's thread is in, from Space storage. `listChannelFeed`, the Channel screen's own read, is what a Channel's read calls. |
 | `apps/api/src/durable-objects/substream-agent.ts` | `appendConversationPost`: a post appended to any Channel or Breakout conversation, keyed on its client message id, without waking that conversation's agent. |
 | `apps/api/src/durable-objects/workstream-message-storage.ts` | `readableMessagesBefore`: a conversation's messages newest first, without tool cards or suggestions. |
@@ -36,15 +36,26 @@ attachments are [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 
 | Loop | Scope | Tools | Acts as |
 | --- | --- | --- | --- |
-| Breakout (`parentKind: workstream`, substream not `"0"`) | Its own conversation, its Thread's Main, and the Channels the Thread is in | list, read, search, merge | The person it works for, admitted to Main by the Breakout |
-| Thread Main (`parentKind: workstream`, substream `"0"`) | Its own thread and the Channels it is in | list, read, search, merge | The person it works for |
+| Breakout (`parentKind: workstream`, substream not `"0"`) | Its own conversation, its Thread's Main, the Channels the Thread is in, and all Threads and Breakouts in those Channels | list, read, search, merge | The person it works for, admitted to Main by the Breakout |
+| Thread Main (`parentKind: workstream`, substream `"0"`) | Its own thread, the Channels it is in, and all Threads and Breakouts in those Channels | list, read, search, merge | The person it works for |
 | Sidekick configuration (`parentKind: automation`, substream `"0"`, no run) | The Sidekick's home and attachments | list, read, search, post, attach | The person talking to it |
 | Sidekick run (`automationRun` present) | The Sidekick's home and attachments | list, read, search, post | The run-as user |
 
 A Thread's Channels are the ones `channelSpaceIds` lists for the acting person
 today, unarchived, Organization-wide first: the person's own reach, never the
 thread's placement, so a member outside a private Channel is not offered it
-even from a thread in it. A loop under workspace authority gets nothing, nor a
+even from a thread in it. Every active thread placement in those Channels adds
+that Thread's Main and all its Breakouts as candidates. Shared placements count
+once, and a sibling's other Channels do not extend the scope: it is one hop
+from the current Thread's Channels, never the whole Organization. Canonical
+admission still decides each candidate independently; being in a Channel grants
+no access to a private Thread or Breakout. Sidekick scopes stay at their home
+and explicit attachments.
+
+Scope discovery and list admission stay within WorkspaceDO, without
+per-conversation cross-object calls.
+
+A loop under workspace authority gets nothing, nor a
 run child woken without its `automationRun`. The plugin is `preload: true` and
 `explicit: true`, and loading it reads nothing: the first tool call is the
 first read.
@@ -62,10 +73,11 @@ it.
 
 - **list** returns `{ conversations: [{ conversationId, title, isHome, isOwn, isParent }] }`
   and a `nextPageId`. The home (or the loop's own) comes first, then (for a
-  Breakout loop) Main, then the thread's Channels, then attachments in the
-  order they were made. `isParent` marks a conversation this one sits inside: a
-  Breakout's Main, a Thread's Channel. Every call re-reads the directories for
-  the acting person and omits what they can no longer open and anything
+  Breakout loop) Main, then the Channels' feeds, then the peer Threads and
+  Breakouts ordered by id. Parents stay ahead of peers across list pages. A
+  Sidekick's home comes first, then attachments in the order they were made. `isParent` marks a
+  conversation this one sits inside: a Breakout's Main, a Thread's Channel.
+  Every call re-reads the directories for the acting person and omits what they can no longer open and anything
   archived. A Channel's id is its Space id, a UUID no Thread shares.
 - **read** takes `conversation` and `limit` and returns
   `{ conversationId, title, messages, nextPageId }`, newest first. Each message
@@ -104,8 +116,10 @@ it.
   and hits are named from those conversations. The index ranks substring
   candidates by document id, a hash, and stores `occurred_at` unindexed
   (`filterable: false`), so it cannot order by time and the newest match can be
-  on any page. `newestSearchHits` reads every candidate page and keeps the
-  newest `limit`; `MAXIMUM_SEARCH_CANDIDATE_PAGES` is the open bound on how many
+  on any page. Candidate pages use the existing maximum conversation page size
+  independently of the requested hit count, so asking for one hit does not page
+  through the index one match at a time. `newestSearchHits` reads every candidate
+  page and keeps the newest `limit`; `MAXIMUM_SEARCH_CANDIDATE_PAGES` is the open bound on how many
   pages one search reads (`LIMIT UNSET`). Indexing `occurred_at` would let the
   index sort, at an indexing cost on every row; that is the team's call. The
   tool has no continuation: a narrower query, or a read of the conversation,
@@ -147,7 +161,7 @@ it.
 
 WorkspaceDO answers each read or post in one call: it builds the scope from its
 own `automation_directory`, attachment rows, `channels`, `breakouts`,
-`channel_viewers` and `breakout_viewers`, matches the reference against it,
+`channel_viewers`, `breakout_viewers` and active `space_channel_memberships`, matches the reference against it,
 and then admits the acting person to that one conversation: an active
 relationship in `workspace_member_status`, then the hosted parent's
 `authorizeViewer`, the same admission the conversation's transport uses, with
@@ -159,6 +173,13 @@ would drop what a grant gives. One target is admitted by another conversation:
 in a Breakout loop's scope, the Channel's Main is admitted through the person's
 admission to the Breakout itself (`admissionAddress`), because a Breakout has
 full access to its parent and Breakout membership does not require the Channel.
+When titles collide, only canonically readable, unarchived candidates take part
+in disambiguation, so an ambiguity response never names an inaccessible peer.
+A guessed peer title that is inaccessible or archived returns
+`conversation_not_in_scope` without revealing its id or archive state, even
+when the title looks like an id. Only a normalized reference equal to the target's
+id counts as an id match. Own and parent conversations retain specific archive
+and access refusals when named by title.
 Attach admits the same way and additionally refuses an archived target,
 which is the rule a write through `ConversationService.writableClient` follows:
 attaching is the consent to publish there.
@@ -222,8 +243,10 @@ other reason throws `conversation_post_refused:<code>`.
 Limits, all placeholders for the team to set per
 [`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md),
 written as the numbers the design named: `MAXIMUM_SEARCH_CANDIDATE_PAGES`, open,
-bounds how many index pages one search reads; a page of 25 by default and at most 50
-for list, read and search (`list_resources`' numbers), and a read budget of 12,000
+bounds how many index pages one search reads. The complete scan can span all
+peer conversations in the current Thread's Channels; a finite bound would make
+newest-hit results incomplete because the index is ordered by id. A page of 25
+by default and at most 50 for list, read and search (`list_resources`' numbers), and a read budget of 12,000
 characters per page (`read_resource`'s). They live as constants at the top of
 `conversation-tools.ts`. The echo of a refused value in a sentence,
 `MAXIMUM_ECHO_CHARACTERS`, is open (`LIMIT UNSET`); a reference has no length
@@ -260,6 +283,9 @@ whole rather than splitting it.
   grant, listed what a grant gives, and admitted to a Breakout-homed Sidekick
   by the Breakout's grant rather than the Channel's; and a room member outside
   the home Breakout refused by the three sites that narrow to it.
+  Thread and Breakout scopes: one-hop peer discovery, parents before peers,
+  current placement and access, opaque peer titles (including UUID-shaped ones),
+  and specific own/parent refusal codes.
   A Breakout member outside its Channel: listed Main and admitted to it from the
   Breakout's scope, and refused it from the Channel's own. A Breakout's merge
   into its Thread (the service the tool calls): once in Main with the
@@ -292,6 +318,32 @@ is published to the target's audience; the person who attached that
 conversation chose that audience.
 
 ## Changelog
+
+### 2026-10-22 — Conversation tools reach the current Thread's Channel peers
+
+**What changed:** Thread and Breakout loops can list, read and search every
+Thread and Breakout in the Channels containing their current Thread. Candidate
+placements are deduplicated, directory facts are read in one batch, and every
+target keeps its canonical admission.
+
+**Why:** The product owner asked agents to work across the conversations in the
+same Channels. Reading only the current conversation and its parent feeds left
+peer discussions outside the tools' reach even when the person could open them.
+
+**Considered and rejected:** Expanding to every conversation the acting person
+can read would include unrelated Channels. Following a peer's placements again
+would make scope transitive and spread it beyond the current Thread's Channels.
+Granting access from placement alone would expose private Threads and Breakouts.
+
+**Consequences:** List, read and search share the same expanded candidates on
+every call. Channel visibility, conversation admission and archival still narrow
+them. Parent feeds precede peer conversations in paginated lists. Duplicate
+titles are disambiguated only among readable candidates; UUID-shaped peer titles
+remain opaque, while known own/parent targets retain specific refusals. Search
+fetches full candidate pages while retaining only the requested newest hits.
+Sidekick attachments and merge destinations keep their existing contracts.
+
+Pull request: [#1403](https://github.com/juno-ai-labs/avalon/pull/1403).
 
 ### 2026-10-19 — Thread and Breakout loops read and search their Channels, and every conversation looks the same
 
