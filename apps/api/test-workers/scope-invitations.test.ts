@@ -241,7 +241,9 @@ it("adds known and new guests with one recipient batch and no foreground cleanup
   expect(await routes(NEWCOMER)).toEqual([{ workspace_id: workspaceId, parent_id: parentId }]);
 });
 
-it("keeps a newer suspension that arrives while recipient setup is in flight", async () => {
+it.each(["suspension", "replacement"])("keeps a newer %s that arrives while recipient setup is in flight", async (change) => {
+  await env.DB.prepare(`INSERT INTO workspace_members (workspace_id,user_id,access_class,role,status,incarnation)
+    VALUES (?,?,'guest',NULL,'active','batch-membership')`).bind(workspaceId, recipientId).run();
   await runInDurableObject(room(), async (instance) => {
     const target = instance as unknown as { env: Env };
     const originalEnv = target.env;
@@ -249,7 +251,9 @@ it("keeps a newer suspension that arrives while recipient setup is in flight", a
       get(current, property) {
         if (property === "batch") return async (statements: D1PreparedStatement[]) => {
           const results = await current.batch(statements);
-          await current.prepare("UPDATE workspace_members SET status='suspended',revision=revision+1 WHERE user_id=?").bind(recipientId).run();
+          await current.prepare(change === "suspension"
+            ? "UPDATE workspace_members SET status='suspended',revision=revision+1 WHERE user_id=?"
+            : "UPDATE workspace_members SET incarnation='replacement',revision=1 WHERE user_id=?").bind(recipientId).run();
           const suspended = await current.prepare(`SELECT workspace_id AS workspaceId, user_id AS userId,
             access_class AS accessClass, role, status, incarnation, revision FROM workspace_members WHERE user_id=?`)
             .bind(recipientId).first();
@@ -264,14 +268,21 @@ it("keeps a newer suspension that arrives while recipient setup is in flight", a
     target.env = new Proxy(originalEnv, { get: (current, property, receiver) => property === "DB" ? database : Reflect.get(current, property, receiver) });
     try {
       expect(await instance.createScopeInvitations(invitation())).toMatchObject({ status: "created",
-        invitations: [{ status: "pending", acceptedByUserId: null }] });
+        invitations: [{ status: change === "suspension" ? "pending" : "accepted",
+          acceptedByUserId: change === "suspension" ? null : recipientId }] });
     } finally { target.env = originalEnv; }
   });
   expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: false });
-  expect(await routes("guest@example.test")).toEqual([{ workspace_id: workspaceId, parent_id: parentId }]);
+  if (change === "suspension") expect(await routes("guest@example.test")).toEqual([{ workspace_id: workspaceId, parent_id: parentId }]);
+  else await withHostedParent(room(), parentId, (parent) => {
+    // An older batch cannot bind its receipt to a newer membership learned
+    // from an event, or accidentally grant that replacement access.
+    expect(parent['scopeGrants'](child).forUser(recipientId).filter((grant) => grant.active)
+      .map((grant) => grant.membershipIncarnation)).toEqual(["batch-membership"]);
+  });
 });
 
-it("waits for a replaced membership to converge instead of claiming against its cached old incarnation", async () => {
+it("binds to the batch's replacement membership so its event admits the guest without another claim", async () => {
   await create();
   // D1 knows this is a new membership, but its event has not reached the
   // Organization yet. The old live cache row cannot be ordered against it.
@@ -279,13 +290,9 @@ it("waits for a replaced membership to converge instead of claiming against its 
     .bind(recipientId).run();
   const request = invitation();
   expect(await room().createScopeInvitations(request)).toMatchObject({ status: "created",
-    invitations: [{ status: "pending", acceptedByUserId: null }] });
+    invitations: [{ status: "accepted", acceptedByUserId: recipientId }] });
   await changeRelationships(env, workspaceId, [recipientId],
     env.DB.prepare("UPDATE workspace_members SET revision=2 WHERE user_id=?").bind(recipientId));
-  // The old accepted share supplies no access in the replacement membership.
-  expect(await room().readScopeAccess({ userId: recipientId, target: child })).toMatchObject({ allowed: false });
-  expect(await room().createScopeInvitations(request)).toMatchObject({ status: "created",
-    invitations: [{ status: "accepted", acceptedByUserId: recipientId }] });
   await withHostedParent(room(), parentId, (parent) => {
     expect(parent['scopeGrants'](child).forUser(recipientId).filter((grant) => grant.active)
       .map((grant) => grant.membershipIncarnation)).toEqual(["replacement"]);

@@ -169,13 +169,12 @@ points:
 **Creation also claims at once** for every address that already belongs to a
 user in this deployment. That person holds the share before the response
 returns and shows up as a participant, not a pending Guest; they still get the
-email, which is how they hear of it. These claims reuse the batch's relationship
-observations through the Organization's versioned member table; a newer
-suspension or replacement event wins. If its live membership and the batch
-name different incarnations, the share stays pending until the ordered membership
-event converges and an explicit operation retry or sign-in claims it; the event
-alone does not retry the claim. It cannot bind a receipt to
-the old cached membership. Grant authorization is still rechecked
+email, which is how they hear of it. Claims bind to the batch's observed membership
+incarnation; a newer suspension of that incarnation wins. A different live row
+is left to the ordered membership events, never substituted into the receipt.
+When the event trails the batch, its arrival makes the new grant usable without
+another claim. When it leads the batch, an old-incarnation grant cannot admit
+the replacement membership. Grant authorization is still rechecked
 after the batch. The delivery alarm, or a later sign-in, removes settled lookup
 rows instead of delaying the response for cleanup. Replaying an already-settled
 creation does not recreate a deleted relationship.
@@ -539,12 +538,13 @@ relationships, then clean settled rows made two production requests take 1.9 and
 
 **Considered and rejected:** Background claims would acknowledge an add before
 the recipient could open it. Overwriting an unordered live membership snapshot
-would discard a potentially newer suspension or replacement. Such invitations
-remain pending for an explicit operation retry or sign-in after convergence.
+would discard a potentially newer suspension or replacement; refusing different
+incarnations would strand otherwise valid shares until another sign-in.
 
 **Consequences:** Grants and frozen email content still commit before the
 response. A settled replay never prepares another operation's recipients.
-The batch and retained relationship must agree on membership incarnation.
+Receipts bind to the batch's incarnation while ordered events retain control of
+the member table. A newer same-incarnation suspension still refuses the claim.
 A batch may create
 an empty guest relationship before a later grant check refuses, as the existing
 claim saga already allowed; that relationship alone grants no conversation
