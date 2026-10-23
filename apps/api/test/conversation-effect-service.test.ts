@@ -895,18 +895,42 @@ describe("the activity Queue consumer's effect legs", () => {
     }
   });
 
+  it("strips unknown directory fields before forwarding an effect to its parent", async () => {
+    const database = seedAuthority();
+    const workspace = workspaceSyncNamespace();
+    const receiveChildEffects = vi.fn(async (_input: unknown) => undefined);
+    const env = regionalEnv(database, workspace, { workstreamReceive: receiveChildEffects });
+    const envelope = childMessage(directoryCommon(), {
+      messageId: MESSAGE_ID, parentKind: "workstream", parentId: WORKSTREAM_ID,
+    });
+    const { batch, ack, retry } = queued({ ...envelope, effect: { ...envelope.effect, futureField: [] } });
+    try {
+      await consumeActivityQueue(batch, env);
+      expect(receiveChildEffects).toHaveBeenCalledOnce();
+      expect(receiveChildEffects.mock.calls[0]?.[0]).toMatchObject({
+        envelopes: [{ effect: { kind: "directory_common", title: "Queue-delivered state" } }],
+      });
+      expect(receiveChildEffects.mock.calls[0]?.[0]).not.toHaveProperty("envelopes.0.effect.futureField");
+      expect(ack).toHaveBeenCalledOnce();
+      expect(retry).not.toHaveBeenCalled();
+    } finally {
+      database.close();
+      workspace.database.close();
+    }
+  });
+
   it("names the field of an effect this consumer's contract refuses, and acks it", async () => {
     const database = seedAuthority();
     const workspace = workspaceSyncNamespace();
     const receiveChildEffects = vi.fn(async () => undefined);
     const env = regionalEnv(database, workspace, { workstreamReceive: receiveChildEffects });
-    // A writer a deploy ahead of this reader: a key the strict effect lacks.
+    // A declared field is still invalid even though unknown fields are stripped.
     const envelope = childMessage(directoryCommon(), {
       messageId: MESSAGE_ID,
       parentKind: "workstream",
       parentId: WORKSTREAM_ID,
     });
-    const { batch, ack, retry } = queued({ ...envelope, effect: { ...envelope.effect, futureField: [] } });
+    const { batch, ack, retry } = queued({ ...envelope, effect: { ...envelope.effect, title: [] } });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     try {
@@ -918,7 +942,7 @@ describe("the activity Queue consumer's effect legs", () => {
         event: "effect_queue_message_invalid",
         workspace_id: WORKSPACE_ID,
         message_id: MESSAGE_ID,
-        code: "effect_queue_message_invalid:effect:unrecognized_keys:futureField",
+        code: "effect_queue_message_invalid:effect.title:invalid_type",
       }));
       expect(info).not.toHaveBeenCalledWith(expect.objectContaining({ reason: "legacy_message_after_cutover" }));
     } finally {
