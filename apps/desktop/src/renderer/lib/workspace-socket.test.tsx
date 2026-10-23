@@ -1,4 +1,5 @@
 import { useSidekickActivity } from './use-sidekick-activity';
+import { ComposerAgentActivity } from '../components/composer-agent-activity';
 import {
   ClientFeatureFlagsSchema,
   asSpaceId,
@@ -2086,7 +2087,7 @@ describe('WorkspaceSocketProvider', () => {
     expect(commands().at(-1)).toMatchObject({ revision: 2, targets: [target] });
     act(() => socket.message({ ...event, revision: 1, waterline: 12, count: 5 }));
     await flushPromises();
-    await waitFor(() => expect(screen.getByTestId('sidekick-count')).toHaveTextContent('0'));
+    await waitFor(() => expect(screen.getByTestId('sidekick-count')).toHaveTextContent('unknown'));
     act(() => socket.message({ ...event, revision: 2, waterline: 12, count: 1 }));
     await flushPromises();
     await waitFor(() => expect(screen.getByTestId('sidekick-count')).toHaveTextContent('1'));
@@ -3030,10 +3031,49 @@ describe('a Channel\'s breakouts and background agents on the organization socke
     expect(railsSent(socket)).toEqual([]);
   });
 
+  it('hides running indicators on disconnect and restores only fresh counts after reconnect', async () => {
+    const queryClient = new QueryClient();
+    const target = { parentKind: 'workstream' as const, parentId: workstreamId, substreamId: '0' };
+    function Indicators(): JSX.Element {
+      const background = useQuery<Record<string, number> | null>({
+        queryKey: ['workstream-background-agents', workstreamId],
+        queryFn: async () => null, enabled: false, initialData: null,
+      });
+      return <>
+        <ComposerAgentActivity count={background.data?.['0']} />
+        <ComposerAgentActivity count={useSidekickActivity(target)} kind="sidekick" />
+      </>;
+    }
+    let socket = await connect(queryClient, null, <Indicators />);
+    act(() => socket.message(sidebarFrame({ backgroundAgentCounts: { '0': 1 } })));
+    const activity = { type: 'workspace_sidekick_activity', revision: 1, target, waterline: 8, count: 1 };
+    act(() => socket.message(activity));
+    expect(await screen.findByRole('status', { name: '1 background agent running' })).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: '1 Sidekick running' })).toBeInTheDocument();
+
+    act(() => socket.close(1012));
+    await waitFor(() => expect(screen.queryByRole('status', { name: /running/u })).not.toBeInTheDocument());
+    act(() => window.dispatchEvent(new Event('online')));
+    await flushPromises();
+    socket = FakeWebSocket.instances[1]!;
+    act(() => socket.open());
+    expect(screen.queryByRole('status', { name: /running/u })).not.toBeInTheDocument();
+    act(() => socket.message(sidebarFrame({ backgroundAgentCounts: { '0': 2 } })));
+    act(() => socket.message({ ...activity, waterline: 9, count: 5 }));
+    expect(await screen.findByRole('status', { name: '2 background agents running' })).toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: /Sidekick/u })).not.toBeInTheDocument();
+    act(() => socket.message({ ...activity, revision: 2, waterline: 9, count: 2 }));
+    expect(await screen.findByRole('status', { name: '2 Sidekicks running' })).toBeInTheDocument();
+  });
+
   it('takes the breakouts and running agents from the connect sidebar and keeps them with no screen open', async () => {
     vi.useFakeTimers();
     const queryClient = new QueryClient();
     const socket = await connect(queryClient);
+    // Keep the producer live while time advances, as the Worker's automatic pong does.
+    socket.send.mockImplementation((frame) => {
+      if (frame === 'ping') queueMicrotask(() => socket.dispatchEvent(new MessageEvent('message', { data: 'pong' })));
+    });
     act(() => socket.message(sidebarFrame({
       privateChildren: [child(kept)], privateChildrenWaterline: 2, backgroundAgentCounts: { [kept]: 1 },
     })));
