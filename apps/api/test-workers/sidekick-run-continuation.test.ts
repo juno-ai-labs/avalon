@@ -418,6 +418,20 @@ describe("Sidekick run continuation", () => {
       const nestedId = agentAddressForId(nested.agentId).substreamId;
       const nestedExecution = await settledExecutionFor(nestedId, nestedId);
       expect(JSON.parse(nestedExecution.execution_context_json).agentExchange.sidekickAccountReferences).toEqual([reference]);
+      // Completion notices settle after terminal receipts and can start another
+      // execution in the owner. Drain that nested notice before testing a fresh
+      // follow-up after eviction; otherwise the follow-up can correctly steer
+      // the notice's execution and have no trigger receipt of its own.
+      await expect.poll(async () => runInDurableObject(childStub(nestedId), (_instance, state) =>
+        state.storage.sql.exec<{ pending: number }>(
+          "SELECT COUNT(*) AS pending FROM runs WHERE external_settled_at IS NULL",
+        ).one().pending), { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 100 }).toBe(0);
+      await expect.poll(async () => runInDurableObject(childStub(workerId), (_instance, state) =>
+        state.storage.sql.exec<{ settled: number }>(`SELECT
+          (SELECT status = 'idle' FROM substream_loops WHERE id = 1)
+          AND NOT EXISTS (SELECT 1 FROM pending_loop_inputs)
+          AND NOT EXISTS (SELECT 1 FROM runs WHERE external_settled_at IS NULL) AS settled`,
+        ).one().settled), { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 100 }).toBe(1);
       await evictDurableObject(childStub(workerId));
     } else {
       expect(workerInput.automationDelegation).toBeUndefined();
