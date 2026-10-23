@@ -21,9 +21,12 @@
 
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { asSubstreamId } from "@rally/contracts";
+
+import { createDaytonaTerminalProvider } from "../src/services/terminal/daytona-provider";
+import type { TerminalProviderRequestMeasurement } from "../src/services/terminal/tracing";
 
 import { conversationObjectName } from "../src/durable-objects/names";
 import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
@@ -207,6 +210,77 @@ function residentExecutionEnvironment(instance: object): Env {
 function residentTerminalFactory(instance: object): TerminalPortFactory {
   return createTerminalPortFactory(residentExecutionEnvironment(instance));
 }
+
+it.each(["get", "poll", "logs"] as const)("recovers a transient session %s failure and settles the same real DO task", async (stage) => {
+  const stub = agent();
+  await boot(stub);
+  const now = Date.now();
+  await runInDurableObject(stub, (_instance, state) => {
+    seedWorkstreamRoot(state);
+    seedRunRow(state, RUN_A, "running", now);
+    seedEffect(state, EFFECT_A, RUN_A);
+  });
+  await reserve(stub, RUN_A, { now, operationLeaseExpiresAt: now + 120_000 });
+  await terminal(stub, "attachProviderSandbox", { generation: 1, sandboxId: "daytona-observation",
+    lifecycleState: "running", idleExpiresAt: now + 120_000, archiveDueAt: now + 180_000,
+    expireDueAt: now + 240_000, now });
+  await terminal(stub, "insertTask", { taskId: TASK_A, runId: RUN_A, effectIntentId: EFFECT_A,
+    sandboxGeneration: 1, sandboxId: "daytona-observation", providerTaskName: "stable-task",
+    commandSha256: "c".repeat(64), commandDeadlineAt: now + 120_000, startedAt: now, now });
+  const unavailable = () => Object.assign(new Error("private provider message"), { statusCode: 503 });
+  let getAttempts = 0;
+  let pollAttempts = 0;
+  let logAttempts = 0;
+  const createSession = vi.fn(async () => undefined);
+  const executeSessionCommand = vi.fn(async () => ({ cmdId: "accepted-command", exitCode: null }));
+  const measurements: TerminalProviderRequestMeasurement[] = [];
+  // Only the external Daytona API is doubled. Every task transition crosses
+  // the production RPC endpoint into real workerd SQLite.
+  const provider = createDaytonaTerminalProvider({ capability: "supported", apiKey: "fixture",
+    apiUrl: "https://daytona.example.test", target: "us", snapshot: "fixture", emergencyDisabled: false,
+  }, () => ({ create: vi.fn(), get: async () => ({ id: "daytona-observation", name: "fixture", state: "started",
+    process: {
+      createSession, executeSessionCommand, deleteSession: vi.fn(),
+      getSession: async () => {
+        if (++getAttempts === 1 && stage === "get") throw unavailable();
+        throw Object.assign(new Error("missing"), { statusCode: 404 });
+      },
+      getSessionCommand: async () => {
+        if (++pollAttempts === 1 && stage === "poll") throw unavailable();
+        return { id: "accepted-command", command: "opaque", exitCode: 0 };
+      },
+      getSessionCommandLogs: async (_session, _command, stdout) => {
+        if (++logAttempts === 1 && stage === "logs") { stdout?.("partial prefix"); throw unavailable(); }
+        stdout?.("ok\n");
+      },
+    },
+  }) }), { observeRequest: (measurement) => { measurements.push(measurement); } });
+  const result = await provider.runCommand("daytona-observation", { taskName: "stable-task",
+    command: "printf ok", cwd: "/workspace", timeoutMs: 1_000, retainSessionForRecovery: true,
+    onSubmitted: async (providerTaskId) => {
+      expect((await terminal(stub, "markTaskRunning", { effectIntentId: EFFECT_A, providerTaskId,
+        commandDeadlineAt: now + 120_000, now: Date.now() })).value).toBe(true);
+    },
+  });
+  expect(result).toEqual({ exitCode: 0, stdout: "ok\n", stderr: "" });
+  expect(executeSessionCommand).toHaveBeenCalledOnce();
+  expect(createSession).toHaveBeenCalledOnce();
+  if (stage === "get") expect(getAttempts).toBe(2);
+  expect(measurements).toContainEqual(expect.objectContaining({
+    operation: stage === "get" ? "process.session_get" : stage === "poll" ? "process.session_poll" : "process.session_logs",
+    outcome: "failed", errorCode: "Error:503",
+  }));
+  expect(JSON.stringify(measurements)).not.toContain("private provider message");
+  expect((await terminal(stub, "settleTask", { effectIntentId: EFFECT_A, runId: RUN_A,
+    sandboxGeneration: 1, sandboxId: "daytona-observation", state: "completed", exitCode: result.exitCode,
+    terminationReason: "exited", stdoutHead: result.stdout, stdoutTail: "", stderrHead: "", stderrTail: "",
+    stdoutBytes: 3, stderrBytes: 0, completedAt: Date.now(), now: Date.now(),
+  })).value).toBe(true);
+  await evictDurableObject(stub);
+  expect((await terminal(stub, "taskByEffect", EFFECT_A)).value).toMatchObject({
+    state: "completed", providerTaskId: "accepted-command", stdoutHead: "ok\n", exitCode: 0,
+  });
+});
 
 describe("Terminal authority on real workerd", () => {
   it("returns typed non-retryable protocol and routing rejections", async () => {

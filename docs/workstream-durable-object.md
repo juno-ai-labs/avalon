@@ -1771,13 +1771,16 @@ A child's envelope arrives by Queue, and the parent commits receipt, child
 value, aggregate, state change and the Organization's directory row inside one
 `WorkspaceDO` transaction.
 
-Each common or viewer UUIDv7 message/event ID is time sortable to milliseconds
-and remains identical for that row on the Channel control socket, the
+New common and viewer message/event IDs are UUIDv7 and time sortable to milliseconds.
+Historical state-event IDs may be any valid UUID and remain identical for that row on the Channel control socket, the
 `channels` or `channel_viewers` source row, and the workspace socket. A
 complete snapshot carries both IDs separately. Independent objects can generate
 same-millisecond IDs in random order, so freshness always compares authority
 generation and the relevant common/viewer waterline, never UUID lexical order
-alone.
+alone. Directory reads log `workspace_directory_non_v7_event_id` for historical
+non-v7 IDs, with Organization, Thread, declared field, event ID, UUID version,
+authority generation and both waterlines. They preserve the stored identity;
+no read rewrites IDs or advances versions. Invalid UUIDs still fail validation.
 
 ### Hosted Sidekicks
 
@@ -1941,6 +1944,26 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-10-23 — Preserve loop time and historical state identities
+
+**What changed:** Pending-input activation clamps the loop's `updated_at` with
+`MAX(updated_at, ?)`, and the claimant samples its clock after ensuring the loop
+exists. Directory response contracts accept any valid UUID for state-event IDs;
+Organization directory reads warn when an ID is not v7, retaining its identity
+and the generation and waterlines that establish ordering.
+
+**Why:** A claim could sample time before initializing its loop and then violate
+`updated_at >= created_at`. Separately, historical UUIDv4 projection IDs made
+otherwise valid Organization socket snapshots fail the UUIDv7 response refinement.
+
+**Considered and rejected:** Removing the timestamp CHECK or rewriting old event
+IDs would weaken durable invariants or change identities during a read. Neither
+is necessary: bookkeeping time is monotonic, while waterlines determine freshness.
+
+**Consequences:** New producers still mint UUIDv7. Investigate the warning's
+stored event ID and Thread rather than inferring ordering from its UUID version.
+
 
 ### 2026-10-22 — Hydrate activity graphs above the SQLite parameter ceiling
 

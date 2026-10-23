@@ -54,6 +54,8 @@ export interface TerminalProviderRequestMeasurement {
   operation: TerminalProviderRequestOperation;
   detail: TerminalUtilityOperation | null;
   outcome: "completed" | "failed";
+  /** Content-free provider class/status/code; never the provider message. */
+  errorCode?: string;
   durationMs: number;
   requestCount: number;
   pollCount: number;
