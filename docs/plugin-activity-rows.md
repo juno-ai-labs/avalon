@@ -62,23 +62,6 @@ says *when* a run worked, and a folded stretch adds its rows up by that. A run
 whose activity did not reach the snapshot therefore has an authoritative
 duration and no spans, which is a state the accordion is built to expect.
 
-### Delegated account details
-
-Sidekick operations carry participant-safe `account` attribution from their
-durable execution-account checkpoint on live invocations and canonical tool
-blocks. It states the acting person and connection, whether that account served,
-refused or merely attempted the operation, and the first connection when fallback
-occurred. Grant generations, credentials and provider payloads stay private.
-
-Grouping retains these operations behind **Account details** in the existing
-plugin activity breakdown, including the settled work accordion. This identity
-is part of what people authorized, so it cannot be discarded with internal calls.
-Disclosure state uses the feed's existing `RowDisclosure`, so scrolling a
-virtualized row away and back retains the expanded account list.
-Older transcripts remain unattributed rather than inferring an account from the
-coordinator or requested plugin. A failed or uncertain attempt is never labeled
-as a completed effect.
-
 ### The five steps
 
 1. **Projection.** `orderedTranscriptMessages` copies `pluginId` and the owning
@@ -803,17 +786,6 @@ stack cannot run a real turn, so the way to get a multi-plugin transcript on
 screen is to write a hand-built `WorkstreamTranscriptSnapshot` into the
 renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
-
-## Changelog
-
-### 2026-10-22 — Retain delegated accounts in activity
-
-Sidekick activity retains each operation's receipt-backed account through live
-events, canonical transcript projection, reload and interrupted settlement.
-Ordinary plugin grouping hid calls, which would also hide whose authority served
-them. Account details preserve that fact without exposing provider payloads or
-reconstructing identity from arguments. The coordinator remains a separate
-run-history field and must not be presented as the actor for every operation.
 
 ### 2026-10-15 — A refused write asking for Allow editing stays a card
 

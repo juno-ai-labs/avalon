@@ -242,8 +242,7 @@ export const SidekickRunContinuationRefusalCodeSchema = z.enum([
   "sidekick_paused",
   "sidekick_deleted",
   "run_not_found",
-  "run_principal_changed",
-  "run_coordinator_unavailable",
+  "run_no_eligible_delegate",
 ]);
 export type SidekickRunContinuationRefusalCode = z.infer<typeof SidekickRunContinuationRefusalCodeSchema>;
 

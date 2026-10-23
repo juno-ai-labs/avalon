@@ -70,18 +70,16 @@ An occurrence with no delegate gets a `needs_input` run and safe recovery summar
 an unauthorized event retains no private payload in the Sidekick. Its directory
 has a safe `delegationAttention` code and recovery message. New consent applies
 to future occurrences rather than replaying blocked historical work. A continued
-run retains its coordinator and refuses with `run_coordinator_unavailable` after
-an authorization refresh observes that person's consent or access loss. Other
-delegates can coordinate a later independent occurrence.
+run retains its coordinator while eligible and selects another eligible delegate
+when that person becomes unavailable. The new coordinator is persisted on the
+existing run. Only an empty eligible list refuses with `run_no_eligible_delegate`.
 
-Migration snapshots existing `run_as_user_id` as the implicit task account and
-retains already-provisioned run identities. A durable alarm enrolls missing
+Migration retains existing `run_as_user_id` as a stable shared-file identity and
+preserves existing human access. A durable alarm enrolls missing
 creators and established previous task-account users without reconstructing
 historical consent provenance. Existing grants and withdrawal tombstones are
 never overwritten. A follow-up migration queues creators that an earlier local
-version left ungranted. The
-The
-legacy claim endpoint now records self-consent and retains its explicit human
+version left ungranted. The legacy claim endpoint now records self-consent and retains its explicit human
 entitlement in `sidekick_claim_access`, without rebinding configured sources or
 changing creator preference. Neither these grants nor coordinator selection
 replace the directory's existing reader/manager entitlements.
@@ -91,17 +89,9 @@ An activation whose conversation post is refused retains a fixed
 tool still returns its original failure; normal later admission clears the
 attention field. This uses the same directory state as unavailable delegation.
 
-External-event openings retain the source connection and code-projected provider
-reference keys from the canonical event row. This host-only field is separate
-from untrusted event metadata and needs no extra ledger. The harness uses it to
-keep the first read/reply/update of an account-scoped ID on the originating
-account; a new unrelated search retains its configured task account. Existing
-openings missing the field can read the same source from their canonical event.
-Adapters without a declared activity-reference projection add no reference.
-
 Configured event sources reconcile through `sidekick-source-registrations.ts`.
 The saved evaluator remains the source definition. An adapter's authored
-`activityResourceIdentity` distinguishes globally addressed resources (Google
+`isPortableActivityResource` distinguishes globally addressed resources (Google
 files) from account-relative resources (mail and calendars). Only the former
 can expand to another eligible delegate's connection. The ordinary resource
 resolver creates or finds that connection's Rally resource ID by provider ID;
@@ -124,12 +114,9 @@ active configured Sidekicks. The handler refreshes ordinary eligibility and
 commits only against the still-current active definition revision. This permits
 eventual authorization propagation without a global barrier or provider probe.
 
-Run history carries its coordinating user through the client mapping. Tool
-activity separately projects actual identities from existing account checkpoints,
-including fallback and attempted/refused outcomes. Canonical transcript facts
-retain this attribution across reload and recovery without exposing grant
-generations or credentials. See [plugin activity
-rows](plugin-activity-rows.md#delegated-account-details).
+Run history carries its coordinating user through the client mapping. Operation
+accounts remain private database debug checkpoints; app activity does not expose
+per-operation people or connection IDs.
 
 Per-operation connector identities, completed-receipt reconciliation, shared
 Terminal authorization and desktop/web controls are tracked by the
@@ -797,23 +784,21 @@ one identity and one history, and can complete more than once.
    Delegated workers share the Sidekick parent but are not Sidekick runs.
    A worker rooted in a run asks `sidekickContinueRun` about its persisted
    `root_substream_id`, including through nested delegation. A refusal lands
-   the assignment without starting execution. Approval retains the worker's
-   inherited principal and records only `automationDelegation` (root run ID and
+   the assignment without starting execution. Approval uses the current eligible coordinator and records only `automationDelegation` (root run ID and
    stop generation), without loading the run's instructions or tools. The normal
    model/tool authority check revalidates that reference, the principal and the
    stop generation, so a later pause, pause/resume, deletion or principal change
    revokes an already activated worker. Authoring-rooted workers (`"0"`) keep the
    ordinary background-agent path, as authoring itself is not paused.
-2. `continueRun` is a read with no side effects. It answers a refusal code, or
+2. `continueRun` can replace an unavailable coordinator. It answers a refusal code, or
    the `automationRun` block and run-as `executionPrincipal` the scheduled
    start builds, with `definitionRevision` the Sidekick's **currently
    accepted** revision and the run's original trigger, plus `stopGeneration`, its
    stop counter. Continuing a run acts on today's consent, so a run started under
-   revision 1 continues under revision 3. It does not continue as somebody
-   else: a run persists `coordinator_user_id` independently of the directory's
-   legacy human access field. A coordinator whose consent or current access is
-   unavailable refuses with `run_coordinator_unavailable`; no mid-run account
-   transfer exposes its transcript to a new runtime principal. It does not
+   revision 1 continues under revision 3. It persists `coordinator_user_id`
+   independently of the directory's legacy human access field. An unavailable
+   coordinator is replaced by another eligible delegate for root and background
+   continuations. Existing human reader/manager rights remain unchanged. It does not
    ask who sent the input: anyone who can reach a run may continue it.
 3. The loop input carries `automationRun`, the run-as principal, and
    `automationContinuation: {stopGeneration, senderName, source}`; the sender stays
@@ -834,8 +819,8 @@ one identity and one history, and can complete more than once.
 
 **Refusals.** `continueRun` answers `sidekick_deleted` for an archived
 Sidekick, `sidekick_paused` for one a person paused, `run_not_found`
-when the Sidekick object holds no row or no such run, and `run_principal_changed`
-when the Sidekick runs as somebody other than the run did. The
+when the Sidekick object holds no row or no such run, and `run_no_eligible_delegate`
+when no delegated user remains eligible. The
 child then lands the input as a delivered turn and appends a `system` row after
 it (`clientMessageId` `sidekick-run-refused:<inputId>`, structured content
 `{kind: "sidekick_run_refused", code, turnId}`) in one transaction
@@ -1391,10 +1376,10 @@ Agent own-grant discovery retains access to a person's stored grants after they
 lose Organization or Sidekick access; the dedicated Account withdrawal UI/API
 is removed. Event, schedule, manual and continued runs
 share eligibility; each run persists its coordinator independently of legacy
-human access. Migration retains established task accounts and enrolls missing creators
-without reconstructing direct-user consent provenance. Canonical event openings
-also retain authored provider reference keys and source connections, including
-compatibility reads for openings saved before that field existed. Self-action
+human access. Migration retains stable shared-file identities and enrolls missing creators
+without reconstructing direct-user consent provenance. Continuation replaces an
+unavailable coordinator and persists the replacement without changing human
+access. Operation accounts remain debug-only receipt records. Self-action
 receipt inspection prevents the outer completed-tool cache from presenting a
 withdrawn grant as current without replaying its mutation. Interrupted actions
 are reconciled by that same receipt instead of minting a fresh consent intent.

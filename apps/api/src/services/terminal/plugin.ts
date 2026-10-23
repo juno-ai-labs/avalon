@@ -165,30 +165,17 @@ export async function createAvalonTerminalPlugin(
     await sidekickWorkspace!.sidekickReadExecutionDelegation({ workspaceId: input.workspaceId, automationId: input.parentId }),
   );
   const initialDelegation = options.delegation !== undefined ? options.delegation : sidekickWorkspace ? await readDelegation() : null;
-  // Shell commands retain one explicitly selected GitHub connection. They do
-  // not retry across delegates or inherit a withdrawn owner's mounted token.
+  // Reuse inventory consent for the selected repository. No shell-wide scan or
+  // mounted-secret cleanup is required for delegation.
   const repositoryDelegateAvailable = async (): Promise<boolean> => {
     if (!sidekickWorkspace) return true;
-    const terminal = terminalPort(input.workspaceId, input.parentId);
-    const selected = await terminal.selectedRepository();
+    const selected = await terminalPort(input.workspaceId, input.parentId).selectedRepository();
     if (!selected) return true;
     const connection = await env.DB.prepare(
       "SELECT scope, owner_user_id, status FROM connector_connections WHERE id = ? AND workspace_id = ?",
     ).bind(selected.connectionId, input.workspaceId).first<{ scope: string; owner_user_id: string | null; status: string }>();
-    if (connection?.scope === "workspace" && connection.status !== "disabled") return true;
-    const available = connection?.status !== "disabled" && connection?.scope === "personal"
-      && initialDelegation?.delegates.some((delegate) => delegate.userId === connection.owner_user_id);
-    // Missing expiry is not proof that a provider-side mount never landed.
-    // Zero records acknowledged removal and is already expired for bootstrap.
-    if (!available && selected.readTokenExpiresAt !== 0) {
-      const sandbox = await terminal.sandbox();
-      if (sandbox?.sandboxId) await provider.clearGitHubReadAccess(sandbox.sandboxId);
-      await terminal.recordRepositoryBootstrap({
-        generation: selected.bootstrappedSandboxGeneration ?? 0, readTokenExpiresAt: 0,
-        repositoryFullName: selected.repositoryFullName, baseSha: selected.baseSha, now: Date.now(),
-      });
-    }
-    return Boolean(available);
+    return Boolean(connection && connection.status !== "disabled" && (connection.scope === "workspace"
+      || initialDelegation?.delegates.some((delegate) => delegate.userId === connection.owner_user_id)));
   };
   // Consent refreshes at inventory boundaries; files remain Sidekick-owned.
   const assertSandboxPrincipal = (context: HarnessToolContext): void => {
@@ -348,9 +335,8 @@ export async function createAvalonTerminalPlugin(
       try {
         assertSandboxPrincipal(context);
         const result = await withTerminalToolTrace(trace, async () => {
-          if (!await repositoryDelegateAvailable() && name === "publish_branch_and_pr") {
-            throw new TerminalToolError("repository_delegate_unavailable",
-              "The selected GitHub connection's owner is no longer an eligible delegate. Local files remain available. Restore their delegation or explicitly select an authorized repository connection before publishing.");
+          if (name === "publish_branch_and_pr" && !await repositoryDelegateAvailable()) {
+            throw new TerminalToolError("repository_delegate_unavailable", "The selected GitHub connection needs an eligible delegate before publishing.");
           }
           return executors[name](toolInput, context);
         });

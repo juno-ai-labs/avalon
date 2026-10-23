@@ -13,7 +13,7 @@ import {
 
 export function sidekickDelegationGuidance(room: boolean): string {
   const name = (local: string) => room ? `sidekick_${local}` : local;
-  return `Use ${name("delegates_list")} to inspect a Sidekick's allowed users. Use ${name("set_delegation")} with a Sidekick ID and an Organization userId to add or withdraw that user's delegation. This is available during autonomous work too. For your own withdrawal after access loss, use ${name("my_delegations_list")} or a known Sidekick ID. Changing delegation starts no run. The harness handles account fallback for known resources; preserve identity for “my,” named senders, pagination and replies.`;
+  return `Use ${name("delegates_list")} to inspect a Sidekick's allowed users. Use ${name("set_delegation")} with a Sidekick ID and an Organization userId to add or withdraw that user's delegation. This is available during autonomous work too. For your own withdrawal after access loss, use ${name("my_delegations_list")} or a known Sidekick ID. Changing delegation starts no run. The harness handles eligible-account fallback after definite access refusals.`;
 }
 
 /** The execution user supplies authority; the tool selects an Organization user. */

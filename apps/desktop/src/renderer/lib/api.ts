@@ -451,7 +451,6 @@ export function mapToolInvocation(invocation: z.infer<typeof WireToolInvocationS
   return {
     id: invocation.id,
     toolCallId: invocation.toolCallId,
-    ...(invocation.account ? { account: invocation.account } : {}),
     name: invocation.activityName ?? invocation.toolName,
     // Kept beside the display name, which the prose above has taken over.
     wireName: invocation.toolName,

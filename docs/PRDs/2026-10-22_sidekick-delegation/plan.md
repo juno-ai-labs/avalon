@@ -1,8 +1,52 @@
 # Implementation plan
 
-The PRD and design remain the complete acceptance contract. This checklist tracks
-local implementation and evidence. The earlier implementation was complete locally; the 2026-10-23 scope revision
-is complete locally. The branch is unpushed and not deployed; these checks do not claim production verification.
+The PRD and design define the current acceptance contract. This branch is local,
+unpushed and not deployed.
+
+## Current scope: 2026-10-23 simplification
+
+- [x] Retain automatic creator enrollment, the allowed-user list, self-service
+  controls and agent mutation for any current Organization user.
+- [x] Replace an unavailable coordinator on continuation and persist the new
+  eligible delegate for root and background-worker execution.
+- [x] Remove `rallyAccount`, task-account semantics and account binding across
+  reads, writes, replies, pages, returned IDs and agent handoffs.
+- [x] Preserve exact-effect uncertain-write recovery and private account checkpoints.
+- [x] Remove operation-account activity UI, transport projection and tool output.
+- [x] Keep the ordinary selected GitHub owner check at bootstrap/publishing;
+  remove mounted-secret cleanup and scans before every shell operation.
+- [x] Complete current scoped/full validation and real-window inspection.
+
+The following checkpoints document earlier branch iterations. Checks of removed
+features (account selectors, dependent-operation bindings, mounted-secret removal
+and account activity UI) are historical and are not current requirements or
+proof of current behavior.
+
+## Current validation
+
+- Focused real-workerd continuation/admission/receipt/transcript lanes passed,
+  including root and background coordinator failover. Calendar recovery passed
+  all three scenarios after replacing removed account-output expectations.
+- Both production-code negative controls failed for the intended reason:
+  disabling coordinator reassignment failed the persisted failover assertion;
+  stopping on the first definite refusal failed delegated fallback. Production
+  code was restored before the full run.
+- Full desktop: 290 files / 4,030 tests passed. Full API Node: 366 files /
+  3,843 tests passed. All other package lanes passed (the connector lane retains
+  its four existing skips). Full workerd: 181 files / 2,093 tests passed. The full
+  `VITEST_MAX_WORKERS=2 pnpm test` run exited successfully.
+- Lint, typecheck, docs gates and `git diff --check` passed.
+- Headed browser inspection passed at 1280×763 and 800×720: ordinary grouped
+  activity retains timing and folding, without account disclosures even when a
+  historical account field is injected. This is a rendering fixture, not live
+  provider evidence. Screenshots and limitations are recorded in
+  `/Users/developer/.codex/visualizations/2026/10/22/01a164ea-7577-7ab0-9c8b-601350fc0969/sidekick-trim-qa.md`.
+- Both antagonistic reviews were triaged: preserved the selected GitHub owner
+  check at bootstrap/publishing, removed per-shell scans and mounted-secret
+  cleanup, reread continuation state after authority awaits, removed unused
+  account metadata, and reject an empty delegate snapshot for run execution.
+
+## Historical implementation and validation
 
 - [x] WorkspaceDO consent authority: membership incarnation, stable grant order,
   prepared generations, withdrawal tombstones, immutable accepted receipts,

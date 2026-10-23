@@ -5,7 +5,7 @@ export * from './artifact-annotations';
 import { ExternalPeopleSchema } from "./external-people";
 export { ExternalPeopleSchema, ExternalPersonSchema, MAX_EXTERNAL_PEOPLE, deduplicateExternalPeople } from "./external-people";
 import { z } from "zod";
-import { SidekickDelegationAttentionCodeSchema, ToolAccountAttributionSchema } from "./sidekick-delegation";
+import { SidekickDelegationAttentionCodeSchema } from "./sidekick-delegation";
 import { ConversationViewRequestSchema } from "./conversation-view";
 import { AttachmentKindSchema, ResourceSlugSchema, parseStoredSuggestedAttachmentToolCall } from "./attachment-contracts";
 import { AutomationLifecycleStateSchema,
@@ -1119,7 +1119,6 @@ export const ToolInvocationSchema = z.object({
    */
   activityName: z.string().min(1).max(200).nullable().default(null),
   connectionId: IdSchema.nullable(),
-  account: ToolAccountAttributionSchema.optional(),
   /**
    * The connector plugin that owns this tool, resolved from `connectionId`, or
    * null for Avalon-owned tools. Rows render this and only this as their icon.
@@ -1736,7 +1735,6 @@ export const AutomationRunDefinitionV1Schema = z.strictObject({
   runAsUserId: IdSchema,
   /** Per-run coordination is independent of the legacy human access entitlement. */
   coordinatorUserId: IdSchema.nullable().optional(),
-  accountUserId: IdSchema.optional(),
   modelOverride: z.string().min(1).nullable(),
   trigger: AutomationRunTriggerV1Schema,
   /**
@@ -1749,7 +1747,6 @@ export const AutomationRunDefinitionV1Schema = z.strictObject({
     structuredContent: z.record(z.string(), z.unknown()),
     resourceId: IdSchema.nullable(),
     /** Host-derived provider references from the canonical activation event. */
-    sourceAccount: z.strictObject({ connectionId: IdSchema, resourceKeys: z.array(z.string()) }).optional(),
   }).nullable(),
   state: z.enum(["pending", "running", "needs_input", "completed", "failed", "stopped"]),
 });
@@ -3750,7 +3747,8 @@ export const ToolExecutionAccountRecordSchema = z.strictObject({
   phase: z.enum(["selected", "refused", "served"]),
   account: ToolExecutionAccountSchema,
   originalAccount: ToolExecutionAccountSchema,
-  resourceKeys: z.array(z.string().min(1)),
+  /** Read compatibility for historical checkpoints; new writes omit this field. */
+  resourceKeys: z.array(z.string().min(1)).optional(),
 });
 export type ToolExecutionAccountRecord = z.infer<typeof ToolExecutionAccountRecordSchema>;
 
