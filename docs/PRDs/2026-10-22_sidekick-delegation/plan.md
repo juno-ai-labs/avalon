@@ -307,6 +307,33 @@ turn an implementation checklist into an assertion that its tests passed.
   produce accepted visual evidence. Account recovery UI, serving-account activity
   and the complete acceptance audit remain outstanding.
 
+### Receipt-backed activity attribution
+
+- Existing execution-account checkpoints now project participant-safe acting
+  user/connection, selected/refused/served state and first-account fallback into
+  live invocations and canonical transcript facts. Attribution follows the
+  actual checkpoint account rather than the requested connector. Consent
+  generations and provider payloads are omitted. Ordinary non-Sidekick tools
+  do not add an account-authority read.
+- The normal grouped activity keeps account details per operation, including
+  within settled work. An ambiguous attempt explicitly says its outcome is
+  unconfirmed; missing historical names retain IDs. The feed's existing
+  disclosure state retains expanded details through parent remounts. Run history
+  preserves its coordinator separately, reusing the mounted delegation query
+  for names rather than adding another identity inventory.
+- Scoped checks passed 456 desktop cases, 97 API Node cases, and all 22 real
+  workerd transcript cases. Production-code negative controls dropped stored
+  account attribution or its interrupted-settlement forwarding. Each failed its
+  literal assertion and was restored; the restored files passed. Lint,
+  repository-wide typecheck, docs and the desktop build passed.
+- Real Electron inspection used documented local transcript-cache fixtures:
+  960×720 and 800×720, account details within settled work, successful fallback,
+  an uncertain Organization-account attempt, missing names/retained IDs, and
+  coordinator history. Closing and reopening the outer work disclosure retained
+  expanded accounts. These are rendering checks, not live provider execution
+  or evidence that full uncertain-write recovery is complete. Screenshot and
+  QA inventory artifacts are saved in this task's visualization directory.
+
 ### Next integration constraints
 
 The common admission policy, completed-consent replay checks and interrupted
@@ -323,15 +350,15 @@ the first tool read. Rooted background children read that host-derived reference
 from their existing root-run authority without inheriting instructions or tools.
 Provider references produced by later tool results still need explicit origin
 context through background-child handoff and resumed inventory snapshots.
-Normal activity details still need actual serving-account fields wired from the
-receipt checkpoints, alongside the coordinating user. Authorized uncertain-write
+Normal activity details now retain serving-account fields from receipt
+checkpoints, alongside the separate coordinating user. Authorized uncertain-write
 reconciliation still needs end-to-end recovery verification; pinning an account
 alone is not evidence that an uncertain provider effect was reconciled.
 Terminal now checks eligible delegation for every operation and retains its
 original file identity across coordinators, including completed imports. Its
 single selected repository connection stays explicit; observed withdrawal
 removes mounted personal GitHub credentials without deleting files. Actual
-serving-account activity presentation remains part of the remaining UI work.
+serving-account activity presentation is wired as described above.
 Historical direct-creation provenance still needs its final audit against any
 existing creation/tool receipts; no new historical provenance service is planned.
 The Sidekick panel and creator disclosure now have the scoped rendering evidence

@@ -1,3 +1,4 @@
+import { asUserId } from "@rally/contracts";
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -2250,6 +2251,24 @@ describe('MessageBlock plugin activity rows', () => {
     expect(mark).toHaveClass('plugin-face-active');
     // The mark replaces the spinner rather than joining it.
     expect(container.querySelector('.agent-work-timing-orb')).toBeNull();
+  });
+
+  it('exposes each actual account and distinguishes served, refused and uncertain attempts', () => {
+    render(<MessageBlock {...actions} message={pluginRow('delegated-tools', {
+      groupKey: 'name:Google', name: 'Google', icon: 'plug', active: false, durationMs: 3_000,
+      operations: [
+        { id: 'read', name: 'read_sheet', status: 'completed', account: { connectionId: 'maya-google', connectionName: "Maya's Google",
+          userId: asUserId('00000000-0000-7000-8000-000000000705'), userName: 'Maya', scope: 'personal', phase: 'served', fallbackFromConnectionId: 'adam-google' } },
+        { id: 'publish', name: 'publish_doc', status: 'ambiguous', account: { connectionId: 'org-google', connectionName: 'Rally Docs',
+          userId: null, userName: null, scope: 'workspace', phase: 'selected', fallbackFromConnectionId: null } },
+      ],
+    })} />);
+    fireEvent.click(screen.getByText('Account details'));
+    expect(screen.getByText("Served as Maya through Maya's Google.")).toBeVisible();
+    expect(screen.getByText('Selected after another account could not access the resource.')).toBeVisible();
+    expect(screen.getByText('Attempted as the Organization account through Rally Docs.')).toBeVisible();
+    expect(screen.getByText('Outcome unconfirmed. Check this account before repeating the action.')).toBeVisible();
+    expect(screen.getByText('Connection: maya-google · User: 00000000-0000-7000-8000-000000000705')).toBeVisible();
   });
 
   it('settles to the past tense with a still mark once the plugin is done', () => {

@@ -21,7 +21,7 @@ import {
   IconWorldSearch,
   type TablerIcon,
 } from '@tabler/icons-react';
-import type { AutomationPluginActivity } from '@rally/contracts';
+import type { AutomationPluginActivity, ToolAccountAttribution } from '@rally/contracts';
 import {
   Check,
   ChevronDown,
@@ -1998,6 +1998,7 @@ function ToolBlock({ message }: { message: Message }): React.JSX.Element | null 
         <ChevronRight aria-hidden="true" className="disclosure-chevron" size={13} />
       </summary>
       <div className="tool-details">
+        {tool.account && <OperationAccount account={tool.account} ambiguous={tool.status === 'ambiguous'} />}
         {tool.input !== undefined && <div><h4>Input</h4><pre>{safeJson(tool.input)}</pre></div>}
         {tool.output !== undefined && <div><h4>Result</h4><pre>{safeJson(tool.output)}</pre></div>}
         {tool.input === undefined && tool.output === undefined && tool.summary && (
@@ -2007,6 +2008,17 @@ function ToolBlock({ message }: { message: Message }): React.JSX.Element | null 
       </div>
     </details>
   );
+}
+
+function OperationAccount({ account, ambiguous }: { account: ToolAccountAttribution; ambiguous: boolean }): React.JSX.Element {
+  const action = account.phase === 'served' ? 'Served' : account.phase === 'refused' ? 'Access refused' : 'Attempted';
+  const person = account.scope === 'workspace' ? 'the Organization account' : normalizeModelText(account.userName ?? account.userId ?? 'a delegated user');
+  return <div className="operation-account">
+    <p>{action} as {person}{account.connectionName ? <> through {normalizeModelText(account.connectionName)}</> : null}.</p>
+    {account.fallbackFromConnectionId && <p>Selected after another account could not access the resource.</p>}
+    {ambiguous && <p>Outcome unconfirmed. Check this account before repeating the action.</p>}
+    <small>Connection: {account.connectionId}{account.userId ? <> · User: {account.userId}</> : null}</small>
+  </div>;
 }
 
 /**
@@ -2411,10 +2423,13 @@ function PluginFace({ plugin }: { plugin: AutomationPluginActivity }): React.JSX
  * Slack for 5m 02s" — so the row reads as a place rather than as a mechanism,
  * which is the whole point of hiding the calls underneath it.
  */
-function PluginActivityBlock({ message }: { message: Message }): React.JSX.Element | null {
+function PluginActivityBlock({ message, disclosure }: { message: Message; disclosure?: RowDisclosure }): React.JSX.Element | null {
+  const [locallyExpanded, setLocallyExpanded] = useState(false);
+  const accountDisclosureId = `${message.id}:accounts`;
+  const expanded = disclosure ? disclosure.expanded.has(accountDisclosureId) : locallyExpanded;
   const group = message.pluginActivity;
   if (!group) return null;
-  return (
+  return <div className="plugin-activity-details">
     <AgentWorkTiming
       active={group.active}
       activeName={group.activeVerb}
@@ -2425,7 +2440,18 @@ function PluginActivityBlock({ message }: { message: Message }): React.JSX.Eleme
       monotonicStartedAt={group.monotonicStartedAt}
       timingAccuracy={group.timingAccuracy}
     />
-  );
+    {group.operations && group.operations.length > 0 && <details className="plugin-account-details" open={expanded}>
+      <summary onClick={(event) => {
+        event.preventDefault();
+        if (disclosure) disclosure.onToggle(accountDisclosureId);
+        else setLocallyExpanded((current) => !current);
+      }}>Account details</summary>
+      <ul>{group.operations.map((operation) => <li key={operation.id}>
+        <strong>{operation.name.replaceAll('_', ' ')}</strong>
+        <OperationAccount account={operation.account} ambiguous={operation.status === 'ambiguous'} />
+      </li>)}</ul>
+    </details>}
+  </div>;
 }
 
 /**
@@ -2438,9 +2464,9 @@ function PluginActivityBlock({ message }: { message: Message }): React.JSX.Eleme
  * rows carried — the accordion above them holds the one for this stretch, and
  * two elements answering to the same anchor is worse than none.
  */
-function WorkAccordionRow({ message }: { message: Message }): React.JSX.Element | null {
+function WorkAccordionRow({ message, disclosure }: { message: Message; disclosure?: RowDisclosure }): React.JSX.Element | null {
   if (message.messageType === 'thought') return <ThoughtBlock message={message} />;
-  if (message.messageType === 'plugin_activity') return <PluginActivityBlock message={message} />;
+  if (message.messageType === 'plugin_activity') return <PluginActivityBlock message={message} {...(disclosure ? { disclosure } : {})} />;
   return null;
 }
 
@@ -2507,7 +2533,7 @@ function WorkAccordionBlock({ disclosure, message }: {
       </button>
       {expanded && (
         <div className="work-accordion-rows">
-          {accordion.rows.map((row) => <WorkAccordionRow key={row.id} message={row} />)}
+          {accordion.rows.map((row) => <WorkAccordionRow key={row.id} message={row} {...(disclosure ? { disclosure } : {})} />)}
         </div>
       )}
     </div>
@@ -2878,7 +2904,7 @@ export function MessageBlock({
       </div>
     );
   }
-  if (message.messageType === 'plugin_activity') return <div className="transcript-event" id={`message-${message.id}`}><PluginActivityBlock message={message} /></div>;
+  if (message.messageType === 'plugin_activity') return <div className="transcript-event" id={`message-${message.id}`}><PluginActivityBlock message={message} {...(rowDisclosure ? { disclosure: rowDisclosure } : {})} /></div>;
   if (message.messageType === 'work_accordion') {
     return (
       <div className="transcript-event" id={`message-${message.id}`}>

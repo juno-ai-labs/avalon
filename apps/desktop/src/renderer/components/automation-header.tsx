@@ -11,11 +11,13 @@ import { statusLabel } from '../lib/format';
 import { Badge, Button, IconButton, ErrorNotice, Modal, StatusDot } from './primitives';
 import { MenuActionItem } from '@rally/ui/components/menu-action-item';
 import { RelativeTime } from './relative-time';
+import { useOptionalCollaborationSession } from '../lib/collaboration-session';
 
 export type AutomationHeaderAction = 'pause' | 'resume' | 'archive' | 'run';
 
 export interface AutomationHeaderProps {
   automation: AutomationDetail;
+  delegateNames?: ReadonlyMap<string, string>;
   delegation?: ReactNode;
   /**
    * Every run the automation has, newest first, from `GET /automations/:id/runs`.
@@ -69,6 +71,7 @@ function runStatus(run: AutomationRun): React.ComponentProps<typeof StatusDot>['
 /** Sidekick profile, lifecycle controls, and activity beside its authoring conversation. */
 export function AutomationHeader({
   automation,
+  delegateNames,
   delegation,
   runs,
   runsError,
@@ -81,6 +84,7 @@ export function AutomationHeader({
   onAppearanceChange,
   onCopyLink,
 }: AutomationHeaderProps): React.JSX.Element {
+  const session = useOptionalCollaborationSession()?.session;
   const definition = automation.currentDefinition;
   const name = definition?.name ?? automation.name;
   const description = definition?.description ?? automation.description;
@@ -213,6 +217,9 @@ export function AutomationHeader({
                           ? <>Running <RelativeTime value={run.startedAt ?? run.createdAt} /></>
                           : <RelativeTime value={run.completedAt ?? run.startedAt ?? run.plannedFor ?? run.createdAt} />)}
                     </small>
+                    {run.coordinatorUserId && <small title={`Coordinating user: ${run.coordinatorUserId}`}>
+                      Coordinated by {run.coordinatorUserId === session?.user.id ? 'you' : delegateNames?.get(run.coordinatorUserId) ?? run.coordinatorUserId}
+                    </small>}
                   </span>
                   <Badge>{statusLabel[runStatus(run)]}</Badge>
                 </li>
