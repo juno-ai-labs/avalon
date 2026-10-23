@@ -20,8 +20,9 @@ export const SUGGESTION_EXCERPT_CHARACTERS = 72;
  * dropped, an ellipsis appended, so the closing quote follows the ellipsis
  * directly. CSS truncation leaves up to a glyph of blank between the ellipsis
  * and whatever comes after it, which is why it is not used here. The line
- * keeps `white-space: nowrap` with `overflow: hidden` as a guard for a narrow
- * pane; the budget is what fits one line of the chip at the narrowest pane
+ * wraps across a merge card's full width; other kinds keep `white-space: nowrap`
+ * with `overflow: hidden` as a guard for a narrow pane. The budget fits one line
+ * of the original chip at the narrowest pane
  * the desktop lays out (design.md, "The client").
  */
 export function suggestionExcerpt(text: string): string {

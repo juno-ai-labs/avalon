@@ -9020,8 +9020,9 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .suggestion-chip-excerpt.is-pending .skeleton-bar { height: 10px; width: min(260px, 72%); }
 .suggestion-chip-controls { align-items: flex-start; display: flex; flex: none; gap: 8px; margin-top: 1px; }
 .suggestion-chip-actions { align-items: flex-end; display: flex; flex-direction: column; gap: 6px; }
-.suggestion-chip.is-merge { align-items: stretch; flex-direction: column; position: relative; }
-.suggestion-chip.is-merge .suggestion-chip-text { padding-right: 26px; }
+.suggestion-chip.is-merge { align-items: stretch; flex-direction: column; position: relative; width: 100%; }
+.suggestion-chip.is-merge .suggestion-chip-title { padding-right: 26px; }
+.suggestion-chip.is-merge .suggestion-chip-excerpt { overflow-wrap: anywhere; white-space: normal; }
 .suggestion-chip.is-merge .suggestion-chip-actions { align-items: center; flex-direction: row; flex-wrap: wrap; }
 .suggestion-chip.is-merge .suggestion-chip-dismiss { position: absolute; right: 12px; top: 10px; }
 .suggestion-chip-action, .suggestion-chip-secondary-action {
@@ -9052,7 +9053,7 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 @media (min-width: 641px) {
   .suggestion-chip-discard { display: inline-flex; }
   .suggestion-chip.is-merge .suggestion-chip-dismiss { display: none; }
-  .suggestion-chip.is-merge .suggestion-chip-text { padding-right: 0; }
+  .suggestion-chip.is-merge .suggestion-chip-title { padding-right: 0; }
 }
 /* The response card: the merge as the parent will draw it, editable, under
    the turn it was asked from or at the end of the feed
