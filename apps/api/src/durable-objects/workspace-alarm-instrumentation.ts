@@ -36,6 +36,8 @@ export type ObservableWorkspaceScheduledAlarmKind =
   | "automation_schedule"
   | "automation_run"
   | "sidekick_memory_tables"
+  | "sidekick_delegation_migration"
+  | "sidekick_delegation_sources"
   | "unknown";
 
 const OBSERVABLE_ALARM_KINDS = new Set<ObservableWorkspaceScheduledAlarmKind>([
@@ -52,6 +54,8 @@ const OBSERVABLE_ALARM_KINDS = new Set<ObservableWorkspaceScheduledAlarmKind>([
   "automation_schedule",
   "automation_run",
   "sidekick_memory_tables",
+  "sidekick_delegation_migration",
+  "sidekick_delegation_sources",
 ]);
 
 export function observableWorkspaceScheduledAlarmKind(

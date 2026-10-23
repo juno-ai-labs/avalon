@@ -71,7 +71,7 @@ export const SidekickDelegationAttentionCodeSchema = z.enum(["no_eligible_delega
 export type SidekickDelegationAttentionCode = z.infer<typeof SidekickDelegationAttentionCodeSchema>;
 export const SIDEKICK_DELEGATION_ATTENTION_MESSAGES: Record<SidekickDelegationAttentionCode, string> = {
   no_eligible_delegate: "Needs attention: no delegated user is available",
-  event_no_eligible_delegate: "Needs attention: the last configured source event had no eligible delegate. Opt in with an account that has access to that source.",
+  event_no_eligible_delegate: "Needs attention: a configured source has no eligible delegated account. Opt in with an account that has access to that source.",
   coordinator_unavailable: "Needs attention: the coordinating delegate is unavailable. Restore their delegation and access, or start a new run with an available delegate.",
 };
 

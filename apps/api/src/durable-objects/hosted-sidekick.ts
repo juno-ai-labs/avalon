@@ -4,8 +4,10 @@ import {
   SidekickExecutionDelegationSchema, type SidekickExecutionDelegation, type WorkspaceExternalEvent,
   SidekickDelegationAttentionCodeSchema, SIDEKICK_DELEGATION_ATTENTION_MESSAGES, type SidekickDelegationAttentionCode,
   type SidekickDelegationGrant, type SidekickDelegationMutationResult, type SidekickDelegatesResult,
+  ExternalEventEvaluatorV1Schema,
 } from "@rally/contracts";
 import { SidekickDelegationStorage } from "./sidekick-delegation-storage";
+import { sidekickSourceRegistrations } from "./sidekick-source-registrations";
 import { rememberSidekickDelegationLocation } from "../services/sidekick-delegation-service";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import {
@@ -152,12 +154,14 @@ import { SCHEDULED_ALARM_RETRY_BASE_MS, scheduledAlarmRetryDelay, type Scheduled
 /** A stored entry per accepted revision whose declared memory tables are still owed. */
 export const SIDEKICK_MEMORY_TABLES_ALARM_KIND = "sidekick_memory_tables";
 export const SIDEKICK_DELEGATION_MIGRATION_ALARM_KIND = "sidekick_delegation_migration";
+export const SIDEKICK_DELEGATION_SOURCES_ALARM_KIND = "sidekick_delegation_sources";
 /** The Sidekick alarm kinds `WorkspaceDO` dispatches here. */
 export const HOSTED_SIDEKICK_ALARM_KINDS: ReadonlySet<string> = new Set([
   AUTOMATION_SCHEDULE_ALARM_KIND,
   AUTOMATION_RUN_ALARM_KIND,
   SIDEKICK_MEMORY_TABLES_ALARM_KIND,
   SIDEKICK_DELEGATION_MIGRATION_ALARM_KIND,
+  SIDEKICK_DELEGATION_SOURCES_ALARM_KIND,
 ]);
 
 /** `<sidekickId>:<key>`: every Sidekick entry names its Sidekick, so one Sidekick's are cancelled alone. */
@@ -326,6 +330,8 @@ export interface HostedSidekickHost {
    * then rolls back with it.
    */
   writeRegistrations(automationId: string, evaluators: readonly unknown[]): number;
+  /** Change only the differing source rows, preserving queued-event boundaries. */
+  reconcileRegistrations(automationId: string, evaluators: readonly unknown[]): void;
   /** After the commit that wrote registrations: the schedule-kind refresh and the Slack source joins. */
   afterRegistrations(automationId: string, revision: number | null, evaluators: readonly unknown[]): Promise<void>;
   /** Inside the transaction that changed a directory row: the sidebar's waterline and a deleted Sidekick's bindings. */
@@ -618,6 +624,7 @@ export class HostedSidekick {
         });
       }
       this.sql.exec("UPDATE automation_directory SET delegation_migrated=1 WHERE automation_id=?", this.sidekickId);
+      this.scheduleSourceReconciliation(uuidV7());
     });
   }
 
@@ -683,10 +690,10 @@ export class HostedSidekick {
     if (!event) return undefined;
     const registry = connectorRegistryForEnv(this.env);
     const adapter = registry.list().some((candidate) => candidate.type === event.connector_type) ? registry.get(event.connector_type) : undefined;
-    const resourceKeys = adapter?.activityResourceKeys?.({ provider: event.provider, eventType: event.event_type,
+    const resourceKeys = adapter?.activityResourceIdentity?.({ provider: event.provider, eventType: event.event_type,
       resourceType: event.resource_type, providerResourceId: event.provider_resource_id,
       subject: JSON.parse(event.subject_json),
-    }) ?? [];
+    })?.resourceKeys ?? [];
     return resourceKeys.length > 0 ? { connectionId: event.connection_id, resourceKeys } : undefined;
   }
 
@@ -737,14 +744,17 @@ export class HostedSidekick {
     if (request.automationId !== this.sidekickId) throw new Error("sidekick_identity_mismatch");
     const enrollment = request.allowed ? await this.assertDelegationEnrollment(request.workspaceId, request.userId) : null;
     if (request.allowed && this.row()?.lifecycle === "deleted") throw this.delegationError("sidekick_delegation_unavailable");
-    const result = this.delegations().mutate({
-      sidekickId: this.sidekickId, userId: request.userId, actorUserId: request.userId,
-      operationId: request.operationId, allowed: request.allowed, expectedGeneration: request.expectedGeneration,
-      membershipIncarnation: enrollment?.relationship.incarnation ?? null, source: request.source,
-      label: enrollment?.row.title || "Unavailable Sidekick",
+    return this.storage.transactionSync(() => {
+      const result = this.delegations().mutate({
+        sidekickId: this.sidekickId, userId: request.userId, actorUserId: request.userId,
+        operationId: request.operationId, allowed: request.allowed, expectedGeneration: request.expectedGeneration,
+        membershipIncarnation: enrollment?.relationship.incarnation ?? null, source: request.source,
+        label: enrollment?.row.title || "Unavailable Sidekick",
+      });
+      if (this.row()) this.host.noteDirectoryChanged(this.sidekickId, false, Date.now());
+      this.scheduleSourceReconciliation(request.operationId);
+      return result;
     });
-    if (this.row()) this.host.noteDirectoryChanged(this.sidekickId, false, Date.now());
-    return result;
   }
 
   /** Own receipt reconciliation survives loss of membership, visibility and deletion. */
@@ -762,13 +772,16 @@ export class HostedSidekick {
     const request = parseRpcInput(SidekickRemoveDelegateRequestSchema, input, "sidekick_delegation_remove");
     const row = this.assertSidekick(request.workspaceId, request.automationId);
     await this.assertManager(row, request.actor);
-    const result = this.delegations().mutate({
-      sidekickId: this.sidekickId, userId: request.userId, actorUserId: request.actor.userId,
-      operationId: request.operationId, allowed: false, expectedGeneration: 0,
-      membershipIncarnation: null, source: "manager_removal", label: "Unavailable Sidekick",
+    return this.storage.transactionSync(() => {
+      const result = this.delegations().mutate({
+        sidekickId: this.sidekickId, userId: request.userId, actorUserId: request.actor.userId,
+        operationId: request.operationId, allowed: false, expectedGeneration: 0,
+        membershipIncarnation: null, source: "manager_removal", label: "Unavailable Sidekick",
+      });
+      this.host.noteDirectoryChanged(this.sidekickId, false, Date.now());
+      this.scheduleSourceReconciliation(request.operationId);
+      return result;
     });
-    this.host.noteDirectoryChanged(this.sidekickId, false, Date.now());
-    return result;
   }
 
   async readDelegation(input: AutomationActorRequest): Promise<SidekickDelegatesResult> {
@@ -954,6 +967,7 @@ export class HostedSidekick {
         this.sidekickId,
       );
       const effectiveAfter = this.writeRegistrations(paused ? [] : prepared.evaluators);
+      if (!paused) this.scheduleSourceReconciliation(uuidV7());
       if (definition.triggers.length > 0 && definition.memoryTables.length > 0) {
         this.host.alarms.schedule({
           kind: SIDEKICK_MEMORY_TABLES_ALARM_KIND,
@@ -1137,7 +1151,13 @@ export class HostedSidekick {
     const definition = row.accepted_definition_json ? AutomationDraftSchema.parse(JSON.parse(row.accepted_definition_json)) : null;
     if (definition?.definitionVersion === 2) {
       const sources = z.array(z.object({ evaluatorId: z.string(), source: z.object({ eventType: z.string() }) })).parse(JSON.parse(row.evaluator_projection_json));
-      if (!definition.triggers.some(isExternalEventTrigger) || !sources.some((entry) => entry.evaluatorId === request.registrationId && entry.source.eventType === request.event.eventType)) {
+      const registration = this.sql.exec<{ evaluator_json: string }>(
+        "SELECT evaluator_json FROM workspace_external_event_registrations WHERE registration_id=? AND automation_id=?",
+        request.registrationId, this.sidekickId,
+      ).toArray()[0];
+      const registered = registration ? ExternalEventEvaluatorV1Schema.parse(JSON.parse(registration.evaluator_json)) : null;
+      const configuredId = registered?.sourceEvaluatorId ?? registered?.evaluatorId;
+      if (!definition.triggers.some(isExternalEventTrigger) || !sources.some((entry) => entry.evaluatorId === configuredId && entry.source.eventType === request.event.eventType)) {
         return { kind: "refuse", outcomeCode: "sidekick_trigger_removed" };
       }
     }
@@ -1423,6 +1443,7 @@ export class HostedSidekick {
         source: "self_service", label: row.title || "Unavailable Sidekick",
       });
       const accessChanged = this.delegations().grantClaimAccess(this.sidekickId, claimant);
+      this.scheduleSourceReconciliation(operationId);
       if (result.changed || accessChanged) this.touchDirectory(Date.now());
       return result.changed || accessChanged;
     });
@@ -1706,6 +1727,10 @@ export class HostedSidekick {
   // ---------------------------------------------------------------------------
 
   async runAlarm(alarm: ScheduledAlarm, innerKey: string): Promise<ScheduledAlarmOutcome> {
+    if (alarm.kind === SIDEKICK_DELEGATION_SOURCES_ALARM_KIND) {
+      await this.reconcileSourceRegistrations();
+      return { progressed: true };
+    }
     if (alarm.kind === SIDEKICK_DELEGATION_MIGRATION_ALARM_KIND) {
       await this.migrateDelegation();
       return { progressed: true };
@@ -1994,6 +2019,7 @@ export class HostedSidekick {
     if (!resumed) throw new Error("sidekick_missing");
     const evaluators = JSON.parse(resumed.evaluator_projection_json) as unknown[];
     this.touchDirectory(now, this.writeRegistrations(evaluators));
+    this.scheduleSourceReconciliation(uuidV7());
     return evaluators;
   }
 
@@ -2017,7 +2043,7 @@ export class HostedSidekick {
    */
   private cancelSidekickAlarms(): void {
     this.host.alarms.cancelByKeyPrefix(
-      [AUTOMATION_SCHEDULE_ALARM_KIND, AUTOMATION_RUN_ALARM_KIND], sidekickAlarmKey(this.sidekickId, ""),
+      [AUTOMATION_SCHEDULE_ALARM_KIND, AUTOMATION_RUN_ALARM_KIND, SIDEKICK_DELEGATION_SOURCES_ALARM_KIND], sidekickAlarmKey(this.sidekickId, ""),
     );
   }
 
@@ -2053,6 +2079,34 @@ export class HostedSidekick {
    */
   private writeRegistrations(evaluators: readonly unknown[]): number {
     return this.host.writeRegistrations(this.sidekickId, evaluators);
+  }
+
+  /** Host-owned invalidations use the same durable source refresh as self-service. */
+  scheduleSourceReconciliation(actionId: string): void {
+    const row = this.row();
+    if (row?.lifecycle !== "active" || row.evaluator_projection_json === "[]") return;
+    this.host.alarms.schedule({ kind: SIDEKICK_DELEGATION_SOURCES_ALARM_KIND,
+      key: sidekickAlarmKey(this.sidekickId, actionId), dueAt: Date.now() });
+  }
+
+  private async reconcileSourceRegistrations(): Promise<void> {
+    const initial = this.row();
+    if (!initial || initial.lifecycle !== "active") return;
+    const authority = await this.readExecutionDelegation({ workspaceId: initial.workspace_id, automationId: this.sidekickId });
+    const expanded = this.storage.transactionSync(() => {
+      const current = this.row();
+      if (!current || current.lifecycle !== "active" || current.accepted_definition_revision !== initial.accepted_definition_revision) return null;
+      const configured = z.array(ExternalEventEvaluatorV1Schema).parse(JSON.parse(current.evaluator_projection_json));
+      const evaluators = sidekickSourceRegistrations({ storage: this.storage, workspaceId: current.workspace_id,
+        sidekickId: this.sidekickId, registry: connectorRegistryForEnv(this.env),
+        eligibleUserIds: new Set(authority.delegates.map((grant) => grant.userId)),
+        evaluators: configured });
+      this.host.reconcileRegistrations(this.sidekickId, evaluators);
+      const covered = new Set(evaluators.map((evaluator) => evaluator.sourceEvaluatorId ?? evaluator.evaluatorId));
+      if (configured.some((evaluator) => !covered.has(evaluator.evaluatorId))) this.noteDelegationAttention("event_no_eligible_delegate");
+      return evaluators;
+    });
+    if (expanded) await this.host.afterRegistrations(this.sidekickId, initial.accepted_definition_revision, expanded);
   }
 
   /**

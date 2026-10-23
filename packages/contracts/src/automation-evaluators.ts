@@ -205,6 +205,8 @@ export const ModelFacingExternalEventPredicateV1Schema = z.union([
 
 export const ExternalEventEvaluatorV1Schema = z.strictObject({
   evaluatorId: IdSchema.brand<"ExternalEventEvaluatorId">(),
+  /** Host-only expansion of a configured rule through another delegated connection. */
+  sourceEvaluatorId: IdSchema.optional(),
   source: z.strictObject({
     connectorType: ConnectorTypeSchema,
     connectionId: IdSchema.brand<"ConnectionId">(),

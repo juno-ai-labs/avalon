@@ -26,6 +26,17 @@ remain separate from this effect-ordering fence.
 
 ## Where the code lives
 
+Sidekick source reconciliation uses stored `sidekick_delegation_sources`
+entries. Grant mutations write the wake atomically with consent; connection
+authority triggers and existing membership/reach invalidations also queue it.
+Keys include the originating action identity, so a wake queued while an older
+handler awaits eligibility cannot be erased by that handler's settlement.
+Migration 130 queues existing active configured Sidekicks. Connection RPCs and
+membership/reach paths re-arm the native alarm after writing work. The handler
+uses normal alarm retries and current definition checks; it performs no provider
+access probe. [Sidekick lifecycle](automation-lifecycle.md) owns registration
+selection and the event cutoffs that unchanged rows preserve.
+
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/durable-objects/scheduled-alarm-report.ts` | How a gated entry is reported, whichever object holds it: the attempt that warns, the one that logs an error, the one that notifies an operator, and what of a thrown error may leave. |
@@ -571,6 +582,25 @@ row to its own grant directory right after the write, and the outbox lane of the
 alarm retries a failed apply. See [scope grant directory](scope-grant-directory.md).
 
 ## Changelog
+
+### 2026-10-22 — Reconcile Sidekick source accounts through the existing alarm
+
+**What changed:** Consent, connection authority and membership/reach changes
+queue source reconciliation in WorkspaceDO's stored alarm lane. Migration 130
+wakes existing active configured Sidekicks. Consent and its refresh wake commit
+together, and connection writes re-arm the native alarm.
+
+**Why:** A grant can make a configured resource readable through another
+account, while withdrawal can remove that source. Without a durable wake,
+scheduled reads and event subscriptions would use different account sets.
+
+**Considered and rejected:** Synchronous provider checks or a separate
+authorization sequencer would add latency beyond the agreed eventual-consistency
+contract. Reusing one in-flight key could let settlement erase a newer wake.
+
+**Consequences:** Each action retains a wake until normal alarm settlement;
+only changed registrations move their event cutoff. This introduces no new
+retry policy or historical-event replay.
 
 ### 2026-09-28 — A WorkspaceDO wake runs only the lanes that are due
 

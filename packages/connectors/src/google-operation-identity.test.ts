@@ -1,18 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { googleOperationIdentity, googleOperationResultKeys, googleActivityResourceKeys } from "./google-operation-identity";
+import { googleOperationIdentity, googleOperationResultKeys, googleActivityResourceIdentity } from "./google-operation-identity";
 
 describe("authored Google operation identity", () => {
   it("projects normalized activation IDs without accepting source identity from prose or metadata", () => {
-    expect(googleActivityResourceKeys({ provider: "google", eventType: "email.received", resourceType: "gmail_thread",
+    expect(googleActivityResourceIdentity({ provider: "google", eventType: "email.received", resourceType: "gmail_thread",
       providerResourceId: "thread-1", subject: { messageId: "message-1", threadId: "thread-1" } }))
-      .toEqual(["google:thread:thread-1", "google:message:message-1"]);
-    expect(googleActivityResourceKeys({ provider: "google", eventType: "calendar.event_changed", resourceType: "calendar_event",
+      .toEqual({ kind: "account", resourceKeys: ["google:thread:thread-1", "google:message:message-1"] });
+    expect(googleActivityResourceIdentity({ provider: "google", eventType: "calendar.event_changed", resourceType: "calendar_event",
       providerResourceId: "event-1", subject: { calendarId: "primary", eventId: "event-1" } }))
-      .toEqual(["google:event:primary:event-1"]);
-    expect(googleActivityResourceKeys({ provider: "google", eventType: "sheets.spreadsheet_changed", resourceType: "google_sheet",
-      providerResourceId: "sheet-1", subject: {} })).toEqual(["google:file:sheet-1"]);
-    expect(googleActivityResourceKeys({ provider: "webhook", eventType: "email.received", resourceType: "gmail_thread",
-      providerResourceId: "forged-thread", subject: { messageId: "forged-message" } })).toEqual([]);
+      .toEqual({ kind: "account", resourceKeys: ["google:event:primary:event-1"] });
+    expect(googleActivityResourceIdentity({ provider: "google", eventType: "sheets.spreadsheet_changed", resourceType: "google_sheet",
+      providerResourceId: "sheet-1", subject: {} })).toEqual({ kind: "resource", resourceKeys: ["google:file:sheet-1"] });
+    expect(googleActivityResourceIdentity({ provider: "webhook", eventType: "email.received", resourceType: "gmail_thread",
+      providerResourceId: "forged-thread", subject: { messageId: "forged-message" } })).toEqual({ kind: "account", resourceKeys: [] });
   });
   it.each([
     ["drive.get_metadata", { fileId: "file-1" }], ["drive.download", { fileId: "file-1" }],
