@@ -3,7 +3,6 @@ import { ArtifactWindow } from './screens/artifact-window';
 import { AppErrorBoundary } from "@rally/ui/components/app-error-boundary";
 import { createQueryClient } from "./lib/query-client";
 import * as Tooltip from '@radix-ui/react-tooltip';
-import type { Region } from "@rally/contracts/regions";
 import { QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { Cable, RefreshCcw } from 'lucide-react';
 import { type PropsWithChildren, useCallback, useEffect, useRef, useState } from 'react';
@@ -11,6 +10,7 @@ import { HashRouter, Navigate, Route, Routes, useLocation, useParams } from 'rea
 import { desktopWorkspaceIdentityKey } from '../common/desktop';
 import { logError } from '../common/logger';
 import { AppShell } from './components/app-shell';
+import { RallyPong } from './components/easter-eggs/rally-pong';
 import { Button, EmptyState, LoadingState } from './components/primitives';
 import { SpeechPlaybackProvider } from './components/speech-playback';
 import { ApiError, isSessionRejection } from './lib/api';
@@ -67,38 +67,42 @@ function ErrorBoundary({ children }: PropsWithChildren): React.JSX.Element {
   }}>{children}</AppErrorBoundary>;
 }
 
-function ServiceSetupState({
-  error,
-  onRetry,
-  targetApiBaseUrl,
-  targetRegion,
-}: {
-  error: Error;
-  onRetry: () => void;
-  targetApiBaseUrl?: string;
-  targetRegion?: Region;
-}): React.JSX.Element {
-  const { api, region, signOut } = useAppSession();
-  const displayRegion = targetRegion ?? region;
+function ServiceSetupState({ error, onRetry }: { error: Error; onRetry: () => void }): React.JSX.Element {
+  const { signOut } = useAppSession();
+  const [playing, setPlaying] = useState(false);
+  const stopPlaying = useCallback(() => setPlaying(false), []);
   const isNetwork = error instanceof ApiError && error.status === 0;
+  useEffect(() => {
+    // Space starts a game, as the offline dinosaur does, unless a control has
+    // focus and Space is that control's.
+    const start = (event: KeyboardEvent) => {
+      if (event.key !== ' ' || event.target !== document.body) return;
+      event.preventDefault();
+      setPlaying(true);
+    };
+    window.addEventListener('keydown', start);
+    return () => window.removeEventListener('keydown', start);
+  }, []);
   return (
     <main className="service-setup-screen window-drag">
       <section className="service-setup-card window-no-drag">
-        <span className="setup-icon"><Cable size={22} /></span>
-        <p className="eyebrow">{isNetwork ? 'Service unavailable' : 'Setup required'}</p>
-        <h1>Regional connection</h1>
-        <ErrorNotice detailsLabel="Connection details" occurrence={error} title={isNetwork ? 'Rally cannot reach this region' : 'The regional service is not ready'}>{error.message}</ErrorNotice>
-        <dl>
-          <div><dt>Region</dt><dd>{displayRegion}</dd></div>
-          <div><dt>API endpoint</dt><dd className="mono">{targetApiBaseUrl ?? api?.baseUrl}</dd></div>
-        </dl>
-        <div className="setup-guidance">
-          <strong>Local development</strong>
-          <p>Start the Cloudflare API for this region and confirm this deployment’s API URL in <code>.env.local</code>. Server API keys must not use a <code>VITE_</code> prefix.</p>
-        </div>
+        <button
+          aria-label={playing ? 'Stop playing Pong' : 'Play Pong while you wait'}
+          className="setup-icon"
+          onClick={() => setPlaying((current) => !current)}
+          type="button"
+        >
+          <Cable size={20} />
+        </button>
+        <h1>{isNetwork ? 'Rally can’t connect' : 'Rally isn’t available right now'}</h1>
+        {/* A network failure's message only restates the title; any other
+            failure's message is the reason, such as a sign-in that was refused. */}
+        <p>{isNetwork ? 'Check your internet connection, then try again.' : error.message}</p>
+        {playing && <RallyPong onClose={stopPlaying} />}
         <div className="setup-actions">
-          <Button onClick={() => void signOut()}>Return to sign in</Button>
-          <Button className="button-primary" onClick={onRetry}><RefreshCcw size={14} /> Retry connection</Button>
+          {isNetwork && <ErrorNotice automatic={false} detailsLabel="Details" occurrence={error} title="Rally can’t connect">{error.message}</ErrorNotice>}
+          <Button onClick={() => void signOut()}>Sign out</Button>
+          <Button className="button-primary" onClick={onRetry}><RefreshCcw size={14} /> Try again</Button>
         </div>
       </section>
     </main>
@@ -465,7 +469,7 @@ function SpaceRedirect(): React.JSX.Element {
 
 function WorkspaceOnboardingGate(): React.JSX.Element {
   const {
-    activateWorkspace, getOnboardingState, runtime, session, signOut, signOutIfCredentialCleared,
+    activateWorkspace, getOnboardingState, session, signOut, signOutIfCredentialCleared,
     surrenderActiveWorkspace,
   } = useAppSession();
   const [activatingWorkspaceId, setActivatingWorkspaceId] = useState<string | null>(null);
@@ -539,8 +543,6 @@ function WorkspaceOnboardingGate(): React.JSX.Element {
             setActivationError(null);
             setActivatingWorkspaceId(null);
           }}
-          targetApiBaseUrl={runtime?.api[onboarding.data.workspace!.region]}
-          targetRegion={onboarding.data.workspace.region}
         />
       );
     }

@@ -2034,13 +2034,6 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .service-setup-card,
 .fatal-error-card { background: var(--av-sys-color-surface-default); border: 1px solid var(--av-ref-color-line-2); border-radius: var(--av-sys-size-radius-xl); padding: 28px; }
 .setup-icon { align-items: center; background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-warning-base); display: flex; height: 42px; justify-content: center; margin-bottom: 20px; width: 42px; }
-.service-setup-card dl { border-bottom: 1px solid var(--av-sys-color-border-default); border-top: 1px solid var(--av-sys-color-border-default); margin: 22px 0; padding: 9px 0; }
-.service-setup-card dl div { display: grid; gap: 12px; grid-template-columns: 90px 1fr; padding: 5px 0; }
-.service-setup-card dt { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); }
-.service-setup-card dd { font-size: var(--av-cmp-control-font-size); margin: 0; overflow-wrap: anywhere; }
-.setup-guidance { background: var(--av-sys-color-surface-subtle); border-radius: var(--av-sys-size-radius-md); padding: 12px 14px; }
-.setup-guidance strong { font-size: var(--av-cmp-control-font-size); }
-.setup-guidance p { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); margin: 5px 0 0; }
 .setup-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
 .fatal-error-card > svg { color: var(--av-sys-color-danger-base); }
 .fatal-error-card p { color: var(--av-sys-color-text-muted); }
@@ -2058,28 +2051,31 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
   padding: 24px;
   width: min(480px, 100%);
 }
+.service-setup-card { width: min(400px, 100%); }
+/* The icon is the Pong button; it should not look like one. */
 .service-setup-card .setup-icon {
   background: var(--av-sys-color-surface-raised-hover);
-  border-radius: 14px;
+  border: 0;
+  border-radius: 12px;
   color: var(--av-sys-color-text-subtle);
-  margin-bottom: 18px;
-  height: 44px;
-  width: 44px;
+  cursor: default;
+  margin-bottom: 16px;
+  height: 40px;
+  padding: 0;
+  width: 40px;
 }
-.service-setup-card h1 { font-size: 22px; font-weight: 560; letter-spacing: -.025em; line-height: 1.3; margin: 6px 0 10px; }
+.service-setup-card .setup-icon:focus-visible { box-shadow: var(--av-sys-focus-ring-quiet); outline: none; }
+.service-setup-card h1 { font-size: 20px; font-weight: 560; letter-spacing: -.02em; line-height: 1.3; margin: 0 0 6px; }
+.service-setup-card > p { color: var(--av-sys-color-text-muted); font-size: 14px; line-height: 1.5; margin: 0; }
+.service-setup-card .setup-actions > .button:first-child { margin-right: auto; }
+.rally-pong { margin-top: 16px; }
+.rally-pong canvas { aspect-ratio: 480 / 200; background: var(--av-sys-color-surface-raised-hover); border-radius: 12px; color: var(--av-sys-color-text-default); display: block; touch-action: none; width: 100%; }
+.rally-pong-score { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); font-variant-numeric: tabular-nums; margin: 8px 0 0; text-align: center; }
 .fatal-error-card h1 { font-size: 22px; font-weight: 560; letter-spacing: -.025em; line-height: 1.3; margin: 0 0 10px; }
 .fatal-error-card > svg { background: var(--av-sys-color-danger-wash); border-radius: 14px; box-sizing: content-box; display: block; margin-bottom: 18px; padding: 11px; }
 .fatal-error-card p { font-size: 14px; line-height: 1.5; margin: 0 0 20px; overflow-wrap: anywhere; }
 .fatal-error-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .fatal-error-actions .button { border-radius: 999px; min-height: 36px; padding: 8px 14px; }
-.service-setup-card > p:not(.eyebrow) { font-size: 14px; line-height: 1.5; }
-.service-setup-card dl { background: var(--av-sys-color-surface-raised-hover); border: .5px solid var(--av-ref-color-line-3); border-radius: 12px; margin: 20px 0 12px; overflow: hidden; padding: 0; }
-.service-setup-card dl div { align-items: baseline; gap: 12px; grid-template-columns: 88px minmax(0, 1fr); padding: 12px 14px; }
-.service-setup-card dl div + div { border-top: .5px solid var(--av-ref-color-line-3); }
-.service-setup-card dd { line-height: 1.45; min-width: 0; }
-.service-setup-card .setup-guidance { background: var(--av-sys-color-surface-raised-hover); border-radius: 12px; padding: 14px; }
-.service-setup-card .setup-guidance strong { color: var(--av-sys-color-text-default); font-weight: 560; }
-.service-setup-card .setup-guidance p { line-height: 1.5; margin-top: 6px; }
 .service-setup-card .setup-actions { flex-wrap: wrap; gap: 8px; margin-top: 20px; }
 .service-setup-card .setup-actions .button { border-radius: 999px; min-height: 36px; padding: 8px 14px; }
 @media (max-width: 480px) {
@@ -2089,6 +2085,25 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
   .fatal-error-card { padding: 20px; }
   .service-setup-card .setup-actions .button { flex: 1 1 auto; }
 }
+
+/* Easter eggs */
+
+.konami-egg {
+  animation: konami-fade 1.6s ease-out forwards;
+  background: radial-gradient(circle at center, color-mix(in srgb, var(--av-sys-color-accent-base) 45%, transparent), transparent 70%);
+  display: grid;
+  inset: 0;
+  place-items: center;
+  pointer-events: none;
+  position: fixed;
+  z-index: 1000;
+}
+.konami-egg span { color: var(--av-sys-color-text-default); font-size: 44px; font-weight: 700; letter-spacing: -.03em; }
+@media (prefers-reduced-motion: no-preference) {
+  .konami-egg span { animation: konami-rise 1.6s ease-out forwards; }
+}
+@keyframes konami-fade { 0% { opacity: 0; } 15% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes konami-rise { from { transform: translateY(24px) scale(.9); } to { transform: translateY(-24px) scale(1.05); } }
 
 /* Shared screens */
 
@@ -2746,6 +2761,13 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .settings-diagnostics div:last-child { border-bottom: 0; }
 .settings-diagnostics dt { align-items: center; color: var(--av-sys-color-text-subtle); display: flex; font-size: var(--av-cmp-control-font-size); gap: 6px; }
 .settings-diagnostics dd { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); margin: 0; overflow-wrap: anywhere; text-align: right; }
+.about-credits { margin-top: 12px; padding: 18px 14px; text-align: center; }
+.about-credits p { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); margin: 0; }
+.about-credits ul { font-size: 15px; font-weight: 560; list-style: none; margin: 6px 0; padding: 0; }
+@media (prefers-reduced-motion: no-preference) {
+  .about-credits { animation: about-credits-in .4s ease-out; }
+}
+@keyframes about-credits-in { from { opacity: 0; transform: translateY(6px); } }
 .settings-diagnostics dd > small { display: block; font-size: 12px; margin-top: 4px; }
 
 /* Rally has one design with a three-position appearance preference. */
