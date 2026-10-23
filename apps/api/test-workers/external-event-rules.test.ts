@@ -50,6 +50,11 @@ function workspace() {
 
 async function seed(): Promise<void> {
   await seedWorkspaceControlPlane(env.DB, { workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, sessionId: SESSION_ID });
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO users(id,name) VALUES (?,'Other member')").bind(OTHER_MEMBER_ID),
+    env.DB.prepare("INSERT INTO workspace_members(workspace_id,user_id,role,status) VALUES (?,?,'member','active')")
+      .bind(WORKSPACE_ID, OTHER_MEMBER_ID),
+  ]);
   await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
   await runInDurableObject(workspace(), (_instance: WorkspaceDO, state) => {
     for (const [connector, connection] of Object.entries(CONNECTIONS)) {
@@ -61,21 +66,16 @@ async function seed(): Promise<void> {
         connection.id, WORKSPACE_ID, connector, `${connector} fixture`, NOW, NOW, connection.plugin,
       );
     }
-    const directoryRow = (automationId: string, scope: "personal" | "workspace", author: string) => {
-      state.storage.sql.exec(
-        `INSERT INTO automation_directory
-           (automation_id, workspace_id, author_user_id, source_version, payload_hash, lifecycle, scope,
-            owning_workstream_id, title, description, next_run_at, projected_at)
-         VALUES (?, ?, ?, 1, 'sha256:seed', 'active', ?, NULL, ?, '', NULL, ?)`,
-        automationId, WORKSPACE_ID, author, scope, automationId, Date.parse(NOW),
-      );
-    };
-    for (const id of Object.values(AUTOMATIONS)) {
-      if (id === AUTOMATIONS.personalOfOther) directoryRow(id, "personal", OTHER_MEMBER_ID);
-      else if (id === AUTOMATIONS.workspaceWide) directoryRow(id, "workspace", AUTHOR_ID);
-      else directoryRow(id, "personal", AUTHOR_ID);
-    }
   });
+  for (const id of Object.values(AUTOMATIONS)) {
+    await workspace().sidekickCreate({ workspaceId: WORKSPACE_ID, automationId: id,
+      authorUserId: id === AUTOMATIONS.personalOfOther ? OTHER_MEMBER_ID : AUTHOR_ID,
+      scope: id === AUTOMATIONS.workspaceWide ? "workspace" : "personal", owningWorkstreamId: null,
+      authorityGeneration: 1, creatorConsent: { requestId: crypto.randomUUID() } });
+    // Routing needs active authority, without publishing a workflow to execute.
+    await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      "UPDATE automation_directory SET lifecycle='active',title=? WHERE automation_id=?", id, id));
+  }
 }
 
 type Evaluator = {
@@ -347,10 +347,8 @@ describe("external event rules across connectors", () => {
     const reviewedByOther = await ingest("github", "github.issue.assigned", {
       metadata: { assigneePersonId: AUTHOR_ID, reviewerPersonIds: [OTHER_MEMBER_ID] },
     });
-    // Restricted to the author: only a personal automation whose author is in
-    // the audience may hear it. A workspace automation is readable by every
-    // member, so a restricted event never reaches one, and another member's
-    // personal automation is outside the audience.
+    // Restricted events require an eligible delegate in their actual audience,
+    // for both personal and Organization-owned Sidekicks.
     const restrictedToAuthor = await ingest("github", "github.issue.assigned", {
       metadata: { assigneePersonId: AUTHOR_ID, reviewerPersonIds: [] },
       visibility: { kind: "restricted" },
@@ -361,7 +359,7 @@ describe("external event rules across connectors", () => {
       .toEqual([AUTOMATIONS.assignedToAuthor, AUTOMATIONS.personalOfOther, AUTOMATIONS.workspaceWide].sort());
     expect(await destinationsFor(reviewedByOther))
       .toEqual([AUTOMATIONS.personalOfOther, AUTOMATIONS.workspaceWide].sort());
-    expect(await destinationsFor(restrictedToAuthor)).toEqual([AUTOMATIONS.assignedToAuthor]);
+    expect(await destinationsFor(restrictedToAuthor)).toEqual([AUTOMATIONS.assignedToAuthor, AUTOMATIONS.workspaceWide].sort());
   });
 
   it("does not hear an event that arrived before the rule, and hears nothing after the rule is replaced", async () => {

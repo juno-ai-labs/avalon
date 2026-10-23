@@ -77,11 +77,22 @@ Migration snapshots existing `run_as_user_id` as the implicit task account and
 retains already-provisioned run identities. A durable alarm installs consent for
 established non-creator claims once, without overwriting any grant or withdrawal.
 Matching creator/run-as identities without direct-user provenance remain
-ungranted. Current direct-user creation records its explicit provenance. The
+ungranted. The historical creation paths stored the same author/run-as pair for
+direct and autonomous creation and left no creation-receipt address on the
+directory row. Agent receipts live in the originating conversation, without a
+reverse lookup from the created Sidekick. Migration
+does not scan all conversation receipts to guess provenance. Ambiguous legacy
+creators use the ordinary opt-in control. Current direct-user creation records
+its explicit provenance. The
 legacy claim endpoint now records self-consent and retains its explicit human
 entitlement in `sidekick_claim_access`, without rebinding configured sources or
 changing creator preference. Neither these grants nor coordinator selection
 replace the directory's existing reader/manager entitlements.
+
+An activation whose conversation post is refused retains a fixed
+`permission_report_unavailable` attention message on the Sidekick. The refused
+tool still returns its original failure; normal later admission clears the
+attention field. This uses the same directory state as unavailable delegation.
 
 External-event openings retain the source connection and code-projected provider
 reference keys from the canonical event row. This host-only field is separate

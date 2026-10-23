@@ -199,6 +199,8 @@ export interface ConnectorToolContext {
   principal: ExecutionPrincipal;
   /** Stable host receipt key when the provider supports idempotent writes. */
   providerIdempotencyKey?: string;
+  /** Re-entering an interrupted receipt, with its original provider key. */
+  replaying?: boolean;
   /**
    * Provider invocation credentials captured by the trusted ingress host.
    * These values are never model-visible and must not be accepted in a tool

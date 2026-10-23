@@ -4805,7 +4805,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     `UPDATE automation_directory SET legacy_account_user_id=COALESCE(run_as_user_id,author_user_id)`,
     `ALTER TABLE sidekick_runs ADD COLUMN coordinator_user_id TEXT`,
     `UPDATE sidekick_runs SET coordinator_user_id=run_as_user_id WHERE run_as_user_id IS NOT NULL`,
-    `CREATE TABLE sidekick_claim_access(sidekick_id TEXT NOT NULL,user_id TEXT NOT NULL,PRIMARY KEY(sidekick_id,user_id))`,
+    `CREATE TABLE sidekick_claim_access(sidekick_id TEXT NOT NULL,user_id TEXT NOT NULL,PRIMARY KEY(sidekick_id,user_id)) STRICT`,
     `INSERT OR IGNORE INTO _internal_durable_alarms(kind,alarm_key,due_at,created_at,updated_at)
      SELECT 'sidekick_delegation_migration',automation_id || ':0',0,0,0 FROM automation_directory WHERE region IS NOT NULL`,
   ],
@@ -6950,6 +6950,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   async sidekickNoteCoordinatorUnavailable(input: Parameters<HostedSidekick["noteCoordinatorUnavailable"]>[0]) {
     return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.noteCoordinatorUnavailable(input));
+  }
+
+  async sidekickNotePermissionReportUnavailable(input: Parameters<HostedSidekick["notePermissionReportUnavailable"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.notePermissionReportUnavailable(input));
   }
 
   async sidekickContinueRun(input: Parameters<HostedSidekick["continueRun"]>[0]) {

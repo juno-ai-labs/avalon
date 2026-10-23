@@ -1672,6 +1672,16 @@ writes as permission to try another account. Undeclared and hosted MCP tools
 retain their explicitly selected connection. [Agent harness](agent-harness.md)
 owns selection and durable account receipts.
 
+Calendar creation uses the existing receipt-derived provider key as a stable
+event ID for timed, all-day and recurring events. A duplicate-ID response reads
+that exact event back through the same account, requiring `calendar.read`,
+without overwriting subsequent edits. Other conflicts and failed readbacks stay
+unresolved. This follows [Google's caller-generated event ID guidance](https://developers.google.com/workspace/calendar/api/guides/create-events).
+Recovery requires an explicit calendar ID (including `primary`) in the original
+arguments. An omitted default or a calendar name may resolve elsewhere after
+interruption, so it stays unresolved instead of risking a second event. Old
+creates without a recorded provider key cannot use this recovery path.
+
 ## Changelog
 
 ### 2026-10-22 — Admit Sidekick events through explicit delegation
@@ -1691,9 +1701,14 @@ remain on their configured account. Google Drive file observations share a
 provider-version occurrence key across accounts, preserving one run when the
 same change arrives through several registrations. No such cross-account
 identity is asserted for private mail or calendar observations.
+Calendar creates now retain a receipt-key event ID; lost responses recover the
+same event through its original account using the existing harness recovery
+path. Historical Google surfaces remain compatible for unchanged operations.
 
 **Why:** The ownership-scope shortcut discarded a Thread-owned Sidekick's
 authorized Sheet changes while an hourly read could proceed.
+An uncertain write also needs an actual provider recovery mechanism: selecting
+the original account alone cannot establish whether its effect happened.
 
 **Considered and rejected:** Extending the old privacy shortcut to schedules
 would restrict the requested standing consent for configured work and shared

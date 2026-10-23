@@ -123,6 +123,10 @@ export async function executeSidekickAccountOperation<C extends SidekickAccountC
   // effect's selection; unrelated identities remain bound.
   const bindingConnections = [...new Set(bindings.map((binding) => binding.connectionId))];
   const continuation = context.executionAccount;
+  const pinnedAccount = prior && prior.phase !== "refused" ? prior.account : continuation;
+  if (pinnedAccount && !grants.has(pinnedAccount.delegatedUserId)) {
+    throw unavailable("The originating delegate is unavailable: they are not an eligible Sidekick delegate. Restore that person's delegation before reconciling this operation; it will not use another delegate.");
+  }
   const source = options.sourceAccount?.resourceKeys.some((key) => identity.resourceKeys.includes(key)) ? options.sourceAccount : undefined;
   const relevantBindings = selection || continuation ? bindings.filter((binding) =>
     (!selection?.connectionId || binding.connectionId === selection.connectionId)
@@ -179,7 +183,7 @@ export async function executeSidekickAccountOperation<C extends SidekickAccountC
   for (const connection of ordered) {
     context.signal.throwIfAborted();
     const delegate = connection.scope === "personal" ? connection.ownerUserId
-      : selection?.userId ?? (options.coordinatorUserId && grants.has(asUserId(options.coordinatorUserId))
+      : pinnedAccount?.delegatedUserId ?? selection?.userId ?? (options.coordinatorUserId && grants.has(asUserId(options.coordinatorUserId))
         ? options.coordinatorUserId : authority.delegates[0]!.userId);
     const grant = grants.get(asUserId(delegate!))!;
     const account: ToolExecutionAccount = {

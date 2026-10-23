@@ -267,6 +267,12 @@ seeding. A cast member acts under the `demo_seed` auth principal: no session,
 because the cast never signs in, and the object verifies their current
 membership instead — the same verification a connector ingress gets.
 
+A Sidekick creation step includes the cast creator's initial delegation, through
+the ordinary creation argument and the action's stable identity. This is part
+of the operator-authored demo fixture, alongside its messages as cast members;
+an autonomous Sidekick creating another Sidekick gains no such opt-in. Replaying
+demo creation never restores a withdrawn grant.
+
 Two things are replaced, and both are decisions rather than writers:
 
 - **Addressing.** A message in a multi-person room is normally classified by a
@@ -741,6 +747,22 @@ the cast discussed is answerable. That was a product defect in every
 multi-person room, not a demo concern, and it is fixed where it lived.
 
 ## Changelog
+
+### 2026-10-22 — Include creator opt-in in scripted Sidekick creation
+
+**What changed:** The existing Sidekick seed action supplies creator consent
+under its stable creation identity, using the ordinary creation path.
+
+**Why:** Explicit delegation otherwise left the pack's scripted briefing without
+an eligible delegate and prevented demo readiness. The pack already authors
+this creation as its cast member; the initial opt-in belongs to that action.
+
+**Considered and rejected:** Bypassing run admission for demo briefings or
+restoring consent whenever a seed action retries. Both would diverge from the
+product behavior the demo must exercise.
+
+**Consequences:** Withdrawal survives replays. Autonomous agent creation still
+records no inherited user consent.
 
 ### 2026-10-13 — A demo's people are seated in General and given Personal Channels before seeding
 

@@ -36,6 +36,53 @@ lookup/self-withdrawal, delegation execution and activity attribution remain.
 Record executed checks and their actual coverage here as work progresses. Do not
 turn an implementation checklist into an assertion that its tests passed.
 
+### Recovery, browser acceptance and final scope checkpoint
+
+- Native Calendar creation now uses the existing provider-key and receipt
+  recovery path. Real workerd covers an accepted POST with a lost response,
+  eviction, original-delegate withdrawal/regrant, executing and ambiguous
+  receipts, and durable R2 completion through the same account/event ID.
+  Recovery refuses an omitted default or calendar name rather than resolving
+  a potentially different destination. Connector tests cover all three create
+  variants, unrelated conflicts, readback capability and unstable targets.
+  No new recovery table, provider preflight or retry framework was added.
+- Negative controls disabled connector recovery, omitted the original-key
+  check, removed the original-delegate fence, and permitted a changed calendar
+  target. Each targeted check failed for its named behavior before restoration.
+- Twelve live prompt/tool cases passed on the configured fallback model,
+  `google/gemini-3.8-flash`, using exported production prompts and schemas.
+  These cover direct opt-in/list/withdrawal, someone else's consent, quoted and
+  injected consent, unknown targets, response-loss inspection, blocked/partial
+  activation reports, quiet successful fallback, and a refused report without
+  a delivery claim. Provider/tool outcomes were fixtures; real consent and post
+  authority are covered separately on workerd. Results and browser screenshots
+  are in this task's Sidekick QA artifact directory.
+- Real headed Chrome inspected creator disclosure and enrollment, empty and
+  populated lists, loading, manager/unavailable rows, pending saves, offline
+  controls, read failure/acknowledgement/retry and compact Details. Two actual
+  browser sessions converged withdrawal/re-enrollment. Archiving the isolated
+  QA draft caused the other session to lose access and remove grant controls.
+  Loading, unavailable rows and read failures used response fixtures; creation,
+  consent changes, archive and the no-delegate Run now refusal used real local
+  APIs. No provider permissions or Organization audience were widened.
+- The historical-creation audit found no reverse creation-receipt address on
+  legacy directory rows. Direct and autonomous creation wrote the same author
+  identity; matching author/run-as therefore retains the documented Needs opt-in
+  behavior. No historical consent reconstruction service is needed.
+- The broad sweep caught missing STRICT declarations in the new, unpublished
+  grant tables and Sidekick-only source fields reaching ordinary Thread watch
+  RPCs. The new schemas are STRICT; Thread deliveries project their unchanged
+  event shape. Older routing fixtures now explicitly create consenting
+  Sidekicks, and the legacy-claim test preserves creator preference.
+- Refused activation posts now persist the existing attention field with a
+  fixed recovery message. A real archived destination refuses the tool and
+  appends no message; the banner survives WorkspaceDO eviction. Removing the
+  attention write made the assertion fail. A real browser inspected its message.
+- The background continuation case that timed out during the unconstrained
+  sweep passed all 20 isolated repetitions; the final full run uses the
+  documented `VITEST_MAX_WORKERS=2` setting. Full-suite completion and final
+  requirement signoff are still pending; the feature remains local and unpushed.
+
 ### Completed-reference background handoff and later executions
 
 - Same-Sidekick agent exchanges carry host-derived connection IDs and completed
@@ -434,12 +481,10 @@ original file identity across coordinators, including completed imports. Its
 single selected repository connection stays explicit; observed withdrawal
 removes mounted personal GitHub credentials without deleting files. Actual
 serving-account activity presentation is wired as described above.
-Historical direct-creation provenance still needs its final audit against any
-existing creation/tool receipts; no new historical provenance service is planned.
-The Sidekick panel and creator disclosure now have the scoped rendering evidence
-above. Manager/unavailable/loading/pending visual states and browser-host
-acceptance still need their evidence. Do not mark these
-checks as proof of untested UI states, complete execution or model behavior.
+The historical creation, browser and model checkpoints are recorded above.
+The remaining gate is the final full-suite result and requirement-by-requirement
+signoff. Real API acceptance and staged UI states are identified separately;
+neither a rendering fixture nor a provider double proves production delivery.
 
 The current harness has no model-visible tool-result byte cap
 (`docs/agent-harness.md`, execution limits). Lists remain complete; do not invent

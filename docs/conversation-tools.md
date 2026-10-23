@@ -67,7 +67,11 @@ permission problem to the owning conversation once for that run, naming the
 blocked work and a concrete recovery action. Successful account fallback needs
 no error post. This uses the same `post` authorization and receipt, and grants
 no extra destination access. A refused post must stay a visible failure; its
-attempt is never evidence of delivery. A Sidekick without a home leaves the
+attempt is never evidence of delivery. An activation post refused by scope,
+access or archival also records the existing Sidekick attention state with a
+fixed recovery message. No provider or event content is retained there, and
+ordinary successful posts perform no extra RPC. A later admitted occurrence
+clears attention through normal admission. A Sidekick without a home leaves the
 actionable failure on its activation.
 
 Wire names are `conversation_list`, `conversation_list_next`,
@@ -326,6 +330,22 @@ is published to the target's audience; the person who attached that
 conversation chose that audience.
 
 ## Changelog
+
+### 2026-10-22 — Keep refused Sidekick posts visible
+
+**What changed:** An activation's refused post sets the existing Sidekick
+attention field, while preserving the original tool refusal and delivery receipt.
+
+**Why:** Prompt guidance can explain a blocked destination, but finishing that
+explanation otherwise left the Sidekick looking healthy without a delivered
+report. People need a visible recovery action on its own screen.
+
+**Considered and rejected:** A new notification queue or a second reporting tool.
+The existing attention state and post refusal already identify the failure.
+
+**Consequences:** Healthy posts have no additional authority read or write.
+Scope and destination admission stay unchanged; a refused call never claims
+delivery or falls back to a different conversation.
 
 ### 2026-10-22 — Conversation tools reach the current Thread's Channel peers
 
