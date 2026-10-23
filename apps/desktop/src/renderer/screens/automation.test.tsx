@@ -82,28 +82,13 @@ beforeEach(() => {
   window.location.hash = '';
 });
 
-describe('Sidekick creator disclosure', () => {
-  it('shows the standing delegation and existing-history disclosure before the create action', async () => {
+describe('Immediate Sidekick creation', () => {
+  it('creates immediately on opening New Sidekick without an enrollment screen', async () => {
     renderScreen(new QueryClient({ defaultOptions: { queries: { retry: false } } }), '/sidekicks/new');
-    expect(screen.getByText('Creating this Sidekick allows it to act as you. You can stop allowing it at any time.')).toBeInTheDocument();
-    expect(screen.getByText(/everyone who can read its existing Sidekick history/u)).toBeInTheDocument();
-    expect(createAutomation).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Create Sidekick' }));
     await showProfile();
     expect(screen.getByRole('heading', { name: 'Weekly changelog' })).toBeInTheDocument();
     expect(createAutomation).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not take the person back into a creation they have left while it was pending', async () => {
-    let acknowledge!: () => void;
-    createAutomation.mockImplementation(() => new Promise((resolve) => { acknowledge = () => resolve({ automationId: SIDEKICK_ID }); }));
-    renderScreen(new QueryClient({ defaultOptions: { queries: { retry: false } } }), '/sidekicks/new');
-    fireEvent.click(screen.getByRole('button', { name: 'Create Sidekick' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(screen.getByText('Sidekicks library')).toBeInTheDocument();
-    await act(async () => acknowledge());
-    expect(screen.getByText('Sidekicks library')).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: 'Weekly changelog' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Create Sidekick' })).not.toBeInTheDocument();
   });
 });
 

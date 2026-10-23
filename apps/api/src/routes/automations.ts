@@ -76,13 +76,6 @@ automationRoutes.post("/:id/delegation", zValidator("param", idParam), zValidato
   return c.json(SidekickDelegationMutationResultSchema.parse(await new SidekickDelegationService(c.env, auth.workspaceId, auth.userId)
     .setOwn(c.req.valid("param").id, input.allowed, input.operationId, "self_service")));
 });
-automationRoutes.post("/:id/delegation/remove", zValidator("param", idParam), zValidator("json", z.strictObject({
-  userId: IdSchema, operationId: IdSchema,
-})), async (c) => {
-  const input = c.req.valid("json");
-  return c.json(SidekickDelegationMutationResultSchema.parse(await new AutomationService(c.env, getWorkspaceAuth(c))
-    .removeDelegate(c.req.valid("param").id, input.userId, input.operationId)));
-});
 automationRoutes.post("/:id/run", zValidator("param", idParam), zValidator("header", runHeaders), async (c) => c.json(
   StartedRunSchema.parse(await new AutomationService(c.env, getWorkspaceAuth(c)).runNow(
     c.req.valid("param").id,

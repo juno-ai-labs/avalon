@@ -2,31 +2,19 @@ import {
   IdSchema, SIDEKICK_DELEGATION_ERRORS, LEGACY_WORKSTREAM_LINK_ORIGINS,
   SidekickDelegatesResultSchema, SidekickMyDelegationsResultSchema, SidekickDelegationReceiptResultSchema,
   asUserId, asWorkspaceId, parseSidekickLinkPathTarget,
-  type UserId, type WorkspaceId, type WorkstreamWorkflowInput,
+  type UserId, type WorkspaceId,
 } from "@rally/contracts";
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { workspaceDOName } from "../durable-objects/names";
-import { createMessageObjectPort } from "../runtime/message-port";
-
-/** No model text participates: canonical human message identity supplies the speaker. */
-export async function directSidekickDelegationUser(env: Env, input: WorkstreamWorkflowInput): Promise<UserId | null> {
-  if (input.executionPrincipal.type !== "user" || !input.triggerMessageId || input.automationRun ||
-    input.automationDelegation || input.backgroundAgent || input.agentExchange || input.scheduledWakeupId || input.activityId) return null;
-  const message = await createMessageObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0")
-    .message({ messageId: input.triggerMessageId });
-  return message?.author_type === "human" && message.author_user_id === input.executionPrincipal.userId
-    ? input.executionPrincipal.userId : null;
-}
-
 /** Record a routing hint before consent can commit, so response loss cannot hide a grant. */
 export async function rememberSidekickDelegationLocation(env: Env, workspaceId: string, userId: string): Promise<void> {
   await env.DB.prepare(`INSERT INTO sidekick_delegation_locations(user_id,workspace_id,region)
     VALUES (?,?,?) ON CONFLICT(user_id,workspace_id) DO NOTHING`).bind(userId, workspaceId, env.AVALON_REGION).run();
 }
 
-/** Signed-in self-service. This class never receives a model-selected actor. */
+/** The host supplies the actor; agent tools may select another Organization user. */
 export class SidekickDelegationService {
   private readonly workspaceId: WorkspaceId;
   constructor(private readonly env: Env, workspaceId: string, private readonly userId: UserId) {
@@ -68,20 +56,27 @@ export class SidekickDelegationService {
     }));
   }
 
-  async setOwn(sidekickId: string, allowed: boolean, operationId: string, source: "self_service" | "agent_request") {
-    IdSchema.parse(sidekickId);
-    IdSchema.parse(operationId);
-    if (allowed) await rememberSidekickDelegationLocation(this.env, this.workspaceId, this.userId);
-    const workspace = await this.workspace();
-    const request = { workspaceId: this.workspaceId, automationId: sidekickId, userId: this.userId, allowed, operationId };
-    // Preparation is durable and idempotent. A re-delivery cannot replace an old generation.
-    const { generation } = await workspace.sidekickPrepareMyDelegation(request);
-    return workspace.sidekickSetMyDelegation({ ...request, expectedGeneration: generation, source });
+  setOwn(sidekickId: string, allowed: boolean, operationId: string, source: "self_service" | "agent_request") {
+    return this.setFor(sidekickId, this.userId, allowed, operationId, source);
   }
 
-  async readOwnReceipt(sidekickId: string, allowed: boolean, operationId: string, source: "self_service" | "agent_request") {
+  async setFor(sidekickId: string, userId: UserId, allowed: boolean, operationId: string, source: "self_service" | "agent_request") {
+    IdSchema.parse(sidekickId);
+    IdSchema.parse(operationId);
+    if (allowed) await rememberSidekickDelegationLocation(this.env, this.workspaceId, userId);
+    const workspace = await this.workspace();
+    const request = { workspaceId: this.workspaceId, automationId: sidekickId, userId, allowed, operationId };
+    const { generation } = await workspace.sidekickPrepareMyDelegation(request);
+    return workspace.sidekickSetDelegation({ ...request, actorUserId: this.userId, expectedGeneration: generation, source });
+  }
+
+  readOwnReceipt(sidekickId: string, allowed: boolean, operationId: string, source: "self_service" | "agent_request") {
+    return this.readReceipt(sidekickId, this.userId, allowed, operationId, source);
+  }
+
+  async readReceipt(sidekickId: string, userId: UserId, allowed: boolean, operationId: string, source: "self_service" | "agent_request") {
     return SidekickDelegationReceiptResultSchema.parse(await (await this.workspace()).sidekickReadMyDelegationReceipt({
-      workspaceId: this.workspaceId, automationId: IdSchema.parse(sidekickId), userId: this.userId,
+      workspaceId: this.workspaceId, automationId: IdSchema.parse(sidekickId), userId, actorUserId: this.userId,
       operationId: IdSchema.parse(operationId), allowed, source,
     }));
   }

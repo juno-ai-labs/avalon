@@ -41,20 +41,18 @@ bytes never serve as a permission lease.
 
 ## Sidekick authoring and loading
 
-Sidekick consent is separate from human reader/manager access. Its WorkspaceDO
-stores self-grants with membership incarnations and withdrawal tombstones;
-[Sidekick lifecycle](automation-lifecycle.md#delegation-consent-authority) owns
-the mutation ordering and rollout. Enrollment requires viewer access, whereas
-signed-in own-grant recovery and withdrawal do not require current Organization
-membership. Recovery reveals only that person's stored grant and safe label.
-Completed consent-tool replay reads the exact self-action receipt and current
-generation before acknowledging current consent. It never prepares or executes
-a fresh opt-in, and withdrawal receipts remain readable after access loss.
-Agent consent tools derive the speaker from a canonical human trigger and do
-not accept a model-supplied actor. Autonomous and background contexts receive no
-consent tools and cannot initialize creator consent by attributing authorship
-to an inherited principal. These checks bind identity, not the meaning of a
-natural-language instruction; model guidance and evaluations cover that risk.
+Sidekick delegation is separate from human reader/manager access. WorkspaceDO
+stores per-user grants with membership incarnations, ordered mutation receipts
+and withdrawal tombstones. [Sidekick lifecycle](automation-lifecycle.md#delegation-consent-authority)
+owns mutation ordering and rollout. Creation immediately enrolls the creator,
+including autonomous creation. Agent tools may target any current Organization
+user; the execution actor remains host-owned and needs Sidekick access to change
+another user. Target enrollment needs active membership. Delegation grants no
+human reader or manager rights, and execution still requires ordinary eligibility
+and provider access. No direct-human consent classifier or self-only agent
+restriction is applied. Own withdrawal and safe stored-label recovery remain
+available after access loss. Receipt replay never prepares a fresh grant and a
+newer withdrawal invalidates older allow acknowledgements.
 
 Conversational publication resolves the current workspace membership role and
 owning-workstream participation through the same actor path as management routes.

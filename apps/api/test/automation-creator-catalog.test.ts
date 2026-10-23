@@ -97,13 +97,16 @@ async function env(localDb: DatabaseSync): Promise<Env> {
     .get(WORKSPACE_ID, USER_ID) as { role: string; status: string; access_class: string } | undefined;
   const active = membership?.status !== "suspended";
   await workspace.instance.applyMemberStatus({ workspaceId: WORKSPACE_ID, sequence: 1, removed: false, relationship: {
-    workspaceId: WORKSPACE_ID, userId: USER_ID, accessClass: "member", role: "owner", status: active ? "active" : "suspended",
+    workspaceId: WORKSPACE_ID, userId: USER_ID, accessClass: "member", role: "owner", status: "active",
     incarnation: "catalog-member", revision: 1,
   } });
   await workspace.instance.sidekickCreate({ workspaceId: WORKSPACE_ID, automationId: WORKSTREAM_ID, authorUserId: USER_ID,
     scope: "workspace", owningWorkstreamId: null, authorityGeneration: 1,
-    ...(active ? { creatorConsent: { requestId: crypto.randomUUID() } } : {}),
   });
+  if (!active) await workspace.instance.applyMemberStatus({ workspaceId: WORKSPACE_ID, sequence: 2, removed: false, relationship: {
+    workspaceId: WORKSPACE_ID, userId: USER_ID, accessClass: "member", role: "owner", status: "suspended",
+    incarnation: "catalog-member", revision: 2,
+  } });
   for (const table of ['connector_connections', 'resources', 'notes']) {
     for (const row of localDb.prepare(`SELECT * FROM ${table}`).all()) {
       if (table === 'connector_connections') {

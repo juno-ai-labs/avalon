@@ -32,12 +32,12 @@ beforeEach(async () => {
     env.DB.prepare("INSERT INTO workspace_members(workspace_id,user_id,status,role) VALUES (?,?,'active','member')").bind(workspaceId, maya),
   ]);
   await workspace().sidekickCreate({ ...address, authorUserId: creator, scope: "workspace", owningWorkstreamId: null,
-    authorityGeneration: 1, creatorConsent: { requestId: crypto.randomUUID() } });
+    authorityGeneration: 1 });
 });
 async function allowMaya(allowed: boolean) {
   const request = { ...address, userId: maya, allowed, operationId: crypto.randomUUID() };
   const prepared = await workspace().sidekickPrepareMyDelegation(request);
-  return workspace().sidekickSetMyDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
+  return workspace().sidekickSetDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
 }
 
 describe("Sidekick provider recovery on real workerd", () => {
