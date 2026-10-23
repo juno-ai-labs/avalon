@@ -52,6 +52,51 @@ function fixture() {
 }
 
 describe("Sidekick operation account selection over durable receipts", () => {
+  it("keeps handed-off mail IDs with their originating account without granting withdrawn access", async () => {
+    const f = fixture();
+    const accountReferences = [{ sidekickId: id(4), connectionId: id(6), resourceKeys: ["google:message:delegated-mail"] }];
+    const identity = { kind: "account" as const, resourceKeys: ["google:message:delegated-mail"] };
+    await executeSidekickAccountOperation({ ...f.options(), accountReferences, identity });
+    expect(f.calls).toEqual([id(6)]);
+    const withdrawn = authority();
+    withdrawn.delegates = withdrawn.delegates.filter((grant) => grant.userId !== other);
+    await expect(executeSidekickAccountOperation({ ...f.options(f.context("write")), mode: "write", accountReferences, identity,
+      authority: withdrawn })).rejects.toThrow("originating Sidekick account is unavailable");
+    expect(f.calls).toEqual([id(6)]);
+    await executeSidekickAccountOperation({ ...f.options(), accountReferences,
+      identity: { kind: "account", resourceKeys: [] } });
+    expect(f.calls).toEqual([id(6), id(5)]);
+  });
+
+  it("refuses ambiguous handed-off private IDs and ignores another Sidekick's references", async () => {
+    const f = fixture();
+    const identity = { kind: "account" as const, resourceKeys: ["google:message:same-id"] };
+    const accountReferences = [a, b].map((connection) => ({ sidekickId: id(4), connectionId: connection.connectionId,
+      resourceKeys: ["google:message:same-id"] }));
+    await expect(executeSidekickAccountOperation({ ...f.options(), identity, accountReferences }))
+      .rejects.toThrow("more than one account");
+    expect(f.calls).toEqual([]);
+    await executeSidekickAccountOperation({ ...f.options(), identity, accountReferences, selection: { userId: other } });
+    expect(f.calls).toEqual([id(6)]);
+    await executeSidekickAccountOperation({ ...f.options(), identity,
+      accountReferences: [{ ...accountReferences[1]!, sidekickId: id(99) }] });
+    expect(f.calls).toEqual([id(6), id(5)]);
+  });
+
+  it("retains completed resource bindings across later executions of one Sidekick occurrence", async () => {
+    const f = fixture(), read = f.context();
+    await executeSidekickAccountOperation({ ...f.options(read), sourceConnectionIds: [b.connectionId] });
+    await f.complete(read);
+    const runId = id(77);
+    seedWorkstreamRun(f.database, { id: runId, attemptId: "attempt", leaseOwner: "owner", leaseExpiresAt: Date.now() + 600_000 });
+    seedToolReceipt(f.database, { id: "continued-effect", runId, toolCallId: "continued-call", toolName: "test", position: 1,
+      status: "executing", mode: "write", executionPlanJson: '{"mode":"write"}' });
+    const context = { ...read, harnessRunId: runId, effectIntentId: "continued-effect", toolCallId: "continued-call" };
+    await executeSidekickAccountOperation({ ...f.options(context), mode: "write", includeConversationAccounts: true,
+      fence: { runId, attemptId: "attempt", owner: "owner" } });
+    expect(f.calls).toEqual([id(6), id(6)]);
+  });
+
   it("keeps activation mail IDs with their source account without redirecting a new inbox search", async () => {
     const f = fixture();
     const sourceAccount = { connectionId: b.connectionId, resourceKeys: ["google:message:event-message"] };

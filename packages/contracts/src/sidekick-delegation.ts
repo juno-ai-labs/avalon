@@ -83,6 +83,12 @@ export const SidekickExecutionDelegationSchema = z.strictObject({
   })),
 });
 export type SidekickExecutionDelegation = z.infer<typeof SidekickExecutionDelegationSchema>;
+
+/** Host handoff of completed provider references; an identity constraint, never a grant. */
+export const SidekickAccountReferenceSchema = z.strictObject({
+  sidekickId: IdSchema, connectionId: IdSchema, resourceKeys: z.array(z.string().min(1)),
+});
+export type SidekickAccountReference = z.infer<typeof SidekickAccountReferenceSchema>;
 export const SidekickDelegationAttentionCodeSchema = z.enum(["no_eligible_delegate", "event_no_eligible_delegate", "coordinator_unavailable"]);
 export type SidekickDelegationAttentionCode = z.infer<typeof SidekickDelegationAttentionCodeSchema>;
 export const SIDEKICK_DELEGATION_ATTENTION_MESSAGES: Record<SidekickDelegationAttentionCode, string> = {

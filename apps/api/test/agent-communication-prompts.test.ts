@@ -66,6 +66,14 @@ describe("rendering an admitted agent message", () => {
     expect(rendered).toContain("Team: sidekick/s-1/0.");
     expect(rendered).not.toContain("automation/");
   });
+
+  it("keeps host account references out of model message text", () => {
+    const rendered = renderAgentMessage({ ...exchange, sidekickAccountReferences: [{
+      sidekickId: '00000000-0000-7000-8000-000000000001', connectionId: '00000000-0000-7000-8000-000000000002',
+      resourceKeys: ['google:message:private-provider-id'],
+    }] }, 'Reply to the message we discussed.');
+    expect(rendered).toBe('Message from agent workstream/room/2.\nMessage ID: 0199aaaa-0000-7000-8000-000000000001. Use this message ID when responding to the sender.\nTeam: workstream/room/0.\nReply to the message we discussed.');
+  });
 });
 
 describe("the agents plugin", () => {
