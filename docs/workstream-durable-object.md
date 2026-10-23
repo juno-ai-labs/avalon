@@ -1964,7 +1964,6 @@ is necessary: bookkeeping time is monotonic, while waterlines determine freshnes
 **Consequences:** New producers still mint UUIDv7. Investigate the warning's
 stored event ID and Thread rather than inferring ordering from its UUID version.
 
-
 ### 2026-10-22 — Hydrate activity graphs above the SQLite parameter ceiling
 
 **What changed:** Transcript activity selection and interval hydration pass ID

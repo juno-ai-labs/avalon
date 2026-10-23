@@ -1,5 +1,6 @@
 import { Daytona } from "@daytona/sdk";
 import { Buffer } from "node:buffer";
+import { createDeadline } from "../../lib/deadline";
 
 import type { TerminalRegionConfiguration } from "./contract";
 import {
@@ -16,6 +17,7 @@ import {
   DAYTONA_REQUEST_TIMEOUT_MS,
   isTerminalProviderNotFound,
   terminalProviderErrorCode,
+  TerminalProviderError,
   terminalShellQuote as shellQuote,
   type TerminalManagedBootstrapCapability,
   type TerminalProviderInstrumentation,
@@ -781,18 +783,35 @@ export function createDaytonaTerminalProvider(
           let delayMs = 250;
           while (true) {
             if (input.signal?.aborted) throw new Error("Terminal command cancelled");
+            const remainingMs = observationDeadline - Date.now();
+            if (remainingMs <= 0) {
+              throw new TerminalProviderError("Daytona command observation deadline exceeded", "command_observation_deadline");
+            }
+            const deadline = createDeadline(remainingMs);
+            let timedOut!: () => void;
+            const expired = new Promise<never>((_resolve, reject) => {
+              timedOut = () => reject(new TerminalProviderError(
+                "Daytona command observation deadline exceeded", "command_observation_deadline",
+              ));
+              deadline.signal.addEventListener("abort", timedOut, { once: true });
+            });
             try {
-              return await read();
+              // The SDK offers no per-read timeout/abort option. Only abandon
+              // read-only observations here; never race command submission.
+              return await Promise.race([read(), expired]);
             } catch (error) {
               const response = error as { status?: number; statusCode?: number; response?: { status?: number } } | null;
               const status = response?.statusCode ?? response?.status ?? response?.response?.status;
               // Missing sessions and rejected credentials/requests need their
               // caller's decision, rather than a new session on a failed GET.
-              if (isTerminalProviderNotFound(error)
+              if (deadline.signal.aborted || isTerminalProviderNotFound(error)
                 || (status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 429)
                 || Date.now() + delayMs >= observationDeadline) throw error;
               await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
               delayMs = Math.min(2_000, delayMs * 2);
+            } finally {
+              deadline.signal.removeEventListener("abort", timedOut);
+              deadline.dispose();
             }
           }
         };

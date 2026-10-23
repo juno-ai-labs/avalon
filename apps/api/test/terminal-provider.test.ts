@@ -741,6 +741,37 @@ describe("Daytona Terminal provider", () => {
     }
   });
 
+  it.each(["get", "poll", "logs"] as const)("returns to recovery when a session %s read hangs beyond the remaining budget", async (stage) => {
+    vi.useFakeTimers();
+    try {
+      const hang = () => new Promise<never>(() => undefined);
+      const executeSessionCommand = vi.fn(async (): Promise<{ cmdId: string; exitCode: number | null }> => ({ cmdId: "accepted-command", exitCode: stage === "poll" ? null : 0 }));
+      const getSession = vi.fn(async () => {
+        if (stage === "get") return hang();
+        throw Object.assign(new Error("missing"), { statusCode: 404 });
+      });
+      const poll = vi.fn(async () => stage === "poll" ? hang() : { id: "accepted-command", command: "opaque", exitCode: 0 });
+      const provider = createDaytonaTerminalProvider({ capability: "supported", apiKey: "fixture",
+        apiUrl: "https://daytona.example.test", target: "us", snapshot: "fixture", emergencyDisabled: false,
+      }, () => ({ create: vi.fn(), get: async () => ({ id: "sandbox", name: "fixture", state: "started",
+        process: { createSession: vi.fn(), executeSessionCommand, deleteSession: vi.fn(), getSession,
+          getSessionCommand: poll, getSessionCommandLogs: hang },
+      }) }));
+      const startedAt = Date.now();
+      const result = expect(provider.runCommand("sandbox", { taskName: "stable", command: "printf ok", cwd: "/workspace",
+        timeoutMs: 1_000, retainSessionForRecovery: true,
+      })).rejects.toMatchObject({ code: "command_observation_deadline" });
+      await vi.advanceTimersByTimeAsync(16_000);
+      await result;
+      expect(Date.now() - startedAt).toBe(16_000);
+      expect(getSession).toHaveBeenCalledOnce();
+      expect(executeSessionCommand).toHaveBeenCalledTimes(stage === "get" ? 0 : 1);
+      if (stage === "poll") expect(poll).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("moves file bytes without host paths and runs one non-interactive session command", async () => {
     const uploadFile = vi.fn(async () => undefined);
     const downloadFile = vi.fn(async () => new Uint8Array([104, 105]));
