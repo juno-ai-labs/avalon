@@ -2710,11 +2710,11 @@ const automationDraftSubmissionJsonSchema = {
       enum: [...PROJECT_COLOR_KEYS_STORABLE],
       description: `The color of the Sidekick's hexagon. A Sidekick that already has one keeps it unless the person asks for another: sidekick_sidekicks_list shows the current one. A new choice is one of ${PROJECT_COLOR_RING.join(", ")}. The other values are accepted only to keep a Sidekick's current color.`,
     },
-    overview: { type: "string", description: "A few sentences for the person approving it: what it watches, what it does each time, and where the result goes. This is what somebody reads to decide whether to accept the draft." },
-    instructions: { type: "string", description: "What each run should actually do, written for a run that cannot see this conversation. Name the steps, the tools, and what finishing looks like. A result meant to reach an inbox, a channel, or a document is only sent if a step here says to send it." },
+    overview: { type: "string", description: "A few sentences for the person. For an instruction-only Skill, explain when to use it and what it helps do. For triggered work, explain what starts it, what happens each run, and where the result goes." },
+    instructions: { type: "string", description: "Self-contained instructions usable without this setup conversation. For an instruction-only Skill, save the knowledge, rules or procedure itself, when to use it, and any needed context, constraints or expected output. For triggered work, save the discovered method: resource IDs, tools and skills to load, input formats, working queries or reusable tool arguments, ordered steps, decisions, delivery actions and success checks. Include state and duplicate handling where needed, no-op conditions, and recovery from missing inputs, changed resources or failures. Mark verified facts, untested assumptions, and data each run must fetch or revalidate. Require tools or resources only when needed." },
     triggers: {
       type: "array",
-      description: "What starts a run, one entry per trigger. Every field of an entry is required, so set the ones the chosen type does not use to null.",
+      description: "Use [] for an instruction-only Skill. For triggered work, list what starts a run, one entry per trigger. Every field of an entry is required; set unused fields to null.",
       items: {
         type: "object",
         additionalProperties: false,
@@ -2723,7 +2723,7 @@ const automationDraftSubmissionJsonSchema = {
           type: {
             type: "string",
             enum: ["manual", "inbound_email", "calendar", "interval", "connector_activity", "semantic_activity", "resource_watch", "webhook"],
-            description: "What starts a run: `manual` when a person asks, `inbound_email` on mail to the Sidekick's address, `calendar` on a recurrence rule, `interval` every so many seconds, `connector_activity` on a connector event matched by deterministic filters, `semantic_activity` on a connector event that also passes a written condition, `resource_watch` when one named resource changes, `webhook` on an inbound HTTP call."
+            description: "What starts a run: `manual` when a person asks, `inbound_email` on mail to the Sidekick's address, `calendar` on a recurrence rule, `interval` every so many seconds, `connector_activity` on a connector event matched by deterministic filters, `semantic_activity` on a connector event that also passes a written condition, `webhook` on an inbound HTTP call. Legacy `resource_watch` does not start Sidekick runs; use declared events or polling instead."
           },
           rrule: { type: ["string", "null"], description: "For a `calendar` trigger, the recurrence as an iCalendar RRULE, for example `FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=0`. Null for every other type." },
           timezone: {
@@ -2750,7 +2750,7 @@ const automationDraftSubmissionJsonSchema = {
             description: "A JSON-encoded object of deterministic filters applied before semantic classification. A ready semantic_activity trigger must name exactly one declared event type from the plugin in suggestedSourcePluginId, as {\"eventType\": \"the.event.type\"}, optionally alongside that event's declared deterministic filter fields."
           },
           condition: { type: ["string", "null"], description: "For a `semantic_activity` trigger, the plain-language test each matching event has to pass before a run starts, for example \"the message asks for a design review\". Write it so it can be judged from the event alone. Null for every other type." },
-          resourceId: { type: ["string", "null"], description: "For a `resource_watch` trigger, the one resource to watch, as an id from resources_search. Null for every other type." }
+          resourceId: { type: ["string", "null"], description: "The resource ID of a legacy `resource_watch` trigger. Do not select that trigger for new work; it has no activation path. Null for every other type; connector-event resource bindings belong in evaluator rules." }
         },
         required: [
           "type",
@@ -2772,7 +2772,7 @@ const automationDraftSubmissionJsonSchema = {
     expectedOutputs: {
       type: "array",
       items: { type: "string" },
-      description: "What each run should produce, one entry per output, for example [\"A summary posted to the work stream\"]. These are what a person checks the Sidekick against, so write observable results rather than steps.",
+      description: "Observable results of using these instructions, one entry per output; use [] when none are needed. For triggered work, describe what each run produces, for example [\"A summary posted to the Thread\"]. Write results rather than steps.",
     },
     defaultBehavior: {
       type: "string",
@@ -2787,7 +2787,7 @@ const automationDraftSubmissionJsonSchema = {
         properties: {
           pluginId: { type: "string", pattern: "^plugin_[a-z][a-z0-9_]{0,62}$", description: "The plugin, as a `pluginId` from plugins_list or plugins_search, for example `plugin_slack`. A connector's display name is not a plugin id." },
           recommendedTools: { type: "array", items: { type: "string" }, description: "The tools this Sidekick actually needs from that plugin, named exactly as plugin_inspect reports them. Use [] when the whole plugin is needed rather than particular tools." },
-          reason: { type: "string", description: "Why this Sidekick needs that plugin, in one sentence, for the person approving it." }
+          reason: { type: "string", description: "One sentence explaining to the person why this Sidekick needs that plugin." }
         },
         required: ["pluginId", "recommendedTools", "reason"]
       }
@@ -2827,11 +2827,11 @@ const automationDraftSubmissionJsonSchema = {
     suggestedScope: {
       type: "string",
       enum: ["personal", "workspace", "workstream"],
-      description: "Who can see and change this Sidekick, which cannot be changed after it is accepted: \"personal\" belongs to the person who asked and acts with their own connections, \"workspace\" belongs to the admins and acts with the workspace's own connections, \"workstream\" belongs to this work stream — everyone in the room can manage it, Rally posts its results here, and it outlives whoever asked for it. Ask which one before submitting. There is no work stream to name: a Sidekick can only ever belong to the one it was written in. Nothing else is delivered for a Sidekick: a result that should reach an inbox, a channel, a DM, or a document is sent by the run itself, so the instructions must name that send and its recipient as a step."
+      description: "The scope already selected for this Sidekick. Preserve it; do not ask the person to choose again. Before first publication, change between personal and workspace only when explicitly requested. Published scope and workstream ownership cannot change. personal uses the run-as person's connections; workspace uses shared Organization connections; workstream belongs to its owning Thread and follows that Thread's management permissions."
     },
     ready: {
       type: "boolean",
-      description: "True only when no blocking human input remains; false means request_elicitation must be called after this draft is submitted."
+      description: "True when the requested instructions or behavior are complete and ready to save; false when required information is missing. Do not require triggers or a connector just to publish reusable instructions. After submitting a partial draft, ask the requester for that information. For an agent's request, send the question to that agent."
     }
   },
   required: [
