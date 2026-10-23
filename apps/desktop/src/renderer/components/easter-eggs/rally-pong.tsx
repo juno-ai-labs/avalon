@@ -21,12 +21,14 @@ export function RallyPong({ onClose }: { onClose: () => void }): React.JSX.Eleme
   useEffect(() => {
     const onEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
-      // Ours, not the window's: some windows close on Escape.
+      // Ours, not the window's: Settings and Sidekicks close on Escape from a
+      // bubble-phase listener that was installed first. Capturing runs ahead of
+      // it, and that listener stands down on a prevented Escape.
       event.preventDefault();
       onCloseRef.current();
     };
-    window.addEventListener('keydown', onEscape);
-    return () => window.removeEventListener('keydown', onEscape);
+    window.addEventListener('keydown', onEscape, true);
+    return () => window.removeEventListener('keydown', onEscape, true);
   }, []);
 
   useEffect(() => {
