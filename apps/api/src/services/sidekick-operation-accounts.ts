@@ -1,7 +1,7 @@
 import { z } from "zod";
 import {
   IdSchema, SidekickExecutionDelegationSchema, AutomationRunDefinitionV1Schema, asUserId, type SidekickExecutionDelegation, type AutomationRunDefinitionV1,
-  type ToolDefinition, type ToolExecutionAccount, type WorkstreamWorkflowInput,
+  type ToolDefinition, type ToolExecutionAccount, type WorkstreamWorkflowInput, type SidekickAccountReference,
 } from "@rally/contracts";
 import { ConnectorError, isConnectorResourceAccessRefusal, type ConnectorOperationIdentity, type ConnectorToolResult } from "@rally/connectors";
 import type { HarnessToolContext } from "@rally/agent-harness";
@@ -80,6 +80,9 @@ export async function executeSidekickAccountOperation<C extends SidekickAccountC
   requested: C; candidates: readonly C[]; sourceConnectionIds: readonly string[];
   sourceAccount?: NonNullable<AutomationRunDefinitionV1["opening"]>["sourceAccount"];
   identity: ConnectorOperationIdentity;
+  accountReferences?: readonly SidekickAccountReference[];
+  /** An occurrence's later executions reuse completed references in its conversation. */
+  includeConversationAccounts?: boolean;
   selection?: SidekickAccountSelection;
   mode: "read" | "write";
   canFallback: boolean;
@@ -93,10 +96,10 @@ export async function executeSidekickAccountOperation<C extends SidekickAccountC
   if (!context.effectIntentId) throw unavailable("This Sidekick operation has no durable receipt. Resume the run before using a delegated account.");
   const effectIntentId = context.effectIntentId;
   const address = { runId: context.harnessRunId, effectIntentId };
-  const [prior, bindings] = await Promise.all([
+  const [prior, receiptsForResource] = await Promise.all([
     receipts.executionAccount(address),
     identity.resourceKeys.length > 0
-      ? receipts.resourceExecutionAccounts({ runId: context.harnessRunId, resourceKeys: identity.resourceKeys })
+      ? receipts.resourceExecutionAccounts({ runId: options.includeConversationAccounts ? null : context.harnessRunId, resourceKeys: identity.resourceKeys })
       : Promise.resolve([]),
   ]);
   const grants = new Map(authority.delegates.map((grant) => [grant.userId, grant]));
@@ -108,20 +111,27 @@ export async function executeSidekickAccountOperation<C extends SidekickAccountC
     seen.add(connection.connectionId);
     return true;
   });
+  const bindings = [
+    ...receiptsForResource.map((binding) => binding.account),
+    ...(options.accountReferences ?? []).filter((reference) => reference.sidekickId === authority.sidekickId
+      && reference.resourceKeys.some((key) => identity.resourceKeys.includes(key)))
+      .map((reference) => ({ connectionId: reference.connectionId,
+        delegatedUserId: connections.find((connection) => connection.connectionId === reference.connectionId)?.ownerUserId })),
+  ];
   // A provider-created ID, a planned write, or a previously dispatched effect
   // cannot move to a different account. A definite refusal opens only that one
   // effect's selection; unrelated identities remain bound.
-  const bindingConnections = [...new Set(bindings.map((binding) => binding.account.connectionId))];
+  const bindingConnections = [...new Set(bindings.map((binding) => binding.connectionId))];
   const continuation = context.executionAccount;
   const source = options.sourceAccount?.resourceKeys.some((key) => identity.resourceKeys.includes(key)) ? options.sourceAccount : undefined;
   const relevantBindings = selection || continuation ? bindings.filter((binding) =>
-    (!selection?.connectionId || binding.account.connectionId === selection.connectionId)
-    && (!selection?.userId || binding.account.delegatedUserId === selection.userId)
-    && (!continuation || binding.account.connectionId === continuation.connectionId)) : bindings;
+    (!selection?.connectionId || binding.connectionId === selection.connectionId)
+    && (!selection?.userId || binding.delegatedUserId === selection.userId)
+    && (!continuation || binding.connectionId === continuation.connectionId)) : bindings;
   if (identity.kind === "account" && bindingConnections.length > 1 && !selection && !continuation) {
     throw unavailable("This provider reference was used through more than one account. Specify rallyAccount for its originating account; do not retry it as another person.");
   }
-  const bound = relevantBindings[0]?.account;
+  const bound = relevantBindings[0];
   if (continuation && continuation.sidekickId !== authority.sidekickId) throw unavailable("This continuation belongs to another Sidekick.");
   if (selection && bindings.length > 0 && relevantBindings.length === 0
     && (identity.kind === "account" || options.mode === "write")) {

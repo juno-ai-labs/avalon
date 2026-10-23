@@ -697,8 +697,12 @@ still use the task account. Portable file reads prefer the event source and
 retain safe fallback. Older openings can recover this reference from the
 existing canonical event row without replaying the event. A background child
 reads only that reference from its existing root-run authority; it does not
-inherit the root's instruction or plugin configuration. References produced by
-later tool results remain a separate handoff concern.
+inherit the root's instruction or plugin configuration. Agent messages within
+the same Sidekick also carry host-derived references from completed tool receipts:
+connection IDs and provider reference keys, never credentials or consent. The
+resolver applies those identity constraints against the receiving inventory's
+eligible delegates. Nested handoffs preserve them; ambiguous private IDs require
+an explicit account. Other Sidekicks and ordinary Threads receive no such context.
 
 The existing receipt checkpoint log records `execution_account` selections
 before dispatch, definite refusals, and the account that served the result.
@@ -707,6 +711,9 @@ generation. No credentials or cursors enter account attribution. An unresolved
 effect can select only its recorded account; a definite refusal is the sole
 transition that permits a different account. Only completed effects establish
 bindings for replies, provider-created IDs and writes planned from reads.
+A continued Sidekick occurrence can read completed bindings from its earlier
+execution receipts in the same conversation; each new occurrence has a different
+conversation, and the authoring conversation remains execution-scoped.
 Retained serving-account evidence prevents read-receipt rebinding. Ordinary
 lease and cancellation fences apply; a completion can record an effect already
 in flight after cancellation without licensing another dispatch.
@@ -1685,6 +1692,13 @@ checks shared re-entry semantics and deadline cleanup on reconciliation.
  test/connector-resource-access.test.ts test/tool-pagination.test.ts` covers
 account ordering, refusal-only fallback, durable account pins, withdrawal,
 named/empty searches, the assembled Google executor and private page identity.
+The same resolver lane covers completed reference handoff, ambiguous private IDs,
+withdrawal after receipt of a reference and binding across later executions.
+The actual loader's handoff case verifies the provider sees the originating
+account without first trying the creator. Real workerd
+`test-workers/sidekick-run-continuation.test.ts` covers nested handoffs and
+continued input after eviction; its runtime fixture explicitly opts the creator
+in and distinguishes legacy human-access metadata from the fixed coordinator.
 `test-workers/tool-receipt-authority.test.ts` proves lease, cancellation,
 rollback and eviction against real workerd; run it with the Workers config.
 `test-workers/sidekick-delegation-admission.test.ts` covers canonical event
@@ -1843,6 +1857,9 @@ Completed self-consent acknowledgements also validate current receipt generation
 without repeating the mutation or rewriting their historical completion.
 Interrupted consent recovery reads the accepted receipt too; missing acceptance
 never licenses a fresh preparation of an old allow.
+Completed provider references now survive later executions of an occurrence and
+host-mediated background handoffs within that Sidekick. These references constrain
+identity without granting access under the receiver's refreshed delegation view.
 
 **Why:** A Thread-owned Sidekick could have consent to read a sheet through a
 second person, but the connector executor still admitted only the coordinator's

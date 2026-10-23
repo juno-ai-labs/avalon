@@ -279,7 +279,7 @@ export class WorkstreamToolReceiptStorage {
     return readToolExecutionAccount(this.sql, input.runId, input.effectIntentId);
   }
 
-  resourceExecutionAccounts(raw: { runId: string; resourceKeys: string[] }): ToolExecutionAccountRecord[] {
+  resourceExecutionAccounts(raw: { runId: string | null; resourceKeys?: string[] }): ToolExecutionAccountRecord[] {
     const input = parseExecutionAccountRequest(ResourceExecutionAccountsSchema, raw);
     return completedToolResourceAccounts(this.sql, input.runId, input.resourceKeys);
   }

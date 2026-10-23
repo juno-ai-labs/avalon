@@ -36,6 +36,38 @@ lookup/self-withdrawal, delegation execution and activity attribution remain.
 Record executed checks and their actual coverage here as work progresses. Do not
 turn an implementation checklist into an assertion that its tests passed.
 
+### Completed-reference background handoff and later executions
+
+- Same-Sidekick agent exchanges carry host-derived connection IDs and completed
+  provider reference keys. Nested assignments and replies merge inherited
+  references; the receiving resolver applies its own delegation snapshot. These
+  fields never become model tool inputs or rendered message text. Another
+  Sidekick's references and unresolved effects cannot establish an origin.
+- The existing completed-receipt query supports an explicit execution or its
+  containing conversation. Later executions of an occurrence retain completed
+  bindings; a new occurrence's separate conversation starts afresh. Authoring
+  queries remain execution-scoped. No migration or additional ledger is added.
+- Restored workerd receipt/continuation/admission lanes passed 56 cases. Real
+  RPCs, message admission, nested workers and eviction preserve the literal
+  origin reference and exclude an unresolved result. Scoped resolver, assembled
+  connector, message renderer, pagination and run-authority lanes passed 83 cases.
+  They cover opaque-ID origin, ambiguous-ID refusal, observed withdrawal,
+  unchanged empty-search default and provider use of a handed-off connection.
+- Five production-code negative controls dropped resolver reference use,
+  conversation scope, loader propagation, inherited nested references or the
+  conversation receipt query. Each targeted assertion failed and the changes
+  were restored. Initial broader continuation failures were deterministic stale
+  fixtures: direct creation omitted creator consent, and two cases still used
+  mutable legacy run-as metadata as the admitted coordinator. The fixtures now
+  authorize direct creation, test inherited-principal mismatch and coordinator
+  withdrawal, and prove a legacy human-access change leaves coordination fixed.
+- The complete contracts suite passed 630 cases, including rejection of forged
+  host-reference fields in start, send and reply model inputs. Lint,
+  repository-wide typecheck and documentation checks passed on restored sources.
+- The full PRD remains incomplete. Provider-write recovery end to end, configured
+  medium-model behavior evaluations, remaining browser/reader-access acceptance
+  and the final requirement audit are still required.
+
 ### Simplification after antagonistic review
 
 - Connector execution and Terminal reuse one inventory delegation snapshot.
@@ -387,13 +419,17 @@ proved above. Multi-session reader-access invalidation remains to be exercised.
 Canonical activation-event references now retain their source account before
 the first tool read. Rooted background children read that host-derived reference
 from their existing root-run authority without inheriting instructions or tools.
-Provider references produced by later tool results still need explicit origin
-context through background-child handoff and resumed inventory snapshots.
+Provider references produced by completed tool results now move through the
+existing host-derived agent exchange within the same Sidekick. Receivers retain
+origin identity under their own delegation snapshots, nested handoffs merge
+those references, and later executions of an occurrence read its completed
+conversation receipts. Unresolved effects and cross-Sidekick messages export no
+such context. Validation is recorded in the handoff evidence section below.
 Normal activity details now retain serving-account fields from receipt
 checkpoints, alongside the separate coordinating user. Authorized uncertain-write
 reconciliation still needs end-to-end recovery verification; pinning an account
 alone is not evidence that an uncertain provider effect was reconciled.
-Terminal now checks eligible delegation for every operation and retains its
+Terminal now reuses eligible delegation from its inventory snapshot and retains its
 original file identity across coordinators, including completed imports. Its
 single selected repository connection stays explicit; observed withdrawal
 removes mounted personal GitHub credentials without deleting files. Actual
