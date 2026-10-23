@@ -225,7 +225,7 @@ describe("reaching one resource through whichever connection can", () => {
     expect(readResult.output).toMatchObject({ values: [["Content calendar"]] });
     const receipts = testToolReceiptPort(objectStore);
     expect(await receipts.executionAccount({ runId: HARNESS_RUN_ID, effectIntentId: "read-effect" }))
-      .toMatchObject({ originalAccount: { connectionId: PERSONAL_ID }, account: { connectionId: WORKSPACE_CONNECTION_ID } });
+      .toBeNull();
     await receipts.complete({ effectIntentId: "read-effect", checkpointIndex: 5, outputRef: "read-output", outputSummary: "Read calendar",
       providerOperationId: FILE_ID, payloadJson: "{}", allowAmbiguousReconciliation: false,
       fence: { runId: HARNESS_RUN_ID, attemptId: lease.attemptId, owner: lease.owner }, now: Date.now() });

@@ -237,11 +237,13 @@ reports the specific blocked operation. In-flight
 writes with uncertain outcomes retain their original account for authorized
 reconciliation and never move to another identity to repeat the effect.
 
-Run history can show the coordinating user. Actual user/connection choices and
-fallback attempts remain in private database checkpoints for debugging; normal
-app activity and tool results do not expose them. Background children inherit
+Run history can show the coordinating user. Write user/connection choices and
+fallback attempts remain in private database checkpoints for debugging; reads
+skip account-checkpoint I/O. Normal app activity and tool results do not expose them. Background children inherit
 the same Sidekick delegation boundary and observe withdrawals through the same
-authorization refresh path. Previously read content and completed publications are not erased
+authorization refresh path. Their model/tool boundaries check root lifecycle and
+stop generation without rescanning eligibility; new activations refresh it.
+Previously read content and completed publications are not erased
 by withdrawal. Sidekick memory and its existing shared Terminal sandbox remain
 Sidekick-scoped; switching account does not reset them or make earlier content
 private to the next delegate.

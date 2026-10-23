@@ -30,22 +30,24 @@ function unavailable(message: string): ConnectorError {
   return new ConnectorError("unauthorized", message);
 }
 
-/** Try eligible accounts after definite access refusals; record choices before dispatch. */
+/** Try eligible accounts after definite access refusals; checkpoint writes for recovery. */
 export async function executeSidekickAccountOperation<C extends SidekickAccountConnection>(options: {
   authority: SidekickExecutionDelegation;
   workspaceId: WorkstreamWorkflowInput["workspaceId"];
   coordinatorUserId: string | null;
   requested: C; candidates: readonly C[]; sourceConnectionIds: readonly string[];
   canFallback: boolean;
+  mode: "read" | "write";
   context: HarnessToolContext;
   receipts: ToolReceiptObjectPort;
   fence: ToolReceiptFence;
   execute: (connection: C) => Promise<ConnectorToolResult>;
 }): Promise<ConnectorToolResult> {
   const { authority, context, receipts } = options;
-  if (!context.effectIntentId) throw unavailable("This Sidekick operation has no durable receipt. Resume the run before using a delegated account.");
+  if (options.mode === "write" && !context.effectIntentId) throw unavailable("This Sidekick operation has no durable receipt. Resume the run before using a delegated account.");
   const effectIntentId = context.effectIntentId;
-  const prior = await receipts.executionAccount({ runId: context.harnessRunId, effectIntentId });
+  const prior = options.mode === "write"
+    ? await receipts.executionAccount({ runId: context.harnessRunId, effectIntentId: effectIntentId! }) : null;
   const grants = new Map(authority.delegates.map((grant) => [grant.userId, grant]));
   const sourceOrder = new Map(options.sourceConnectionIds.map((id, index) => [id, index]));
   const grantOrder = new Map(authority.delegates.map((grant, index) => [grant.userId, index]));
@@ -90,15 +92,15 @@ export async function executeSidekickAccountOperation<C extends SidekickAccountC
         : { type: "user", userId: grant.userId },
     };
     const record = (phase: "selected" | "refused" | "served") => receipts.recordExecutionAccount({
-      effectIntentId, fence: options.fence, now: Date.now(), phase, account,
+      effectIntentId: effectIntentId!, fence: options.fence, now: Date.now(), phase, account,
     });
-    await record("selected");
+    if (options.mode === "write") await record("selected");
     let result: ConnectorToolResult;
     try {
       result = await options.execute(connection);
     } catch (error) {
       if (!options.canFallback || pinned || !isConnectorResourceAccessRefusal(error)) throw error;
-      await record("refused");
+      if (options.mode === "write") await record("refused");
       const details = error.details && typeof error.details === "object" ? error.details as Record<string, unknown> : {};
       const priorDetails = refusal?.details as Record<string, unknown> | undefined;
       if (!refusal || (!priorDetails?.resourceAuthorization && details.resourceAuthorization)) {
@@ -106,7 +108,7 @@ export async function executeSidekickAccountOperation<C extends SidekickAccountC
       }
       continue;
     }
-    await record("served");
+    if (options.mode === "write") await record("served");
     return result;
   }
   throw refusal ?? unavailable("No eligible delegated account could access this resource. Restore access or add a delegate who can open it.");

@@ -476,7 +476,7 @@ describe("Sidekick run continuation", () => {
     expect((await settledExecutionFor(worker.workerId, resumed.messageId)).status).toBe("completed");
   });
 
-  it.each(["pause", "pause_resume", "principal_changed", "run_not_found"] as const)(
+  it.each(["pause", "pause_resume", "run_not_found"] as const)(
     "fences a worker's model and tool authority after %s",
     async (revocation) => {
       await activeSidekick();
@@ -487,10 +487,6 @@ describe("Sidekick run continuation", () => {
         if (revocation === "pause_resume") {
           await workspaceStub().sidekickResume({ ...addressed(), actor: actor() });
         }
-      } else if (revocation === "principal_changed") {
-        // An inherited execution cannot substitute a different user for the
-        // root's persisted coordinator, even if that user belongs to the org.
-        worker.input.executionPrincipal = { type: "user", userId: CLAIMANT_ID };
       } else {
         await runInDurableObject(workspaceStub(), (_instance, state) => {
           state.storage.sql.exec("DELETE FROM sidekick_runs WHERE sidekick_id = ? AND run_id = ?",
@@ -501,6 +497,24 @@ describe("Sidekick run continuation", () => {
         .rejects.toThrow("This Sidekick delegation is no longer authorized");
     },
   );
+
+  it("reuses an active worker's eligibility snapshot until its next activation", async () => {
+    await activeSidekick();
+    const worker = await delegatedRunWorker();
+    const request = { ...addressed(), userId: AUTHOR_ID, allowed: false, operationId: crypto.randomUUID() };
+    const prepared = await workspaceStub().sidekickPrepareMyDelegation(request);
+    await workspaceStub().sidekickSetDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
+    await expect(__integrationTesting.assertRunAuthorityStillValid(TEST_ENV, worker.input)).resolves.toBeDefined();
+    await expect(__integrationTesting.assertRunAuthorityStillValid(TEST_ENV, worker.input)).resolves.toBeDefined();
+
+    const marker = "Refresh worker eligibility before this new assignment.";
+    const sent = await worker.owner.send({ agentId: worker.agentId, message: marker, attachmentIds: [] },
+      { ...worker.context, effectIntentId: crypto.randomUUID() });
+    await expect.poll(() => refusals(worker.workerId), { timeout: RUN_SETTLE_TIMEOUT_MS }).toEqual([
+      { code: "run_no_eligible_delegate", turnId: sent.messageId },
+    ]);
+    expect(callThatSaw(marker)).toBeUndefined();
+  });
 
   it("keeps nested workers subject to the root Sidekick run's pause", async () => {
     await activeSidekick();
