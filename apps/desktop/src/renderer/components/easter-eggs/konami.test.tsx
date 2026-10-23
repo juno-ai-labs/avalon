@@ -10,4 +10,13 @@ describe('KonamiEgg', () => {
     for (const key of KONAMI_CODE) fireEvent.keyDown(document.body, { key });
     expect(screen.getByText('+30 lives')).toBeInTheDocument();
   });
+
+  it('flags the page so every avatar runs its lap, and clears the flag after', () => {
+    const { unmount } = render(<KonamiEgg />);
+    expect(document.documentElement).not.toHaveAttribute('data-konami');
+    for (const key of KONAMI_CODE) fireEvent.keyDown(document.body, { key });
+    expect(document.documentElement).toHaveAttribute('data-konami');
+    unmount();
+    expect(document.documentElement).not.toHaveAttribute('data-konami');
+  });
 });

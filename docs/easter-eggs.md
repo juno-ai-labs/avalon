@@ -38,7 +38,7 @@ replaces the app when the organization or account cannot be loaded.
 
 | Egg | Trigger | Effect |
 | --- | --- | --- |
-| Konami code | ↑ ↑ ↓ ↓ ← → ← → B A anywhere in the shell | An accent-colour wash and "+30 lives" (Contra's reward) for 1.6 s. It removes itself on `animationend`. |
+| Konami code | ↑ ↑ ↓ ↓ ← → ← → B A anywhere in the shell | An accent-colour wash and "+30 lives" (Contra's reward) for 1.6 s, and every avatar on screen (people, Rally, Sidekicks) runs a small lap: once round a 6 px circle, upright, then a hop. The egg sets `data-konami` on the root while it plays, so the stylesheet reaches every avatar without the lists knowing. It removes itself on `animationend`. |
 | Credits | Seven clicks on the version in Settings › Application › About within 3 s | A "Made by" card under the version. |
 | Pong | Space on the "can't connect" screen when no control has focus, or a click on the screen's icon | Pong inside the card. Mouse, arrow keys or W/S move the left paddle; Escape or the icon closes it. The score is returns in the current rally and the best this visit. |
 
@@ -79,7 +79,8 @@ or configuration file: the person who sees it cannot act on those.
   (`rally/no-dynamic-import`), so the effects are in the main bundle, and they
   are kept small for that reason.
 - **The Konami effect respects reduced motion.** Under
-  `prefers-reduced-motion: reduce` the text does not move; it only fades.
+  `prefers-reduced-motion: reduce` the text does not move and no avatar laps;
+  the wash only fades.
   Verified visually, no automated guard.
 
 ## Boundary
@@ -120,7 +121,7 @@ web share.
 ### 2026-10-23 — Document created, with three eggs and a smaller "can't connect" screen
 
 **What changed:** Added the key-sequence and click-burst triggers, the Konami
-code, hidden credits in Settings › About, and Pong. Rewrote the "can't connect"
+code (with every avatar running a lap), hidden credits in Settings › About, and Pong. Rewrote the "can't connect"
 screen: it dropped the region and API endpoint table, the local-development
 advice about `.env.local` and `VITE_` keys, and the dialog that opened on
 arrival.

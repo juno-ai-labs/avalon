@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { AboutRally } from './about-credits';
 
@@ -15,6 +15,7 @@ describe('AboutRally', () => {
     for (let click = 0; click < 6; click += 1) fireEvent.click(version);
     expect(screen.queryByRole('region', { name: 'Credits' })).not.toBeInTheDocument();
     fireEvent.click(version);
-    expect(screen.getByRole('region', { name: 'Credits' })).toHaveTextContent('Morgan Ellis');
+    const credits = within(screen.getByRole('region', { name: 'Credits' }));
+    expect(credits.getAllByRole('listitem').map((item) => item.textContent)).toEqual(['Adam J', 'Alex T', 'Katherine B', 'Zzyzx']);
   });
 });
