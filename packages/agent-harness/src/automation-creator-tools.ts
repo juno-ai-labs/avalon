@@ -614,7 +614,10 @@ start work. For work after an external change, load polling-for-events and follo
 its event-first setup and resource-registration procedure.
 
 For new or changed executable work, test the workflow with available reads or
-non-destructive trials. Record what worked, what you could not test, and remaining
+non-destructive trials. Inspecting tool schemas is discovery, not a workflow test.
+Exercise the data retrieval and transformation needed to produce a representative
+result, and save the working queries or tool arguments when reusable.
+Record what worked, what you could not test, and remaining
 assumptions. Draft acceptance is not a workflow test. Leave future runs' deliveries
 and other effects to those runs unless requested during setup.
 
