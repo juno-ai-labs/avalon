@@ -1228,9 +1228,7 @@ one SQLite authority, so there is no longer a cross-object effect to defer.
 and rolls back even earlier declarations in the batch. Keep hashes outside the
 transaction and recheck authority fences at commit. A retry ceiling was rejected:
 it would delay and hide the same deterministic failure rather than distinguish
-it from recoverable storage errors. The incident's four populated tables were
-reconciled by appending compatible revisions, preserving existing schemas,
-rows, cells, historical revisions and schedule instants.
+it from recoverable storage errors.
 
 ### 2026-10-22 — Keep Sidekick actions discoverable across lifecycle states
 

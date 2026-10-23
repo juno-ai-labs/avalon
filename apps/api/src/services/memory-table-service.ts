@@ -140,7 +140,7 @@ class MemoryTableToolError extends Error {
   constructor(
     readonly code: string,
     message: string,
-    readonly details: Record<string, unknown>,
+    readonly details: { reason: string; field?: string; retryable?: boolean },
   ) {
     super(message);
   }
@@ -744,13 +744,15 @@ async function createTable(
   }));
   if (outcome.outcome === "replayed" || outcome.outcome === "opened") {
     const recorded = JSON.parse(outcome.resultJson) as Record<string, unknown>;
-    return { output: recorded, summary: `Opened durable table “${args.name}”`, providerOperationId: String(recorded.memoryTableId) };
+    return { output: recorded, summary: `${outcome.outcome === "opened" ? "Opened" : "Created"} durable table “${args.name}”`, providerOperationId: String(recorded.memoryTableId) };
   }
   if (outcome.outcome === "receipt_mismatch") throw new Error("memory_table_mutation_receipt_mismatch");
   if (outcome.outcome === "schema_conflict") {
     throw new MemoryTableToolError("memory_table_name_schema_conflict",
       `Table “${args.name}” already exists; incompatible fields: ${outcome.fields.join(", ")}.`,
-      { memoryTableId: outcome.memoryTableId, fields: outcome.fields, field: outcome.fields[0], retryable: false, reason: memoryTableSchemaRecovery(outcome.memoryTableId) });
+      // Only reason/field/retryable survive the harness failure envelope;
+      // put the concrete recovery call (including its ID) in reason.
+      { field: outcome.fields[0]!, retryable: false, reason: memoryTableSchemaRecovery(outcome.memoryTableId) });
   }
   return { output: result, summary: `Created durable table “${args.name}”`, providerOperationId: memoryTableId };
 }
@@ -1183,7 +1185,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
               enum: MEMORY_SCOPE_KINDS,
               description: "How long the table should outlive this run, narrowest first: `workstream` for this thread alone, `sidekick` for future runs of this installed Sidekick, `user` for one person, `workspace` for everyone in the organization. Not every run authorizes every kind; a refusal names the ones this run does have.",
             },
-            name: { type: "string", description: "A short name for the table, for example \"Reviewed repositories\". A table already under this name in the chosen scope is reopened when its schema matches: column names, types, required/searchable flags, and ordered key columns. Description, usage instructions, and column descriptions are updated without changing rows or IDs. On a schema conflict, call table_describe with the returned memoryTableId and reuse that schema, or choose a new name and explicitly migrate rows. Do not retry unchanged." },
+            name: { type: "string", description: "A short name for the table, for example \"Reviewed repositories\". A table already under this name in the chosen scope is reopened when its schema matches: column names, types, required/searchable flags, and ordered key columns. Reopening overwrites description, usage instructions, and column descriptions for every run sharing that table, without changing rows or IDs. On a schema conflict, call table_describe with the returned memoryTableId and reuse that schema, or choose a new name and explicitly migrate rows. Do not retry unchanged." },
             description: { type: "string", description: "What the table holds and why it exists, in a sentence or two. This is what table_search matches, so write the words someone would look for." },
             usageInstructions: { type: "string", description: "How a later run should use this table: when to insert, when to update, and what each unusual column means. Write it for a run that has never seen this table and cannot ask you." },
             columns: { type: "array", items: columnJsonSchema, description: "The table's columns, at least one. Columns cannot be added or renamed afterwards, so declare the ones the work will need rather than the minimum for the first row." },
@@ -1425,25 +1427,6 @@ export function automationMemoryTableResult(
   const memoryTableId = outcome.outcome === "created" ? request.memoryTableId
     : String((JSON.parse(outcome.resultJson) as { memoryTableId: string }).memoryTableId);
   return { name: request.name, memoryTableId, outcome: outcome.outcome === "created" ? "created" : "opened" };
-}
-
-/** Materialize through RPC for callers outside the local publication transaction. */
-export async function materializeAutomationMemoryTables(env: Env, input: AutomationMemoryTablesInput) {
-  if (input.tables.length === 0) return [];
-  const scope = await ensureScope(env, input.workspaceId, "sidekick", input.automationId, true);
-  const prepared = await prepareAutomationMemoryTables({ ...input, memoryScopeId: scope.memoryScopeId });
-  const workspace = await workspaceMemoryObject(env, input.workspaceId);
-  const results = [];
-  for (const [index, { request, legacyInputHash }] of prepared.entries()) {
-    let outcome = WorkspaceMemoryTableCreateResultSchema.parse(await workspace.createMemoryTable(request));
-    if (outcome.outcome === "receipt_mismatch") {
-      outcome = WorkspaceMemoryTableCreateResultSchema.parse(await workspace.createMemoryTable({
-        ...request, mutation: { ...request.mutation, inputHash: legacyInputHash },
-      }));
-    }
-    results.push(automationMemoryTableResult(outcome, request, index));
-  }
-  return results;
 }
 
 /**
