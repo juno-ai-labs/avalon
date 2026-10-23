@@ -149,13 +149,11 @@ and activity refresh in the attachment transaction, including a repeated attach.
 
 ### Reading projections from older deployments
 
-Common and viewer directory effect schemas strip unknown fields, including
-nested link and reservation objects. Retired fields such as `originType`,
-`automationSubscriptionId`, `automationRunId` and `plannedFor` therefore cannot
-break shared navigation or escape into its response. Declared fields retain
-their validation. Persisted projection reads use `parseRpcInput` so a malformed
-known field names the projection schema, field and issue code across RPC.
-The read does not rewrite persisted payloads, source versions or hashes.
+Common and viewer directory effect schemas strip unknown properties on both
+persisted reads and incoming effect/Queue writes, including nested link and
+reservation objects. Declared fields still validate. Persisted reads use
+`parseRpcInput` to retain schema, field and issue codes across RPC; they do not
+rewrite payloads, versions or hashes.
 
 ### People the member table has never heard of
 
@@ -630,7 +628,8 @@ Space in an Organization now shares one SQLite database and one socket set.
 
 ### 2026-10-23 — Read historical directory projections without retaining obsolete fields
 
-**What changed:** Common and viewer directory schemas strip unknown properties;
+**What changed:** Common and viewer directory schemas strip unknown properties
+on both reads and incoming effects, so a newer writer's extra fields are dropped;
 projection reads preserve declared-field diagnostics across the Durable Object
 RPC boundary.
 
@@ -644,7 +643,6 @@ migration and its hashes; stripping at the existing schema boundary needs neithe
 
 **Consequences:** Access decisions stay at the parent. A malformed declared field
 still fails with a field-specific code rather than being silently discarded.
-
 
 ### 2026-10-22 — Preserve irreversible archive cascades across restore snapshots
 

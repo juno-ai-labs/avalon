@@ -211,7 +211,7 @@ function residentTerminalFactory(instance: object): TerminalPortFactory {
   return createTerminalPortFactory(residentExecutionEnvironment(instance));
 }
 
-it.each(["get", "poll", "logs"] as const)("recovers a transient session %s failure and settles the same real DO task", async (stage) => {
+it.each(["get", "poll", "logs", "hanging_poll"] as const)("handles a session %s observation failure without replacing the real DO task", async (stage) => {
   const stub = agent();
   await boot(stub);
   const now = Date.now();
@@ -246,6 +246,7 @@ it.each(["get", "poll", "logs"] as const)("recovers a transient session %s failu
         throw Object.assign(new Error("missing"), { statusCode: 404 });
       },
       getSessionCommand: async () => {
+        if (stage === "hanging_poll") return new Promise<never>(() => undefined);
         if (++pollAttempts === 1 && stage === "poll") throw unavailable();
         return { id: "accepted-command", command: "opaque", exitCode: 0 };
       },
@@ -255,13 +256,24 @@ it.each(["get", "poll", "logs"] as const)("recovers a transient session %s failu
       },
     },
   }) }), { observeRequest: (measurement) => { measurements.push(measurement); } });
-  const result = await provider.runCommand("daytona-observation", { taskName: "stable-task",
+  const pending = provider.runCommand("daytona-observation", { taskName: "stable-task",
     command: "printf ok", cwd: "/workspace", timeoutMs: 1_000, retainSessionForRecovery: true,
     onSubmitted: async (providerTaskId) => {
       expect((await terminal(stub, "markTaskRunning", { effectIntentId: EFFECT_A, providerTaskId,
         commandDeadlineAt: now + 120_000, now: Date.now() })).value).toBe(true);
     },
   });
+  if (stage === "hanging_poll") {
+    await expect(pending).rejects.toMatchObject({ code: "command_observation_deadline" });
+    expect(executeSessionCommand).toHaveBeenCalledOnce();
+    expect(createSession).toHaveBeenCalledOnce();
+    // The object can already have hibernated while the provider read stalled.
+    expect((await terminal(stub, "taskByEffect", EFFECT_A)).value).toMatchObject({
+      state: "running", providerTaskId: "accepted-command", completedAt: null,
+    });
+    return;
+  }
+  const result = await pending;
   expect(result).toEqual({ exitCode: 0, stdout: "ok\n", stderr: "" });
   expect(executeSessionCommand).toHaveBeenCalledOnce();
   expect(createSession).toHaveBeenCalledOnce();
