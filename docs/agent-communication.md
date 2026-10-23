@@ -68,6 +68,16 @@ sibling or its owner is mid-call, and its reads take no lease, waiting only
 for a sandbox that is not yet running or whose checkout is still being
 prepared ([`terminal-workspaces.md`](terminal-workspaces.md)).
 
+Within one Sidekick, the host exports connection IDs and provider reference keys
+from completed tool receipts into `AgentExchange.sidekickAccountReferences`.
+It merges inherited references for nested assignments and replies. The metadata
+contains no credentials or grant generations, grants no authority and is not
+rendered into model message text. The receiver resolves opaque IDs and dependent
+writes against those originating connections using its own eligible delegation
+snapshot. Unresolved effects are never exported. Other Sidekicks and ordinary
+Threads do not receive this context, and a new Sidekick occurrence keeps its own
+receipt scope. This reuses existing receipt storage and durable input admission.
+
 Creation reserves the child and obtains the current generation in one parent RPC.
 Child reservation refuses archived parents. Bootstrap, identity provisioning and
 background initialization use one child RPC while retaining their existing
@@ -362,6 +372,15 @@ fields are rejected, including model-selected authority and team selectors.
 
 ## Testing
 
+Real workerd `test-workers/sidekick-run-continuation.test.ts` covers completed
+reference export, nested handoff and resumed input after eviction, excluding
+unresolved effects. `test-workers/tool-receipt-authority.test.ts` exercises the
+receipt query's explicit run and conversation scopes. Run these with
+`pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts`.
+Node `test/agent-communication-prompts.test.ts` verifies host reference metadata
+is absent from rendered message text. Resolver and assembled connector coverage
+is indexed in [the harness](agent-harness.md#testing).
+
 `pnpm --filter @rally/contracts exec vitest run src/agent-communication.test.ts`
 checks address round trips, explicit context, attachments, and distinct send/reply
 parameters. `pnpm --filter @rally/api test:workers test-workers/agent-teams.test.ts`
@@ -374,6 +393,25 @@ the ownership flags from a conversation that acts for no thread, and a guest's
 grant-only contact. Complete desktop behavior remains an implementation gate.
 
 ## Changelog
+
+### 2026-10-22 — Preserve provider account meaning through Sidekick handoffs
+
+**What changed:** Same-Sidekick agent delivery carries compact completed provider
+references from the sender's existing receipts and incoming handoff. Receivers
+use them as account constraints for opaque IDs and dependent work. Nested
+assignments, replies and resumed workers retain the host metadata through the
+existing input authorization, without new tables or model tool arguments.
+
+**Why:** A provider message ID read as one delegate could otherwise be handed to
+a worker and interpreted as the creator's ID. Giving that worker the sender's
+credentials or rerunning the whole task as each person would exceed the product
+contract. Completed reference identity is the only information that needs to move.
+
+**Consequences:** The recipient still needs current delegated access; forwarding
+an ID does not revive a withdrawn grant. Ambiguous private references need an
+explicit account. Uncertain effects remain on their original receipt and are
+not exported as completed facts. Cross-Sidekick and ordinary Thread messages
+keep their existing context and authorization boundaries.
 
 ### 2026-10-22 — Attach Sidekick context without waking its wizard
 

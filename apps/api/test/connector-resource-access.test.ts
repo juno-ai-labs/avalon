@@ -179,9 +179,10 @@ const write = { spreadsheetId: FILE_ID, range: "A1:B1", values: [["a", "b"]], va
 
 describe("reaching one resource through whichever connection can", () => {
   it.each([
-    { source: false, expectedReads: ["personal-token", "workspace-token"], expectedOriginal: PERSONAL_ID },
-    { source: true, expectedReads: ["workspace-token"], expectedOriginal: WORKSPACE_CONNECTION_ID },
-  ])("dispatches an assembled Sidekick Google tool using another consenting user's credentials (event source: $source)", async ({ source, expectedReads, expectedOriginal }) => {
+    { source: false, handoff: false, expectedReads: ["personal-token", "workspace-token"], expectedOriginal: PERSONAL_ID },
+    { source: true, handoff: false, expectedReads: ["workspace-token"], expectedOriginal: WORKSPACE_CONNECTION_ID },
+    { source: false, handoff: true, expectedReads: ["workspace-token"], expectedOriginal: WORKSPACE_CONNECTION_ID },
+  ])("dispatches an assembled Sidekick Google tool using another consenting user's credentials (event source: $source, handoff: $handoff)", async ({ source, handoff, expectedReads, expectedOriginal }) => {
     const reads: string[] = [];
     const writes = googleAsTwoAccounts({ reads });
     const { env, database, objectStore, workspaceObject } = await fixture();
@@ -205,7 +206,13 @@ describe("reaching one resource through whichever connection can", () => {
       .run(lease.attemptId, lease.owner, Date.now()+600_000, HARNESS_RUN_ID);
     seedToolReceipt(objectStore, { id: "read-effect", runId: HARNESS_RUN_ID, toolCallId: "read-call",
       toolName: "sheets.read_values", status: "executing", mode: "read", executionPlanJson: '{"mode":"read"}' });
-    const input = { ...workflowInput(), parentKind: "automation" as const };
+    const input = { ...workflowInput(), parentKind: "automation" as const,
+      ...(handoff ? { agentExchange: {
+        teamId: `automation/${WORKSTREAM_ID}/0` as never, senderAgentId: `automation/${WORKSTREAM_ID}/0` as never,
+        messageId: "00000000-0000-4000-8000-000000000093", sidekickAccountReferences: [{ sidekickId: WORKSTREAM_ID,
+          connectionId: WORKSPACE_CONNECTION_ID, resourceKeys: [`google:file:${FILE_ID}`] }],
+      } } : {}),
+    };
     // Admission's canonical projection is covered in real workerd. Here the
     // real loader must carry that typed run-opening reference into execution.
     const runDefinition = source ? new Preparation(async () => AutomationRunDefinitionV1Schema.parse({

@@ -174,6 +174,7 @@ describe("tool-receipt authority on real workerd", () => {
     await receipt(stub, "recordExecutionAccount", accountRequest(false, "served"));
     const query = { runId: RUN, resourceKeys: ["google:file:calendar-sheet"] };
     expect(await receipt(stub, "resourceExecutionAccounts", query)).toMatchObject({ value: [] });
+    expect(await receipt(stub, "resourceExecutionAccounts", { runId: null })).toMatchObject({ value: [] });
     await receipt(stub, "complete", {
       effectIntentId: "account-effect", checkpointIndex: 3, outputRef: "result", outputSummary: "Read sheet",
       providerOperationId: null, payloadJson: "{}", allowAmbiguousReconciliation: false,
@@ -189,6 +190,13 @@ describe("tool-receipt authority on real workerd", () => {
     }] });
     expect(await receipt(stub, "resourceExecutionAccounts", { ...query, runId: "another-run" })).toMatchObject({ value: [] });
     expect(await receipt(stub, "resourceExecutionAccounts", { ...query, resourceKeys: ["google:file:another-sheet"] })).toMatchObject({ value: [] });
+    expect(await receipt(stub, "resourceExecutionAccounts", { runId: null })).toMatchObject({ value: [{
+      resourceKeys: ["google:file:calendar-sheet"], account: { connectionId: "00000000-0000-7000-8000-00000000ac02" },
+    }] });
+    expect(await receipt(stub, "resourceExecutionAccounts", { ...query, runId: null })).toMatchObject({ value: [{
+      resourceKeys: ["google:file:calendar-sheet"], account: { connectionId: "00000000-0000-7000-8000-00000000ac02" },
+    }] });
+    expect(await receipt(stub, "resourceExecutionAccounts", { runId: null, resourceKeys: [] })).toMatchObject({ value: [] });
   });
 
   it("refuses execution account changes after cancellation or an uncertain provider effect", async () => {

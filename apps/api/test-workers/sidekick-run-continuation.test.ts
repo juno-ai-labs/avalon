@@ -21,7 +21,7 @@
  */
 
 import { env } from "cloudflare:workers";
-import { reset, runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -176,6 +176,7 @@ async function activeSidekick(): Promise<void> {
     scope: "personal",
     owningWorkstreamId: null,
     automationId: AUTOMATION_ID,
+    creatorConsent: { requestId: crypto.randomUUID() },
   });
   expect(created).toEqual({ automationId: AUTOMATION_ID, created: true });
   await submit();
@@ -368,6 +369,28 @@ describe("Sidekick run continuation", () => {
         executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test",
       });
     const owner = new AgentCommunicationService(TEST_ENV, ownerInput);
+    const reference = { sidekickId: AUTOMATION_ID, connectionId: "00000000-0000-7000-8000-00000000c7f1",
+      resourceKeys: ["google:message:handoff-mail"] };
+    if (origin === "run") {
+      // Completed provider output is the fixture; this test exercises its
+      // export through real receipt RPCs, message admission and child recovery.
+      await runInDurableObject(childStub(ownerSubstreamId), (_instance, state) => {
+        for (const [position, status, resourceKey] of [[900, "completed", "google:message:handoff-mail"],
+          [901, "ambiguous", "google:message:unresolved-mail"]] as const) {
+          const effect = `handoff-read-${position}`;
+          state.storage.sql.exec(`INSERT INTO tool_effects(effect_intent_id,run_id,attempt_epoch,tool_position,occurrence_key,
+            tool_name,mode,request_hash,authority_revision,status,tool_call_id,input_json,checkpoint_index,started_at)
+            VALUES (?,?,1,?,?,'gmail.read_message','read','handoff-read','1',?,?, '{}',1,?)`,
+          effect, ownerInput.harnessRunId, position, effect, status, effect, Date.now());
+          const account = { sidekickId: AUTOMATION_ID, connectionId: reference.connectionId, delegatedUserId: AUTHOR_ID,
+            principal: { type: "user", userId: AUTHOR_ID }, grantGeneration: 1 };
+          state.storage.sql.exec(`INSERT INTO tool_effect_checkpoints(checkpoint_id,effect_intent_id,run_id,attempt_id,
+            checkpoint_index,phase,member_safe_payload_json,created_at) VALUES (?,?,?,'handoff-attempt',1,'execution_account',?,?)`,
+          effect, effect, ownerInput.harnessRunId,
+          JSON.stringify({ phase: "served", account, originalAccount: account, resourceKeys: [resourceKey] }), Date.now());
+        }
+      });
+    }
     const context = {
       workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, harnessRunId: ownerInput.harnessRunId,
       toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
@@ -388,6 +411,14 @@ describe("Sidekick run continuation", () => {
     expect(workerInput.automationRun).toBeUndefined();
     if (origin === "run") {
       expect(workerInput.automationDelegation).toMatchObject({ runId: ownerSubstreamId });
+      expect(workerInput.agentExchange?.sidekickAccountReferences).toEqual([reference]);
+      const nestedOwner = new AgentCommunicationService(TEST_ENV, workerInput);
+      const nested = await nestedOwner.start({ name: "Reply researcher", description: "Use the handed-off message",
+        message: "Inspect the originating message account.", attachmentIds: [] }, { ...context, effectIntentId: crypto.randomUUID() });
+      const nestedId = agentAddressForId(nested.agentId).substreamId;
+      const nestedExecution = await settledExecutionFor(nestedId, nestedId);
+      expect(JSON.parse(nestedExecution.execution_context_json).agentExchange.sidekickAccountReferences).toEqual([reference]);
+      await evictDurableObject(childStub(workerId));
     } else {
       expect(workerInput.automationDelegation).toBeUndefined();
     }
@@ -396,7 +427,11 @@ describe("Sidekick run continuation", () => {
     const followUp = await owner.send({ agentId: started.agentId,
       message: "Check the shared-conversation count too.", attachmentIds: [] },
     { ...context, effectIntentId: crypto.randomUUID() });
-    expect((await settledExecutionFor(workerId, followUp.messageId)).status).toBe("completed");
+    const continued = await settledExecutionFor(workerId, followUp.messageId);
+    expect(continued.status).toBe("completed");
+    if (origin === "run") {
+      expect(JSON.parse(continued.execution_context_json).agentExchange.sidekickAccountReferences).toEqual([reference]);
+    }
     expect(callThatSaw("Check the shared-conversation count too.")).toBeDefined();
     expect(await refusals(workerId)).toEqual([]);
   });
@@ -437,15 +472,14 @@ describe("Sidekick run continuation", () => {
         if (revocation === "pause_resume") {
           await workspaceStub().sidekickResume({ ...addressed(), actor: actor() });
         }
+      } else if (revocation === "principal_changed") {
+        // An inherited execution cannot substitute a different user for the
+        // root's persisted coordinator, even if that user belongs to the org.
+        worker.input.executionPrincipal = { type: "user", userId: CLAIMANT_ID };
       } else {
         await runInDurableObject(workspaceStub(), (_instance, state) => {
-          if (revocation === "principal_changed") {
-            state.storage.sql.exec("UPDATE automation_directory SET run_as_user_id = ? WHERE automation_id = ?",
-              CLAIMANT_ID, AUTOMATION_ID);
-          } else {
-            state.storage.sql.exec("DELETE FROM sidekick_runs WHERE sidekick_id = ? AND run_id = ?",
-              AUTOMATION_ID, worker.runId);
-          }
+          state.storage.sql.exec("DELETE FROM sidekick_runs WHERE sidekick_id = ? AND run_id = ?",
+            AUTOMATION_ID, worker.runId);
         });
       }
       await expect(__integrationTesting.assertRunAuthorityStillValid(TEST_ENV, worker.input))
@@ -481,11 +515,13 @@ describe("Sidekick run continuation", () => {
     expect(await receipts(nestedId)).toHaveLength(1);
   });
 
-  it("continues a completed run as its run-as user, with its instructions at the revision accepted now", async () => {
+  it("continues as its persisted coordinator after a legacy run-as change, with today's accepted instructions", async () => {
     await activeSidekick();
     const runId = await completedRun();
-    // Today's consent, not the run's: a newer accepted revision. (A new run-as
-    // user refuses instead; see the `run_principal_changed` case.)
+    // Human access metadata is independent of the admitted coordinator.
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE automation_directory SET run_as_user_id=? WHERE automation_id=?", CLAIMANT_ID, AUTOMATION_ID);
+    });
     expect(await submit({ ...DEFINITION, instructions: "Revision two: forward each reply to the home room." })).toBe(2);
     await apply();
 
@@ -599,13 +635,12 @@ describe("Sidekick run continuation", () => {
         state.storage.sql.exec(`DELETE FROM sidekick_runs WHERE sidekick_id = ? AND run_id = ?`, AUTOMATION_ID, runId);
       });
     }],
-    // Another member takes over who the Sidekick runs as, the way
-    // `claimExecutionPrincipal` leaves it: the run's transcript is still the
-    // first principal's, so it is not handed to the second.
-    ["run_principal_changed", async () => {
-      await runInDurableObject(workspaceStub(), (_instance, state) => {
-        state.storage.sql.exec(`UPDATE automation_directory SET run_as_user_id = ? WHERE automation_id = ?`, CLAIMANT_ID, AUTOMATION_ID);
-      });
+    // A later independent occurrence may choose someone else; an existing run
+    // whose coordinator withdraws is blocked rather than silently transferred.
+    ["run_coordinator_unavailable", async () => {
+      const request = { ...addressed(), userId: AUTHOR_ID, allowed: false, operationId: crypto.randomUUID() };
+      const prepared = await workspaceStub().sidekickPrepareMyDelegation(request);
+      await workspaceStub().sidekickSetMyDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
     }],
   ] as const)("refuses input with %s and leaves nothing queued", async (code, arrange) => {
     await activeSidekick();

@@ -5829,6 +5829,8 @@ async function loadHarnessTools(
               coordinatorUserId: input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null,
               requested: frozen, candidates, identity,
               sourceAccount: runDefinition?.opening?.sourceAccount ?? backgroundSource,
+              accountReferences: input.agentExchange?.sidekickAccountReferences ?? [],
+              includeConversationAccounts: Boolean(input.automationRun || input.backgroundAgent),
               ...(selection ? { selection } : {}), mode: definition.mode,
               sourceConnectionIds: runDefinition ? Object.values(runDefinition.activitySourcePluginIds)
                 .flatMap((pluginId) => runDefinition.connectorBindings[pluginId] ? [runDefinition.connectorBindings[pluginId]!] : []) : [],

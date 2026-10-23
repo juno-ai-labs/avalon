@@ -18,7 +18,12 @@ export function toolAccountAttribution(record: ToolExecutionAccountRecord, names
   };
 }
 export const ExecutionAccountReadSchema = z.strictObject({ runId: z.string().min(1), effectIntentId: z.string().min(1) });
-export const ResourceExecutionAccountsSchema = z.strictObject({ runId: z.string().min(1), resourceKeys: z.array(z.string().min(1)) });
+export const ResourceExecutionAccountsSchema = z.strictObject({
+  // A Sidekick run's conversation includes its later execution receipts.
+  runId: z.string().min(1).nullable(),
+  // Omit only when the host exports completed references for an agent handoff.
+  resourceKeys: z.array(z.string().min(1)).optional(),
+});
 export const RecordExecutionAccountSchema = z.strictObject({
   effectIntentId: z.string().min(1), fence: z.strictObject({ runId: z.string().min(1), attemptId: z.string().min(1), owner: z.string().min(1) }),
   now: z.number().int().nonnegative(), phase: z.enum(["selected", "refused", "served"]),
@@ -51,16 +56,17 @@ export function readToolExecutionAccount(sql: SqlStorage, runId: string, effectI
 }
 
 /** Only a completed effect establishes an account for dependent work. */
-export function completedToolResourceAccounts(sql: SqlStorage, runId: string, resourceKeys: readonly string[]): ToolExecutionAccountRecord[] {
-  if (resourceKeys.length === 0) return [];
+export function completedToolResourceAccounts(sql: SqlStorage, runId: string | null, resourceKeys?: readonly string[]): ToolExecutionAccountRecord[] {
+  if (resourceKeys?.length === 0) return [];
   return sql.exec<{ member_safe_payload_json: string }>(
     `SELECT checkpoint.member_safe_payload_json FROM tool_effect_checkpoints checkpoint
       JOIN tool_effects effect ON effect.effect_intent_id=checkpoint.effect_intent_id
-      WHERE checkpoint.run_id=? AND effect.run_id=? AND effect.status='completed' AND checkpoint.phase=?
+      WHERE (? IS NULL OR checkpoint.run_id=?) AND effect.run_id=checkpoint.run_id AND effect.status='completed' AND checkpoint.phase=?
         AND json_extract(checkpoint.member_safe_payload_json,'$.phase')='served'
-        AND EXISTS (SELECT 1 FROM json_each(checkpoint.member_safe_payload_json,'$.resourceKeys') resource
-          WHERE resource.value IN (SELECT value FROM json_each(?)))
-      ORDER BY effect.tool_position DESC,checkpoint.checkpoint_index DESC`,
-    runId, runId, TOOL_ACCOUNT_CHECKPOINT, JSON.stringify(resourceKeys),
+        AND (? IS NULL OR EXISTS (SELECT 1 FROM json_each(checkpoint.member_safe_payload_json,'$.resourceKeys') resource
+          WHERE resource.value IN (SELECT value FROM json_each(?))))
+      ORDER BY effect.started_at DESC,effect.tool_position DESC,checkpoint.checkpoint_index DESC`,
+    runId, runId, TOOL_ACCOUNT_CHECKPOINT, resourceKeys === undefined ? null : JSON.stringify(resourceKeys),
+    resourceKeys === undefined ? null : JSON.stringify(resourceKeys),
   ).toArray().map((row) => recordJson(row.member_safe_payload_json));
 }
