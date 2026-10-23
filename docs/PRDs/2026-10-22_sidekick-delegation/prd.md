@@ -133,12 +133,9 @@ Sidekick to act as me**. A person needs access to the Sidekick, not permission
 to edit its definition, to grant their own authority. An existing delegate can
 withdraw their own grant even if they have since lost access to the Sidekick.
 This withdrawal path reveals only their own grant and safe Sidekick identity.
-It is available in **Settings → Account → Sidekick delegation**, which lists
-only the signed-in person's grants, including unavailable Sidekicks. Use the
-name recorded when they granted access, or **Unavailable Sidekick** when that
-label cannot safely be retained. This account-level surface needs no current
-Sidekick viewer or Organization membership grant. It permits withdrawal and
-own-grant reconciliation, never enrollment or reading another person's grant.
+Use the agent's own-delegation tools for withdrawal when the Sidekick cannot
+be opened. They reveal only that person's stored grant and safe label. There
+is no Account settings withdrawal screen or separate account HTTP endpoint.
 
 The list is visible to existing authorized Sidekick viewers. It exposes no
 account inventory, tokens, or private provider errors. Other users have no
@@ -317,7 +314,8 @@ typed-authorized-tools clause remains valid and needs no new product hierarchy.
 
 ## Decision log
 
-None yet.
+- 2026-10-22: Removed the dedicated Account withdrawal feature at the user's
+  request. Sidekick-screen withdrawal and agent self-delegation tools remain.
 
 ## Key design decisions
 
