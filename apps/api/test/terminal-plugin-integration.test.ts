@@ -197,13 +197,12 @@ describe("Terminal Bind integration", () => {
     } });
     await workspace.instance.sidekickCreate({
       workspaceId: W, automationId: S, authorUserId: U, scope: "workspace",
-      owningWorkstreamId: null, owningSubstreamId: asSubstreamId("0"), authorityGeneration: 1,
-      creatorConsent: { requestId: crypto.randomUUID() },
+      owningWorkstreamId: null, owningSubstreamId: asSubstreamId("0"), authorityGeneration: 1
     });
     const consent = async (userId: typeof U, allowed: boolean) => {
       const request = { workspaceId: W, automationId: S, userId, allowed, operationId: crypto.randomUUID() };
       const prepared = await workspace.instance.sidekickPrepareMyDelegation(request);
-      return workspace.instance.sidekickSetMyDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
+      return workspace.instance.sidekickSetDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
     };
     const sandboxProvider = provider();
     vi.mocked(sandboxProvider.runUtilityCommand).mockImplementation(async (_id, request) => ({

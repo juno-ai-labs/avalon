@@ -18,8 +18,8 @@ export function SidekickDelegation({ id }: { id: string }): React.JSX.Element {
   const { api, session } = useCollaborationSession();
   const online = useOnline();
   const client = useQueryClient();
-  const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
-  const inFlight = useRef(new Set<string>());
+  const [pending, setPending] = useState(false);
+  const inFlight = useRef(false);
   const [uncertain, setUncertain] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const query = useSidekickDelegates(id);
@@ -28,9 +28,9 @@ export function SidekickDelegation({ id }: { id: string }): React.JSX.Element {
     if (!result.error) setUncertain(false);
   };
   const act = async (userId: string, write: () => Promise<SidekickDelegationMutationResult>): Promise<void> => {
-    if (!api || !navigator.onLine || uncertain || inFlight.current.has(userId)) return;
-    inFlight.current.add(userId);
-    setPending((current) => new Set([...current, userId]));
+    if (!api || !navigator.onLine || uncertain || inFlight.current) return;
+    inFlight.current = true;
+    setPending(true);
     setError(null);
     try {
       const result = await write();
@@ -59,19 +59,18 @@ export function SidekickDelegation({ id }: { id: string }): React.JSX.Element {
       const result = await query.refetch();
       setUncertain(Boolean(result.error));
     } finally {
-      inFlight.current.delete(userId);
-      setPending((current) => new Set([...current].filter((key) => key !== userId)));
+      inFlight.current = false;
+      setPending(false);
       void client.invalidateQueries({ queryKey: ['automation', id], exact: true });
     }
   };
   return <>
     <SidekickDelegationList data={query.data} loading={query.isPending} offline={!online}
-      needsRefresh={uncertain} pendingUserIds={pending}
+      needsRefresh={uncertain} pending={pending}
       onRefresh={() => void refresh()}
       onSetOwn={(allowed) => {
         if (query.data) void act(query.data.you.userId, () => api!.setMySidekickDelegation(id, allowed, crypto.randomUUID()));
-      }}
-      onRemove={(userId) => void act(userId, () => api!.removeSidekickDelegate(id, userId, crypto.randomUUID()))} />
+      }} />
     {query.error && !uncertain && <Button disabledReason={!online ? 'Go online to refresh delegation.' : undefined}
       onClick={() => void refresh()}>Refresh delegation</Button>}
     {(error || query.error) && <ErrorNotice occurrence={error ?? query.error}>{(error ?? query.error)?.message}</ErrorNotice>}

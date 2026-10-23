@@ -175,8 +175,7 @@ async function activeSidekick(): Promise<void> {
     authorUserId: AUTHOR_ID,
     scope: "personal",
     owningWorkstreamId: null,
-    automationId: AUTOMATION_ID,
-    creatorConsent: { requestId: crypto.randomUUID() },
+    automationId: AUTOMATION_ID
   });
   expect(created).toEqual({ automationId: AUTOMATION_ID, created: true });
   await submit();
@@ -654,7 +653,7 @@ describe("Sidekick run continuation", () => {
     ["run_coordinator_unavailable", async () => {
       const request = { ...addressed(), userId: AUTHOR_ID, allowed: false, operationId: crypto.randomUUID() };
       const prepared = await workspaceStub().sidekickPrepareMyDelegation(request);
-      await workspaceStub().sidekickSetMyDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
+      await workspaceStub().sidekickSetDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
     }],
   ] as const)("refuses input with %s and leaves nothing queued", async (code, arrange) => {
     await activeSidekick();

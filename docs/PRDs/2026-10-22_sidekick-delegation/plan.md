@@ -1,12 +1,12 @@
 # Implementation plan
 
 The PRD and design remain the complete acceptance contract. This checklist tracks
-local implementation and evidence. The feature is complete locally, unpushed
-and not deployed; these checks do not claim production verification.
+local implementation and evidence. The earlier implementation was complete locally; the 2026-10-23 scope revision
+is complete locally. The branch is unpushed and not deployed; these checks do not claim production verification.
 
 - [x] WorkspaceDO consent authority: membership incarnation, stable grant order,
   prepared generations, withdrawal tombstones, immutable accepted receipts,
-  creator initialization, manager removal, and conservative legacy migration.
+  automatic creator enrollment and legacy backfill that preserves withdrawal.
 - [x] Signed-in self-service APIs, viewer-authorized discovery, own-grant access
   after losing Organization membership, and existing realtime invalidations.
 - [x] Shared event, schedule, manual and continuation eligibility; configured
@@ -15,11 +15,11 @@ and not deployed; these checks do not claim production verification.
 - [x] Harness operation identity resolver, safe refusal fallback, sticky
   account-relative operations and effect receipts, actual-account attribution,
   and delegation refresh for background children.
-- [x] Strict delegation tools in both existing plugin presentations; direct-user
-  provenance for tools and creation; no autonomous consent tools.
+- [x] Strict targeted delegation tools in direct and autonomous presentations;
+  any current Organization user can be targeted and creators enroll immediately.
 - [x] Activation permission-reporting guidance, actionable Needs attention, and
   configured medium fallback model evaluations.
-- [x] Shared desktop/web Sidekick list, creator disclosure, all
+- [x] Shared desktop/web Sidekick list, immediate creation, all
   loading/error/offline/pending/unavailable states and attribution.
 - [x] Real workerd and provider-double tests, production-code negative controls,
   lint, typecheck, real Electron/browser inspection and two-session convergence.
@@ -27,10 +27,61 @@ and not deployed; these checks do not claim production verification.
 
 ## Scope update
 
+2026-10-23: Remove manager removal, creator consent markers, creation/history
+disclosures and direct-human consent restrictions/guidance. Every creation
+immediately enrolls its creator, including autonomous creation. The agent tool
+becomes `sidekick_set_delegation({ sidekickId, userId, allowed })`, available to
+user-driven and autonomous executions for any current Organization user.
+Existing withdrawal ordering, identity binding, event audiences, recovery and
+Terminal protections remain. Validation of this revision is recorded below; the runtime sweep and focused fixture repair are complete. Evidence
+below describes the earlier scope unless explicitly updated for this revision.
+
+
 The user removed the dedicated Account withdrawal feature. Its unfinished UI
 and transport work were discarded, and the separate account HTTP route and
 response contract were removed. Sidekick-screen withdrawal, agent own-grant
 lookup/self-withdrawal, delegation execution and activity attribution remain.
+
+## 2026-10-23 simplification validation
+
+- Automatic enrollment: new creators are enrolled in the same creation
+  transaction, including the real autonomous agent creation path. Migration 131
+  queues earlier unenrolled creators, including those with no legacy task-account
+  binding. Existing allowed or withdrawn records are never overwritten.
+- Removed manager removal throughout UI, API client, HTTP route and RPC. Removed
+  creator-consent fields, direct-speaker lookup, creation/history disclosures,
+  creation CSS and special quoted/external-event consent guidance.
+- Agent mutation is `sidekick_set_delegation({ sidekickId, userId, allowed })`.
+  Actor identity stays host-owned. Direct and autonomous runs can target any
+  current Organization user. Self-service UI remains self-only.
+- Three production breaks failed their intended workerd assertions: dropping
+  creation enrollment, restoring self-only targeting and dropping creator
+  backfill. Restored consent/admission files pass 30 tests.
+- All API Node tests pass (3,859) after updating two old catalog expectations;
+  the complete catalog file passes 41. The initial broad root run passed every
+  other package, including desktop 4,032, and failed only those two stale tests.
+  The workerd sweep passed 180 files and 2,092 tests; one fixture created a
+  nonexistent author without Organization membership. The fixture now declares
+  that creator as a real member. Its original access-revocation assertions are
+  unchanged, and both affected runtime files pass all 58 tests. These results
+  combine the broad sweep with the focused repair run; the broad command itself
+  was not rerun after that fixture-only correction.
+- Three live model cases on the configured fallback pass: direct targeting of
+  another member, autonomous enrollment and autonomous withdrawal. Production
+  descriptions and schemas were exported; outcomes were fixtures and no real
+  provider write occurred.
+- Real headed Chrome: Settings → Sidekicks → New Sidekick immediately created a
+  draft, with creator already allowed/eligible in the real delegation API.
+  Withdrawal survived reload; normal re-enrollment worked. Offline controls were
+  disabled and a physical click sent zero mutations. The isolated draft was
+  archived afterwards. Native 1280×763 and compact 800×720 Details were inspected,
+  with no horizontal overflow, overlapping or covered controls. A labeled GET
+  fixture added unavailable Maya to inspect the populated list: no manager
+  removal or shared-history disclosure appeared. Screenshots and the new model
+  results are in the task's QA artifact directory. Local auth was a cookie
+  fixture over the ordinary identity session; login was outside this check.
+- Lint, typecheck, documentation and schema/tool checks pass after the final
+  correction. No new PR, push or deployment is part of this revision.
 
 ## Evidence
 
@@ -108,9 +159,9 @@ turn an implementation checklist into an assertion that its tests passed.
 
 | PRD acceptance | Implementation and evidence |
 | --- | --- |
-| 1. Creator consent and migration | Consent workerd lanes cover direct creation, no inherited autonomous grant, withdrawal/replay and legacy claims. Historical ambiguous creators stay Needs opt-in. |
+| 1. Creator consent and migration | Workerd covers immediate creation through the autonomous service, creator backfill with or without an old task-account binding, and preservation of withdrawals. |
 | 2. Self-service UI | Real Electron and browser windows; all listed visual states, real two-session grant convergence and archive/access-loss convergence. Response fixtures are identified above. |
-| 3. Agent self-consent | Strict self-only schemas and authenticated-speaker workerd checks; live configured-fallback checks for consent, wrong-user requests and quoted/injected data. |
+| 3. Agent self-consent | Strict target-user schemas, autonomous changes to another Organization user and out-of-Organization refusal are covered on workerd. Three new live model cases pass. |
 | 4. Event/schedule consistency | Shared admission and source-reconciliation workerd lanes; assembled connector cases exercise the same permission shape with and without event origin. Providers are doubled; no production Sheet permissions changed. |
 | 5. Eligible fallback | Resolver/assembled Google tests prove permission-only fallback and refreshed withdrawal. Snapshot-authorized in-flight work remains permitted. |
 | 6. Account-dependent meaning | Empty searches, named users, private IDs, replies, pagination and legacy task-account bindings are covered by resolver and pagination lanes. |

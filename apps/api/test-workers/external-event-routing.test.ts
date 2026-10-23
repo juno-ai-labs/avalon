@@ -226,8 +226,7 @@ async function activateAutomation(): Promise<void> {
     authorUserId: AUTHOR_ID,
     scope: "personal",
     owningWorkstreamId: null,
-    automationId: AUTOMATION_ID,
-    creatorConsent: { requestId: crypto.randomUUID() },
+    automationId: AUTOMATION_ID
   });
   expect(created.created).toBe(true);
   await workspace().sidekickSubmitDefinition({
@@ -351,8 +350,7 @@ describe("external event routing", () => {
       ashbyConnectionId, WORKSPACE_ID, JSON.stringify({ selectedEvents: [eventType] }), NOW, NOW);
     });
     await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID,
-      scope: "workspace", owningWorkstreamId: null, automationId: AUTOMATION_ID,
-      creatorConsent: { requestId: crypto.randomUUID() } });
+      scope: "workspace", owningWorkstreamId: null, automationId: AUTOMATION_ID });
     await workspace().sidekickSubmitDefinition({ workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID,
       draft: { ...DEFINITION, name: "Ashby watcher", suggestedScope: "workspace",
         triggers: [{ type: "connector_activity", connectorType: "ashby", sourceBindingKey: "ashby_events",

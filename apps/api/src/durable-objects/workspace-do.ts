@@ -4813,6 +4813,18 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 130,
   description: "reconcile configured Sidekick sources after connection authority changes",
   statements: SIDEKICK_SOURCE_CONNECTION_SCHEMA_STATEMENTS,
+}, {
+  version: 131,
+  description: "automatically enroll existing Sidekick creators without replacing recorded withdrawals",
+  statements: [
+    `UPDATE automation_directory SET delegation_migrated=0
+      WHERE region IS NOT NULL AND lifecycle<>'deleted'
+        AND NOT EXISTS (SELECT 1 FROM sidekick_delegations grant
+          WHERE grant.sidekick_id=automation_id AND grant.user_id=author_user_id)`,
+    `INSERT OR IGNORE INTO _internal_durable_alarms(kind,alarm_key,due_at,created_at,updated_at)
+     SELECT 'sidekick_delegation_migration',automation_id || ':0',0,0,0 FROM automation_directory
+      WHERE region IS NOT NULL AND lifecycle<>'deleted' AND delegation_migrated=0`,
+  ],
 }];
 
 function conversationToolEntry(conversation: {
@@ -6884,16 +6896,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.prepareMyDelegation(input));
   }
 
-  async sidekickSetMyDelegation(input: Parameters<HostedSidekick["setMyDelegation"]>[0]) {
-    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.setMyDelegation(input));
+  async sidekickSetDelegation(input: Parameters<HostedSidekick["setDelegation"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.setDelegation(input));
   }
 
   async sidekickReadMyDelegationReceipt(input: Parameters<HostedSidekick["readMyDelegationReceipt"]>[0]) {
     return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readMyDelegationReceipt(input));
-  }
-
-  async sidekickRemoveDelegate(input: Parameters<HostedSidekick["removeDelegate"]>[0]) {
-    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.removeDelegate(input));
   }
 
   async sidekickReadDelegation(input: Parameters<HostedSidekick["readDelegation"]>[0]) {

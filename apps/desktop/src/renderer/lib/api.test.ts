@@ -439,22 +439,18 @@ describe('Rally API wire adapter', () => {
   it('reads and changes delegation with a host-generated action identity and no selectable consenting user', async () => {
     const operationId = '00000000-0000-7000-8000-000000000041';
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(json({ sidekickId: automationId, creatorUserId: userId, canManage: true,
+      .mockResolvedValueOnce(json({ sidekickId: automationId, creatorUserId: userId,
         you: { userId, allowed: false }, delegates: [] }))
-      .mockResolvedValueOnce(json({ sidekickId: automationId, userId, allowed: true, changed: true }))
-      .mockResolvedValueOnce(json({ sidekickId: automationId, userId, allowed: false, changed: true }));
+      .mockResolvedValueOnce(json({ sidekickId: automationId, userId, allowed: true, changed: true }));
     vi.stubGlobal('fetch', fetchMock);
     const api = new RallyApi('https://api.rally.test', session);
-    expect(await api.getSidekickDelegates(automationId)).toMatchObject({ canManage: true, delegates: [] });
+    expect(await api.getSidekickDelegates(automationId)).toMatchObject({ delegates: [] });
     expect(await api.setMySidekickDelegation(automationId, true, operationId)).toMatchObject({ userId, allowed: true });
-    expect(await api.removeSidekickDelegate(automationId, userId, operationId)).toMatchObject({ userId, allowed: false });
     expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
       `https://api.rally.test/sidekicks/${automationId}/delegation`,
       `https://api.rally.test/sidekicks/${automationId}/delegation`,
-      `https://api.rally.test/sidekicks/${automationId}/delegation/remove`,
     ]);
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ allowed: true, operationId });
-    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual({ userId, operationId });
   });
 
   it('applies the current revision with no body and lists runs from their own route', async () => {

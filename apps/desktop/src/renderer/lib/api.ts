@@ -1333,20 +1333,7 @@ export class RallyApi {
     });
   }
 
-  async removeSidekickDelegate(id: string, userId: string, operationId: string): Promise<z.infer<typeof SidekickDelegationMutationResultSchema>> {
-    return this.request(`/sidekicks/${encodeURIComponent(id)}/delegation/remove`, {
-      method: 'POST', body: { userId, operationId }, schema: SidekickDelegationMutationResultSchema,
-    });
-  }
 
-  /**
-   * Apply the current ready revision: the first time this creates the
-   * automation, every later time it re-applies an edit.
-   *
-   * No body: the definition is on the object, written by its conversation, and
-   * everything applying it needs is derived there rather than restated by a
-   * client that never held it.
-   */
   async acceptAutomation(id: string): Promise<AutomationDetail> {
     const raw = await this.request(`/sidekicks/${encodeURIComponent(id)}/accept`, {
       method: 'POST',

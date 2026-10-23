@@ -25,16 +25,15 @@ operation's observed generation, including across a lost response. Allow checks
 it atomically; withdrawal always advances a tombstone, even for an absent grant.
 Accepted intents and outcomes have immutable receipts. Replaying an accepted
 intent does no write, and a receipt superseded by another generation reports a
-stale action instead of presenting its old result as current. A new opt-in needs
-a new user action. This orders consent writes inside one object; it adds no
+stale action instead of presenting its old result as current. A new allow needs
+a new delegation action. This orders consent writes inside one object; it adds no
 synchronous cross-object authorization barrier or provider probe.
 
-Direct UI creation supplies `creatorConsent`; the agent path supplies it only
-when the canonical triggering message is human, authored by the execution user,
-and the run is neither autonomous, scheduled, a background worker nor an agent
-exchange. The creation transaction initializes consent only when inserting a new
-Sidekick, respecting any existing tombstone. Old callers that provide only an
-author identity establish no consent. Creation replay never initializes it again.
+Every creation immediately enrolls its creator, including autonomous creation.
+The creation transaction records the grant once under the Sidekick ID, using the
+creator's current membership incarnation. No direct-human provenance lookup,
+creator-consent marker or disclosure screen is required. Creation replay never
+restores an existing withdrawal.
 
 `sidekick-delegation-service.ts` supplies signed-in self-service and exact
 viewer-authorized UUID, canonical link or name lookup. Named lookup is not limited
@@ -47,13 +46,15 @@ Organization/region routing references for those tools; WorkspaceDO supplies
 every grant result. The reference confers no access or execution authority.
 
 The `rally:sidekicks` plugin exposes `my_delegations_list`, `delegates_list` and
-`set_my_delegation` only for direct human turns. Authoring uses its normal
-`sidekick` prefix; the room's existing recommendation presentation uses the full
-`sidekick_…` canonical names. Model input supplies only target and allow/withdraw
-intent. A canonical human trigger fixes the consenting speaker; model reasoning
-still decides whether the person requested that change. The host does not claim
-to prove the meaning of natural language. Background creation keeps author
-attribution but cannot create consent.
+`set_delegation` during direct and autonomous work. Authoring and Sidekick
+activations use the `sidekick` prefix; room presentations use full wire names.
+The mutation accepts `{ sidekickId, userId, allowed }`: the model selects a
+current Organization user, while the host supplies the execution actor. The
+actor needs existing Sidekick access to change another person; the target needs
+active Organization membership to be enrolled. A grant alone changes no human
+visibility or manager rights. There is no canonical-speaker or special
+quoted/event-consent check. The UI retains self-service only; the manager removal
+control and endpoint are removed.
 
 Admission uses this authority for events, schedules and manual runs. A run stores
 `coordinator_user_id` independently of the directory's legacy human-access field.
@@ -74,16 +75,12 @@ an authorization refresh observes that person's consent or access loss. Other
 delegates can coordinate a later independent occurrence.
 
 Migration snapshots existing `run_as_user_id` as the implicit task account and
-retains already-provisioned run identities. A durable alarm installs consent for
-established non-creator claims once, without overwriting any grant or withdrawal.
-Matching creator/run-as identities without direct-user provenance remain
-ungranted. The historical creation paths stored the same author/run-as pair for
-direct and autonomous creation and left no creation-receipt address on the
-directory row. Agent receipts live in the originating conversation, without a
-reverse lookup from the created Sidekick. Migration
-does not scan all conversation receipts to guess provenance. Ambiguous legacy
-creators use the ordinary opt-in control. Current direct-user creation records
-its explicit provenance. The
+retains already-provisioned run identities. A durable alarm enrolls missing
+creators and established previous task-account users without reconstructing
+historical consent provenance. Existing grants and withdrawal tombstones are
+never overwritten. A follow-up migration queues creators that an earlier local
+version left ungranted. The
+The
 legacy claim endpoint now records self-consent and retains its explicit human
 entitlement in `sidekick_claim_access`, without rebinding configured sources or
 changing creator preference. Neither these grants nor coordinator selection
@@ -139,20 +136,17 @@ Terminal authorization and desktop/web controls are tracked by the
 [implementation plan](PRDs/2026-10-22_sidekick-delegation/plan.md) until all
 acceptance evidence is complete.
 
-Delegation list responses include the creator's existing public identity even
-after withdrawal, current public delegate presentation and a `canManage`
-projection from the same check used by mutations. Membership and viewer checks
-still guard the read. The shared Sidekick screen renders these identities,
-self-service and manager removal without adding authority. Its creation surface
-shows the standing-consent/history disclosure before sending the direct human
-create action. [Shared UI](shared-ui.md#sidekick-delegation) owns pending,
-uncertain-response and offline behavior. The dedicated Account withdrawal
-feature was removed at the user's request; Sidekick-screen and agent withdrawal
-remain.
+Delegation list responses include the creator's public identity after
+withdrawal and the current allowed users with availability. Membership and
+viewer checks still guard the read. Desktop/web show self-service actions with
+no manager removal or shared-history disclosure. New Sidekick creates
+immediately on opening the route. [Shared UI](shared-ui.md#sidekick-delegation)
+owns pending, uncertain-response and offline behavior. The dedicated Account
+withdrawal feature remains removed.
 
 Consent receipt reconciliation is a read through
 `sidekickReadMyDelegationReceipt`, keyed by the host's original effect ID. It
-compares the exact self-action and source against its durable preparation and
+compares the exact actor, target, intent and source against its durable preparation and
 immutable receipt, then checks the current generation. A still-allowed result
 also needs current eligibility. It neither prepares a new intent nor mutates a
 grant. The normal harness checks this before replaying a completed consent-tool
@@ -162,7 +156,7 @@ withdrawal receipt remains readable without membership or viewer access.
 An interrupted consent tool also reconciles by that original effect identity.
 The accepted action's outcome can be saved after response loss; missing or
 superseded acceptance cannot trigger a new preparation or another consent
-mutation. The existing harness repair path builds the direct speaker's consent
+mutation. The existing harness repair path builds the execution user's delegation
 subset and preserves the original action ID. It retains a named stale-action
 or unavailable reason when no current acknowledgement is safe.
 
@@ -1189,9 +1183,11 @@ or the memory store the automation scope lives in.
 test-workers/sidekick-delegation.test.ts` drives the consent RPCs and services on
 real workerd, including delayed first delivery, receipt replay, tombstones,
 membership incarnations, viewer-only enrollment and own recovery after access
-loss. Its canonical human messages use real transcript storage. Negative
-controls drop the withdrawal write and bypass ordering, incarnation, speaker
-and account-recovery checks to prove the assertions observe production behavior.
+loss. The same lane exercises the actual autonomous creation service and
+targeted changes to another Organization user. Production-break controls drop
+creator enrollment or restore the old self-only restriction; both fail their
+corresponding assertions. Withdrawal ordering and account recovery retain their
+existing negative controls.
 `test/sidekick-delegation-tools.test.ts` checks both actual plugin presentations
 and advertised/runtime schema agreement. Harness `src/prompts.test.ts` covers
 activation permission guidance; model behavior needs the separate evaluations.
@@ -1389,14 +1385,14 @@ instructions. See [Google connector guidance](connectors.md#google).
 ### 2026-10-22 — Record consent independently of Sidekick ownership
 
 **What changed:** WorkspaceDO stores per-person grants, prepared generations,
-withdrawal tombstones and accepted mutation receipts. Direct human creation and
-self-service use that authority; inherited autonomous identities do not opt in.
+withdrawal tombstones and accepted mutation receipts. Every creation enrolls its creator immediately, including autonomous creation.
+UI self-service and targeted autonomous agent changes use the same authority.
 Agent own-grant discovery retains access to a person's stored grants after they
 lose Organization or Sidekick access; the dedicated Account withdrawal UI/API
 is removed. Event, schedule, manual and continued runs
 share eligibility; each run persists its coordinator independently of legacy
-human access. Migration retains established task accounts and distinguishes
-proven claims from ambiguous creator attribution. Canonical event openings
+human access. Migration retains established task accounts and enrolls missing creators
+without reconstructing direct-user consent provenance. Canonical event openings
 also retain authored provider reference keys and source connections, including
 compatibility reads for openings saved before that field existed. Self-action
 receipt inspection prevents the outer completed-tool cache from presenting a
@@ -1427,8 +1423,9 @@ consent remains in WorkspaceDO. Configured sources expand only through authored
 portable resource identity; differential registration updates preserve queued
 event boundaries. Ordinary connection, membership and reach invalidations wake
 reconciliation through the existing alarm lane, with no provider preflight.
-The implementation plan tracks the remaining
-execution and UI integration before the feature is complete.
+The 2026-10-23 revision removes manager removal, creator disclosures and
+direct-human restrictions at the user's request; targeted agent writes may
+manage any current Organization user. Withdrawal ordering remains intact.
 
 Related: [Sidekick delegation PRD](PRDs/2026-10-22_sidekick-delegation/prd.md).
 

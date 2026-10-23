@@ -44,17 +44,17 @@ beforeEach(async () => {
   ]);
 });
 
-async function create(direct = true, scope: "workspace" | "workstream" = "workspace") {
+async function create(withCreator = true, scope: "workspace" | "workstream" = "workspace") {
   await stub().sidekickCreate({ ...address, authorUserId: creator, scope,
     owningWorkstreamId: scope === "workstream" ? homeId : null, authorityGeneration: 1,
-    ...(direct ? { creatorConsent: { requestId: crypto.randomUUID() } } : {}),
   });
+  if (!withCreator) await consent(creator, false);
 }
 
 async function consent(userId: typeof creator, allowed: boolean) {
   const request = { ...address, userId, allowed, operationId: crypto.randomUUID() };
   const prepared = await stub().sidekickPrepareMyDelegation(request);
-  return stub().sidekickSetMyDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
+  return stub().sidekickSetDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
 }
 
 async function activate(draft = definition, evaluatorRules: Parameters<ReturnType<typeof stub>["sidekickSubmitDefinition"]>[0]["evaluatorRules"] = null) {
@@ -168,13 +168,13 @@ describe("shared Sidekick delegation admission", () => {
         BEFORE INSERT ON _internal_durable_alarms WHEN NEW.kind='sidekick_delegation_sources'
         BEGIN SELECT RAISE(ABORT,'source_wake_fault'); END`));
       await runInDurableObject(stub(), async (instance) => {
-        await expect(instance.sidekickSetMyDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" }))
+        await expect(instance.sidekickSetDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" }))
           .rejects.toThrow("source_wake_fault");
       });
       expect((await execution()).delegates.map((grant) => grant.userId)).toEqual([creator]);
       expect(await stub().sidekickReadMyDelegationReceipt({ ...request, source: "self_service" })).toEqual({ outcome: "missing" });
       await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec("DROP TRIGGER fail_source_wake"));
-      await stub().sidekickSetMyDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
+      await stub().sidekickSetDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
     } else await consent(other, true);
     await runDurableObjectAlarm(stub());
     if (lateConnection) {
@@ -349,7 +349,7 @@ describe("shared Sidekick delegation admission", () => {
     expect((await execution()).delegates.map((grant) => grant.userId)).toEqual([creator]);
   });
 
-  it("does not turn an ambiguous legacy creator or inherited principal into consent", async () => {
+  it("preserves a creator withdrawal during legacy migration", async () => {
     await create(false);
     await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec(
       "UPDATE automation_directory SET legacy_account_user_id=?,delegation_migrated=0 WHERE automation_id=?", creator, automationId,

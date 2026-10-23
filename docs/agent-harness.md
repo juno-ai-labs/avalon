@@ -648,19 +648,19 @@ would overwrite the completed historical effect. Transport failures retain the
 existing receipt-port failure behavior. Tools without this hook retain normal
 historical replay.
 
-Sidekick self-consent uses this read to match the immutable action receipt to
-the canonical speaker, target, intent and source, then compare its generation
+Sidekick delegation uses this read to match the immutable action receipt to
+the execution actor, target user, intent and source, then compare its generation
 to current consent and check an allowed grant's current eligibility. Withdrawal
 acknowledgements remain inspectable after membership or Sidekick access loss.
 A stale acknowledgement never re-enters the consent executor or prepares a new
-grant; the model is directed to read current own grants and wait for a new request.
+grant; the model reads current delegation before a new change.
 
-Interrupted self-consent writes reconcile against the same accepted action
+Interrupted delegation writes reconcile against the same accepted action
 receipt before any executor re-entry. Only an exact, current accepted action
 returns its persisted outcome. Missing, superseded or unavailable acceptance
-stays named and requires current own-grant inspection and a new user request;
+stays named and requires current grant inspection and a new delegation change;
 recovery cannot prepare an old intent at a newer generation. Startup recovery
-reconstructs only the applicable consent subset for the canonical human speaker,
+reconstructs only the delegation subset for the execution actor,
 without loading authoring tools or creating a Terminal sandbox. The result is
 stored through the normal R2/receipt path before the repaired transcript can
 claim success. A proven recovered result can settle an already-ambiguous
@@ -744,10 +744,12 @@ and the model sees `success: false` with a stable code and recovery action. A
 returned result containing an `error` field would instead be a completed tool by
 protocol and is forbidden for these cases.
 
-The existing Sidekick plugin adds self-delegation tools only for a direct human
-trigger whose canonical author matches the execution user. The host derives
-that user; the model supplies the Sidekick target and allow/withdraw intent.
-Both room and authoring presentations keep stable `sidekick_…` wire names.
+The existing Sidekick plugin exposes delegation during direct and autonomous
+work. The host supplies the execution actor; model input selects the Sidekick,
+any current Organization userId, and allow/withdraw intent. Creator enrollment
+is automatic for every creation path. There is no human-speaker classifier or
+special quoted/event-consent guidance. Authoring, activation and room
+presentations retain the `sidekick_…` wire prefix.
 [Sidekick lifecycle](automation-lifecycle.md#delegation-consent-authority) owns
 the consent authority; loading these tools starts no run and grants no account
 access. Sidekick activation prompts carry permission-recovery guidance directly,
@@ -1690,12 +1692,12 @@ outputs, summaries, token content, and provider responses remain excluded.
 checks completed replay refusals reach the model without executor calls, new
 execution plans or terminal effect events. Real workerd
 `test-workers/sidekick-delegation.test.ts` drives the consent receipt RPC and
-actual tool-owned replay validator with canonical human turns; it covers stale
-and unavailable acknowledgements, matching actor/intent and read-only withdrawal
+actual tool-owned replay validator in direct and autonomous contexts; it covers
+stale and unavailable acknowledgements, matching actor/target/intent and read-only withdrawal
 recovery. These prove protocol and authority behavior, not semantic model intent. The same workerd lane exercises crash repair
 through real replacement leases, receipt settlement and R2 for both consent
-presentations; accepted, missing, superseded and autonomous-context recovery
-are separate assertions. `apps/api/test/terminal-command-recovery.test.ts`
+presentations; accepted, missing and superseded recovery are separate
+assertions. Autonomous changes to another Organization user are covered too. `apps/api/test/terminal-command-recovery.test.ts`
 checks shared re-entry semantics and deadline cleanup on reconciliation.
 
 `pnpm --filter @rally/api exec vitest run test/sidekick-operation-accounts.test.ts
@@ -1707,8 +1709,7 @@ withdrawal after receipt of a reference and binding across later executions.
 The actual loader's handoff case verifies the provider sees the originating
 account without first trying the creator. Real workerd
 `test-workers/sidekick-run-continuation.test.ts` covers nested handoffs and
-continued input after eviction; its runtime fixture explicitly opts the creator
-in and distinguishes legacy human-access metadata from the fixed coordinator.
+continued input after eviction; its creation path enrolls the creator automatically and distinguishes legacy human-access metadata from the fixed coordinator.
 `test-workers/tool-receipt-authority.test.ts` proves lease, cancellation,
 rollback and eviction against real workerd; run it with the Workers config.
 `test-workers/sidekick-delegation-admission.test.ts` covers canonical event
@@ -1863,7 +1864,7 @@ provider references and private pagination. Google declares those identities;
 undeclared and hosted MCP surfaces keep one explicitly selected connection.
 Canonical activation events bind their provider references before any tool
 result exists; old run openings recover that reference from the event row.
-Completed self-consent acknowledgements also validate current receipt generation
+Completed delegation acknowledgements also validate current receipt generation
 without repeating the mutation or rewriting their historical completion.
 Interrupted consent recovery reads the accepted receipt too; missing acceptance
 never licenses a fresh preparation of an old allow.
@@ -1890,8 +1891,10 @@ needed durable boundary without extra credentials or a global authz sequencer.
 Unresolved effects and dependent writes keep their originating account; restored
 access permits authorized reconciliation, not a repeat under another user.
 Adapter identity declarations remain code-owned and credentials remain prepared
-only for the account being used. The Sidekick UI and complete replay recovery
-are separate unfinished acceptance items in the PRD implementation plan.
+only for the account being used. The user's 2026-10-23 revision removes direct
+human consent restrictions: the same receipt machinery accepts targeted
+Organization-user delegation during autonomous work. It does not add authoring
+controls to activation runs.
 
 ### 2026-10-22 — Explain unsupported local browser requests through a skill
 

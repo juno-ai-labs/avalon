@@ -192,12 +192,11 @@ describe("reaching one resource through whichever connection can", () => {
     database.prepare("INSERT INTO workspace_members(workspace_id,user_id,role,status,joined_at) VALUES (?,?,'member','active',?)")
       .run(WORKSPACE_ID, other, NOW);
     await workspaceObject.instance.sidekickCreate({ workspaceId: WORKSPACE_ID, automationId: WORKSTREAM_ID,
-      authorUserId: USER_ID, scope: "workspace", owningWorkstreamId: null, authorityGeneration: 1,
-      creatorConsent: { requestId: crypto.randomUUID() },
+      authorUserId: USER_ID, scope: "workspace", owningWorkstreamId: null, authorityGeneration: 1
     });
     const request = { workspaceId: WORKSPACE_ID, automationId: WORKSTREAM_ID, userId: other, allowed: true, operationId: crypto.randomUUID() };
     const prepared = await workspaceObject.instance.sidekickPrepareMyDelegation(request);
-    await workspaceObject.instance.sidekickSetMyDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
+    await workspaceObject.instance.sidekickSetDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
     workspaceObject.objectDatabase.prepare("UPDATE connector_connections SET scope='personal',owner_user_id=? WHERE id=?")
       .run(other, WORKSPACE_CONNECTION_ID);
     const lease = { attemptId: "account-attempt", owner: "account-owner", attemptNumber: 1,
@@ -254,7 +253,7 @@ describe("reaching one resource through whichever connection can", () => {
         account: { principal: { type: "user", userId: other }, connectionId: WORKSPACE_CONNECTION_ID } });
     const revoke = { ...request, allowed: false, operationId: crypto.randomUUID() };
     const revocation = await workspaceObject.instance.sidekickPrepareMyDelegation(revoke);
-    await workspaceObject.instance.sidekickSetMyDelegation({ ...revoke, expectedGeneration: revocation.generation, source: "self_service" });
+    await workspaceObject.instance.sidekickSetDelegation({ ...revoke, expectedGeneration: revocation.generation, source: "self_service" });
     seedToolReceipt(objectStore, { id: "after-withdrawal", runId: HARNESS_RUN_ID, toolCallId: "after-withdrawal", position: 2,
       toolName: "sheets.update_values", status: "executing", mode: "write", executionPlanJson: '{"mode":"write"}' });
     const afterWithdrawal = { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID,
