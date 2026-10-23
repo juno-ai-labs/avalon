@@ -566,12 +566,12 @@ describe("Rally engineering MCP tools", () => {
     expect(global.runArtifactSql).not.toHaveBeenCalled();
   });
 
-  it("sends D1 SQL to the named region's binding only", async () => {
+  it.each(["TELEMETRY_DB", "MESSAGE_ISSUES_DB"] as const)("sends %s SQL to the named region's binding only", async (database) => {
     const global = regionalBinding("global");
     const enterprise = regionalBinding("enterprise");
     vi.mocked(enterprise.runD1Sql).mockResolvedValue({
       region: "enterprise",
-      database: "TELEMETRY_DB",
+      database,
       result: { columns: ["answer"], rows: [{ answer: 42 }], rowsRead: 1, rowsWritten: 0 },
     });
 
@@ -580,17 +580,17 @@ describe("Rally engineering MCP tools", () => {
       "tools/call",
       {
         name: "run_d1_sql",
-        arguments: { region: "enterprise", database: "TELEMETRY_DB", sql: "SELECT ? AS answer", bindings: [42] },
+        arguments: { region: "enterprise", database, sql: "SELECT ? AS answer", bindings: [42] },
       },
     );
     const result = response.result as { content: Array<{ text: string }> };
     expect(JSON.parse(result.content[0]!.text)).toEqual({
       region: "enterprise",
-      database: "TELEMETRY_DB",
+      database,
       result: { columns: ["answer"], rows: [{ answer: 42 }], rowsRead: 1, rowsWritten: 0 },
     });
     expect(enterprise.runD1Sql).toHaveBeenCalledWith({
-      database: "TELEMETRY_DB",
+      database,
       query: { sql: "SELECT ? AS answer", bindings: [42] },
     });
     expect(global.runD1Sql).not.toHaveBeenCalled();
