@@ -27,6 +27,9 @@ import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlit
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 import { SPACE_CHANNEL_PAGE_SIZE } from "../src/durable-objects/workspace-space-storage";
 import { withSpaceStorage } from "./helpers/space-membership";
+import { acceptInvitationForUser } from "../src/services/workspace-service";
+import { WorkspaceRelationshipChangeMessageSchema } from "../src/services/workspace-relationship-delivery";
+import { applyWorkspaceRelationshipChange } from "../src/queues/access-revocation-consumer";
 
 /** Its own workspace id: object names are shared across files, storage is not. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000fe100");
@@ -162,6 +165,67 @@ describe("a new Organization", () => {
 });
 
 describe("seatOrganizationMember", () => {
+  it("dispatches an accepted invitation immediately and retries its pending delivery on replay", async () => {
+    const probe = env.QUEUE_PROBE;
+    const received = env.QUEUE_PROBE_TEST;
+    if (!probe || !received) throw new Error("queue probe bindings missing");
+    const invitationId = "00000000-0000-7000-8000-0000000fe130";
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?").bind(WORKSPACE_ID, MEMBER),
+      env.DB.prepare("ALTER TABLE workspace_members ADD COLUMN joined_at TEXT"),
+      env.DB.prepare("ALTER TABLE workspaces ADD COLUMN name TEXT"),
+      env.DB.prepare("UPDATE workspaces SET name = 'Invitation test' WHERE id = ?").bind(WORKSPACE_ID),
+      env.DB.prepare("CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT, email TEXT)"),
+      env.DB.prepare("INSERT INTO users VALUES (?, 'Owner', 'owner@example.test'), (?, 'Member', 'member@example.test')")
+        .bind(OWNER, MEMBER),
+      env.DB.prepare(`CREATE TABLE workspace_invitations (
+        id TEXT PRIMARY KEY, workspace_id TEXT, email TEXT, invited_by_user_id TEXT,
+        role TEXT, expires_at TEXT, accepted_at TEXT, accepted_by_user_id TEXT,
+        revoked_at TEXT, created_at TEXT)`),
+      env.DB.prepare(`INSERT INTO workspace_invitations
+        (id, workspace_id, email, invited_by_user_id, role, expires_at, created_at)
+        VALUES (?, ?, 'member@example.test', ?, 'member', '2099-01-01T00:00:00.000Z', '2026-10-22T00:00:00.000Z')`)
+        .bind(invitationId, WORKSPACE_ID, OWNER),
+      env.DB.prepare(`CREATE TABLE workspace_relationship_deliveries (
+        sequence INTEGER PRIMARY KEY, workspace_id TEXT, user_id TEXT, incarnation TEXT,
+        revision INTEGER, change_kind TEXT, access_class TEXT, role TEXT, status TEXT,
+        dispatched_at TEXT, processed_at TEXT)`),
+      env.DB.prepare(`CREATE TRIGGER membership_delivery AFTER INSERT ON workspace_members BEGIN
+        INSERT INTO workspace_relationship_deliveries
+          (workspace_id, user_id, incarnation, revision, change_kind, access_class, role, status)
+        VALUES (NEW.workspace_id, NEW.user_id, NEW.incarnation, NEW.revision, 'upsert',
+          NEW.access_class, NEW.role, NEW.status);
+      END`),
+    ]);
+    const apiEnv = { ...env, ACCESS_REVOCATION_QUEUE: probe };
+    const user = { id: MEMBER, email: "member@example.test" };
+    await expect(acceptInvitationForUser(apiEnv, invitationId, user)).resolves.toBe(WORKSPACE_ID);
+    expect(await env.DB.prepare("SELECT dispatched_at FROM workspace_relationship_deliveries WHERE user_id = ?")
+      .bind(MEMBER).first()).toEqual({ dispatched_at: expect.any(String) });
+
+    const messages = async () => (await received.received()).flatMap((body) => {
+      const parsed = WorkspaceRelationshipChangeMessageSchema.safeParse(body);
+      return parsed.success && parsed.data.relationship.workspaceId === WORKSPACE_ID ? [parsed.data] : [];
+    });
+    await expect.poll(messages, { timeout: 15_000 }).toHaveLength(1);
+    const [message] = await messages();
+    expect(message).toMatchObject({ kind: "workspace_relationship_changed", removed: false,
+      relationship: { userId: MEMBER, accessClass: "member", role: "member", status: "active" } });
+    await applyWorkspaceRelationshipChange(apiEnv, message!);
+    expect((await activeSpaces(MEMBER)).map((space) => [space.name, participants(space).includes(MEMBER)]).sort())
+      .toEqual([["General", true], ["Your Personal Channel", true]]);
+
+    // Queue acceptance with a lost dispatch marker must be recoverable by an
+    // acceptance retry, without waiting for the scheduled sweep.
+    await env.DB.prepare("UPDATE workspace_relationship_deliveries SET dispatched_at = NULL WHERE user_id = ?")
+      .bind(MEMBER).run();
+    await acceptInvitationForUser(apiEnv, invitationId, user);
+    await expect.poll(messages, { timeout: 15_000 }).toHaveLength(2);
+    await applyWorkspaceRelationshipChange(apiEnv, (await messages())[1]!);
+    expect((await activeSpaces(MEMBER)).filter((space) => space.scope === "individual").map((space) => space.name))
+      .toEqual(["Your Personal Channel"]);
+  });
+
   it("asks for an anchor, then seats the member in General and creates their Personal Channel once", async () => {
     const request = { workspaceId: WORKSPACE_ID, userId: MEMBER, personalSpaceId: MEMBER_PERSONAL };
     await expect(workspace().seatOrganizationMember(request))

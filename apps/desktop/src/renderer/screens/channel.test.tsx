@@ -1,4 +1,5 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
+import { ErrorNoticeProvider } from '@rally/ui/components/error-notice';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Link, MemoryRouter, parsePath, Route, Routes, useLocation } from 'react-router-dom';
@@ -9,7 +10,7 @@ import { asUserId, asWorkstreamId } from '@rally/contracts';
 import { OPEN_EXPANDED, revealChannelMessageState } from '../lib/navigation-routes';
 import { useUiStore } from '../lib/ui-store';
 import { CHANNEL_STATS_QUERY_KEY, channelFeedQueryKey } from '../lib/sidebar-list-store';
-import { mapResource, type ChannelFeedPageView } from '../lib/api';
+import { ApiError, mapResource, type ChannelFeedPageView } from '../lib/api';
 import { RESOURCE_HEADS_QUERY_KEY } from '../lib/resource-heads';
 import type { ResourceVersion, Workspace, WorkstreamSummary } from '../lib/types';
 import { ChannelScreen } from './channel';
@@ -168,7 +169,7 @@ function renderChannel(path = '/channels/outbound', seed: (client: QueryClient) 
     readThroughSequenceNumber: 2, firstUnreadSequenceNumber: null, hasUnread: false,
   })]);
   seed(client);
-  const view = render(<QueryClientProvider client={client}><Tooltip.Provider>
+  const view = render(<ErrorNoticeProvider><QueryClientProvider client={client}><Tooltip.Provider>
     <MemoryRouter initialEntries={[{ ...parsePath(path), state }]}>
       <Routes><Route element={<ChannelScreen workspace={viewer} />} path="/channels/:channelId/*" /></Routes>
       <Routes><Route element={<Location />} path="*" /></Routes>
@@ -176,7 +177,7 @@ function renderChannel(path = '/channels/outbound', seed: (client: QueryClient) 
       <Link to="/channels/empty">Empty Channel</Link>
       <Link to="/channels/outbound">Outbound Channel</Link>
     </MemoryRouter>
-  </Tooltip.Provider></QueryClientProvider>);
+  </Tooltip.Provider></QueryClientProvider></ErrorNoticeProvider>);
   return { ...view, client };
 }
 
@@ -193,6 +194,44 @@ describe('a Channel', () => {
     api.getChannelFeed.mockResolvedValue({ nextCursor: null, latestAttentionSequenceNumber: 2, items: [
       { kind: 'thread', placedAt: '2026-10-02T00:00:00.000Z', attentionSequenceNumber: 1, thread: plan },
     ] });
+  });
+
+  it.each([
+    [403, 'space_access_denied', false], [404, 'space_not_found', false],
+    [403, 'space_access_denied', true], [404, 'space_not_found', true],
+  ] as const)('shows not found without error dialogs when a cached Channel loses read access (%s, %s, cached feed %s)', async (status, code, cachedFeed) => {
+    let refuseFeed: (error: Error) => void = () => { throw new Error('feed has not started'); };
+    api.getChannelFeed.mockImplementation(() => new Promise((_resolve, reject) => { refuseFeed = reject; }));
+    api.getChannelStats.mockResolvedValue([]);
+    const { client } = renderChannel('/channels/outbound', (seeded) => {
+      seeded.removeQueries({ queryKey: CHANNEL_STATS_QUERY_KEY });
+      if (cachedFeed) seeded.setQueryData(channelFeedQueryKey('outbound'), { pages: [numberedFeed([1])], pageParams: [null] });
+    });
+
+    await waitFor(() => expect(client.getQueryState(CHANNEL_STATS_QUERY_KEY))
+      .toMatchObject({ status: 'success', fetchStatus: 'idle' }), { timeout: 5_000 });
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    await act(async () => { refuseFeed(new ApiError('Channel not found', status, code)); });
+
+    expect(await screen.findByText('Channel not found')).toBeVisible();
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry reading position' })).not.toBeInTheDocument();
+  });
+
+  it('reports Organization setup errors instead of calling the Channel unavailable', async () => {
+    api.getChannelFeed.mockRejectedValue(new ApiError('Choose or join a workspace to continue', 403, 'workspace_setup_required'));
+    renderChannel();
+
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('The threads in this channel couldn’t be loaded.');
+    expect(screen.queryByText('Channel not found')).not.toBeInTheDocument();
+  });
+
+  it('still reports an actual Channel feed outage', async () => {
+    api.getChannelFeed.mockRejectedValue(new ApiError('Unavailable', 503, 'service_unavailable'));
+    renderChannel();
+
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('The threads in this channel couldn’t be loaded.');
+    expect(screen.queryByText('Channel not found')).not.toBeInTheDocument();
   });
 
   it('keeps the Sidekicks count unknown until the library answers, then shows zero for an empty list', async () => {
