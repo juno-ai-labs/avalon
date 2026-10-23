@@ -450,25 +450,39 @@ describe("a hosted Sidekick", () => {
     await provisionWorkstreamObject(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId, title: 'Knowledge', objective: '', scope: 'workspace', createdByUserId: AUTHOR_ID,
       participantUserIds: [AUTHOR_ID], harnessStatus: 'idle', titleStatus: 'settled', emailAddress: null, emailRouteStatus: null, systemKind: null, modelOverride: 'double/primary', now: Date.now() });
     await deliverChildEffects(TEST_ENV, root);
-    async function child(operationId: string) {
+    const childIds = new Map<string, string>();
+    async function child(operationId: string, childWorkstreamId = workstreamId) {
       const recipe = { policy: { revision: 'test-empty-v1', strategy: { id: 'empty', version: 1 }, config: {} }, capture: 'none' as const, parts: [] };
-      const reserved = await parent.beginPrivateChildPreparation({ workspaceId: WORKSPACE_ID, parentId: workstreamId, operationId, creatorUserId: AUTHOR_ID, title: operationId,
+      const reserved = await parent.beginPrivateChildPreparation({ workspaceId: WORKSPACE_ID, parentId: childWorkstreamId, operationId, creatorUserId: AUTHOR_ID, title: operationId,
         sourceSubstreamId: '0', sourceThroughTurnId: null, recipe, membershipInitializer: { plugin: { id: 'creator-only', version: 1 }, config: {}, memberUserIds: [AUTHOR_ID] } });
+      childIds.set(operationId, reserved.substreamId);
       const hash = '0'.repeat(64);
-      await parent.savePreparedPrivateChildContext({ workspaceId: WORKSPACE_ID, parentId: workstreamId, operationId,
+      await parent.savePreparedPrivateChildContext({ workspaceId: WORKSPACE_ID, parentId: childWorkstreamId, operationId,
         preparedContext: { schemaVersion: 1, recipe, recipeHash: hash, capture: null, captureHash: null, parts: [], contentHash: hash } });
-      await parent.claimPrivateChildConfirmation({ workspaceId: WORKSPACE_ID, parentId: workstreamId, operationId, actorUserId: AUTHOR_ID });
-      await bootstrapConversationChildRuntime(TEST_ENV, WORKSPACE_ID, 'workstream', workstreamId, reserved.substreamId);
-      await provisionWorkstreamObject(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId, substreamId: reserved.substreamId, title: operationId, objective: '', scope: 'personal', createdByUserId: AUTHOR_ID,
+      await parent.claimPrivateChildConfirmation({ workspaceId: WORKSPACE_ID, parentId: childWorkstreamId, operationId, actorUserId: AUTHOR_ID });
+      await bootstrapConversationChildRuntime(TEST_ENV, WORKSPACE_ID, 'workstream', childWorkstreamId, reserved.substreamId);
+      await provisionWorkstreamObject(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: childWorkstreamId, substreamId: reserved.substreamId, title: operationId, objective: '', scope: 'personal', createdByUserId: AUTHOR_ID,
         participantUserIds: [AUTHOR_ID], harnessStatus: 'idle', titleStatus: 'settled', emailAddress: null, emailRouteStatus: null, systemKind: null, modelOverride: 'double/primary', now: Date.now() });
-      const agent = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName('global', WORKSPACE_ID, workstreamId, asSubstreamId(reserved.substreamId))));
-      await agent.installPreparedSubstreamContext({ workspaceId: WORKSPACE_ID, workstreamId, substreamId: reserved.substreamId, operationId });
-      await parent.setPrivateChildTerminalStatus({ workspaceId: WORKSPACE_ID, parentId: workstreamId, operationId, status: 'ready', errorCode: null });
+      const agent = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName('global', WORKSPACE_ID, childWorkstreamId, asSubstreamId(reserved.substreamId))));
+      await agent.installPreparedSubstreamContext({ workspaceId: WORKSPACE_ID, workstreamId: childWorkstreamId, substreamId: reserved.substreamId, operationId });
+      await parent.setPrivateChildTerminalStatus({ workspaceId: WORKSPACE_ID, parentId: childWorkstreamId, operationId, status: 'ready', errorCode: null });
       await deliverChildEffects(TEST_ENV, agent);
       return agent;
     }
     const first = await child('first-child');
     const sibling = await child('sibling-child');
+    // Private Breakouts currently branch from Main only. Preserve the
+    // diagnostic at the real RPC boundary when a caller asks for deeper nesting.
+    const nestedRejection = await parent.beginPrivateChildPreparation({
+      workspaceId: WORKSPACE_ID, parentId: workstreamId, operationId: 'unsupported-nested-child',
+      creatorUserId: AUTHOR_ID, title: 'Nested', sourceSubstreamId: childIds.get('first-child'),
+      sourceThroughTurnId: null,
+      recipe: { policy: { revision: 'test-empty-v1', strategy: { id: 'empty', version: 1 }, config: {} }, capture: 'none', parts: [] },
+      membershipInitializer: { plugin: { id: 'creator-only', version: 1 }, config: {}, memberUserIds: [AUTHOR_ID] },
+    } as never).then(() => null, (error: unknown) => error);
+    expect(nestedRejection).toBeInstanceOf(Error);
+    expect((nestedRejection as Error).message).toContain('private_child_preparation_invalid');
+    expect((nestedRejection as Error).message).toContain('sourceSubstreamId');
     await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: 'workspace', owningWorkstreamId: null, automationId: AUTOMATION_ID });
     await workspaceStub().sidekickSaveDefinition({ ...addressed(), draft: { ...DEFINITION, suggestedScope: 'workspace', definitionVersion: 2, triggers: [], instructions: 'Secret body loaded only on request.' }, evaluatorRules: null, submittedByRunId: null, actor: actor() });
     let messageOrdinal = 0;
@@ -500,14 +514,31 @@ describe("a hosted Sidekick", () => {
       expect(prompt).toContain('[Recommended]');
       expect(prompt).not.toContain('Secret body loaded only on request.');
     }
-    await execute(first, [{ name: 'load_skill', arguments: { name: 'skill-manual-helper' } }]);
+    const loaded = await execute(first, [{ name: 'load_skill', arguments: { name: 'skill-manual-helper' } }]);
+    expect(loaded).toContain('Secret body loaded only on request.');
     expect(await first.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([AUTOMATION_ID]);
     expect(await root.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([]);
     expect(await sibling.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([]);
+    // Breakouts created after the recommendation also discover it without
+    // silently activating another conversation's local loads.
+    const later = await child('later-child');
+    const another = await child('another-child');
+    for (const agent of [later, another]) {
+      const beforeLoad = await execute(agent);
+      expect(beforeLoad.split('\n').find((line) => line.includes('skill-manual-helper'))).toContain('[Recommended]');
+      expect(beforeLoad).not.toContain('Secret body loaded only on request.');
+      expect(await execute(agent, [{ name: 'load_skill', arguments: { name: 'skill-manual-helper' } }]))
+        .toContain('Secret body loaded only on request.');
+      // The next execution activates the saved attachment without load_skill.
+      await evictDurableObject(agent);
+      expect(await execute(agent)).toContain('Secret body loaded only on request.');
+    }
     await execute(sibling, [{ name: 'load_skill', arguments: { name: 'skill-manual-helper' } }]);
     await execute(first, [{ name: 'load_plugin', arguments: { pluginId: 'rally_skill_recommendations' } }, { name: 'unrecommend_skill', arguments: { skillId: AUTOMATION_ID } }]);
     expect(await first.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId }), JSON.stringify(provider.calls.at(-1)?.messages.filter((message) => message.role === 'tool'))).toEqual([]);
     expect(await sibling.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([AUTOMATION_ID]);
+    expect(await later.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([AUTOMATION_ID]);
+    expect(await another.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([AUTOMATION_ID]);
     const after = await execute(root);
     expect(after).not.toContain('[Recommended]');
     expect(after).toContain('skill-manual-helper');
@@ -518,13 +549,62 @@ describe("a hosted Sidekick", () => {
     await workspaceStub().sidekickSaveDefinition({ workspaceId: WORKSPACE_ID, automationId: ownedId,
       draft: { ...DEFINITION, name: 'Owned helper', suggestedScope: 'workstream', definitionVersion: 2, triggers: [], instructions: 'Owned body loaded only on request.' },
       evaluatorRules: null, submittedByRunId: null, actor: { ...actor(), participantOfOwningWorkstream: true } });
-    for (const agent of [root, first, sibling]) {
+    for (const agent of [root, first, sibling, later, another]) {
       const prompt = await execute(agent);
       expect(prompt.split('\n').find((line) => line.includes('skill-owned-helper'))).toContain('[Recommended]');
       expect(prompt).not.toContain('Owned body loaded only on request.');
+      expect(await execute(agent, [{ name: 'load_skill', arguments: { name: 'skill-owned-helper' } }]))
+        .toContain('Owned body loaded only on request.');
     }
     await execute(first, [{ name: 'load_plugin', arguments: { pluginId: 'rally_skill_recommendations' } }, { name: 'unrecommend_skill', arguments: { skillId: ownedId } }]);
     expect((await execute(root)).split('\n').find((line) => line.includes('skill-owned-helper'))).toContain('[Recommended]');
+
+    // The enclosing Space's default reaches a newly born Channel, whereas
+    // a Sidekick owned by another Channel must not enter its catalog.
+    const reservedSpace = await workspaceStub().reserveSpace({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
+      space: { name: 'Shared knowledge', iconKey: 'briefcase', colorKey: 'blue', scope: 'workspace' } });
+    if (!reservedSpace.ok) throw new Error(`reserveSpace refused: ${reservedSpace.code}`);
+    expect(await workspaceStub().addSpaceDefault({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
+      spaceId: reservedSpace.space.id, kind: 'sidekick', targetId: AUTOMATION_ID })).toMatchObject({ ok: true });
+    const otherWorkstreamId = asWorkstreamId('00000000-0000-7000-8000-00000000ad97');
+    expect(await workspaceStub().reserveChannelInSpaces({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
+      workstreamId: otherWorkstreamId, spaceIds: [reservedSpace.space.id], requestedScope: 'workspace',
+      requestedParticipantUserIds: [AUTHOR_ID], authorityGeneration: 1,
+      directory: { title: 'Other knowledge', description: '', emailAddress: null, titleStatus: 'settled', createdAt: NOW },
+    })).toMatchObject({ status: 'reserved' });
+    await bootstrapWorkstreamRuntimeEnvironment(TEST_ENV, WORKSPACE_ID, otherWorkstreamId, 'workstream');
+    await provisionWorkstreamObject(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: otherWorkstreamId,
+      title: 'Other knowledge', objective: '', scope: 'workspace', createdByUserId: AUTHOR_ID,
+      participantUserIds: [AUTHOR_ID], harnessStatus: 'idle', titleStatus: 'settled', emailAddress: null,
+      emailRouteStatus: null, systemKind: null, modelOverride: 'double/primary', now: Date.now() });
+    const otherRoot = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName('global', WORKSPACE_ID, otherWorkstreamId)));
+    await deliverChildEffects(TEST_ENV, otherRoot);
+    // Birth stages defaults before the Channel's parent exists. The test
+    // Queue has no consumer; hand its persisted target to the real consumer.
+    const defaultTargets = await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{
+      spaceId: string; kind: string; targetId: string; defaultGeneration: number;
+      workstreamId: string; membershipGeneration: number;
+    }>(`SELECT space_id AS spaceId, kind, target_id AS targetId, default_generation AS defaultGeneration,
+        workstream_id AS workstreamId, membership_generation AS membershipGeneration
+        FROM space_default_targets WHERE workstream_id = ? AND state = 'pending'`, otherWorkstreamId).toArray());
+    expect(defaultTargets).toHaveLength(1);
+    expect(await consumeEffectBodies(TEST_ENV, defaultTargets.map((target) => ({ ...target,
+      type: 'space_default', region: 'global', workspaceId: WORKSPACE_ID, requestedByUserId: AUTHOR_ID,
+    })))).toEqual({ acked: 1, retried: 0 });
+    const otherPrompt = await execute(otherRoot);
+    expect(otherPrompt.split('\n').find((line) => line.includes('skill-manual-helper'))).toContain('[Recommended]');
+    expect(otherPrompt).not.toContain('skill-owned-helper');
+    expect(otherPrompt).not.toContain('Owned body loaded only on request.');
+    expect(await execute(otherRoot, [{ name: 'load_skill', arguments: { name: 'skill-manual-helper' } }]))
+      .toContain('Secret body loaded only on request.');
+    const otherChild = await child('other-channel-child', otherWorkstreamId);
+    const otherChildPrompt = await execute(otherChild);
+    expect(otherChildPrompt.split('\n').find((line) => line.includes('skill-manual-helper'))).toContain('[Recommended]');
+    expect(otherChildPrompt).not.toContain('Secret body loaded only on request.');
+    expect(otherChildPrompt).not.toContain('skill-owned-helper');
+    expect(await execute(otherChild, [{ name: 'load_skill', arguments: { name: 'skill-manual-helper' } }]))
+      .toContain('Secret body loaded only on request.');
 
     // A delegated agent has a real local participant but no human-viewable
     // private-child membership. Its tools must use execution authority.
@@ -576,13 +656,18 @@ describe("a hosted Sidekick", () => {
     }
     expect(await parent.recommendedSidekickIds({ workspaceId: WORKSPACE_ID, parentId: workstreamId })).toEqual([]);
     expect(await hidden.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([]);
-    expect(await root.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([AUTOMATION_ID]);
+    expect(await root.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([ownedId, AUTOMATION_ID]);
     await hidden.stopOwnedAgent();
     await expect(userService.setSidekickRecommendation(workstreamId, AUTOMATION_ID, true, address.substreamId,
       { ...input, substreamId: address.substreamId, backgroundAgent: true })).rejects.toMatchObject({
       status: 403, code: 'sidekick_attachment_execution_forbidden',
     });
     expect(await parent.recommendedSidekickIds({ workspaceId: WORKSPACE_ID, parentId: workstreamId })).toEqual([]);
+    // Saved local attachments do not bypass lifecycle on the next execution.
+    await workspaceStub().sidekickPause({ ...addressed(), actor: actor() });
+    expect(await execute(otherChild)).not.toContain('Secret body loaded only on request.');
+    await workspaceStub().sidekickResume({ ...addressed(), actor: actor() });
+    expect(await execute(otherChild)).toContain('Secret body loaded only on request.');
   });
   it("publishes through the authoring conversation and completes with a durable final reply", async () => {
     await createDraft();
