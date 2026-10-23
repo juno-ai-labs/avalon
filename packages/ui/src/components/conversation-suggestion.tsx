@@ -33,7 +33,7 @@ export function suggestionExcerpt(text: string): string {
   return `“${kept}${cut ? '…' : ''}”`;
 }
 
-export function SuggestionChip({ action, excerpt, kind, label, onDismiss, pending, secondaryAction, sentence, title }: {
+export function SuggestionChip({ action, excerpt, kind, label, onDismiss, pending, resolveAction, sentence, title }: {
   kind: 'merge_up' | 'start_breakout' | 'mark_resolved';
   /** The chip's accessible name. */
   label: string;
@@ -46,7 +46,7 @@ export function SuggestionChip({ action, excerpt, kind, label, onDismiss, pendin
   pending: boolean;
   action: { label: string; onAct: () => void; disabled?: boolean };
   /** Independent of the draft: resolution needs no drafted words. */
-  secondaryAction?: { label: string; onAct: () => void; disabled?: boolean };
+  resolveAction?: { label: string; onAct: () => void; disabled?: boolean };
   onDismiss: () => void;
 }): React.JSX.Element {
   const Icon = kind === 'mark_resolved' ? IconCheck : kind === 'merge_up' ? IconCornerUpLeft : IconCornerDownRight;
@@ -66,8 +66,8 @@ export function SuggestionChip({ action, excerpt, kind, label, onDismiss, pendin
           <button className="suggestion-chip-action" disabled={pending || action.disabled} onClick={action.onAct} type="button">
             <Icon aria-hidden="true" size={12} stroke={2} />{action.label}
           </button>
-          {secondaryAction && <button className="suggestion-chip-secondary-action" disabled={secondaryAction.disabled} onClick={secondaryAction.onAct} type="button">
-            <IconCheck aria-hidden="true" size={12} stroke={2} />{secondaryAction.label}
+          {resolveAction && <button className="suggestion-chip-secondary-action" disabled={resolveAction.disabled} onClick={resolveAction.onAct} type="button">
+            <IconCheck aria-hidden="true" size={12} stroke={2} />{resolveAction.label}
           </button>}
           {kind === 'merge_up' && <button className="suggestion-chip-secondary-action suggestion-chip-discard" onClick={onDismiss} type="button">
             <IconX aria-hidden="true" size={12} stroke={2} />Discard

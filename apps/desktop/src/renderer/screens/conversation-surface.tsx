@@ -3314,7 +3314,7 @@ function ConversationSurfaceContent({
     && !dismissedSuggestionIds.has(suggestion.suggestionId)
     && suggestionTurnIsVisible(suggestion.judgedTurnId, readableTurnIds)
     && (suggestion.kind === 'mark_resolved' ? !resolved && parentKind === 'workstream' && Boolean(api)
-      : suggestion.kind === 'merge_up' ? merge !== null && startMerge !== undefined : canStartBreakout));
+      : suggestion.kind === 'merge_up' ? !resolved && merge !== null && startMerge !== undefined : canStartBreakout));
   const afterTurn = new Map<string, React.ReactNode>();
   for (const suggestion of visibleSuggestions) {
     if (mergeCard?.anchorTurnId === suggestion.judgedTurnId) continue;
@@ -3341,7 +3341,7 @@ function ConversationSurfaceContent({
         action={{ label: 'Merge', onAct: () => startMerge?.(words, suggestion.judgedTurnId) }}
         excerpt={pending ? null : suggestionExcerpt(words)}
         kind="merge_up"
-        secondaryAction={onResolve ? { label: 'Resolve without merge', onAct: onResolve, disabled: resolveDisabled || resolved } : undefined}
+        resolveAction={onResolve ? { label: 'Resolve without merge', onAct: onResolve, disabled: resolveDisabled } : undefined}
         label={`Suggestion: merge to ${mergeTargetName ?? ''}`}
         onDismiss={() => dismissSuggestion(suggestion)}
         pending={pending}
