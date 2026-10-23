@@ -1,11 +1,11 @@
 ---
-slug: easter-eggs
+slug: bring-back-easter-eggs
 title: "Why have coding agents not brought easter-egg utopia?"
 description: "Coding agents can build an easter egg in minutes. So why aren’t we seeing more of them?"
 author: "The Rally team"
 ---
 
-With the rise of coding agents and being able to hand off hours of work without supervision, why haven’t we seen a revival of fun easter eggs? Previously, with the organizational move towards development teams/squads/pods (over solo 2-3 person groups) and the rise of sprints/estimation/deliverables, it’s not hard to see how easter eggs lost planning poker to one more CRUD feature because “we’re 2 points over this sprint’s target”.
+With the rise of coding agents and being able to hand off hours of work without supervision, why haven’t we seen a revival of fun easter eggs? Previously, with the organizational move towards development teams/squads/pods (over small 2-3 person groups) and the rise of sprints/estimation/deliverables, it’s not hard to see how easter eggs lost planning poker to one more CRUD feature because “we’re 2 points over this sprint’s target”.
 
 Can coding agents bring back the fun in software engineering (if we’re all just middle-managers of agents now)?
 
