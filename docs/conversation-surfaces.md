@@ -33,8 +33,7 @@ Running Sidekicks share background agents' animated indicator above the input.
 The host supplies independent counts to `WorkstreamComposer`, so both rows can
 stack and clear independently. [Sidekick lifecycle](automation-lifecycle.md#activity-above-the-composer)
 owns the activity read and update signal.
-Background counts remain cached while their socket owns the session, including
-when the composer mounts before the first directory row and is later reopened.
+The query client retains socket-owned counts and breakout lists across navigation.
 Losing that socket or unmounting its owner resets both kinds of count to unknown;
 the labels stay hidden until fresh directory and Sidekick subscription answers
 arrive after reconnect.
@@ -793,10 +792,10 @@ alone passes just as well in the scroller that hides it from a reader who has
 scrolled up, which is the defect that shipped to review. Any visible
 change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
-`workstream-open.test.tsx` also covers a count arriving as its first composer
-unmounts, then reopening after the ordinary five-minute cache lifetime.
-`workspace-socket.test.tsx` renders both running labels through disconnect and
-reconnect, including an obsolete Sidekick subscription answer.
+`query-client.test.ts` covers observers created before the first socket row,
+unmounted before a rerender, and revisited after the default cache lifetime.
+`workspace-socket.test.tsx` renders running labels through disconnect and
+reconnect and protects fresh activity from a retired owner's delayed close.
 
 ## Slow model notice
 
@@ -826,14 +825,15 @@ selection and message protocol.
 
 ### 2026-10-23 — Keep running counts through navigation, discard them on disconnect
 
-The background-count observer declares its session-long cache lifetime when it
-is created. Installing socket defaults later could leave a composer-created
-entry with five-minute garbage collection if navigation beat its rerender;
-reopening then hid the indicator because the count has no fetcher. Socket loss
-and owner teardown now reset background and Sidekick activity to unknown, so an
-old running count cannot remain a live claim while disconnected. Reconnect
-reuses the existing directory delivery and target subscriptions to restore
-current counts; it adds no polling or new requests.
+The query client installs session-long retention for both counts and breakout
+lists before any observer or socket write can create an entry. Installing it
+lazily could leave an observer-created entry with five-minute garbage collection
+if navigation beat its rerender; reopening then lost state with no fetcher.
+Socket loss and owner teardown reset background and Sidekick activity to unknown,
+so disconnected counts cannot remain live claims. Teardown releases transport
+ownership before closing it, preventing a delayed close from clearing a
+replacement owner's fresh counts. Reconnect uses the existing directory and
+target subscription deliveries, without new requests.
 
 ### 2026-10-21 — Deliver dictation independently of arrival timing
 

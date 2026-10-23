@@ -100,8 +100,7 @@ import { ChannelPaneContextValue, type ChannelPaneContext } from '../lib/navigat
 import type { HarnessRunMetadata, HarnessStatus, WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import type * as CollaborationSessionModule from '../lib/collaboration-session';
 import type { ClientSession } from '@rally/contracts/client-session';
-import { asSpaceId, asSubstreamId, type SpaceDirectory } from '@rally/contracts';
-import { applyChannelViewerState } from '../lib/channel-viewer-state';
+import { asSpaceId, type SpaceDirectory } from '@rally/contracts';
 
 const workstreamId = '00000000-0000-7000-8000-000000000650';
 
@@ -291,33 +290,6 @@ describe('socket-first channel open', () => {
     expect(screen.getByRole('status', { name: '2 background agents running' })).toBeInTheDocument();
     act(() => cache.setQueryData(['workstream-background-agents', workstreamId], { '0': 0 }));
     await waitFor(() => expect(screen.queryByRole('status', { name: /background agents? running/u })).not.toBeInTheDocument());
-  });
-
-  it('retains running agents when the composer opens before its socket row and is revisited after five minutes', async () => {
-    const boot = recoveryBoot();
-    const cache = renderScreen((query) => {
-      query.setQueryData(['workstream', workstreamId], boot);
-      query.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
-    });
-    await screen.findByRole('textbox', { name: /message/iu });
-    vi.useFakeTimers();
-    try {
-      // Leave before the socket notification can rerender the observer with new defaults.
-      act(() => {
-        applyChannelViewerState(cache, {
-          id: workstreamId, backgroundAgentCounts: { [asSubstreamId('0')]: 1 },
-        }, liveVersion, null);
-        navigateInTest('/settings');
-      });
-      await act(async () => { await vi.advanceTimersByTimeAsync(6 * 60_000); });
-    } finally {
-      vi.useRealTimers();
-    }
-    // Other screen data may expire while away; the socket-owned running count must not.
-    cache.setQueryData(['workstream', workstreamId], boot);
-    cache.setQueryData(['ordered-transcript', workstreamId], boot.transcript);
-    act(() => navigateInTest(`/workstreams/${workstreamId}`));
-    expect(await screen.findByRole('status', { name: '1 background agent running' })).toBeInTheDocument();
   });
 
   it('uses only the selected guest conversation roster despite a cached organization directory', async () => {
