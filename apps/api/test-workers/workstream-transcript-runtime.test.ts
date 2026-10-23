@@ -6,6 +6,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
   WorkstreamWorkflowInputSchema,
+  ServerSocketEventSchema,
+  WorkstreamTranscriptSnapshotSchema,
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
@@ -17,14 +19,14 @@ import { providerRequestView, responsesStreamResponse } from "@rally/agent-harne
 import { completionVerificationNudge } from "../src/services/completion-verification";
 
 import type { Env } from "../src/env";
-import { conversationObjectName, substreamLoopId } from "../src/durable-objects/names";
+import { conversationObjectName, substreamLoopId, workspaceDOName } from "../src/durable-objects/names";
 import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-storage";
 import { WorkstreamHarnessRunStorage } from "../src/durable-objects/workstream-harness-run-storage";
 import { WorkstreamToolReceiptStorage } from "../src/durable-objects/workstream-tool-receipt-storage";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import { readCompletionVerificationSnapshot } from "../src/durable-objects/completion-verification-storage";
 import { createTestEnv } from "../test/helpers/cloudflare-test";
-import { seedWorkstreamRoot } from "./helpers/substream-fixture";
+import { seedWorkspaceControlPlane, seedWorkstreamRoot } from "./helpers/substream-fixture";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000701");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-000000000702");
@@ -39,6 +41,11 @@ beforeEach(async () => reset());
 
 describe("work-stream transcript on workerd SQLite", () => {
   it.each(["wide", "deep"] as const)("hydrates a %s activity graph above SQLite's parameter ceiling", async (shape) => {
+    await seedWorkspaceControlPlane(env.DB, {
+      workspaceId: WORKSPACE_ID, userId: USER_ID, sessionId: "activity-graph-session",
+    });
+    const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
+    await workspace.initializeWorkspace(WORKSPACE_ID, "wnam");
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
@@ -74,18 +81,74 @@ describe("work-stream transcript on workerd SQLite", () => {
       }
       activity("live-outside-range", null, null, true);
       activity("unrelated-completed", null, null);
+    });
 
-      // Wide exceeds the seed parameter ceiling; deep expands a single seed
-      // past the interval-hydration ceiling. Neither may truncate the graph.
-      const snapshot = transcript.createOpeningSnapshot({
-        unreadHighWaterAttentionOrdinal: null, now: Date.parse("2026-01-01T00:00:03.000Z"),
-      });
-      expect(snapshot.activities).toHaveLength(107);
-      expect(snapshot.activeActivities).toEqual([expect.objectContaining({
-        activityId: "live-outside-range", intervals: [expect.objectContaining({ elapsedMsAtSnapshot: 2_000 })],
-      })]);
-      expect(snapshot.activities.some((entry) => entry.activityId === "unrelated-completed")).toBe(false);
-      const range = transcript.range(snapshot, { startInclusive: 1, endExclusive: snapshot.snapshotThrough + 1 });
+    // Wide exceeds the seed parameter ceiling; deep expands a single seed
+    // past the interval-hydration ceiling. Neither may truncate the graph.
+    const opening = await stub.executeTranscriptOperation({
+      workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID,
+      operation: "createOpeningSnapshot",
+      args: [{ unreadHighWaterAttentionOrdinal: null, now: Date.parse("2026-01-01T00:00:03.000Z") }],
+    });
+    expect(opening.status).toBe(200);
+    const snapshot = WorkstreamTranscriptSnapshotSchema.parse(JSON.parse(opening.bodyJson).value);
+    expect(snapshot.activities).toHaveLength(107);
+    expect(snapshot.activeActivities).toEqual([expect.objectContaining({
+      activityId: "live-outside-range", intervals: [expect.objectContaining({ elapsedMsAtSnapshot: 2_000 })],
+    })]);
+    expect(snapshot.activities.some((entry) => entry.activityId === "unrelated-completed")).toBe(false);
+    const response = await stub.fetch("https://substream.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-substream-id": "0",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": "activity-graph-session",
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000705",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    const nextEvent = (type: "snapshot" | "transcript_range") => new Promise<unknown>((resolve, reject) => {
+      const onClose = (event: CloseEvent) => {
+        socket.removeEventListener("message", onMessage);
+        reject(new Error(`Socket closed: ${event.code} ${event.reason}`));
+      };
+      const onMessage = (event: MessageEvent) => {
+        const decoded = ServerSocketEventSchema.parse(JSON.parse(String(event.data)));
+        if (decoded.type !== type && decoded.type !== "error" && decoded.type !== "resync_required") return;
+        socket.removeEventListener("message", onMessage);
+        socket.removeEventListener("close", onClose);
+        resolve(decoded);
+      };
+      socket.addEventListener("message", onMessage);
+      socket.addEventListener("close", onClose, { once: true });
+    });
+    try {
+      const subscribed = nextEvent("snapshot");
+      socket.send(JSON.stringify({ type: "subscribe", afterSequence: 0 }));
+      const frame = ServerSocketEventSchema.parse(await subscribed);
+      expect(frame.type).toBe("snapshot");
+      if (frame.type !== "snapshot") throw new Error(`Expected snapshot, got ${frame.type}`);
+      expect(frame.transcript.activities).toHaveLength(107);
+
+      const loaded = nextEvent("transcript_range");
+      socket.send(JSON.stringify({
+        type: "load_transcript_range",
+        requestId: "00000000-0000-7000-8000-000000000706",
+        request: {
+          snapshotId: frame.transcript.snapshotId,
+          range: { startInclusive: 1, endExclusive: snapshot.snapshotThrough + 1 },
+          resumeAfterEventSequence: frame.sequence,
+        },
+      }));
+      const rangeFrame = ServerSocketEventSchema.parse(await loaded);
+      expect(rangeFrame.type).toBe("transcript_range");
+      if (rangeFrame.type !== "transcript_range") throw new Error(`Expected range, got ${rangeFrame.type}`);
+      const range = rangeFrame.result;
       expect(range.activities).toHaveLength(106);
       expect(range.activities[0]).toMatchObject({ activityId: "shared-root", parentActivityId: null });
       expect(range.activities[105]).toMatchObject({ activityId: "activity-104", callIndex: 104 });
@@ -93,7 +156,9 @@ describe("work-stream transcript on workerd SQLite", () => {
       expect(range.activities.every((entry) => entry.state === "completed"
         && entry.intervals.length === 1 && entry.intervals[0]!.durationMs === 1_000)).toBe(true);
       expect(range.turns[0]?.blocks[0]).toMatchObject({ type: "text", text: shape === "wide" ? "Result 0" : "Result 104" });
-    });
+    } finally {
+      socket.close(1000, "test complete");
+    }
   });
 
   it("keeps completion verification consumed across compaction and eviction", async () => {
