@@ -69,6 +69,7 @@ import { invalidateCachedWorkstreamDetails } from '../lib/workstreams-cache';
 import { ApiError, type RallyApi } from '../lib/api';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { desktopBridge } from '../lib/platform';
+import { AboutRally } from '../components/easter-eggs/about-credits';
 import { MAC_APP_CONNECT_NOTE, MAC_APP_DOWNLOADABLE, MAC_APP_DOWNLOAD_URL, connectorStartsHere } from '../lib/browser-connectors';
 import { disableWebPush, enableWebPush, webPushState } from '../lib/web-push';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
@@ -2583,9 +2584,7 @@ export function WorkspaceSettingsScreen({
                   </>
                 )}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2><SettingLabel setting={settings.about} /></h2><p>Which release of Rally this Mac is running.</p></div>
-                <dl className="settings-diagnostics settings-list-card">
-                  <div><dt><SettingLabel setting={settings.version} /></dt><dd>{runtime?.appVersion ?? 'Unknown'}</dd></div>
-                </dl>
+                <AboutRally version={runtime?.appVersion ?? 'Unknown'} versionLabel={<SettingLabel setting={settings.version} />} />
               </section>
             )}
           </div>
