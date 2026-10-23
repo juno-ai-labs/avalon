@@ -65,12 +65,14 @@ export function stepRally(state: RallyState, playerTarget: number, seconds: numb
   const opponentFace = FIELD.width - PADDLE.inset - PADDLE.width;
   let { rally, best } = state;
 
-  if (vx < 0 && x - BALL_RADIUS <= playerFace && x >= PADDLE.inset && hits(player, y)) {
+  // A hit is the ball crossing a paddle's face during this step, so a fast
+  // ball that would jump past the paddle in one step is still returned.
+  if (vx < 0 && x - BALL_RADIUS <= playerFace && state.ball.x - BALL_RADIUS >= playerFace && hits(player, y)) {
     ({ vx, vy } = returned(speed, player, y, 1));
     x = playerFace + BALL_RADIUS;
     rally += 1;
     best = Math.max(best, rally);
-  } else if (vx > 0 && x + BALL_RADIUS >= opponentFace && x <= FIELD.width - PADDLE.inset && hits(opponent, y)) {
+  } else if (vx > 0 && x + BALL_RADIUS >= opponentFace && state.ball.x + BALL_RADIUS <= opponentFace && hits(opponent, y)) {
     ({ vx, vy } = returned(speed, opponent, y, -1));
     x = opponentFace - BALL_RADIUS;
   }

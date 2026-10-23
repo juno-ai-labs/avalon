@@ -1,6 +1,6 @@
 # Easter eggs
 
-Rally's hidden extras, on desktop and web, and the two triggers they are built
+Rally's hidden extras and the two triggers they are built
 from. An egg is a **trigger** plus an **effect**: the trigger is a shared hook,
 the effect is the egg's own component, and the component mounts only when the
 trigger fires. A new egg picks a trigger and writes an effect; it does not write
@@ -98,14 +98,18 @@ The small card a conversation shows while its socket connects is
 [`conversation-surfaces.md`](conversation-surfaces.md), not this screen.
 
 The native macOS About panel (`role: 'about'` in `application-menu.ts`) is
-Electron's own and has no egg; the credits live in Settings, which desktop and
-web share.
+Electron's own and has no egg; the credits live in Settings › Application ›
+About instead. That section is desktop-only (Settings hides the Desktop app
+group in a browser), so the credits are too. Pong and the Konami lap work on
+desktop and web.
 
 ## Failure modes and limits
 
 - Without a 2D canvas context, Pong draws nothing but still opens and closes.
 - Pong's frame step is capped at 1/30 s, so a window hidden mid-rally resumes
-  where it was instead of carrying the ball through a paddle in one jump.
+  where it was rather than jumping. A paddle hit is the ball crossing the
+  paddle's face during a step, not landing on it, so a fast ball cannot pass
+  through a paddle in one step.
 - The best Pong score lasts until the screen closes. It is not stored.
 - The numbers that tune the eggs (seven clicks in 3 s, ball speed, 5 % speed-up
   per return, Rally's paddle speed) are taste, not limits; change them freely.
