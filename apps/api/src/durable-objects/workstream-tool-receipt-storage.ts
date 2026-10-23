@@ -33,6 +33,11 @@ import {
 import { uuidV7 } from "../lib/uuid-v7";
 import { ToolPageError, ToolPageStorage, type PageClaim, type PageIssueSchema, type PageClaimSchema } from "./tool-page-storage";
 import type { z } from "zod";
+import type { ToolExecutionAccount, ToolExecutionAccountRecord } from "@rally/contracts";
+import {
+  TOOL_ACCOUNT_CHECKPOINT, readToolExecutionAccount,
+  ExecutionAccountReadSchema, RecordExecutionAccountSchema, parseExecutionAccountRequest,
+} from "./tool-execution-account";
 import {
   WorkstreamTranscriptStorage,
   type PreparedToolLifecycle,
@@ -268,6 +273,55 @@ export class WorkstreamToolReceiptStorage {
   constructor(
     private readonly storage: DurableObjectStorage,
   ) {}
+
+  executionAccount(raw: { runId: string; effectIntentId: string }): ToolExecutionAccountRecord | null {
+    const input = parseExecutionAccountRequest(ExecutionAccountReadSchema, raw);
+    return readToolExecutionAccount(this.sql, input.runId, input.effectIntentId);
+  }
+
+  /** Persist before provider dispatch. Only a definite refusal permits another account. */
+  recordExecutionAccount(raw: {
+    effectIntentId: string; fence: ToolReceiptFence; now: number;
+    phase: ToolExecutionAccountRecord["phase"]; account: ToolExecutionAccount;
+  }): ToolExecutionAccountRecord {
+    const input = parseExecutionAccountRequest(RecordExecutionAccountSchema, raw);
+    return this.storage.transactionSync(() => {
+      if (this.#fence(input.fence, input.now, input.phase !== "selected") !== "held") {
+        throw new Error("tool_execution_account_ownership_lost");
+      }
+      const effect = first(this.sql.exec<{ status: string; checkpoint_index: number }>(
+        "SELECT status,checkpoint_index FROM tool_effects WHERE effect_intent_id=? AND run_id=?",
+        input.effectIntentId, input.fence.runId,
+      ));
+      if (!effect || !["executing", "ambiguous"].includes(effect.status)) throw new Error("tool_execution_account_receipt_missing");
+      const prior = this.executionAccount({ runId: input.fence.runId, effectIntentId: input.effectIntentId });
+      const record: ToolExecutionAccountRecord = {
+        phase: input.phase, account: input.account, originalAccount: prior?.originalAccount ?? input.account,
+      };
+      const sameAccount = prior && prior.account.connectionId === record.account.connectionId
+        && JSON.stringify(prior.account.principal) === JSON.stringify(record.account.principal)
+        && prior.account.sidekickId === record.account.sidekickId
+        && prior.account.delegatedUserId === record.account.delegatedUserId;
+      if ((!prior && input.phase !== "selected")
+        || (prior && prior.account.sidekickId !== record.account.sidekickId)
+        || (prior && !sameAccount && (prior.phase !== "refused" || input.phase !== "selected" || effect.status === "ambiguous"))) {
+        throw new Error("tool_execution_account_change_refused");
+      }
+      // A retry keeps its account. A renewed grant can authorize reconciliation
+      // under that same identity, while originalAccount preserves first dispatch.
+      if (sameAccount && input.phase === "selected" && prior!.phase !== "refused"
+        && JSON.stringify(prior!.account) === JSON.stringify(record.account)) return prior!;
+      if (prior?.phase === "refused" && input.phase === "served") throw new Error("tool_execution_account_not_selected");
+      if (prior?.phase === "served" && input.phase === "refused") throw new Error("tool_execution_account_already_served");
+      const written = this.#appendCheckpoint({
+        effectIntentId: input.effectIntentId, runId: input.fence.runId, attemptId: input.fence.attemptId,
+        index: effect.checkpoint_index + 1, phase: TOOL_ACCOUNT_CHECKPOINT, payloadJson: JSON.stringify(record), now: input.now,
+      });
+      if (written === null) throw new Error("tool_execution_account_checkpoint_conflict");
+      this.sql.exec("UPDATE tool_effects SET checkpoint_index=? WHERE effect_intent_id=?", written, input.effectIntentId);
+      return record;
+    });
+  }
 
   issuePage(input: z.infer<typeof PageIssueSchema> & { fence: ToolReceiptFence }): string | null {
     return this.storage.transactionSync(() => {
@@ -660,12 +714,18 @@ export class WorkstreamToolReceiptStorage {
               )
            OR EXISTS (
                 SELECT 1 FROM tool_pages WHERE producer_id = ? OR consumer_id = ?
+              )
+           OR EXISTS (
+                SELECT 1 FROM tool_effect_checkpoints WHERE effect_intent_id = ? AND phase = ?
+                  AND json_extract(member_safe_payload_json,'$.phase')='served'
               )`,
       runId,
       toolCallId,
       effectIntentId,
       effectIntentId,
       effectIntentId,
+      effectIntentId,
+      TOOL_ACCOUNT_CHECKPOINT,
     )) !== undefined;
   }
 

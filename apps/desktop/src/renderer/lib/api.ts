@@ -1,5 +1,6 @@
 import { MessageIssueReceiptSchema, type CreateMessageIssue, type MessageIssueReceipt } from '@rally/contracts/message-issues';
 import { connectorAuthorizationStatus } from '@rally/contracts';
+import { SidekickDelegatesResultSchema, SidekickDelegationMutationResultSchema } from '@rally/contracts';
 import type { Annotation } from '@rally/contracts';
 import { ManagedScopeGrantsSchema, RevokeScopeGrantSchema, ScopeGrantMutationResultSchema } from "@rally/contracts/scope-grants";
 import { ScopeSharingOptionsSchema, ScopeInvitationsListSchema, ScopeInvitationResultSchema, type ScopeGrantTarget, type CreateScopeInvitations } from "@rally/contracts/scope-grants";
@@ -449,6 +450,7 @@ export function mapToolInvocation(invocation: z.infer<typeof WireToolInvocationS
   const completed = invocation.completedAt ? Date.parse(invocation.completedAt) : Number.NaN;
   return {
     id: invocation.id,
+    toolCallId: invocation.toolCallId,
     name: invocation.activityName ?? invocation.toolName,
     // Kept beside the display name, which the prose above has taken over.
     wireName: invocation.toolName,
@@ -540,6 +542,7 @@ function mapAutomationRun(run: WireAutomationRun): AutomationRun {
   return {
     id: run.id,
     automationId: run.automationId,
+    ...(run.coordinatorUserId === undefined ? {} : { coordinatorUserId: run.coordinatorUserId }),
     triggerType: run.triggerType,
     status: run.status,
     plannedFor: run.plannedFor,
@@ -604,6 +607,7 @@ function mapAutomationDetail(detail: z.infer<typeof WireAutomationDetailSchema>)
     lifecycle: detail.lifecycle,
     authorUserId: detail.authorUserId,
     runAsUserId: detail.runAsUserId,
+    ...(detail.delegationAttention !== undefined ? { delegationAttention: detail.delegationAttention } : {}),
     currentDefinition: detail.currentDefinition,
     currentDefinitionRevision: detail.currentDefinitionRevision,
     acceptedDefinitionRevision: detail.acceptedDefinitionRevision,
@@ -1318,14 +1322,17 @@ export class RallyApi {
     return this.request('/automations', { method: 'POST', schema: createdAutomationSchema });
   }
 
-  /**
-   * Apply the current ready revision: the first time this creates the
-   * automation, every later time it re-applies an edit.
-   *
-   * No body: the definition is on the object, written by its conversation, and
-   * everything applying it needs is derived there rather than restated by a
-   * client that never held it.
-   */
+  async getSidekickDelegates(id: string, signal?: AbortSignal): Promise<z.infer<typeof SidekickDelegatesResultSchema>> {
+    return this.request(`/sidekicks/${encodeURIComponent(id)}/delegation`, { schema: SidekickDelegatesResultSchema, signal });
+  }
+
+  async setMySidekickDelegation(id: string, allowed: boolean, operationId: string): Promise<z.infer<typeof SidekickDelegationMutationResultSchema>> {
+    return this.request(`/sidekicks/${encodeURIComponent(id)}/delegation`, {
+      method: 'POST', body: { allowed, operationId }, schema: SidekickDelegationMutationResultSchema,
+    });
+  }
+
+
   async acceptAutomation(id: string): Promise<AutomationDetail> {
     const raw = await this.request(`/sidekicks/${encodeURIComponent(id)}/accept`, {
       method: 'POST',

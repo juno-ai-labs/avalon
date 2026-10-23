@@ -128,8 +128,9 @@ class AuthorityDatabase {
           // still wants this run finished.
           sidekickReadRunState: async (request: Record<string, unknown>) => {
             this.runStateReads.push(request);
-            return this.state.run;
+            return this.state.run ? this.state.run : null;
           },
+          sidekickNoteCoordinatorUnavailable: async () => undefined,
         }),
       }),
     });
@@ -291,8 +292,6 @@ describe("durable run authority revalidation", () => {
       .rejects.toThrow(/no longer running/i);
   });
 
-  // `pending` is not here: provisioning starts a run's loop before it reports
-  // the run running, so a pending row is live (sidekick-run-continuation.test.ts).
   it.each([
     "stopped",
     "completed",
@@ -374,7 +373,8 @@ describe("durable run authority revalidation", () => {
     const namespace = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
       idFromName: (name: string) => createTestDurableObjectId(name),
       // The run's own state is the Sidekick's, hosted in the same object.
-      get: () => ({ connectorEvent, sidekickReadRunState: async () => database.state.run }),
+      get: () => ({ connectorEvent, sidekickReadRunState: async () => database.state.run
+        ? database.state.run : null }),
     });
     const env = createTestEnv({
       ...database.env,

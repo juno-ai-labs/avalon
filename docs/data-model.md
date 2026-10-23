@@ -35,6 +35,13 @@ contracts expose camel-cased TypeScript values; storage uses explicit
 snake-cased columns, and JSON only where provider- or model-shaped data is not
 relationally queried.
 
+WorkspaceDO migrations 128–131 add Sidekick grants, prepared mutations, immutable
+receipts, run coordinators, source-reconciliation wakes and legacy enrollment
+backfill. [Sidekick lifecycle](automation-lifecycle.md#delegation-consent-authority)
+owns the policy. The claim-access table from 129 and D1 migration 0124's
+`sidekick_delegation_locations` are unused; the applied migrations are retained
+without using either table for access or cross-Organization discovery.
+
 **Storage words and product words differ.** Since the navigation redesign
 ([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)) a stored **Space**
 (`spaces`, `space_*`) is the product's **Channel**, a stored **Channel** or

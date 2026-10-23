@@ -226,7 +226,7 @@ async function activateAutomation(): Promise<void> {
     authorUserId: AUTHOR_ID,
     scope: "personal",
     owningWorkstreamId: null,
-    automationId: AUTOMATION_ID,
+    automationId: AUTOMATION_ID
   });
   expect(created.created).toBe(true);
   await workspace().sidekickSubmitDefinition({
@@ -418,6 +418,7 @@ describe("external event routing", () => {
   });
 
   it("rejects stale registration effects and keeps retry activation boundaries stable", async () => {
+    await activateAutomation();
     const project = (sourceGeneration: number, eventType: string) => workspace().applyExternalEventRegistrations({
       schemaVersion: 1, workspaceId: WORKSPACE_ID, sourceGeneration,
       destination: { kind: "automation", automationId: AUTOMATION_ID },

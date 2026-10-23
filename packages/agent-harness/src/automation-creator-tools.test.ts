@@ -220,6 +220,9 @@ describe("the automations plugin", () => {
     expect(systemMessage).toContain("workstream");
     expect(systemMessage).toContain("Published scope cannot change");
     expect(systemMessage).toContain("Use the scope already selected");
+    expect(systemMessage).toContain("Every scope can use eligible delegates' personal connections");
+    expect(systemMessage).toContain("Eligible delegates can use");
+    expect(systemMessage).not.toContain("Only the run-as person can use");
     expect(systemMessage).toContain("Do not ask participants to choose it again");
     // The room an automation belongs to is the one it was written in, so an
     // agent offering to deliver somewhere else is offering something that does

@@ -283,6 +283,8 @@ class ToolSelectionStatement {
       results = this.database.attachedConnectionIds
         .filter((connectionId) => requested.has(resourceFor(connectionId)))
         .map((connection_id) => ({ connection_id }));
+    } else if (sql.includes("FROM users")) {
+      results = [{ id: USER_ID, name: "Member" }];
     } else if (sql.includes("FROM connector_connections")) {
       if (sql.includes("(scope = 'workspace' OR (scope = 'personal'")) {
         expect(this.values).toEqual([WORKSPACE_ID, USER_ID]);
@@ -364,6 +366,12 @@ afterEach(() => {
  */
 function hostingSidekicks(database: ToolSelectionDatabase): Env["WORKSPACE_DOS"] {
   const sidekicks: Record<string, unknown> = {
+    // Catalog input only. Real consent/admission is exercised in test-workers;
+    // this suite checks tool projection for a supplied eligible-user snapshot.
+    sidekickReadExecutionDelegation: async (request: { automationId: string }) => ({
+      sidekickId: request.automationId, creatorUserId: USER_ID, accountUserId: USER_ID,
+      delegates: [{ userId: USER_ID, generation: 1, grantedAt: 1 }],
+    }),
     sidekickCreate: vi.fn(async (request: Record<string, unknown>) => {
       database.createdAutomations.push(request);
       return { created: false };
@@ -707,7 +715,8 @@ describe("connector tools selected for harness runs", () => {
         "start_agent", "list_agents", "send_message", "reply_to_message", "stop_agent",
       ]));
     expect(selected.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")
-      ?.tools.map((tool) => tool.definition.name)).toEqual(["list_skill_recommendations", "recommend_skill", "unrecommend_skill"]);
+      ?.tools.map((tool) => tool.definition.name)).toEqual(["list_skill_recommendations", "recommend_skill", "unrecommend_skill",
+        "sidekick_my_delegations_list", "sidekick_delegates_list", "sidekick_set_delegation"]);
     expect(selected.tools.some((tool) => tool.definition.name === "run_subagent")).toBe(false);
   });
 
@@ -718,8 +727,10 @@ describe("connector tools selected for harness runs", () => {
     const authoring = await __integrationTesting.loadHarnessTools(runtimeEnv, automationConversationInput());
     const child = await __integrationTesting.loadHarnessTools(runtimeEnv, childWorkflowInput(automationConversationInput()));
     expect(room.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")
-      ?.tools.map((tool) => tool.definition.name)).toEqual(["list_skill_recommendations", "recommend_skill", "unrecommend_skill"]);
-    expect(child.plugins.map((plugin) => plugin.canonicalId)).not.toContain("rally:sidekicks");
+      ?.tools.map((tool) => tool.definition.name)).toEqual(["list_skill_recommendations", "recommend_skill", "unrecommend_skill",
+        "sidekick_my_delegations_list", "sidekick_delegates_list", "sidekick_set_delegation"]);
+    expect(child.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")?.tools.map((tool) => tool.definition.name))
+      .toEqual(["my_delegations_list", "delegates_list", "set_delegation"]);
     expect(authoring.plugins.map((plugin) => plugin.canonicalId)).toContain("rally:sidekicks");
     expect(room.plugins.find((plugin) => plugin.canonicalId === "avalon:agents")
       ?.tools.map((tool) => tool.definition.name)).toEqual(expect.arrayContaining(["sidekicks_list", "create_sidekick"]));

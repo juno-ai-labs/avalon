@@ -86,6 +86,21 @@ export const AutomationActorRequestSchema = z.strictObject({
 });
 export type AutomationActorRequest = z.infer<typeof AutomationActorRequestSchema>;
 
+/** Host-private preparation state, never part of a model-advertised input. */
+export const SidekickPrepareDelegationRequestSchema = z.strictObject({
+  ...Addressed, userId: UserIdSchema, allowed: z.boolean(), operationId: IdSchema,
+});
+export const SidekickSetDelegationRequestSchema = SidekickPrepareDelegationRequestSchema.extend({
+  actorUserId: UserIdSchema.optional(),
+  expectedGeneration: z.number().int().nonnegative(),
+  source: z.enum(["self_service", "agent_request"]),
+});
+export const SidekickReadDelegationReceiptRequestSchema = SidekickPrepareDelegationRequestSchema.extend({
+  actorUserId: UserIdSchema.optional(),
+  source: z.enum(["self_service", "agent_request"]),
+});
+
+
 /**
  * A partial icon/colour choice for the Sidekick itself.
  *
@@ -227,7 +242,7 @@ export const SidekickRunContinuationRefusalCodeSchema = z.enum([
   "sidekick_paused",
   "sidekick_deleted",
   "run_not_found",
-  "run_principal_changed",
+  "run_no_eligible_delegate",
 ]);
 export type SidekickRunContinuationRefusalCode = z.infer<typeof SidekickRunContinuationRefusalCodeSchema>;
 

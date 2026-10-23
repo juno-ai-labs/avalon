@@ -314,13 +314,34 @@ async function createDraft(owningWorkstreamId: string | null = null): Promise<vo
     authorUserId: AUTHOR_ID,
     scope: owningWorkstreamId ? "workstream" : "personal",
     owningWorkstreamId,
-    automationId: AUTOMATION_ID,
+    automationId: AUTOMATION_ID
   });
   expect(created).toEqual({ automationId: AUTOMATION_ID, created: true });
 }
 
 async function submit(draft: AutomationDraft = DEFINITION): Promise<{ definitionRevision: number; ready: boolean }> {
   return workspaceStub().sidekickSubmitDefinition({ ...addressed(), draft, evaluatorRules: null, submittedByRunId: null });
+}
+
+/** Legacy event watches still publish a real registration before delivery. */
+async function registerSlackWatcher(): Promise<void> {
+  await runDurableObjectAlarm(workspaceStub());
+  await expect.poll(async () => (await alarms()).filter((entry) => entry.kind === "sidekick_delegation_sources").length,
+    { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(0);
+  await workspaceStub().applyExternalEventRegistrations({
+    schemaVersion: 1, workspaceId: WORKSPACE_ID, sourceGeneration: 1,
+    destination: { kind: "automation", automationId: AUTOMATION_ID },
+    evaluators: [{ evaluatorId: crypto.randomUUID(), source: {
+      connectorType: "slack", connectionId: SLACK_CONNECTION_ID, eventType: "slack.message.posted",
+    }, when: { kind: "always" } }],
+  });
+}
+
+async function registrationFor(eventType: string): Promise<string> {
+  return runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{ registration_id: string }>(
+    "SELECT registration_id FROM workspace_external_event_registrations WHERE automation_id=? AND event_type=? AND state='active'",
+    AUTOMATION_ID, eventType,
+  ).one().registration_id);
 }
 
 /**
@@ -911,7 +932,7 @@ describe("a hosted Sidekick", () => {
   });
 
   it.each(["plugin_mcp_rally_engineering_3", "plugin_custom_mcp_3"])(
-    "binds and reclaims a named MCP connection through %s",
+    "binds a named MCP connection through %s and keeps self-consent separate from rebinding",
     async (pluginId) => {
       const customMcpConnectionId = "00000000-0000-7000-8000-00000000ad42";
       await runInDurableObject(workspaceStub(), (_instance, state) => {
@@ -931,16 +952,16 @@ describe("a hosted Sidekick", () => {
       expect(await apply()).toMatchObject({
         lifecycle: "active", connectorBindings: { [pluginId]: customMcpConnectionId },
       });
-      // A stale binding must be repaired from the same name-aware directory
-      // used when accepting a new definition.
+      // Self-consent preserves the configured source, including a stale one;
+      // changing a source is a separate definition edit.
       await runInDurableObject(workspaceStub(), (_instance, state) => {
         state.storage.sql.exec(`UPDATE automation_directory SET connector_bindings_json = ? WHERE automation_id = ?`,
           JSON.stringify({ [pluginId]: "00000000-0000-7000-8000-00000000ad41" }), AUTOMATION_ID);
       });
       expect(await workspaceStub().sidekickClaimExecutionPrincipal({ ...addressed(), actor: actor() }))
-        .toMatchObject({ reboundPluginIds: [pluginId], unboundProviders: [] });
+        .toMatchObject({ reboundPluginIds: [], unboundProviders: [] });
       expect(JSON.parse((await automationRow()).connector_bindings_json!))
-        .toEqual({ [pluginId]: customMcpConnectionId });
+        .toEqual({ [pluginId]: "00000000-0000-7000-8000-00000000ad41" });
     },
   );
 
@@ -993,9 +1014,9 @@ describe("a hosted Sidekick", () => {
          FROM connector_connections WHERE id = ?`, replacementId, SLACK_CONNECTION_ID);
     });
     const claim = await workspaceStub().sidekickClaimExecutionPrincipal({ ...addressed(), actor: actor() });
-    expect(claim).toMatchObject({ reboundPluginIds: pluginIds, unboundProviders: [], changed: true });
+    expect(claim).toMatchObject({ reboundPluginIds: [], unboundProviders: [] });
     expect(JSON.parse((await automationRow()).connector_bindings_json ?? "null"))
-      .toEqual(Object.fromEntries(pluginIds.map((pluginId) => [pluginId, replacementId])));
+      .toEqual(Object.fromEntries(pluginIds.map((pluginId) => [pluginId, SLACK_CONNECTION_ID])));
   });
 
   it("applies a ready revision: binds the workspace connection, reserves the address, activates", async () => {
@@ -1091,7 +1112,7 @@ describe("a hosted Sidekick", () => {
     // model.
     expect(await workspaceStub().sidekickAdmitExternalEvent({
       ...addressed(),
-      registrationId: "00000000-0000-7000-8000-00000000ad71",
+      registrationId: await registrationFor("deploy.finished"),
       payloadHash: `sha256:${"d".repeat(64)}`,
       event: {
         id: "00000000-0000-7000-8000-00000000ad72",
@@ -1202,7 +1223,7 @@ describe("a hosted Sidekick", () => {
       .toMatchObject({ state: "stopped", lifecycle: "active" });
   });
 
-  it("rebinds a plugin on a principal claim when the claimant cannot use its connection", async () => {
+  it("keeps configured source bindings when an installed client records self-consent", async () => {
     await activeAutomation();
     await seedSlackConnection();
     // Bound to a connection that is gone; the plugin's live one is the Organization's.
@@ -1216,11 +1237,11 @@ describe("a hosted Sidekick", () => {
 
     const claim = await workspaceStub().sidekickClaimExecutionPrincipal({ ...addressed(), actor: actor() });
 
-    expect(claim).toMatchObject({ reboundPluginIds: ["plugin_slack"], unboundProviders: [], changed: true });
-    expect(JSON.parse((await automationRow()).connector_bindings_json!)).toEqual({ plugin_slack: SLACK_CONNECTION_ID });
+    expect(claim).toMatchObject({ reboundPluginIds: [], unboundProviders: [] });
+    expect(JSON.parse((await automationRow()).connector_bindings_json!)).toEqual({ plugin_slack: foreign });
   });
 
-  it("unbinds a plugin on a principal claim when its one connection is somebody else's personal one", async () => {
+  it("does not substitute another person's personal source on an installed client's self-consent", async () => {
     await activeAutomation();
     // The plugin's only connection is another member's personal one, which
     // the claimant may neither use nor be handed as a replacement.
@@ -1242,7 +1263,7 @@ describe("a hosted Sidekick", () => {
 
     const claim = await workspaceStub().sidekickClaimExecutionPrincipal({ ...addressed(), actor: actor() });
 
-    expect(claim).toMatchObject({ reboundPluginIds: [], unboundProviders: ["plugin_slack"] });
+    expect(claim).toMatchObject({ reboundPluginIds: [], unboundProviders: [] });
     expect(JSON.parse((await automationRow()).connector_bindings_json!)).toEqual({ plugin_slack: theirs });
   });
 
@@ -1774,6 +1795,7 @@ describe("a hosted Sidekick", () => {
     const earlierEventId = "00000000-0000-7000-8000-00000000ad50";
     await ingestSlackEvent(earlierEventId, "event-before-activation");
     await apply();
+    await registerSlackWatcher();
     expect((await automationRow()).effective_after_event_sequence).toBe(1);
     const event = {
       id: "00000000-0000-7000-8000-00000000ad52",
@@ -1789,7 +1811,7 @@ describe("a hosted Sidekick", () => {
     };
     const admission = {
       ...addressed(),
-      registrationId: "00000000-0000-7000-8000-00000000ad51",
+      registrationId: await registrationFor("slack.message.posted"),
       payloadHash: `sha256:${"a".repeat(64)}`,
     };
 
@@ -1836,6 +1858,7 @@ describe("a hosted Sidekick", () => {
     await createDraft();
     await submit();
     await apply();
+    await registerSlackWatcher();
     const base = {
       eventType: "slack.message.posted",
       title: "New message",
@@ -1847,7 +1870,7 @@ describe("a hosted Sidekick", () => {
     };
     const admission = {
       ...addressed(),
-      registrationId: "00000000-0000-7000-8000-00000000ad61",
+      registrationId: await registrationFor("slack.message.posted"),
       payloadHash: `sha256:${"b".repeat(64)}`,
     };
     const occurrenceKey = "granola:connection:note:not_1234567890abcd:transcript";
@@ -1904,6 +1927,27 @@ describe("a hosted Sidekick", () => {
     const message = (rejection as Error).message;
     expect(message).toContain("save_definition_invalid");
     expect(message).toContain("draft.triggers");
+  });
+
+  it("rechecks the email trigger after delegate authorization yields", async () => {
+    await activeAutomation();
+    await submit({ ...DEFINITION, definitionVersion: 2, triggers: [{ type: "manual" }] });
+    const result = await runInDurableObject(workspaceStub(), async (instance) => {
+      const host = (instance as unknown as { hostedSidekickHost: () => HostedSidekickHost }).hostedSidekickHost();
+      const readRelationship = host.readRelationship;
+      host.readRelationship = async (...args) => {
+        // Publishing can remove the trigger while admission reads authority.
+        await new HostedSidekick({ ...host, readRelationship }, AUTOMATION_ID).apply({ ...addressed(), actor: actor() });
+        return readRelationship(...args);
+      };
+      return new HostedSidekick(host, AUTOMATION_ID).admitInboundEmail({
+        ...addressed(), emailAddress: EMAIL_ADDRESS, resendEmailId: "removed-email-trigger",
+        senderUserId: AUTHOR_ID, receivedAt: Date.parse(NOW), payloadRef: "emails/removed-trigger",
+        resourceId: RESOURCE_ID, textContent: "Please summarize this.", structuredContent: { subject: "Summary" },
+      });
+    });
+    expect(result).toEqual({ admitted: false, duplicate: false, outcomeCode: "sidekick_email_route_mismatch", runId: null });
+    expect(await runRows()).toEqual([]);
   });
 
   it("admits an inbound email once, answers a resend retry from its receipt, and refuses a stranger", async () => {

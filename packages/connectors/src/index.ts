@@ -11,6 +11,7 @@ import { createCanvaConnector, type CanvaConnectorConfig } from "./canva";
 export { createCanvaConnector, CanvaCapabilities, CanvaAgentPluginDescriptor, type CanvaConnectorConfig } from "./canva";
 import { RegionSchema } from "@rally/contracts/regions";
 import { paginatedResult } from "./tool-pagination";
+import { isPortableGoogleActivityResource } from "./google-operation-identity";
 import { ConnectorTextCursorSchema, readConnectorTextPage } from "./text-pages";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
@@ -1342,7 +1343,7 @@ export const GoogleAgentPluginDescriptor = defineConnectorAgentPlugin({
 
 function calendarCreationTool(name: string, kind: "timed" | "all_day" | "recurring"): ToolDefinition {
   const inputSchema = googleToolInputSchema(kind === "timed" ? CalendarEventCreateArgsSchema : kind === "all_day" ? CalendarAllDayCreateArgsSchema : CalendarRecurringCreateArgsSchema);
-  return { name, description: kind === "timed" ? "Create a single timed calendar event. For all-day events use create_all_day_event; for a recurring series use create_recurring_event. Guests receive invitations by default." : kind === "all_day" ? "Create a single all-day calendar event using local dates and an exclusive end date. Use create_recurring_event for a repeating all-day series. Guests receive invitations by default." : "Create a recurring calendar series from a repeat schedule (daily, weekly, monthly or yearly) and an explicit IANA timeZone. The connector builds Google recurrence rules. The connector creates the first occurrence and recurrence in one write. Date-only start/end create an all-day series; timestamps create a timed series. Guests receive invitations by default.", capability: "calendar.write", mode: "write", idempotency: "record_before_execute", inputSchema };
+  return { name, description: kind === "timed" ? "Create a single timed calendar event. For all-day events use create_all_day_event; for a recurring series use create_recurring_event. Guests receive invitations by default." : kind === "all_day" ? "Create a single all-day calendar event using local dates and an exclusive end date. Use create_recurring_event for a repeating all-day series. Guests receive invitations by default." : "Create a recurring calendar series from a repeat schedule (daily, weekly, monthly or yearly) and an explicit IANA timeZone. The connector builds Google recurrence rules. The connector creates the first occurrence and recurrence in one write. Date-only start/end create an all-day series; timestamps create a timed series. Guests receive invitations by default.", capability: "calendar.write", mode: "write", idempotency: "provider_key", inputSchema };
 }
 
 function sheetValuesWriteInputSchema(append: boolean): Record<string, unknown> {
@@ -2675,6 +2676,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
     },
 
     resourceRegistrationCapability: "drive.read",
+    isPortableActivityResource: isPortableGoogleActivityResource,
 
     async probeResourceAccess(connection, reference, signal): Promise<ConnectorResourceAccess> {
       const fileId = googleDriveFileIdFromReference(reference);
@@ -3197,6 +3199,12 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         const allDay = /^\d{4}-\d{2}-\d{2}$/u.test(parsed.start);
         const repeat = parsed.repeat === undefined ? undefined : GoogleRepeatSchema.parse(parsed.repeat);
         const args = { ...parsed, recurrenceData: repeat ? [googleRecurrenceRule(repeat, allDay, parsed.timeZone!)] : undefined, allDay };
+        // Defaults and names can point to a different calendar after an
+        // interruption. Without the original target, a provider key alone
+        // cannot prevent a second event in another calendar.
+        if (context.replaying && (!args.calendarId || (args.calendarId !== "primary" && !args.calendarId.includes("@")))) {
+          throw new ConnectorError("invalid_payload", "calendarId: the original explicit calendar ID is required to recover this event; its creation remains unconfirmed", { field: "calendarId" });
+        }
         const calendarId = await resolveGoogleCalendarId(context, args.calendarId);
         const url = new URL(
           `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`
@@ -3204,15 +3212,33 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         url.searchParams.set("sendUpdates", args.sendUpdates ?? "all");
         if (args.addGoogleMeetUrl) url.searchParams.set("conferenceDataVersion", "1");
         const event = calendarEventWriteBody(args);
-        const payload = await api(context.connection, url.toString(), {
+        // Calendar documents caller-generated IDs as protection against a lost
+        // insert response. Reuse the host's receipt key, never a new event ID.
+        // https://developers.google.com/workspace/calendar/api/guides/create-events
+        const stableId = context.providerIdempotencyKey ? await sha256(context.providerIdempotencyKey) : null;
+        if (stableId) event.id = stableId;
+        const response = await api(context.connection, url.toString(), {
           method: "POST",
           body: JSON.stringify(event),
           signal: context.signal
-        }).then((response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES));
+        }, stableId ? [409] : []);
+        let payload = await safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES);
+        if (response.status === 409) {
+          const duplicate = readRecord(payload, "error");
+          if (!Array.isArray(duplicate?.errors) || !duplicate.errors.some((error) =>
+            error && typeof error === "object" && "reason" in error && error.reason === "duplicate")) {
+            throw new ConnectorError("provider_error", "Google Calendar creation conflicted without confirming the original event", payload);
+          }
+          assertGoogleCapability(context.connection, "calendar.read");
+          const original = new URL(`${url.origin}${url.pathname}/${stableId}`);
+          payload = await api(context.connection, original.toString(), { signal: context.signal })
+            .then((result) => safeJsonBounded(result, GOOGLE_TOOL_RESPONSE_BYTES));
+          if (readString(payload, "id") !== stableId) throw new ConnectorError("provider_error", "Google Calendar did not confirm the original event ID");
+        }
         const eventId = requiredString(payload, "id", "Google Calendar did not return an event ID");
         return {
           output: boundedToolOutput(sanitizeCalendarEvent(payload, calendarId)),
-          summary: `Created calendar event “${args.summary}”`,
+          summary: response.status === 409 ? `Recovered calendar event “${args.summary}”` : `Created calendar event “${args.summary}”`,
           providerOperationId: eventId
         };
       }
@@ -4047,6 +4073,7 @@ function normalizeDriveActivity(
   const identity = `drive:${fileId}:${version}`;
   return {
     ...googleActivityScope(connection),
+    occurrenceKey: `google:${eventType}:${identity}`,
     provider: "google",
     providerEventId: identity,
     eventType,

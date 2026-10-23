@@ -6,6 +6,7 @@ import { readCanvaReference } from "./canva-resource-access";
 import type { OutboundExternalBinding } from "../durable-objects/external-binding-outbox";
 import { runtimeDeferral } from "../lib/defer";
 import { Preparation, ToolSurfacePreparations } from "./harness-preparation";
+import { validateCompletedToolReplay } from "./completed-tool-replay";
 import { completionVerificationNudge } from "./completion-verification";
 import type { CompletionVerificationSnapshot } from "../durable-objects/completion-verification-storage";
 import { AGENT_MESSAGE_CONTENT_KIND, ImportedMessageProvenanceSchema } from "@rally/contracts";
@@ -13,7 +14,10 @@ import { agentCoordinationRoleGuidance } from './agent-communication-prompts';
 import { conversationParentStub, hostedParentStub } from "./conversation-parent-client";
 import { AgentCommunicationService } from "./agent-communication-service";
 import { createAgentCommunicationPlugin } from "./agent-communication-plugin";
-import { continueSidekickRun } from "./sidekick-run-continuation";
+import {
+  executeSidekickAccountOperation, readSidekickOperationDelegation,
+} from "./sidekick-operation-accounts";
+import type { SidekickExecutionDelegation } from "@rally/contracts";
 import { AgentMessageContentSchema, renderAgentMessage } from "./agent-message-content";
 import { ObjectPortError } from "../runtime/object-port";
 import { dynamicConnectorCapability, stableConnectionWireName, stableWireToolName, validateDynamicConnectorTools, discoverDynamicConnectorTools, connectorServerPresentation, storedConnectorServerMetadata } from "./connector-tool-inventory";
@@ -267,6 +271,7 @@ import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import { withToolPagination } from "./tool-pagination";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
+import { sidekickDelegationTools, sidekickDelegationGuidance } from "./sidekick-delegation-tools";
 import { createTranscriptObjectPort } from "../runtime/transcript-port";
 import { renderSubstreamInitialContext } from "./substream-initial-context";
 import type { TranscriptObjectPort } from "../durable-objects/workstream-transcript-protocol";
@@ -313,6 +318,7 @@ import {
 } from "./conversation-tools";
 import { conversationIdOf } from "../durable-objects/workspace-sidekick-conversation-storage";
 import { createAvalonTerminalPlugin } from "./terminal/plugin";
+import { TerminalToolError } from "./terminal/tools";
 import type { WorkstreamRuntimeResourceAttacher } from "./workstream-object-client";
 
 const BIND_ROUTING_POLICY_VERSION = "bind-10-openrouter-v1";
@@ -947,12 +953,14 @@ function createConnectorToolContext(
   signal: AbortSignal,
   providerIdempotencyKey?: string,
   invocationAuthorization?: ConnectorToolContext["invocationAuthorization"],
+  replaying?: boolean,
 ): ConnectorToolContext {
   return {
     connection,
     principal,
     ...(providerIdempotencyKey ? { providerIdempotencyKey } : {}),
     ...(invocationAuthorization ? { invocationAuthorization } : {}),
+    ...(replaying ? { replaying: true } : {}),
     signal,
   };
 }
@@ -1768,6 +1776,7 @@ function createAvalonAutomationsPlugin(
   loadedPluginIds: Set<string>,
   expandPages: (tool: HarnessTool, prefix: string, connectionId: string | null) => HarnessTool[],
 ): HarnessPlugin {
+  const delegationUser = input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null;
   const catalog: AutomationCreatorPluginCatalogEntry[] = [];
   const inspectedPluginIds = new Set<string>();
   const resolvedResources = new Map<string, {
@@ -1824,10 +1833,13 @@ function createAvalonAutomationsPlugin(
         },
       };
     })];
+    if (delegationUser) tools.push(...sidekickDelegationTools(env, input, delegationUser, true));
     return { canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_skill_recommendations", shortWireName: "",
-      displayName: "Skill recommendations", description: "Choose which reusable skills to recommend for future runs in this thread. To use a skill now, call load_skill.",
-      searchAliases: ["skill", "instructions", "knowledge", "recommend", "procedure"],
-      systemMessage: "Use list_skill_recommendations, recommend_skill and unrecommend_skill to manage this thread's skill recommendations. Recommendations affect future executions; call load_skill with a name from the Skills catalog to use instructions now. To set up delegated work, use the separate sidekicks_list and create_sidekick agent tools.",
+      displayName: "Skill recommendations",
+      description: `Choose which reusable skills to recommend for future runs in this thread. To use a skill now, call load_skill.${delegationUser ? " Inspect and manage Sidekick delegates for Organization users." : ""}`,
+      searchAliases: ["skill", "instructions", "knowledge", "recommend", "procedure",
+        ...(delegationUser ? ["sidekick", "delegate", "delegation", "account", "consent", "allow", "withdraw"] : [])],
+      systemMessage: `Use list_skill_recommendations, recommend_skill and unrecommend_skill to manage this thread's skill recommendations. Recommendations affect future executions; call load_skill with a name from the Skills catalog to use instructions now. To set up delegated work, use the separate sidekicks_list and create_sidekick agent tools.${delegationUser ? ` ${sidekickDelegationGuidance()}` : ""}`,
       tools, preload: false, explicit: false };
   }
   /**
@@ -2157,7 +2169,7 @@ function createAvalonAutomationsPlugin(
   });
   return {
     ...plugin,
-    systemMessage: `${plugin.systemMessage}\n\nThis conversation configures Sidekick ${authoredAutomationId}.`,
+    systemMessage: `${plugin.systemMessage} This conversation configures Sidekick ${authoredAutomationId}. Read its current definition before revising it. ${delegationUser ? sidekickDelegationGuidance() : ""}`,
     // An automation's own conversation exists to draft and edit it, so the
     // tools are in hand from the first turn there. In a room they stay
     // discoverable behind `list_plugins`, where most turns never need them.
@@ -2165,13 +2177,13 @@ function createAvalonAutomationsPlugin(
     // Restored durable activations deliberately skip onActivate, so every tool
     // also passes through this single-flight preparation. That is what restores
     // the inspection/evaluator facts a replacement object lost from memory.
-    tools: plugin.tools.map((tool) => ({
+    tools: [...plugin.tools.map((tool): HarnessTool => ({
       ...tool,
       execute: async (raw, context) => {
         await prepare();
         return tool.execute(raw, context);
       },
-    })),
+    })), ...(delegationUser ? sidekickDelegationTools(env, input, delegationUser, false) : [])],
     onActivate: async () => prepare(),
   };
 }
@@ -3833,6 +3845,16 @@ export async function runWorkstreamHarness(
           ]);
           return { allowed: true };
         }
+        if (input.parentKind === "automation") {
+          await Promise.all([
+            liveness.pulse("before_tool", true),
+            assertRunAuthorityStillValid(env, input, runAuthoritySnapshot),
+          ]);
+          // The requested plugin identifies the authored operation. Its serving
+          // account is selected below; authorizing its old owner here would
+          // prevent a known-resource read from using another eligible delegate.
+          return { allowed: true, authorizationContext: { delegation: harnessTools.delegation } };
+        }
         const [, , row] = await Promise.all([
           liveness.pulse("before_tool", true),
           assertRunAuthorityStillValid(env, input, runAuthoritySnapshot),
@@ -4034,6 +4056,11 @@ export async function runWorkstreamHarness(
       if (!row) return null;
       const policyMatches = storedToolPolicyMatches(row.executionPlanJson, expectedPolicy);
       if (row.status === "completed" && row.requestHash === inputHash && policyMatches) {
+        const replayRefusal = await validateCompletedToolReplay([...harnessTools.corePlugins, ...harnessTools.plugins], policyIdentity, parseJson(row.inputJson, {}), {
+          workspaceId: input.workspaceId, workstreamId: input.parentId, harnessRunId: input.harnessRunId,
+          toolCallId, effectIntentId: row.effectIntentId, executionPrincipal: input.executionPrincipal, signal: harnessSignal,
+        });
+        if (replayRefusal) return replayRefusal;
         if (expectedPolicy.definition.name === "view_image") {
           // The picture was the result, and it lived only in that turn: the
           // sandbox file may have changed or gone since. The read is safe, so
@@ -4146,6 +4173,8 @@ export async function runWorkstreamHarness(
           throw error;
         }
         logStructuredEvent(env, "warn", "terminal_tool_receipt_recovery_ambiguous", {
+          code: error instanceof TerminalToolError ? error.code : diagnosticErrorCode(error, "reentry_failed"),
+          plugin_id: expectedPolicy.pluginId,
           workspace_id: input.workspaceId,
           workstream_id: input.parentId,
           harness_run_id: input.harnessRunId,
@@ -4643,6 +4672,7 @@ export async function runWorkstreamHarness(
               },
             );
           }
+          const invocation = await loadToolInvocation(env, input, event.toolCallId);
           {
             const position = transcriptToolPosition(event.toolCallId);
             const plugin = transcriptPluginActivity(event.toolCallId, event.pluginId);
@@ -4710,7 +4740,6 @@ export async function runWorkstreamHarness(
             }
             await settleTranscriptAssistantActivity(event.toolCallId, "fail");
           }
-          const invocation = await loadToolInvocation(env, input, event.toolCallId);
           if (invocation) {
             await emit({ type: "tool_failed", invocation });
             runtimeDeferral(recordToolAudit(env, input, invocation.id, event.toolName, receiptPolicy.definition.mode, ambiguous ? "ambiguous" : "failed"));
@@ -5509,9 +5538,15 @@ async function loadHarnessTools(
   connectionByTool: Map<string, string>;
   idempotencyByTool: Map<string, "safe" | "provider_key" | "record_before_execute">;
   modeByTool: Map<string, "read" | "write">;
+  delegation: SidekickExecutionDelegation | null;
 }> {
-  const [attachedLinks, connectionRows] = await inventoryPreparation.get();
-  const runDefinition = await runDefinitionPreparation.get();
+  const [[attachedLinks, connectionRows], runDefinition, delegation] = await Promise.all([
+    inventoryPreparation.get(), runDefinitionPreparation.get(), readSidekickOperationDelegation(env, input),
+  ]);
+  if (delegation && delegation.delegates.length === 0 && (input.automationRun || input.automationDelegation)) {
+    throw new ConnectorError("unauthorized", "No eligible Sidekick delegate is available to continue this run.");
+  }
+  const delegatedUsers = new Set(delegation?.delegates.map((grant) => grant.userId));
   const defaultModelPluginIds = new Set(runDefinition?.defaultPluginIds ?? []);
   // Two reads, one per authority, where the retired statement was a join.
   // Which resources this work stream has attached is the object's, and which
@@ -5591,6 +5626,7 @@ async function loadHarnessTools(
     env,
     input,
     inObjectResourceAttacher,
+    delegation ? { delegation } : {},
   );
   const multimodalGenerationPlugin = createAvalonMultimodalGenerationPlugin(
     env,
@@ -5603,7 +5639,12 @@ async function loadHarnessTools(
   const automationsPlugin = input.executionPrincipal.type === "user" && !input.automationRun && (input.parentKind === "workstream"
     || (input.parentKind === "automation" && (input.substreamId ?? "0") === "0"))
     ? createAvalonAutomationsPlugin(env, input, loadedAutomationPluginIds, expandPages)
-    : null;
+    : input.executionPrincipal.type === "user" ? {
+      canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_sidekicks", shortWireName: "sidekick",
+      displayName: "Sidekick delegation", description: "Inspect and manage Sidekick delegation for Organization users.",
+      preload: false, explicit: false, systemMessage: sidekickDelegationGuidance(),
+      tools: sidekickDelegationTools(env, input, input.executionPrincipal.userId, false),
+    } : null;
   // List, read and post to Rally conversations, scoped by the loop: a
   // Breakout loop reaches its own conversation and its Channel's Main; a
   // Sidekick's configuration conversation and runs reach its home and
@@ -5672,9 +5713,12 @@ async function loadHarnessTools(
     const connectionId = String(row.id);
     const scope = row.scope === "workspace" ? "workspace" : "personal";
     const eligible = scope === "workspace" ||
+      (delegation && row.owner_user_id != null && delegatedUsers.has(asUserId(String(row.owner_user_id)))) ||
       (input.executionPrincipal.type === "user" && scope === "personal" && row.owner_user_id === input.executionPrincipal.userId);
     if (!eligible) continue;
-    if (scope === "personal" && (input.executionPrincipal.type !== "user" || row.owner_user_id !== input.executionPrincipal.userId)) continue;
+    if (scope === "personal" && (delegation
+      ? !delegatedUsers.has(asUserId(String(row.owner_user_id)))
+      : input.executionPrincipal.type !== "user" || row.owner_user_id !== input.executionPrincipal.userId)) continue;
     // A connection whose connector this deployment does not configure is
     // skipped, not a throw. A rollout gate turned back off leaves its rows in
     // place deliberately, and `registry.get` throws on an unregistered type —
@@ -5715,8 +5759,8 @@ async function loadHarnessTools(
       searchAliases: connectorSearchAliases(adapter),
       systemMessage: adapter.agentPlugin.systemMessage,
     });
-    let presentation = connectorServerPresentation(basePresentation, storedConnectorServerMetadata(row.config_json));
     const dynamicCapability = dynamicConnectorCapability(adapter, scope, grantedScopes);
+    let presentation = connectorServerPresentation(basePresentation, storedConnectorServerMetadata(row.config_json));
     const staticDefinitions = dynamicCapability
       ? []
       : adapter.agentPlugin.tools.filter((definition) => (
@@ -5761,15 +5805,51 @@ async function loadHarnessTools(
       if (!connectorCapabilitySupportsScope(adapter, definition.capability, scope)) return [];
       const tool: HarnessTool = {
         definition,
+        ...(!dynamicCapability && definition.mode === "write" && definition.idempotency === "provider_key"
+          ? { reenterable: true } : {}),
         ...(includeStaticInputValidator && adapter.validateToolInput
           ? {
-              validateInput: (toolInput) => adapter.validateToolInput!(
-                definition.providerOperationName ?? definition.name,
-                toolInput,
-              ),
+              validateInput: (toolInput) => {
+                try {
+                  return adapter.validateToolInput?.(definition.providerOperationName ?? definition.name, toolInput) ?? null;
+                } catch (error) {
+                  if (error instanceof z.ZodError) return error;
+                  throw error;
+                }
+              },
             }
           : {}),
-        execute: (toolInput, context) => executeAuthorizedConnectorTool(
+        execute: async (toolInput, context) => {
+          if (delegation) {
+            // Consent refreshes with this inventory, including on continuation.
+            // Selected connection credentials/capabilities are still checked at dispatch.
+            const authority = delegation;
+            if (!paginationLease) throw new ConnectorError("unauthorized", "Sidekick account execution requires a durable run receipt.");
+            if (!(context.authorizationContext as PreparedConnectorAuthorization | undefined)?.delegation) {
+              await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
+            }
+            const operation = definition.providerOperationName ?? definition.name;
+            const invalid = adapter.validateToolInput?.(operation, toolInput);
+            if (invalid) throw invalid;
+            const candidates = dynamicCapability ? [] : [...frozenConnections.values()].filter((candidate) => candidate.connectorType === frozen.connectorType
+              && candidate.grantedScopes.includes(definition.capability)
+              && connectorCapabilitySupportsScope(adapter, definition.capability, candidate.scope));
+            return executeSidekickAccountOperation({
+              authority, workspaceId: input.workspaceId,
+              coordinatorUserId: input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null,
+              requested: frozen, candidates,
+              sourceConnectionIds: runDefinition ? Object.values(runDefinition.activitySourcePluginIds)
+                .flatMap((pluginId) => runDefinition.connectorBindings[pluginId] ? [runDefinition.connectorBindings[pluginId]!] : []) : [],
+              canFallback: !dynamicCapability && Boolean(adapter.probeResourceAccess),
+              mode: definition.mode,
+              context, receipts: pageReceipts,
+              fence: { runId: input.harnessRunId, attemptId: paginationLease.attemptId, owner: paginationLease.owner },
+              execute: (candidate) => executeConnectorToolOnConnection(env, input, candidate, operation, definition.capability,
+                toolInput, context.signal, context.providerIdempotencyKey, undefined, context.effectIntentId,
+                { delegation: authority } satisfies PreparedConnectorAuthorization, context.replaying),
+            });
+          }
+          return executeAuthorizedConnectorTool(
           env,
           input,
           frozen,
@@ -5789,7 +5869,9 @@ async function loadHarnessTools(
             && candidate.grantedScopes.includes(definition.capability)
             && connectorCapabilitySupportsScope(adapter, definition.capability, candidate.scope)
           )),
-        ),
+          context.replaying,
+          );
+        },
       };
       const expanded = includeStaticInputValidator ? expandPages(tool, shortWireName, connectionId) : [tool];
       for (const expandedTool of expanded) {
@@ -5906,15 +5988,22 @@ async function loadHarnessTools(
   // Verify former Google identities against their complete, unchanged tool
   // surfaces. Identity aliases alone must never make a stale receipt replayable.
   const rememberSurface = async (targets: string[], pluginId: string, tools: HarnessTool[]) => {
-    const [toolSurfaceHash, prePaginationSurfaceHash, legacyToolSurfaceHash, preTextPaginationSurfaceHash] = await Promise.all([
-      connectorToolSurfaceHash(pluginId, tools),
-      connectorToolSurfaceHash(pluginId, priorPaginationTools(tools)),
-      connectorToolSurfaceHash(pluginId, tools, (name) => legacyConnectorCanonicalToolName("google", name) ?? name),
-      connectorToolSurfaceHash(pluginId, priorTextPaginationTools(tools)),
-    ]);
-    for (const target of targets) compatiblePluginSurfaces.set(target, [
-      ...(compatiblePluginSurfaces.get(target) ?? []), { pluginId, toolSurfaceHash, prePaginationSurfaceHash, legacyToolSurfaceHash, preTextPaginationSurfaceHash },
-    ]);
+    // Preserve unrelated completed Google calls across Calendar's provider-key
+    // cutover. The per-call idempotency fence still rejects an old create.
+    const prior = tools.map((tool) => ["calendar.create_event", "calendar.create_all_day_event", "calendar.create_recurring_event"].includes(tool.definition.name)
+      ? { ...tool, definition: { ...tool.definition, idempotency: "record_before_execute" as const } } : tool);
+    const versions = prior.some((tool, index) => tool !== tools[index]) ? [tools, prior] : [tools];
+    for (const version of versions) {
+      const [toolSurfaceHash, prePaginationSurfaceHash, legacyToolSurfaceHash, preTextPaginationSurfaceHash] = await Promise.all([
+        connectorToolSurfaceHash(pluginId, version),
+        connectorToolSurfaceHash(pluginId, priorPaginationTools(version)),
+        connectorToolSurfaceHash(pluginId, version, (name) => legacyConnectorCanonicalToolName("google", name) ?? name),
+        connectorToolSurfaceHash(pluginId, priorTextPaginationTools(version)),
+      ]);
+      for (const target of targets) compatiblePluginSurfaces.set(target, [
+        ...(compatiblePluginSurfaces.get(target) ?? []), { pluginId, toolSurfaceHash, prePaginationSurfaceHash, legacyToolSurfaceHash, preTextPaginationSurfaceHash },
+      ]);
+    }
   };
   await Promise.all([...frozenConnections.values()].filter((frozen) => frozen.connectorType === "google").flatMap((frozen) => {
     const plugin = plugins.find((candidate) => candidate.canonicalId === frozen.pluginId)!;
@@ -5952,6 +6041,7 @@ async function loadHarnessTools(
     connectionByTool,
     idempotencyByTool,
     modeByTool,
+    delegation,
   };
 }
 
@@ -5968,6 +6058,7 @@ function profileHarnessTools(corePlugins: HarnessPlugin[]): Awaited<ReturnType<t
     definition: tool.definition,
   })));
   return {
+    delegation: null,
     coreTools,
     corePlugins,
     tools: coreTools,
@@ -6457,9 +6548,10 @@ function toolSurfaceJson(
 }
 
 type PreparedConnectorAuthorization = {
-  frozen: FrozenConnectorPlugin;
-  capability: string;
-  row: Record<string, unknown>;
+  frozen?: FrozenConnectorPlugin;
+  capability?: string;
+  row?: Record<string, unknown>;
+  delegation?: SidekickExecutionDelegation | null;
 };
 
 /**
@@ -6493,10 +6585,11 @@ async function executeAuthorizedConnectorTool(
   effectIntentId?: string,
   authorizationContext?: unknown,
   alternates?: () => readonly FrozenConnectorPlugin[],
+  replaying?: boolean,
 ) {
   try {
     return await executeConnectorToolOnConnection(env, input, frozen, toolName, capability, toolInput,
-      signal, providerIdempotencyKey, ownershipGuard, effectIntentId, authorizationContext);
+      signal, providerIdempotencyKey, ownershipGuard, effectIntentId, authorizationContext, replaying);
   } catch (error) {
     if (!isConnectorResourceAccessRefusal(error)
       || !connectorRegistryForEnv(env).get(frozen.connectorType).probeResourceAccess) {
@@ -6519,7 +6612,7 @@ async function executeAuthorizedConnectorTool(
       if (candidate.scope === "workspace" && carriesResourceAuthorization(refusal)) break;
       try {
         const result = await executeConnectorToolOnConnection(env, input, candidate, toolName, capability,
-          toolInput, signal, providerIdempotencyKey, ownershipGuard, effectIntentId);
+          toolInput, signal, providerIdempotencyKey, ownershipGuard, effectIntentId, undefined, replaying);
         return servedThrough(result, candidate, frozen);
       } catch (next) {
         if (!isConnectorResourceAccessRefusal(next)) throw next;
@@ -6578,6 +6671,7 @@ async function executeConnectorToolOnConnection(
   ownershipGuard?: () => Promise<void>,
   effectIntentId?: string,
   authorizationContext?: unknown,
+  replaying?: boolean,
 ) {
   await ownershipGuard?.();
   const prepared = authorizationContext as PreparedConnectorAuthorization | undefined;
@@ -6592,12 +6686,13 @@ async function executeConnectorToolOnConnection(
     signal,
     ownershipGuard,
     preparedRow,
+    prepared?.delegation ?? undefined,
   );
   return withAuthorizedConnection(env, { connection, adapter, signal }, async (authorized) => {
     await ownershipGuard?.();
     const effectivePrincipal = authorized.scope === "workspace"
       ? { type: "workspace" as const, workspaceId: input.workspaceId }
-      : input.executionPrincipal;
+      : { type: "user" as const, userId: asUserId(frozen.ownerUserId!) };
     if (frozen.connectorType === "canva") {
       const transaction = z.object({ transaction_id: z.string().optional() }).parse(toolInput);
       if (transaction.transaction_id && !await createToolReceiptObjectPort(
@@ -6617,12 +6712,15 @@ async function executeConnectorToolOnConnection(
           signal,
           providerIdempotencyKey,
           frozen.connectorType === "slack"
+            && (input.parentKind !== "automation" || (effectivePrincipal.type === "user"
+              && input.executionPrincipal.type === "user" && effectivePrincipal.userId === input.executionPrincipal.userId))
             && input.slackSearchAuthorization
             && input.slackOrigin
             && (authorized.config.providerAccountId === input.slackOrigin.teamId
               || authorized.credentials.teamId === input.slackOrigin.teamId)
             ? { slackActionToken: input.slackSearchAuthorization.actionToken }
             : undefined,
+          replaying,
         ),
         ...(frozen.connectorType === "google" ? {
           textPages: connectorTextPages(env.PAYLOADS, {
@@ -6658,9 +6756,10 @@ async function loadAuthorizedConnectionContext(
   signal: AbortSignal,
   ownershipGuard?: () => Promise<void>,
   preparedRow?: Record<string, unknown>,
+  delegation?: SidekickExecutionDelegation,
 ): Promise<{ connection: ConnectorConnectionContext; adapter: ResolvedConnectorAdapter }> {
   await ownershipGuard?.();
-  const row = preparedRow ?? await assertFrozenConnectionAuthorized(env, input, frozen, capability);
+  const row = preparedRow ?? await assertFrozenConnectionAuthorized(env, input, frozen, capability, !delegation, delegation);
   let credentials: Record<string, unknown> = {};
   if (typeof row.encrypted_credentials === "string" && typeof row.credential_iv === "string") {
     credentials = JSON.parse(await decryptVersionedConnectorCredentials(env, {
@@ -6694,6 +6793,7 @@ async function assertFrozenConnectionAuthorized(
   frozen: FrozenConnectorPlugin,
   capability?: string,
   verifyRunAuthority = true,
+  delegation?: SidekickExecutionDelegation,
 ): Promise<Record<string, unknown>> {
   if (frozen.workspaceId !== input.workspaceId || frozen.pluginId !== connectorPluginCanonicalId(frozen.connectionId, frozen.googleBundle)) {
     throw new ConnectorError("unauthorized", "Connector is outside this immutable run scope");
@@ -6713,10 +6813,11 @@ async function assertFrozenConnectionAuthorized(
   ) {
     throw new ConnectorError("unauthorized", "Connector is no longer authorized for this run");
   }
-  if (frozen.scope === "personal" && (
-    input.executionPrincipal.type !== "user" || input.executionPrincipal.userId !== frozen.ownerUserId
-  )) {
-    throw new ConnectorError("unauthorized", "Personal connector ownership changed");
+  if (frozen.scope === "personal") {
+    const authority = delegation ?? await readSidekickOperationDelegation(env, input);
+    const allowed = authority ? authority.delegates.some((grant) => grant.userId === frozen.ownerUserId)
+      : input.executionPrincipal.type === "user" && input.executionPrincipal.userId === frozen.ownerUserId;
+    if (!allowed) throw new ConnectorError("unauthorized", "The personal connection's owner is not an eligible delegate for this operation");
   }
   const currentScopes = parseJson<string[]>(row.granted_scopes_json, []);
   if (capability && (!frozen.grantedScopes.includes(capability) || !currentScopes.includes(capability))) {
@@ -6796,25 +6897,23 @@ async function readRunAuthority(
     throw new ConnectorError("unauthorized", "Work stream is no longer active");
   }
 
-  // Delegated work keeps its own instructions and principal, but cannot
-  // outlive the root Sidekick run's consent. Check again at every model/tool
-  // boundary, including after a pause followed by a resume.
+  // Eligibility is selected at activation and reused during this attempt.
+  // Model/tool boundaries only check the root lifecycle and stop generation,
+  // including a pause followed by a resume; they do not rescan delegates.
   if (input.automationDelegation) {
     const delegation = input.automationDelegation;
     if (!input.backgroundAgent || input.parentKind !== "automation") {
       throw new ConnectorError("unauthorized", "Sidekick delegation requires a background worker");
     }
     startedAt = Date.now();
-    const live = await continueSidekickRun(env, {
-      region: input.region,
+    const live = await (await hostedParentStub(env, input.workspaceId)).sidekickReadRunState({
       workspaceId: input.workspaceId,
       automationId: input.parentId,
       runId: delegation.runId,
     });
     recordOptionalTiming(onTiming, "automation", startedAt);
-    if (live.outcome !== "continue" || live.stopGeneration !== delegation.stopGeneration
-      || input.executionPrincipal.type !== "user" || live.executionPrincipal.type !== "user"
-      || live.executionPrincipal.userId !== input.executionPrincipal.userId) {
+    if (!live || live.lifecycle !== "active" || live.stopGeneration !== delegation.stopGeneration
+      || input.executionPrincipal.type !== "user") {
       throw new ConnectorError("unauthorized", "This Sidekick delegation is no longer authorized");
     }
   }
@@ -7322,6 +7421,7 @@ async function reenterInterruptedWrite(input: {
     || !input.policyMatches
     || input.expectedPolicy.definition.mode !== "write"
     || input.expectedPolicy.definition.idempotency === "safe"
+    || (input.expectedPolicy.definition.idempotency === "provider_key" && input.row.providerIdempotencyKey === null)
   ) {
     return null;
   }
@@ -7369,17 +7469,17 @@ async function reenterInterruptedWrite(input: {
   // only licence to execute, because it says the external effect is provably
   // absent and the call below is therefore a first execution rather than a
   // second write; anything else leaves the attempt unresolved.
-  if (tool.reconcileEffect) {
-    const reconciled = await tool.reconcileEffect(recordedInput, {
-      ...callContext,
-      attemptStartedAt: input.row.attemptStartedAt,
-    });
-    if (reconciled.outcome === "landed") return reconciled.result;
-    if (reconciled.outcome === "unknown") {
-      throw new HarnessToolEffectUnresolvedError(reconciled.reason);
-    }
-  }
   try {
+    if (tool.reconcileEffect) {
+      const reconciled = await tool.reconcileEffect(recordedInput, {
+        ...callContext,
+        attemptStartedAt: input.row.attemptStartedAt,
+      });
+      if (reconciled.outcome === "landed") return reconciled.result;
+      if (reconciled.outcome === "unknown") {
+        throw new HarnessToolEffectUnresolvedError(reconciled.reason);
+      }
+    }
     return await tool.execute(recordedInput, callContext);
   } finally {
     deadline?.dispose();
@@ -7425,12 +7525,10 @@ export type InterruptedWriteReentry =
 /**
  * Re-enter one interrupted write from *outside* a harness run.
  *
- * Crash repair runs before the run's tool registry exists, so until now it had
- * no way to ask a tool anything and classified every unsettled write as
- * unknowable. It does not need the registry: it needs the one plugin that owns
- * the one call it is repairing, and Terminal — the only plugin with
- * re-enterable tools — is already built from exactly the `(env, input)` the
- * repair path holds.
+ * Terminal and direct-speaker consent repair build their owning plugin from
+ * `(env, input)`. Authored provider-key connectors reuse ordinary inventory
+ * admission and account selection, dispose unused clients and invoke only the
+ * owning tool. Catalog construction activates no connector or Terminal sandbox.
  *
  * Built per call rather than cached, because it runs at most once per
  * interrupted batch and building it acquires provider clients a healthy claim
@@ -7471,7 +7569,8 @@ export async function reenterInterruptedWriteForRecovery(
     : receipt.toolName;
   const capability = typeof plan?.capability === "string" ? plan.capability : null;
   const idempotency = plan?.idempotency;
-  if (pluginId !== TERMINAL_PLUGIN_ID || capability === null) {
+  const keyedConnector = pluginId?.startsWith("connection:") && idempotency === "provider_key";
+  if (pluginId === null || (!keyedConnector && pluginId !== TERMINAL_PLUGIN_ID && pluginId !== AUTOMATIONS_PLUGIN_ID) || capability === null) {
     return { outcome: "unknown", reason: "no_recovery_executor" };
   }
   if (idempotency !== "provider_key" && idempotency !== "record_before_execute") {
@@ -7486,9 +7585,8 @@ export async function reenterInterruptedWriteForRecovery(
   // deliberately: there is no earlier reading of this run's authority to hold
   // the repair to, and re-reading it is the whole point.
   //
-  // `beforeToolCall` also resolves the call against the run's tool registry,
-  // which the repair path has no way to build. The plugin below stands in for
-  // it: it is constructed from this run's own `(env, input)`, so it is the
+  // `beforeToolCall` also resolves the call against the run's tool registry.
+  // The plugin below is constructed from this run's own `(env, input)`, so it is the
   // plugin this run would have had, and `reenterInterruptedWrite` then refuses
   // any tool whose live name, capability, mode, or class disagrees with what
   // the receipt recorded. What is not reproduced here is the Sidekick
@@ -7499,11 +7597,27 @@ export async function reenterInterruptedWriteForRecovery(
   } catch (error) {
     return { outcome: "unknown", reason: diagnosticErrorCode(error, "run_authority_lost") };
   }
-  let plugin: Awaited<ReturnType<typeof createAvalonTerminalPlugin>>;
+  let plugin: (HarnessPlugin & Partial<Disposable>) | null;
   try {
     // Publication and reconciliation resolve the admitted home at execution,
     // so repair uses the same address and current access as a live tool call.
-    plugin = await createAvalonTerminalPlugin(env, input, inObjectResourceAttacher);
+    if (pluginId === TERMINAL_PLUGIN_ID) {
+      plugin = await createAvalonTerminalPlugin(env, input, inObjectResourceAttacher);
+    } else if (keyedConnector) {
+      // Reuse ordinary inventory admission and account selection. Building a
+      // catalog activates no connector and allocates no Terminal sandbox.
+      const inventory = await loadHarnessTools(withWorkspaceRuntimeDatabase(env, input.workspaceId), input,
+        undefined, inObjectResourceAttacher, undefined, undefined, lease);
+      plugin = inventory.plugins.find((candidate) => candidate.canonicalId === pluginId) ?? null;
+      disposeHarnessPlugins(env, inventory.plugins.filter((candidate) => candidate !== plugin));
+    } else {
+      const userId = input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null;
+      if (!userId) return { outcome: "unknown", reason: "sidekick_delegation_user_required" };
+      const room = input.parentKind !== "automation";
+      plugin = { canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: room ? "rally_skill_recommendations" : "rally_sidekicks",
+        shortWireName: room ? "" : "sidekick", description: "Sidekick delegation recovery", preload: false,
+        tools: sidekickDelegationTools(env, input, userId, room) };
+    }
   } catch (error) {
     return { outcome: "unknown", reason: diagnosticErrorCode(error, "plugin_unavailable") };
   }
@@ -7565,6 +7679,7 @@ export async function reenterInterruptedWriteForRecovery(
         outputSummary: result.summary,
         ...(result.providerOperationId ? { providerOperationId: result.providerOperationId } : {}),
         memberSafePayload: { toolName: canonicalToolName, recovered: true },
+        allowAmbiguousReconciliation: receipt.status === "ambiguous",
         allowCancellationRequested: true,
       });
     } catch (error) {
@@ -7595,7 +7710,7 @@ export async function reenterInterruptedWriteForRecovery(
       reason: declared ? codeShaped(declared) : diagnosticErrorCode(error, "reentry_failed"),
     };
   } finally {
-    plugin[Symbol.dispose]();
+    plugin[Symbol.dispose]?.();
     // Never left running. A timer that outlives this call keeps renewing the
     // lease of an attempt nobody is executing, in a Worker isolate that may go
     // on to serve something else.

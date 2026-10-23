@@ -267,6 +267,10 @@ seeding. A cast member acts under the `demo_seed` auth principal: no session,
 because the cast never signs in, and the object verifies their current
 membership instead — the same verification a connector ingress gets.
 
+Sidekick creation automatically enrolls its cast creator through the ordinary
+creation path, just as direct and autonomous product creation do. Replaying demo
+creation never restores a withdrawn grant.
+
 Two things are replaced, and both are decisions rather than writers:
 
 - **Addressing.** A message in a multi-person room is normally classified by a

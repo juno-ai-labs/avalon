@@ -361,9 +361,10 @@ export class AgentCommunicationService {
           substreamId: asSubstreamId(owningSubstreamId), userId })).authorized;
       if (!member) throw new AgentCommunicationError("sidekick_owning_workstream_forbidden");
     }
+    const creationId = await this.messageId(context);
     const created = await createAutomation(this.env, { workspaceId: this.input.workspaceId,
       authorUserId: this.input.executionPrincipal.userId, scope, owningWorkstreamId, owningSubstreamId,
-      automationId: await this.messageId(context) });
+      automationId: creationId });
     return { sidekickId: created.automationId, agentId: agentIdForAddress({ parentKind: "automation",
       parentId: created.automationId, substreamId: asSubstreamId("0") }) };
   }

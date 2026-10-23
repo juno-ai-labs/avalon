@@ -14,7 +14,7 @@ import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asSubstreamId, asWorkspaceId } from "@rally/contracts";
+import { asSubstreamId, asWorkspaceId, ToolExecutionAccountSchema } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import { withToolPagination } from "../src/services/tool-pagination";
 import { z } from "zod";
@@ -129,6 +129,88 @@ function admission(effectIntentId: string, toolCallId: string, runId = RUN): Rec
 }
 
 describe("tool-receipt authority on real workerd", () => {
+  const account = (other = false) => ToolExecutionAccountSchema.parse({
+    sidekickId: "00000000-0000-7000-8000-00000000ac01",
+    connectionId: other ? "00000000-0000-7000-8000-00000000ac03" : "00000000-0000-7000-8000-00000000ac02",
+    delegatedUserId: other ? "00000000-0000-7000-8000-00000000ac05" : "00000000-0000-7000-8000-00000000ac04",
+    principal: { type: "user", userId: other ? "00000000-0000-7000-8000-00000000ac05" : "00000000-0000-7000-8000-00000000ac04" },
+    grantGeneration: other ? 9 : 7,
+  });
+  const accountRequest = (other = false, phase: "selected" | "refused" | "served" = "selected") => ({
+    effectIntentId: "account-effect", fence: { runId: RUN, attemptId: ATTEMPT, owner: OWNER },
+    account: account(other), phase, now: Date.now(),
+  });
+
+  it("keeps an execution account across eviction and only switches after a definite refusal", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => { seedWorkstreamRoot(state); seedLiveRun(state); });
+    await receipt(stub, "admit", admission("account-effect", "account-call"));
+    expect(await receipt(stub, "recordExecutionAccount", accountRequest())).toMatchObject({ status: 200, value: { phase: "selected" } });
+    await evictDurableObject(stub);
+    expect(await receipt(stub, "executionAccount", { runId: RUN, effectIntentId: "account-effect" }))
+      .toMatchObject({ value: { account: { connectionId: "00000000-0000-7000-8000-00000000ac02", grantGeneration: 7 } } });
+    await expect(receipt(stub, "recordExecutionAccount", accountRequest())).rejects.toThrow("tool_execution_account_ownership_lost");
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec("UPDATE runs SET lease_owner=?,lease_expires_at=? WHERE run_id=?", OWNER, Date.now()+600_000, RUN);
+    });
+    await expect(receipt(stub, "recordExecutionAccount", accountRequest(true)))
+      .rejects.toThrow("tool_execution_account_change_refused");
+    await receipt(stub, "recordExecutionAccount", accountRequest(false, "refused"));
+    expect(await receipt(stub, "recordExecutionAccount", accountRequest(true))).toMatchObject({ value: {
+      account: { connectionId: "00000000-0000-7000-8000-00000000ac03", grantGeneration: 9 },
+      originalAccount: { connectionId: "00000000-0000-7000-8000-00000000ac02", grantGeneration: 7 },
+    } });
+    await expect(receipt(stub, "recordExecutionAccount", accountRequest()))
+      .rejects.toThrow("tool_execution_account_change_refused");
+  });
+
+  it("refuses execution account changes after cancellation or an uncertain provider effect", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => { seedWorkstreamRoot(state); seedLiveRun(state); });
+    await receipt(stub, "admit", admission("account-effect", "account-call"));
+    await receipt(stub, "recordExecutionAccount", accountRequest());
+    await receipt(stub, "recordExecutionAccount", accountRequest(false, "refused"));
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec("UPDATE tool_effects SET status='ambiguous' WHERE effect_intent_id='account-effect'");
+    });
+    await expect(receipt(stub, "recordExecutionAccount", accountRequest(true)))
+      .rejects.toThrow("tool_execution_account_change_refused");
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec("UPDATE runs SET cancellation_requested_at=? WHERE run_id=?", Date.now(), RUN);
+    });
+    await expect(receipt(stub, "recordExecutionAccount", accountRequest()))
+      .rejects.toThrow("tool_execution_account_ownership_lost");
+  });
+
+  it("rolls back an execution account when its receipt checkpoint cannot advance", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => { seedWorkstreamRoot(state); seedLiveRun(state); });
+    await receipt(stub, "admit", admission("account-effect", "account-call"));
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(`CREATE TRIGGER reject_account_checkpoint BEFORE UPDATE OF checkpoint_index ON tool_effects
+        BEGIN SELECT RAISE(ABORT,'account_checkpoint_test_fault'); END`);
+    });
+    await expect(receipt(stub, "recordExecutionAccount", accountRequest())).rejects.toThrow("account_checkpoint_test_fault");
+    expect(await receipt(stub, "executionAccount", { runId: RUN, effectIntentId: "account-effect" })).toMatchObject({ value: null });
+  });
+
+  it("names the rejected execution account field without recording a mismatched principal", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => { seedWorkstreamRoot(state); seedLiveRun(state); });
+    await receipt(stub, "admit", admission("account-effect", "account-call"));
+    const request = accountRequest();
+    const rejected = receipt(stub, "recordExecutionAccount", { ...request,
+      account: { ...request.account, principal: account(true).principal },
+    });
+    await expect(rejected).rejects.toThrow("account.delegatedUserId");
+    await expect(rejected).rejects.not.toThrow("00000000-0000-7000-8000-00000000ac05");
+    expect(await receipt(stub, "executionAccount", { runId: RUN, effectIntentId: "account-effect" })).toMatchObject({ value: null });
+  });
+
   it("cleans only known open Canva transactions and preserves uncertain commits across eviction", async () => {
     const stub = agent();
     await boot(stub);
@@ -697,9 +779,11 @@ describe("tool-receipt authority on real workerd", () => {
     await receipt(stub, "admit", { ...everyField, ...admission("dispatch-probe", "dispatch-probe") });
 
     for (const operation of methods) {
-      // Pagination has an explicit refusal protocol (unknown page, lost
-      // executing receipt); the dedicated test above drives its success path.
-      if (operation === "issuePage" || operation === "claimPage") continue;
+      // Pagination and execution accounts have strict request schemas and
+      // refusal protocols. Their dedicated tests above drive actual dispatch
+      // with the exact request, rather than this intentionally overfull probe.
+      if (operation === "issuePage" || operation === "claimPage"
+        || operation === "executionAccount" || operation === "recordExecutionAccount") continue;
       const answer = await receipt(stub, operation, everyField);
       expect(answer.error ?? "", `operation ${operation}`)
         .not.toBe("invalid_tool_receipt_operation");

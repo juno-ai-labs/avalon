@@ -16,10 +16,11 @@
  */
 
 import { env } from "cloudflare:workers";
-import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { asWorkspaceId, asUserId, AutomationDetailSchema, AutomationDraftSchema, type AutomationMemoryTable } from "@rally/contracts";
 
+import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { sha256 } from "../src/lib/crypto";
 import { workspaceDOName } from "../src/durable-objects/names";
 import { WorkspaceMemoryScopeSchema, WorkspaceMemoryTableCreateResultSchema } from "../src/durable-objects/workspace-memory-protocol";
@@ -130,20 +131,10 @@ async function counts() {
 }
 
 beforeEach(async () => {
+  await reset();
+  // Creation enrolls the creator through real Organization membership.
+  await seedWorkspaceControlPlane(env.DB, { workspaceId: WORKSPACE_ID, userId: USER_ID, sessionId: crypto.randomUUID() });
   await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
-  await runInDurableObject(workspace(), (_instance, state) => {
-    for (const table of [
-      "memory_table_cells",
-      "memory_table_rows",
-      "memory_table_columns",
-      "memory_table_mutations",
-      "memory_tables",
-      "memory_scopes", "sidekick_revisions", "sidekick_schedules", "sidekick_children", "automation_directory",
-    ]) {
-      state.storage.sql.exec(`DELETE FROM ${table}`);
-    }
-    state.storage.sql.exec(`DELETE FROM _internal_durable_alarms WHERE kind = ?`, SIDEKICK_MEMORY_TABLES_ALARM_KIND);
-  });
   await workspace().ensureMemoryScope({ workspaceId: WORKSPACE_ID, proposedScopeId: SCOPE_ID,
     kind: "sidekick", ownerId: AUTOMATION_ID, at: AT,
   });
