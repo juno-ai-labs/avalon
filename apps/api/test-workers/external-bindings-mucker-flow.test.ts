@@ -335,7 +335,7 @@ async function seedBreakout(title: string): Promise<SubstreamId> {
 async function seedSidekick(home: SubstreamId): Promise<void> {
   await createAutomation(TEST_ENV, {
     workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "workstream",
-    owningWorkstreamId: ROOM_ID, owningSubstreamId: home, automationId: AUTOMATION_ID,
+    owningWorkstreamId: ROOM_ID, owningSubstreamId: home, automationId: AUTOMATION_ID
   });
   const addressed = { workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID };
   await workspace().sidekickSubmitDefinition({ ...addressed, draft: DEFINITION, evaluatorRules: null, submittedByRunId: null });

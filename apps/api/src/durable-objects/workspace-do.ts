@@ -1,4 +1,5 @@
 import { WorkspaceChannelMessageIssueRequestSchema, WorkspaceChannelMessageIssueResultSchema, type WorkspaceChannelMessageIssueRequest } from './workspace-space-protocol';
+import { SIDEKICK_SOURCE_CONNECTION_SCHEMA_STATEMENTS } from "./sidekick-source-registrations";
 import { SidekickActivityTargetSchema, type WorkspaceSidekickActivityEvent, type SidekickActivityTarget } from "@rally/contracts";
 import { runningSidekickCount, SidekickActivityRequestSchema, type SidekickActivityRequest } from "./sidekick-activity";
 import { RESOURCE_READ_PROJECTION_SQL } from '../services/resource-read-projection';
@@ -1238,7 +1239,10 @@ import {
   type ConversationToolScopeResult,
 } from "./workspace-conversation-tool-protocol";
 
+import { SIDEKICK_DELEGATION_SCHEMA_STATEMENTS, SidekickDelegationStorage } from "./sidekick-delegation-storage";
+
 const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
+  "sidekick_delegations", "sidekick_delegation_receipts", "sidekick_delegation_preparations", "sidekick_claim_access",
   "scope_grant_directory",
   "connector_installations", "connector_installation_steps",
   ...AUTHORIZATION_STORAGE_TABLES,
@@ -4784,6 +4788,40 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
           AND NOT EXISTS (SELECT 1 FROM parent_children child WHERE child.parent_id = source.parent_id AND child.substream_id = '0')
           AND NOT EXISTS (SELECT 1 FROM parent_participant_migrations migration WHERE migration.parent_id = source.parent_id AND migration.substream_id = '0')`,
   ],
+}, {
+  version: 128,
+  description: "store Sidekick consent separately from human access and receipt prepared delegation changes",
+  statements: SIDEKICK_DELEGATION_SCHEMA_STATEMENTS,
+}, {
+  version: 129,
+  description: "separate run coordinators and legacy task accounts from Sidekick human access",
+  statements: [
+    `ALTER TABLE automation_directory ADD COLUMN legacy_account_user_id TEXT`,
+    `ALTER TABLE automation_directory ADD COLUMN delegation_attention_code TEXT`,
+    `ALTER TABLE automation_directory ADD COLUMN delegation_migrated INTEGER NOT NULL DEFAULT 0 CHECK(delegation_migrated IN (0,1))`,
+    `UPDATE automation_directory SET legacy_account_user_id=COALESCE(run_as_user_id,author_user_id)`,
+    `ALTER TABLE sidekick_runs ADD COLUMN coordinator_user_id TEXT`,
+    `UPDATE sidekick_runs SET coordinator_user_id=run_as_user_id WHERE run_as_user_id IS NOT NULL`,
+    `CREATE TABLE sidekick_claim_access(sidekick_id TEXT NOT NULL,user_id TEXT NOT NULL,PRIMARY KEY(sidekick_id,user_id)) STRICT`,
+    `INSERT OR IGNORE INTO _internal_durable_alarms(kind,alarm_key,due_at,created_at,updated_at)
+     SELECT 'sidekick_delegation_migration',automation_id || ':0',0,0,0 FROM automation_directory WHERE region IS NOT NULL`,
+  ],
+}, {
+  version: 130,
+  description: "reconcile configured Sidekick sources after connection authority changes",
+  statements: SIDEKICK_SOURCE_CONNECTION_SCHEMA_STATEMENTS,
+}, {
+  version: 131,
+  description: "automatically enroll existing Sidekick creators without replacing recorded withdrawals",
+  statements: [
+    `UPDATE automation_directory SET delegation_migrated=0
+      WHERE region IS NOT NULL AND lifecycle<>'deleted'
+        AND NOT EXISTS (SELECT 1 FROM sidekick_delegations grant
+          WHERE grant.sidekick_id=automation_id AND grant.user_id=author_user_id)`,
+    `INSERT OR IGNORE INTO _internal_durable_alarms(kind,alarm_key,due_at,created_at,updated_at)
+     SELECT 'sidekick_delegation_migration',automation_id || ':0',0,0,0 FROM automation_directory
+      WHERE region IS NOT NULL AND lifecycle<>'deleted' AND delegation_migrated=0`,
+  ],
 }];
 
 function conversationToolEntry(conversation: {
@@ -6521,6 +6559,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** Set by a hosted Sidekick write that moved a directory row; the sidebar list is published after it. */
   private sidekickDirectoryMoved = false;
 
+  private queueSidekickSourcesForUsers(userIds: readonly string[]): boolean {
+    if (userIds.length === 0) return false;
+    const targets = this.state.storage.sql.exec<{ automation_id: string }>(
+      `SELECT DISTINCT directory.automation_id FROM automation_directory directory
+         JOIN sidekick_delegations consent ON consent.sidekick_id=directory.automation_id
+        WHERE directory.lifecycle='active' AND directory.evaluator_projection_json<>'[]'
+          AND consent.user_id IN (SELECT value FROM json_each(?)) AND json_extract(consent.grant_json,'$.allowed')=1`,
+      JSON.stringify(userIds),
+    ).toArray();
+    const host = this.hostedSidekickHost();
+    for (const target of targets) new HostedSidekick(host, target.automation_id).scheduleSourceReconciliation();
+    return targets.length > 0;
+  }
+
   /**
    * Whether an id names a Sidekick: its directory row. Asked before the
    * Channel fallback, which would otherwise read a Sidekick as a Channel.
@@ -6537,6 +6589,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       storage: this.state.storage,
       alarms: this.scheduledAlarms,
       writeRegistrations: (automationId, evaluators) => this.writeSidekickRegistrations(automationId, evaluators),
+      reconcileRegistrations: (automationId, evaluators) => {
+        const request = ExternalEventRegistrationProjectionV1Schema.parse({ schemaVersion: 1, workspaceId: this.workspaceId(),
+          destination: { kind: "automation", automationId }, sourceGeneration: 1, evaluators });
+        this.replaceExternalEventRegistrationRows(request, `automation:${automationId}`, Date.now(), true);
+      },
       afterRegistrations: (automationId, revision, evaluators) => this.afterSidekickRegistrations(automationId, revision, evaluators),
       noteDirectoryChanged: (automationId, deleted, now) => {
         this.state.storage.sql.exec(
@@ -6831,6 +6888,46 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.claimExecutionPrincipal(input));
   }
 
+  async sidekickPrepareMyDelegation(input: Parameters<HostedSidekick["prepareMyDelegation"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.prepareMyDelegation(input));
+  }
+
+  async sidekickSetDelegation(input: Parameters<HostedSidekick["setDelegation"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.setDelegation(input));
+  }
+
+  async sidekickReadMyDelegationReceipt(input: Parameters<HostedSidekick["readMyDelegationReceipt"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readMyDelegationReceipt(input));
+  }
+
+  async sidekickReadDelegation(input: Parameters<HostedSidekick["readDelegation"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readDelegation(input));
+  }
+
+  async sidekickReadExecutionDelegation(input: Parameters<HostedSidekick["readExecutionDelegation"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readExecutionDelegation(input));
+  }
+
+  /** Own consent records remain readable without membership or Sidekick viewer access. */
+  async sidekickReadMyDelegations(input: { workspaceId: string; userId: string }) {
+    await this.initialized;
+    const userId = asUserId(input.userId);
+    asWorkspaceId(input.workspaceId);
+    if (!this.workspaceId()) return { userId, delegations: [] };
+    this.assertWorkspace(input.workspaceId);
+    const grants = new SidekickDelegationStorage(this.state.storage).forUser(userId);
+    return {
+      userId,
+      delegations: await Promise.all(grants.map(async (grant) => {
+        const sidekick = await this.hostedSidekick(grant.sidekickId, input.workspaceId);
+        return {
+          sidekickId: grant.sidekickId, label: grant.label, allowed: grant.allowed,
+          eligible: await sidekick.delegationEligible(grant),
+        };
+      })),
+    };
+  }
+
   async sidekickAdmitExternalEvent(input: Parameters<HostedSidekick["admitExternalEvent"]>[0]) {
     return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.admitExternalEvent(input));
   }
@@ -6855,8 +6952,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readRunState(input));
   }
 
+
+  async sidekickNotePermissionReportUnavailable(input: Parameters<HostedSidekick["notePermissionReportUnavailable"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.notePermissionReportUnavailable(input));
+  }
+
   async sidekickContinueRun(input: Parameters<HostedSidekick["continueRun"]>[0]) {
-    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.continueRun(input));
+    return this.sidekickCall(input.automationId, input.workspaceId, async (sidekick) => {
+      const result = await sidekick.continueRun(input);
+      if (result.outcome === "refused" && result.code === "run_no_eligible_delegate") {
+        sidekick.noteDelegationAttention("no_eligible_delegate");
+      }
+      return result;
+    });
   }
 
   /** For the provisioning consumer: what to start, or `null` once the run is no longer pending. */
@@ -7221,6 +7329,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const request = WorkspaceRuntimeSqlRequestSchema.parse(input);
       this.assertWorkspace(request.workspaceId);
       const results = this.runWorkspaceSql(request);
+      if (request.statements.some((statement) => workspaceMutationTarget(statement.sql) === "connector_connections")
+        && this.state.storage.sql.exec("SELECT 1 FROM _internal_durable_alarms WHERE kind='sidekick_delegation_sources' LIMIT 1").toArray().length > 0) {
+        await this.armNextAlarm();
+      }
       const kinds = new Set<WorkspaceScheduleTargetKind>();
       for (const statement of request.statements) {
         const target = workspaceMutationTarget(statement.sql);
@@ -9581,6 +9693,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     request: z.infer<typeof ExternalEventRegistrationProjectionV1Schema>,
     destinationKey: string,
     now: number,
+    preserveActive = false,
   ): { effectiveAfterEventSequence: number; applied: true } {
     const destinationKind = request.destination.kind;
     const cutoff = this.latestConnectorEventSequence();
@@ -9588,18 +9701,26 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       `UPDATE workspace_external_event_registrations
           SET state = 'removed', updated_at = ?
         WHERE destination_kind = ? AND destination_key = ?
-          AND state = 'active'`,
+          AND state = 'active' AND (? = 0 OR registration_id NOT IN (SELECT value FROM json_each(?)))`,
       now,
       destinationKind,
       destinationKey,
+      preserveActive ? 1 : 0,
+      JSON.stringify(request.evaluators.map((evaluator) => evaluator.evaluatorId)),
     );
     this.state.storage.sql.exec(
       `UPDATE schedules SET enabled = 0, updated_at = ? WHERE id IN (
         SELECT registration_id FROM workspace_external_event_registrations
-        WHERE destination_key = ? AND connector_type = 'canva')`,
-      new Date(now).toISOString(), destinationKey,
+        WHERE destination_key = ? AND connector_type = 'canva' AND (? = 0 OR state='removed'))`,
+      new Date(now).toISOString(), destinationKey, preserveActive ? 1 : 0,
     );
+    const changed = [];
     for (const evaluator of request.evaluators) {
+      if (preserveActive && this.state.storage.sql.exec(
+        `SELECT 1 FROM workspace_external_event_registrations WHERE registration_id=? AND destination_key=?
+          AND state='active' AND evaluator_json=?`, evaluator.evaluatorId, destinationKey, JSON.stringify(evaluator),
+      ).toArray().length > 0) continue;
+      changed.push(evaluator);
       this.state.storage.sql.exec(
         `INSERT INTO workspace_external_event_registrations
            (registration_id, destination_key, workspace_id, effective_after_event_sequence,
@@ -9629,7 +9750,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         now,
       );
     }
-    for (const evaluator of request.evaluators) {
+    for (const evaluator of changed) {
       if (evaluator.source.connectorType !== "canva" || destinationKind !== "automation") continue;
       if (!evaluator.source.resourceId) throw new Error("canva_trigger_requires_design");
       const resource = this.state.storage.sql.exec<{ id: string }>(
@@ -9785,7 +9906,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // in `visibility`, so matching on connection and event type alone would let
     // a personal automation's evaluator probe content its author cannot see.
     const restrictedUserIds = restrictedActivityUserIds(event);
-    const visibility = JSON.parse(event.visibility_json) as { kind?: unknown; scope?: unknown };
     // The host wrote the occurrence key beside the provider's metadata at
     // ingest; the destination gets it as its own field and dedupes on it.
     const { occurrenceKey, ...eventMetadata } = metadata;
@@ -9799,10 +9919,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       metadata: eventMetadata,
       ...(typeof occurrenceKey === "string" && occurrenceKey.length > 0 ? { occurrenceKey } : {}),
       occurredAt: event.occurred_at,
-      audienceUserIds: JSON.parse(event.target_user_ids_json) as string[],
-      audienceKind: visibility.kind === "workspace" || visibility.scope === "workspace"
-        ? "workspace" as const
-        : "restricted" as const,
+      audienceUserIds: restrictedUserIds ?? [],
+      audienceKind: restrictedUserIds === null ? "workspace" as const : "restricted" as const,
+      sourceConnectionId: event.connection_id,
+      sourceConnectionScope: event.connection_scope === "personal" ? "personal" as const : "workspace" as const,
+      sourceConnectionOwnerUserId: event.connection_owner_user_id,
     };
     // A message in a bound external conversation is claimed by its binding,
     // as a matched watch claims one, so a bound reply never also becomes
@@ -9825,23 +9946,24 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const boundSidekickId = binding?.outcome === "deliver" && binding.target.parentKind === "automation"
       ? binding.target.parentId
       : null;
-    const deliveries = registrations.flatMap((registration) => {
+    const delegateEligibility = new Map<string, Promise<boolean>>();
+    const matches = await Promise.all(registrations.map(async (registration) => {
       if (registration.resource_id && !resourceIds.includes(registration.resource_id)) return [];
       if (boundSidekickId !== null && registration.automation_id === boundSidekickId) return [];
-      if (restrictedUserIds !== null && registration.destination_kind === "automation") {
-        // A workspace automation is readable by every member, so a restricted
-        // activity can never reach one. A personal automation may see it only
-        // when its own author is inside the audience.
-        const audience = registration.automation_id === null ? null : this.state.storage.sql.exec<{
-          scope: string;
-          author_user_id: string;
-        }>(`SELECT scope, author_user_id FROM automation_directory WHERE automation_id = ?`,
-          registration.automation_id).toArray()[0];
-        if (!audience || audience.scope !== "personal") return [];
-        if (!restrictedUserIds.includes(audience.author_user_id)) return [];
-      }
       const evaluator = ExternalEventEvaluatorV1Schema.parse(JSON.parse(registration.evaluator_json));
       if (!evaluateExternalEventPredicate(evaluator.when, context)) return [];
+      if (registration.destination_kind === "automation") {
+        const sidekick = registration.automation_id === null ? null : await this.sidekickParent(registration.automation_id, request.workspaceId);
+        if (!sidekick || await sidekick.eventCoordinator(workspaceEvent, registration.registration_id, delegateEligibility) === null) {
+          if (sidekick && registration.automation_id) await this.sidekickCall(registration.automation_id, request.workspaceId,
+            (target) => target.noteDelegationAttention("event_no_eligible_delegate"));
+          logInfo(this.env, "external_event_delegation_refused", {
+            workspace_id: request.workspaceId, event_id: request.eventId,
+            automation_id: registration.automation_id, code: "sidekick_no_eligible_delegate",
+          });
+          return [];
+        }
+      }
       const destination = registration.destination_kind === "automation"
         ? { kind: "automation" as const, automationId: registration.automation_id! }
         : {
@@ -9860,7 +9982,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         event: workspaceEvent,
         payloadHash: event.payload_hash,
       })];
-    });
+    }));
+    const deliveries = matches.flat();
     // A silent non-match reads exactly like a lost event to the person whose
     // automation never fired; the count and the event are what they need.
     logInfo(this.env, "external_event_matched", {
@@ -13869,6 +13992,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * caller, which sends both once for the whole pass.
    */
   private async runDirectoryFollowUp(followUp: DirectoryFollowUp, rows: ChannelRowPlan): Promise<void> {
+    if (this.queueSidekickSourcesForUsers(followUp.reachChangedUsers)) await this.armNextAlarm();
     const commonChanges = new Set(followUp.commonChanges);
     const viewerChanges = new Map(followUp.viewerChanges.map(([id, users]) => [id, new Set(users)]));
     const breakoutChanges = new Set(followUp.breakoutChanges);
@@ -14131,6 +14255,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         request.removed ? request.relationship.incarnation : null, active ? 1 : 0,
         request.sequence, Date.now(),
       );
+      this.queueSidekickSourcesForUsers([userId]);
       if (!active) {
         // Leaving a Channel's participants changes its facepile for everyone,
         // leaving any row changes this person's reach, and leaving a Space's
@@ -14162,6 +14287,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return true;
     });
     if (followUpId !== null) await this.runDirectoryFollowUps([followUpId]);
+    if (this.state.storage.sql.exec("SELECT 1 FROM _internal_durable_alarms WHERE kind='sidekick_delegation_sources' LIMIT 1").toArray().length > 0) await this.armNextAlarm();
     return { applied };
   }
 

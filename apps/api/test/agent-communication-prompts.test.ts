@@ -66,6 +66,8 @@ describe("rendering an admitted agent message", () => {
     expect(rendered).toContain("Team: sidekick/s-1/0.");
     expect(rendered).not.toContain("automation/");
   });
+
+
 });
 
 describe("the agents plugin", () => {

@@ -21,7 +21,7 @@
  */
 
 import { env } from "cloudflare:workers";
-import { reset, runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -175,7 +175,7 @@ async function activeSidekick(): Promise<void> {
     authorUserId: AUTHOR_ID,
     scope: "personal",
     owningWorkstreamId: null,
-    automationId: AUTOMATION_ID,
+    automationId: AUTOMATION_ID
   });
   expect(created).toEqual({ automationId: AUTOMATION_ID, created: true });
   await submit();
@@ -356,6 +356,34 @@ beforeEach(async () => {
 });
 
 describe("Sidekick run continuation", () => {
+  it.each(["run", "worker"] as const)("continues a %s through another eligible delegate after coordinator withdrawal", async (target) => {
+    await activeSidekick();
+    const worker = target === "worker" ? await delegatedRunWorker() : null;
+    const runId = worker?.runId ?? await completedRun();
+    const targetId = worker?.workerId ?? runId;
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      // The second delegate already has human access; enrollment does not grant it.
+      state.storage.sql.exec("UPDATE automation_directory SET scope='workspace' WHERE automation_id=?", AUTOMATION_ID);
+    });
+    for (const [userId, allowed] of [[CLAIMANT_ID, true], [AUTHOR_ID, false]] as const) {
+      const request = { ...addressed(), userId, allowed, operationId: crypto.randomUUID() };
+      const prepared = await workspaceStub().sidekickPrepareMyDelegation(request);
+      await workspaceStub().sidekickSetDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
+    }
+    const reply = "Keep going with the remaining delegate.";
+    const turnId = target === "worker"
+      ? (await worker!.owner.send({ agentId: worker!.agentId, message: reply, attachmentIds: [] },
+        { ...worker!.context, effectIntentId: crypto.randomUUID() })).messageId
+      : await sendToRun(runId, reply, "coordinator-failover");
+    const execution = await settledExecutionFor(targetId, turnId);
+    expect(execution.status).toBe("completed");
+    expect(JSON.parse(execution.execution_context_json)).toMatchObject({
+      executionPrincipal: { type: "user", userId: CLAIMANT_ID },
+    });
+    expect(callThatSaw(reply)).toBeDefined();
+    expect(await refusals(targetId)).toEqual([]);
+  });
+
   it.each(["authoring", "run"] as const)("starts and continues a background worker under Sidekick %s", async (origin) => {
     await activeSidekick();
     const ownerSubstreamId = origin === "run" ? await completedRun() : "0";
@@ -388,6 +416,27 @@ describe("Sidekick run continuation", () => {
     expect(workerInput.automationRun).toBeUndefined();
     if (origin === "run") {
       expect(workerInput.automationDelegation).toMatchObject({ runId: ownerSubstreamId });
+      const nestedOwner = new AgentCommunicationService(TEST_ENV, workerInput);
+      const nested = await nestedOwner.start({ name: "Reply researcher", description: "Inspect activity",
+        message: "Inspect the activity counts again.", attachmentIds: [] }, { ...context, effectIntentId: crypto.randomUUID() });
+      const nestedId = agentAddressForId(nested.agentId).substreamId;
+      const nestedExecution = await settledExecutionFor(nestedId, nestedId);
+      expect(nestedExecution.status).toBe("completed");
+      // Completion notices settle after terminal receipts and can start another
+      // execution in the owner. Drain that nested notice before testing a fresh
+      // follow-up after eviction; otherwise the follow-up can correctly steer
+      // the notice's execution and have no trigger receipt of its own.
+      await expect.poll(async () => runInDurableObject(childStub(nestedId), (_instance, state) =>
+        state.storage.sql.exec<{ pending: number }>(
+          "SELECT COUNT(*) AS pending FROM runs WHERE external_settled_at IS NULL",
+        ).one().pending), { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 100 }).toBe(0);
+      await expect.poll(async () => runInDurableObject(childStub(workerId), (_instance, state) =>
+        state.storage.sql.exec<{ settled: number }>(`SELECT
+          (SELECT status = 'idle' FROM substream_loops WHERE id = 1)
+          AND NOT EXISTS (SELECT 1 FROM pending_loop_inputs)
+          AND NOT EXISTS (SELECT 1 FROM runs WHERE external_settled_at IS NULL) AS settled`,
+        ).one().settled), { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 100 }).toBe(1);
+      await evictDurableObject(childStub(workerId));
     } else {
       expect(workerInput.automationDelegation).toBeUndefined();
     }
@@ -396,7 +445,8 @@ describe("Sidekick run continuation", () => {
     const followUp = await owner.send({ agentId: started.agentId,
       message: "Check the shared-conversation count too.", attachmentIds: [] },
     { ...context, effectIntentId: crypto.randomUUID() });
-    expect((await settledExecutionFor(workerId, followUp.messageId)).status).toBe("completed");
+    const continued = await settledExecutionFor(workerId, followUp.messageId);
+    expect(continued.status).toBe("completed");
     expect(callThatSaw("Check the shared-conversation count too.")).toBeDefined();
     expect(await refusals(workerId)).toEqual([]);
   });
@@ -426,7 +476,7 @@ describe("Sidekick run continuation", () => {
     expect((await settledExecutionFor(worker.workerId, resumed.messageId)).status).toBe("completed");
   });
 
-  it.each(["pause", "pause_resume", "principal_changed", "run_not_found"] as const)(
+  it.each(["pause", "pause_resume", "run_not_found"] as const)(
     "fences a worker's model and tool authority after %s",
     async (revocation) => {
       await activeSidekick();
@@ -439,19 +489,32 @@ describe("Sidekick run continuation", () => {
         }
       } else {
         await runInDurableObject(workspaceStub(), (_instance, state) => {
-          if (revocation === "principal_changed") {
-            state.storage.sql.exec("UPDATE automation_directory SET run_as_user_id = ? WHERE automation_id = ?",
-              CLAIMANT_ID, AUTOMATION_ID);
-          } else {
-            state.storage.sql.exec("DELETE FROM sidekick_runs WHERE sidekick_id = ? AND run_id = ?",
-              AUTOMATION_ID, worker.runId);
-          }
+          state.storage.sql.exec("DELETE FROM sidekick_runs WHERE sidekick_id = ? AND run_id = ?",
+            AUTOMATION_ID, worker.runId);
         });
       }
       await expect(__integrationTesting.assertRunAuthorityStillValid(TEST_ENV, worker.input))
         .rejects.toThrow("This Sidekick delegation is no longer authorized");
     },
   );
+
+  it("reuses an active worker's eligibility snapshot until its next activation", async () => {
+    await activeSidekick();
+    const worker = await delegatedRunWorker();
+    const request = { ...addressed(), userId: AUTHOR_ID, allowed: false, operationId: crypto.randomUUID() };
+    const prepared = await workspaceStub().sidekickPrepareMyDelegation(request);
+    await workspaceStub().sidekickSetDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
+    await expect(__integrationTesting.assertRunAuthorityStillValid(TEST_ENV, worker.input)).resolves.toBeDefined();
+    await expect(__integrationTesting.assertRunAuthorityStillValid(TEST_ENV, worker.input)).resolves.toBeDefined();
+
+    const marker = "Refresh worker eligibility before this new assignment.";
+    const sent = await worker.owner.send({ agentId: worker.agentId, message: marker, attachmentIds: [] },
+      { ...worker.context, effectIntentId: crypto.randomUUID() });
+    await expect.poll(() => refusals(worker.workerId), { timeout: RUN_SETTLE_TIMEOUT_MS }).toEqual([
+      { code: "run_no_eligible_delegate", turnId: sent.messageId },
+    ]);
+    expect(callThatSaw(marker)).toBeUndefined();
+  });
 
   it("keeps nested workers subject to the root Sidekick run's pause", async () => {
     await activeSidekick();
@@ -481,11 +544,13 @@ describe("Sidekick run continuation", () => {
     expect(await receipts(nestedId)).toHaveLength(1);
   });
 
-  it("continues a completed run as its run-as user, with its instructions at the revision accepted now", async () => {
+  it("continues as its persisted coordinator after a legacy run-as change, with today's accepted instructions", async () => {
     await activeSidekick();
     const runId = await completedRun();
-    // Today's consent, not the run's: a newer accepted revision. (A new run-as
-    // user refuses instead; see the `run_principal_changed` case.)
+    // Human access metadata is independent of the admitted coordinator.
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE automation_directory SET run_as_user_id=? WHERE automation_id=?", CLAIMANT_ID, AUTOMATION_ID);
+    });
     expect(await submit({ ...DEFINITION, instructions: "Revision two: forward each reply to the home room." })).toBe(2);
     await apply();
 
@@ -599,13 +664,11 @@ describe("Sidekick run continuation", () => {
         state.storage.sql.exec(`DELETE FROM sidekick_runs WHERE sidekick_id = ? AND run_id = ?`, AUTOMATION_ID, runId);
       });
     }],
-    // Another member takes over who the Sidekick runs as, the way
-    // `claimExecutionPrincipal` leaves it: the run's transcript is still the
-    // first principal's, so it is not handed to the second.
-    ["run_principal_changed", async () => {
-      await runInDurableObject(workspaceStub(), (_instance, state) => {
-        state.storage.sql.exec(`UPDATE automation_directory SET run_as_user_id = ? WHERE automation_id = ?`, CLAIMANT_ID, AUTOMATION_ID);
-      });
+    // With no remaining eligible delegate, input cannot activate execution.
+    ["run_no_eligible_delegate", async () => {
+      const request = { ...addressed(), userId: AUTHOR_ID, allowed: false, operationId: crypto.randomUUID() };
+      const prepared = await workspaceStub().sidekickPrepareMyDelegation(request);
+      await workspaceStub().sidekickSetDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
     }],
   ] as const)("refuses input with %s and leaves nothing queued", async (code, arrange) => {
     await activeSidekick();

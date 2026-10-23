@@ -7,13 +7,177 @@ runs, through `HostedSidekick`; how it got there and how it is stored are
 The legacy `SidekickDO` that held them before is deleted.
 Substream `0` is the authoring conversation; delegated runs are child substreams.
 
+## Delegation consent authority
+
+`sidekick-delegation-storage.ts` owns consent in WorkspaceDO. The strict shared
+inputs and outputs live in `packages/contracts/src/sidekick-delegation.ts`.
+`HostedSidekick` admits enrollment through current membership and the existing
+viewer rule, independently of definition management. Each grant retains its
+membership incarnation, generation, original opt-in time, safe label and actor/
+request provenance. Eligibility requires the same current incarnation and viewer
+access. Pausing retains consent; removing a membership and rejoining never
+reactivates the old incarnation's authority.
+
+The host prepares a mutation before dispatch. Preparation records intent without
+an enrollment check; the actual mutation authorizes membership and visibility
+once before it can grant authority. Preparation durably retains that
+operation's observed generation, including across a lost response. Allow checks
+it atomically; withdrawal always advances a tombstone, even for an absent grant.
+Accepted intents and outcomes have immutable receipts. Replaying an accepted
+intent does no write, and a receipt superseded by another generation reports a
+stale action instead of presenting its old result as current. A new allow needs
+a new delegation action. This orders consent writes inside one object; it adds no
+synchronous cross-object authorization barrier or provider probe.
+
+Every creation immediately enrolls its creator, including autonomous creation.
+The creation transaction records the grant once under the Sidekick ID, using the
+creator's current membership incarnation. No direct-human provenance lookup,
+creator-consent marker or disclosure screen is required. Creation replay never
+restores an existing withdrawal.
+
+`sidekick-delegation-service.ts` supplies signed-in self-service and exact
+viewer-authorized UUID, canonical link or name lookup. Named lookup is not limited
+to editable Sidekicks; ambiguous visible names refuse with a stable code.
+Sidekick routes serve `/sidekicks/:id/delegation`. There is no Account settings
+withdrawal screen or dedicated account HTTP endpoint. The agent's own-grant
+lookup and self-withdrawal retain a person's stored grant and safe label after
+access loss within the current Organization. The tools never discover or route
+to grants in other Organizations. The old D1 `sidekick_delegation_locations`
+table is unused; its migration remains immutable.
+
+The `rally:sidekicks` plugin exposes `my_delegations_list`, `delegates_list` and
+`set_delegation` during direct and autonomous work. Authoring and Sidekick
+activations use the `sidekick` prefix; room presentations use full wire names.
+Both presentations teach the resulting `sidekick_` wire names. Configuration
+chats use the chatting person's accounts; only activations and delegated work
+receive the Sidekick's eligible account pool.
+The mutation accepts `{ sidekickId, userId, allowed }`: the model selects a
+current Organization user, while the host supplies the execution actor. The
+actor needs existing Sidekick access to change another person; the target needs
+active Organization membership to be enrolled. A grant alone changes no human
+visibility or manager rights. There is no canonical-speaker or special
+quoted/event-consent check. The UI retains self-service only; the manager removal
+control and endpoint are removed.
+
+Admission uses this authority for events, schedules and manual runs. A run stores
+`coordinator_user_id` independently of the directory's legacy human-access field.
+Manual Run prefers an eligible requester but never opts them in. Schedules prefer
+an eligible saved source owner, then the creator and stable grant order. Personal
+events require their source owner's eligible grant; restricted workspace events
+require an eligible delegate inside their actual audience. Matching and delivery
+both apply this policy, while preserving activation boundaries, deterministic
+filters, semantic conditions and occurrence deduplication. Ownership scope alone
+never rejects an otherwise eligible event. Coordinator selection checks an
+eligible preferred user first, then configured source owners, the creator and
+remaining grants. Audience restrictions narrow candidates before eligibility
+checks. Matching evaluators share pending eligibility checks only within that
+matching request, keyed by Sidekick, user and grant generation; delayed delivery
+checks again independently.
+
+An occurrence with no delegate gets a `needs_input` run and safe recovery summary;
+an unauthorized event retains no private payload in the Sidekick. Its directory
+has a safe `delegationAttention` code and recovery message. Source reconciliation
+clears a source warning when coverage returns; unrelated manual or scheduled
+admissions do not clear it. Permission-report warnings survive source recovery.
+New consent applies
+to future occurrences rather than replaying blocked historical work. A continued
+run retains its coordinator while eligible and selects another eligible delegate
+when that person becomes unavailable. The new coordinator is persisted on the
+existing run. Only an empty eligible list refuses with `run_no_eligible_delegate`.
+Eligibility refreshes at activation and inventory loading. An ongoing background
+attempt reuses that snapshot; model/tool boundaries read the root lifecycle and
+stop generation without rescanning delegates or comparing coordinators. Pause,
+delete and pause/resume still fence old work.
+
+Migration retains existing `run_as_user_id` as a stable shared-file identity and
+preserves existing human access. A durable alarm enrolls missing
+creators and established previous task-account users without reconstructing
+historical consent provenance. Existing grants and withdrawal tombstones are
+never overwritten. A follow-up migration queues creators that an earlier local
+version left ungranted. The legacy claim endpoint records self-consent without new human access
+entitlements, rebinding configured sources or
+changing creator preference. Neither these grants nor coordinator selection
+replace the directory's existing reader/manager entitlements.
+
+An activation whose conversation post is refused retains a fixed
+`permission_report_unavailable` attention message on the Sidekick. The refused
+tool still returns its original failure; normal later admission clears the
+attention field. This uses the same directory state as unavailable delegation.
+
+Configured event sources reconcile through `sidekick-source-registrations.ts`.
+The saved evaluator remains the source definition. An adapter's authored
+`isPortableActivityResource` distinguishes globally addressed resources (Google
+files) from account-relative resources (mail and calendars). Only the former
+can expand to another eligible delegate's connection. The ordinary resource
+resolver creates or finds that connection's Rally resource ID by provider ID;
+titles never identify a source. Expanded registrations retain their saved
+`sourceEvaluatorId`, so queued delivery still checks the current definition.
+Unchanged active registrations keep their ID and event-sequence cutoff. New
+or reactivated ones start at the current cutoff; reconciliation does not replay
+history. Delivery reads the registration's active state and cutoff from its
+existing row read. A removed source refuses a delayed envelope; after
+reactivation, an older envelope can only replay an already admitted occurrence,
+never create historical work.
+Global Google file observations carry a common occurrence key across accounts.
+Providers without a common identity keep their existing deduplication semantics.
+
+The existing WorkspaceDO alarm lane stores `sidekick_delegation_sources` work
+in the same transaction as consent changes. Apply, resume and legacy enrollment
+also queue it. Connection authority changes queue it through migration 130's
+SQL triggers, while membership and reader reach use their existing invalidation
+paths. Pending changes coalesce into one entry per Sidekick; each enqueue moves
+the due instant so an older handler cannot settle a newer change. Cursor and
+token renewal do not trigger it. The connection RPC arms the
+native alarm after committing the wake. Migration 130 also wakes existing
+active configured Sidekicks. The handler refreshes ordinary eligibility and
+commits only against the still-current active definition revision. This permits
+eventual authorization propagation without a global barrier or provider probe.
+
+Run history carries its coordinating user through the client mapping. Write
+operation accounts remain private database debug checkpoints; reads do not look up
+or append account checkpoints. App activity does not expose per-operation people
+or connection IDs.
+
+Per-operation connector identities, completed-receipt reconciliation, shared
+Terminal authorization and desktop/web controls are tracked by the
+[implementation plan](PRDs/2026-10-22_sidekick-delegation/plan.md) until all
+acceptance evidence is complete.
+
+Sidekick details retain the stored delegation attention message without computing
+an unused eligible-delegate status. The separate delegation list loads public
+identities and eligibility concurrently after reader authorization.
+
+Delegation list responses include the creator's public identity after
+withdrawal and the current allowed users with availability. Membership and
+viewer checks still guard the read. Desktop/web show self-service actions with
+no manager removal or shared-history disclosure. New Sidekick creates
+immediately on opening the route. [Shared UI](shared-ui.md#sidekick-delegation)
+owns pending, uncertain-response and offline behavior. The dedicated Account
+withdrawal feature remains removed.
+
+Consent receipt reconciliation is a read through
+`sidekickReadMyDelegationReceipt`, keyed by the host's original effect ID. It
+compares the exact actor, target, intent and source against its durable preparation and
+immutable receipt, then checks the current generation. A still-allowed result
+also needs current eligibility. It neither prepares a new intent nor mutates a
+grant. The normal harness checks this before replaying a completed consent-tool
+acknowledgement. Changed generations get the stale-action recovery sentence;
+unavailable allowed grants get the enrollment-unavailable sentence. A current
+withdrawal receipt remains readable without membership or viewer access.
+An interrupted consent tool also reconciles by that original effect identity.
+The accepted action's outcome can be saved after response loss; missing or
+superseded acceptance cannot trigger a new preparation or another consent
+mutation. The existing harness repair path builds the execution user's delegation
+subset and preserves the original action ID. It retains a named stale-action
+or unavailable reason when no current acknowledgement is safe.
+
 ## Sidekick publication and loading
 
 Authoring is conversational. A ready submission saves through `saveDefinition`,
 which checks management authority before recording and publishing a revision.
 The authoring prompt tells the model that only a refused submission blocks
-activation: a connection state check does not, and a personal or work-stream
-Sidekick may use the personal connection of the person it runs as
+activation: a connection state check does not, and every Sidekick scope can
+configure work using a consenting delegate's personal connection
 ([`agent-tools.md`](agent-tools.md#2026-10-15--the-connection-check-covers-every-scope)).
 The model generates internal instructions and a user-friendly description. An
 incomplete submission does not replace the accepted revision. Edits preserve a
@@ -458,8 +622,8 @@ reasonably concluded the connection was usable.
 Instruction-only definitions bypass connector binding, schedule preparation,
 email reservation and memory-table creation. Triggered definitions reuse the
 existing validation and execution setup: bindings resolve against WorkspaceDO,
-workspace Sidekicks require workspace credentials, evaluator rules must name
-inspected sources, and schedules use their explicit or resolved timezone. Google bundle plugin IDs resolve through the same
+every Sidekick scope may bind an eligible delegate's personal connection,
+evaluator rules must name inspected sources, and schedules use their explicit or resolved timezone. Google bundle plugin IDs resolve through the same
 connection views used by the model catalog: Mail + Calendar and Drive + Docs +
 Sheets can bind one credential without sharing tools or trigger descriptors.
 Saved combined IDs remain binding aliases; see [connectors](connectors.md).
@@ -516,10 +680,11 @@ hands a normalized event to `WorkspaceDO.ingestConnectorEvent`; a second,
 ID-only delivery claims it for processing and calls
 `matchExternalEventDestinations`, which selects active registrations by
 connection, connector type, event type, and
-`effective_after_event_sequence`, applies the audience rule (a restricted
-activity never reaches a `workspace` automation and reaches a `personal` one
-only when its author is inside the audience), evaluates each registration's
-predicate with no model inference, and returns one complete
+`effective_after_event_sequence`, applies the delegation audience rule (a
+personal activity requires its source owner's eligible grant, and a restricted
+workspace activity requires an eligible delegate inside its actual audience),
+evaluates each registration's predicate with no model inference, and returns
+one complete
 `workspace_external_event_delivery_v1` message per match carrying the
 registration, the destination, and the event. There is no delivery ledger and
 no lease: the consumer sends each message to the Queue, and the destination is
@@ -691,23 +856,22 @@ one identity and one history, and can complete more than once.
    Delegated workers share the Sidekick parent but are not Sidekick runs.
    A worker rooted in a run asks `sidekickContinueRun` about its persisted
    `root_substream_id`, including through nested delegation. A refusal lands
-   the assignment without starting execution. Approval retains the worker's
-   inherited principal and records only `automationDelegation` (root run ID and
+   the assignment without starting execution. Approval uses the current eligible coordinator and records only `automationDelegation` (root run ID and
    stop generation), without loading the run's instructions or tools. The normal
-   model/tool authority check revalidates that reference, the principal and the
-   stop generation, so a later pause, pause/resume, deletion or principal change
-   revokes an already activated worker. Authoring-rooted workers (`"0"`) keep the
+   model/tool authority check reads root lifecycle and stop generation, so a
+   later pause, pause/resume or deletion fences an already activated worker.
+   Delegate eligibility and coordinator selection refresh on activation; changing
+   the coordinator does not revoke a worker's current eligibility snapshot. Authoring-rooted workers (`"0"`) keep the
    ordinary background-agent path, as authoring itself is not paused.
-2. `continueRun` is a read with no side effects. It answers a refusal code, or
+2. `continueRun` can replace an unavailable coordinator. It answers a refusal code, or
    the `automationRun` block and run-as `executionPrincipal` the scheduled
    start builds, with `definitionRevision` the Sidekick's **currently
    accepted** revision and the run's original trigger, plus `stopGeneration`, its
    stop counter. Continuing a run acts on today's consent, so a run started under
-   revision 1 continues under revision 3. It does not continue as somebody
-   else: a run records its run-as user when it is provisioned
-   (`runs.run_as_user_id`, migration 13), and a Sidekick claimed by someone
-   else since refuses with `run_principal_changed` rather than put the old
-   principal's transcript in front of the new one's connectors. It does not
+   revision 1 continues under revision 3. It persists `coordinator_user_id`
+   independently of the directory's legacy human access field. An unavailable
+   coordinator is replaced by another eligible delegate for root and background
+   continuations. Existing human reader/manager rights remain unchanged. It does not
    ask who sent the input: anyone who can reach a run may continue it.
 3. The loop input carries `automationRun`, the run-as principal, and
    `automationContinuation: {stopGeneration, senderName, source}`; the sender stays
@@ -728,8 +892,8 @@ one identity and one history, and can complete more than once.
 
 **Refusals.** `continueRun` answers `sidekick_deleted` for an archived
 Sidekick, `sidekick_paused` for one a person paused, `run_not_found`
-when the Sidekick object holds no row or no such run, and `run_principal_changed`
-when the Sidekick runs as somebody other than the run did. The
+when the Sidekick object holds no row or no such run, and `run_no_eligible_delegate`
+when no delegated user remains eligible. The
 child then lands the input as a delivered turn and appends a `system` row after
 it (`clientMessageId` `sidekick-run-refused:<inputId>`, structured content
 `{kind: "sidekick_run_refused", code, turnId}`) in one transaction
@@ -835,9 +999,9 @@ participant of the room, because authorship is not a share in the room's
 automation. Who may view (`assertViewer`, and `authorizeViewer` for the
 conversation): a `workspace` automation by any member, otherwise the author,
 the run-as principal, or a participant of the owning room.
-`claimExecutionPrincipal` lets a manager take over `run_as_user_id` and rebinds
-every binding the last principal took with them to the claimant's own or a
-workspace connection, reporting what it could not rebind.
+`claimExecutionPrincipal` is installed-client compatibility for authenticated
+self-consent. Configured bindings, creator preference and human access remain
+independent. A successful claim creates no management entitlement.
 
 ### The directory row
 
@@ -1057,7 +1221,7 @@ or the memory store the automation scope lives in.
   `substream_loop_drain_failed`, and the child's alarm claims the input again;
   the input stays at the head of the queue until the Sidekick answers.
 - **Input the Sidekick refuses** (`sidekick_paused`, `sidekick_deleted`,
-  `run_not_found`, `run_principal_changed`) lands as a delivered turn with a `sidekick_run_refused`
+  `run_not_found`, `run_no_eligible_delegate`) lands as a delivered turn with a `sidekick_run_refused`
   system row naming the code, and logs `sidekick_run_continuation_refused`.
   What a sender outside Rally sees is the bound thread's to decide. A refused
   answer to a question the run asked lands the same way, as a turn with no
@@ -1070,6 +1234,37 @@ or the memory store the automation scope lives in.
   runs stay in the object; there is no paging yet.
 
 ## Testing
+
+`pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts
+test-workers/sidekick-delegation.test.ts` drives the consent RPCs and services on
+real workerd, including delayed first delivery, receipt replay, tombstones,
+membership incarnations, viewer-only enrollment and own recovery after access
+loss. The same lane exercises the actual autonomous creation service and
+targeted changes to another Organization user. Production-break controls drop
+creator enrollment or restore the old self-only restriction; both fail their
+corresponding assertions. Withdrawal ordering and account recovery retain their
+existing negative controls.
+`test/sidekick-delegation-tools.test.ts` checks both actual plugin presentations
+and advertised/runtime schema agreement. Harness `src/prompts.test.ts` covers
+activation permission guidance; model behavior needs the separate evaluations.
+
+`test-workers/sidekick-delegation-admission.test.ts` exercises real event matching,
+delivery, due alarms, manual admission, continuation and compatibility claims.
+The original Thread-owned personal Google Sheet shape and its Organization-owned
+variant both start an event run and an hourly run through the same delegate.
+Withdrawals, restricted audiences, coordinator identity and retained human
+management are checked independently; production-code negative controls prove
+those gates. It also checks that detail reads do not scan eligibility, preferred
+and personal-event selection avoids unrelated delegates, and matching shares
+pending checks only within one request while delivery still observes withdrawal.
+Restoring the unnecessary scans or removing request-local sharing fails those
+regressions. Delayed-delivery cases prove removed connections cannot start work,
+reactivation refuses old unadmitted events, and accepted occurrences still
+replay; both new refusals failed against the preceding production code.
+The same workerd lane verifies canonical source-account capture,
+legacy-opening recovery and rooted background origin reads; metadata cannot
+forge that projection. `test/run-authority-validity.test.ts` checks the model/tool boundary's
+specific coordinator failure and error-path attention recording.
 
 `pnpm --filter @rally/desktop exec vitest run
 src/renderer/components/automation-header.test.tsx` covers persistent profile
@@ -1184,7 +1379,7 @@ only for a `workspace` automation.
 
 The conversation's readers are the parent's decision, carried to the
 conversation object on the ticket and by seating the reader; a run's
-conversation seats only the run-as principal, and its state reaches nobody but
+conversation seats its persisted coordinator, and its state reaches nobody but
 the parent.
 
 Inbound mail is untrusted: the From header can be spoofed, so the sender must
@@ -1193,7 +1388,7 @@ personal automation. That screening is the whole control; an inbound-email run
 holds the same tools as any other run, a decision
 [`security.md`](security.md) records.
 
-A continued run acts with its run-as user's authority whoever sent the input,
+A continued run retains its coordinator whoever sent the input,
 and `continueRun` does not screen the sender: anyone who can reach a run may
 continue it, including a person outside Rally in a thread bound to it. The
 control is the framing. Text from an external actor in a run child
@@ -1205,10 +1400,12 @@ carries the sender's name, is a user-role message too. The same row in a
 Channel or in a Sidekick's configuration conversation keeps the request
 framing.
 
-Binding is where credentials are lent: a personal connection may be bound only
-by its owner or the run-as principal, and a `workspace` automation binds only
-workspace connections. `claimExecutionPrincipal` is the one way a run-as
-principal changes, and the claimant is always the caller.
+Binding records configured sources and retains an existing source while its
+delegate is unavailable. An owner can configure their own connection during
+setup; execution still requires eligible delegation. Every Sidekick scope uses
+the same consent policy. `claimExecutionPrincipal` records only the authenticated
+claimant's consent; it adds no human access entitlement and cannot replace other
+delegates, configured sources or creator preference.
 
 Losing access closes an open conversation. The automation holds no socket of
 its own; the [access-revocation queue](access-revocation.md) reaches its
@@ -1299,6 +1496,66 @@ freezing changing inputs; activations still fetch current data and follow the sa
 failure and no-op rules. This is authoring guidance, not a new publication gate.
 
 Pull request: [#1425](https://github.com/juno-ai-labs/avalon/pull/1425).
+
+### 2026-10-22 — Record consent independently of Sidekick ownership
+
+**What changed:** WorkspaceDO stores per-person grants, prepared generations,
+withdrawal tombstones and accepted mutation receipts. Every creation enrolls its creator immediately, including autonomous creation.
+UI self-service and targeted autonomous agent changes use the same authority.
+Agent own-grant discovery retains access to a person's stored grants after they
+lose Organization or Sidekick access; the dedicated Account withdrawal UI/API
+is removed. Event, schedule, manual and continued runs
+share eligibility; each run persists its coordinator independently of legacy
+human access. Migration retains stable shared-file identities and enrolls missing creators
+without reconstructing direct-user consent provenance. Continuation replaces an
+unavailable coordinator and persists the replacement without changing human
+access. Write accounts remain debug-only receipt records; reads skip account
+checkpoint I/O. Background model/tool boundaries reuse activation eligibility and
+retain only the root lifecycle and stop-generation check. Coordinator selection
+short-circuits preferred users and narrows candidates by audience. Matching shares
+pending eligibility within one request; delegation-list identity/eligibility
+reads run together. Details omit the unused derived delegation status. Delivery
+also enforces reconciled registration state/cutoffs, preserving existing
+occurrence replay without admitting historical work after reactivation. Self-action
+receipt inspection prevents the outer completed-tool cache from presenting a
+withdrawn grant as current without replaying its mutation. Interrupted actions
+are reconciled by that same receipt instead of minting a fresh consent intent.
+An activation's refused conversation post also records a fixed recovery message
+in the same attention field, without adding a separate notification mechanism.
+
+**Why:** A mutable run-as user cannot represent several people's consent or
+independent withdrawal. Reusing that field for automatic coordination would also
+change existing human access. A durable prepared generation prevents response
+loss or delayed dispatch from turning an old allow into a new opt-in. A global
+authorization barrier is unnecessary because eventual authorization propagation
+is the agreed product contract. Repeated background eligibility scans and account
+checkpoints for reads would add durable work to every step without helping
+uncertain-write recovery. Recomputing unused detail status and repeating matching
+checks likewise adds work without changing the product outcome. Checking only
+the Sidekick-wide event cutoff ignored source removal/reactivation, allowing
+delayed envelopes to admit work after the reconciled source boundary moved.
+A blocked report must also remain visible after the model finishes explaining
+it, since an attempted post is not confirmation that anyone received it.
+
+**Considered and rejected:** Reusing directory run-as as the consent list would
+couple execution selection to human reader/manager rights. A global revocation
+sequencer or per-operation provider preflight would add latency for synchronous
+enforcement beyond the agreed eventual-consistency contract. Consent-write
+ordering belongs in the one existing owning object.
+
+**Consequences:** Execution consumers use these grants without deriving
+human access from selected accounts. Migration and creator initialization cannot
+overwrite tombstones. Recovery stays within the current Organization; the unused
+regional routing index no longer participates. Consent remains in WorkspaceDO.
+Configured sources expand only through authored
+portable resource identity; differential registration updates preserve queued
+event boundaries. Ordinary connection, membership and reach invalidations wake
+reconciliation through the existing alarm lane, with no provider preflight.
+The 2026-10-23 revision removes manager removal, creator disclosures and
+direct-human restrictions at the user's request; targeted agent writes may
+manage any current Organization user. Withdrawal ordering remains intact.
+
+Related: [Sidekick delegation PRD](PRDs/2026-10-22_sidekick-delegation/prd.md).
 
 ### 2026-10-22 — Keep Sidekick actions discoverable across lifecycle states
 

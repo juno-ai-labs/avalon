@@ -28,6 +28,45 @@ function terminalPlugin(tool: HarnessTool): HarnessPlugin {
 }
 
 describe("Terminal command receipt recovery", () => {
+  it("leaves a provider-key write unresolved when its original key is missing", async () => {
+    const execute = vi.fn(async () => ({ output: {}, summary: "Should not run" }));
+    const plugin = terminalPlugin({
+      definition: { name: "recover", description: "Recover", capability: "test.recover", mode: "write",
+        idempotency: "provider_key", inputSchema: { type: "object" } },
+      reenterable: true, execute,
+    });
+    await expect(__integrationTesting.reenterInterruptedWrite({
+      row: { id: RECEIPT, status: "started", inputHash: "same", inputJson: "{}",
+        attemptStartedAt: ATTEMPT_STARTED_AT, providerIdempotencyKey: null },
+      expectedInputHash: "same", policyMatches: true,
+      expectedPolicy: { pluginId: "rally:terminal", definition: plugin.tools[0]!.definition }, plugins: [plugin], context,
+    })).resolves.toBeNull();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it.each(["landed", "unknown"] as const)("disposes the recovery deadline when reconciliation is %s", async (outcome) => {
+    vi.useFakeTimers();
+    try {
+      const plugin = terminalPlugin({
+        definition: { name: "recover", description: "Recover", capability: "test.recover", mode: "write",
+          idempotency: "record_before_execute", inputSchema: { type: "object" } },
+        reenterable: true,
+        reconcileEffect: async () => outcome === "landed"
+          ? { outcome: "landed", result: { output: { recovered: true }, summary: "Recovered" } }
+          : { outcome: "unknown", reason: "test_receipt_unavailable" },
+        execute: async () => { throw new Error("reconciled_effect_must_not_execute"); },
+      });
+      const recovered = __integrationTesting.reenterInterruptedWrite({
+        row: { id: RECEIPT, status: "started", inputHash: "same", inputJson: "{}", attemptStartedAt: ATTEMPT_STARTED_AT, providerIdempotencyKey: null },
+        expectedInputHash: "same", policyMatches: true, maxWallClockMs: 1_000,
+        expectedPolicy: { pluginId: "rally:terminal", definition: plugin.tools[0]!.definition }, plugins: [plugin], context,
+      });
+      if (outcome === "landed") await expect(recovered).resolves.toMatchObject({ output: { recovered: true } });
+      else await expect(recovered).rejects.toMatchObject({ code: "effect_reconcile_unknown" });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("re-executes only the recorded Terminal run_command through its frozen tool", async () => {
     const execute = vi.fn(async () => ({ output: { state: "completed" }, summary: "Recovered" }));
     const plugin = terminalPlugin({

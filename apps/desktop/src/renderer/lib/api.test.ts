@@ -179,6 +179,7 @@ const wireAutomationDetail = {
 const wireAutomationRun = {
   id: runId,
   automationId,
+  coordinatorUserId: userId,
   triggerType: 'schedule' as const,
   plannedFor: timestamp,
   startedAt: timestamp,
@@ -435,6 +436,23 @@ describe('Rally API wire adapter', () => {
     expect(fetchMock.mock.calls[0]?.[1]?.body).toBeUndefined();
   });
 
+  it('reads and changes delegation with a host-generated action identity and no selectable consenting user', async () => {
+    const operationId = '00000000-0000-7000-8000-000000000041';
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json({ sidekickId: automationId, creatorUserId: userId,
+        you: { userId, allowed: false }, delegates: [] }))
+      .mockResolvedValueOnce(json({ sidekickId: automationId, userId, allowed: true, changed: true }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+    expect(await api.getSidekickDelegates(automationId)).toMatchObject({ delegates: [] });
+    expect(await api.setMySidekickDelegation(automationId, true, operationId)).toMatchObject({ userId, allowed: true });
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      `https://api.rally.test/sidekicks/${automationId}/delegation`,
+      `https://api.rally.test/sidekicks/${automationId}/delegation`,
+    ]);
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ allowed: true, operationId });
+  });
+
   it('applies the current revision with no body and lists runs from their own route', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json({ ...wireAutomationDetail, lifecycle: 'active', status: 'active', acceptedDefinitionRevision: 1 }))
@@ -443,7 +461,7 @@ describe('Rally API wire adapter', () => {
     const api = new RallyApi('https://api.rally.test', session);
 
     await expect(api.acceptAutomation(automationId)).resolves.toMatchObject({ acceptedDefinitionRevision: 1 });
-    await expect(api.getAutomationRuns(automationId)).resolves.toEqual([expect.objectContaining({ id: runId })]);
+    await expect(api.getAutomationRuns(automationId)).resolves.toEqual([expect.objectContaining({ id: runId, coordinatorUserId: userId })]);
 
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`https://api.rally.test/sidekicks/${automationId}/accept`);
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' });

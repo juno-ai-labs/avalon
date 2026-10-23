@@ -1,9 +1,11 @@
 export * from './artifact-picker';
+export * from "./sidekick-delegation";
 import { AnnotationsSchema, validateAnnotationAttachments } from './artifact-annotations';
 export * from './artifact-annotations';
 import { ExternalPeopleSchema } from "./external-people";
 export { ExternalPeopleSchema, ExternalPersonSchema, MAX_EXTERNAL_PEOPLE, deduplicateExternalPeople } from "./external-people";
 import { z } from "zod";
+import { SidekickDelegationAttentionCodeSchema } from "./sidekick-delegation";
 import { ConversationViewRequestSchema } from "./conversation-view";
 import { AttachmentKindSchema, ResourceSlugSchema, parseStoredSuggestedAttachmentToolCall } from "./attachment-contracts";
 import { AutomationLifecycleStateSchema,
@@ -1731,6 +1733,8 @@ export const AutomationRunDefinitionV1Schema = z.strictObject({
    */
   owningSubstreamId: SubstreamIdSchema.default("0" as SubstreamId),
   runAsUserId: IdSchema,
+  /** Per-run coordination is independent of the legacy human access entitlement. */
+  coordinatorUserId: IdSchema.nullable().optional(),
   modelOverride: z.string().min(1).nullable(),
   trigger: AutomationRunTriggerV1Schema,
   /**
@@ -1742,6 +1746,7 @@ export const AutomationRunDefinitionV1Schema = z.strictObject({
     textContent: z.string().min(1),
     structuredContent: z.record(z.string(), z.unknown()),
     resourceId: IdSchema.nullable(),
+    /** Host-derived provider references from the canonical activation event. */
   }).nullable(),
   state: z.enum(["pending", "running", "needs_input", "completed", "failed", "stopped"]),
 });
@@ -1817,6 +1822,7 @@ export const AutomationRunSchema = z.object({
   /** The run id, which is also its substream under the automation. */
   id: IdSchema,
   automationId: IdSchema,
+  coordinatorUserId: IdSchema.nullable().optional(),
   triggerType: z.enum(["manual", "schedule", "external_event", "inbound_email"]),
   plannedFor: TimestampSchema.nullable(),
   startedAt: TimestampSchema.nullable(),
@@ -1830,6 +1836,7 @@ export const AutomationDetailSchema = AutomationSummarySchema.extend({
   lifecycle: AutomationLifecycleStateSchema,
   authorUserId: IdSchema,
   runAsUserId: IdSchema,
+  delegationAttention: z.strictObject({ code: SidekickDelegationAttentionCodeSchema, message: z.string() }).nullable().optional(),
   /** The latest submitted definition, or null before the chat has submitted one. */
   currentDefinition: AutomationDraftSchema.nullable(),
   currentDefinitionRevision: z.number().int().nonnegative(),
@@ -3724,6 +3731,27 @@ export const ExecutionPrincipalSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("user"), userId: UserIdSchema }),
   z.object({ type: z.literal("workspace"), workspaceId: WorkspaceIdSchema })
 ]);
+
+/** Host receipt attribution. Contains no credentials or provider cursors. */
+export const ToolExecutionAccountSchema = z.strictObject({
+  sidekickId: IdSchema,
+  connectionId: IdSchema,
+  principal: ExecutionPrincipalSchema,
+  delegatedUserId: UserIdSchema,
+  grantGeneration: z.number().int().nonnegative(),
+}).refine((account) => account.principal.type !== "user" || account.principal.userId === account.delegatedUserId, {
+  path: ["delegatedUserId"], message: "A personal operation's delegate must match its serving principal",
+});
+export type ToolExecutionAccount = z.infer<typeof ToolExecutionAccountSchema>;
+
+export const ToolExecutionAccountRecordSchema = z.strictObject({
+  phase: z.enum(["selected", "refused", "served"]),
+  account: ToolExecutionAccountSchema,
+  originalAccount: ToolExecutionAccountSchema,
+  /** Read compatibility for historical checkpoints; new writes omit this field. */
+  resourceKeys: z.array(z.string().min(1)).optional(),
+});
+export type ToolExecutionAccountRecord = z.infer<typeof ToolExecutionAccountRecordSchema>;
 
 export const SlackOriginAttachmentSchema = z.strictObject({
   id: z.string().min(1).max(255).nullable(),

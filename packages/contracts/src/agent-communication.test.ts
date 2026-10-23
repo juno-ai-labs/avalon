@@ -41,6 +41,14 @@ describe("agent communication contracts", () => {
     expect(StartAgentInputSchema.safeParse({ name: input.name, message: input.message }).success).toBe(false);
   });
 
+  it("rejects host account references supplied through model message tools", () => {
+    const agentId = agentIdForAddress({ parentKind: "automation", parentId, substreamId: main });
+    const sidekickAccountReferences = [{ sidekickId: parentId, connectionId: otherParentId, resourceKeys: ["google:message:mail"] }];
+    expect(StartAgentInputSchema.safeParse({ name: "Reply", description: "Reply to mail", message: "Reply.", sidekickAccountReferences }).success).toBe(false);
+    expect(SendAgentMessageInputSchema.safeParse({ agentId, message: "Reply.", sidekickAccountReferences }).success).toBe(false);
+    expect(ReplyToAgentMessageInputSchema.safeParse({ messageId: otherParentId, message: "Reply.", sidekickAccountReferences }).success).toBe(false);
+  });
+
   it("supports existing attachments on start, send and reply while retaining distinct addressing", () => {
     const content = { message: "", attachmentIds: [parentId] };
     expect(StartAgentInputSchema.parse({ name: "Image", description: "Inspect image", ...content })).toMatchObject(content);

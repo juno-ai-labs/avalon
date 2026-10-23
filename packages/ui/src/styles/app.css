@@ -7343,6 +7343,17 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .sidebar-collapse-footer-toggle { display: flex; }
 .sidebar-drag-guide { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--av-sys-color-text-muted); opacity: .25; pointer-events: none; z-index: 100; }
 
+.sidekick-delegation { margin-top: 0; }
+.sidekick-delegation h2 { font-size: 14px; margin: 0 0 10px; }
+.sidekick-delegation-disclosure { color: var(--av-sys-color-text-muted); font-size: 12px; line-height: 1.5; }
+.sidekick-delegation-disclosure p { margin: 0 0 10px; }
+.sidekick-delegates { list-style: none; margin: 16px 0; padding: 0; display: grid; gap: 14px; }
+.sidekick-delegates li, .sidekick-delegate-inactive { display: flex; align-items: center; gap: 10px; }
+.sidekick-delegate-inactive { margin: 12px 0 16px; color: var(--av-sys-color-text-muted); }
+.sidekick-delegate-copy { min-width: 0; flex: 1; display: grid; gap: 3px; overflow-wrap: anywhere; font-size: 13px; }
+.sidekick-delegate-copy > span { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.sidekick-delegate-copy small { font-size: 11px; color: var(--av-sys-color-text-muted); }
+.sidekick-delegation > button { margin: 4px 0; max-width: 100%; white-space: normal; text-align: left; }
 .settings-account-profile { display: grid; gap: 12px; }
 .settings-support-note { color: var(--av-sys-color-text-muted); font-size: 12px; margin: 0; padding: 0 8px; }
 .settings-account-profile .settings-profile-card { border-radius: 0; }

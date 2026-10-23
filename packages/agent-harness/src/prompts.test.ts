@@ -207,7 +207,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           sidekick: workstreamAutomation,
         }),
-        hash: "5bcf91996b2f7f3993d43b311a0510a971658320eb8fb6cb08c7d48bb6545255",
+        hash: "3d8511c87aa063095c252a4eea75e5f8f53ce975b3a22789d6d812373183c891",
       },
       workstreamName: {
         actual: renderWorkstreamNameMessages({
@@ -395,16 +395,14 @@ describe("prompt renderers", () => {
     expect(prompt).not.toMatch(/\n{3,}/u);
   });
 
-  it("names a room Sidekick's home in its task context and no posting tool in policy", () => {
+  it("names a room Sidekick's home and gives activation-specific permission recovery", () => {
     const prompt = renderWorkstreamSystemPrompt({
       title: "Weekly engineering brief: 2026-08-07",
       objective: "Produce the scheduled weekly engineering brief.",
       sidekick: workstreamAutomation,
     });
 
-    // The home is where the conversation plugin posts by default. The prompt
-    // names the place; the plugin's system message names the tool, because a
-    // tool name in standing policy renders for runs whose plugin is absent.
+    // Permission recovery must reach activations even without authoring tools.
     expect(prompt).toContain('"homeConversationId": "00000000-0000-7000-8000-0000000000aa/00000000-0000-7000-8000-0000000000ab"');
     expect(prompt).toContain('"sidekickId": "00000000-0000-7000-8000-0000000000ac"');
     expect(prompt).toContain('"definitionRevision": 3');
@@ -412,6 +410,10 @@ describe("prompt renderers", () => {
     expect(prompt).toContain("Do not create a replacement Sidekick or schedule its next regular activation just to keep it running.");
     expect(prompt).not.toContain("post_result");
     expect(prompt).not.toMatch(/conversation_[a-z_]+/u);
+    expect(prompt).toContain("alert the owning conversation");
+    expect(prompt).toContain("Successful fallback needs no permission-error message");
+    expect(prompt).toContain("report the unresolved problem once for this run");
+    expect(prompt).toContain("do not claim delivery");
     expect(prompt).not.toContain("# Result delivery");
   });
 

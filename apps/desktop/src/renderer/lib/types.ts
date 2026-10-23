@@ -3,6 +3,7 @@ import type { WorkstreamAppearance } from '@rally/contracts';
 import type {
   AgentModelOverride,
   AutomationDraft as ContractAutomationDraft,
+  SidekickDelegationAttentionCode,
   AutomationLifecycleState as ContractAutomationLifecycleState,
   AutomationPluginActivity,
   AutomationRunStatus as ContractAutomationRunStatus,
@@ -748,6 +749,7 @@ export interface BackgroundTask {
 export interface AutomationRun {
   id: string;
   automationId: string;
+  coordinatorUserId?: string | null;
   triggerType: 'manual' | 'schedule' | 'external_event' | 'inbound_email';
   status: AutomationRunStatus;
   plannedFor: string | null;
@@ -833,6 +835,7 @@ export interface AutomationDetail extends AutomationSummary {
   lifecycle: AutomationLifecycleState;
   authorUserId: string;
   runAsUserId: string;
+  delegationAttention?: { code: SidekickDelegationAttentionCode; message: string } | null;
   /** The latest submitted definition, or null before the chat has submitted one. */
   currentDefinition: AutomationDefinition | null;
   currentDefinitionRevision: number;
