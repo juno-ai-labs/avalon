@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { IdSchema, UserIdSchema, WorkspaceIdSchema } from "./identifiers";
+import { IdSchema, UserIdSchema } from "./identifiers";
 import { PersonalPresentationSchema } from "./onboarding";
 
 /** Shared runtime/advertised inputs: the host supplies identity and provenance. */
@@ -36,9 +36,6 @@ export const SidekickMyDelegationsResultSchema = z.strictObject({
   })),
 });
 export type SidekickMyDelegationsResult = z.infer<typeof SidekickMyDelegationsResultSchema>;
-export const AccountSidekickDelegationsSchema = z.strictObject({
-  organizations: z.array(SidekickMyDelegationsResultSchema.extend({ workspaceId: WorkspaceIdSchema })),
-});
 
 /** Participant-safe attribution from an operation's receipt, never its arguments. */
 export const ToolAccountAttributionSchema = z.strictObject({
@@ -101,5 +98,5 @@ export const SIDEKICK_DELEGATION_ERRORS = {
   sidekick_delegation_membership_unavailable: "Your Organization membership is unavailable. Restore membership before allowing this Sidekick to act as you. You can still withdraw an existing grant.",
   sidekick_delegation_unavailable: "This Sidekick cannot accept enrollment. Refresh its details before trying again. You can still withdraw your own grant.",
   sidekick_delegation_stale_action: "This delegation changed after this request was prepared. Read your current grant. Only a new request from you can allow it again.",
-  sidekick_delegation_list_too_large: "This delegation list exceeds the tool output budget. Inspect it in the Sidekick screen, or Settings → Account → Sidekick delegation for your own grants.",
+  sidekick_delegation_list_too_large: "This delegation list exceeds the tool output budget. Inspect it in the Sidekick screen.",
 } as const;

@@ -18,11 +18,18 @@ implementation and evidence; an unchecked item is not shipped or verified.
   provenance for tools and creation; no autonomous consent tools.
 - [ ] Activation permission-reporting guidance, actionable Needs attention, and
   configured medium fallback model evaluations.
-- [ ] Shared desktop/web Sidekick list, creator disclosure, Account withdrawal
-  controls, all loading/error/offline/pending/unavailable states and attribution.
+- [ ] Shared desktop/web Sidekick list, creator disclosure, all
+  loading/error/offline/pending/unavailable states and attribution.
 - [ ] Real workerd and provider-double tests, production-code negative controls,
   lint, typecheck, real Electron/browser inspection and two-session convergence.
 - [ ] Owning subsystem documents and final requirement-by-requirement audit.
+
+## Scope update
+
+The user removed the dedicated Account withdrawal feature. Its unfinished UI
+and transport work were discarded, and the separate account HTTP route and
+response contract were removed. Sidekick-screen withdrawal, agent own-grant
+lookup/self-withdrawal, delegation execution and activity attribution remain.
 
 ## Evidence
 
@@ -304,8 +311,8 @@ turn an implementation checklist into an assertion that its tests passed.
   inspection remain unverified. Attempting a staged manager visual fixture lost
   the interactive controller; the orphaned Electron process later showed a
   native `write EPIPE` alert from its closed output pipe. That fixture did not
-  produce accepted visual evidence. Account recovery UI, serving-account activity
-  and the complete acceptance audit remain outstanding.
+  produce accepted visual evidence. The Account recovery UI was subsequently
+  removed from scope. The complete acceptance audit remains outstanding.
 
 ### Receipt-backed activity attribution
 
@@ -362,8 +369,8 @@ serving-account activity presentation is wired as described above.
 Historical direct-creation provenance still needs its final audit against any
 existing creation/tool receipts; no new historical provenance service is planned.
 The Sidekick panel and creator disclosure now have the scoped rendering evidence
-above. Account recovery controls, manager/unavailable/loading/pending visual
-states and browser-host acceptance still need their evidence. Do not mark these
+above. Manager/unavailable/loading/pending visual states and browser-host
+acceptance still need their evidence. Do not mark these
 checks as proof of untested UI states, complete execution or model behavior.
 
 The current harness has no model-visible tool-result byte cap

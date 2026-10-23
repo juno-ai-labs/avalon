@@ -300,8 +300,8 @@ would repeat the normal create/allow action instead of explaining it in place.
 **Consequences:** Pending actions are scoped to the affected person. Other
 windows use the existing invalidation path. Run history preserves the coordinator,
 while activity shows receipt-backed serving accounts through the work breakdown.
-Account recovery remains unfinished and is tracked in the
-[implementation plan](PRDs/2026-10-22_sidekick-delegation/plan.md).
+The dedicated Account withdrawal feature was removed at the user's request.
+Sidekick-screen self-withdrawal remains.
 
 ### 2026-10-22 — Share explained disabled controls
 

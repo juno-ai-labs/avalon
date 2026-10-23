@@ -37,13 +37,12 @@ author identity establish no consent. Creation replay never initializes it again
 `sidekick-delegation-service.ts` supplies signed-in self-service and exact
 viewer-authorized UUID, canonical link or name lookup. Named lookup is not limited
 to editable Sidekicks; ambiguous visible names refuse with a stable code.
-Sidekick routes serve `/sidekicks/:id/delegation`; account recovery uses
-`/account/sidekick-delegation`, under identity authentication without Organization
-membership middleware. Its list and withdrawal reveal only the signed-in
-person's own stored grants and labels. D1's `sidekick_delegation_locations` holds
-only user/Organization/region routing references, written before an opt-in can
-commit and retained after membership loss. WorkspaceDO supplies every result;
-the reference confers no access or execution authority.
+Sidekick routes serve `/sidekicks/:id/delegation`. There is no Account settings
+withdrawal screen or dedicated account HTTP endpoint. The agent's own-grant
+lookup and self-withdrawal retain a person's stored grant and safe label after
+access loss. D1's `sidekick_delegation_locations` supplies only the user/
+Organization/region routing references for those tools; WorkspaceDO supplies
+every grant result. The reference confers no access or execution authority.
 
 The `rally:sidekicks` plugin exposes `my_delegations_list`, `delegates_list` and
 `set_my_delegation` only for direct human turns. Authoring uses its normal
@@ -132,8 +131,9 @@ still guard the read. The shared Sidekick screen renders these identities,
 self-service and manager removal without adding authority. Its creation surface
 shows the standing-consent/history disclosure before sending the direct human
 create action. [Shared UI](shared-ui.md#sidekick-delegation) owns pending,
-uncertain-response and offline behavior. Account withdrawal UI and serving-
-account activity presentation remain tracked acceptance work.
+uncertain-response and offline behavior. The dedicated Account withdrawal
+feature was removed at the user's request; Sidekick-screen and agent withdrawal
+remain.
 
 Consent receipt reconciliation is a read through
 `sidekickReadMyDelegationReceipt`, keyed by the host's original effect ID. It
@@ -1376,8 +1376,9 @@ instructions. See [Google connector guidance](connectors.md#google).
 **What changed:** WorkspaceDO stores per-person grants, prepared generations,
 withdrawal tombstones and accepted mutation receipts. Direct human creation and
 self-service use that authority; inherited autonomous identities do not opt in.
-Signed-in account recovery retains access to a person's own grants after they
-lose Organization or Sidekick access. Event, schedule, manual and continued runs
+Agent own-grant discovery retains access to a person's stored grants after they
+lose Organization or Sidekick access; the dedicated Account withdrawal UI/API
+is removed. Event, schedule, manual and continued runs
 share eligibility; each run persists its coordinator independently of legacy
 human access. Migration retains established task accounts and distinguishes
 proven claims from ambiguous creator attribution. Canonical event openings
