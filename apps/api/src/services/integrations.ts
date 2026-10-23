@@ -5626,7 +5626,7 @@ async function loadHarnessTools(
     env,
     input,
     inObjectResourceAttacher,
-    { delegation },
+    delegation ? { delegation } : {},
   );
   const multimodalGenerationPlugin = createAvalonMultimodalGenerationPlugin(
     env,

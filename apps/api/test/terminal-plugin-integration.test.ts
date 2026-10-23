@@ -13,6 +13,7 @@ import { compileTerminalNetworkPolicy } from "../src/services/terminal/network-p
 import { createAvalonTerminalPlugin } from "../src/services/terminal/plugin";
 import type { TerminalGitHubReadGateway } from "../src/services/terminal/repository";
 import { createTestEnv } from "./helpers/cloudflare-test";
+import type { TerminalProviderRpcSession } from "../src/services/terminal/provider-rpc-contract";
 import {
   createTestWorkspaceDO,
   workspaceObjectRpcs,
@@ -279,6 +280,38 @@ describe("Terminal Bind integration", () => {
     expect(sandboxProvider.createSandbox).toHaveBeenCalledTimes(1);
     expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id FROM terminal_workspace"))
       .toEqual({ generation: 1, sandbox_id: "sandbox-1" });
+  });
+
+  it("lets the creator read shared files through the assembled Sidekick authoring inventory", async () => {
+    const { env, input, workspace } = fixture("supported");
+    await workspace.instance.applyMemberStatus({ workspaceId: W, sequence: 1, removed: false, relationship: {
+      workspaceId: W, userId: U, accessClass: "member", role: "owner", status: "active", incarnation: "test-member", revision: 1,
+    } });
+    await workspace.instance.sidekickCreate({ workspaceId: W, automationId: S, authorUserId: U,
+      scope: "workspace", owningWorkstreamId: null, authorityGeneration: 1 });
+    const snapshot = { id: "wizard-sandbox", name: "wizard-sandbox", state: "running" as const, domainAllowList: [] as string[] };
+    // Only the external sandbox provider is doubled; inventory assembly,
+    // delegation, shared-file authority and Terminal execution remain real.
+    const unexpected = async (): Promise<never> => { throw new Error("Unexpected sandbox provider call"); };
+    const session: TerminalProviderRpcSession = {
+      createSandbox: async (request) => ({ ok: true, value: { ...snapshot, name: request.stableName, domainAllowList: request.domainAllowList } }),
+      prepareSandbox: async (_id, allowList) => ({ ok: true, value: { ...snapshot, domainAllowList: allowList } }),
+      runUtilityCommand: async (_id, request) => ({ ok: true, value: { exitCode: 0, stderr: "",
+        stdout: request.operation === "file.read_page" ? JSON.stringify({ content: "Wizard setup works", startLine: 1, endLine: 1,
+          totalLines: 1, truncated: false }) : "0\n" } }),
+      getSandbox: unexpected, recoverSandbox: unexpected, startSandbox: unexpected,
+      stopSandbox: unexpected, archiveSandbox: unexpected, deleteSandbox: unexpected,
+      updateNetworkPolicy: unexpected, configureGitHubReadAccess: unexpected, clearGitHubReadAccess: unexpected,
+      readFile: unexpected, writeFile: unexpected, runCommand: unexpected, cleanupCommand: unexpected,
+    };
+    const tools = await __integrationTesting.loadHarnessTools(createTestEnv({ ...env,
+      TERMINAL_PROVIDER: { createSession: async () => session },
+    }), { ...input, parentKind: "automation" });
+    const terminal = tools.plugins.find((plugin) => plugin.canonicalId === "rally:terminal")!;
+    await expect(terminal.tools.find((tool) => tool.definition.name === "read_file")!.execute!({ filePath: "README.md" }, {
+      workspaceId: W, workstreamId: S, harnessRunId: R, toolCallId: "assembled-wizard-read",
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal,
+    })).resolves.toMatchObject({ output: { content: "Wizard setup works" } });
   });
 
   it("registers the complete deferred plugin without allocating a sandbox", async () => {
