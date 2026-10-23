@@ -437,6 +437,23 @@ describe('SessionGate identity-first ordering', () => {
       expect(close).toHaveBeenCalledOnce();
     });
 
+    it('ends a Pong game on Escape before closing the window, and closes it on the next', async () => {
+      const close = vi.spyOn(window, 'close').mockImplementation(() => undefined);
+      window.history.replaceState({}, '', '/?surface=sidekicks');
+      sessionState.session = workspaceSession;
+      sessionState.api.getWorkspace.mockRejectedValueOnce(new Error('Regional service unavailable.'));
+      renderGate();
+      fireEvent.click(await screen.findByRole('button', { name: 'Play Pong while you wait' }));
+      expect(screen.getByText('Rally 0 · Best 0')).toBeVisible();
+
+      fireEvent.keyDown(document.body, { key: 'Escape' });
+      expect(screen.queryByText('Rally 0 · Best 0')).not.toBeInTheDocument();
+      expect(close).not.toHaveBeenCalled();
+
+      fireEvent.keyDown(document.body, { key: 'Escape' });
+      expect(close).toHaveBeenCalledOnce();
+    });
+
     it('hands the keystroke to the screen once the profile lands, rather than answering it twice', async () => {
       const close = vi.spyOn(window, 'close').mockImplementation(() => undefined);
       window.history.replaceState({}, '', '/?surface=settings');
