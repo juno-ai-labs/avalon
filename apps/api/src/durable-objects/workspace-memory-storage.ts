@@ -1,3 +1,4 @@
+import { memoryTableSchemaConflicts, publicMemoryTable } from "./memory-table-definition";
 import {
   WorkspaceMemoryReceiptResultSchema,
   WorkspaceMemoryScopeSchema,
@@ -490,10 +491,34 @@ export function createWorkspaceMemoryTable(
       request.name,
     ).toArray()[0];
     if (existing) {
-      return WorkspaceMemoryTableCreateResultSchema.parse({
-        outcome: "name_exists",
-        memoryTableId: existing.memory_table_id,
+      const found = workspaceMemoryTableWithColumns(storage, {
+        workspaceId: request.workspaceId, memoryTableId: existing.memory_table_id,
       });
+      if (found.outcome !== "found") throw new Error("memory_table_existing_missing");
+      const fields = memoryTableSchemaConflicts(found.table, found.columns, request);
+      if (fields.length > 0) return {
+        outcome: "schema_conflict", memoryTableId: existing.memory_table_id, fields,
+      };
+      storage.sql.exec(
+        `UPDATE memory_tables SET description = ?, usage_instructions = ?, last_mutation_id = ?, updated_at = ?
+          WHERE memory_table_id = ?`,
+        request.description, request.usageInstructions, request.mutation.memoryTableMutationId,
+        request.at, existing.memory_table_id,
+      );
+      for (const column of request.columns) {
+        storage.sql.exec(
+          `UPDATE memory_table_columns SET description = ? WHERE memory_table_id = ? AND name = ? COLLATE NOCASE`,
+          column.description, existing.memory_table_id, column.name,
+        );
+      }
+      const resultJson = JSON.stringify(publicMemoryTable({ ...found.table,
+        description: request.description, usageInstructions: request.usageInstructions,
+      }, found.columns.map((column) => ({ ...column,
+        description: request.columns.find((declared) => declared.name.toLocaleLowerCase() === column.name.toLocaleLowerCase())!.description,
+      }))));
+      insertTableMutation(storage, request.workspaceId, existing.memory_table_id, request.memoryScopeId,
+        "create", request.mutation, resultJson, request.at);
+      return { outcome: "opened", memoryTableId: existing.memory_table_id, resultJson };
     }
     storage.sql.exec(
       `INSERT INTO memory_tables
