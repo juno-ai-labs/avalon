@@ -14,6 +14,19 @@ describe('stepRally', () => {
     expect(next.best).toBe(1);
   });
 
+  it('returns a fast ball that would cross the person’s paddle within one step', () => {
+    const start = ballAt(serve({ best: 0 }), 23, 100, -360);
+    const next = stepRally(start, 100, 1 / 30);
+    expect(next.ball.vx).toBeGreaterThan(0);
+    expect(next.rally).toBe(1);
+  });
+
+  it('returns a fast ball that would cross Rally’s paddle within one step', () => {
+    const start = { ...ballAt(serve({ best: 0 }), FIELD.width - 23, 100, 360), opponent: 100 };
+    const next = stepRally(start, 100, 1 / 30);
+    expect(next.ball.vx).toBeLessThan(0);
+  });
+
   it('ends the rally on a miss, serves again, and keeps the best', () => {
     const start = { ...ballAt(serve({ best: 4 }), 1, 20, -220), rally: 3 };
     const next = stepRally(start, FIELD.height - 10, 0.05);
