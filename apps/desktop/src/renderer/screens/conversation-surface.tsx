@@ -2086,6 +2086,9 @@ function ConversationSurfaceContent({
     ? { parentKind, parentId: id, substreamId } : null);
   const backgroundAgents = useQuery({
     queryKey: ['workstream-background-agents', id], queryFn: skipToken,
+    // The composer can mount before the socket installs its query defaults.
+    // Pushed counts belong to the session until the directory evicts this parent.
+    gcTime: Number.POSITIVE_INFINITY,
     initialData: null as Record<string, number> | null,
     select: (counts) => counts === null ? null : counts[substreamId] ?? 0,
   });
