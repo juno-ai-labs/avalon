@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { useClickBurst } from '../../lib/easter-eggs';
 
 /** Who made Rally, shown to whoever clicks the version seven times. */
-export const RALLY_CREDITS = ['Adam Juhasz'] as const;
+export const RALLY_CREDITS = ['Adam J', 'Alex T', 'Katherine B', 'Zzyzx'] as const;
 
 const CLICKS = 7;
 const WITHIN_MS = 3_000;
