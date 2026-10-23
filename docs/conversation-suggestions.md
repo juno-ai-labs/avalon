@@ -185,8 +185,8 @@ sentence are fixed strings with one slot: "Merge to **{target}**" and "This
 might be a good time to merge this back into **{target}**."; "Breakout:
 **{subject}**" and "Want to break this out?". The excerpt is the drafted words
 cut by `suggestionExcerpt` to `SUGGESTION_EXCERPT_CHARACTERS` with the ellipsis
-inside the closing quote; the line itself never wraps, and clips as a guard in
-a pane narrower than the budget was set for. The chip lays the title, the
+inside the closing quote. Merge excerpts wrap across the card's full content
+width; other excerpts stay on one line and clip in a narrower pane. The chip lays the title, the
 sentence and the excerpt in a column. Breakout and resolution suggestions keep
 the action pill and Dismiss beside them. The merge pill uses the merge target
 pill's green, the breakout pill neutral like the breakout chips, so the two
@@ -195,8 +195,9 @@ skeleton and the action is disabled; Dismiss works from the first frame.
 Merge suggestions place Merge and **Resolve without merge** side by side below
 the text, wrapping the buttons when needed. Desktop widths add a third **Discard**
 tertiary button with an X and no resting fill or visible border, using the
-existing dismiss action; mobile widths keep the X
-in the top right instead.
+existing dismiss action; mobile widths keep the X in the top right instead.
+Only the mobile title reserves space for that X; the sentence and excerpt use
+the full content width below it.
 Resolve uses the standard secondary button's border, surface and hover colors. This
 uses the host's existing Thread or Breakout resolution action, including its
 pending state, error notice and navigation after success. It needs no drafted
