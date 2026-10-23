@@ -45,8 +45,10 @@ and personal presentation are reused.
 
 The query lives under `['automation', id, 'delegation']`, using the existing
 automation invalidation and window relay. It refreshes on reconnect/focus too.
-Each affected person's action stays pending through acknowledgement and a fresh
-read. No grant is optimistic. A lost response triggers a read, never an automatic
+Each affected person's action stays pending through acknowledgement. The accepted
+result updates the confirmed list immediately and invalidates it for an ordinary
+background refresh; a read failure does not undo the acknowledgement or block
+another action. No grant is optimistic. A lost response triggers a read, never an automatic
 repeat of the write. If that read also fails, the last confirmed list stays and
 Refresh is required before another mutation. Offline actions are disabled and
 never queued for reconnect. Failures use the ordinary acknowledged error popup.
@@ -287,13 +289,17 @@ component test runner is needed for the same implementations.
 **What changed:** The shared Sidekick screen displays allowed identities,
 availability, You/Creator markers, self allow/withdraw and manager removal.
 Creation shows the standing-work and existing-history disclosure before the
-request. Current authority is read after writes, including a lost response.
+request. Acknowledged writes update the confirmed list and refresh in the
+background. An uncertain response requires successful reconciliation before
+another change; a failed background read alone does not lock confirmed controls.
 
 **Why:** People need to understand whose access a Sidekick can use and withdraw
 their own grant without replacing another person or acquiring management rights.
 Automatic creator opt-in also needs its explanation before creation.
 
-**Considered and rejected:** Optimistic grants or offline queued consent could
+**Considered and rejected:** Waiting for a second successful read after an
+acknowledged mutation blocks confirmed controls during an unrelated read failure.
+Optimistic grants or offline queued consent could
 present permission the authority never accepted. A separate confirmation dialog
 would repeat the normal create/allow action instead of explaining it in place.
 
