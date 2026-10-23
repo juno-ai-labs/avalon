@@ -15,22 +15,22 @@ function key(kind: string, value: unknown): string[] {
 }
 
 /** IDs produced by Google's normalizers, never metadata or event prose. */
-export function googleActivityResourceKeys(activity: Pick<NormalizedActivity, "provider" | "eventType" | "resourceType" | "providerResourceId" | "subject">): string[] {
-  if (activity.provider !== "google") return [];
+export function googleActivityResourceIdentity(activity: Pick<NormalizedActivity, "provider" | "eventType" | "resourceType" | "providerResourceId" | "subject">): ConnectorOperationIdentity {
+  if (activity.provider !== "google") return { kind: "account", resourceKeys: [] };
   const subject = activity.subject;
-  if (activity.resourceType === "gmail_thread") return [...new Set([
+  if (activity.resourceType === "gmail_thread") return { kind: "account", resourceKeys: [...new Set([
     ...key("thread", activity.providerResourceId), ...key("thread", subject.threadId), ...key("message", subject.messageId),
-  ])];
+  ])] };
   if (activity.resourceType === "calendar_event") {
     const calendar = subject.calendarId;
-    if (typeof calendar !== "string" || !calendar) return [];
-    return [...key(`event:${calendar}`, activity.providerResourceId ?? subject.eventId),
-      ...(calendar === "primary" ? [] : key("calendar", calendar))];
+    if (typeof calendar !== "string" || !calendar) return { kind: "account", resourceKeys: [] };
+    return { kind: "account", resourceKeys: [...key(`event:${calendar}`, activity.providerResourceId ?? subject.eventId),
+      ...(calendar === "primary" ? [] : key("calendar", calendar))] };
   }
   if (["google_sheet", "google_doc", "drive_file"].includes(activity.resourceType ?? "")) {
-    return key("file", activity.providerResourceId);
+    return { kind: "resource", resourceKeys: key("file", activity.providerResourceId) };
   }
-  return [];
+  return { kind: "account", resourceKeys: [] };
 }
 
 export function googleOperationIdentity(name: string, input: unknown): ConnectorOperationIdentity {

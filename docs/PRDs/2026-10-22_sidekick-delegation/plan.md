@@ -226,6 +226,43 @@ turn an implementation checklist into an assertion that its tests passed.
   Documentation checks passed. No grant
   migration, new retry loop or authorization barrier was introduced.
 
+### Configured source reconciliation
+
+- Authored activity identity now distinguishes portable provider resources from
+  account-relative references. Configured Google files expand through eligible
+  delegates' connections using the existing resource resolver and exact provider
+  IDs, never titles. Private Gmail/calendar sources stay on their configured
+  account. Aliases retain the saved evaluator ID as provenance; queued delivery
+  still checks the current definition and current delegation.
+- Differential updates preserve unchanged registration IDs and sequence cutoffs;
+  new registrations start at the current cutoff. The Drive normalizer supplies
+  the same provider-version occurrence identity through different accounts.
+  Real workerd scenarios verify one run for duplicate observations, a later
+  independent occurrence under the remaining delegate, no creator re-enrollment,
+  no unrelated same-title match and removal after membership loss.
+- Consent and its source wake commit atomically in the existing alarm lane.
+  Connection authority triggers, membership and existing reader-reach
+  invalidations queue reconciliation. Cursor/token writes are excluded. A real
+  connection RPC advances a parked native alarm when a newly enabled account
+  becomes available. Migration 130 also wakes existing active configured
+  Sidekicks; the migrated SQLite upgrade case excludes paused/empty definitions.
+- Twelve production-code negative controls failed their intended assertions:
+  admitting an unconsented owner, copying private references, resetting an
+  unchanged cutoff, resolving by title, dropping alias provenance, dropping the
+  connection trigger, omitting native re-arming, omitting membership invalidation,
+  omitting the upgrade wake, omitting the grant wake, removing the outer consent
+  transaction, and omitting the normalizer's common occurrence key. All were
+  restored. In the transaction control the failed wake left a grant committed;
+  the restored fault case proves that both grant and receipt roll back.
+- Restored checks: 81 real workerd admission/consent/hosted-Sidekick cases,
+  34 Node schema/catalog/alarm-instrumentation cases, and 176 connector cases.
+  Lint, repository-wide typecheck and documentation checks passed. The initial
+  fault fixture asserted an expected RPC exception across the test boundary and
+  produced an unhandled rejection; asserting inside the real owning object
+  corrected the fixture. Reader-reach wake wiring is installed but still needs
+  explicit multi-session acceptance evidence. No provider preflight, global
+  authorization barrier, new retry policy or historical-event replay was added.
+
 ### Next integration constraints
 
 The common admission policy, completed-consent replay checks and interrupted
@@ -234,8 +271,9 @@ read current own-grant generation and eligibility without repeating the consent
 mutation. Medium-model uncertain-response behavior still needs evaluation;
 storage/protocol tests are not semantic model evidence.
 
-Configured sources still need reconciliation across delegates' connection-
-specific Rally resource IDs, preserving provider resource/occurrence identity.
+Configured source reconciliation now preserves connection-specific Rally IDs,
+provider resource/occurrence identity and unchanged registration cutoffs, as
+proved above. Multi-session reader-access invalidation remains to be exercised.
 Canonical activation-event references now retain their source account before
 the first tool read. Rooted background children read that host-derived reference
 from their existing root-run authority without inheriting instructions or tools.

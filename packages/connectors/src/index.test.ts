@@ -1193,6 +1193,16 @@ describe("connectors", () => {
     });
     expectNormalized(incremental.activities);
     expect(requested.filter((url) => url.pathname.endsWith("/changes"))).toHaveLength(2);
+    expect(incremental.activities[0]?.occurrenceKey)
+      .toBe("google:docs.document_changed:drive:file-1:2026-07-31T12:00:00.000Z:changed");
+    const secondAccount = authorizedConnection({
+      ...googleConnection(["drive.read"], baseline.cursor),
+      id: "00000000-0000-4000-8000-000000000989",
+      ownerUserId: "00000000-0000-4000-8000-000000000988",
+    });
+    const sameChanges = await adapter.poll!(secondAccount, neverAborts());
+    expect(sameChanges.activities[0]?.occurrenceKey)
+      .toBe("google:docs.document_changed:drive:file-1:2026-07-31T12:00:00.000Z:changed");
   });
 
   it("hydrates Google resources into bounded, provider-specific context", async () => {

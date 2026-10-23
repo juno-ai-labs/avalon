@@ -910,7 +910,7 @@ export interface ConnectorAdapter {
   operationIdentity?(toolName: string, input: unknown): ConnectorOperationIdentity;
   operationResultKeys?(toolName: string, input: unknown, result: ConnectorToolResult): string[];
   /** Canonical activity fields only; metadata and prose never select an account. */
-  activityResourceKeys?(activity: Pick<NormalizedActivity, "provider" | "eventType" | "resourceType" | "providerResourceId" | "subject">): string[];
+  activityResourceIdentity?(activity: Pick<NormalizedActivity, "provider" | "eventType" | "resourceType" | "providerResourceId" | "subject">): ConnectorOperationIdentity;
   probeResourceAccess?(
     connection: AuthorizedConnectorConnection,
     reference: string,

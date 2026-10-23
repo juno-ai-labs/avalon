@@ -90,6 +90,29 @@ account; a new unrelated search retains its configured task account. Existing
 openings missing the field can read the same source from their canonical event.
 Adapters without a declared activity-reference projection add no reference.
 
+Configured event sources reconcile through `sidekick-source-registrations.ts`.
+The saved evaluator remains the source definition. An adapter's authored
+`activityResourceIdentity` distinguishes globally addressed resources (Google
+files) from account-relative resources (mail and calendars). Only the former
+can expand to another eligible delegate's connection. The ordinary resource
+resolver creates or finds that connection's Rally resource ID by provider ID;
+titles never identify a source. Expanded registrations retain their saved
+`sourceEvaluatorId`, so queued delivery still checks the current definition.
+Unchanged active registrations keep their ID and event-sequence cutoff. New
+ones start at the current cutoff; reconciliation does not replay history.
+Global Google file observations carry a common occurrence key across accounts.
+Providers without a common identity keep their existing deduplication semantics.
+
+The existing WorkspaceDO alarm lane stores `sidekick_delegation_sources` work
+in the same transaction as consent changes. Apply, resume and legacy enrollment
+also queue it. Connection authority changes queue it through migration 130's
+SQL triggers, while membership and reader reach use their existing invalidation
+paths. Cursor and token renewal do not trigger it. The connection RPC arms the
+native alarm after committing the wake. Migration 130 also wakes existing
+active configured Sidekicks. The handler refreshes ordinary eligibility and
+commits only against the still-current active definition revision. This permits
+eventual authorization propagation without a global barrier or provider probe.
+
 Per-operation connector identities, completed-receipt reconciliation, shared
 Terminal authorization and desktop/web controls are tracked by the
 [implementation plan](PRDs/2026-10-22_sidekick-delegation/plan.md) until all
@@ -1363,7 +1386,11 @@ ordering belongs in the one existing owning object.
 **Consequences:** Execution consumers use these grants without deriving
 human access from selected accounts. Migration and creator initialization cannot
 overwrite tombstones. The regional routing index is recovery metadata only;
-consent remains in WorkspaceDO. The implementation plan tracks the remaining
+consent remains in WorkspaceDO. Configured sources expand only through authored
+portable resource identity; differential registration updates preserve queued
+event boundaries. Ordinary connection, membership and reach invalidations wake
+reconciliation through the existing alarm lane, with no provider preflight.
+The implementation plan tracks the remaining
 execution and UI integration before the feature is complete.
 
 Related: [Sidekick delegation PRD](PRDs/2026-10-22_sidekick-delegation/prd.md).
