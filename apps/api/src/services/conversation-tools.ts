@@ -164,6 +164,8 @@ export interface ConversationIndexHit {
 
 /** Everything the executors reach outside themselves. */
 export interface ConversationToolPorts {
+  /** Sidekick activation error path; ordinary posts incur no additional RPC. */
+  notePostRefused?: () => Promise<void>;
   workspace(): Promise<ConversationWorkspacePort>;
   readMessages(target: ConversationToolEntry, page: { beforeSequence: number; limit: number }): Promise<MessageRow[]>;
   /** Appends once per client message id: a replay answers with the message already written. */
@@ -208,6 +210,12 @@ export function conversationToolPorts(env: Env, input: WorkstreamWorkflowInput):
   const messages = (target: ConversationToolEntry) => createMessageObjectPort(env, workspaceId, target.parentId,
     undefined, target.substreamId);
   return {
+    ...(input.automationRun ? { notePostRefused: async () => {
+      const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
+        workspaceDOName(env.AVALON_REGION, workspaceId));
+      await workspace.sidekickNotePermissionReportUnavailable({ workspaceId, automationId: input.automationRun!.automationId,
+        runId: input.automationRun!.runId });
+    } } : {}),
     workspace: async () => durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
       workspaceDOName(env.AVALON_REGION, workspaceId)),
     readMessages: async (target, page) => messages(target).readableMessagesBefore(page),
@@ -910,6 +918,18 @@ export function createConversationsPlugin(
           : `Posted to ${target.title || "the conversation"}`,
       };
     },
+  };
+
+  const executePost = post.execute;
+  post.execute = async (raw, context) => {
+    try { return await executePost(raw, context); }
+    catch (error) {
+      if ((error instanceof ConversationToolError && ["conversation_access_denied", "conversation_archived", "conversation_not_in_scope"].includes(error.code))
+        || (error instanceof Error && error.message.startsWith("conversation_post_refused:"))) {
+        await ports.notePostRefused?.();
+      }
+      throw error;
+    }
   };
 
   const attach: HarnessTool = {

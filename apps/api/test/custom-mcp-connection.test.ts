@@ -45,13 +45,16 @@ afterEach(() => {
 
 describe("custom MCP connections", () => {
   it("edits a saved legacy MCP recommendation through the current catalog ID", async () => {
-    const { auth, env, stub } = fixture();
+    const { auth, env, stub, workspace } = fixture();
     stubMcpServer([READ_TOOL]);
     await new ConnectionService(env, auth).createCustomMcp({
       displayName: "Rally Engineering", scope: "workspace", serverUrl: SERVER_URL,
       requestHeaders: { "X-Api-Key": "secret-value" }, toolPolicy: "all_tools",
     });
     const input = { ...catalogWorkflowInput(), parentKind: "automation" as const };
+    await workspace.instance.sidekickCreate({ workspaceId: WORKSPACE_ID, automationId: input.parentId,
+      authorUserId: USER_ID, scope: "personal", owningWorkstreamId: null, authorityGeneration: 1,
+      creatorConsent: { requestId: crypto.randomUUID() } });
     const saved: AutomationDraft = {
       definitionVersion: 2, name: "Engineering", description: "Inspect Rally", overview: "Inspect Rally",
       instructions: "Inspect the selected Thread.", triggers: [{ type: "manual" }], requiredCapabilities: [],
@@ -59,8 +62,8 @@ describe("custom MCP connections", () => {
       followUpQuestion: null, elicitation: null, ready: true,
       recommendedPlugins: [{ pluginId: "plugin_custom_mcp", recommendedTools: [], reason: "Inspect Rally" }],
     };
-    // Only the Sidekick RPC boundary is doubled; the connection lookup executes
-    // against the real WorkspaceDO schema. Inference is not needed for this edit.
+    // Definition RPCs are doubled; connections and delegation execute against
+    // the real WorkspaceDO schema. Inference is not needed for this edit.
     const saveDefinition = vi.fn(async () => ({ definitionRevision: 4 }));
     Object.assign(stub, {
       sidekickReadDetails: async () => [{
@@ -601,7 +604,7 @@ function fixture() {
     register: (created) => { databases.push(created); },
   });
   const stub = {
-    ...workspaceObjectRpcs(workspace.instance, ["executeRuntimeSql"]),
+    ...workspaceObjectRpcs(workspace.instance, ["executeRuntimeSql", "sidekickReadExecutionDelegation"]),
     publishSync: async () => 0,
   };
   const workspaceObjects: Env["WORKSPACE_DOS"] = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
@@ -618,6 +621,7 @@ function fixture() {
     role: "owner",
   };
   return {
+    workspace,
     database,
     auth,
     stub,

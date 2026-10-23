@@ -28,6 +28,22 @@ function terminalPlugin(tool: HarnessTool): HarnessPlugin {
 }
 
 describe("Terminal command receipt recovery", () => {
+  it("leaves a provider-key write unresolved when its original key is missing", async () => {
+    const execute = vi.fn(async () => ({ output: {}, summary: "Should not run" }));
+    const plugin = terminalPlugin({
+      definition: { name: "recover", description: "Recover", capability: "test.recover", mode: "write",
+        idempotency: "provider_key", inputSchema: { type: "object" } },
+      reenterable: true, execute,
+    });
+    await expect(__integrationTesting.reenterInterruptedWrite({
+      row: { id: RECEIPT, status: "started", inputHash: "same", inputJson: "{}",
+        attemptStartedAt: ATTEMPT_STARTED_AT, providerIdempotencyKey: null },
+      expectedInputHash: "same", policyMatches: true,
+      expectedPolicy: { pluginId: "rally:terminal", definition: plugin.tools[0]!.definition }, plugins: [plugin], context,
+    })).resolves.toBeNull();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it.each(["landed", "unknown"] as const)("disposes the recovery deadline when reconciliation is %s", async (outcome) => {
     vi.useFakeTimers();
     try {

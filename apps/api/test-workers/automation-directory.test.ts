@@ -487,7 +487,7 @@ describe("automation directory", () => {
     expect(detail.appearance).toBeUndefined();
   });
 
-  it("republishes who a Sidekick runs as when somebody takes it over, so search follows the handoff", async () => {
+  it("retains a claimant's human search access without replacing the Sidekick's creator preference", async () => {
     const automationId = await createAndPublish("workstream");
     const [group] = await searchAudienceGroupIds([searchAudienceGroup.sidekick(automationId)]);
     const audience = (userId: string) => workspaceStub().readSearchAudience({ workspaceId: WORKSPACE_ID, userId });
@@ -510,7 +510,10 @@ describe("automation directory", () => {
       actor: { userId: MEMBER_ID, actorRole: "member", participantOfOwningWorkstream: false },
     });
     expect(claim.changed).toBe(true);
-    expect((await directoryRow(automationId)).run_as_user_id).toBe(MEMBER_ID);
+    expect((await directoryRow(automationId)).run_as_user_id).toBe(AUTHOR_ID);
+    expect(await workspaceStub().sidekickReadExecutionDelegation({ workspaceId: WORKSPACE_ID, automationId }))
+      .toMatchObject({ creatorUserId: AUTHOR_ID, delegates: expect.arrayContaining([{ userId: MEMBER_ID,
+        generation: 1, grantedAt: expect.any(Number) }]) });
     expect(await audience(MEMBER_ID)).toContain(group);
   });
 

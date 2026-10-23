@@ -89,12 +89,13 @@ export const SidekickAccountReferenceSchema = z.strictObject({
   sidekickId: IdSchema, connectionId: IdSchema, resourceKeys: z.array(z.string().min(1)),
 });
 export type SidekickAccountReference = z.infer<typeof SidekickAccountReferenceSchema>;
-export const SidekickDelegationAttentionCodeSchema = z.enum(["no_eligible_delegate", "event_no_eligible_delegate", "coordinator_unavailable"]);
+export const SidekickDelegationAttentionCodeSchema = z.enum(["no_eligible_delegate", "event_no_eligible_delegate", "coordinator_unavailable", "permission_report_unavailable"]);
 export type SidekickDelegationAttentionCode = z.infer<typeof SidekickDelegationAttentionCodeSchema>;
 export const SIDEKICK_DELEGATION_ATTENTION_MESSAGES: Record<SidekickDelegationAttentionCode, string> = {
   no_eligible_delegate: "Needs attention: no delegated user is available",
   event_no_eligible_delegate: "Needs attention: a configured source has no eligible delegated account. Opt in with an account that has access to that source.",
   coordinator_unavailable: "Needs attention: the coordinating delegate is unavailable. Restore their delegation and access, or start a new run with an available delegate.",
+  permission_report_unavailable: "Needs attention: a message could not reach its destination. Restore conversation access and rerun the blocked work; no delivery was confirmed.",
 };
 
 export const SIDEKICK_DELEGATION_ERRORS = {

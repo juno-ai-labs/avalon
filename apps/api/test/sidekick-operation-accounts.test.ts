@@ -265,4 +265,27 @@ describe("Sidekick operation account selection over durable receipts", () => {
     expect(result.executionAccount.principal).toEqual({ type: "workspace", workspaceId: id(1) });
     expect(result.output).toMatchObject({ servedThrough: { scope: "workspace", userId: null } });
   });
+
+  it("keeps an uncertain Organization write with its original delegate across withdrawal and regrant", async () => {
+    const f = fixture(), call = f.context("write");
+    const organization: SidekickAccountConnection = { connectionId: id(9), scope: "workspace", ownerUserId: null, modelPluginId: "plugin_org" };
+    const options = { ...f.options(call), requested: organization, mode: "write" as const,
+      selection: { connectionId: id(9) }, identity: { kind: "account" as const, resourceKeys: [] } };
+    await expect(executeSidekickAccountOperation({ ...options, execute: async () => {
+      throw new TypeError("Response lost");
+    } })).rejects.toThrow("Response lost");
+    const withdrawn = authority();
+    withdrawn.delegates = withdrawn.delegates.filter((grant) => grant.userId !== creator);
+    await expect(executeSidekickAccountOperation({ ...options, authority: withdrawn, coordinatorUserId: other }))
+      .rejects.toThrow("originating delegate is unavailable");
+    expect(f.calls).toEqual([]);
+    const regranted = authority();
+    regranted.delegates[0]!.generation = 11;
+    const result = await executeSidekickAccountOperation({ ...options, authority: regranted, coordinatorUserId: other });
+    expect(result.executionAccount).toMatchObject({ delegatedUserId: creator, grantGeneration: 11,
+      principal: { type: "workspace", workspaceId: id(1) } });
+    expect(await f.receipts.executionAccount({ runId: call.harnessRunId, effectIntentId: call.effectIntentId! }))
+      .toMatchObject({ originalAccount: { delegatedUserId: creator, grantGeneration: 7 },
+        account: { delegatedUserId: creator, grantGeneration: 11 } });
+  });
 });
