@@ -49,6 +49,7 @@ import { IconSearch } from '@tabler/icons-react';
 import { useDownloadedUpdate } from '../lib/use-downloaded-update';
 import { OrganizationUsageMenuItem } from './organization-usage';
 import { WorkspaceAccountMenu } from './workspace-account-menu';
+import { KonamiEgg } from './easter-eggs/konami';
 import { useDeviceTimezoneSync } from '../lib/device-timezone';
 
 interface AppShellProps extends PropsWithChildren {
@@ -573,6 +574,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           }
         }} />}
       <AttachmentLightbox key={`lightbox:${searchIdentity}`} preview={searchPreview?.identity === searchIdentity ? searchPreview.preview : null} onClose={() => setSearchPreview(null)} />
+      <KonamiEgg />
     </>
   );
 }
