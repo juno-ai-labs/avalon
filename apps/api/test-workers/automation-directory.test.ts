@@ -487,11 +487,11 @@ describe("automation directory", () => {
     expect(detail.appearance).toBeUndefined();
   });
 
-  it("republishes who a Sidekick runs as when somebody takes it over, so search follows the handoff", async () => {
+  it("keeps a claimant's human search access tied to the home without changing creator preference", async () => {
     const automationId = await createAndPublish("workstream");
     const [group] = await searchAudienceGroupIds([searchAudienceGroup.sidekick(automationId)]);
     const audience = (userId: string) => workspaceStub().readSearchAudience({ workspaceId: WORKSPACE_ID, userId });
-    // The member is not in the owning room, so only running the Sidekick lets them search it.
+    // The member is not in the owning room and cannot search its Sidekick.
     expect(await audience(MEMBER_ID)).not.toContain(group);
     // Taking it over is for whoever may manage the room; a grant on the room
     // makes the member one, the way sharing a Channel does.
@@ -510,8 +510,19 @@ describe("automation directory", () => {
       actor: { userId: MEMBER_ID, actorRole: "member", participantOfOwningWorkstream: false },
     });
     expect(claim.changed).toBe(true);
-    expect((await directoryRow(automationId)).run_as_user_id).toBe(MEMBER_ID);
+    expect((await directoryRow(automationId)).run_as_user_id).toBe(AUTHOR_ID);
+    expect(await workspaceStub().sidekickReadExecutionDelegation({ workspaceId: WORKSPACE_ID, automationId }))
+      .toMatchObject({ creatorUserId: AUTHOR_ID, delegates: expect.arrayContaining([{ userId: MEMBER_ID,
+        generation: 1, grantedAt: expect.any(Number) }]) });
     expect(await audience(MEMBER_ID)).toContain(group);
+    await withHostedParent(workspaceStub(), ROOM_ID, (parent) => {
+      const grants = (parent as unknown as { scopeGrants(address: { workspaceId: string; parentId: string }): ScopeGrantStorage })
+        .scopeGrants({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID });
+      expect(grants.mutate({ operationId: crypto.randomUUID(), actorUserId: AUTHOR_ID, userId: MEMBER_ID,
+        target: { kind: "workstream", workspaceId: WORKSPACE_ID, parentId: ROOM_ID }, active: false, expectedRevision: grants.read(MEMBER_ID, { kind: "workstream", workspaceId: WORKSPACE_ID, parentId: ROOM_ID })!.revision },
+      "existing-member")).toMatchObject({ status: "committed" });
+    });
+    expect(await audience(MEMBER_ID)).not.toContain(group);
   });
 
   it("names every automation for a member's revocation, and a room's own for a lost room", async () => {

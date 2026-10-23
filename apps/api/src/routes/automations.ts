@@ -9,12 +9,14 @@ import {
   WorkstreamAutomationSummarySchema,
   WorkstreamAppearancePatchSchema,
   IdSchema,
+  SidekickDelegatesResultSchema, SidekickDelegationMutationResultSchema,
 } from "@rally/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { getAuth, getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { workspaceRealtimeInvalidation } from "../middleware/workspace-realtime";
 import { AutomationService } from "../services/automation-service";
+import { SidekickDelegationService } from "../services/sidekick-delegation-service";
 
 const idParam = z.object({ id: IdSchema });
 const runHeaders = z.object({ "idempotency-key": z.string().min(8).max(120) });
@@ -61,6 +63,19 @@ automationRoutes.get("/:id", zValidator("param", idParam), async (c) =>
   c.json(AutomationDetailSchema.parse(detailResponse(
     await new AutomationService(c.env, getWorkspaceAuth(c)).detail(c.req.valid("param").id),
   ))));
+automationRoutes.get("/:id/delegation", zValidator("param", idParam), async (c) => {
+  const auth = getWorkspaceAuth(c);
+  return c.json(SidekickDelegatesResultSchema.parse(await new SidekickDelegationService(c.env, auth.workspaceId, auth.userId)
+    .listDelegates(c.req.valid("param").id)));
+});
+automationRoutes.post("/:id/delegation", zValidator("param", idParam), zValidator("json", z.strictObject({
+  allowed: z.boolean(), operationId: IdSchema,
+})), async (c) => {
+  const auth = getWorkspaceAuth(c);
+  const input = c.req.valid("json");
+  return c.json(SidekickDelegationMutationResultSchema.parse(await new SidekickDelegationService(c.env, auth.workspaceId, auth.userId)
+    .setOwn(c.req.valid("param").id, input.allowed, input.operationId, "self_service")));
+});
 automationRoutes.post("/:id/run", zValidator("param", idParam), zValidator("header", runHeaders), async (c) => c.json(
   StartedRunSchema.parse(await new AutomationService(c.env, getWorkspaceAuth(c)).runNow(
     c.req.valid("param").id,

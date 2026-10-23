@@ -205,6 +205,8 @@ export const ModelFacingExternalEventPredicateV1Schema = z.union([
 
 export const ExternalEventEvaluatorV1Schema = z.strictObject({
   evaluatorId: IdSchema.brand<"ExternalEventEvaluatorId">(),
+  /** Host-only expansion of a configured rule through another delegated connection. */
+  sourceEvaluatorId: IdSchema.optional(),
   source: z.strictObject({
     connectorType: ConnectorTypeSchema,
     connectionId: IdSchema.brand<"ConnectionId">(),
@@ -370,6 +372,10 @@ export const WorkspaceExternalEventSchema = z.strictObject({
   occurredAt: z.number().int().nonnegative(),
   audienceUserIds: z.array(IdSchema),
   audienceKind: z.enum(["workspace", "restricted"]),
+  /** Host-written source identity. Older queued deliveries resolve this from their registration. */
+  sourceConnectionId: IdSchema.optional(),
+  sourceConnectionScope: z.enum(["personal", "workspace"]).optional(),
+  sourceConnectionOwnerUserId: IdSchema.nullable().optional(),
 });
 export type WorkspaceExternalEvent = z.infer<typeof WorkspaceExternalEventSchema>;
 

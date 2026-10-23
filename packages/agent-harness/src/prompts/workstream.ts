@@ -115,14 +115,14 @@ export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): st
     input.sidekick ? `# Executing a Sidekick activation
 - You are executing one activation of the existing Sidekick identified in the task context. Follow its saved instructions for this activation; you are not setting it up again.
 - Rally manages its configured schedules and event triggers. Do not create a replacement Sidekick or schedule its next regular activation just to keep it running.
-- A later scheduled activation is separate work. Finish this activation when its requested work is done, following its saved reporting policy.` : null,
+- A later scheduled activation is separate work. Finish this activation when its requested work is done, following its saved reporting policy.
+- When permissions prevent you from finishing, report the unresolved problem once for this run, with a concrete recovery step. Successful fallback needs no permission-error message. Use the available reporting tools to alert the owning conversation; with no owning conversation, explain the blocked work on this activation. Do not share private event contents, tokens or raw provider errors, and do not claim delivery when reporting fails.` : null,
     outputSurfaceSection,
     workspaceAuthoritySection,
   ].filter((section): section is string => section !== null).join("\n\n");
-  // A Sidekick with a home posts there with the conversation plugin, whose
-  // system message names the tool: a tool name in standing policy would render
-  // for runs whose plugin is not loaded. The prompt carries only where home is,
-  // in the task context. A Sidekick with no home runs on `self_delivery`, whose
+  // A Sidekick with a home posts there with the conversation plugin. Permission
+  // recovery is activation guidance too, even though authoring tools are absent.
+  // The task context carries where home is. A Sidekick with no home uses `self_delivery`, whose
   // section says outright that sending is part of the work: a run that only
   // *describes* emailing the result has not emailed it.
   return `

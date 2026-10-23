@@ -41,6 +41,19 @@ bytes never serve as a permission lease.
 
 ## Sidekick authoring and loading
 
+Sidekick delegation is separate from human reader/manager access. WorkspaceDO
+stores per-user grants with membership incarnations, ordered mutation receipts
+and withdrawal tombstones. [Sidekick lifecycle](automation-lifecycle.md#delegation-consent-authority)
+owns mutation ordering and rollout. Creation immediately enrolls the creator,
+including autonomous creation. Agent tools may target any current Organization
+user; the execution actor remains host-owned and needs Sidekick access to change
+another user. Target enrollment needs active membership. Delegation grants no
+human reader or manager rights, and execution still requires ordinary eligibility
+and provider access. No direct-human consent classifier or self-only agent
+restriction is applied. Own withdrawal and safe stored-label recovery remain
+available after access loss. Receipt replay never prepares a fresh grant and a
+newer withdrawal invalidates older allow acknowledgements.
+
 Conversational publication resolves the current workspace membership role and
 owning-workstream participation through the same actor path as management routes.
 A ready model submission publishes under that actor, while automation run contexts

@@ -197,10 +197,19 @@ tools are opted in explicitly, while hosted MCP schemas/results remain untouched
 
 - A personal connection can be used only by its owner principal.
 - A workspace connection is an organization capability: every ad-hoc work stream in that workspace receives all tools granted to the connection. Those tool calls execute as the workspace principal, even when the run was started by a member.
-- Workspace automations remain explicitly bound to selected workspace connections so a published automation cannot silently change providers or accounts.
+- Sidekicks retain configured source bindings; delegation and the selected operation identity govern their use independently of ownership scope.
 - A work-stream participant does not expose their personal connections by joining.
 - Tools require both a manifest capability and a capability recorded on the connection.
 - Credentials are decrypted only for the duration of a backend operation.
+
+Sidekick event matching and delivery use that owner's eligible consent rather
+than the Sidekick's ownership scope. A Thread- or Organization-owned Sidekick
+can receive a personal event only while the owner is an eligible delegate;
+restricted workspace events require an eligible delegate inside the real
+audience. This standing consent covers the Sidekick's configured sharing and
+existing shared history. It does not widen ordinary Thread attachments or
+connector event visibility. [Sidekick lifecycle](automation-lifecycle.md#delegation-consent-authority)
+owns the common admission policy, coordinator identity and migration.
 
 Hosted MCP personal connections add one more layer without weakening those
 rules. Their static connector descriptor supplies trusted catalog prose and
@@ -1603,6 +1612,8 @@ independent change condition, mixed batches, and URL/metadata merge behavior.
 
 | Suite | Covers |
 | --- | --- |
+| `packages/connectors/src/google-operation-identity.test.ts` | Code-authored file, mail and calendar reference projection from tool results and canonical normalized activities. |
+| `apps/api/test/sidekick-operation-accounts.test.ts`, `apps/api/test/connector-resource-access.test.ts` | Independent delegated operation selection, refusal-only fallback, read account-checkpoint bypass, exact uncertain-write recovery and actual assembled Google credential selection with provider HTTP doubles. |
 | `apps/desktop/src/renderer/lib/connector-connection-card.test.ts`, `apps/desktop/src/renderer/lib/transcript.test.ts`, `apps/desktop/src/renderer/components/connector-mentions.test.tsx`, `apps/desktop/src/renderer/components/workstream-blocks.test.tsx` | Display compatibility, adjacent card deduplication, hidden-work visibility, known-provider fallback, guest visibility, and update/reload actions with live progress. |
 | `apps/api/test/connector-credential-freshness.test.ts` | Both halves of the freshness contract. Its conformance half **enumerates the registry rather than a hand-written list**, so a connector added later is enrolled by existing: for every adapter that can refresh a credential, a provider that rejects the token must be answered with a refresh and a retry. An adapter whose health check does not present the connection's expiring credential — Notion introspects a token in the request body under the integration's own client credentials — declares that in the fixture table, so the exemption is a reviewable fact rather than a silent pass. |
 | `apps/api/test/connector-credential-refresh.test.ts` | The lease, the serialized rotation, the adopt-don't-redeem path, and that a successful refresh heals the row. |
@@ -1653,6 +1664,24 @@ identity to the canonical resource transaction. `check_resource_access` omits
 this internal registration metadata from its existing access-only result. See [Sidekick resource binding](automation-lifecycle.md) for setup
 and receipt replay.
 
+### Sidekick delegation and provider recovery
+
+Native tools reuse the existing pre-effect access-refusal contract for eligible
+delegate fallback. Empty results, transient failures and uncertain effects do
+not trigger fallback. Hosted MCP inventories remain tied to their selected
+connection. Each operation selects independently, without task-account,
+resource/reply/page bindings or model account selectors.
+
+Calendar creation uses the existing receipt-derived provider key as a stable
+event ID for timed, all-day and recurring events. A duplicate-ID response reads
+that exact event back through the same account, requiring `calendar.read`,
+without overwriting subsequent edits. Other conflicts and failed readbacks stay
+unresolved. This follows [Google's caller-generated event ID guidance](https://developers.google.com/workspace/calendar/api/guides/create-events).
+Recovery requires an explicit calendar ID (including `primary`) in the original
+arguments. An omitted default or a calendar name may resolve elsewhere after
+interruption, so it stays unresolved instead of risking a second event. Old
+creates without a recorded provider key cannot use this recovery path.
+
 ## Changelog
 
 ### 2026-10-22 — Report shortened Sheets cell text
@@ -1671,6 +1700,37 @@ source or an explicit report of missing data.
 
 Pull request: [#1421](https://github.com/juno-ai-labs/avalon/pull/1421).
 
+### 2026-10-22 — Admit Sidekick events through explicit delegation
+
+**What changed:** Matching and delivery accept a personal event for any Sidekick
+scope through the eligible source owner's consent. Restricted workspace events
+require an eligible delegate inside their actual audience. Authored Google
+tools permit access-refusal fallback across eligible owners. The authored
+`isPortableActivityResource` distinction controls configured-source expansion: Google files can register through eligible
+delegates' connections using canonical provider IDs; Gmail and Calendar IDs
+remain on their configured account. Google Drive file observations share a
+provider-version occurrence key across accounts, preserving one run when the
+same change arrives through several registrations. No such cross-account
+identity is asserted for private mail or calendar observations.
+Calendar creates now retain a receipt-key event ID; lost responses recover the
+same event through its original account using the existing harness recovery
+path. Historical Google surfaces remain compatible for unchanged operations.
+
+**Why:** The ownership-scope shortcut discarded a Thread-owned Sidekick's
+authorized Sheet changes while an hourly read could proceed.
+An uncertain write also needs an actual provider recovery mechanism: selecting
+the original account alone cannot establish whether its effect happened.
+
+**Considered and rejected:** Extending the old privacy shortcut to schedules
+would restrict the requested standing consent for configured work and shared
+Sidekick history.
+
+**Consequences:** Ordinary resource attachments retain their existing audience rules.
+Authorization uses normal eventually consistent views, with no extra provider
+preflight. [Sidekick lifecycle](automation-lifecycle.md#2026-10-22--record-consent-independently-of-sidekick-ownership)
+owns the complete mechanism and rollout constraints.
+
+Related: [Sidekick delegation PRD](PRDs/2026-10-22_sidekick-delegation/prd.md).
 
 ### 2026-10-21 — Google credentials expose separate product bundles
 

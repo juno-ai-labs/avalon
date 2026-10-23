@@ -3272,7 +3272,7 @@ describe("Slack replies routed by external conversation bindings", () => {
       workspaceRpcs: {
         sidekickReadRunState: async (request: Record<string, unknown>) => {
           reads.push(request);
-          return { state, lifecycle, completedAt: null };
+          return { state, lifecycle, completedAt: null, coordinatorEligible: true };
         },
       },
     };

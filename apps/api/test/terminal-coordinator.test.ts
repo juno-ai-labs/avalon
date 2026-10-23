@@ -1166,7 +1166,7 @@ describe("Terminal sandbox coordinator", () => {
       .toEqual({ generation: 1, sandbox_id: "sandbox-1" });
   });
 
-  it.each([false, true])("only lets a primary Sidekick run reset changed sandbox permissions (background=%s)", async (backgroundAgent) => {
+  it.each([false, true])("retains pre-delegation Sidekick files for another eligible coordinator (background=%s)", async (backgroundAgent) => {
     const { objectStore, env, provider, clock } = fixture();
     const child = "00000000-0000-4000-8000-000000000088";
     const childRun = "00000000-0000-4000-8000-000000000089";
@@ -1190,20 +1190,13 @@ describe("Terminal sandbox coordinator", () => {
     await wizard.release(context());
     const activation = new TerminalSandboxCoordinator(
       env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock,
-      undefined, false, undefined, { ...await scope(child, backgroundAgent), runsPort },
+      undefined, false, undefined, { ...await scope(child, backgroundAgent), runsPort, sharedFileUserId: USER_ID },
     );
     const nextContext = { ...context(otherUser), harnessRunId: childRun, toolCallId: "sidekick-next" };
-    if (backgroundAgent) {
-      await expect(activation.acquire(nextContext)).rejects.toMatchObject({ code: "sandbox_authority_mismatch" });
-      expect(provider.deleteSandbox).not.toHaveBeenCalled();
-      expect(workstreamObjectGet(objectStore, "SELECT generation FROM terminal_workspace WHERE id = 1"))
-        .toEqual({ generation: 1 });
-    } else {
-      await expect(activation.acquire(nextContext)).resolves.toMatchObject({ providerSandboxId: "sandbox-2", generation: 2 });
-      expect(provider.deleteSandbox).toHaveBeenCalledWith("sandbox-1");
-      expect(workstreamObjectGet(objectStore, "SELECT generation FROM terminal_workspace WHERE id = 1"))
-        .toEqual({ generation: 2 });
-    }
+    await expect(activation.acquire(nextContext)).resolves.toMatchObject({ providerSandboxId: "sandbox-1", generation: 1 });
+    expect(provider.deleteSandbox).not.toHaveBeenCalled();
+    expect(workstreamObjectGet(objectStore, "SELECT generation FROM terminal_workspace WHERE id = 1"))
+      .toEqual({ generation: 1 });
   });
 
   it("judges each import by the conversation whose attachment authorized it", async () => {

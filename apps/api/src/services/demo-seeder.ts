@@ -565,6 +565,8 @@ export async function applyDemoSeedAction(
         scope: action.scope,
         owningWorkstreamId: null,
         automationId: sidekickId,
+        // The operator-authored demo plays this creation as its cast member,
+        // including creator opt-in, before starting the scripted briefing.
       });
       const service = new AutomationService(env, auth);
       // Publishes as well as records: `saveDefinition` applies a ready

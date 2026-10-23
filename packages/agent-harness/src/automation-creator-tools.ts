@@ -591,9 +591,11 @@ To revise this Sidekick, read its current definition with sidekick_sidekicks_lis
 Preserve configuration unrelated to the requested change.
 
 Use the scope already selected. Do not ask participants to choose it again.
-- "personal" belongs to the requester and uses their connections.
-- "workspace" belongs to the admins and uses the Organization's shared connections.
+- "personal" belongs to the requester.
+- "workspace" belongs to the Organization and is managed by its admins.
 - "workstream" belongs to its owning Thread and follows that Thread's management permissions.
+Every scope can use eligible delegates' personal connections and authorized Organization
+connections. Scope determines ownership and management, not whose account serves an operation.
 Workstream ownership cannot change. Before first publication, switch between
 personal and workspace only when explicitly requested. Published scope cannot change.
 
@@ -603,7 +605,7 @@ Load and inspect any required plugins. Inspect relevant resources and sample inp
 resolve their IDs and formats. Use tools to resolve missing details before asking questions.
 
 Resources in the Sidekick's home and attached conversations are available under
-the run-as person's permissions. Known Rally resource IDs can also be read under
+the execution user's current permissions. Known Rally resource IDs can also be read under
 those permissions without an attachment. Prefer attaching intended resources for
 clarity; an omitted attachment must not block an authorized read.
 
@@ -635,9 +637,10 @@ to send to an inbox, channel, DM or document.
 Scheduled result delivery to a workstream is limited to the owning workstream.
 
 The wizard, runs and background agents share one Terminal sandbox; other Sidekicks
-and the requesting Thread have separate sandboxes. Only the run-as person can use
-these shared files; other editors can still configure the Sidekick. Files can be
-lost, so save resource IDs, file recovery steps and shared-table access instructions.
+and the requesting Thread have separate sandboxes. Eligible delegates can use
+these shared files; changing coordinator or withdrawing delegation does not erase completed
+imports or files. Shell commands retain one selected repository connection and do not retry
+across accounts. Files can be lost, so save resource IDs, file recovery steps and shared-table access instructions.
 Terminal publications belong to the home conversation when it has one.
 
 Runs can overlap; Terminal locks only one tool call at a time. For runs updating
@@ -654,7 +657,9 @@ A ready submission saves and activates immediately unless an existing pause must
 Do not ask the person to press Create or Apply.
 Saving an instruction-only Skill makes it available to load; it does not start a run.
 
-A personal or workstream Sidekick may use the run-as person's personal connection.
+Every Sidekick scope may use its eligible delegates' personal connections and authorized
+Organization connections. Configuring a source grants no delegation; its owner must be an
+eligible delegate before execution can use that personal connection.
 For work needing a connector, once required details are complete and an inspected
 plugin supports the work, submit even if a connection check or another agent claims a blocker. Report an
 actual refusal exactly. After saving, briefly say what was saved or what

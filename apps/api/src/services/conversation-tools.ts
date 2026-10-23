@@ -20,6 +20,7 @@ import {
   type WorkstreamWorkflowInput,
 } from "@rally/contracts";
 import { describeZodIssues } from "@rally/contracts/zod-diagnostics";
+import { logWarn, diagnosticErrorCode } from "../observability/logger";
 import { truncateUtf16Safe } from "@rally/contracts/text";
 import { z } from "zod";
 
@@ -164,6 +165,8 @@ export interface ConversationIndexHit {
 
 /** Everything the executors reach outside themselves. */
 export interface ConversationToolPorts {
+  /** Sidekick activation error path; ordinary posts incur no additional RPC. */
+  notePostRefused?: () => Promise<void>;
   workspace(): Promise<ConversationWorkspacePort>;
   readMessages(target: ConversationToolEntry, page: { beforeSequence: number; limit: number }): Promise<MessageRow[]>;
   /** Appends once per client message id: a replay answers with the message already written. */
@@ -208,6 +211,20 @@ export function conversationToolPorts(env: Env, input: WorkstreamWorkflowInput):
   const messages = (target: ConversationToolEntry) => createMessageObjectPort(env, workspaceId, target.parentId,
     undefined, target.substreamId);
   return {
+    ...(input.automationRun ? { notePostRefused: async () => {
+      try {
+        const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
+          workspaceDOName(env.AVALON_REGION, workspaceId));
+        await workspace.sidekickNotePermissionReportUnavailable({ workspaceId, automationId: input.automationRun!.automationId,
+          runId: input.automationRun!.runId });
+      } catch (error) {
+        // Attention is diagnostic; its failure must not replace the posting
+        // refusal the model needs to explain and recover from.
+        logWarn(env, "sidekick_permission_attention_failed", { workspace_id: workspaceId,
+          automation_id: input.automationRun!.automationId, run_id: input.automationRun!.runId,
+          code: diagnosticErrorCode(error, "permission_attention_failed") });
+      }
+    } } : {}),
     workspace: async () => durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
       workspaceDOName(env.AVALON_REGION, workspaceId)),
     readMessages: async (target, page) => messages(target).readableMessagesBefore(page),
@@ -912,6 +929,18 @@ export function createConversationsPlugin(
     },
   };
 
+  const executePost = post.execute;
+  post.execute = async (raw, context) => {
+    try { return await executePost(raw, context); }
+    catch (error) {
+      if ((error instanceof ConversationToolError && ["conversation_access_denied", "conversation_archived", "conversation_not_in_scope"].includes(error.code))
+        || (error instanceof Error && error.message.startsWith("conversation_post_refused:"))) {
+        await ports.notePostRefused?.();
+      }
+      throw error;
+    }
+  };
+
   const attach: HarnessTool = {
     definition: {
       name: "attach",
@@ -1029,7 +1058,7 @@ function homeSentence(home: boolean | null, lead: string): string {
  * A run's final message stays in the run child, which nobody but the run's
  * people reads: a result reaches a conversation only by a post.
  */
-export const RUN_POST_INSTRUCTION = "Your final message stays in this run; when the instructions say a conversation should hear something, post it with conversation_post, once, in full, after the work is done.";
+export const RUN_POST_INSTRUCTION = "Your final message stays in this run; when the instructions say a conversation should hear something, post it with conversation_post, once, in full, after the work is done. When a permission problem prevents you from finishing, use conversation_post to tell the owning conversation what is blocked and how someone can fix it. Distinguish completed and unfinished work; report the unresolved problem once for this run. Successful fallback needs no permission-error message. Share no private event contents, tokens or raw provider errors. Name a concrete recovery step, such as adding a delegate, reconnecting an account, or restoring resource or destination access. If you cannot post, leave the actionable failure visible and do not claim delivery.";
 
 /**
  * What sits above a Thread or Breakout is this loop's to read: a Breakout's
