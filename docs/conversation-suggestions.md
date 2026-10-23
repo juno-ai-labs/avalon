@@ -187,11 +187,22 @@ might be a good time to merge this back into **{target}**."; "Breakout:
 cut by `suggestionExcerpt` to `SUGGESTION_EXCERPT_CHARACTERS` with the ellipsis
 inside the closing quote; the line itself never wraps, and clips as a guard in
 a pane narrower than the budget was set for. The chip lays the title, the
-sentence and the excerpt in a column with the action pill and the dismiss
-beside them, as the PRD's mockups draw it: the merge pill in the merge target
+sentence and the excerpt in a column. Breakout and resolution suggestions keep
+the action pill and Dismiss beside them. The merge pill uses the merge target
 pill's green, the breakout pill neutral like the breakout chips, so the two
 never read as the same action. While the draft is pending the excerpt is a
 skeleton and the action is disabled; Dismiss works from the first frame.
+Merge suggestions place Merge and **Resolve without merge** side by side below
+the text, wrapping the buttons when needed. Desktop widths add a third **Discard**
+tertiary button with an X and no resting fill or visible border, using the
+existing dismiss action; mobile widths keep the X
+in the top right instead.
+Resolve uses the standard secondary button's border, surface and hover colors. This
+uses the host's existing Thread or Breakout resolution action, including its
+pending state, error notice and navigation after success. It needs no drafted
+words, so it stays available while the merge draft is pending. Archived
+conversations omit the action; resolved conversations disable it. It creates no
+merge and does not dismiss the suggestion.
 
 **Accept merge** opens the response card in the chip's place, prefilled with
 the drafted note and the suggestion's target; merging goes through the merge
