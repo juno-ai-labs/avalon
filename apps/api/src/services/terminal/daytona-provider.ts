@@ -1,5 +1,6 @@
 import { Daytona } from "@daytona/sdk";
 import { Buffer } from "node:buffer";
+import { createDeadline } from "../../lib/deadline";
 
 import type { TerminalRegionConfiguration } from "./contract";
 import {
@@ -15,6 +16,8 @@ import type {
 import {
   DAYTONA_REQUEST_TIMEOUT_MS,
   isTerminalProviderNotFound,
+  terminalProviderErrorCode,
+  TerminalProviderError,
   terminalShellQuote as shellQuote,
   type TerminalManagedBootstrapCapability,
   type TerminalProviderInstrumentation,
@@ -252,11 +255,13 @@ export function createDaytonaTerminalProvider(
     const startedAt = now();
     let outcome: TerminalProviderRequestMeasurement["outcome"] = "completed";
     let result: T | undefined;
+    let errorCode: string | undefined;
     try {
       result = await callback();
       return result;
     } catch (error) {
       outcome = "failed";
+      errorCode = terminalProviderErrorCode(error);
       throw error;
     } finally {
       try {
@@ -264,6 +269,7 @@ export function createDaytonaTerminalProvider(
           operation,
           detail: options.detail ?? null,
           outcome,
+          ...(errorCode ? { errorCode } : {}),
           durationMs: elapsed(startedAt, now()),
           requestCount: 1,
           pollCount: options.poll ? 1 : 0,
@@ -770,14 +776,57 @@ export function createDaytonaTerminalProvider(
         if (!supportsObservation) {
           throw new Error("Daytona command observation is unavailable; Rally refused to execute an unrecoverable command");
         }
+        // Observations are safe to repeat; submission is not. Reuse the command's
+        // existing observation budget and backoff for transient read failures.
+        let observationDeadline = Date.now() + input.timeoutMs + 15_000;
+        const observeCommand = async <T>(read: () => Promise<T>): Promise<T> => {
+          let delayMs = 250;
+          while (true) {
+            if (input.signal?.aborted) throw new Error("Terminal command cancelled");
+            const remainingMs = observationDeadline - Date.now();
+            if (remainingMs <= 0) {
+              throw new TerminalProviderError("Daytona command observation deadline exceeded", "command_observation_deadline");
+            }
+            const deadline = createDeadline(remainingMs);
+            let timedOut!: () => void;
+            const expired = new Promise<never>((_resolve, reject) => {
+              timedOut = () => reject(new TerminalProviderError(
+                "Daytona command observation deadline exceeded", "command_observation_deadline",
+              ));
+              deadline.signal.addEventListener("abort", timedOut, { once: true });
+            });
+            try {
+              // The SDK offers no per-read timeout/abort option. Only abandon
+              // read-only observations here; never race command submission.
+              return await Promise.race([read(), expired]);
+            } catch (error) {
+              const response = error as { status?: number; statusCode?: number; response?: { status?: number } } | null;
+              const status = response?.statusCode ?? response?.status ?? response?.response?.status;
+              // Missing sessions and rejected credentials/requests need their
+              // caller's decision, rather than a new session on a failed GET.
+              if (deadline.signal.aborted || isTerminalProviderNotFound(error)
+                || (status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 429)
+                || Date.now() + delayMs >= observationDeadline) throw error;
+              await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+              delayMs = Math.min(2_000, delayMs * 2);
+            } finally {
+              deadline.signal.removeEventListener("abort", timedOut);
+              deadline.dispose();
+            }
+          }
+        };
+        const readSession = () => observeCommand(() => measureRequest(
+          "process.session_get", () => sandbox.process!.getSession!(input.taskName),
+        ));
         const execution = (async () => {
           let commands: Array<{ id: string; command: string; exitCode?: number | null }> = [];
           try {
-            commands = (await measureRequest("process.session_get", () => sandbox.process!.getSession!(input.taskName))).commands;
-          } catch {
+            commands = (await readSession()).commands;
+          } catch (error) {
+            if (!isTerminalProviderNotFound(error)) throw error;
             if (input.signal?.aborted) {
               cancelled = true;
-              throw new Error("Terminal command cancelled");
+              throw new Error("Terminal command cancelled", { cause: error });
             }
             await input.assertSubmissionAuthority?.();
             try {
@@ -785,7 +834,7 @@ export function createDaytonaTerminalProvider(
             } catch {
               // A create response can be lost after Daytona created the named
               // session. Resolve that ambiguity by loading the same name.
-              commands = (await measureRequest("process.session_get", () => sandbox.process!.getSession!(input.taskName))).commands;
+              commands = (await readSession()).commands;
             }
           }
           if (commands.length > 1) {
@@ -832,16 +881,16 @@ export function createDaytonaTerminalProvider(
           }
           await input.onSubmitted?.(commandId);
           let delayMs = 250;
-          const observationDeadline = Date.now() + input.timeoutMs + 15_000;
+          observationDeadline = Date.now() + input.timeoutMs + 15_000;
           while (observedExitCode === undefined) {
             if (Date.now() >= observationDeadline) {
               throw new Error("Daytona command outcome is still unknown after the observation deadline");
             }
-            const observed = await measureRequest(
+            const observed = await observeCommand(() => measureRequest(
               "process.session_poll",
               () => sandbox.process!.getSessionCommand!(input.taskName, commandId),
               { poll: true },
-            );
+            ));
             observedExitCode = observed.exitCode ?? undefined;
             if (observedExitCode === undefined) {
               await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
@@ -862,16 +911,23 @@ export function createDaytonaTerminalProvider(
             if (stream === "stdout") stdoutChunks.push(boundedChunk);
             else stderrChunks.push(boundedChunk);
           };
-          const logs = await measureRequest(
-            "process.session_logs",
-            () => sandbox.process!.getSessionCommandLogs!(
-              input.taskName,
-              commandId,
-              (chunk) => capture("stdout", chunk),
-              (chunk) => capture("stderr", chunk),
-            ),
-            { bytes: () => capturedBytes },
-          );
+          const logs = await observeCommand(() => {
+            // A failed streaming read may have delivered a prefix. Start each
+            // observation afresh so retrying cannot duplicate that prefix.
+            stdoutChunks.length = 0;
+            stderrChunks.length = 0;
+            capturedBytes = 0;
+            return measureRequest(
+              "process.session_logs",
+              () => sandbox.process!.getSessionCommandLogs!(
+                input.taskName,
+                commandId,
+                (chunk) => capture("stdout", chunk),
+                (chunk) => capture("stderr", chunk),
+              ),
+              { bytes: () => capturedBytes },
+            );
+          });
           const stdout = stdoutChunks.join("") || logs?.stdout || "";
           const stderr = stderrChunks.join("") || logs?.stderr || "";
           return {

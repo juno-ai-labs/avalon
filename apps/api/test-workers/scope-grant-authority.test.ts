@@ -406,7 +406,7 @@ it("answers a batch read Channel by Channel, withholding one while releasing the
 });
 
 
-it("releases canonical Channel and shared conversation labels without granting Main", async () => {
+it("reads legacy projection fields without granting Main or leaking removed fields", async () => {
   await seedActorGrant(parent);
   await seedActorGrant(child);
   await runInDurableObject(room(), (_instance, state) => {
@@ -416,6 +416,7 @@ it("releases canonical Channel and shared conversation labels without granting M
         (parent_id, substream_id, source_version, payload_hash, effect_json, updated_at)
         VALUES (?, ?, 1, ?, json(?), 1)`, parentId, substreamId, `hash-${substreamId}`, JSON.stringify({
         kind: "directory_common",
+        originType: "automation", automationSubscriptionId: "old", automationRunId: "old", plannedFor: null,
         appearance: { icon, color },
         title: substreamId === "0" ? "Private parent" : "Visible child",
         description: "",
@@ -443,6 +444,8 @@ it("releases canonical Channel and shared conversation labels without granting M
     conversations: [{ substreamId: "0", title: "Main", scope: "personal", archived: false,
       appearance: { icon: "briefcase", color: "blue" } }, { substreamId: childId, title: "Visible child", scope: "personal", archived: false, originTurnId: null,
       appearance: { icon: "star", color: "red" } }] });
+  await exec("UPDATE parent_child_projections SET effect_json = json_set(effect_json, '$.title', 12) WHERE parent_id = ? AND substream_id = ?", parentId, childId);
+  await expect(readSharedWorkstream(room(), request)).rejects.toThrow("directory_common_projection_invalid:title:invalid_type");
   await changeRelationships(env, workspaceId, [recipientId], env.DB.prepare("UPDATE workspace_members SET status='suspended' WHERE user_id=?").bind(recipientId));
   expect(await readSharedWorkstream(room(), request)).toBeNull();
 });

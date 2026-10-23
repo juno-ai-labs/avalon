@@ -1847,7 +1847,7 @@ export class WorkstreamTranscriptStorage {
                 active_execution_epoch = ?, lease_owner = ?, lease_expires_at = ?,
                 next_execution_sequence = next_execution_sequence + 1,
                 transcript_projected_through = MAX(transcript_projected_through, ?),
-                revision = revision + 1, updated_at = ?
+                revision = revision + 1, updated_at = MAX(updated_at, ?)
           WHERE id = 1 AND revision = ? AND status = 'idle'
             AND bind_state_revision = ?
           RETURNING loop_id, revision`,
