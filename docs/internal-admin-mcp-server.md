@@ -241,7 +241,7 @@ quoted values into SQL. Bindings may be strings, finite numbers, or `null`.
 | `run_workspace_sql` | `workspaceId`, `sql`, optional `bindings` | Runs arbitrary SQLite in WorkspaceDO, including a Channel's or Space's parent state in the `parent_*` tables. |
 | `run_substream_sql` | `workspaceId`, `workstreamId`, `substreamId`, `sql`, optional `bindings` | Runs arbitrary SQLite in SubstreamAgent. |
 | `run_artifact_sql` | `workspaceId`, `artifactId`, `sql`, optional `bindings` | Runs arbitrary SQLite in ArtifactHostDO — the artifact's supervisor, not its facet. |
-| `run_d1_sql` | `region`, `database` (`DB`, `TELEMETRY_DB`, `USAGE_DB` or `PLATFORM_DB`), `sql`, optional `bindings` | Runs arbitrary SQL in that region's D1 database. |
+| `run_d1_sql` | `region`, `database` (`DB`, `TELEMETRY_DB`, `USAGE_DB`, `PLATFORM_DB` or `MESSAGE_ISSUES_DB`), `sql`, optional `bindings` | Runs arbitrary SQL in that region's D1 database. |
 | `list_feature_flags` | None | Lists Ace's managed product flags with their live Flagship definitions. |
 | `update_feature_flag` | `key`, `description`, `enabled`, `default_variation`, `rules` | Replaces a managed product flag's whole definition through Ace and notifies connected clients. |
 | `list_model_flags` | None | Lists each agent role's model flag with its default and live route. |
