@@ -2757,6 +2757,8 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .settings-diagnostics div:last-child { border-bottom: 0; }
 .settings-diagnostics dt { align-items: center; color: var(--av-sys-color-text-subtle); display: flex; font-size: var(--av-cmp-control-font-size); gap: 6px; }
 .settings-diagnostics dd { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); margin: 0; overflow-wrap: anywhere; text-align: right; }
+.about-version { background: none; border: 0; color: inherit; cursor: default; font: inherit; padding: 0; }
+.about-version:focus-visible { border-radius: 4px; box-shadow: var(--av-sys-focus-ring-quiet); outline: none; }
 .about-credits { margin-top: 12px; padding: 18px 14px; text-align: center; }
 .about-credits p { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); margin: 0; }
 .about-credits ul { font-size: 15px; font-weight: 560; list-style: none; margin: 6px 0; padding: 0; }

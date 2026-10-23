@@ -14,7 +14,11 @@ export function AboutRally({ version, versionLabel }: { version: string; version
   return (
     <>
       <dl className="settings-diagnostics settings-list-card">
-        <div><dt>{versionLabel}</dt><dd onClick={click}>{version}</dd></div>
+        <div>
+          <dt>{versionLabel}</dt>
+          {/* A button so the keyboard can reach the credits too; styled as text. */}
+          <dd><button className="about-version" onClick={click} type="button">{version}</button></dd>
+        </div>
       </dl>
       {creditsShown && (
         <section aria-label="Credits" className="about-credits settings-list-card">

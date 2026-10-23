@@ -54,6 +54,8 @@ export function RallyPong({ onClose }: { onClose: () => void }): React.JSX.Eleme
       const move = direction(event.key);
       if (move) held.delete(move);
     };
+    // A key released in another window sends no keyup here.
+    const onBlur = () => held.clear();
 
     let last = performance.now();
     let frame = 0;
@@ -90,12 +92,14 @@ export function RallyPong({ onClose }: { onClose: () => void }): React.JSX.Eleme
     canvas.addEventListener('pointermove', onPointer);
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
     frame = requestAnimationFrame(draw);
     return () => {
       cancelAnimationFrame(frame);
       canvas.removeEventListener('pointermove', onPointer);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
     };
   }, []);
 
