@@ -2794,7 +2794,7 @@ const automationDraftSubmissionJsonSchema = {
     },
     memoryTables: {
       type: "array",
-      description: "Sidekick-scoped durable structured collections required across runs; use [] when none are needed.",
+      description: "Sidekick-scoped durable structured collections required across runs; use [] when none are needed. Before editing an existing declaration, inspect its table with table_describe and preserve column names, types, required/searchable flags and ordered keyColumns. Descriptions and usage instructions may change. A schema conflict refuses publication; reuse the stored schema or choose a new table name and explicitly migrate rows.",
       items: {
         type: "object",
         additionalProperties: false,

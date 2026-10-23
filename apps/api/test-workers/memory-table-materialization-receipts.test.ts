@@ -88,13 +88,13 @@ function serviceEnv() {
   });
 }
 
-async function materialize() {
+async function materialize(tables: readonly AutomationMemoryTable[] = [DECLARED], definitionRevision = REVISION) {
   return materializeAutomationMemoryTables(serviceEnv(), {
     workspaceId: WORKSPACE_ID,
     automationId: AUTOMATION_ID,
-    definitionRevision: REVISION,
+    definitionRevision,
     runAsUserId: USER_ID,
-    tables: [DECLARED],
+    tables,
   });
 }
 
@@ -173,7 +173,7 @@ describe("materializing a Sidekick's declared tables across the rename", () => {
     // The publication alarm's re-apply: the same Sidekick, the same revision,
     // the same declaration, now hashed under the new names.
     await expect(materialize()).resolves.toEqual([
-      { name: DECLARED.name, memoryTableId: expect.any(String), outcome: "opened" },
+      { name: DECLARED.name, memoryTableId: "table-seen-entries", outcome: "opened" },
     ]);
     expect(await counts()).toEqual({ tables: 1, mutations: 1 });
   });
@@ -186,6 +186,40 @@ describe("materializing a Sidekick's declared tables across the rename", () => {
       { name: DECLARED.name, memoryTableId: first[0]!.memoryTableId, outcome: "opened" },
     ]);
     expect(await counts()).toEqual({ tables: 1, mutations: 1 });
+  });
+
+  it("reconciles descriptions and instructions without changing durable row or column identities", async () => {
+    const [created] = await materialize();
+    const memoryTableId = created!.memoryTableId;
+    await runInDurableObject(workspace(), (_instance, state) => {
+      const table = state.storage.sql.exec<{ memory_scope_id: string; last_mutation_id: string }>(
+        `SELECT memory_scope_id, last_mutation_id FROM memory_tables WHERE memory_table_id = ?`, memoryTableId,
+      ).one();
+      state.storage.sql.exec(`INSERT INTO memory_table_rows
+        (memory_table_row_id, memory_table_id, memory_scope_id, workspace_id, natural_key_hash, data_json,
+         revision, provenance_json, created_by_mutation_id, last_mutation_id, created_at, updated_at)
+        VALUES ('kept-row', ?, ?, ?, 'key-hash', '{"url":"https://example.com/kept"}', 7, '{}', ?, ?, ?, ?)`,
+        memoryTableId, table.memory_scope_id, WORKSPACE_ID, table.last_mutation_id, table.last_mutation_id, AT, AT);
+      state.storage.sql.exec(`INSERT INTO memory_table_cells
+        (memory_table_row_id, memory_table_id, memory_table_column_id, value_type, string_value)
+        VALUES ('kept-row', ?, ?, 'url', 'https://example.com/kept')`, memoryTableId, `${memoryTableId}:column:0`);
+    });
+    expect(await materialize([{ ...DECLARED, description: "Updated description", usageInstructions: "Updated instructions",
+      columns: [{ ...DECLARED.columns[0]!, description: "Updated URL description" }],
+    }], REVISION + 1)).toEqual([{ name: "Seen entries", memoryTableId, outcome: "opened" }]);
+    const actual = await workspace().memoryTableWithColumns({ workspaceId: WORKSPACE_ID, memoryTableId });
+    expect(actual).toMatchObject({ outcome: "found", table: {
+      description: "Updated description", usageInstructions: "Updated instructions", schemaRevision: 1, dataRevision: 0,
+    }, columns: [{ memoryTableColumnId: `${memoryTableId}:column:0`, description: "Updated URL description" }] });
+    const retained = await runInDurableObject(workspace(), (_instance, state) => ({
+      rows: state.storage.sql.exec(`SELECT memory_table_row_id, data_json, revision FROM memory_table_rows`).toArray(),
+      cells: state.storage.sql.exec(`SELECT memory_table_row_id, memory_table_column_id, string_value FROM memory_table_cells`).toArray(),
+    }));
+    expect(retained).toEqual({
+      rows: [{ memory_table_row_id: "kept-row", data_json: '{"url":"https://example.com/kept"}', revision: 7 }],
+      cells: [{ memory_table_row_id: "kept-row", memory_table_column_id: `${memoryTableId}:column:0`, string_value: "https://example.com/kept" }],
+    });
+    expect(await counts()).toEqual({ tables: 1, mutations: 2 });
   });
 
   it("names the offending field when a declaration is refused across the RPC boundary", async () => {
