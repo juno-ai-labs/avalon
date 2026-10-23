@@ -280,11 +280,9 @@ The caller names the region and the binding, and the bridge's `runD1Sql` runs
 the statement through that binding. `PLATFORM_DB` is one database every region
 binds, so any region reaches the same rows.
 
-For Oopsie investigations, use `region: "global"` and
-`database: "MESSAGE_ISSUES_DB"`. Inspect the schema with
-`SELECT sql FROM sqlite_schema WHERE name = 'message_issues'`, then query
-`message_issues` with bound report, Organization or conversation identifiers.
-The report columns and provenance are documented in [message issues](message-issues.md).
+`MESSAGE_ISSUES_DB` holds Oopsie reports in the submitting Organization's region
+(only `global` today); the report columns and provenance are documented in
+[message issues](message-issues.md#data-model).
 
 The result has the Durable Object tools' shape, with two differences D1
 forces. D1 returns rows as objects, so `columns` comes from the first row and is

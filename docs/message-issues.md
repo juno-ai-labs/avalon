@@ -103,9 +103,8 @@ own binding and migration application. Report content remains in the submitting
 Organization's configured deployment. `db:migrate` includes the local schema;
 the API deployment applies it before promoting the new Worker.
 
-Engineers inspect reports through [Engineering MCP](engineering-mcp.md#d1):
-`run_d1_sql` with `region: "global"` and `database: "MESSAGE_ISSUES_DB"` reaches
-this store directly. Inspect `message_issues`' schema before querying reports.
+Engineers query this store through [Engineering MCP's `run_d1_sql`](engineering-mcp.md#d1)
+using `MESSAGE_ISSUES_DB` in the Organization's region.
 
 ## Changelog
 
