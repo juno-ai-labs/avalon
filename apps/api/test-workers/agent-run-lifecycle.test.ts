@@ -9,7 +9,7 @@
  */
 
 import { env } from "cloudflare:workers";
-import { evictDurableObject, runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { asSubstreamId } from "@rally/contracts";
@@ -21,6 +21,7 @@ import {
   WORKSPACE_ID,
   WORKSTREAM_ID,
   activateFixtureReceipt,
+  admitFixturePendingInput,
   boot,
   ensureFixtureLoop,
   executionReceipts,
@@ -93,6 +94,28 @@ async function activate(
 
 const RUN_A = "00000000-0000-7000-8000-0000000004b1";
 const RUN_B = "00000000-0000-7000-8000-0000000004b2";
+
+it("activates an admitted input when the loop was created after the caller clock", async () => {
+  const stub = await readyAgent();
+  await runInDurableObject(stub, async (_instance, state) => {
+    await admitFixturePendingInput(state, {
+      inputId: "00000000-0000-7000-8000-0000000009f1", text: "Clock regression fixture", now: Date.now() - 1_000,
+    });
+    // Reproduce an older activation snapshot, including a wall-clock rollback.
+    const createdAt = Date.now() + 60_000;
+    state.storage.sql.exec("UPDATE substream_loops SET created_at = ?, updated_at = ?", createdAt, createdAt);
+    await state.storage.setAlarm(Date.now() + 60_000);
+  });
+  await runDurableObjectAlarm(stub);
+  await runInDurableObject(stub, async (_instance, state) => {
+    expect(executionReceipts(state)).toHaveLength(1);
+    expect(state.storage.sql.exec("SELECT input_id FROM pending_loop_inputs").toArray()).toEqual([]);
+    expect(state.storage.sql.exec<{ monotonic: number }>(
+      "SELECT updated_at >= created_at AS monotonic FROM substream_loops",
+    ).one().monotonic).toBe(1);
+    await state.storage.deleteAlarm();
+  });
+});
 
 describe("admitting a subordinate execution receipt", () => {
   it("arms one stable loop and absorbs an ambiguous-response retry", async () => {

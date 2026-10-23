@@ -7580,7 +7580,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       requestId: request.requestId,
       directoryWaterline: this.directoryWaterline(),
       items: mapDirectoryWorkstreams(sql, rows, identity.workspaceId, spaces, viewer, true),
-      stateVersions: rows.map(directoryStateVersion),
+      stateVersions: rows.map((row) => this.directoryStateVersion(row)),
       rails: [],
       nextAfter: page.length === CHANNEL_RAILS_NAMED_LIMIT ? page.at(-1)! : null,
     });
@@ -7708,7 +7708,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         this.state.storage.sql, [row], attachment.workspaceId,
         this.spaceStorage(), viewerOf(attachment), true,
       )[0],
-      stateVersion: directoryStateVersion(row),
+      stateVersion: this.directoryStateVersion(row),
     }));
     for (const peer of this.state.getWebSockets()) {
       const peerAttachment = readAttachment(peer);
@@ -17574,6 +17574,27 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
+  /** Preserve historical event identities, recording their provenance for investigation. */
+  private directoryStateVersion(row: WorkspaceDirectoryRow) {
+    const version = directoryStateVersion(row);
+    for (const field of ["commonEventId", "viewerEventId"] as const) {
+      const eventId = version[field];
+      if (eventId !== null && eventId[14] !== "7" && IdSchema.safeParse(eventId).success) {
+        logWarn(this.env, "workspace_directory_non_v7_event_id", {
+          workspace_id: this.workspaceId(),
+          workstream_id: row.workstream_id,
+          field,
+          event_id: eventId,
+          uuid_version: eventId[14],
+          authority_generation: version.authorityGeneration,
+          common_waterline: version.commonWaterline,
+          viewer_waterline: version.viewerWaterline,
+        });
+      }
+    }
+    return version;
+  }
+
   /**
    * Apply one directory effect a Channel published *about one of its
    * breakouts*.
@@ -18001,7 +18022,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         this.state.storage.sql, rows, request.workspaceId, this.spaceStorage(),
         { userId: request.userId, accessClass }, withViewerState,
       ),
-      stateVersions: rows.map(directoryStateVersion),
+      stateVersions: rows.map((row) => this.directoryStateVersion(row)),
       nextCursor,
       directoryWaterline: this.directoryWaterline(),
     };
@@ -18361,7 +18382,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const viewerStates = channelViewerStates(this.state.storage.sql, person.userId, visibleIds, shared.background);
     const shown = new Set(visibleIds);
     return rows.map((row) => {
-      const stateVersion = directoryStateVersion(row);
+      const stateVersion = this.directoryStateVersion(row);
       return JSON.stringify(WorkspaceWorkstreamStateEventSchema.parse({
         type: "workspace_workstream_state",
         occurredAt: shared.occurredAt,
