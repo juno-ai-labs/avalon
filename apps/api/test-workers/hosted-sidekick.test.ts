@@ -323,6 +323,27 @@ async function submit(draft: AutomationDraft = DEFINITION): Promise<{ definition
   return workspaceStub().sidekickSubmitDefinition({ ...addressed(), draft, evaluatorRules: null, submittedByRunId: null });
 }
 
+/** Legacy event watches still publish a real registration before delivery. */
+async function registerSlackWatcher(): Promise<void> {
+  await runDurableObjectAlarm(workspaceStub());
+  await expect.poll(async () => (await alarms()).filter((entry) => entry.kind === "sidekick_delegation_sources").length,
+    { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(0);
+  await workspaceStub().applyExternalEventRegistrations({
+    schemaVersion: 1, workspaceId: WORKSPACE_ID, sourceGeneration: 1,
+    destination: { kind: "automation", automationId: AUTOMATION_ID },
+    evaluators: [{ evaluatorId: crypto.randomUUID(), source: {
+      connectorType: "slack", connectionId: SLACK_CONNECTION_ID, eventType: "slack.message.posted",
+    }, when: { kind: "always" } }],
+  });
+}
+
+async function registrationFor(eventType: string): Promise<string> {
+  return runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{ registration_id: string }>(
+    "SELECT registration_id FROM workspace_external_event_registrations WHERE automation_id=? AND event_type=? AND state='active'",
+    AUTOMATION_ID, eventType,
+  ).one().registration_id);
+}
+
 /**
  * Applied inside the object: `AutomationDetail` is what the stub returns, and
  * a rejection over a stub is reported a second time as unhandled, which fails
@@ -995,7 +1016,7 @@ describe("a hosted Sidekick", () => {
     // model.
     expect(await workspaceStub().sidekickAdmitExternalEvent({
       ...addressed(),
-      registrationId: "00000000-0000-7000-8000-00000000ad71",
+      registrationId: await registrationFor("deploy.finished"),
       payloadHash: `sha256:${"d".repeat(64)}`,
       event: {
         id: "00000000-0000-7000-8000-00000000ad72",
@@ -1678,6 +1699,7 @@ describe("a hosted Sidekick", () => {
     const earlierEventId = "00000000-0000-7000-8000-00000000ad50";
     await ingestSlackEvent(earlierEventId, "event-before-activation");
     await apply();
+    await registerSlackWatcher();
     expect((await automationRow()).effective_after_event_sequence).toBe(1);
     const event = {
       id: "00000000-0000-7000-8000-00000000ad52",
@@ -1693,7 +1715,7 @@ describe("a hosted Sidekick", () => {
     };
     const admission = {
       ...addressed(),
-      registrationId: "00000000-0000-7000-8000-00000000ad51",
+      registrationId: await registrationFor("slack.message.posted"),
       payloadHash: `sha256:${"a".repeat(64)}`,
     };
 
@@ -1740,6 +1762,7 @@ describe("a hosted Sidekick", () => {
     await createDraft();
     await submit();
     await apply();
+    await registerSlackWatcher();
     const base = {
       eventType: "slack.message.posted",
       title: "New message",
@@ -1751,7 +1774,7 @@ describe("a hosted Sidekick", () => {
     };
     const admission = {
       ...addressed(),
-      registrationId: "00000000-0000-7000-8000-00000000ad61",
+      registrationId: await registrationFor("slack.message.posted"),
       payloadHash: `sha256:${"b".repeat(64)}`,
     };
     const occurrenceKey = "granola:connection:note:not_1234567890abcd:transcript";

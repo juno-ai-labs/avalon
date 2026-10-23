@@ -39,14 +39,12 @@ import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
-import { writeSidekickRegistrations } from "./helpers/sidekick";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000ae0");
 const CONNECTION_ID = "00000000-0000-7000-8000-000000000ae1";
 const AUTOMATION_ID = asAutomationId("00000000-0000-7000-8000-000000000ae2");
 const AUTHOR_ID = asUserId("00000000-0000-7000-8000-000000000ae3");
 const SESSION_ID = "00000000-0000-7000-8000-000000000ae4";
-const REGISTRATION_ID = "00000000-0000-7000-8000-000000000ae5";
 const EVENT_ID = "00000000-0000-7000-8000-000000000ae6";
 const SECOND_EVENT_ID = "00000000-0000-7000-8000-000000000ae7";
 const THIRD_EVENT_ID = "00000000-0000-7000-8000-000000000ae8";
@@ -114,23 +112,14 @@ async function activate(definition: AutomationDraft): Promise<void> {
   });
   expect(created.created).toBe(true);
   await submitAndApply(definition);
-  // Registrations are written directly rather than through the apply tail, so
-  // the activation boundary is set once and the event sequence stays this test's
-  // to control.
-  await writeSidekickRegistrations(TEST_ENV, WORKSPACE_ID, AUTOMATION_ID, [{
-    evaluatorId: REGISTRATION_ID,
-    source: { connectorType: "ashby", connectionId: CONNECTION_ID, eventType: EVENT_TYPE },
-    when: { kind: "always" },
-  }]);
 }
 
 /**
  * Accept a new definition on an automation that already exists.
  *
  * Split out of `activate` so a test can change what the accepted revision says
- * without recreating the automation or rewriting its registrations — which is the
- * only way to reach the window where a condition moves under a delivery whose
- * plan has already been read.
+ * without recreating the automation. This reaches the window where a condition
+ * moves under a delivery whose plan has already been read.
  */
 async function submitAndApply(definition: AutomationDraft): Promise<void> {
   await workspace().sidekickSubmitDefinition({
@@ -203,10 +192,14 @@ async function admission(eventId: string) {
   const sequence = await runInDurableObject(workspace(), (_instance: WorkspaceDO, state) => state.storage.sql.exec<{ event_sequence: number }>(
     `SELECT event_sequence FROM workspace_connector_events WHERE event_id = ?`, eventId,
   ).one().event_sequence);
+  const registrationId = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ registration_id: string }>(
+    `SELECT registration_id FROM workspace_external_event_registrations
+      WHERE automation_id = ? AND event_type = ? AND state = 'active'`, AUTOMATION_ID, EVENT_TYPE,
+  ).one().registration_id);
   return {
     workspaceId: WORKSPACE_ID,
     automationId: AUTOMATION_ID,
-    registrationId: REGISTRATION_ID,
+    registrationId,
     payloadHash: `sha256:${eventId.slice(-2).repeat(32)}`,
     event: {
       id: eventId,
@@ -319,22 +312,16 @@ describe("semantic trigger conditions", () => {
    * Why a verdict does not need to carry what it judged.
    *
    * The classifier runs between the unjudged refusal and the admission, so an `apply`
-   * can change the condition while the model call is in flight, keeping the same
-   * registration identity — which looks like a window where the object sees the
-   * new condition and admits on a verdict for the old one. It is closed, by
-   * something one clause earlier and for an unrelated reason: `apply` is the only
-   * path that can move an accepted condition, it re-establishes
+   * can change the condition while the model call is in flight. The old
+   * registration is then refused. Even if the delivery is replanned against the
+   * current registration, `apply` re-establishes
    * `effective_after_event_sequence` at the sequence current when its
    * registration tail lands, and the boundary check is ordered *before* the
    * semantic one. An event ingested before the apply is at or below that
    * boundary, so it never reaches the gate.
    *
-   * Both halves were checked by breaking them. Removing the `= NULL` that apply
-   * writes does **not** open the hole, because the registration tail sets the
-   * boundary forward anyway. Moving the semantic check above the boundary check
-   * does: the delivery then admits on the superseded verdict, which is exactly
-   * the failure this pins. So what protects the gate is the ordering, and the
-   * ordering is invisible from the gate's own clause.
+   * Both registration removal and the current registration's boundary are
+   * asserted below, so neither path can accept the superseded verdict.
    */
   it("refuses a delivery whose condition was replaced after its plan was read", async () => {
     await activate(SEMANTIC_DEFINITION);
@@ -359,6 +346,10 @@ describe("semantic trigger conditions", () => {
     // confidence the classifier can report: the point is that it cannot admit.
     expect(await workspace().sidekickAdmitExternalEvent({
       ...request,
+      conditionVerdict: { admit: true, code: "condition_met", confidence: 0.99, model: "jev-1.13.0" },
+    })).toEqual({ admitted: false, outcomeCode: "sidekick_trigger_removed" });
+    expect(await workspace().sidekickAdmitExternalEvent({
+      ...await admission(FOURTH_EVENT_ID),
       conditionVerdict: { admit: true, code: "condition_met", confidence: 0.99, model: "jev-1.13.0" },
     })).toEqual({ admitted: false, outcomeCode: "sidekick_event_before_activation_boundary" });
     expect(await runCount()).toBe(0);
