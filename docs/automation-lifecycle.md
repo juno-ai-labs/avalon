@@ -79,6 +79,10 @@ to future occurrences rather than replaying blocked historical work. A continued
 run retains its coordinator while eligible and selects another eligible delegate
 when that person becomes unavailable. The new coordinator is persisted on the
 existing run. Only an empty eligible list refuses with `run_no_eligible_delegate`.
+Eligibility refreshes at activation and inventory loading. An ongoing background
+attempt reuses that snapshot; model/tool boundaries read the root lifecycle and
+stop generation without rescanning delegates or comparing coordinators. Pause,
+delete and pause/resume still fence old work.
 
 Migration retains existing `run_as_user_id` as a stable shared-file identity and
 preserves existing human access. A durable alarm enrolls missing
@@ -120,9 +124,10 @@ active configured Sidekicks. The handler refreshes ordinary eligibility and
 commits only against the still-current active definition revision. This permits
 eventual authorization propagation without a global barrier or provider probe.
 
-Run history carries its coordinating user through the client mapping. Operation
-accounts remain private database debug checkpoints; app activity does not expose
-per-operation people or connection IDs.
+Run history carries its coordinating user through the client mapping. Write
+operation accounts remain private database debug checkpoints; reads do not look up
+or append account checkpoints. App activity does not expose per-operation people
+or connection IDs.
 
 Per-operation connector identities, completed-receipt reconciliation, shared
 Terminal authorization and desktop/web controls are tracked by the
@@ -1481,7 +1486,9 @@ share eligibility; each run persists its coordinator independently of legacy
 human access. Migration retains stable shared-file identities and enrolls missing creators
 without reconstructing direct-user consent provenance. Continuation replaces an
 unavailable coordinator and persists the replacement without changing human
-access. Operation accounts remain debug-only receipt records. Self-action
+access. Write accounts remain debug-only receipt records; reads skip account
+checkpoint I/O. Background model/tool boundaries reuse activation eligibility and
+retain only the root lifecycle and stop-generation check. Self-action
 receipt inspection prevents the outer completed-tool cache from presenting a
 withdrawn grant as current without replaying its mutation. Interrupted actions
 are reconciled by that same receipt instead of minting a fresh consent intent.
@@ -1493,7 +1500,9 @@ independent withdrawal. Reusing that field for automatic coordination would also
 change existing human access. A durable prepared generation prevents response
 loss or delayed dispatch from turning an old allow into a new opt-in. A global
 authorization barrier is unnecessary because eventual authorization propagation
-is the agreed product contract.
+is the agreed product contract. Repeated background eligibility scans and account
+checkpoints for reads would add durable work to every step without helping
+uncertain-write recovery.
 A blocked report must also remain visible after the model finishes explaining
 it, since an attempted post is not confirmation that anyone received it.
 

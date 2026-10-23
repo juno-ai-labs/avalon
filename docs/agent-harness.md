@@ -684,7 +684,9 @@ A Sidekick inventory includes its eligible delegates' connections. Its coordinat
 continues to own the run, conversation and personal run preferences; selecting a
 provider account does not replace that identity or grant human access. The tool
 inventory loads delegation through WorkspaceDO's ordinary authorization view;
-continuations and new runs rebuild that snapshot. Each call reuses it and
+continuations and new runs rebuild that snapshot. Background model/tool boundaries
+read only the root lifecycle and stop generation, without rescanning delegates
+or changing the coordinator. Each call reuses the inventory snapshot and
 checks the actual serving connection and capability before credentials are
 prepared. No healthy operation adds a provider access probe or revocation barrier.
 
@@ -697,7 +699,8 @@ may differ across accounts. There is no `rallyAccount` selector or special handl
 of inboxes, named senders, replies, returned IDs, handoffs or page continuations.
 
 The existing receipt checkpoint log records `execution_account` selections before
-dispatch, definite refusals, and the account that served the result. It retains
+write dispatch, definite write refusals, and the account that served the write.
+Reads neither look up nor append account checkpoints. Write checkpoints retain
 first selection, actual principal, connection and grant generation for database
 queries. This debug information is not projected into app activity or tool output.
 Recovery of the exact same uncertain effect retains its original account and
@@ -1693,9 +1696,12 @@ checks shared re-entry semantics and deadline cleanup on reconciliation.
 
 `pnpm --filter @rally/api exec vitest run test/sidekick-operation-accounts.test.ts
  test/connector-resource-access.test.ts` covers plugin selection, eligible fallback,
-exact-effect recovery, withdrawal and the assembled Google executor. Real workerd
-`sidekick-run-continuation.test.ts` covers coordinator failover for root runs and
-background workers, including resumed input after eviction.
+read account-checkpoint bypass, uncertain-write recovery, withdrawal and the
+assembled Google executor. Real workerd `sidekick-run-continuation.test.ts` covers
+coordinator failover for root runs and background workers, including resumed
+input after eviction, reuse of activation eligibility during an attempt, and
+pause/stop-generation fencing. Restoring the old read checkpoints and background
+eligibility scans makes the corresponding regressions fail.
 `tool-receipt-authority.test.ts` proves checkpoint leases, cancellation and rollback;
 `sidekick-delegation-admission.test.ts` covers event audiences, sources and schedules.
 Production-code negative controls are recorded in the
@@ -1909,8 +1915,10 @@ Pull request: [#1422](https://github.com/juno-ai-labs/avalon/pull/1422).
 
 **What changed:** Eligible delegates' connections enter the Sidekick inventory.
 Code-authored tools can fall back after a definite pre-effect access refusal.
-Receipt checkpoints record actual accounts privately and retain the original
-account only for recovery of that exact uncertain effect. Delegation changes
+Write receipt checkpoints record actual accounts privately and retain the original
+account only for recovery of that exact uncertain effect. Reads skip account
+checkpoint I/O; background model/tool boundaries reuse activation eligibility
+and check only root lifecycle and stop generation. Delegation changes
 use ordered actor/target receipts, including autonomous mutations. Provider-key
 recovery preserves the original provider key, including Calendar event creation.
 
@@ -1918,6 +1926,8 @@ recovery preserves the original provider key, including Calendar event creation.
 but the connector executor still admitted only the coordinator's credentials.
 The user requested simple delegation and eventual consistency, then explicitly
 removed account-dependent workflows, selectors and user-facing account activity.
+Repeated background eligibility scans and read-account checkpoints added serial
+durable work despite the accepted eventual-consistency contract.
 
 **Considered and rejected:** Per-person workflow loops, credential pools, access
 preflights, resource/reply/page account bindings and a separate identity selector.

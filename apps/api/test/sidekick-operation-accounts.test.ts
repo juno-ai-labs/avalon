@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { asUserId, asWorkspaceId, SidekickExecutionDelegationSchema } from "@rally/contracts";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { WorkstreamWorkflowInputSchema } from "@rally/contracts";
@@ -29,11 +29,11 @@ function fixture() {
   const fence = { runId: id(7), attemptId: "attempt", owner: "owner" };
   const receipts = testToolReceiptPort(database);
   let sequence = 0;
-  const context = (mode: "read" | "write" = "read"): HarnessToolContext => {
+  const context = (mode: "read" | "write" = "read"): HarnessToolContext & { mode: "read" | "write" } => {
     sequence++;
     seedToolReceipt(database, { id: `effect-${sequence}`, runId: id(7), toolCallId: `call-${sequence}`, toolName: "test",
       position: sequence, status: "executing", mode, executionPlanJson: JSON.stringify({ mode }) });
-    return { workspaceId, workstreamId: id(8), harnessRunId: id(7), toolCallId: `call-${sequence}`, effectIntentId: `effect-${sequence}`,
+    return { mode, workspaceId, workstreamId: id(8), harnessRunId: id(7), toolCallId: `call-${sequence}`, effectIntentId: `effect-${sequence}`,
       executionPrincipal: { type: "user", userId: creator }, signal: new AbortController().signal };
   };
   const complete = async (call: HarnessToolContext) => {
@@ -44,7 +44,7 @@ function fixture() {
   const options = (call = context()) => ({
     authority: authority(), workspaceId, coordinatorUserId: creator, requested: a, candidates: [b, a, b],
     sourceConnectionIds: [] as string[],
-    canFallback: true, context: call, receipts, fence,
+    canFallback: true, mode: call.mode, context: call, receipts, fence,
     execute: async (connection: SidekickAccountConnection) => {
       calls.push(connection.connectionId);
       return { output: { values: [["Read"]] }, summary: "Read sheet" };
@@ -69,8 +69,10 @@ describe("Sidekick operation account selection over durable receipts", () => {
     expect(f.calls).toEqual([id(6), id(5)]);
   });
 
-  it("tries the creator before other delegates, deduplicates connections and records actual fallback", async () => {
+  it("tries the creator before other delegates without reading or writing account checkpoints", async () => {
     const f = fixture(), call = f.context();
+    const readAccount = vi.spyOn(f.receipts, "executionAccount");
+    const recordAccount = vi.spyOn(f.receipts, "recordExecutionAccount");
     const output = await executeSidekickAccountOperation({ ...f.options(call), execute: async (connection) => {
       f.calls.push(connection.connectionId);
       if (connection.connectionId === a.connectionId) throw connectorResourceAccessRefused("Not shared", {});
@@ -78,9 +80,9 @@ describe("Sidekick operation account selection over durable receipts", () => {
     } });
     expect(f.calls).toEqual([id(5), id(6)]);
     expect(output.output).toEqual({ values: [["Calendar"]] });
-    expect(await f.receipts.executionAccount({ runId: id(7), effectIntentId: call.effectIntentId! })).toMatchObject({
-      phase: "served", originalAccount: { connectionId: id(5), grantGeneration: 7 }, account: { connectionId: id(6), grantGeneration: 9 },
-    });
+    expect(readAccount).not.toHaveBeenCalled();
+    expect(recordAccount).not.toHaveBeenCalled();
+    expect(await f.receipts.executionAccount({ runId: id(7), effectIntentId: call.effectIntentId! })).toBeNull();
   });
 
   it("starts with the selected plugin without a provider access probe", async () => {
@@ -105,18 +107,22 @@ describe("Sidekick operation account selection over durable receipts", () => {
 
   it("allows a write to fall back only after a declared pre-effect refusal", async () => {
     const f = fixture();
-    await executeSidekickAccountOperation({ ...f.options(f.context("write")), execute: async (connection) => {
+    const call = f.context("write");
+    await executeSidekickAccountOperation({ ...f.options(call), execute: async (connection) => {
       f.calls.push(connection.connectionId);
       if (connection.connectionId === a.connectionId) throw connectorResourceAccessRefused("Not writable", {});
       return { output: { updatedCells: 1 }, summary: "Updated sheet" };
     } });
     expect(f.calls).toEqual([id(5), id(6)]);
+    expect(await f.receipts.executionAccount({ runId: id(7), effectIntentId: call.effectIntentId! })).toMatchObject({
+      phase: "served", originalAccount: { connectionId: id(5), grantGeneration: 7 }, account: { connectionId: id(6), grantGeneration: 9 },
+    });
   });
 
   it("records an Organization connection with its workspace principal", async () => {
     const f = fixture();
     const organization: SidekickAccountConnection = { connectionId: id(9), scope: "workspace", ownerUserId: null, modelPluginId: "plugin_org" };
-    const result = await executeSidekickAccountOperation({ ...f.options(), requested: organization,
+    const result = await executeSidekickAccountOperation({ ...f.options(f.context("write")), requested: organization,
       candidates: [],
     });
     expect(f.calls).toEqual([id(9)]);
