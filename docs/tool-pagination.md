@@ -47,14 +47,6 @@ attachment executor. New attachment continuation state is private JSON, without
 HMAC signing or an artificial expiry; the old signed-token decoder remains only
 for pre-cutover receipts. Table queries retain their data-revision validation.
 
-Sidekick connector continuations privately retain the actual serving account,
-which may differ from the requested plugin's original owner. Their stored input
-uses an envelope containing provider arguments and host account metadata; the
-wrapper still accepts older unwrapped argument rows. Redemption carries the
-saved account into execution and refreshes its current delegation. It cannot
-reinterpret a provider cursor through another person's connection after a
-fallback. The public schema remains `{ pageId }`.
-
 ## Invariants
 
 - Page IDs match the conversation, principal, connection and operation, not
@@ -151,9 +143,7 @@ rebinding a published ID to different arguments.
 drives the wrapper and receipt endpoint through real workerd, including eviction,
 producer completion, scopes, competing claims, retries, and forward cycles. It
 does not invoke inference. Eviction expires the former isolate's lease; the test
-explicitly models acquiring it again before redeeming a persisted page. It also
-checks that a Sidekick's serving account survives eviction and is carried into
-the next provider operation, independently of the coordinator's principal.
+explicitly models acquiring it again before redeeming a persisted page.
 
 `packages/connectors/src/tool-pagination.test.ts` proves exact extraction before
 bounding and preservation of cursor-named document content.
@@ -163,24 +153,6 @@ Existing connector, attachment, table, tool-selection, grounding and receipt sui
 authorized executors. `workstream-object-schema.test.ts` covers migration shape.
 
 ## Changelog
-
-### 2026-10-22 — Retain the serving Sidekick account with each continuation
-
-**What changed:** Private continuation arguments carry the host-selected
-account. Redemption restores it into tool context; older argument-only rows
-remain readable. Existing receipt ownership, consume-once and cycle rules stay.
-
-**Why:** After a known resource succeeds through another delegate, sending its
-cursor back to the requested plugin's original account changes what the cursor
-means. A model page ID must continue the same account's result.
-
-**Considered and rejected:** Asking the model to copy account IDs with every
-page, replacing the public page-ID protocol, or mounting multiple credentials.
-The existing durable private arguments can retain the serving identity.
-
-**Consequences:** Delegation is checked again at execution; withdrawal can block
-a continuation, and never redirects it to another account. Account metadata
-contains no credentials or provider cursors.
 
 ### 2026-10-19 — Exclude new operations from the historical surface
 

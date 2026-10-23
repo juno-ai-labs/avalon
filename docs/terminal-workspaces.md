@@ -348,15 +348,12 @@ the mounted token before any model command runs. The typed
 `publish_branch_and_pr` operation remains available as an optional convergent
 publisher, but it is not a gate around standard Git and GitHub CLI use.
 
-A Sidekick's shell retains one explicitly selected repository connection;
-there is no cross-account shell retry. Before each tool and repository
-preparation, a personal connection's owner must still be an eligible delegate.
-After withdrawal is observed, Rally removes that connection's mounted GitHub
-secrets and invalidates its credential expiry while preserving files and local
-Terminal tools. The typed publisher refuses with `repository_delegate_unavailable`.
-A subsequent independent run can refresh credentials after restored consent;
-`checkout_repository` can explicitly select an authorized connection. This uses
-the ordinary eventual authorization view, without a global revocation barrier.
+A Sidekick's shell retains its selected repository connection, without
+cross-account shell retry. Repository bootstrap and the typed publisher check
+that a personal connection's owner is in the inventory's eligible delegation
+snapshot. An unavailable owner does not block local files. Existing mounted
+credentials follow their ordinary lifecycle; delegation does not add an unmount
+protocol or a scan before every shell command.
 
 ### Network policy and lifecycle
 
@@ -908,9 +905,10 @@ without a provider call; the port resolution rule is in
 Sidekick activation or worker retains a pre-delegation generation across a
 coordinator change. The plugin integration suite checks that consent withdrawal
 blocks cached callers, retained imports survive, and a withdrawn repository
-owner's mounted credentials are cleared without deleting files. Production-code
-negative controls cover the consent check, stable file identity, retained import
-rule and credential removal. On real workerd, `test-workers/terminal-sidekick-sandbox.test.ts`
+owner cannot bootstrap fresh credentials or use the typed publisher. Existing
+mounts follow their normal lifecycle. Earlier negative controls for credential
+removal are historical evidence for scope since removed; consent and shared-file
+identity checks remain. On real workerd, `test-workers/terminal-sidekick-sandbox.test.ts`
 proves that the wizard and successive activations share the same persisted
 sandbox and exclusive mutation lease across eviction, while another Sidekick
 remains separate. Reverting the routing or the primary-run reset guard makes
@@ -1333,15 +1331,16 @@ update lag before changing the default.
 delegation snapshot, including cached reads. A refreshed inventory observes
 withdrawal without synchronous grant RPCs for every command. Its file identity remains stable across coordinating
 users and retains the pre-delegation fingerprint. Completed imports remain
-shared. A selected personal GitHub connection keeps its own identity and loses
-its mounted secrets when its owner is no longer eligible; local files survive.
+shared. Repository bootstrap and the typed publisher check the selected personal
+connection owner against the loaded delegation snapshot; local files survive.
+Mounted credentials retain their normal lifecycle, without a new cleanup protocol.
 The shared recovery path also durably settles proven ambiguous results and
 cleans up its deadline when a reconciler returns or refuses before execution.
 
 **Why:** The old run-as fence prevented an eligible delegate from continuing
 shared work and erased retained content when coordination moved to another
-person. Reusing its old GitHub credential after an authorization refresh observes
-withdrawal would allow new provider operations under unavailable consent. A recovered effect
+person. Fresh GitHub bootstrap and typed publication still need an eligible
+connection owner. A recovered effect
 without the reconciliation settlement flag stayed ambiguous despite proof of
 completion; an early reconciler return also left its deadline timer running.
 

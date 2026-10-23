@@ -24,7 +24,6 @@ export type ToolReceiptObjectPort = ObjectPortOf<WorkstreamToolReceiptStorage>;
 
 const DISPATCHED_OPERATIONS = [
   "executionAccount",
-  "resourceExecutionAccounts",
   "recordExecutionAccount",
   "issuePage",
   "claimPage",

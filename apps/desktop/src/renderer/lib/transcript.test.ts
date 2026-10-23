@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { asUserId, CONNECTOR_CONNECTION_CARD_WIRE_NAME, type WorkstreamTranscriptSnapshot } from '@rally/contracts';
+import { CONNECTOR_CONNECTION_CARD_WIRE_NAME, type WorkstreamTranscriptSnapshot } from '@rally/contracts';
 import type { PendingTranscriptInput } from '@rally/contracts';
 import type { Message, ThoughtEventData } from './types';
 import {
@@ -1708,23 +1708,6 @@ describe('grouping tool calls by plugin', () => {
     });
 
   const slack = { groupKey: 'name:Slack', name: 'Slack', icon: 'slack' } as const;
-
-  it('retains each operation account when plugin calls collapse into activity', () => {
-    const account = { connectionId: 'maya-google', connectionName: "Maya's Google", userId: asUserId('00000000-0000-7000-8000-000000000705'), userName: 'Maya',
-      scope: 'personal' as const, phase: 'served' as const, fallbackFromConnectionId: 'adam-google' };
-    const grouped = groupPluginToolMessages([
-      toolRow('read', 'connection:google', 'Google', { wireName: 'read_sheet', account }),
-      toolRow('publish', 'connection:google', 'Google', { wireName: 'publish_doc', account: { ...account,
-        connectionId: 'adam-google', userId: asUserId('00000000-0000-7000-8000-000000000704'), userName: 'Adam', fallbackFromConnectionId: null } }),
-    ]);
-    expect(grouped).toHaveLength(1);
-    expect(grouped[0]?.pluginActivity?.operations).toEqual([
-      { id: 'read', name: 'read_sheet', status: 'completed', account: {
-        connectionId: 'maya-google', connectionName: "Maya's Google", userId: '00000000-0000-7000-8000-000000000705', userName: 'Maya', scope: 'personal', phase: 'served', fallbackFromConnectionId: 'adam-google' } },
-      { id: 'publish', name: 'publish_doc', status: 'completed', account: {
-        connectionId: 'adam-google', connectionName: "Maya's Google", userId: '00000000-0000-7000-8000-000000000704', userName: 'Adam', scope: 'personal', phase: 'served', fallbackFromConnectionId: null } },
-    ]);
-  });
 
   it('shows one row per plugin, where that plugin first worked', () => {
     const grouped = groupPluginToolMessages([

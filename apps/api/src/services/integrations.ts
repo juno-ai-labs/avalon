@@ -1,4 +1,3 @@
-import { toolAccountAttribution } from "../durable-objects/tool-execution-account";
 import { emitCompletionRepromptTelemetry, type CompletionRepromptObservation } from "../telemetry/completion-verification";
 import { connectorAuthorizationStatus } from "@rally/contracts";
 import { readConnectorResourceAttachment } from "./connector-resource-attachments";
@@ -17,7 +16,7 @@ import { AgentCommunicationService } from "./agent-communication-service";
 import { createAgentCommunicationPlugin } from "./agent-communication-plugin";
 import { continueSidekickRun } from "./sidekick-run-continuation";
 import {
-  executeSidekickAccountOperation, readSidekickOperationDelegation, readSidekickOperationSource, sidekickAccountToolDefinition, splitSidekickAccount,
+  executeSidekickAccountOperation, readSidekickOperationDelegation,
 } from "./sidekick-operation-accounts";
 import type { SidekickExecutionDelegation } from "@rally/contracts";
 import { AgentMessageContentSchema, renderAgentMessage } from "./agent-message-content";
@@ -54,7 +53,6 @@ import {
   createTextDeltaBatcher,
   memberSafeHarnessFailureMessage,
   renderScheduledWakeupMessage,
-  renderSidekickAccountGuidance,
   renderWorkstreamSystemPrompt,
   renderCompactionCheckpointContent,
   rememberAutomationPeopleSearchResult,
@@ -4550,7 +4548,6 @@ export async function runWorkstreamHarness(
                 toolName: event.toolName,
                 status: "completed",
                 participantSafeResult: event.result.summary,
-                ...(invocation.account ? { account: invocation.account } : {}),
                 occurredAtUtc: new Date().toISOString(),
               });
               await orderedTranscript.upsertActivity({
@@ -4696,7 +4693,6 @@ export async function runWorkstreamHarness(
               toolCallId: event.toolCallId,
               pluginId: event.pluginId,
               toolName: event.toolName,
-              ...(invocation?.account ? { account: invocation.account } : {}),
               status: ambiguous || planAlreadyAmbiguous ? "ambiguous" : "failed",
               ...(participantSafeResult ? { participantSafeResult } : {}),
               error: event.error,
@@ -5533,13 +5529,13 @@ async function loadHarnessTools(
   modeByTool: Map<string, "read" | "write">;
   delegation: SidekickExecutionDelegation | null;
 }> {
-  const [[attachedLinks, connectionRows], runDefinition, delegation, backgroundSource] = await Promise.all([
-    inventoryPreparation.get(), runDefinitionPreparation.get(), readSidekickOperationDelegation(env, input), readSidekickOperationSource(env, input),
+  const [[attachedLinks, connectionRows], runDefinition, delegation] = await Promise.all([
+    inventoryPreparation.get(), runDefinitionPreparation.get(), readSidekickOperationDelegation(env, input),
   ]);
+  if (delegation && delegation.delegates.length === 0 && (input.automationRun || input.automationDelegation)) {
+    throw new ConnectorError("unauthorized", "No eligible Sidekick delegate is available to continue this run.");
+  }
   const delegatedUsers = new Set(delegation?.delegates.map((grant) => grant.userId));
-  const delegateNames = delegation ? await env.DB.prepare("SELECT id,name FROM users WHERE id IN (SELECT value FROM json_each(?))")
-    .bind(JSON.stringify([...new Set([...delegatedUsers, delegation.accountUserId])])).all<{ id: string; name: string }>() : null;
-  const delegateName = (userId: string) => delegateNames?.results.find((user) => user.id === userId)?.name || userId;
   const defaultModelPluginIds = new Set(runDefinition?.defaultPluginIds ?? []);
   // Two reads, one per authority, where the retired statement was a join.
   // Which resources this work stream has attached is the object's, and which
@@ -5743,17 +5739,7 @@ async function loadHarnessTools(
       systemMessage: adapter.agentPlugin.systemMessage,
     });
     const dynamicCapability = dynamicConnectorCapability(adapter, scope, grantedScopes);
-    const supportsAccountSelection = !dynamicCapability && Boolean(adapter.operationIdentity);
     let presentation = connectorServerPresentation(basePresentation, storedConnectorServerMetadata(row.config_json));
-    const withAccountGuidance = (message: string) => !delegation ? message : `${message} ${renderSidekickAccountGuidance({
-      taskAccount: { userId: delegation.accountUserId, name: delegateName(delegation.accountUserId) },
-      connection: { connectionId, scope, owner: scope === "personal"
-        ? { userId: String(row.owner_user_id), name: delegateName(String(row.owner_user_id)) } : null },
-      supportsAccountSelection,
-    })}`;
-    presentation = { ...presentation, systemMessage: withAccountGuidance(presentation.systemMessage),
-      searchAliases: [...presentation.searchAliases, ...(scope === "personal" ? [delegateName(String(row.owner_user_id))] : [])],
-    };
     const staticDefinitions = dynamicCapability
       ? []
       : adapter.agentPlugin.tools.filter((definition) => (
@@ -5797,15 +5783,14 @@ async function loadHarnessTools(
       if (!grantedScopes.includes(definition.capability)) return [];
       if (!connectorCapabilitySupportsScope(adapter, definition.capability, scope)) return [];
       const tool: HarnessTool = {
-        definition: delegation && supportsAccountSelection ? sidekickAccountToolDefinition(definition) : definition,
+        definition,
         ...(!dynamicCapability && definition.mode === "write" && definition.idempotency === "provider_key"
           ? { reenterable: true } : {}),
-        ...(includeStaticInputValidator && (adapter.validateToolInput || (delegation && supportsAccountSelection))
+        ...(includeStaticInputValidator && adapter.validateToolInput
           ? {
               validateInput: (toolInput) => {
                 try {
-                  const providerInput = delegation && supportsAccountSelection ? splitSidekickAccount(toolInput).input : toolInput;
-                  return adapter.validateToolInput?.(definition.providerOperationName ?? definition.name, providerInput) ?? null;
+                  return adapter.validateToolInput?.(definition.providerOperationName ?? definition.name, toolInput) ?? null;
                 } catch (error) {
                   if (error instanceof z.ZodError) return error;
                   throw error;
@@ -5822,33 +5807,24 @@ async function loadHarnessTools(
             if (!(context.authorizationContext as PreparedConnectorAuthorization | undefined)?.delegation) {
               await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
             }
-            const parsed = supportsAccountSelection ? splitSidekickAccount(toolInput)
-              : { input: toolInput, selection: { connectionId: frozen.connectionId } };
             const operation = definition.providerOperationName ?? definition.name;
-            const invalid = adapter.validateToolInput?.(operation, parsed.input);
+            const invalid = adapter.validateToolInput?.(operation, toolInput);
             if (invalid) throw invalid;
-            const candidates = [...frozenConnections.values()].filter((candidate) => candidate.connectorType === frozen.connectorType
+            const candidates = dynamicCapability ? [] : [...frozenConnections.values()].filter((candidate) => candidate.connectorType === frozen.connectorType
               && candidate.grantedScopes.includes(definition.capability)
               && connectorCapabilitySupportsScope(adapter, definition.capability, candidate.scope));
-            const identity = adapter.operationIdentity?.(operation, parsed.input) ?? { kind: "account" as const, resourceKeys: [] };
-            const selection = parsed.selection;
             return executeSidekickAccountOperation({
               authority, workspaceId: input.workspaceId,
               coordinatorUserId: input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null,
-              requested: frozen, candidates, identity,
-              sourceAccount: runDefinition?.opening?.sourceAccount ?? backgroundSource,
-              accountReferences: input.agentExchange?.sidekickAccountReferences ?? [],
-              includeConversationAccounts: Boolean(input.automationRun || input.backgroundAgent),
-              ...(selection ? { selection } : {}), mode: definition.mode,
+              requested: frozen, candidates,
               sourceConnectionIds: runDefinition ? Object.values(runDefinition.activitySourcePluginIds)
                 .flatMap((pluginId) => runDefinition.connectorBindings[pluginId] ? [runDefinition.connectorBindings[pluginId]!] : []) : [],
-              canFallback: Boolean(adapter.operationIdentity && adapter.probeResourceAccess),
+              canFallback: !dynamicCapability && Boolean(adapter.probeResourceAccess),
               context, receipts: pageReceipts,
               fence: { runId: input.harnessRunId, attemptId: paginationLease.attemptId, owner: paginationLease.owner },
               execute: (candidate) => executeConnectorToolOnConnection(env, input, candidate, operation, definition.capability,
-                parsed.input, context.signal, context.providerIdempotencyKey, undefined, context.effectIntentId,
+                toolInput, context.signal, context.providerIdempotencyKey, undefined, context.effectIntentId,
                 { delegation: authority } satisfies PreparedConnectorAuthorization, context.replaying),
-              ...(adapter.operationResultKeys ? { resultKeys: (result) => adapter.operationResultKeys!(operation, parsed.input, result) } : {}),
             });
           }
           return executeAuthorizedConnectorTool(
@@ -5941,7 +5917,7 @@ async function loadHarnessTools(
               );
               presentation = connectorServerPresentation(basePresentation, discovered.server);
               connectorPlugin.description = presentation.description;
-              connectorPlugin.systemMessage = withAccountGuidance(presentation.systemMessage);
+              connectorPlugin.systemMessage = presentation.systemMessage;
               const discoveredTools = discovered.tools
                 .flatMap((definition) => addPluginTool(definition));
               if (!discoveredTools.length) {
@@ -6952,17 +6928,6 @@ async function readRunAuthority(
     || (live.state !== "pending" && live.state !== "running" && live.state !== "needs_input"
       && !continuedAfterFinish(input, live))) {
     throw new ConnectorError("unauthorized", "This Sidekick run is no longer running");
-  }
-  if (!live.coordinatorEligible) {
-    await (await hostedParentStub(env, input.workspaceId)).sidekickNoteCoordinatorUnavailable({
-      workspaceId: input.workspaceId, automationId: run.automationId, runId: run.runId,
-    }).catch((error: unknown) => logStructuredEvent(env, "warn", "sidekick_attention_record_failed", {
-      workspace_id: input.workspaceId, automation_id: run.automationId, run_id: run.runId,
-      code: diagnosticErrorCode(error, "sidekick_attention_record_unavailable"),
-    }));
-    throw new ApiError(409, "sidekick_coordinator_unavailable",
-      "The coordinating delegate is unavailable. Restore their delegation and access, or start a new run with an available delegate.",
-      { sidekickId: run.automationId, runId: run.runId });
   }
   const snapshot: RunAuthoritySnapshot = {
     automationRunId: run.runId,
@@ -9231,12 +9196,12 @@ function automationRunProvenance(
 
 async function loadToolInvocation(
   env: Env,
-  target: { workspaceId: string; parentId: string; harnessRunId: string; substreamId?: string | undefined; parentKind?: string },
+  target: { workspaceId: string; parentId: string; harnessRunId: string; substreamId?: string | undefined },
   toolCallId: string,
   // The smallest capability this needs, rather than the whole port: it reads one
-  // receipt and its account checkpoint, never settling either. A caller —
-  // or a test — can supply exactly those reads.
-  receipts: Pick<ToolReceiptObjectPort, "receiptForCall" | "executionAccount"> = createToolReceiptObjectPort(
+  // receipt and never settles anything, and saying so is what lets a caller —
+  // or a test — supply exactly that.
+  receipts: Pick<ToolReceiptObjectPort, "receiptForCall"> = createToolReceiptObjectPort(
     env,
     target.workspaceId,
     target.parentId,
@@ -9254,30 +9219,19 @@ async function loadToolInvocation(
   // does; the `LEFT JOIN connector_connections` alternative was the unbound
   // arm, and it is deleted rather than carried across the boundary — the two
   // tables live in different objects and no join can span them.
-  const accountRecord = target.parentKind === "automation" ? await receipts.executionAccount({
-    runId: target.harnessRunId, effectIntentId: receipt.effectIntentId,
-  }) : null;
-  const connectionId = accountRecord?.account.connectionId ?? receipt.connectionId;
-  const [owner, user] = await Promise.all([
-    connectionId == null ? null : env.DB.prepare(
+  const owner = receipt.connectionId == null ? null : await env.DB.prepare(
     `SELECT connector_type, display_name, model_plugin_id, granted_scopes_json
        FROM connector_connections WHERE id = ?`,
-  ).bind(connectionId).first<{
+  ).bind(receipt.connectionId).first<{
     connector_type: string;
     display_name: string;
     model_plugin_id: string;
     granted_scopes_json: string;
-  }>(),
-    accountRecord?.account.principal.type === "user" ? env.DB.prepare("SELECT name FROM users WHERE id = ?")
-      .bind(accountRecord.account.principal.userId).first<{ name: string }>() : null,
-  ]);
-  const account = accountRecord ? toolAccountAttribution(accountRecord, {
-    connectionName: owner?.display_name ?? null, userName: user?.name ?? null,
-  }) : undefined;
+  }>();
   const error = parseJson<{ code: string; message: string } | null>(receipt.errorJson, null);
   const status = wireToolStatus(receipt.status);
   const plugin = toolInvocationOwningPlugin({
-    connection_id: connectionId,
+    connection_id: receipt.connectionId,
     owner_connector_type: owner?.connector_type ?? null,
     owner_display_name: owner?.display_name ?? null,
     owner_model_plugin_id: owner?.model_plugin_id ?? null,
@@ -9300,8 +9254,7 @@ async function loadToolInvocation(
         : status === "failed" ? "failed" : "completed",
       plugin,
     }),
-    connectionId,
-    ...(account ? { account } : {}),
+    connectionId: receipt.connectionId,
     plugin,
     status,
     inputSummary: summarize(parseJson(receipt.inputJson, {}), 1_000),

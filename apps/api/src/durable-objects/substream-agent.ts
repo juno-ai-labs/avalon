@@ -1,4 +1,3 @@
-import { toolAccountAttribution } from "./tool-execution-account";
 import { RESERVED_CHILD_MEMBERSHIP_VERSION } from "./hosted-parent";
 import { readCompletionVerificationSnapshot } from "./completion-verification-storage";
 import { projectConversationView } from "@rally/contracts/conversation-view";
@@ -4167,6 +4166,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // head of the queue holding everything behind it.
       let continuation: Extract<SidekickRunContinuation, { outcome: "continue" }> | null = null;
       let delegation: WorkstreamWorkflowInput["automationDelegation"];
+      let delegatedPrincipal: WorkstreamWorkflowInput["executionPrincipal"] | undefined;
       const externalSubstreamId = this.externalSubstreamId();
       // Workers have no run row of their own. A run-rooted worker asks about
       // its root's authority, while authoring-rooted workers have no run gate.
@@ -4193,12 +4193,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           return this.claimPersistentLoopExecution();
         }
         if (background) {
-          const inherited = ExecutionPrincipalSchema.parse(authorization.executionPrincipal);
-          if (inherited.type !== "user" || decided.executionPrincipal.type !== "user"
-            || inherited.userId !== decided.executionPrincipal.userId) {
-            await this.refuseSidekickRunInput(loop, pending, "run_principal_changed", authorityRunId);
-            return this.claimPersistentLoopExecution();
-          }
+          delegatedPrincipal = decided.executionPrincipal;
           delegation = { runId: authorityRunId, stopGeneration: decided.stopGeneration };
         } else {
           continuation = decided;
@@ -4207,7 +4202,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // Read after any continuation call, so the Bind fences the activation
       // carries are the ones current when it commits.
       const projection = this.transcript.readBindProjection(loop.loop_id);
-      const executionPrincipal = continuation?.executionPrincipal ?? authorization.executionPrincipal;
+      const executionPrincipal = continuation?.executionPrincipal ?? delegatedPrincipal ?? authorization.executionPrincipal;
       const runId = asHarnessRunId(uuidV7(now));
       const input = WorkstreamWorkflowInputSchema.parse({
         region: this.env.AVALON_REGION,
@@ -5182,7 +5177,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         || loop.bind_state_revision !== current.stateRevision) {
         throw new Error("substream_loop_execution_fence_mismatch");
       }
-      const accountRecord = receipt ? this.toolReceipts.executionAccount({ runId: input.harnessRunId, effectIntentId: receipt.effectIntentId }) : null;
       await this.transcript.commitRecoveredToolResult({
         transition: {
           kind: "tool_result_accepted",
@@ -5207,7 +5201,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
             ? "completed"
             : classification === "ambiguous" ? "ambiguous" : "failed",
           participantSafeResult,
-          ...(accountRecord ? { account: toolAccountAttribution(accountRecord) } : {}),
           error: participantError,
         },
         settlesBatch: !hasWithheldElicitation && offset === recoverableCalls.length - 1,

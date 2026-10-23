@@ -11,7 +11,7 @@ Use three composable mechanisms:
    eligibility, and generation. UI, agent tools, trigger admission and execution
    call the same authority.
 2. **Operation identity resolution** in the harness: build ordered candidates
-   from active grants and task/account constraints, then reuse the connector
+   from active grants and compatible connections, then reuse the connector
    execution path. Each invocation records its served principal.
 3. **Existing durable receipts**: persist the chosen principal, connection,
    delegation generation and effect state before an external mutation. Replay
@@ -39,8 +39,7 @@ the same title as one source. Reconcile only the configured source/event pairs.
 
 The schedule path admits one occurrence and resolves delegation through the
 same authority. The run's coordinating user is the creator when eligible,
-otherwise the first eligible delegate in stable grant order, subject to explicit task
-identity constraints. An event's eligible source owner is preferred for its
+otherwise the first eligible delegate in stable grant order. An event's eligible source owner is preferred for its
 coordinating user; a manual run prefers its eligible requester as coordinator.
 Those trigger preferences affect coordination only, not the separate tool-account
 order in the PRD. This determines runtime ownership and conversational context;
@@ -49,26 +48,19 @@ it does not lend that person's identity to every connector operation.
 Changing coordinating user cannot silently expose retained transcripts or use
 another person's personal system prompt as the new user's prompt. Existing
 Sidekick reader rules and shared-memory/sandbox scope still apply. Continue a
-run with the persisted coordinator while eligible; if that person becomes
-unavailable after authz refresh, retain receipts and surface a blocked
-continuation. A later independent occurrence can select another coordinator.
-Automatic transfer of a running conversation to another user is outside this
-proposal; per-operation connector fallback does not require such a transfer.
+run with the persisted coordinator while eligible; otherwise pick another eligible
+delegate and persist that coordinator before continuation. Root runs and background
+workers use the replacement. If no delegate is eligible, report Needs attention.
 Never write the selected coordinator into the directory's legacy run-as field
 or derive reader/manager access from the new per-run coordinator field.
 
-Keep already selected accounts sticky only within the operation chain/resource
-for that run. New tasks resolve afresh. Snapshot candidate references for one
-invocation using the existing authz view. Added/withdrawn grants become visible
-on its normal refresh path; stale snapshots and in-flight operations may settle.
-Do not introduce synchronous grant reads or provider probes for every call.
-
-An explicitly selected account constrains all attempts. Automatic fallback is
-only for adapters that can distinguish a definite access refusal from an
-uncertain effect and preserve the addressed resource across accounts. Opaque
-provider IDs, account-relative paths, hosted MCP inventories, and Terminal
-processes cannot be assumed interchangeable. A selected identity survives
-restart, pagination, continuation, and receipt reconciliation.
+Each operation starts with its selected plugin, then uses configured source,
+creator and stable delegate ordering after a definite pre-effect access refusal.
+Remote MCP inventories retain their selected connection. There is no account
+selector or account-dependent read/reply/page/handoff feature. Only recovery of
+an exact uncertain effect retains its original account and provider key.
+Added/withdrawn grants propagate through ordinary authorization refreshes; stale
+snapshots and in-flight operations may settle without per-call grant reads.
 
 ## Agent tools
 
@@ -123,13 +115,15 @@ creates immediately on opening the route. There is no Account withdrawal screen.
 
 ## Attribution and shared state
 
-Extend existing receipts with actual served principal, connection, grant
-generation and original selected account. Keep the requested plugin and served
-connection distinct, as existing `servedThrough` already does. The model-visible
-success identifies the serving account; the normal tool activity details expose
-it to existing authorized readers. Provider IDs, cursors, signatures and effect
-keys remain scoped to their serving account. Do not write credentials into
-attribution records.
+Existing receipt checkpoints retain actual principal, connection, grant
+generation, original selection and effect state for database debugging and exact
+effect recovery. These fields are absent from normal app activity and model tool
+output. Do not write credentials into them.
+
+GitHub uses its existing mounted-credential lifecycle. Repository bootstrap and
+typed publishing check the selected connection owner against the inventory's
+delegation snapshot; local files remain available. No unmount protocol or
+per-shell-command delegate scan is required.
 
 The coordinating identity supplies existing personal preferences,
 conversation admission and runtime identity for that run. Other
@@ -159,7 +153,7 @@ actionable owning-conversation post, successful fallback without an error post,
 partial completion, and refusal of the post itself without a false delivery
 claim. Verify the guidance reaches activation runs, not just the authoring chat.
 
-Inspect the actual Sidekick controls and attribution in Electron and browser
+Inspect the actual Sidekick controls and ordinary activity in Electron and browser
 windows. Exercise the same source with a schedule and a connector event, then
 withdraw the successful delegate and observe the next operation's behavior.
 When implementation lands, update the owning subsystem documents in that same

@@ -223,11 +223,6 @@ describe("Terminal Bind integration", () => {
       signal: new AbortController().signal };
     await expect(read({ filePath: "site/index.html" }, toolContext))
       .resolves.toMatchObject({ output: { content: "shared site" } });
-    if (personalRepository) {
-      // The provider mount can land before its expiry acknowledgement commits.
-      // An unknown local expiry must not hide a credential after withdrawal.
-      workstreamObjectRun(objectStore, "UPDATE terminal_repository SET read_token_expires_at = NULL");
-    }
     // The completed import's source is no longer readable. Its bytes are
     // already part of shared Sidekick state, so later delegates retain them.
     await testTerminalPortFactory(objectStore)(W, S).recordImportedResource({
@@ -266,17 +261,14 @@ describe("Terminal Bind integration", () => {
         harnessRunId: childRun, executionPrincipal: { type: "user", userId: runAsUser } },
     )).resolves.toMatchObject({ output: { content: "shared site" } });
     if (personalRepository) {
-      expect(sandboxProvider.clearGitHubReadAccess).toHaveBeenCalledExactlyOnceWith("sandbox-1");
       expect(gateway.mintRepositoryToken).toHaveBeenCalledTimes(1);
-      expect(workstreamObjectGet(objectStore, "SELECT read_token_expires_at FROM terminal_repository"))
-        .toEqual({ read_token_expires_at: 0 });
       await expect(activation!.tools.find((tool) => tool.definition.name === "publish_branch_and_pr")!.execute!(
         { title: "Ship", body: "Update" }, { ...toolContext, harnessRunId: childRun,
           toolCallId: "publish-after-withdrawal", executionPrincipal: { type: "user", userId: runAsUser } },
       )).rejects.toMatchObject({ code: "repository_delegate_unavailable" });
     }
     // A refreshed inventory blocks the withdrawn caller, while an independent
-    // eligible activation retains the original files and clears old secrets.
+    // eligible activation retains the original files.
     const laterWizard = await createAvalonTerminalPlugin(env, { ...input, parentKind: "automation" }, undefined, {
       provider: sandboxProvider,
     });

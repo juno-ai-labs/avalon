@@ -2,7 +2,6 @@ import { z } from "zod";
 import { ConversationParentKindSchema } from "./conversation-parent";
 import { IdSchema, SubstreamIdSchema } from "./identifiers";
 import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
-import { SidekickAccountReferenceSchema } from "./sidekick-delegation";
 
 /** A conversation address within the host's workspace, not a separately allocated agent identity. */
 export const AgentAddressSchema = z.strictObject({
@@ -42,8 +41,6 @@ export const AgentExchangeSchema = z.strictObject({
   teamId: AgentIdSchema,
   messageId: IdSchema,
   senderAgentId: AgentIdSchema,
-  /** Host-derived completed references within one Sidekick; absent on older messages. */
-  sidekickAccountReferences: z.array(SidekickAccountReferenceSchema).optional(),
   /** Absent on a model-authored message, which is every message but two. */
   notice: AgentExchangeNoticeSchema.optional(),
   /**

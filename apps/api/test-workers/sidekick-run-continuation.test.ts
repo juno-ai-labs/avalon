@@ -356,6 +356,34 @@ beforeEach(async () => {
 });
 
 describe("Sidekick run continuation", () => {
+  it.each(["run", "worker"] as const)("continues a %s through another eligible delegate after coordinator withdrawal", async (target) => {
+    await activeSidekick();
+    const worker = target === "worker" ? await delegatedRunWorker() : null;
+    const runId = worker?.runId ?? await completedRun();
+    const targetId = worker?.workerId ?? runId;
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      // The second delegate already has human access; enrollment does not grant it.
+      state.storage.sql.exec("UPDATE automation_directory SET scope='workspace' WHERE automation_id=?", AUTOMATION_ID);
+    });
+    for (const [userId, allowed] of [[CLAIMANT_ID, true], [AUTHOR_ID, false]] as const) {
+      const request = { ...addressed(), userId, allowed, operationId: crypto.randomUUID() };
+      const prepared = await workspaceStub().sidekickPrepareMyDelegation(request);
+      await workspaceStub().sidekickSetDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
+    }
+    const reply = "Keep going with the remaining delegate.";
+    const turnId = target === "worker"
+      ? (await worker!.owner.send({ agentId: worker!.agentId, message: reply, attachmentIds: [] },
+        { ...worker!.context, effectIntentId: crypto.randomUUID() })).messageId
+      : await sendToRun(runId, reply, "coordinator-failover");
+    const execution = await settledExecutionFor(targetId, turnId);
+    expect(execution.status).toBe("completed");
+    expect(JSON.parse(execution.execution_context_json)).toMatchObject({
+      executionPrincipal: { type: "user", userId: CLAIMANT_ID },
+    });
+    expect(callThatSaw(reply)).toBeDefined();
+    expect(await refusals(targetId)).toEqual([]);
+  });
+
   it.each(["authoring", "run"] as const)("starts and continues a background worker under Sidekick %s", async (origin) => {
     await activeSidekick();
     const ownerSubstreamId = origin === "run" ? await completedRun() : "0";
@@ -368,28 +396,6 @@ describe("Sidekick run continuation", () => {
         executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test",
       });
     const owner = new AgentCommunicationService(TEST_ENV, ownerInput);
-    const reference = { sidekickId: AUTOMATION_ID, connectionId: "00000000-0000-7000-8000-00000000c7f1",
-      resourceKeys: ["google:message:handoff-mail"] };
-    if (origin === "run") {
-      // Completed provider output is the fixture; this test exercises its
-      // export through real receipt RPCs, message admission and child recovery.
-      await runInDurableObject(childStub(ownerSubstreamId), (_instance, state) => {
-        for (const [position, status, resourceKey] of [[900, "completed", "google:message:handoff-mail"],
-          [901, "ambiguous", "google:message:unresolved-mail"]] as const) {
-          const effect = `handoff-read-${position}`;
-          state.storage.sql.exec(`INSERT INTO tool_effects(effect_intent_id,run_id,attempt_epoch,tool_position,occurrence_key,
-            tool_name,mode,request_hash,authority_revision,status,tool_call_id,input_json,checkpoint_index,started_at)
-            VALUES (?,?,1,?,?,'gmail.read_message','read','handoff-read','1',?,?, '{}',1,?)`,
-          effect, ownerInput.harnessRunId, position, effect, status, effect, Date.now());
-          const account = { sidekickId: AUTOMATION_ID, connectionId: reference.connectionId, delegatedUserId: AUTHOR_ID,
-            principal: { type: "user", userId: AUTHOR_ID }, grantGeneration: 1 };
-          state.storage.sql.exec(`INSERT INTO tool_effect_checkpoints(checkpoint_id,effect_intent_id,run_id,attempt_id,
-            checkpoint_index,phase,member_safe_payload_json,created_at) VALUES (?,?,?,'handoff-attempt',1,'execution_account',?,?)`,
-          effect, effect, ownerInput.harnessRunId,
-          JSON.stringify({ phase: "served", account, originalAccount: account, resourceKeys: [resourceKey] }), Date.now());
-        }
-      });
-    }
     const context = {
       workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, harnessRunId: ownerInput.harnessRunId,
       toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
@@ -410,13 +416,12 @@ describe("Sidekick run continuation", () => {
     expect(workerInput.automationRun).toBeUndefined();
     if (origin === "run") {
       expect(workerInput.automationDelegation).toMatchObject({ runId: ownerSubstreamId });
-      expect(workerInput.agentExchange?.sidekickAccountReferences).toEqual([reference]);
       const nestedOwner = new AgentCommunicationService(TEST_ENV, workerInput);
-      const nested = await nestedOwner.start({ name: "Reply researcher", description: "Use the handed-off message",
-        message: "Inspect the originating message account.", attachmentIds: [] }, { ...context, effectIntentId: crypto.randomUUID() });
+      const nested = await nestedOwner.start({ name: "Reply researcher", description: "Inspect activity",
+        message: "Inspect the activity counts again.", attachmentIds: [] }, { ...context, effectIntentId: crypto.randomUUID() });
       const nestedId = agentAddressForId(nested.agentId).substreamId;
       const nestedExecution = await settledExecutionFor(nestedId, nestedId);
-      expect(JSON.parse(nestedExecution.execution_context_json).agentExchange.sidekickAccountReferences).toEqual([reference]);
+      expect(nestedExecution.status).toBe("completed");
       // Completion notices settle after terminal receipts and can start another
       // execution in the owner. Drain that nested notice before testing a fresh
       // follow-up after eviction; otherwise the follow-up can correctly steer
@@ -442,9 +447,6 @@ describe("Sidekick run continuation", () => {
     { ...context, effectIntentId: crypto.randomUUID() });
     const continued = await settledExecutionFor(workerId, followUp.messageId);
     expect(continued.status).toBe("completed");
-    if (origin === "run") {
-      expect(JSON.parse(continued.execution_context_json).agentExchange.sidekickAccountReferences).toEqual([reference]);
-    }
     expect(callThatSaw("Check the shared-conversation count too.")).toBeDefined();
     expect(await refusals(workerId)).toEqual([]);
   });
@@ -648,9 +650,8 @@ describe("Sidekick run continuation", () => {
         state.storage.sql.exec(`DELETE FROM sidekick_runs WHERE sidekick_id = ? AND run_id = ?`, AUTOMATION_ID, runId);
       });
     }],
-    // A later independent occurrence may choose someone else; an existing run
-    // whose coordinator withdraws is blocked rather than silently transferred.
-    ["run_coordinator_unavailable", async () => {
+    // With no remaining eligible delegate, input cannot activate execution.
+    ["run_no_eligible_delegate", async () => {
       const request = { ...addressed(), userId: AUTHOR_ID, allowed: false, operationId: crypto.randomUUID() };
       const prepared = await workspaceStub().sidekickPrepareMyDelegation(request);
       await workspaceStub().sidekickSetDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });

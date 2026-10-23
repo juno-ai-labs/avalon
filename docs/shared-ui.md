@@ -59,9 +59,8 @@ padded layout ahead of timing.
 
 Run history preserves the coordinating user independently of the legacy run-as
 field. Names reuse the delegation query already mounted by the Sidekick screen;
-an unavailable historical identity retains its ID. Connector activity exposes
-actual acting accounts through the existing work breakdown; [plugin activity
-rows](plugin-activity-rows.md#delegated-account-details) owns that projection.
+an unavailable historical identity retains its ID. Operation-account details
+remain in private receipt storage for debugging and are absent from app activity.
 
 ## Error popups
 
@@ -298,7 +297,7 @@ can still present authority the backend never accepted, so acknowledged state
 and uncertain-outcome recovery remain.
 
 **Consequences:** Existing invalidations synchronize other windows. Run history
-retains the coordinator and activity details retain operation accounts. There
+retains the coordinator; operation accounts are private database debug records. There
 is no Account withdrawal screen. Self-service remains available on the Sidekick.
 
 ### 2026-10-22 — Share explained disabled controls
