@@ -643,11 +643,32 @@ export class HostedSidekick {
     });
   }
 
-  private async coordinator(preferredUserId: string | null = null, audienceUserIds: readonly string[] | null = null, preferSource = true): Promise<string | null> {
+  private async coordinator(
+    preferredUserId: string | null = null,
+    audienceUserIds: readonly string[] | null = null,
+    preferSource = true,
+    eligibility = new Map<string, Promise<boolean>>(),
+  ): Promise<string | null> {
+    const initial = this.row();
+    if (!initial || initial.lifecycle === "deleted") return null;
+    await this.migrateDelegation();
     const row = this.row();
     if (!row || row.lifecycle === "deleted") return null;
-    const authority = await this.readExecutionDelegation({ workspaceId: row.workspace_id, automationId: this.sidekickId });
-    const eligible = authority.delegates.filter((grant) => audienceUserIds === null || audienceUserIds.includes(grant.userId));
+    const grants = this.delegations().forSidekick(this.sidekickId)
+      .filter((grant) => grant.allowed && (audienceUserIds === null || audienceUserIds.includes(grant.userId)));
+    if (grants.length === 0) return null;
+    const eligible = (userId: string): Promise<boolean> => {
+      const grant = grants.find((candidate) => candidate.userId === userId);
+      if (!grant) return Promise.resolve(false);
+      const key = `${this.sidekickId}:${grant.userId}:${grant.generation}`;
+      let pending = eligibility.get(key);
+      if (!pending) {
+        pending = this.delegationEligible(grant);
+        eligibility.set(key, pending);
+      }
+      return pending;
+    };
+    if (preferredUserId !== null && await eligible(preferredUserId)) return preferredUserId;
     const bindingsByPlugin = JSON.parse(row.connector_bindings_json) as Record<string, string>;
     const bindings = preferSource ? Object.values(JSON.parse(row.activity_source_plugin_ids_json) as Record<string, string>)
       .flatMap((pluginId) => bindingsByPlugin[pluginId] ? [bindingsByPlugin[pluginId]!] : []) : [];
@@ -655,12 +676,16 @@ export class HostedSidekick {
       "SELECT owner_user_id FROM connector_connections WHERE id IN (SELECT value FROM json_each(?)) AND owner_user_id IS NOT NULL ORDER BY id",
       JSON.stringify(bindings),
     ).toArray().map((connection) => connection.owner_user_id);
-    const preferred = [preferredUserId, ...owners, authority.creatorUserId];
-    return preferred.find((userId) => userId !== null && eligible.some((grant) => grant.userId === userId)) ?? eligible[0]?.userId ?? null;
+    const availableOwners = await Promise.all(owners.map(eligible));
+    const sourceOwner = owners.find((_userId, index) => availableOwners[index]);
+    if (sourceOwner) return sourceOwner;
+    if (await eligible(row.author_user_id)) return row.author_user_id;
+    const available = await Promise.all(grants.map((grant) => eligible(grant.userId)));
+    return grants.find((_grant, index) => available[index])?.userId ?? null;
   }
 
-  /** Both matching and delivery use the source owner's consent and the event's actual audience. */
-  async eventCoordinator(event: WorkspaceExternalEvent, registrationId: string): Promise<string | null> {
+  /** Matching shares eligibility only within its request; delivery checks afresh. */
+  async eventCoordinator(event: WorkspaceExternalEvent, registrationId: string, eligibility?: Map<string, Promise<boolean>>): Promise<string | null> {
     const stored = this.sql.exec<{
       connection_scope: string; connection_owner_user_id: string | null; target_user_ids_json: string; visibility_json: string;
     }>("SELECT connection_scope,connection_owner_user_id,target_user_ids_json,visibility_json FROM workspace_connector_events WHERE event_id=?", event.id).toArray()[0];
@@ -675,9 +700,9 @@ export class HostedSidekick {
       : event.audienceKind === "restricted" ? event.audienceUserIds : null;
     if (personal) {
       if (!owner || (audience !== null && !audience.includes(owner))) return null;
-      return this.coordinator(owner, [owner]);
+      return this.coordinator(owner, [owner], false, eligibility);
     }
-    return this.coordinator(null, audience, false);
+    return this.coordinator(null, audience, false, eligibility);
   }
 
   private delegationError(code: keyof typeof SIDEKICK_DELEGATION_ERRORS): ApiError {
@@ -768,10 +793,12 @@ export class HostedSidekick {
       userId: request.actor.userId, actorRole: relationship.role,
     }, this.host)) throw this.delegationError("sidekick_not_found");
     const grants = this.delegations().forSidekick(this.sidekickId).filter((grant) => grant.allowed);
-    const people = await this.env.DB.prepare(
+    const [people, availability] = await Promise.all([this.env.DB.prepare(
       "SELECT id,name,avatar_url,presentation_json FROM users WHERE id IN (SELECT value FROM json_each(?))",
     ).bind(JSON.stringify([...new Set([row.author_user_id, ...grants.map((grant) => grant.userId)])]))
-      .all<{ id: string; name: string | null; avatar_url: string | null; presentation_json: string | null }>();
+      .all<{ id: string; name: string | null; avatar_url: string | null; presentation_json: string | null }>(),
+      Promise.all(grants.map((grant) => this.delegationEligible(grant))),
+    ]);
     const identities = new Map(people.results.map((person) => {
       let raw: unknown;
       try { raw = person.presentation_json ? JSON.parse(person.presentation_json) : null; }
@@ -786,9 +813,7 @@ export class HostedSidekick {
       sidekickId: this.sidekickId, creatorUserId: row.author_user_id,
       creator: identity(row.author_user_id),
       you: { userId: request.actor.userId, allowed: this.delegations().read(this.sidekickId, request.actor.userId)?.allowed ?? false },
-      delegates: await Promise.all(grants.map(async (grant) => ({
-        ...identity(grant.userId), eligible: await this.delegationEligible(grant),
-      }))),
+      delegates: grants.map((grant, index) => ({ ...identity(grant.userId), eligible: availability[index]! })),
     });
   }
 
@@ -2514,7 +2539,6 @@ export class HostedSidekick {
    * participant of it, the library's rule, read from this object's own rows.
    */
   async detail(readerUserId: string): Promise<AutomationDetail> {
-    const delegation = await this.readExecutionDelegation({ workspaceId: this.row()!.workspace_id, automationId: this.sidekickId });
     // The row with both revisions and its last run in one read; the recent
     // runs are the second. `next_run_at` is kept by `touchDirectory`.
     const row = first(this.sql.exec<HostedSidekickRow & {
@@ -2562,7 +2586,6 @@ export class HostedSidekick {
       lifecycle: row.lifecycle,
       authorUserId: row.author_user_id,
       runAsUserId: row.run_as_user_id,
-      delegationStatus: delegation.delegates.length > 0 ? "available" : this.delegations().forSidekick(this.sidekickId).some((grant) => grant.allowed) ? "no_eligible_delegate" : "needs_opt_in",
       delegationAttention: row.delegation_attention_code === null ? null : {
         code: SidekickDelegationAttentionCodeSchema.parse(row.delegation_attention_code),
         message: SIDEKICK_DELEGATION_ATTENTION_MESSAGES[SidekickDelegationAttentionCodeSchema.parse(row.delegation_attention_code)],

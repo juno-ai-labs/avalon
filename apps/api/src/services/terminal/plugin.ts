@@ -166,18 +166,6 @@ export async function createAvalonTerminalPlugin(
     await sidekickWorkspace!.sidekickReadExecutionDelegation({ workspaceId: input.workspaceId, automationId: input.parentId }),
   );
   const initialDelegation = options.delegation !== undefined ? options.delegation : sidekickWorkspace ? await readDelegation() : null;
-  // Reuse inventory consent for the selected repository. No shell-wide scan or
-  // mounted-secret cleanup is required for delegation.
-  const repositoryDelegateAvailable = async (): Promise<boolean> => {
-    if (!sidekickWorkspace) return true;
-    const selected = await terminalPort(input.workspaceId, input.parentId).selectedRepository();
-    if (!selected) return true;
-    const connection = await env.DB.prepare(
-      "SELECT scope, owner_user_id, status FROM connector_connections WHERE id = ? AND workspace_id = ?",
-    ).bind(selected.connectionId, input.workspaceId).first<{ scope: string; owner_user_id: string | null; status: string }>();
-    return Boolean(connection && connection.status !== "disabled" && (connection.scope === "workspace"
-      || initialDelegation?.delegates.some((delegate) => delegate.userId === connection.owner_user_id)));
-  };
   // Consent refreshes at inventory boundaries; files remain Sidekick-owned.
   const assertSandboxPrincipal = (context: HarnessToolContext): void => {
     if (!sidekickWorkspace) return;
@@ -224,7 +212,6 @@ export async function createAvalonTerminalPlugin(
     sandbox: Parameters<typeof bootstrapTerminalRepository>[2],
     sandboxProvider: TerminalSandboxProvider,
   ): Promise<void> => {
-    if (!await repositoryDelegateAvailable()) return;
     try {
       await bootstrapTerminalRepository(
         env,
@@ -234,9 +221,10 @@ export async function createAvalonTerminalPlugin(
         readGateway,
         terminalPort,
         instructions,
+        initialDelegation ?? undefined,
       );
     } catch (error) {
-      if (error instanceof TerminalToolError && error.code === "repository_not_configured") return;
+      if (error instanceof TerminalToolError && (error.code === "repository_not_configured" || error.code === "repository_delegate_unavailable")) return;
       throw error;
     }
   };
@@ -253,7 +241,6 @@ export async function createAvalonTerminalPlugin(
     context: HarnessToolContext,
     sandbox: Parameters<typeof bootstrapTerminalRepository>[2],
   ): Promise<string | null> => {
-    if (!await repositoryDelegateAvailable()) return "repository_delegate_unavailable";
     try {
       await bootstrapTerminalRepository(
         env,
@@ -263,9 +250,11 @@ export async function createAvalonTerminalPlugin(
         readGateway,
         terminalPort,
         instructions,
+        initialDelegation ?? undefined,
       );
       return null;
     } catch (error) {
+      if (error instanceof TerminalToolError && error.code === "repository_delegate_unavailable") return error.code;
       // Repository selection and bootstrap failures are repaired through the
       // Terminal tool surface itself. The sandbox is already usable, so hiding
       // checkout_repository here would remove the only in-product repair path.
@@ -307,7 +296,7 @@ export async function createAvalonTerminalPlugin(
     coordinator,
     provider,
     resourceBridge,
-    createRepositoryPublisher(env, createGitHubRestPublicationGateway(env), terminalPort),
+    createRepositoryPublisher(env, createGitHubRestPublicationGateway(env), terminalPort, initialDelegation ?? undefined),
     createTerminalRepositorySelector(
       env,
       provider,
@@ -335,12 +324,7 @@ export async function createAvalonTerminalPlugin(
       });
       try {
         assertSandboxPrincipal(context);
-        const result = await withTerminalToolTrace(trace, async () => {
-          if (name === "publish_branch_and_pr" && !await repositoryDelegateAvailable()) {
-            throw new TerminalToolError("repository_delegate_unavailable", "The selected GitHub connection needs an eligible delegate before publishing.");
-          }
-          return executors[name](toolInput, context);
-        });
+        const result = await withTerminalToolTrace(trace, () => executors[name](toolInput, context));
         const durationMs = Date.now() - startedAt;
         logStructuredEvent(env, "info", "terminal_tool_finished", {
           workspace_id: context.workspaceId,

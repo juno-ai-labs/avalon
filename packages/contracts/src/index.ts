@@ -1836,7 +1836,6 @@ export const AutomationDetailSchema = AutomationSummarySchema.extend({
   lifecycle: AutomationLifecycleStateSchema,
   authorUserId: IdSchema,
   runAsUserId: IdSchema,
-  delegationStatus: z.enum(["available", "needs_opt_in", "no_eligible_delegate"]).optional(),
   delegationAttention: z.strictObject({ code: SidekickDelegationAttentionCodeSchema, message: z.string() }).nullable().optional(),
   /** The latest submitted definition, or null before the chat has submitted one. */
   currentDefinition: AutomationDraftSchema.nullable(),
