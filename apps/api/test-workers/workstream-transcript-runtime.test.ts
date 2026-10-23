@@ -38,6 +38,38 @@ interface TranscriptOperationExecutor {
 beforeEach(async () => reset());
 
 describe("work-stream transcript on workerd SQLite", () => {
+  it("retains the actual serving account and fallback in participant details after eviction", async () => {
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    await runInDurableObject(stub, async (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
+      const transcript = new WorkstreamTranscriptStorage(state.storage);
+      await transcript.seedDevelopmentConversationTurn({
+        turnId: "account-turn", clientMessageId: null, externalActorJson: null, actor: "assistant", authorUserId: null, authorSnapshot: null,
+        messageType: "tool", text: "", structuredContentJson: JSON.stringify({ invocation: {
+          toolCallId: "account-call", toolName: "sheets_read", status: "started",
+        } }), producedByRunId: null, expectedTranscriptSequence: 1, createdAtUtc: new Date(1_000).toISOString(),
+      });
+      await transcript.upsertToolLifecycle({
+        toolCallId: "account-call", pluginId: "connection:source", toolName: "sheets_read", status: "completed",
+        participantSafeResult: "Read the sheet", occurredAtUtc: new Date(2_000).toISOString(),
+        account: { connectionId: "00000000-0000-7000-8000-000000000706", connectionName: "Maya's Google",
+          userId: asUserId("00000000-0000-7000-8000-000000000705"), userName: "Maya", scope: "personal", phase: "served",
+          fallbackFromConnectionId: "00000000-0000-7000-8000-000000000707" },
+      });
+    });
+    await evictDurableObject(stub);
+    await runInDurableObject(stub, (_instance, state) => {
+      const block = new WorkstreamTranscriptStorage(state.storage).participantTurn("account-turn")!.blocks[0];
+      expect(block).toMatchObject({ type: "tool", participantSafeResult: "Read the sheet", account: {
+        connectionId: "00000000-0000-7000-8000-000000000706", connectionName: "Maya's Google",
+        userId: "00000000-0000-7000-8000-000000000705", userName: "Maya", scope: "personal", phase: "served",
+        fallbackFromConnectionId: "00000000-0000-7000-8000-000000000707",
+      } });
+    });
+  });
+
   it("keeps completion verification consumed across compaction and eviction", async () => {
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),

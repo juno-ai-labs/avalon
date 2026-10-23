@@ -450,6 +450,8 @@ export function mapToolInvocation(invocation: z.infer<typeof WireToolInvocationS
   const completed = invocation.completedAt ? Date.parse(invocation.completedAt) : Number.NaN;
   return {
     id: invocation.id,
+    toolCallId: invocation.toolCallId,
+    ...(invocation.account ? { account: invocation.account } : {}),
     name: invocation.activityName ?? invocation.toolName,
     // Kept beside the display name, which the prose above has taken over.
     wireName: invocation.toolName,
@@ -541,6 +543,7 @@ function mapAutomationRun(run: WireAutomationRun): AutomationRun {
   return {
     id: run.id,
     automationId: run.automationId,
+    ...(run.coordinatorUserId === undefined ? {} : { coordinatorUserId: run.coordinatorUserId }),
     triggerType: run.triggerType,
     status: run.status,
     plannedFor: run.plannedFor,

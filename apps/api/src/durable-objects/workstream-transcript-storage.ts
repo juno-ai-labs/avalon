@@ -10,6 +10,8 @@ import {
   PendingTranscriptInputSchema,
   type ExternalActor,
   type PendingTranscriptInput,
+  ToolAccountAttributionSchema,
+  type ToolAccountAttribution,
   type TranscriptActivity,
   type TranscriptBlock,
   type TranscriptPluginRun,
@@ -713,6 +715,7 @@ export class WorkstreamTranscriptStorage {
       toolName: string;
       status: "completed" | "failed" | "ambiguous";
       participantSafeResult?: unknown;
+      account?: ToolAccountAttribution;
       error?: string | null;
     };
     settlesBatch: boolean;
@@ -732,6 +735,7 @@ export class WorkstreamTranscriptStorage {
         ...(input.lifecycle.participantSafeResult === undefined
           ? {}
           : { participantSafeResult: input.lifecycle.participantSafeResult }),
+        ...(input.lifecycle.account ? { account: input.lifecycle.account } : {}),
         ...(input.lifecycle.error === undefined ? {} : { error: input.lifecycle.error }),
         occurredAtUtc: new Date(now).toISOString(),
       }),
@@ -2316,6 +2320,7 @@ export class WorkstreamTranscriptStorage {
     status: "started" | "completed" | "failed" | "ambiguous" | "cancelled";
     participantSafeInput?: unknown;
     participantSafeResult?: unknown;
+    account?: ToolAccountAttribution;
     error?: string | null;
     occurredAtUtc: string;
   }): Promise<void> {
@@ -2330,6 +2335,7 @@ export class WorkstreamTranscriptStorage {
     status: "started" | "completed" | "failed" | "ambiguous" | "cancelled";
     participantSafeInput?: unknown;
     participantSafeResult?: unknown;
+    account?: ToolAccountAttribution;
     error?: string | null;
     occurredAtUtc: string;
   }): Promise<PreparedToolLifecycle> {
@@ -2357,6 +2363,7 @@ export class WorkstreamTranscriptStorage {
         ?? previousPayload.participantSafeInput
         ?? null,
       participantSafeResult: input.participantSafeResult ?? null,
+      ...(input.account ? { account: ToolAccountAttributionSchema.parse(input.account) } : {}),
       error: input.error ?? null,
       status: input.status,
     };
@@ -5559,6 +5566,7 @@ function hydrateBlock(
       ? safe.error
       : toolInvocationError(legacyInvocation),
     activityId: row.activity_id,
+    ...(safe.account ? { account: ToolAccountAttributionSchema.parse(safe.account) } : {}),
   };
 }
 

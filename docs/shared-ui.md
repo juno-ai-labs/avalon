@@ -59,6 +59,12 @@ than automatically creating another. Delegation appears inside the profile's
 padded layout ahead of timing. An existing delegate can expand the full scope
 explanation; a person opting in sees it before the action.
 
+Run history preserves the coordinating user independently of the legacy run-as
+field. Names reuse the delegation query already mounted by the Sidekick screen;
+an unavailable historical identity retains its ID. Connector activity exposes
+actual acting accounts through the existing work breakdown; [plugin activity
+rows](plugin-activity-rows.md#delegated-account-details) owns that projection.
+
 ## Error popups
 
 Operational failures across Electron and browser are acknowledged popups with
@@ -292,8 +298,9 @@ present permission the authority never accepted. A separate confirmation dialog
 would repeat the normal create/allow action instead of explaining it in place.
 
 **Consequences:** Pending actions are scoped to the affected person. Other
-windows use the existing invalidation path. Account recovery and actual serving-
-account activity remain separate unfinished UI requirements in the
+windows use the existing invalidation path. Run history preserves the coordinator,
+while activity shows receipt-backed serving accounts through the work breakdown.
+Account recovery remains unfinished and is tracked in the
 [implementation plan](PRDs/2026-10-22_sidekick-delegation/plan.md).
 
 ### 2026-10-22 — Share explained disabled controls

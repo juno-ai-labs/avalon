@@ -5,7 +5,7 @@ export * from './artifact-annotations';
 import { ExternalPeopleSchema } from "./external-people";
 export { ExternalPeopleSchema, ExternalPersonSchema, MAX_EXTERNAL_PEOPLE, deduplicateExternalPeople } from "./external-people";
 import { z } from "zod";
-import { SidekickDelegationAttentionCodeSchema } from "./sidekick-delegation";
+import { SidekickDelegationAttentionCodeSchema, ToolAccountAttributionSchema } from "./sidekick-delegation";
 import { ConversationViewRequestSchema } from "./conversation-view";
 import { AttachmentKindSchema, ResourceSlugSchema, parseStoredSuggestedAttachmentToolCall } from "./attachment-contracts";
 import { AutomationLifecycleStateSchema,
@@ -1119,6 +1119,7 @@ export const ToolInvocationSchema = z.object({
    */
   activityName: z.string().min(1).max(200).nullable().default(null),
   connectionId: IdSchema.nullable(),
+  account: ToolAccountAttributionSchema.optional(),
   /**
    * The connector plugin that owns this tool, resolved from `connectionId`, or
    * null for Avalon-owned tools. Rows render this and only this as their icon.

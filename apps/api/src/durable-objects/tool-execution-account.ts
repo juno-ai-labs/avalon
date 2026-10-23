@@ -1,9 +1,22 @@
-import { ToolExecutionAccountSchema, ToolExecutionAccountRecordSchema, type ToolExecutionAccountRecord } from "@rally/contracts";
+import { ToolExecutionAccountSchema, ToolExecutionAccountRecordSchema, type ToolExecutionAccountRecord, type ToolAccountAttribution } from "@rally/contracts";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { z } from "zod";
 
 /** Account choices live in the existing append-only receipt checkpoints. */
 export const TOOL_ACCOUNT_CHECKPOINT = "execution_account";
+
+export function toolAccountAttribution(record: ToolExecutionAccountRecord, names?: { connectionName?: string | null; userName?: string | null }): ToolAccountAttribution {
+  const personal = record.account.principal.type === "user";
+  return {
+    connectionId: record.account.connectionId,
+    connectionName: names?.connectionName ?? null,
+    userId: personal ? record.account.delegatedUserId : null,
+    userName: personal ? names?.userName ?? null : null,
+    scope: personal ? "personal" : "workspace",
+    phase: record.phase,
+    fallbackFromConnectionId: record.originalAccount.connectionId === record.account.connectionId ? null : record.originalAccount.connectionId,
+  };
+}
 export const ExecutionAccountReadSchema = z.strictObject({ runId: z.string().min(1), effectIntentId: z.string().min(1) });
 export const ResourceExecutionAccountsSchema = z.strictObject({ runId: z.string().min(1), resourceKeys: z.array(z.string().min(1)) });
 export const RecordExecutionAccountSchema = z.strictObject({

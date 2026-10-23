@@ -179,6 +179,7 @@ const wireAutomationDetail = {
 const wireAutomationRun = {
   id: runId,
   automationId,
+  coordinatorUserId: userId,
   triggerType: 'schedule' as const,
   plannedFor: timestamp,
   startedAt: timestamp,
@@ -464,7 +465,7 @@ describe('Rally API wire adapter', () => {
     const api = new RallyApi('https://api.rally.test', session);
 
     await expect(api.acceptAutomation(automationId)).resolves.toMatchObject({ acceptedDefinitionRevision: 1 });
-    await expect(api.getAutomationRuns(automationId)).resolves.toEqual([expect.objectContaining({ id: runId })]);
+    await expect(api.getAutomationRuns(automationId)).resolves.toEqual([expect.objectContaining({ id: runId, coordinatorUserId: userId })]);
 
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`https://api.rally.test/sidekicks/${automationId}/accept`);
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' });

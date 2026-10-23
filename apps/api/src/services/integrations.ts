@@ -1,3 +1,4 @@
+import { toolAccountAttribution } from "../durable-objects/tool-execution-account";
 import { emitCompletionRepromptTelemetry, type CompletionRepromptObservation } from "../telemetry/completion-verification";
 import { connectorAuthorizationStatus } from "@rally/contracts";
 import { readConnectorResourceAttachment } from "./connector-resource-attachments";
@@ -4549,6 +4550,7 @@ export async function runWorkstreamHarness(
                 toolName: event.toolName,
                 status: "completed",
                 participantSafeResult: event.result.summary,
+                ...(invocation.account ? { account: invocation.account } : {}),
                 occurredAtUtc: new Date().toISOString(),
               });
               await orderedTranscript.upsertActivity({
@@ -4662,6 +4664,7 @@ export async function runWorkstreamHarness(
               },
             );
           }
+          const invocation = await loadToolInvocation(env, input, event.toolCallId);
           {
             const position = transcriptToolPosition(event.toolCallId);
             const plugin = transcriptPluginActivity(event.toolCallId, event.pluginId);
@@ -4693,6 +4696,7 @@ export async function runWorkstreamHarness(
               toolCallId: event.toolCallId,
               pluginId: event.pluginId,
               toolName: event.toolName,
+              ...(invocation?.account ? { account: invocation.account } : {}),
               status: ambiguous || planAlreadyAmbiguous ? "ambiguous" : "failed",
               ...(participantSafeResult ? { participantSafeResult } : {}),
               error: event.error,
@@ -4729,7 +4733,6 @@ export async function runWorkstreamHarness(
             }
             await settleTranscriptAssistantActivity(event.toolCallId, "fail");
           }
-          const invocation = await loadToolInvocation(env, input, event.toolCallId);
           if (invocation) {
             await emit({ type: "tool_failed", invocation });
             runtimeDeferral(recordToolAudit(env, input, invocation.id, event.toolName, receiptPolicy.definition.mode, ambiguous ? "ambiguous" : "failed"));
@@ -9196,12 +9199,12 @@ function automationRunProvenance(
 
 async function loadToolInvocation(
   env: Env,
-  target: { workspaceId: string; parentId: string; harnessRunId: string; substreamId?: string | undefined },
+  target: { workspaceId: string; parentId: string; harnessRunId: string; substreamId?: string | undefined; parentKind?: string },
   toolCallId: string,
   // The smallest capability this needs, rather than the whole port: it reads one
-  // receipt and never settles anything, and saying so is what lets a caller —
-  // or a test — supply exactly that.
-  receipts: Pick<ToolReceiptObjectPort, "receiptForCall"> = createToolReceiptObjectPort(
+  // receipt and its account checkpoint, never settling either. A caller —
+  // or a test — can supply exactly those reads.
+  receipts: Pick<ToolReceiptObjectPort, "receiptForCall" | "executionAccount"> = createToolReceiptObjectPort(
     env,
     target.workspaceId,
     target.parentId,
@@ -9219,19 +9222,30 @@ async function loadToolInvocation(
   // does; the `LEFT JOIN connector_connections` alternative was the unbound
   // arm, and it is deleted rather than carried across the boundary — the two
   // tables live in different objects and no join can span them.
-  const owner = receipt.connectionId == null ? null : await env.DB.prepare(
+  const accountRecord = target.parentKind === "automation" ? await receipts.executionAccount({
+    runId: target.harnessRunId, effectIntentId: receipt.effectIntentId,
+  }) : null;
+  const connectionId = accountRecord?.account.connectionId ?? receipt.connectionId;
+  const [owner, user] = await Promise.all([
+    connectionId == null ? null : env.DB.prepare(
     `SELECT connector_type, display_name, model_plugin_id, granted_scopes_json
        FROM connector_connections WHERE id = ?`,
-  ).bind(receipt.connectionId).first<{
+  ).bind(connectionId).first<{
     connector_type: string;
     display_name: string;
     model_plugin_id: string;
     granted_scopes_json: string;
-  }>();
+  }>(),
+    accountRecord?.account.principal.type === "user" ? env.DB.prepare("SELECT name FROM users WHERE id = ?")
+      .bind(accountRecord.account.principal.userId).first<{ name: string }>() : null,
+  ]);
+  const account = accountRecord ? toolAccountAttribution(accountRecord, {
+    connectionName: owner?.display_name ?? null, userName: user?.name ?? null,
+  }) : undefined;
   const error = parseJson<{ code: string; message: string } | null>(receipt.errorJson, null);
   const status = wireToolStatus(receipt.status);
   const plugin = toolInvocationOwningPlugin({
-    connection_id: receipt.connectionId,
+    connection_id: connectionId,
     owner_connector_type: owner?.connector_type ?? null,
     owner_display_name: owner?.display_name ?? null,
     owner_model_plugin_id: owner?.model_plugin_id ?? null,
@@ -9254,7 +9268,8 @@ async function loadToolInvocation(
         : status === "failed" ? "failed" : "completed",
       plugin,
     }),
-    connectionId: receipt.connectionId,
+    connectionId,
+    ...(account ? { account } : {}),
     plugin,
     status,
     inputSummary: summarize(parseJson(receipt.inputJson, {}), 1_000),
