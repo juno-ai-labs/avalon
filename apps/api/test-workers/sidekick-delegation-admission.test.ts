@@ -1,12 +1,13 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 import { env } from "cloudflare:workers";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AutomationDetailSchema, AutomationRunDefinitionV1Schema, AutomationSetEvaluatorRulesInputV1Schema,
   SidekickExecutionDelegationSchema, asUserId, asWorkspaceId, type AutomationDraft,
   WorkspaceExternalEventMatchResultSchema,
 } from "@rally/contracts";
+import { HostedSidekick } from "../src/durable-objects/hosted-sidekick";
 import { workspaceDOName } from "../src/durable-objects/names";
 import { AUTOMATION_SCHEDULE_ALARM_KIND } from "../src/durable-objects/automation-do-protocol";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
@@ -33,6 +34,7 @@ const definition: AutomationDraft = {
   suggestedScope: "workspace", followUpQuestion: null, elicitation: null, ready: true, definitionVersion: 2,
 };
 useHeldEffectQueue();
+afterEach(() => vi.restoreAllMocks());
 
 beforeEach(async () => {
   await reset();
@@ -71,19 +73,19 @@ async function execution() {
   return SidekickExecutionDelegationSchema.parse(await stub().sidekickReadExecutionDelegation(address));
 }
 
-async function webhook() {
+async function webhook(evaluatorKeys = ["deployed"]) {
   await create();
   await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec(`INSERT INTO connector_connections
     (id,workspace_id,connector_type,scope,display_name,model_plugin_id,granted_scopes_json,status,config_json,created_at,updated_at)
     VALUES (?,?,'generic_webhook','workspace','Deploy hook','plugin_webhook','[]','healthy','{"eventTypes":["deploy.finished"]}',?,?)`, connectionId, workspaceId, now, now));
   await activate({ ...definition, triggers: [{ type: "connector_activity", connectorType: "generic_webhook", sourceBindingKey: "deploy_hook",
     suggestedSourcePluginId: "plugin_webhook", eventTypes: ["deploy.finished"], deterministicFilters: {} }] },
-  AutomationSetEvaluatorRulesInputV1Schema.parse({ schemaVersion: 1, evaluators: [{ evaluatorKey: "deployed", source: {
+  AutomationSetEvaluatorRulesInputV1Schema.parse({ schemaVersion: 1, evaluators: evaluatorKeys.map((evaluatorKey) => ({ evaluatorKey, source: {
     sourceBindingKey: "deploy_hook", suggestedSourcePluginId: "plugin_webhook", event: { kind: "event_type", eventType: "deploy.finished" },
-  }, when: { kind: "always" } }] }));
+  }, when: { kind: "always" } })) }));
   const registration = await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec<{ registration_id: string }>(
     "SELECT registration_id FROM workspace_external_event_registrations WHERE automation_id=? AND state='active'", automationId,
-  ).one());
+  ).toArray()[0]!);
   return { ...address, registrationId: registration.registration_id, payloadHash: "hash", event: {
     id: crypto.randomUUID(), eventSequence: 1, eventType: "deploy.finished", title: "Private deploy", summary: "A deploy finished",
     textSnippet: "Private deploy details", metadata: {}, occurredAt: Date.now(), audienceKind: "restricted" as const, audienceUserIds: [other],
@@ -91,6 +93,62 @@ async function webhook() {
 }
 
 describe("shared Sidekick delegation admission", () => {
+  it("reads details without scanning delegate eligibility", async () => {
+    await create();
+    await consent(other, true);
+    const eligibility = vi.spyOn(HostedSidekick.prototype, "delegationEligible");
+    const detail = AutomationDetailSchema.parse(await stub().sidekickReadDetail({ ...address, actor: actor() }));
+    expect(detail.authorUserId).toBe(creator);
+    expect(eligibility).not.toHaveBeenCalled();
+  });
+
+  it("checks only the preferred delegate for manual and personal-event admission", async () => {
+    const request = await webhook();
+    await consent(other, true);
+    await runDurableObjectAlarm(stub());
+    await expect.poll(async () => runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
+      "SELECT count(*) AS count FROM _internal_durable_alarms WHERE kind='sidekick_delegation_sources'",
+    ).one().count)).toBe(0);
+    const eligibility = vi.spyOn(HostedSidekick.prototype, "delegationEligible");
+    const manual = await stub().sidekickRunNow({ ...address, actor: actor(), idempotencyKey: "preferred-only" });
+    expect((await runs()).find((run) => run.run_id === manual.runId)?.coordinator_user_id).toBe(creator);
+    expect(await stub().sidekickAdmitExternalEvent({ ...request, event: { ...request.event,
+      sourceConnectionScope: "personal", sourceConnectionOwnerUserId: creator, audienceUserIds: [creator],
+    } })).toMatchObject({ admitted: true });
+    expect(eligibility.mock.calls.length).toBeGreaterThan(0);
+    expect(eligibility.mock.calls.every(([grant]) => grant.userId === creator)).toBe(true);
+  });
+
+  it("shares pending eligibility across matching evaluators only within one request", async () => {
+    await webhook(["deployed", "also_deployed"]);
+    await runDurableObjectAlarm(stub());
+    await expect.poll(async () => runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
+      "SELECT count(*) AS count FROM _internal_durable_alarms WHERE kind='sidekick_delegation_sources'",
+    ).one().count)).toBe(0);
+    const eventId = crypto.randomUUID();
+    await stub().ingestConnectorEvent({ workspaceId, ingressEventId: eventId, payloadHash: `sha256:${"a".repeat(64)}`, event: {
+      connectorType: "generic_webhook", activity: {
+        id: eventId, workspaceId, region: "global", connectionId, connectionScope: "workspace", connectionOwnerUserId: null,
+        provider: "generic_webhook", providerEventId: eventId, eventType: "deploy.finished", resourceType: null, providerResourceId: null,
+        actor: {}, subject: {}, occurredAt: now, receivedAt: now, title: "Deployed", summary: "Deploy finished", textSnippet: "Deploy finished",
+        payloadRef: null, visibility: { kind: "workspace" }, targetUserIds: [], entityKeys: [], dedupeKey: eventId,
+        rawContentHash: null, metadata: {}, externalPeople: [],
+      },
+    } });
+    const eligibility = vi.spyOn(HostedSidekick.prototype, "delegationEligible");
+    const match = async () => WorkspaceExternalEventMatchResultSchema.parse(await stub().matchExternalEventDestinations({ workspaceId, eventId }));
+    const first = await match();
+    expect(first.deliveries).toHaveLength(2);
+    expect(eligibility).toHaveBeenCalledTimes(1);
+    expect((await match()).deliveries).toHaveLength(2);
+    expect(eligibility).toHaveBeenCalledTimes(2);
+    await consent(creator, false);
+    const delivery = first.deliveries[0]!;
+    expect(await stub().sidekickAdmitExternalEvent({ ...address, registrationId: delivery.registrationId,
+      event: delivery.event, payloadHash: delivery.payloadHash })).toMatchObject({ admitted: false, outcomeCode: "sidekick_no_eligible_delegate" });
+    expect((await match()).deliveries).toEqual([]);
+  });
+
   it("clears restored source coverage without clearing an unrelated permission warning", async () => {
     await webhook();
     const attention = async () => AutomationDetailSchema.parse(await stub().sidekickReadDetail({ ...address, actor: actor() })).delegationAttention;
@@ -351,7 +409,7 @@ describe("shared Sidekick delegation admission", () => {
     expect(await runs()).toEqual([{ run_id: expect.any(String), coordinator_user_id: null, state: "needs_input",
       summary: "Needs attention: no delegated user is available", opening_json: null }]);
     const detail = AutomationDetailSchema.parse(await stub().sidekickReadDetail({ ...address, actor: actor() }));
-    expect(detail.delegationStatus).toBe("needs_opt_in");
+    expect(detail.delegationAttention).toMatchObject({ code: "no_eligible_delegate" });
   });
 
   it("migrates an established non-creator claim once, retaining its task account and never reviving a withdrawal", async () => {

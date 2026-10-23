@@ -686,7 +686,10 @@ provider account does not replace that identity or grant human access. The tool
 inventory loads delegation through WorkspaceDO's ordinary authorization view;
 continuations and new runs rebuild that snapshot. Background model/tool boundaries
 read only the root lifecycle and stop generation, without rescanning delegates
-or changing the coordinator. Each call reuses the inventory snapshot and
+or changing the coordinator. Selection stops at an eligible preferred user;
+audience-constrained selection never checks unrelated grants. Matching evaluators
+reuse pending eligibility only within one matching request; queued delivery
+checks independently. Each call reuses the inventory snapshot and
 checks the actual serving connection and capability before credentials are
 prepared. No healthy operation adds a provider access probe or revocation barrier.
 
@@ -1927,7 +1930,9 @@ but the connector executor still admitted only the coordinator's credentials.
 The user requested simple delegation and eventual consistency, then explicitly
 removed account-dependent workflows, selectors and user-facing account activity.
 Repeated background eligibility scans and read-account checkpoints added serial
-durable work despite the accepted eventual-consistency contract.
+durable work despite the accepted eventual-consistency contract. Unused detail
+status and duplicate matching/repository reads likewise contributed no required
+product behavior.
 
 **Considered and rejected:** Per-person workflow loops, credential pools, access
 preflights, resource/reply/page account bindings and a separate identity selector.

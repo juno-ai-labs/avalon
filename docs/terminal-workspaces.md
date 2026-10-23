@@ -693,7 +693,9 @@ personless; it is not duplicated into these product events.
   is checked at the same authorization boundaries.** Ordinary conversations
   bind files to that principal; Sidekicks bind files to their stable original
   identity and check current delegation separately. The repository authority
-  is shared by the agent and its owner. Should those fingerprints differ, or
+  is shared by the agent and its owner. Bootstrap and publication check the
+  selected connection owner against the inventory delegation snapshot in their
+  existing connection-policy read. Should those fingerprints differ, or
   should an ordinary conversation's imported resource become unreadable,
   the agent refuses with `sandbox_authority_mismatch` rather than replace a
   checkout that is not its own; only the owning conversation's run replaces
@@ -1367,7 +1369,9 @@ delegation snapshot, including cached reads. A refreshed inventory observes
 withdrawal without synchronous grant RPCs for every command. Its file identity remains stable across coordinating
 users and retains the pre-delegation fingerprint. Completed imports remain
 shared. Repository bootstrap and the typed publisher check the selected personal
-connection owner against the loaded delegation snapshot; local files survive.
+connection owner against the loaded delegation snapshot using the selection and
+connection-policy reads they already perform. The plugin adds no separate
+repository selection or connection query for delegation; local files survive.
 Mounted credentials retain their normal lifecycle, without a new cleanup protocol.
 The shared recovery path also durably settles proven ambiguous results and
 cleans up its deadline when a reconciler returns or refuses before execution.
@@ -1375,7 +1379,9 @@ cleans up its deadline when a reconciler returns or refuses before execution.
 **Why:** The old run-as fence prevented an eligible delegate from continuing
 shared work and erased retained content when coordination moved to another
 person. Fresh GitHub bootstrap and typed publication still need an eligible
-connection owner. A recovered effect
+connection owner. Repeating repository selection and connection reads in an
+outer delegation guard added serial work; the existing repository authorization
+read has all the facts needed for that decision. A recovered effect
 without the reconciliation settlement flag stayed ambiguous despite proof of
 completion; an early reconciler return also left its deadline timer running.
 

@@ -5,7 +5,7 @@ import {
   githubRepositoryAuthorization,
   type GitHubRepositoryAccessLevel,
 } from "@rally/connectors";
-import type { ExecutionPrincipal } from "@rally/contracts";
+import type { ExecutionPrincipal, SidekickExecutionDelegation } from "@rally/contracts";
 import { newId } from "@rally/db";
 
 import type { Env } from "../../env";
@@ -129,12 +129,17 @@ async function assertRepositoryRemoteAccess(
   database: D1Database,
   selection: TerminalRepositorySelection,
   required: "read_only" | "full_access",
+  delegation?: SidekickExecutionDelegation,
 ): Promise<GitHubRepositoryAccessLevel> {
   const row = await database.prepare(
-    `SELECT COALESCE(config_json, '{}') AS config_json
+    `SELECT scope, owner_user_id, COALESCE(config_json, '{}') AS config_json
        FROM connector_connections
       WHERE id = ? AND workspace_id = ? AND connector_type = 'github' AND status <> 'disabled'`,
-  ).bind(selection.connectionId, selection.workspaceId).first<{ config_json: string }>();
+  ).bind(selection.connectionId, selection.workspaceId).first<{ scope: string; owner_user_id: string | null; config_json: string }>();
+  if (delegation && (!row || (row.scope === "personal"
+    && !delegation.delegates.some((delegate) => delegate.userId === row.owner_user_id)))) {
+    throw new TerminalToolError("repository_delegate_unavailable", "The selected GitHub connection needs an eligible delegate before remote repository work.");
+  }
   if (!row) {
     throw new TerminalToolError(
       "repository_access_revoked",
@@ -188,6 +193,7 @@ export async function bootstrapTerminalRepository(
    * script's `set -e` and only the clone's exit code decides the outcome.
    */
   instructions?: TerminalInstructionFiles,
+  delegation?: SidekickExecutionDelegation,
 ): Promise<{
   repositoryFullName: string;
   baseRef: string;
@@ -204,7 +210,7 @@ export async function bootstrapTerminalRepository(
   if (!selection) {
     throw new TerminalToolError("repository_not_configured", "This work stream has no active GitHub repository. Choose an authorized owner/name with checkout_repository, then retry the repository operation.");
   }
-  const remoteAccess = await assertRepositoryRemoteAccess(env.DB, selection, "read_only");
+  const remoteAccess = await assertRepositoryRemoteAccess(env.DB, selection, "read_only", delegation);
   const alreadyBootstrapped = selection.bootstrappedSandboxGeneration === sandbox.generation;
   const credentialFresh = alreadyBootstrapped
     && Boolean(selection.readTokenExpiresAt)
@@ -424,6 +430,7 @@ export function createTerminalRepositoryPublisher(
   env: Env,
   gateway: TerminalGitHubPublicationGateway,
   terminalPortFactory: TerminalPortFactory = createTerminalPortFactory(env),
+  delegation?: SidekickExecutionDelegation,
 ): TerminalRepositoryPublisher {
   return {
     async publishBranchAndPr(context, input, sandbox, provider) {
@@ -439,7 +446,7 @@ export function createTerminalRepositoryPublisher(
           "This work stream has no active GitHub repository. Choose one with checkout_repository, then retry publish_branch_and_pr.",
         );
       }
-      await assertRepositoryRemoteAccess(env.DB, selection, "full_access");
+      await assertRepositoryRemoteAccess(env.DB, selection, "full_access", delegation);
       const effectIntentId = requireTerminalEffectIntent(context, "repositoryPublication");
       const terminal = terminalPortFactory(context.workspaceId, context.workstreamId);
       const completed = await terminal.completedPublication(effectIntentId);
