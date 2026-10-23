@@ -267,7 +267,10 @@ agent. A Sidekick's own conversation acts for the thread that owns it. Setup
 discovery also returns current `status`, `nextRunAt`, and `lastRunAt`, so an agent
 can distinguish a saved draft, an active Sidekick, and a scheduled or previously
 executed run. A sent setup message or an old memory fact establishes none of
-these. The authorized directory reads `lastRunAt` from the latest admitted run,
+these. Sending a setup or edit request is dispatch, not completion. The requesting
+agent reports the change as saved only after confirmation that the requested
+revision was accepted; an already-active Sidekick does not prove a later edit
+was accepted. The authorized directory reads `lastRunAt` from the latest admitted run,
 using the same timestamp semantics as Sidekick details; this is evidence of a
 recorded run, not successful completion.
 
@@ -374,6 +377,24 @@ the ownership flags from a conversation that acts for no thread, and a guest's
 grant-only contact. Complete desktop behavior remains an implementation gate.
 
 ## Changelog
+
+### 2026-10-23 — Confirm the requested revision before reporting a saved edit
+
+**What changed:** The requesting agent waits for confirmation that the requested
+Sidekick revision was accepted before reporting the change as saved.
+
+**Why:** A signup-report edit was announced as updated while its wizard was still
+revising it. Dispatch confirmed that the request was sent, while the active
+Sidekick still held the previous reporting rules.
+
+**Considered and rejected:** Treating an active status or a successful send as
+edit completion; neither identifies acceptance of the requested revision.
+
+**Consequences:** Setup dispatch and accepted revision are distinct reporting
+states. The wizard's acceptance confirmation supplies the evidence without a new
+approval step or redundant reads after successful publication.
+
+Pull request: [#1425](https://github.com/juno-ai-labs/avalon/pull/1425).
 
 ### 2026-10-22 — Attach Sidekick context without waking its wizard
 
