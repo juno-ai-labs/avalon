@@ -1282,7 +1282,7 @@ describe("connectors", () => {
       contentTruncated: false
     });
     expect(driveMetadataFields).toContain("isAppAuthorized");
-    expect(driveMetadataFields).toContain("capabilities(canEdit)");
+    expect(driveMetadataFields).toContain("capabilities(canEdit,canDownload)");
   });
 
   it("exposes bounded scoped read tools without raw Gmail parts or PDF base64", async () => {
@@ -1290,6 +1290,7 @@ describe("connectors", () => {
     const fetcher: typeof fetch = async (input) => {
       const url = requestUrl(input);
       requested.push(url);
+      if (url.pathname === "/drive/v3/files/file-1") return googleJson({ id: "file-1", mimeType: "application/vnd.google-apps.document" });
       if (url.pathname.endsWith("/messages/message-1")) {
         return googleJson({
           id: "message-1",
@@ -1348,7 +1349,8 @@ describe("connectors", () => {
     );
     expect(pdf.output).toMatchObject({ contentIncluded: false, mimeType: "application/pdf" });
     expect(pdf.output).not.toHaveProperty("base64");
-    expect(requested).toHaveLength(callsBeforePdf);
+    expect(requested).toHaveLength(callsBeforePdf + 1);
+    expect(requested.at(-1)!.pathname).toBe("/drive/v3/files/file-1");
   });
 
   it("reads the connected Gmail account's own address rather than leaving it to be inferred", async () => {
@@ -2965,6 +2967,27 @@ describe("connectors", () => {
     );
     expect(requests[1]?.searchParams.get("valueRenderOption")).toBe("FORMATTED_VALUE");
     expect(requests[1]?.searchParams.get("dateTimeRenderOption")).toBe("FORMATTED_STRING");
+  });
+
+  it.each([50_000, 50_001])("reports whether a %i-character Sheets cell was shortened and preserves later rows", async (length) => {
+    const fetcher: typeof fetch = async () => googleJson({
+      range: "Sheet1!A1:B2", majorDimension: "ROWS",
+      values: [["x".repeat(length), "kept"], ["following"]]
+    });
+    const result = await googleAdapter(fetcher).executeTool("sheets.read_values", {
+      spreadsheetId: "sheet-1", range: "Sheet1!A1:B2"
+    }, {
+      connection: googleConnection(["sheets.read"]),
+      principal: { type: "user", userId: TEST_USER_ID },
+      signal: neverAborts()
+    });
+
+    expect(result.output).toMatchObject({
+      truncated: length > 50_000,
+      cellTextTruncated: length > 50_000,
+      rowCount: 2, cellCount: 3
+    });
+    expect(result.output).toMatchObject({ values: [[expect.any(String), "kept"], ["following"]] });
   });
 
   it("names the tool that reads an id rather than passing a Workspace mismatch through", async () => {

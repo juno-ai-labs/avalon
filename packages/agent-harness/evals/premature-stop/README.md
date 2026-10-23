@@ -3,7 +3,8 @@
 Evaluate whether JEV can recognize a final reply that promises to do requested
 work instead of delivering it. This is **not** a completeness, quality, or
 truthfulness judge. The eval itself never executes a recovery. The production
-integration now uses the baseline question with `uncertainty_fallback` at 0.70;
+integration adds explicit Rally identity and participant addressing to the
+baseline question and uses `uncertainty_fallback` at 0.70;
 see [completion verification](../../../../docs/agent-harness.md#completion-verification-before-stopping).
 
 The implemented policy favors missed-work recall: **one verification reprompt
@@ -21,6 +22,38 @@ resolved context, and lifecycle `ready`. Pending background work, cancellation,
 required input, ambiguous writes, an already-used recovery, and unknown state
 suppress continuation. The original policy lets the turn end on provider failure. The agreed evaluation
 deadline is one second, with no retries or fallback model.
+
+## Agent identity and participant addressing
+
+`addressing-cases.jsonl` contains 15 authored development regressions, separate
+from the frozen 60-case synthetic corpus. They cover requested waiting,
+participant assignments, implicit and stripped-bot requests, connector mentions,
+and non-message activations, including a completed saved wake-up without separate
+standing instructions. Chat cases use the production `human` and `external`
+origins; the older frozen synthetic corpus retains its historical origin names.
+Test their semantics against live JEV.
+
+[`agent-identity-2026-10-22.json`](agent-identity-2026-10-22.json) records the
+comparisons and limitations. These are development regressions, not a new
+holdout or an end-to-end recovery evaluation. The original private 120-case
+real corpus lives in the earlier cloud environment; it is absent from this
+local checkout and was not rerun. Only the exact reported production snapshot
+was replayed here.
+
+The October 21 reports remain historical evidence for the original question.
+The current `baseline` variant imports the updated production question and no
+longer matches that original rubric's hash.
+
+Run the checked-in addressing cases through the same live runner:
+
+```bash
+cp packages/agent-harness/evals/premature-stop/addressing-cases.jsonl \
+  /workspace/jev-completion-private/addressing-cases.jsonl
+chmod 600 /workspace/jev-completion-private/addressing-cases.jsonl
+NODE_USE_ENV_PROXY=1 corepack pnpm --filter @rally/agent-harness eval:premature-stop \
+  /workspace/jev-completion-private/addressing-cases.jsonl \
+  /workspace/jev-completion-private/addressing-report.json jev-1.14.0 1000 0.70 baseline
+```
 
 ## Corpora and provenance
 

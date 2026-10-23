@@ -19,114 +19,73 @@ import type { HarnessSkill } from "./index";
  * read one from at startup.
  */
 
-const BUILDING_LIVE_SITES_BODY = `You are building a **live site**: a directory of files that Rally will
-serve publicly at a stable URL. The standing
-guidance told you *when* to build one; this skill is *how* to build one
-that works the first time.
+const BUILDING_LIVE_SITES_BODY = `Build a directory of files that Rally serves at a stable URL. Load Terminal
+for file editing, \`import_resource\` and \`publish_resource\`; loading this
+skill does not activate those tools.
 
-Load the **Terminal** plugin before building or revising the site. Loading this
-skill supplies instructions, not tools; Terminal supplies the file-editing,
-\`import_resource\` and \`publish_resource\` tools the procedure uses. A Sidekick
-that refreshes a site needs these tools for its publication step too.
+## Configure a Sidekick to refresh an existing site
 
-## Configure an existing site's refresh before writing the Sidekick
+Inspect the published site before saving the Sidekick. Save these facts in its
+run instructions:
 
-Existing local files may be older than the published site. Import the current
-published source before each refresh, even when files exist. Other conversations
-can revise it from separate sandboxes; the publication path alone does not
-recover or update source files.
+- **Resource ID:** The published site's Rally resource ID.
+- **Owning thread:** The thread that originally published it.
+- **Import destination:** Its directory relative to \`/workspace\`.
+- **Publication path:** That directory relative to \`/workspace/.rally-output\`.
+- **Data format:** File names, record layout, and field names and types.
 
-Before saving the Sidekick, inspect the existing site and save these facts in
-its run instructions:
+Use a workstream-scoped Sidekick owned by the original thread. Personal and
+Organization Sidekicks publish in their own conversations; importing files does
+not redirect publication. If the original conversation cannot be used, report
+that requirement instead of creating a replacement site.
 
-- **Resource ID:** The published site's Rally resource ID, used to import it.
-- **Owning thread:** The thread in which the site was originally published.
-- **Import destination:** The original site directory, relative to \`/workspace\`.
-- **Publication path:** The same directory, relative to \`/workspace/.rally-output\`.
-- **Data format:** The data file names, how the rows are arranged in them, and
-  the field names and types the site's code expects.
+Prefer attaching the site with the setup message using \`attachmentIds\` in
+\`send_message\` or \`reply_to_message\`, even if the Sidekick can already read
+it. Use \`sidekick_attach_resource({ sidekickId, resourceId })\` to add context
+without a message. Confirm that the wizard can import it.
 
-When assigning a site refresh, prefer attaching the exact published site with
-the setup instructions, even when the Sidekick can already read it. This makes
-it clear which site the wizard and future runs should update. Include its Rally
-resource ID in \`send_message.attachmentIds\` (or
-\`reply_to_message.attachmentIds\` when replying). To add the site as context
-without messaging or waking the wizard, use
-\`sidekick_attach_resource({ sidekickId, resourceId })\`.
+Load \`tracking-seen-or-done-items\` and save its shared-output claim procedure,
+keyed by site resource ID. Each refresh must hold that claim through import,
+editing, verification and publication; release it when the run finishes.
 
-Confirm that the wizard can import the original site.
+Save this sequence for each activation:
 
-For overlapping refreshes, load \`tracking-seen-or-done-items\` and save its
-shared-table coordination procedure, keyed by the site resource ID. One run
-must hold the claim across the entire import, edit, check, and publish sequence.
+1. **Recover the current site.** Load Terminal and acquire the claim. Back up
+   any existing site directory outside \`.rally-output\`, then import the
+   published site into the original \`destinationPath\`, using \`overwrite: true\`
+   if files exist. Local files may be stale. Try the known resource ID even if
+   it is absent from resource lists; access depends on the execution user's
+   permissions. If import fails, report the gap and stop instead of publishing
+   an older copy.
+2. **Prepare the update.** Inspect the imported code and data format. Carry forward
+   only unfinished backup changes needed for the request. For structured source
+   records, follow \`using-external-structured-data\` as described below.
+3. **Compare.** Compare transformed source data with the imported data, ignoring
+   synchronization timestamps. Do this on the first activation too; an empty
+   tracking table does not prove the site is current. If they match, record the
+   verified no-op, release the claim and finish silently. Otherwise update the
+   necessary files in the site's expected format.
+4. **Publish and verify.** Check the updated files, then publish the original
+   path. Confirm successful publication of the same site before recording
+   completion, release the claim and follow the saved reporting policy.
 
-Save these steps for each run as well:
+For example, import a site published at \`content-calendar\` into
+\`.rally-output/content-calendar\` and republish \`content-calendar\`. If the
+original destination is unknown, use the required path reported by the import
+tool.
 
-1. Load Terminal and acquire the shared output claim before importing or
-   comparing files. Hold it until the run finishes, including a no-op. Inspect
-   the original site directory. If it exists, copy it
-   to a backup outside \`.rally-output\` before replacing it, so unfinished work
-   remains recoverable. Call \`import_resource\` with the site's resource ID, the
-   original directory as \`destinationPath\`, and \`overwrite: true\` when that
-   directory exists. If a known site ID is missing from the resource list,
-   attempt \`import_resource\` with that ID before asking for reattachment.
-   The execution user must be able to read the site; a missing attachment
-   does not block that authorized ID lookup.
-   If import fails, report the recovery gap instead of publishing an older local copy.
-2. Read the imported site files and the code that reads the data. Compare any
-   unfinished changes in the backup with the current source and carry forward
-   only changes needed for the request. Retrieve the
-   current source records through their connection; do not rebuild from memory.
-3. Transform the complete returned records with code, following the source-row
-   checks below. Compare the transformed data with the imported published data,
-   using the fields the site consumes and ignoring synchronization timestamps.
-   Do this on the first scheduled run too: an empty tracking table is not a
-   reason to ignore changes since initial publication. If they match, record a
-   verified no-op, release the claim and finish silently without republishing.
-   Otherwise update the necessary files in the format the site's code expects.
-4. Verify the updated files, then call \`publish_resource\` with the original
-   publication path. Check its result before recording completion, release the
-   claim, and follow the saved reporting policy.
+## Use structured data and report verified outcomes
 
-For example, a content calendar published at \`content-calendar\` must be
-imported into \`.rally-output/content-calendar\` and republished as
-\`content-calendar\`. The saved definition must also carry the actual resource
-ID, owning thread and inspected data format; these paths alone are insufficient.
-If the original import destination is unknown, use the required destination
-reported by the import tool rather than inventing a new directory.
-
-Preserve **both the original publishing conversation and directory path**.
-For a site published in a thread, configure a workstream-scoped Sidekick owned
-by that same thread. Personal or Organization Sidekicks publish in their own
-conversation and cannot redirect publication to an arbitrary thread. Importing
-source does not change that target. If this run cannot publish in the original
-conversation, report that requirement rather than creating a replacement site.
-
-## Keep all requested source data and report verified results
-
-For a site built from spreadsheet rows or other structured records, transform
-the returned records with code rather than manually rewriting them. Save the
-connector's returned rows as machine-readable input, such as JSON or CSV, and
-have the script parse, filter, map and write those records. A handwritten list
-of posts inside a Python or JavaScript script is still manual transcription;
-it does not satisfy this procedure. If a response is truncated, fetch the
-remaining rows or a complete supported export before transforming it. Read every
-source row that meets the request, including any additional pages or ranges.
-Compare the source row counts and IDs (or other unique row keys) with the
-converted data to catch omitted or duplicated rows. Explain any rows intentionally
-excluded. Keep the format the site's code expects, and do not invent missing
-values. Record when the data was synchronized separately from dates in the
-source; a row's date does not tell you when it was synchronized.
+For spreadsheet or other structured sources, load
+\`using-external-structured-data\` for both initial builds and refreshes. Save
+that skill name, the source and the field mapping in the Sidekick's instructions.
 
 Report these outcomes separately:
 
 - **Site published:** The publication tool returned success.
 - **Sidekick activated:** You checked that the saved Sidekick is active.
-- **Refresh executed successfully:** A Sidekick run read the source, updated and
-  checked the files, and published the refresh, with results confirming each step.
-
-Publishing the initial site and activating a Sidekick do not establish that a
-later refresh succeeded. Loading a skill does not prove its steps were followed.
+- **Refresh succeeded:** A Sidekick run read the source, updated and checked
+  the files, and confirmed publication. Setup alone does not establish this.
 
 ## Build and verify the site
 

@@ -159,7 +159,7 @@ The host resolves stored-loadable Sidekicks against execution and conversation a
 | `packages/agent-harness/src/tool-arguments.ts` | Schema-guided numeric-string normalization, blanked-optional-argument stripping, and bounded model-visible argument errors. |
 | `scripts/eslint-rules/tool-input-boundaries.mjs` | Prevents individual tools from replacing the exact shared numeric-string policy with permissive coercion or compatibility unions. |
 | `packages/agent-harness/src/prompts/` | Every stable prompt. Byte-stable and golden-hashed; read [`writing-prompts.md`](writing-prompts.md) first. |
-| `packages/agent-harness/src/skills.ts`, `built-in-skills.ts` | The skill registry, its three bounds, and the five skills the package ships — three unowned, two scoped by `ownerPlugin`. |
+| `packages/agent-harness/src/skills.ts`, `built-in-skills.ts` | The skill registry, its three bounds, and the built-in skill catalog, including procedures scoped by `ownerPlugin`. |
 | `packages/agent-harness/src/tool-activity.ts` | `toolActivityName` — the prose every transcript row is labelled with. |
 | `packages/agent-harness/src/tool-schema-safety.ts` | The measured rule for what xAI reads as an object, two build-time checks over what Bind's sanitizer *emits*, and the run-time repair gated on one of them — that repair is the piece with the blast radius, since it rewrites third-party schemas. |
 | `apps/api/src/runtime/harness-run-runtime.ts` | The host side: admission, the lease, run scope, receipts, terminal state. |
@@ -168,17 +168,30 @@ The host resolves stored-loadable Sidekicks against execution and conversation a
 | `apps/api/src/services/sidekick-operation-accounts.ts` | Per-operation delegate selection, safe fallback and private debug checkpoints. |
 | `apps/api/src/services/completed-tool-replay.ts` | Read-only tool-owned validation before a historical completed result is presented again. |
 | `apps/api/src/durable-objects/tool-execution-account.ts` | Private account checkpoints in the existing receipt ledger. |
+| `apps/api/src/services/memory-table-service.ts` | Table tool schemas, scoped access, actionable conflicts and preparation of declared tables. |
+| `apps/api/src/durable-objects/workspace-memory-storage.ts`, `memory-table-definition.ts` | Atomic table/metadata receipts, structural compatibility and the shared public table projection. |
 | `packages/contracts` — `readStructuredFailure` | The shape a tool's machine-readable failure half is read through. |
 
 ### Completion verification before stopping
 
-Ordinary persistent conversation loops use the evaluated premature-stop baseline
-question, pinned to JEV 1.14.0 with a one-second deadline. The host accepts a
+Ordinary persistent conversation loops use the premature-stop baseline question
+with explicit agent identity and participant addressing, pinned to JEV 1.14.0
+with a one-second deadline. The host accepts a
 stop only when JEV reports `answer_or_result` or `blocker_or_question` with
 confidence **strictly above 0.70**. An unfinished or unclear result, confidence
 at or below 0.70, missing trigger context, unavailable credentials, timeout, or
 malformed response causes one verification reprompt. This is a narrow judgment
 of stopping behavior, not a proof of factual correctness or task completeness.
+
+The question identifies Rally as the AI author of the candidate response and
+`@Rally` as a mention addressing that agent. Implicit requests and requests whose
+bot mention was removed still count; mentions may name recipients, subjects or
+connector tools rather than assignees. Work explicitly assigned only to another
+participant stays theirs in human messages; that exception does not transfer
+Rally's work to people mentioned in activation content. An acknowledgement of an
+explicit instruction for Rally to wait or act after another participant or
+future event is an answer/result. A separately requested immediate deliverable still has to
+be judged, even when the same message also tells Rally to wait afterward.
 
 The check runs at Bind's `onTurnWouldEnd` hook, after the model produces a
 response that would end its turn and before the host finalizes the run. The
@@ -522,7 +535,7 @@ The agent acts on clear scoped requests, infers safe defaults, batches independe
 
 Every address, identifier, URL, name, date, and quoted fact in an outward-facing write must be sourced from a tool result in the run, the authorized task context, or a person in the work stream. Inferring a default settles a choice among safe options and never supplies an unheld fact, so an unsourceable value is a missing identifier that routes to a lookup or a question rather than a plausible placeholder. Identifiers are threaded through unchanged from the result that produced them and from the same connection, and a result carrying only identifiers is a step rather than an answer. These are platform policy and belong here rather than in any one connector's plugin message, because the same failure is available through every connector that writes.
 
-Interactive multi-round work starts with a short plan and reports meaningful phase changes. Headless runs skip progress narration. Completions lead with the outcome, evidence, and blockers; private reasoning is never emitted.
+Substantial interactive work starts with a brief approach; updates then focus on changes to participants' expectations or decisions they need to make. Headless runs skip progress narration. Final responses lead with the result and omit padding while retaining requested detail and material caveats. The prompt owns the writing rules; its preference for natural language applies to style only and does not relax platform policy. Private reasoning is never emitted.
 
 A run of a room's Sidekick posts its result itself, with `conversation_post` from the preloaded `rally:conversations` plugin, which defaults to the home named by the task context's `sidekick.homeConversationId`; the plugin's system message, not standing policy, names the tool. Nothing posts after the run. A Sidekick no room owns runs on the `self_delivery` surface, whose section tells the run that any sending its instructions ask for is its own work, done with its tools inside the run, and that it sends nothing when they ask for no delivery; left silent, a run that *describes* emailing a summary has not emailed it. [`conversation-tools.md`](conversation-tools.md) owns the plugin and [`automation-lifecycle.md`](automation-lifecycle.md) the home.
 
@@ -735,7 +748,13 @@ The always-active `rally_skills` plugin owns two globally named controls. `load_
 
 Three bounds keep a looping model from loading its way into a context-limit error: a count cap, a budget over the total tokens of loaded bodies, and a byte cap on a single `read_skill_resource` response. Bind judges the first two (`admitSkillLoad`); Rally measures the token half by resolving the bodies the load would actually inject, and applies the third itself — an unbounded Tier-3 read would otherwise route around the Tier-2 budget, since a skill whose body fits can bundle a reference that does not. All three are configurable, through `maxActiveSkills`, `maxActiveSkillBodyTokens`, and `maxSkillResourceBytes`.
 
-The package ships ten skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet. Four are unowned and offered to ordinary runs: `deep-research`, `writing-an-email`, `scheduling-a-calendar-event`, and `using-the-local-inapp-browser`. The other six each set an `ownerPlugin` and are offered only to a run whose scope already carries that plugin: `polling-for-events` below, `tracking-seen-or-done-items` owned by `rally:tables`, `building-live-sites` above, and the three AI-chat readers — `reading-an-ai-chat`, `reading-chatgpt-conversations` and `reading-claude-conversations` (`reading-ai-chats-skills.ts`) — owned by Rally's browser plugin, `avalon:browser`. The generic reader is written against what every chat page must have (conversation data the page loaded, messages with authors, ids and parent links) rather than any markup, and ends in a self-check against the page; the provider companions carry routes and shapes as hints to verify, so a provider redesign degrades to the generic procedure instead of a wrong import. The email and calendar skills are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
+The package ships eleven skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet. Five are unowned and offered to ordinary runs: `deep-research`, `writing-an-email`, `scheduling-a-calendar-event`, `using-the-local-inapp-browser`, and `using-external-structured-data`. The other six each set an `ownerPlugin` and are offered only to a run whose scope already carries that plugin: `polling-for-events` below, `tracking-seen-or-done-items` owned by `rally:tables`, `building-live-sites` above, and the three AI-chat readers — `reading-an-ai-chat`, `reading-chatgpt-conversations` and `reading-claude-conversations` (`reading-ai-chats-skills.ts`) — owned by Rally's browser plugin, `avalon:browser`. The generic reader is written against what every chat page must have (conversation data the page loaded, messages with authors, ids and parent links) rather than any markup, and ends in a self-check against the page; the provider companions carry routes and shapes as hints to verify, so a provider redesign degrades to the generic procedure instead of a wrong import. The email and calendar skills are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
+
+`using-external-structured-data` owns the source-handling procedure shared by
+sites, reports, imports and other outputs. It has no owner-plugin gate; local-file
+steps require Terminal separately. See [the skill](../packages/agent-harness/src/using-external-structured-data-skill.ts)
+for its direct-processing and Terminal paths. `building-live-sites` references
+it while retaining site-specific recovery, formats and publication.
 
 `using-the-local-inapp-browser` is unowned so its limitation guidance reaches
 ordinary conversations that lack browser tools. [Agent profiles](#agent-profiles)
@@ -1310,15 +1329,22 @@ insert contention is a separate typed failure because inserts do not have an
 `expectedRevision`; after bounded host retries it directs the model to query by
 the declared natural key and retry only the rows that remain absent.
 
-An automation's definition may describe the tables it keeps (`memoryTables`),
-and a run receives that description from `readRunDefinition`. Publishing an
-accepted definition with triggers creates or reopens those tables in the
-Sidekick's scope. A stored alarm retries materialization if it is deferred;
-table creation does not roll back the published definition. A run can also
-create a table through `rally_tables` under the Sidekick's scope when it needs
-one. Later runs find and reuse it. Table rows never enter a prompt unasked; the
-agent must query only the rows and columns needed for the current run.
+Sidekick definitions may declare tables used across runs; [Sidekick publication](automation-lifecycle.md) owns their provisioning and activation contract.
 
+`table_create` reopens a same-name table when column names (case insensitive),
+types, required/searchable flags and ordered natural-key columns match.
+Declaration order is irrelevant; stored column IDs and order stay stable. Table
+and column descriptions and usage instructions are editable metadata. A reopen
+updates that metadata for every run sharing the table and records its receipt
+atomically, leaving row contents, cell IDs, row revisions, and schema/data
+revisions unchanged. A schema conflict
+returns `memory_table_name_schema_conflict`, the existing `memoryTableId`,
+incompatible field paths and `retryable: false`. The recovery is to call
+`table_describe` and reuse the stored schema, or choose another name and
+explicitly copy/transform rows; retrying unchanged cannot succeed.
+A run can also create a table through `rally_tables` in its authorized scope.
+Table rows never enter a prompt unasked; the agent queries only needed rows and
+columns.
 
 ### Scheduled wake-ups
 
@@ -1689,6 +1715,9 @@ between the nudge commit and the next model call.
 Run them with `pnpm --filter @rally/api test:workers` and the respective paths;
 `-t 'completion verification'` scopes the added runtime cases.
 
+The [premature-stop evaluation](../packages/agent-harness/evals/premature-stop/README.md#agent-identity-and-participant-addressing)
+covers agent identity and addressing semantics through live JEV regressions.
+
 Sidekick catalog naming is covered by `apps/api/test/sidekick-presentation.test.ts`
 (`pnpm --filter @rally/api exec vitest run test/sidekick-presentation.test.ts`).
 The load, durable attachment, and next-execution instruction restoration path is
@@ -1810,6 +1839,71 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-10-23 — Table creation supports metadata edits with stable schema
+
+**What changed:** Table creation compares stored schema, reconciles editable
+metadata with its receipt, and returns field-specific recovery for incompatible
+schemas. Unicode case variants update by the matched column's stable ID.
+
+**Why:** Treating descriptions and usage instructions as schema blocked harmless
+edits. A separate metadata write after service-side comparison would still race,
+so compatibility, metadata and receipts belong in the storage transaction.
+
+**Consequences:** Metadata edits apply to every authorized run sharing the table.
+Column IDs, natural-key order and row/cell data must survive these edits; actual
+schema changes require an explicit migration into another table.
+
+### 2026-10-22 — Updates and final responses carry only what participants need
+
+**What changed:** The work-stream prompt replaces its update-every-three-or-four-tool-calls instruction with a brief approach for substantial interactive work and updates only for blockers, unexpected delays, material changes of approach, or participant decisions. Headless runs explicitly skip progress narration, and the help article describes the new policy. Final responses lead with the result, use plain words and active voice, cut repetition and process recaps, and stop when the request is satisfied while retaining needed detail and caveats. The natural-language exception applies only to style. Existing wording is shortened to keep the prompt within its fixed size budget while retaining explicit tool lookup, the ban on invented placeholders, and the distinction between identifiers and read records.
+
+**Why:** A CSV business-case request accumulated progress messages that merely described intermediate checks and the next writing step, followed by a final message that repeated the published document's findings. Tool count was creating a reason to speak without creating information a participant needed, and the general response policy lacked a concise, direct writing rule.
+
+**Considered and rejected:** Keeping a fixed tool-call cadence with shorter updates still rewards routine narration. The existing work indicators already show that execution continues. A fixed response length would not account for requests that need substantial explanation; the rule preserves needed detail and makes clarity take precedence over strict brevity.
+
+**Consequences:** Narration remains available when expectations change, without a tool-count quota. Concision must not omit requested detail or material caveats. This changes prompt guidance only; reviewer acknowledgement loops and the feed's treatment of saved prose remain separate mechanisms.
+
+Pull request: [#1423](https://github.com/juno-ai-labs/avalon/pull/1423).
+
+### 2026-10-22 — Share structured-source handling across output types
+
+**What changed:** Added the built-in `using-external-structured-data` skill for
+complete reads, raw-response transfer, coded transformations and field-by-field
+checks. It is offered without a provider-specific owner and asks for Terminal
+only when local files or code are needed. The site skill loads it instead of
+copying the general procedure.
+
+**Why:** A calendar build lost source fields despite a complete Sheet response.
+The transfer and validation procedure also applies to reports, imports and other
+outputs; keeping it only in the site skill would hide it from those tasks and
+encourage separate copies. Site recovery and publication remain in their
+existing skill so source-data guidance does not absorb destination behavior.
+
+Pull request: [#1421](https://github.com/juno-ai-labs/avalon/pull/1421).
+
+### 2026-10-22 — Identify the agent in completion judgments
+
+**What changed:** Completion verification identifies Rally and its mention syntax,
+scopes requested work to that agent without requiring a literal mention, and
+distinguishes requested waiting from a blocker or an unfinished immediate task.
+
+**Why:** A production request assigned review to a person and explicitly told
+Rally to wait. The judge accepted Rally's acknowledgement at 0.55 confidence,
+below the 0.70 stopping threshold, triggering a second acknowledgement from the
+same run. The judge had the conversation but no definition of which participant
+was the AI.
+
+**Considered and rejected:** Lowering the stopping threshold or bypassing checks
+on messages containing `@Rally`. Neither supplies the missing identity context,
+and a mixed-addressing message can still assign immediate work to Rally.
+
+**Consequences:** The question's identity and addressing semantics are part of
+the classifier contract. The existing threshold, lifecycle gates and one-use
+recovery remain in force; prompt changes are checked with live model regressions,
+not a provider double that returns the expected label.
+
+Pull request: [#1422](https://github.com/juno-ai-labs/avalon/pull/1422).
 
 ### 2026-10-22 — Select eligible Sidekick delegates through existing receipts
 

@@ -152,6 +152,7 @@ import {
   type ResolvedConnectorAdapter,
 } from "@rally/connectors";
 import { z } from "zod";
+import { connectorTextPages } from "./connector-text-pages";
 import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import { AutomationService } from "./automation-service";
 import { WorkstreamService } from "./workstream-service";
@@ -1881,6 +1882,7 @@ function createAvalonAutomationsPlugin(
           asWorkspaceId(input.workspaceId),
           asUserId(authorUserId),
           expandPages,
+          { parentId: input.parentId, substreamId: input.substreamId ?? "0" },
         ));
       }
       // A receipt written before the Sidekick rename carries the capability
@@ -2192,6 +2194,7 @@ async function loadAutomationCreatorPluginCatalog(
   workspaceId: WorkspaceId,
   userId: UserId,
   expandPages?: (tool: HarnessTool, prefix: string, connectionId: string | null) => HarnessTool[],
+  textPageScope?: { parentId: string; substreamId: string },
 ): Promise<AutomationCreatorPluginCatalogEntry[]> {
   const result = await env.DB.prepare(
     `SELECT * FROM connector_connections
@@ -2338,7 +2341,7 @@ async function loadAutomationCreatorPluginCatalog(
           execute: (toolInput, context) => executeAutomationCreatorConnectorTool(
             env, { workspaceId, userId }, frozen,
             definition.providerOperationName ?? definition.name,
-            definition.capability, toolInput, context.signal, context.providerIdempotencyKey,
+            definition.capability, toolInput, context.signal, context.providerIdempotencyKey, textPageScope,
           ),
         };
         const tools = !dynamicCapability && expandPages ? expandPages(tool, wirePrefix, connectionId) : [tool];
@@ -2441,6 +2444,7 @@ async function executeAutomationCreatorConnectorTool(
   toolInput: unknown,
   signal: AbortSignal,
   providerIdempotencyKey?: string,
+  textPageScope?: { parentId: string; substreamId: string },
 ) {
   const { connection, adapter } = await loadAutomationCreatorConnectionContext(
     env,
@@ -2456,7 +2460,15 @@ async function executeAutomationCreatorConnectorTool(
     return adapter.executeTool(
       toolName,
       toolInput,
-      createConnectorToolContext(authorized, effectivePrincipal, signal, providerIdempotencyKey),
+      {
+        ...createConnectorToolContext(authorized, effectivePrincipal, signal, providerIdempotencyKey),
+        ...(frozen.connectorType === "google" && textPageScope ? {
+          textPages: connectorTextPages(env.PAYLOADS, {
+            region: env.AVALON_REGION, workspaceId: input.workspaceId, workstreamId: textPageScope.parentId,
+            substreamId: textPageScope.substreamId, connectionId: frozen.connectionId,
+          }, async () => { signal.throwIfAborted(); await assertAutomationCreatorConnectionAuthorized(env, input, frozen, capability); }, signal),
+        } : {}),
+      },
     );
   });
 }
@@ -5562,6 +5574,16 @@ async function loadHarnessTools(
   const priorPaginationTools = (tools: readonly HarnessTool[]) => prePaginationTools(
     [...new Set(tools.map((tool) => paginationSources.get(tool) ?? tool))],
   );
+  const priorTextPaginationTools = (tools: readonly HarnessTool[]) => {
+    const seen = new Set<HarnessTool>();
+    return tools.flatMap((tool) => {
+      const source = paginationSources.get(tool) ?? tool;
+      if (source.definition.pagination?.cursorParameter !== "textPage") return [tool];
+      if (seen.has(source)) return [];
+      seen.add(source);
+      return [prePaginationTool(source)];
+    });
+  };
   // `prefix` namespaces the minted page IDs; `wirePrefix` is what the page
   // tools' descriptions call their own family by. They are the same string for
   // a connector, and differ for a plugin that advertises no wire prefix.
@@ -5972,13 +5994,14 @@ async function loadHarnessTools(
       ? { ...tool, definition: { ...tool.definition, idempotency: "record_before_execute" as const } } : tool);
     const versions = prior.some((tool, index) => tool !== tools[index]) ? [tools, prior] : [tools];
     for (const version of versions) {
-      const [toolSurfaceHash, prePaginationSurfaceHash, legacyToolSurfaceHash] = await Promise.all([
+      const [toolSurfaceHash, prePaginationSurfaceHash, legacyToolSurfaceHash, preTextPaginationSurfaceHash] = await Promise.all([
         connectorToolSurfaceHash(pluginId, version),
         connectorToolSurfaceHash(pluginId, priorPaginationTools(version)),
         connectorToolSurfaceHash(pluginId, version, (name) => legacyConnectorCanonicalToolName("google", name) ?? name),
+        connectorToolSurfaceHash(pluginId, priorTextPaginationTools(version)),
       ]);
       for (const target of targets) compatiblePluginSurfaces.set(target, [
-        ...(compatiblePluginSurfaces.get(target) ?? []), { pluginId, toolSurfaceHash, prePaginationSurfaceHash, legacyToolSurfaceHash },
+        ...(compatiblePluginSurfaces.get(target) ?? []), { pluginId, toolSurfaceHash, prePaginationSurfaceHash, legacyToolSurfaceHash, preTextPaginationSurfaceHash },
       ]);
     }
   };
@@ -5986,6 +6009,7 @@ async function loadHarnessTools(
     const plugin = plugins.find((candidate) => candidate.canonicalId === frozen.pluginId)!;
     return connectorPluginBindingViews("google", frozen.credentialModelPluginId ?? frozen.modelPluginId, frozen.grantedScopes)
       .map((alias) => connectorPluginCanonicalId(frozen.connectionId, alias.googleBundle))
+      // Include the current identity so its pre-text-pagination receipts survive for unchanged operations.
       .map((id) => rememberSurface([frozen.pluginId], id, plugin.tools));
   }));
   await Promise.all([...combinedGoogleTools].map(([connectionId, combined]) => {
@@ -6423,6 +6447,22 @@ function prePaginationTools(tools: readonly HarnessTool[]): HarnessTool[] {
  * All other schema/policy fields remain unchanged, so future changes still fence.
  */
 function prePaginationTool(tool: HarnessTool): HarnessTool {
+  // These three reads gained private text continuations after the cutover.
+  // Reconstruct their old schemas only for unrelated operations' receipt hashes;
+  // the changed reads themselves remain fenced by their current paginated plan.
+  if (tool.definition.pagination?.cursorParameter === "textPage") {
+    const properties = z.record(z.string(), z.record(z.string(), z.unknown())).parse(tool.definition.inputSchema.properties);
+    if (properties.textPage) {
+      const prior = { ...properties };
+      delete prior.textPage;
+      if (tool.definition.name === "drive.download") prior.fileId = { ...prior.fileId,
+        description: "The Drive file id, as drive.search returns it, for example `1A2b3C4d5E6f7G8h9I0j`. Use drive.export instead for a Google Doc, Sheet, or Slides file, which has no downloadable body of its own." };
+      if (tool.definition.name === "drive.export") prior.mimeType = { ...prior.mimeType,
+        enum: ["text/plain", "application/pdf"],
+        description: "What to convert the document to. Use `text/plain`, which returns the document's text. `application/pdf` returns metadata only and no content — binary PDF data is never put in front of the model — so choose it only to confirm a PDF export is possible, never to read the document." };
+      tool = { ...tool, definition: { ...tool.definition, inputSchema: { ...tool.definition.inputSchema, properties: prior } } };
+    }
+  }
   // A string restores a property's description; an object restores the
   // schema fields it names, for a property whose shape changed as well.
   const descriptions: Record<string, Record<string, string | Record<string, unknown>>> = {
@@ -6682,6 +6722,12 @@ async function executeConnectorToolOnConnection(
             : undefined,
           replaying,
         ),
+        ...(frozen.connectorType === "google" ? {
+          textPages: connectorTextPages(env.PAYLOADS, {
+            region: env.AVALON_REGION, workspaceId: input.workspaceId, workstreamId: input.parentId,
+            substreamId: input.substreamId ?? "0", connectionId: frozen.connectionId,
+          }, async () => { signal.throwIfAborted(); await ownershipGuard?.(); }, signal),
+        } : {}),
         ...(frozen.connectorType === "google" && ["gmail.create_draft", "gmail.create_reply_draft"].includes(toolName) ? {
           readAttachment: async (resourceId: string) => {
             await ownershipGuard?.();
@@ -7680,6 +7726,7 @@ interface CompatiblePluginSurface {
   pluginId: string;
   toolSurfaceHash: string;
   prePaginationSurfaceHash: string;
+  preTextPaginationSurfaceHash: string;
   legacyToolSurfaceHash: string;
 }
 
@@ -7754,6 +7801,8 @@ function resolveHarnessToolReceiptPolicy(
       { pluginId: surface.pluginId, canonicalToolName: definition.name, toolSurfaceHash: surface.toolSurfaceHash },
       ...(!definition.pagination ? [{ pluginId: surface.pluginId, canonicalToolName: definition.name,
         toolSurfaceHash: surface.prePaginationSurfaceHash }] : []),
+      ...(definition.pagination?.cursorParameter !== "textPage"
+        ? [{ pluginId: surface.pluginId, canonicalToolName: definition.name, toolSurfaceHash: surface.preTextPaginationSurfaceHash }] : []),
       ...(legacyConnectorCanonicalToolName(frozen.connectorType, definition.name) ? [{ pluginId: surface.pluginId,
         canonicalToolName: legacyConnectorCanonicalToolName(frozen.connectorType, definition.name)!, toolSurfaceHash: surface.legacyToolSurfaceHash }] : []),
     ]),

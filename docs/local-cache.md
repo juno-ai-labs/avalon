@@ -60,7 +60,8 @@ retention starts. It does not create empty entries, fetch, change values, or
 change their garbage-collection duration. On release, the ordinary cache
 collection rules resume. Multiple producers can hold the same entry.
 
-The workspace socket holds its directories, feature flags and work-stream
+The workspace socket holds its directories, feature flags, access-recovery
+nudge and work-stream
 ordering ledgers, and each Channel's breakout list and the version stored
 with it, which arrive on that Channel's row. Each conversation socket holds its
 detail, transcript, inherited context, streaming overlays, feed source and

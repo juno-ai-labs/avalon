@@ -148,6 +148,7 @@ export async function createAvalonTerminalPlugin(
           operation_detail: measurement.detail,
           provider_operation_index: trace?.providerOperationCount ?? null,
           state: measurement.outcome,
+          ...(measurement.errorCode ? { error_code: measurement.errorCode } : {}),
           duration_ms: measurement.durationMs,
           provider_request_count: measurement.requestCount,
           provider_poll_count: measurement.pollCount,

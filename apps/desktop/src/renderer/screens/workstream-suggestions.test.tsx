@@ -20,6 +20,7 @@ const api = vi.hoisted(() => ({
   getConversation: vi.fn(),
   dismissSuggestion: vi.fn(),
   resolveSuggestion: vi.fn(),
+  resolveConversation: vi.fn(),
   mergeConversation: vi.fn(),
   mergeChannels: vi.fn(),
 }));
@@ -136,7 +137,7 @@ function socket(suggestions: ConversationSuggestion[]): void {
   });
 }
 
-function renderBreakout(turns: Turn[], suggestions: ConversationSuggestion[]): void {
+function renderBreakout(turns: Turn[], suggestions: ConversationSuggestion[]): QueryClient {
   socket(suggestions);
   const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } });
   seed(queryClient, ['workstream', threadId], ['ordered-transcript', threadId], boot(threadId, 'Pricing', []));
@@ -150,9 +151,10 @@ function renderBreakout(turns: Turn[], suggestions: ConversationSuggestion[]): v
       </QueryClientProvider>
     </Tooltip.Provider>,
   );
+  return queryClient;
 }
 
-function renderThread(turns: Turn[], suggestions: ConversationSuggestion[], configure?: (client: QueryClient) => void): void {
+function renderThread(turns: Turn[], suggestions: ConversationSuggestion[], configure?: (client: QueryClient) => void): QueryClient {
   socket(suggestions);
   const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } });
   seed(queryClient, ['workstream', threadId], ['ordered-transcript', threadId], boot(threadId, 'Pricing', turns));
@@ -166,6 +168,7 @@ function renderThread(turns: Turn[], suggestions: ConversationSuggestion[], conf
       </QueryClientProvider>
     </Tooltip.Provider>,
   );
+  return queryClient;
 }
 
 const twoTurns = [turn(1, 'human', 'Should we keep the annual discount?'), turn(2, 'assistant', judged)];
@@ -193,6 +196,29 @@ describe('the suggestion chip', () => {
     });
     await screen.findByText(judged);
     expect(screen.queryByRole('group', { name: 'Suggestion: mark resolved' })).toBeNull();
+  });
+
+  it.each(['Thread', 'Breakout'])('hides the merge suggestion when its %s becomes resolved', async (kind) => {
+    const channelId = asSpaceId('00000000-0000-7000-8000-000000000921');
+    api.mergeChannels.mockResolvedValue({ channels: [{ id: channelId, name: 'GTM' }] });
+    const client = kind === 'Thread' ? renderThread(twoTurns, [suggestion()], (cache) => {
+      cache.setQueryData<WorkstreamDetail>(['workstream', threadId], (held) => held ? { ...held, spaceIds: [channelId] } : held);
+      cache.setQueryData<SpaceDirectory>(['spaces'], { waterline: 1, items: [{
+        id: channelId, name: 'GTM', iconKey: 'briefcase', colorKey: 'blue', scope: 'workspace', reach: 'organization', status: 'active',
+        systemRole: null, revision: 1, participants: [], channelCount: 1, attentionCount: 0,
+        defaultResourceIds: [], defaultSidekickIds: [], createdAt: '2026-10-18T10:00:00.000Z', updatedAt: '2026-10-18T10:00:00.000Z',
+      }] });
+    }) : renderBreakout(twoTurns, [suggestion()]);
+    const chip = await screen.findByRole('group', { name: kind === 'Thread' ? 'Suggestion: merge to GTM' : 'Suggestion: merge to Pricing' });
+    await act(async () => {
+      if (kind === 'Thread') setCachedWorkstreams(client, [{ ...boot(threadId, 'Pricing', twoTurns), spaceIds: [channelId], resolved: true }]);
+      else client.setQueryData(['workstream-children', threadId], { privateChildren: [{
+        substreamId: breakoutId, title: 'Annual discount', resolved: true,
+        createdByUserId: null, createdAt: '2026-10-18T10:00:00.000Z', updatedAt: '2026-10-18T10:00:00.000Z',
+      }] });
+    });
+    expect(chip).not.toBeInTheDocument();
+    expect(api.mergeConversation).not.toHaveBeenCalled();
   });
 
   it('keeps dismissal available but disables resolution in an archived conversation', async () => {
@@ -268,6 +294,35 @@ describe('the suggestion chip', () => {
     // Under the judged turn: the chip's row follows that turn's row.
     const row = chip.closest('[data-arrival-id]');
     expect(row?.querySelector('.message-block')?.textContent).toContain(judged);
+  });
+
+  it('resolves a Breakout from the merge suggestion while its draft is pending, without merging', async () => {
+    let finish = (): void => {};
+    api.resolveConversation.mockReturnValue(new Promise<void>((resolve) => { finish = resolve; }));
+    renderBreakout(twoTurns, [suggestion({ draft: { status: 'pending', text: null, subject: null } })]);
+    const chip = await screen.findByRole('group', { name: 'Suggestion: merge to Pricing' });
+    const resolve = within(chip).getByRole('button', { name: 'Resolve without merge' });
+    expect(within(chip).getByRole('button', { name: 'Merge' })).toBeDisabled();
+    expect(resolve).toBeEnabled();
+    fireEvent.click(resolve);
+    expect(api.resolveConversation).toHaveBeenCalledWith(threadId, breakoutId);
+    expect(resolve).toBeDisabled();
+    await act(async () => { finish(); });
+    expect(screen.queryByRole('group', { name: 'Suggestion: merge to Pricing' })).toBeNull();
+    expect(api.mergeConversation).not.toHaveBeenCalled();
+    expect(api.dismissSuggestion).not.toHaveBeenCalled();
+  });
+
+  it('keeps the merge suggestion available when resolving fails', async () => {
+    api.resolveConversation.mockRejectedValue(new Error('offline'));
+    renderBreakout(twoTurns, [suggestion()]);
+    const chip = await screen.findByRole('group', { name: 'Suggestion: merge to Pricing' });
+    fireEvent.click(within(chip).getByRole('button', { name: 'Resolve without merge' }));
+    await screen.findByText('The breakout couldn’t be resolved. Try again.');
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'OK' }));
+    expect(within(chip).getByRole('button', { name: 'Resolve without merge' })).toBeEnabled();
+    expect(within(chip).getByRole('button', { name: 'Merge' })).toBeEnabled();
+    expect(api.mergeConversation).not.toHaveBeenCalled();
   });
 
   it('stays while two newer messages exist', async () => {
