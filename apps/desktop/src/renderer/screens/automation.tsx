@@ -12,7 +12,7 @@ import { useCloseWindowSurface } from '../lib/window-surface';
 import { copySidekickLink } from '../lib/copy-workstream-link';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { ConversationSurface } from './conversation-surface';
-import { SidekickDelegation } from '../components/sidekick-delegation';
+import { SidekickDelegation, useSidekickDelegates } from '../components/sidekick-delegation';
 import { SidekickDelegationDisclosure } from '@rally/ui/components/sidekick-delegation';
 import { useOnline } from '../lib/use-online';
 
@@ -91,6 +91,7 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
   const { api, session } = useCollaborationSession();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const delegates = useSidekickDelegates(id);
   const automation = useQuery({
     queryKey: ['automation', id],
     queryFn: ({ signal }) => api!.getAutomation(id, signal),
@@ -187,6 +188,7 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
   return (
     <SidekickDetailLayout key={id} overview={<AutomationHeader
       automation={detail}
+      delegateNames={new Map([...(delegates.data?.delegates ?? []), ...(delegates.data?.creator ? [delegates.data.creator] : [])].map((person) => [person.userId, person.displayName]))}
       delegation={<SidekickDelegation id={id} />}
       error={act.error?.message}
       onAppearanceChange={setAppearance}

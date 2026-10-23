@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { HttpUrlSchema } from "./url-schemas";
+import { ToolAccountAttributionSchema } from "./sidekick-delegation";
 
 const UtcTimestampSchema = z.string().datetime({ offset: true });
 
@@ -118,6 +119,7 @@ export const TranscriptToolBlockSchema = z.object({
   status: z.enum(["planned", "started", "completed", "failed", "ambiguous", "cancelled"]),
   participantSafeInput: z.unknown().nullable(),
   participantSafeResult: z.unknown().nullable(),
+  account: ToolAccountAttributionSchema.optional(),
   error: z.string().nullable(),
   activityId: z.string().min(1).nullable(),
 });

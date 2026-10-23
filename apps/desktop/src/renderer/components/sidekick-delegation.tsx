@@ -5,6 +5,14 @@ import { ErrorNotice } from './primitives';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { useOnline } from '../lib/use-online';
 
+export function useSidekickDelegates(id: string) {
+  const { api } = useCollaborationSession();
+  return useQuery({ queryKey: ['automation', id, 'delegation'],
+    queryFn: ({ signal }) => api!.getSidekickDelegates(id, signal), enabled: Boolean(api),
+    refetchOnReconnect: true, refetchOnWindowFocus: true,
+  });
+}
+
 export function SidekickDelegation({ id }: { id: string }): React.JSX.Element {
   const { api } = useCollaborationSession();
   const online = useOnline();
@@ -13,10 +21,7 @@ export function SidekickDelegation({ id }: { id: string }): React.JSX.Element {
   const inFlight = useRef(new Set<string>());
   const [uncertain, setUncertain] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-  const query = useQuery({ queryKey: ['automation', id, 'delegation'],
-    queryFn: ({ signal }) => api!.getSidekickDelegates(id, signal), enabled: Boolean(api),
-    refetchOnReconnect: true, refetchOnWindowFocus: true,
-  });
+  const query = useSidekickDelegates(id);
   const refresh = async (): Promise<void> => {
     const result = await query.refetch();
     if (!result.error) setUncertain(false);

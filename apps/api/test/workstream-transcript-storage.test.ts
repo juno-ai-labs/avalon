@@ -3366,6 +3366,8 @@ describe("canonical ordered work-stream transcript", () => {
       lifecycle: {
         toolName: "tool-2",
         status: "ambiguous",
+        account: { connectionId: "00000000-0000-7000-8000-000000000706", connectionName: null,
+          userId: null, userName: null, scope: "workspace", phase: "selected", fallbackFromConnectionId: null },
         participantSafeResult: "Rally could not confirm whether this external action completed",
         error: "Rally could not confirm whether this external action completed",
       },
@@ -3391,6 +3393,8 @@ describe("canonical ordered work-stream transcript", () => {
       [1, "completed"],
       [2, "ambiguous"],
     ]);
+    expect(tools[2]?.account).toEqual({ connectionId: "00000000-0000-7000-8000-000000000706", connectionName: null,
+      userId: null, userName: null, scope: "workspace", phase: "selected", fallbackFromConnectionId: null });
     const recoveredActivities = transcript.createOpeningSnapshot({
       unreadHighWaterAttentionOrdinal: null,
       now: NOW + 6,

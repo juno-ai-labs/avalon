@@ -9284,3 +9284,10 @@ button.merged-into-label:hover { color: var(--av-sys-color-text-default); }
 .annotation-chip > [role='alert'] { flex-basis:100%; padding:0 8px 8px; }
 .annotation-chip > [role='alert'] button { margin:6px 8px 0 0; color:inherit; background:transparent; border:1px solid var(--av-sys-color-border-default); border-radius:6px; padding:4px 8px; cursor:pointer; }
 .annotation-chips > [role='status'] { color:var(--av-sys-color-text-muted); font-size:12px; }
+
+/* Receipt attribution stays in the existing activity breakdown. */
+.plugin-account-details { color: var(--av-sys-color-text-muted); font-size: 12px; margin: 4px 0 10px 28px; }
+.plugin-account-details > summary { cursor: pointer; width: fit-content; }
+.plugin-account-details ul { display: grid; gap: 12px; list-style: none; margin: 10px 0; padding: 0; }
+.operation-account p { margin: 4px 0; }
+.operation-account small { display: block; overflow-wrap: anywhere; }

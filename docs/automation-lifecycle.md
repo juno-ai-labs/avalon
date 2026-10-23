@@ -113,6 +113,13 @@ active configured Sidekicks. The handler refreshes ordinary eligibility and
 commits only against the still-current active definition revision. This permits
 eventual authorization propagation without a global barrier or provider probe.
 
+Run history carries its coordinating user through the client mapping. Tool
+activity separately projects actual identities from existing account checkpoints,
+including fallback and attempted/refused outcomes. Canonical transcript facts
+retain this attribution across reload and recovery without exposing grant
+generations or credentials. See [plugin activity
+rows](plugin-activity-rows.md#delegated-account-details).
+
 Per-operation connector identities, completed-receipt reconciliation, shared
 Terminal authorization and desktop/web controls are tracked by the
 [implementation plan](PRDs/2026-10-22_sidekick-delegation/plan.md) until all

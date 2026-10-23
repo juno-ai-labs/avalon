@@ -6,6 +6,7 @@ import type {
   SidekickDelegationAttentionCode,
   AutomationLifecycleState as ContractAutomationLifecycleState,
   AutomationPluginActivity,
+  ToolAccountAttribution,
   AutomationRunStatus as ContractAutomationRunStatus,
   Scope as ContractScope,
   GitHubRepositoryAccessSettings as ContractGitHubRepositoryAccessSettings,
@@ -352,6 +353,7 @@ export interface ToolEventData {
   id: string;
   /** Stable provider/Bind call identity shared by live and canonical rows. */
   toolCallId?: string;
+  account?: ToolAccountAttribution;
   name: string;
   summary?: string;
   status: 'started' | 'completed' | 'failed' | 'ambiguous';
@@ -394,6 +396,7 @@ export interface ToolEventData {
  * count rather than a duration — see `count` and `PluginGroup.countPhrase`.
  */
 export interface PluginActivityData {
+  operations?: Array<Pick<ToolEventData, 'id' | 'name' | 'status'> & { account: ToolAccountAttribution }>;
   /** Stable within one agent loop; two plugins that share it share a row. */
   groupKey: string;
   name: string;
@@ -749,6 +752,7 @@ export interface BackgroundTask {
 export interface AutomationRun {
   id: string;
   automationId: string;
+  coordinatorUserId?: string | null;
   triggerType: 'manual' | 'schedule' | 'external_event' | 'inbound_email';
   status: AutomationRunStatus;
   plannedFor: string | null;

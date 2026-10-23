@@ -341,9 +341,11 @@ describe('AutomationHeader', () => {
     unmount();
 
     renderHeader(active, {
+      delegateNames: new Map([["maya", "Maya"]]),
       runs: [{
         id: 'run-1',
         automationId: 'automation-1',
+        coordinatorUserId: 'maya',
         triggerType: 'schedule',
         status: 'completed',
         plannedFor: '2026-09-01T09:00:00.000Z',
@@ -361,6 +363,7 @@ describe('AutomationHeader', () => {
     const runs = within(dialog).getByRole('list', { name: 'Runs' });
     expect(runs).toHaveTextContent('Scheduled');
     expect(runs).toHaveTextContent('Three pull requests merged.');
+    expect(runs).toHaveTextContent('Coordinated by Maya');
     expect(runs).toHaveTextContent('Latest run completed');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close dialog' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Run history' })).toBeNull());

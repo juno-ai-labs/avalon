@@ -1,3 +1,4 @@
+import { toolAccountAttribution } from "./tool-execution-account";
 import { RESERVED_CHILD_MEMBERSHIP_VERSION } from "./hosted-parent";
 import { readCompletionVerificationSnapshot } from "./completion-verification-storage";
 import { projectConversationView } from "@rally/contracts/conversation-view";
@@ -5181,6 +5182,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         || loop.bind_state_revision !== current.stateRevision) {
         throw new Error("substream_loop_execution_fence_mismatch");
       }
+      const accountRecord = receipt ? this.toolReceipts.executionAccount({ runId: input.harnessRunId, effectIntentId: receipt.effectIntentId }) : null;
       await this.transcript.commitRecoveredToolResult({
         transition: {
           kind: "tool_result_accepted",
@@ -5205,6 +5207,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
             ? "completed"
             : classification === "ambiguous" ? "ambiguous" : "failed",
           participantSafeResult,
+          ...(accountRecord ? { account: toolAccountAttribution(accountRecord) } : {}),
           error: participantError,
         },
         settlesBatch: !hasWithheldElicitation && offset === recoverableCalls.length - 1,

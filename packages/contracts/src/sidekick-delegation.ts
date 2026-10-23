@@ -40,6 +40,18 @@ export const AccountSidekickDelegationsSchema = z.strictObject({
   organizations: z.array(SidekickMyDelegationsResultSchema.extend({ workspaceId: WorkspaceIdSchema })),
 });
 
+/** Participant-safe attribution from an operation's receipt, never its arguments. */
+export const ToolAccountAttributionSchema = z.strictObject({
+  connectionId: IdSchema,
+  connectionName: z.string().nullable(),
+  userId: UserIdSchema.nullable(),
+  userName: z.string().nullable(),
+  scope: z.enum(["personal", "workspace"]),
+  phase: z.enum(["selected", "refused", "served"]),
+  fallbackFromConnectionId: IdSchema.nullable(),
+});
+export type ToolAccountAttribution = z.infer<typeof ToolAccountAttributionSchema>;
+
 /** Internal consent record. Generations and provenance never become tool inputs. */
 export const SidekickDelegationGrantSchema = z.strictObject({
   sidekickId: IdSchema,

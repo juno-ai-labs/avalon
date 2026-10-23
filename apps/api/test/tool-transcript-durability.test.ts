@@ -1,4 +1,4 @@
-import { asWorkspaceId, asWorkstreamId, type ToolInvocation } from "@rally/contracts";
+import { asUserId, asWorkspaceId, asWorkstreamId, type ToolExecutionAccountRecord, type ToolInvocation } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
 import { __integrationTesting } from "../src/services/integrations";
 import type { ToolReceiptObjectPort } from "../src/durable-objects/workstream-tool-receipt-protocol";
@@ -80,14 +80,16 @@ const receiptRecord: ToolReceiptRecord = {
 async function project(
   receipt: Partial<ToolReceiptRecord>,
   owner: Record<string, unknown> | null,
+  account: ToolExecutionAccountRecord | null = null,
 ): Promise<{ loaded: ToolInvocation | null; lookup: ConnectorLookup }> {
   const lookup = new ConnectorLookup(owner);
   const port = {
     receiptForCall: async () => ({ ...receiptRecord, ...receipt }),
-  } satisfies Pick<ToolReceiptObjectPort, "receiptForCall">;
+    executionAccount: async () => account,
+  } satisfies Pick<ToolReceiptObjectPort, "receiptForCall" | "executionAccount">;
   const loaded = await __integrationTesting.loadToolInvocation(
     createTestEnv({ DB: lookup.binding }),
-    { workspaceId, parentId: workstreamId, harnessRunId },
+    { workspaceId, parentId: workstreamId, harnessRunId, ...(account ? { parentKind: "automation" } : {}) },
     "tool-call-1",
     port,
   );
@@ -102,6 +104,21 @@ const driveOwner = {
 };
 
 describe("tool invocation attribution", () => {
+  it("attributes fallback to the receipt's actual account instead of the requested connection", async () => {
+    const actual = { sidekickId: "00000000-0000-7000-8000-000000000011", connectionId: CONNECTION_ID,
+      delegatedUserId: asUserId("00000000-0000-7000-8000-000000000012"), grantGeneration: 9,
+      principal: { type: "user" as const, userId: asUserId("00000000-0000-7000-8000-000000000012") } };
+    const { loaded } = await project({ connectionId: "00000000-0000-7000-8000-000000000013" }, driveOwner, {
+      phase: "served", account: actual,
+      originalAccount: { ...actual, connectionId: "00000000-0000-7000-8000-000000000013" }, resourceKeys: [],
+    });
+    expect(loaded?.connectionId).toBe("00000000-0000-7000-8000-000000000010");
+    expect(loaded?.account).toEqual({ connectionId: "00000000-0000-7000-8000-000000000010", connectionName: "Google Drive · Work",
+      userId: "00000000-0000-7000-8000-000000000012", userName: null, scope: "personal", phase: "served",
+      fallbackFromConnectionId: "00000000-0000-7000-8000-000000000013" });
+    expect(loaded?.plugin?.canonicalId).toBe("connection:00000000-0000-7000-8000-000000000010");
+  });
+
   it("attributes an invocation to the connector that owns its tool", async () => {
     const { loaded, lookup } = await project({ connectionId: CONNECTION_ID }, driveOwner);
 
@@ -174,7 +191,8 @@ describe("tool invocation attribution", () => {
     const lookup = new ConnectorLookup(null);
     const port = {
       receiptForCall: async () => null,
-    } satisfies Pick<ToolReceiptObjectPort, "receiptForCall">;
+      executionAccount: async () => null,
+    } satisfies Pick<ToolReceiptObjectPort, "receiptForCall" | "executionAccount">;
 
     expect(await __integrationTesting.loadToolInvocation(
       createTestEnv({ DB: lookup.binding }),
