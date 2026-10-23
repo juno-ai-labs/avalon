@@ -1,28 +1,29 @@
 # Implementation plan
 
 The PRD and design remain the complete acceptance contract. This checklist tracks
-implementation and evidence; an unchecked item is not shipped or verified.
+local implementation and evidence. The feature is complete locally, unpushed
+and not deployed; these checks do not claim production verification.
 
-- [ ] WorkspaceDO consent authority: membership incarnation, stable grant order,
+- [x] WorkspaceDO consent authority: membership incarnation, stable grant order,
   prepared generations, withdrawal tombstones, immutable accepted receipts,
   creator initialization, manager removal, and conservative legacy migration.
-- [ ] Signed-in self-service APIs, viewer-authorized discovery, own-grant access
+- [x] Signed-in self-service APIs, viewer-authorized discovery, own-grant access
   after losing Organization membership, and existing realtime invalidations.
-- [ ] Shared event, schedule, manual and continuation eligibility; configured
+- [x] Shared event, schedule, manual and continuation eligibility; configured
   source reconciliation, provider occurrence deduplication, and persisted run
   coordinators independent of legacy human access rights.
-- [ ] Harness operation identity resolver, safe refusal fallback, sticky
+- [x] Harness operation identity resolver, safe refusal fallback, sticky
   account-relative operations and effect receipts, actual-account attribution,
   and delegation refresh for background children.
-- [ ] Strict delegation tools in both existing plugin presentations; direct-user
+- [x] Strict delegation tools in both existing plugin presentations; direct-user
   provenance for tools and creation; no autonomous consent tools.
-- [ ] Activation permission-reporting guidance, actionable Needs attention, and
+- [x] Activation permission-reporting guidance, actionable Needs attention, and
   configured medium fallback model evaluations.
-- [ ] Shared desktop/web Sidekick list, creator disclosure, all
+- [x] Shared desktop/web Sidekick list, creator disclosure, all
   loading/error/offline/pending/unavailable states and attribution.
-- [ ] Real workerd and provider-double tests, production-code negative controls,
+- [x] Real workerd and provider-double tests, production-code negative controls,
   lint, typecheck, real Electron/browser inspection and two-session convergence.
-- [ ] Owning subsystem documents and final requirement-by-requirement audit.
+- [x] Owning subsystem documents and final requirement-by-requirement audit.
 
 ## Scope update
 
@@ -57,6 +58,12 @@ turn an implementation checklist into an assertion that its tests passed.
   a delivery claim. Provider/tool outcomes were fixtures; real consent and post
   authority are covered separately on workerd. Results and browser screenshots
   are in this task's Sidekick QA artifact directory.
+- Three additional live account-guidance checks passed with the production
+  Google tool schemas: “my inbox” selects the current requester, “send as Maya”
+  selects Maya, and an unqualified scheduled inbox read retains the configured
+  task account even under another coordinator. An empty result may refine the
+  query in the same account; it must not switch accounts. These used fixture
+  provider outcomes and made no real email writes.
 - Real headed Chrome inspected creator disclosure and enrollment, empty and
   populated lists, loading, manager/unavailable rows, pending saves, offline
   controls, read failure/acknowledgement/retry and compact Details. Two actual
@@ -78,10 +85,40 @@ turn an implementation checklist into an assertion that its tests passed.
   fixed recovery message. A real archived destination refuses the tool and
   appends no message; the banner survives WorkspaceDO eviction. Removing the
   attention write made the assertion fail. A real browser inspected its message.
-- The background continuation case that timed out during the unconstrained
-  sweep passed all 20 isolated repetitions; the final full run uses the
-  documented `VITEST_MAX_WORKERS=2` setting. Full-suite completion and final
-  requirement signoff are still pending; the feature remains local and unpushed.
+- The background continuation timeout was an invalid test ordering assumption.
+  A nested worker's completion notice settles independently after its terminal
+  receipt and can start an execution in the parent. A controlled delivery/model
+  gate reproduced the timeout: the follow-up was consumed as a steer in that
+  notice execution, which completed, with no queued inputs or refusals. The
+  test incorrectly waited for a separate trigger receipt. It now waits for
+  nested notice settlement and the parent's settled idle state before evicting
+  completed work and sending an independent follow-up. Waiting only for idle
+  was insufficient because the notice could still arrive afterwards. The
+  earlier artificial still-owned lease experiment reproduced a symptom but did
+  not establish its cause; terminalization closes the linked loop atomically.
+  This changes fixture ordering without a new timeout, retry or runtime rule.
+  All 20 repetitions of the complete continuation file passed (400 test
+  executions), followed by a passing fresh full `pnpm test` with
+  `VITEST_MAX_WORKERS=2`: API Node 3,859, real workerd 2,092, desktop 4,032,
+  harness 558, contracts 630 and connectors 602 (four existing skips), plus
+  all remaining packages. Lint, typecheck and documentation checks also pass.
+  The feature is local and unpushed.
+
+### Requirement audit
+
+| PRD acceptance | Implementation and evidence |
+| --- | --- |
+| 1. Creator consent and migration | Consent workerd lanes cover direct creation, no inherited autonomous grant, withdrawal/replay and legacy claims. Historical ambiguous creators stay Needs opt-in. |
+| 2. Self-service UI | Real Electron and browser windows; all listed visual states, real two-session grant convergence and archive/access-loss convergence. Response fixtures are identified above. |
+| 3. Agent self-consent | Strict self-only schemas and authenticated-speaker workerd checks; live configured-fallback checks for consent, wrong-user requests and quoted/injected data. |
+| 4. Event/schedule consistency | Shared admission and source-reconciliation workerd lanes; assembled connector cases exercise the same permission shape with and without event origin. Providers are doubled; no production Sheet permissions changed. |
+| 5. Eligible fallback | Resolver/assembled Google tests prove permission-only fallback and refreshed withdrawal. Snapshot-authorized in-flight work remains permitted. |
+| 6. Account-dependent meaning | Empty searches, named users, private IDs, replies, pagination and legacy task-account bindings are covered by resolver and pagination lanes. |
+| 7. Writes and recovery | Refusal-only write fallback plus real-workerd/provider-double Calendar recovery; ambiguous/cancelled effects never move to a different account. |
+| 8. Revocation and continuation | Membership incarnation, delayed old allow, accepted/interrupted receipt replay, persisted coordination and same-Sidekick background references are covered on workerd. |
+| 9. Multiple operation identities | Durable per-operation account checkpoints, servedThrough results, activity details and separate coordinator history; shared Terminal retains files and removes observed withdrawn credentials. |
+| 10. Runtime and quality gates | Negative controls, Electron/browser QA and live model checks recorded above. The post-fix full suite, 20 continuation repetitions, lint, typecheck and docs checks all pass. |
+| 11. Permission reports | Production activation guidance, four live reporting cases and a durable refused-post attention test with eviction and a production-break control. |
 
 ### Completed-reference background handoff and later executions
 
@@ -457,12 +494,13 @@ turn an implementation checklist into an assertion that its tests passed.
 The common admission policy, completed-consent replay checks and interrupted
 consent receipt reconciliation are installed. Completed and interrupted replay
 read current own-grant generation and eligibility without repeating the consent
-mutation. Medium-model uncertain-response behavior still needs evaluation;
-storage/protocol tests are not semantic model evidence.
+mutation. The live configured-fallback checks above now cover uncertain
+responses; storage/protocol tests alone are not semantic model evidence.
 
 Configured source reconciliation now preserves connection-specific Rally IDs,
 provider resource/occurrence identity and unchanged registration cutoffs, as
-proved above. Multi-session reader-access invalidation remains to be exercised.
+proved above. The real browser archive check above also covers multi-session
+reader-access invalidation.
 Canonical activation-event references now retain their source account before
 the first tool read. Rooted background children read that host-derived reference
 from their existing root-run authority without inheriting instructions or tools.
@@ -473,17 +511,17 @@ those references, and later executions of an occurrence read its completed
 conversation receipts. Unresolved effects and cross-Sidekick messages export no
 such context. Validation is recorded in the handoff evidence section below.
 Normal activity details now retain serving-account fields from receipt
-checkpoints, alongside the separate coordinating user. Authorized uncertain-write
-reconciliation still needs end-to-end recovery verification; pinning an account
-alone is not evidence that an uncertain provider effect was reconciled.
+checkpoints, alongside the separate coordinating user. The Calendar recovery
+checkpoint above now covers authorized uncertain-write reconciliation through
+real workerd and a provider double; pinning an account alone is not that proof.
 Terminal now reuses eligible delegation from its inventory snapshot and retains its
 original file identity across coordinators, including completed imports. Its
 single selected repository connection stays explicit; observed withdrawal
 removes mounted personal GitHub credentials without deleting files. Actual
 serving-account activity presentation is wired as described above.
 The historical creation, browser and model checkpoints are recorded above.
-The remaining gate is the final full-suite result and requirement-by-requirement
-signoff. Real API acceptance and staged UI states are identified separately;
+The final full suite and requirement-by-requirement local signoff are complete.
+Real API acceptance and staged UI states are identified separately;
 neither a rendering fixture nor a provider double proves production delivery.
 
 The current harness has no model-visible tool-result byte cap

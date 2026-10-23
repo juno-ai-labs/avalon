@@ -1402,6 +1402,8 @@ compatibility reads for openings saved before that field existed. Self-action
 receipt inspection prevents the outer completed-tool cache from presenting a
 withdrawn grant as current without replaying its mutation. Interrupted actions
 are reconciled by that same receipt instead of minting a fresh consent intent.
+An activation's refused conversation post also records a fixed recovery message
+in the same attention field, without adding a separate notification mechanism.
 
 **Why:** A mutable run-as user cannot represent several people's consent or
 independent withdrawal. Reusing that field for automatic coordination would also
@@ -1409,6 +1411,8 @@ change existing human access. A durable prepared generation prevents response
 loss or delayed dispatch from turning an old allow into a new opt-in. A global
 authorization barrier is unnecessary because eventual authorization propagation
 is the agreed product contract.
+A blocked report must also remain visible after the model finishes explaining
+it, since an attempted post is not confirmation that anyone received it.
 
 **Considered and rejected:** Reusing directory run-as as the consent list would
 couple execution selection to human reader/manager rights. A global revocation
