@@ -29,8 +29,10 @@ remain separate from this effect-ordering fence.
 Sidekick source reconciliation uses stored `sidekick_delegation_sources`
 entries. Grant mutations write the wake atomically with consent; connection
 authority triggers and existing membership/reach invalidations also queue it.
-Keys include the originating action identity, so a wake queued while an older
-handler awaits eligibility cannot be erased by that handler's settlement.
+One `<sidekickId>:sources` entry coalesces pending changes. Each enqueue advances
+its due instant to at least the previous instant plus one millisecond; this is
+the existing scheduler's settlement fence, not a debounce delay. A wake queued
+while an older handler awaits eligibility cannot be erased by its settlement.
 Migration 130 queues existing active configured Sidekicks. Connection RPCs and
 membership/reach paths re-arm the native alarm after writing work. The handler
 uses normal alarm retries and current definition checks; it performs no provider
@@ -596,9 +598,11 @@ scheduled reads and event subscriptions would use different account sets.
 
 **Considered and rejected:** Synchronous provider checks or a separate
 authorization sequencer would add latency beyond the agreed eventual-consistency
-contract. Reusing one in-flight key could let settlement erase a newer wake.
+contract. A separate row per originating action repeats the same latest-state
+read; one key with a strictly advancing instant preserves newer work through
+the scheduler's existing conditional settlement.
 
-**Consequences:** Each action retains a wake until normal alarm settlement;
+**Consequences:** Each Sidekick retains at most one pending refresh;
 only changed registrations move their event cutoff. This introduces no new
 retry policy or historical-event replay.
 

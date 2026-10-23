@@ -36,6 +36,24 @@ lookup/self-withdrawal, delegation execution and activity attribution remain.
 Record executed checks and their actual coverage here as work progresses. Do not
 turn an implementation checklist into an assertion that its tests passed.
 
+### Simplification after antagonistic review
+
+- Connector execution and Terminal reuse one inventory delegation snapshot.
+  Continuations and later runs rebuild it; stale snapshots may finish, while
+  refreshed inventories refuse withdrawn delegates and remove their mounted
+  repository credentials. Serving connection capability and credential checks,
+  coordinator liveness, identity pins and durable receipts remain.
+- Enrollment is authorized once at mutation, after intent preparation; empty
+  resource-key operations skip the resource-binding RPC. Source changes coalesce
+  into one stored alarm per Sidekick, with strictly advancing due instants so
+  an older handler cannot erase work queued during its await.
+- Restored scoped checks passed 82 real workerd consent/admission/hosted-Sidekick
+  cases and 81 Node schema/connector/Terminal/resolver/run-authority cases.
+  Lint and repository-wide typecheck passed. Production-code negative controls
+  restored per-call grant reads or dropped wake advancement; the targeted
+  assertions failed for stale-snapshot rejection and erasure of the newer wake.
+  Full-suite, remaining UI simplification and model behavior evidence are open.
+
 ### Consent installation
 
 - `test-workers/sidekick-delegation.test.ts`: 10 passing real workerd cases,

@@ -186,7 +186,7 @@ function readGateway(baseSha = BASE): TerminalGitHubReadGateway {
 }
 
 describe("Terminal Bind integration", () => {
-  it.each([false, true])("shares Sidekick files across eligible delegates and withdraws cached access (personal repository %s)", async (personalRepository) => {
+  it.each([false, true])("shares Sidekick files and observes withdrawal on inventory refresh (personal repository %s)", async (personalRepository) => {
     const { database, objectStore, objectStores, env, input, workspace } = fixture("supported");
     if (personalRepository) {
       selectRepository(database, objectStore);
@@ -248,6 +248,9 @@ describe("Terminal Bind integration", () => {
     } });
     await consent(runAsUser, true);
     await consent(U, false);
+    // Eventual authz permits the existing snapshot to finish its work.
+    await expect(read({ filePath: "site/index.html" }, { ...toolContext, toolCallId: "stale-snapshot-read" }))
+      .resolves.toMatchObject({ output: { content: "shared site" } });
     const child = asSubstreamId("30000000-0000-4000-8000-000000000088");
     const childRun = asHarnessRunId("30000000-0000-4000-8000-000000000089");
     const childStore = testWorkstreamObjectStore();
@@ -273,16 +276,14 @@ describe("Terminal Bind integration", () => {
           toolCallId: "publish-after-withdrawal", executionPrincipal: { type: "user", userId: runAsUser } },
       )).rejects.toMatchObject({ code: "repository_delegate_unavailable" });
     }
-    // Withdrawal blocks both the old cached caller and a new wizard, while
-    // the independent eligible activation retains the original files.
+    // A refreshed inventory blocks the withdrawn caller, while an independent
+    // eligible activation retains the original files and clears old secrets.
     const laterWizard = await createAvalonTerminalPlugin(env, { ...input, parentKind: "automation" }, undefined, {
       provider: sandboxProvider,
     });
-    for (const wizard of [plugin!, laterWizard!]) {
-      await expect(wizard.tools.find((tool) => tool.definition.name === "read_file")!.execute!(
+    await expect(laterWizard!.tools.find((tool) => tool.definition.name === "read_file")!.execute!(
         { filePath: "site/index.html" }, { ...toolContext, toolCallId: "later-editor" },
-      )).rejects.toMatchObject({ code: "sandbox_authority_mismatch" });
-    }
+    )).rejects.toMatchObject({ code: "sandbox_authority_mismatch" });
     expect(sandboxProvider.deleteSandbox).not.toHaveBeenCalled();
     expect(sandboxProvider.createSandbox).toHaveBeenCalledTimes(1);
     expect(workstreamObjectGet(objectStore, "SELECT generation, sandbox_id FROM terminal_workspace"))
