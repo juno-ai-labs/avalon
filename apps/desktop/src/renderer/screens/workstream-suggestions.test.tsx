@@ -20,6 +20,7 @@ const api = vi.hoisted(() => ({
   getConversation: vi.fn(),
   dismissSuggestion: vi.fn(),
   resolveSuggestion: vi.fn(),
+  resolveConversation: vi.fn(),
   mergeConversation: vi.fn(),
   mergeChannels: vi.fn(),
 }));
@@ -268,6 +269,35 @@ describe('the suggestion chip', () => {
     // Under the judged turn: the chip's row follows that turn's row.
     const row = chip.closest('[data-arrival-id]');
     expect(row?.querySelector('.message-block')?.textContent).toContain(judged);
+  });
+
+  it('resolves a Breakout from the merge suggestion while its draft is pending, without merging', async () => {
+    let finish = (): void => {};
+    api.resolveConversation.mockReturnValue(new Promise<void>((resolve) => { finish = resolve; }));
+    renderBreakout(twoTurns, [suggestion({ draft: { status: 'pending', text: null, subject: null } })]);
+    const chip = await screen.findByRole('group', { name: 'Suggestion: merge to Pricing' });
+    const resolve = within(chip).getByRole('button', { name: 'Resolve without merge' });
+    expect(within(chip).getByRole('button', { name: 'Merge' })).toBeDisabled();
+    expect(resolve).toBeEnabled();
+    fireEvent.click(resolve);
+    expect(api.resolveConversation).toHaveBeenCalledWith(threadId, breakoutId);
+    expect(resolve).toBeDisabled();
+    await act(async () => { finish(); });
+    expect(screen.queryByRole('group', { name: 'Suggestion: merge to Pricing' })).toBeNull();
+    expect(api.mergeConversation).not.toHaveBeenCalled();
+    expect(api.dismissSuggestion).not.toHaveBeenCalled();
+  });
+
+  it('keeps the merge suggestion available when resolving fails', async () => {
+    api.resolveConversation.mockRejectedValue(new Error('offline'));
+    renderBreakout(twoTurns, [suggestion()]);
+    const chip = await screen.findByRole('group', { name: 'Suggestion: merge to Pricing' });
+    fireEvent.click(within(chip).getByRole('button', { name: 'Resolve without merge' }));
+    await screen.findByText('The breakout couldn’t be resolved. Try again.');
+    for (const dialog of screen.getAllByRole('alertdialog')) fireEvent.click(within(dialog).getByRole('button', { name: 'OK' }));
+    expect(within(chip).getByRole('button', { name: 'Resolve without merge' })).toBeEnabled();
+    expect(within(chip).getByRole('button', { name: 'Merge' })).toBeEnabled();
+    expect(api.mergeConversation).not.toHaveBeenCalled();
   });
 
   it('stays while two newer messages exist', async () => {
