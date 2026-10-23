@@ -70,6 +70,14 @@ empty and untouched, so the suggestion never replaces what the person typed or
 a remembered name.
 
 The invite page uses manual email chips separated by spaces, commas or semicolons.
+Invite stays enabled while the person enters addresses. Clicking it with an
+invalid address opens an error modal before any invitations are sent; clicking
+it with no addresses asks for at least one. Each click can reopen the modal after
+acknowledgement. Invalid chips use the shared pastel red palette fill and its
+matching red ink. The client checks
+for a nonempty local part and domain separated by one `@`, with no whitespace;
+it does not require a dot in the domain. Invitation failures still open an error
+popup.
 Before sending, it reconciles pending invitations and active members so retrying a
 lost response does not replace an invitation already sent. Failed addresses stay
 editable. Onboarding has no teammate discovery API.
@@ -147,6 +155,26 @@ inventory is [the PRD motion audit](PRDs/2026-09-05_new-user-onboarding/motion-r
 Onboarding no longer starts an agent run or a connector authorization.
 
 ## Changelog
+
+### 2026-10-23 — Let creators finish typing invitation addresses
+
+**What changed:** Invite stays enabled, and invalid addresses open a modal only
+when it is clicked, before any invitation is sent. Invalid chips have a pastel
+red fill. The client checks for `something@something` without requiring a dot
+in the domain. Failed invitation attempts still show their error.
+
+**Why:** During signup, entering the first letter of an address immediately
+opened a modal and interrupted typing. Draft validation used the same automatic
+error notice as an operational failure.
+
+**Considered and rejected:** Opening the popup during typing or blur interrupts
+editing. Disabling Invite for invalid addresses gives no explanation when a
+person tries to proceed, so validation runs when they click it instead.
+
+**Consequences:** Use the same lightweight check for chip highlighting and for
+submission, including its unfinished draft. A rejected submission preserves the
+addresses and opens a fresh notice on each attempt without a network request.
+The invitation API owns server validation.
 
 ### 2026-10-13 — Prefill the organization name from the email domain
 
