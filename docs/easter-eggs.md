@@ -68,9 +68,11 @@ or configuration file: the person who sees it cannot act on those.
   main process, and none stores anything. Hidden code that reaches a server is
   hidden attack surface; one that only draws is not. No automated guard.
 - **Pong takes Escape from the window.** Settings and the Sidekicks window close
-  on Escape (`lib/window-escape.ts`); Pong calls `preventDefault()`, which that
-  hook honours, so Escape ends the game rather than closing the window. Guard:
-  `App.session-gate.test.tsx` ("plays Pong while it waits").
+  on Escape from a bubble-phase `window` listener installed before Pong mounts
+  (`lib/window-escape.ts`). Pong listens in the capture phase so it runs first,
+  and calls `preventDefault()`, which that hook honours, so Escape ends the game
+  rather than closing the window. Guard: `App.session-gate.test.tsx` ("ends a
+  Pong game on Escape before closing the window").
 - **Space starts Pong only from the page itself.** When a button has focus,
   Space is that button's; starting a game instead would swallow a Try again.
   No automated guard.
