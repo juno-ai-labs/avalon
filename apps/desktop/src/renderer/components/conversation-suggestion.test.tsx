@@ -14,7 +14,7 @@ describe('suggestionExcerpt', () => {
 });
 
 describe('SuggestionChip', () => {
-  it('draws the title, the sentence, the excerpt and both controls, and acts on each', () => {
+  it('draws the title, the sentence and the excerpt, and dismisses through either control', () => {
     const onAct = vi.fn();
     const onDismiss = vi.fn();
     render(<SuggestionChip
@@ -34,6 +34,8 @@ describe('SuggestionChip', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss suggestion' }));
     expect(onAct).toHaveBeenCalledOnce();
     expect(onDismiss).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(onDismiss).toHaveBeenCalledTimes(2);
   });
 
   it('while the draft is pending draws a skeleton, disables the action and keeps Dismiss live', () => {
