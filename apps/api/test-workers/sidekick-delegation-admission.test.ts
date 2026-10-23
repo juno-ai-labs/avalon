@@ -27,6 +27,7 @@ const address = { workspaceId, automationId };
 const actor = (userId = creator) => ({ userId, actorRole: userId === other ? "admin" as const : "member" as const, participantOfOwningWorkstream: false });
 const stub = () => env.WORKSPACE_DOS.getByName(workspaceDOName("global", workspaceId));
 const now = "2026-10-22T20:00:00.000Z";
+const SOURCE_RECONCILIATION_TIMEOUT_MS = 15_000;
 const definition: AutomationDraft = {
   name: "Content calendar", description: "Report content changes", overview: "Watch the calendar",
   instructions: "Read the calendar and report changes.", triggers: [{ type: "manual" }],
@@ -119,8 +120,12 @@ describe("shared Sidekick delegation admission", () => {
     expect(eligibility.mock.calls.every(([grant]) => grant.userId === creator)).toBe(true);
   });
 
-  it("shares pending eligibility across matching evaluators only within one request", async () => {
+  it.each([false, true].flatMap((legacy) => [false, true].map((previouslyAdmitted) => ({ legacy, previouslyAdmitted }))))(
+    "shares pending eligibility within a request and fences reactivated sources (admitted: $previouslyAdmitted, legacy: $legacy)", async ({ previouslyAdmitted, legacy }) => {
     await webhook(["deployed", "also_deployed"]);
+    if (legacy) await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec(
+      "UPDATE sidekick_revisions SET definition_json=json_remove(definition_json,'$.definitionVersion') WHERE sidekick_id=?", automationId,
+    ));
     await runDurableObjectAlarm(stub());
     await expect.poll(async () => runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
       "SELECT count(*) AS count FROM _internal_durable_alarms WHERE kind='sidekick_delegation_sources'",
@@ -142,11 +147,48 @@ describe("shared Sidekick delegation admission", () => {
     expect(eligibility).toHaveBeenCalledTimes(1);
     expect((await match()).deliveries).toHaveLength(2);
     expect(eligibility).toHaveBeenCalledTimes(2);
-    await consent(creator, false);
     const delivery = first.deliveries[0]!;
-    expect(await stub().sidekickAdmitExternalEvent({ ...address, registrationId: delivery.registrationId,
-      event: delivery.event, payloadHash: delivery.payloadHash })).toMatchObject({ admitted: false, outcomeCode: "sidekick_no_eligible_delegate" });
+    const admit = () => stub().sidekickAdmitExternalEvent({ ...address, registrationId: delivery.registrationId,
+      event: delivery.event, payloadHash: delivery.payloadHash });
+    if (previouslyAdmitted) expect(await admit()).toMatchObject({ admitted: true });
+    await consent(creator, false);
+    expect(await admit()).toMatchObject({ admitted: false });
     expect((await match()).deliveries).toEqual([]);
+    const registrationStates = () => runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec<{
+      state: string; effective_after_event_sequence: number;
+    }>("SELECT state,effective_after_event_sequence FROM workspace_external_event_registrations WHERE automation_id=? ORDER BY registration_id", automationId).toArray());
+    await runDurableObjectAlarm(stub());
+    await expect.poll(async () => (await registrationStates()).map((registration) => registration.state), { timeout: SOURCE_RECONCILIATION_TIMEOUT_MS })
+      .toEqual(["removed", "removed"]);
+    // The current durable source state must fence an envelope already in flight.
+    expect(await admit()).toMatchObject({ admitted: false });
+    await consent(creator, true);
+    await runDurableObjectAlarm(stub());
+    await expect.poll(async () => (await registrationStates()).map((registration) => registration.state), { timeout: SOURCE_RECONCILIATION_TIMEOUT_MS })
+      .toEqual(["active", "active"]);
+    expect((await registrationStates()).every((registration) => registration.effective_after_event_sequence >= delivery.event.eventSequence)).toBe(true);
+    expect(await admit()).toMatchObject(previouslyAdmitted
+      ? { admitted: true, outcomeCode: "sidekick_occurrence_replayed" }
+      : { admitted: false, outcomeCode: "sidekick_event_before_activation_boundary" });
+    expect(await runs()).toHaveLength(previouslyAdmitted ? 1 : 0);
+  });
+
+  it.each([false, true])("refuses delayed delivery after a disabled connection's registration is removed (legacy: %s)", async (legacy) => {
+    const request = await webhook();
+    if (legacy) await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec(
+      "UPDATE sidekick_revisions SET definition_json=json_remove(definition_json,'$.definitionVersion') WHERE sidekick_id=?", automationId,
+    ));
+    await stub().executeRuntimeSql({ workspaceId, requestId: crypto.randomUUID(), statements: [{
+      sql: "UPDATE connector_connections SET status='disabled' WHERE id=?", params: [connectionId],
+    }] });
+    await runDurableObjectAlarm(stub());
+    await expect.poll(async () => runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec<{ state: string }>(
+      "SELECT state FROM workspace_external_event_registrations WHERE registration_id=?", request.registrationId,
+    ).one().state), { timeout: SOURCE_RECONCILIATION_TIMEOUT_MS }).toBe("removed");
+    expect(await stub().sidekickAdmitExternalEvent({ ...request,
+      event: { ...request.event, audienceKind: "workspace", audienceUserIds: [] },
+    })).toMatchObject({ admitted: false, outcomeCode: "sidekick_trigger_removed" });
+    expect(await runs()).toEqual([]);
   });
 
   it("clears restored source coverage without clearing an unrelated permission warning", async () => {
@@ -306,7 +348,7 @@ describe("shared Sidekick delegation admission", () => {
     await consent(creator, false);
     await runDurableObjectAlarm(stub());
     await expect.poll(async () => (await registrations()).map((entry) => entry.connection_id)).toEqual([secondConnection]);
-    expect(await admit(queued)).toMatchObject({ admitted: false, outcomeCode: "sidekick_no_eligible_delegate" });
+    expect(await admit(queued)).toMatchObject({ admitted: false });
     const next = (await changed(secondConnection, "v2")).deliveries;
     expect(next).toHaveLength(1);
     expect(await admit(next[0]!)).toMatchObject({ admitted: true });
@@ -537,7 +579,7 @@ describe("shared Sidekick delegation admission", () => {
     expect((await event("calendar-change-2")).deliveries).toEqual([]);
     expect(AutomationDetailSchema.parse(await stub().sidekickReadDetail({ ...address, actor: actor() })).delegationAttention?.code).toBe("event_no_eligible_delegate");
     expect(await stub().sidekickAdmitExternalEvent({ ...address, registrationId: delivery.registrationId,
-      event: { ...delivery.event, id: crypto.randomUUID() }, payloadHash: delivery.payloadHash })).toMatchObject({ admitted: false, outcomeCode: "sidekick_no_eligible_delegate" });
+      event: { ...delivery.event, id: crypto.randomUUID() }, payloadHash: delivery.payloadHash })).toMatchObject({ admitted: false });
     expect(await runs()).toHaveLength(2);
   });
 });

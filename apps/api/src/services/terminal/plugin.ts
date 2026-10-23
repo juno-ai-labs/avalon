@@ -68,7 +68,7 @@ export async function createAvalonTerminalPlugin(
     provider?: TerminalSandboxProvider;
     readGateway?: TerminalGitHubReadGateway;
     /** Reuse the connector inventory's authz snapshot when assembled together. */
-    delegation?: SidekickExecutionDelegation | null;
+    delegation?: SidekickExecutionDelegation;
   } = {},
 ): Promise<(HarnessPlugin & Disposable) | null> {
   env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
