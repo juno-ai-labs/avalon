@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { asUserId, asWorkspaceId, SidekickExecutionDelegationSchema } from "@rally/contracts";
+import { createTestEnv } from "./helpers/cloudflare-test";
+import { WorkstreamWorkflowInputSchema } from "@rally/contracts";
 import { ConnectorError, connectorResourceAccessRefused } from "@rally/connectors";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import type { DatabaseSync } from "node:sqlite";
-import { executeSidekickAccountOperation, type SidekickAccountConnection } from "../src/services/sidekick-operation-accounts";
+import { executeSidekickAccountOperation, readSidekickOperationDelegation, type SidekickAccountConnection } from "../src/services/sidekick-operation-accounts";
 import {
   seedToolReceipt, seedWorkstreamRun, seedWorkstreamObjectRoot, testToolReceiptPort, testWorkstreamObjectStore,
 } from "./helpers/durable-authority";
@@ -52,6 +54,13 @@ function fixture() {
 }
 
 describe("Sidekick operation account selection over durable receipts", () => {
+  it("does not expose delegation to a Sidekick configuration chat", async () => {
+    const input = WorkstreamWorkflowInputSchema.parse({ workspaceId, parentKind: "automation", parentId: id(4),
+      loopId: "config-loop", harnessRunId: id(7), region: "global", reason: "human_message", triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: other } });
+    expect(await readSidekickOperationDelegation(createTestEnv({}), input)).toBeNull();
+  });
+
   it("selects independently for a new operation after a read through another delegate", async () => {
     const f = fixture(), read = f.context();
     await executeSidekickAccountOperation({ ...f.options(read), requested: b });

@@ -91,6 +91,43 @@ async function webhook() {
 }
 
 describe("shared Sidekick delegation admission", () => {
+  it("clears restored source coverage without clearing an unrelated permission warning", async () => {
+    await webhook();
+    const attention = async () => AutomationDetailSchema.parse(await stub().sidekickReadDetail({ ...address, actor: actor() })).delegationAttention;
+    await consent(creator, false);
+    await runDurableObjectAlarm(stub());
+    await expect.poll(async () => (await attention())?.code).toBe("event_no_eligible_delegate");
+    await consent(creator, true);
+    await runDurableObjectAlarm(stub());
+    await expect.poll(attention).toBeNull();
+    await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec(
+      "UPDATE automation_directory SET delegation_attention_code='permission_report_unavailable' WHERE automation_id=?", automationId));
+    await consent(other, true);
+    await runDurableObjectAlarm(stub());
+    expect((await attention())?.code).toBe("permission_report_unavailable");
+  });
+
+  it("does not clear a source warning when an unrelated manual run is admitted", async () => {
+    await create();
+    await activate();
+    await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec(
+      "UPDATE automation_directory SET delegation_attention_code='event_no_eligible_delegate' WHERE automation_id=?", automationId));
+    await stub().sidekickRunNow({ ...address, actor: actor(), idempotencyKey: "manual-with-source-warning" });
+    expect(AutomationDetailSchema.parse(await stub().sidekickReadDetail({ ...address, actor: actor() })).delegationAttention?.code)
+      .toBe("event_no_eligible_delegate");
+  });
+
+  it("does not turn a legacy claim into permanent manager access", async () => {
+    await create();
+    await activate();
+    await stub().sidekickClaimExecutionPrincipal({ ...address, actor: actor(other) });
+    await runInDurableObject(stub(), async (instance) => {
+      await expect(instance.sidekickPause({ ...address, actor: { ...actor(other), actorRole: "member" } }))
+        .rejects.toMatchObject({ status: 403 });
+    });
+    expect((await execution()).delegates.map((grant) => grant.userId)).toContain(other);
+  });
+
   it("coalesces source changes without losing a wake behind an older handler", async () => {
     await webhook();
     const observed = await runInDurableObject(stub(), (_instance, state) => {
@@ -364,14 +401,16 @@ describe("shared Sidekick delegation admission", () => {
     ]);
   });
 
-  it("treats the installed-client claim as self-consent and retains explicit human management after withdrawal", async () => {
+  it("treats the installed-client claim as self-consent without adding human management rights", async () => {
     await create();
     await activate();
     expect(await stub().sidekickClaimExecutionPrincipal({ ...address, actor: actor(other) })).toMatchObject({ principalUserId: other, changed: true });
     expect((await execution()).delegates.map((grant) => grant.userId)).toEqual([creator, other]);
     await consent(other, false);
-    await stub().sidekickPause({ ...address, actor: { ...actor(other), actorRole: "member" } });
-    await stub().sidekickResume({ ...address, actor: actor() });
+    await runInDurableObject(stub(), async (instance) => {
+      await expect(instance.sidekickPause({ ...address, actor: { ...actor(other), actorRole: "member" } }))
+        .rejects.toMatchObject({ status: 403 });
+    });
     expect(AutomationDetailSchema.parse(await stub().sidekickReadDetail({ ...address, actor: actor() })).runAsUserId).toBe(creator);
     expect((await execution()).delegates.map((grant) => grant.userId)).toEqual([creator]);
   });

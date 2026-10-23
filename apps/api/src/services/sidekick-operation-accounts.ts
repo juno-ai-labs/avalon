@@ -11,7 +11,7 @@ import { workspaceDOName } from "../durable-objects/names";
 import type { Env } from "../env";
 
 export async function readSidekickOperationDelegation(env: Env, input: WorkstreamWorkflowInput): Promise<SidekickExecutionDelegation | null> {
-  if (input.parentKind !== "automation") return null;
+  if (input.parentKind !== "automation" || (!input.automationRun && !input.automationDelegation)) return null;
   const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, input.workspaceId,
     workspaceDOName(env.AVALON_REGION, input.workspaceId));
   return SidekickExecutionDelegationSchema.parse(await workspace.sidekickReadExecutionDelegation({

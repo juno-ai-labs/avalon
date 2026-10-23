@@ -1839,7 +1839,7 @@ function createAvalonAutomationsPlugin(
       description: `Choose which reusable skills to recommend for future runs in this thread. To use a skill now, call load_skill.${delegationUser ? " Inspect and manage Sidekick delegates for Organization users." : ""}`,
       searchAliases: ["skill", "instructions", "knowledge", "recommend", "procedure",
         ...(delegationUser ? ["sidekick", "delegate", "delegation", "account", "consent", "allow", "withdraw"] : [])],
-      systemMessage: `Use list_skill_recommendations, recommend_skill and unrecommend_skill to manage this thread's skill recommendations. Recommendations affect future executions; call load_skill with a name from the Skills catalog to use instructions now. To set up delegated work, use the separate sidekicks_list and create_sidekick agent tools.${delegationUser ? ` ${sidekickDelegationGuidance(true)}` : ""}`,
+      systemMessage: `Use list_skill_recommendations, recommend_skill and unrecommend_skill to manage this thread's skill recommendations. Recommendations affect future executions; call load_skill with a name from the Skills catalog to use instructions now. To set up delegated work, use the separate sidekicks_list and create_sidekick agent tools.${delegationUser ? ` ${sidekickDelegationGuidance()}` : ""}`,
       tools, preload: false, explicit: false };
   }
   /**
@@ -2168,7 +2168,7 @@ function createAvalonAutomationsPlugin(
   });
   return {
     ...plugin,
-    systemMessage: `${plugin.systemMessage} This conversation configures Sidekick ${authoredAutomationId}. Read its current definition before revising it. ${delegationUser ? sidekickDelegationGuidance(false) : ""}`,
+    systemMessage: `${plugin.systemMessage} This conversation configures Sidekick ${authoredAutomationId}. Read its current definition before revising it. ${delegationUser ? sidekickDelegationGuidance() : ""}`,
     // An automation's own conversation exists to draft and edit it, so the
     // tools are in hand from the first turn there. In a room they stay
     // discoverable behind `list_plugins`, where most turns never need them.
@@ -5621,7 +5621,7 @@ async function loadHarnessTools(
     : input.executionPrincipal.type === "user" ? {
       canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_sidekicks", shortWireName: "sidekick",
       displayName: "Sidekick delegation", description: "Inspect and manage Sidekick delegation for Organization users.",
-      preload: false, explicit: false, systemMessage: sidekickDelegationGuidance(false),
+      preload: false, explicit: false, systemMessage: sidekickDelegationGuidance(),
       tools: sidekickDelegationTools(env, input, input.executionPrincipal.userId, false),
     } : null;
   // List, read and post to Rally conversations, scoped by the loop: a

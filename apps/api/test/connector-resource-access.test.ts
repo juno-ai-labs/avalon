@@ -1,5 +1,5 @@
-import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
-import type { WorkstreamWorkflowInput } from "@rally/contracts";
+import { asHarnessRunId, asAutomationId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import type { WorkstreamWorkflowInput, AutomationDraft } from "@rally/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -87,6 +87,7 @@ async function fixture() {
   const workspaceObject = createTestWorkspaceDO({
     workspaceId: WORKSPACE_ID,
     regionalDatabase: database,
+    environment: { PUBLIC_API_BASE_URL: "https://api.example.test" },
     register: (created) => { openDatabases.push(created); },
   });
   const baseEnv = createTestEnv({
@@ -100,7 +101,7 @@ async function fixture() {
     CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
     WORKSPACE_DOS: testSubstreamAgentsBinding(objectStore, {
-      extra: workspaceObjectRpcs(workspaceObject.instance, ["executeRuntimeSql", "sidekickReadExecutionDelegation"]),
+      extra: workspaceObjectRpcs(workspaceObject.instance, ["executeRuntimeSql", "sidekickReadExecutionDelegation", "sidekickReadRunDefinition", "sidekickReadRunState"]),
     }),
   });
   const insert = async (id: string, scope: "personal" | "workspace", token: string, plugin: string): Promise<Frozen> => {
@@ -177,7 +178,8 @@ function googleAsTwoAccounts(options: {
 const write = { spreadsheetId: FILE_ID, range: "A1:B1", values: [["a", "b"]], valueInputOption: "RAW" };
 
 describe("reaching one resource through whichever connection can", () => {
-  it("dispatches an assembled Sidekick Google tool through eligible delegates after definite refusals", async () => {    const reads: string[] = [];
+  it("dispatches an assembled Sidekick Google tool through eligible delegates after definite refusals", async () => {
+    const reads: string[] = [];
     const writes = googleAsTwoAccounts({ reads });
     const { env, database, objectStore, workspaceObject } = await fixture();
     const other = asUserId("00000000-0000-4000-8000-000000000032");
@@ -199,7 +201,19 @@ describe("reaching one resource through whichever connection can", () => {
       .run(lease.attemptId, lease.owner, Date.now()+600_000, HARNESS_RUN_ID);
     seedToolReceipt(objectStore, { id: "read-effect", runId: HARNESS_RUN_ID, toolCallId: "read-call",
       toolName: "sheets.read_values", status: "executing", mode: "read", executionPlanJson: '{"mode":"read"}' });
-    const input = { ...workflowInput(), parentKind: "automation" as const };
+    const address = { workspaceId: WORKSPACE_ID, automationId: WORKSTREAM_ID };
+    const draft: AutomationDraft = { name: "Sheet helper", description: "Update the sheet", overview: "Update the sheet",
+      instructions: "Read and update the sheet.", definitionVersion: 2, triggers: [{ type: "manual" }],
+      requiredCapabilities: [], expectedOutputs: [], defaultBehavior: {}, recommendedPlugins: [], memoryTables: [],
+      suggestedScope: "workspace", followUpQuestion: null, elicitation: null, ready: true };
+    await workspaceObject.instance.sidekickSubmitDefinition({ ...address, draft, evaluatorRules: null, submittedByRunId: null });
+    const actor = { userId: USER_ID, participantOfOwningWorkstream: false };
+    await workspaceObject.instance.sidekickApply({ ...address, actor });
+    const admitted = await workspaceObject.instance.sidekickRunNow({ ...address, actor, idempotencyKey: "sheet-fallback" });
+    const input: WorkstreamWorkflowInput = { ...workflowInput(), parentKind: "automation", automationRun: {
+      schemaVersion: 1, automationId: asAutomationId(WORKSTREAM_ID), runId: admitted.runId, definitionRevision: 1,
+      trigger: { kind: "manual", requestedByUserId: USER_ID },
+    } };
     const catalog = await __integrationTesting.loadHarnessTools(env, input, undefined, undefined, undefined, undefined, lease);
     const plugin = catalog.plugins.find((candidate) => catalog.frozenConnections.get(candidate.canonicalId)?.ownerUserId === USER_ID
       && candidate.tools.some((tool) => tool.definition.name === "sheets.update_values"))!;

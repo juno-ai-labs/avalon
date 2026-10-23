@@ -8,7 +8,6 @@ import {
 } from "@rally/contracts";
 import { SidekickDelegationStorage } from "./sidekick-delegation-storage";
 import { queueSidekickSourceReconciliation, sidekickSourceRegistrations } from "./sidekick-source-registrations";
-import { rememberSidekickDelegationLocation } from "../services/sidekick-delegation-service";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import {
   SidekickPrepareDelegationRequestSchema, SidekickSetDelegationRequestSchema, SidekickReadDelegationReceiptRequestSchema,
@@ -52,7 +51,7 @@ import {
   withoutUnusableAutomationResourceIds,
 } from "@rally/contracts";
 import type { WorkspaceRelationship } from "@rally/contracts/scope-grants";
-import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
+import { zodDiagnosticCode, describeZodIssues, codeShaped } from "@rally/contracts/zod-diagnostics";
 import type { ConversationEffectEnvelope } from "@rally/contracts/conversation-effects";
 import {
   ConversationParentAuthorityRequestSchema,
@@ -348,8 +347,6 @@ export interface HostedSidekickHost {
   }): Promise<{ authorized: boolean; archived: boolean }>;
   readManagementAccess(input: { workspaceId: string; parentId: string; userId: string }): Promise<{ allowed: boolean; writable: boolean }>;
   readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null>;
-  /** Compatibility entitlement from an explicit legacy claim; delegation never creates one. */
-  hasSidekickClaimAccess?(automationId: string, userId: string): boolean;
   /** Hand a run to the activity Queue, whose consumer provisions it. */
   sendRunProvision(message: { workspaceId: string; automationId: string; runId: string }): Promise<void>;
 }
@@ -392,12 +389,11 @@ export async function sidekickReaderAllows(
     owning_workstream_id: string | null; owning_substream_id: string; workspace_id: string;
   },
   actor: { userId: string; actorRole: "owner" | "admin" | "member" | null },
-  host: Pick<HostedSidekickHost, "isChannelParticipant" | "readManagementAccess" | "channelViewer" | "hasSidekickClaimAccess">,
+  host: Pick<HostedSidekickHost, "isChannelParticipant" | "readManagementAccess" | "channelViewer">,
   rule: "participant" | "manager" = "participant",
 ): Promise<boolean> {
   if (row.lifecycle === "deleted") return false;
   if (row.author_user_id === actor.userId || row.run_as_user_id === actor.userId) return true;
-  if (row.automation_id && host.hasSidekickClaimAccess?.(row.automation_id, actor.userId)) return true;
   if (row.scope === "workspace") return actor.actorRole != null;
   if (row.scope !== "workstream" || row.owning_workstream_id === null) return false;
   return homeAdmits(row, actor.userId, host, rule);
@@ -612,9 +608,6 @@ export class HostedSidekick {
     const relationships = await Promise.all(users.map(async (userId) => ({ userId,
       relationship: await this.host.readRelationship(row.workspace_id, userId),
     })));
-    for (const { userId, relationship } of relationships) {
-      if (relationship?.status === "active") await rememberSidekickDelegationLocation(this.env, row.workspace_id, userId);
-    }
     this.storage.transactionSync(() => {
       const current = this.row();
       if (!current || current.delegation_migrated === 1) return;
@@ -776,10 +769,15 @@ export class HostedSidekick {
       "SELECT id,name,avatar_url,presentation_json FROM users WHERE id IN (SELECT value FROM json_each(?))",
     ).bind(JSON.stringify([...new Set([row.author_user_id, ...grants.map((grant) => grant.userId)])]))
       .all<{ id: string; name: string | null; avatar_url: string | null; presentation_json: string | null }>();
-    const identities = new Map(people.results.map((person) => [person.id, {
-      userId: person.id, displayName: person.name || "Rally user", avatarUrl: person.avatar_url,
-      presentation: person.presentation_json ? PersonalPresentationSchema.parse(JSON.parse(person.presentation_json)) : null,
-    }]));
+    const identities = new Map(people.results.map((person) => {
+      let raw: unknown;
+      try { raw = person.presentation_json ? JSON.parse(person.presentation_json) : null; }
+      catch { throw new Error("sidekick_delegate_presentation_invalid:presentation_json"); }
+      const parsed = PersonalPresentationSchema.nullable().safeParse(raw);
+      if (!parsed.success) throw new Error(codeShaped(`sidekick_delegate_presentation_invalid:${describeZodIssues(parsed.error)}`));
+      return [person.id, { userId: person.id, displayName: person.name || "Rally user", avatarUrl: person.avatar_url,
+        presentation: parsed.data }];
+    }));
     const identity = (userId: string) => identities.get(userId) ?? { userId, displayName: "Rally user", avatarUrl: null, presentation: null };
     return SidekickDelegatesResultSchema.parse({
       sidekickId: this.sidekickId, creatorUserId: row.author_user_id,
@@ -1217,38 +1215,51 @@ export class HostedSidekick {
     admitted: boolean; duplicate: boolean; outcomeCode: string; runId: string | null;
   }> {
     const request = parseRpcInput(AutomationInboundEmailAdmissionSchema, input, "admit_inbound_email");
-    const row = this.assertIdentity(this.withAccepted(), request.workspaceId, request.automationId);
-    const existing = first(this.sql.exec<{ run_id: string | null; outcome_code: string }>(
+    const readReceipt = () => first(this.sql.exec<{ run_id: string | null; outcome_code: string }>(
       `SELECT run_id, outcome_code FROM sidekick_email_receipts WHERE sidekick_id = ? AND resend_email_id = ?`,
       this.sidekickId, request.resendEmailId,
     ));
-    if (existing) {
-      return { admitted: existing.run_id !== null, duplicate: true, outcomeCode: existing.outcome_code, runId: existing.run_id };
-    }
-    const emailEnabled = row.accepted_definition_json !== null
-      && sidekickReceivesEmail(AutomationDraftSchema.parse(JSON.parse(row.accepted_definition_json)));
-    const refusal = row.lifecycle !== "active"
-      ? "sidekick_not_active"
-      : !emailEnabled || row.email_address === null || row.email_address.toLowerCase() !== request.emailAddress.toLowerCase()
-        ? "sidekick_email_route_mismatch"
-        : request.senderUserId === null
-          || (row.scope === "personal"
-            && request.senderUserId !== row.author_user_id
-            && request.senderUserId !== row.run_as_user_id)
-          ? "email_sender_not_authorized"
-          : null;
-    const now = Date.now();
-    if (refusal) {
+    const replay = (receipt: { run_id: string | null; outcome_code: string }) => ({
+      admitted: receipt.run_id !== null, duplicate: true, outcomeCode: receipt.outcome_code, runId: receipt.run_id,
+    });
+    const refusalFor = (row: HostedSidekickRow & { accepted_definition_json: string | null }) => {
+      const emailEnabled = row.accepted_definition_json !== null
+        && sidekickReceivesEmail(AutomationDraftSchema.parse(JSON.parse(row.accepted_definition_json)));
+      return row.lifecycle !== "active"
+        ? "sidekick_not_active"
+        : !emailEnabled || row.email_address === null || row.email_address.toLowerCase() !== request.emailAddress.toLowerCase()
+          ? "sidekick_email_route_mismatch"
+          : request.senderUserId === null
+            || (row.scope === "personal"
+              && request.senderUserId !== row.author_user_id
+              && request.senderUserId !== row.run_as_user_id)
+            ? "email_sender_not_authorized"
+            : null;
+    };
+    const refuse = (code: string) => {
       this.sql.exec(
         `INSERT OR IGNORE INTO sidekick_email_receipts
            (sidekick_id, resend_email_id, run_id, outcome_code, payload_ref, resource_id, received_at)
          VALUES (?, ?, NULL, ?, ?, ?, ?)`,
-        this.sidekickId, request.resendEmailId, refusal, request.payloadRef, request.resourceId, request.receivedAt,
+        this.sidekickId, request.resendEmailId, code, request.payloadRef, request.resourceId, request.receivedAt,
       );
-      return { admitted: false, duplicate: false, outcomeCode: refusal, runId: null };
-    }
+      return { admitted: false, duplicate: false, outcomeCode: code, runId: null };
+    };
+    const initial = this.assertIdentity(this.withAccepted(), request.workspaceId, request.automationId);
+    const existing = readReceipt();
+    if (existing) return replay(existing);
+    const initialRefusal = refusalFor(initial);
+    if (initialRefusal) return refuse(initialRefusal);
     const coordinator = await this.coordinator();
-    const admitted = this.storage.transactionSync(() => {
+    return this.storage.transactionSync(() => {
+      // Definition publication and another copy of this email can interleave
+      // while delegate authority is read. Commit only against current state.
+      const row = this.assertIdentity(this.withAccepted(), request.workspaceId, request.automationId);
+      const existing = readReceipt();
+      if (existing) return replay(existing);
+      const refusal = refusalFor(row);
+      if (refusal) return refuse(refusal);
+      const now = Date.now();
       const run = this.admitOccurrence(
         row.accepted_definition_revision,
         `inbound_email:${request.resendEmailId}`,
@@ -1262,9 +1273,8 @@ export class HostedSidekick {
          VALUES (?, ?, ?, 'admitted', ?, ?, ?)`,
         this.sidekickId, request.resendEmailId, run.runId, request.payloadRef, request.resourceId, request.receivedAt,
       );
-      return run;
+      return { admitted: true, duplicate: run.reused, outcomeCode: "admitted", runId: run.runId };
     });
-    return { admitted: true, duplicate: admitted.reused, outcomeCode: "admitted", runId: admitted.runId };
   }
 
   /** Minimal rail metadata for an already admitted receiving conversation. */
@@ -1404,14 +1414,13 @@ export class HostedSidekick {
     return { items: this.runSummaries(50) };
   }
 
-  /** Installed clients' claim is self-opt-in, preserving its explicit human access entitlement. */
+  /** Installed clients' claim enrolls the caller without changing human access. */
   async claimExecutionPrincipal(input: AutomationActorRequest): Promise<AutomationExecutionPrincipalClaim> {
     const request = parseRpcInput(AutomationActorRequestSchema, input, "claim_execution_principal");
     await this.assertManager(this.assertSidekick(request.workspaceId, request.automationId), request.actor);
     const claimant = request.actor.userId;
     const operationId = uuidV7();
     const prepared = this.delegations().prepare(this.sidekickId, claimant, operationId, true);
-    await rememberSidekickDelegationLocation(this.env, request.workspaceId, claimant);
     const relationship = await this.host.readRelationship(request.workspaceId, claimant);
     if (relationship?.status !== "active") throw this.delegationError("sidekick_delegation_membership_unavailable");
     const claim = this.storage.transactionSync(() => {
@@ -1422,10 +1431,9 @@ export class HostedSidekick {
         allowed: true, expectedGeneration: prepared.generation, membershipIncarnation: relationship.incarnation,
         source: "self_service", label: row.title || "Unavailable Sidekick",
       });
-      const accessChanged = this.delegations().grantClaimAccess(this.sidekickId, claimant);
       this.scheduleSourceReconciliation();
-      if (result.changed || accessChanged) this.touchDirectory(Date.now());
-      return result.changed || accessChanged;
+      if (result.changed) this.touchDirectory(Date.now());
+      return result.changed;
     });
     return AutomationExecutionPrincipalClaimSchema.parse({
       principalUserId: claimant, reboundPluginIds: [], unboundProviders: [], changed: claim,
@@ -1459,7 +1467,6 @@ export class HostedSidekick {
   /** Who may read a Sidekick's conversations. */
   private async sidekickViewer(row: HostedSidekickRow, userId: string): Promise<boolean> {
     if (row.scope === "workspace" || row.author_user_id === userId || row.run_as_user_id === userId) return true;
-    if (this.delegations().hasClaimAccess(this.sidekickId, userId)) return true;
     if (row.scope !== "workstream") return false;
     return homeAdmits(row, userId, this.host);
   }
@@ -1507,7 +1514,7 @@ export class HostedSidekick {
       exists: true as const, scope: row.scope, owningWorkstreamId: row.owning_workstream_id,
       owningSubstreamId: row.owning_substream_id,
       author: row.author_user_id === request.userId,
-      executor: row.run_as_user_id === request.userId || this.delegations().hasClaimAccess(this.sidekickId, request.userId),
+      executor: row.run_as_user_id === request.userId,
       children: this.childRegistry().map((child) => child.substreamId),
       revision: JSON.stringify([row.authority_generation, row.updated_at]), validatedAt: Date.now(),
     };
@@ -1814,7 +1821,8 @@ export class HostedSidekick {
       coordinatorUserId,
     ));
     if (!run) throw new Error("sidekick_occurrence_missing");
-    this.noteDelegationAttention(coordinatorUserId === null ? "no_eligible_delegate" : null);
+    if (coordinatorUserId === null) this.noteDelegationAttention("no_eligible_delegate");
+    else if (this.row()?.delegation_attention_code !== "event_no_eligible_delegate") this.noteDelegationAttention(null);
     if (run.state === "pending") this.armRunStart(run.run_id, now);
     return { runId: run.run_id, reused: run.run_id !== runId };
   }
@@ -2079,7 +2087,11 @@ export class HostedSidekick {
         evaluators: configured });
       this.host.reconcileRegistrations(this.sidekickId, evaluators);
       const covered = new Set(evaluators.map((evaluator) => evaluator.sourceEvaluatorId ?? evaluator.evaluatorId));
-      if (configured.some((evaluator) => !covered.has(evaluator.evaluatorId))) this.noteDelegationAttention("event_no_eligible_delegate");
+      if (configured.some((evaluator) => !covered.has(evaluator.evaluatorId))) {
+        if (current.delegation_attention_code !== "permission_report_unavailable") this.noteDelegationAttention("event_no_eligible_delegate");
+      } else if (current.delegation_attention_code === "event_no_eligible_delegate") {
+        this.noteDelegationAttention(null);
+      }
       return evaluators;
     });
     if (expanded) await this.host.afterRegistrations(this.sidekickId, initial.accepted_definition_revision, expanded);
@@ -2438,7 +2450,6 @@ export class HostedSidekick {
   }
 
   private async managerAllows(row: HostedSidekickRow, actor: AutomationActor): Promise<boolean> {
-    if (this.delegations().hasClaimAccess(this.sidekickId, actor.userId)) return true;
     if (row.scope === "workstream") {
       // Whoever may manage the owning Channel manages it, as a grant or an
       // archive leaves that, and so does the person who asked for it. No
