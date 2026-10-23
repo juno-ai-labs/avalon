@@ -345,8 +345,8 @@ do not mention it:
 
 - **Add the port to `ALLOWED_ORIGINS` in `.env.local`** and re-run
   `pnpm env:sync`. The example file lists 5173 and 5174 only, so a renderer on
-  any other port is refused by CORS and the client paints **Rally cannot reach
-  this region** — the Worker is running, is reachable by `curl`, and logs no
+  any other port is refused by CORS and the client paints **Rally can't
+  connect** — the Worker is running, is reachable by `curl`, and logs no
   failure, because the preflight is what it refuses.
 - **Give the second client its own `XDG_CONFIG_HOME`.** The app takes a
   single-instance lock keyed on its Electron userData directory, which is
