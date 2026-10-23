@@ -137,6 +137,18 @@ beforeEach(async () => {
 }, 30_000);
 
 describe("substream preparation on workerd", () => {
+  it("names the rejected source field across RPC when asked to branch from a Breakout", async () => {
+    const rejection = await parent().beginPrivateChildPreparation({
+      workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, operationId: crypto.randomUUID(),
+      creatorUserId: CREATOR_ID, title: 'Nested', sourceSubstreamId: '1', sourceThroughTurnId: null,
+      recipe: { policy: { revision: 'test-empty-v1', strategy: { id: 'empty', version: 1 }, config: {} }, capture: 'none', parts: [] },
+      membershipInitializer: { plugin: { id: 'creator-only', version: 1 }, config: {}, memberUserIds: [CREATOR_ID] },
+    } as never).then(() => null, (error: unknown) => error);
+    expect(rejection).toBeInstanceOf(Error);
+    expect((rejection as Error).message).toContain('private_child_preparation_invalid');
+    expect((rejection as Error).message).toContain('sourceSubstreamId');
+  });
+
   it("warms the reserved child before confirmation without claiming authority or publishing it", async () => {
     const service = new SubstreamCreationService({ ...TEST_ENV, LOG_LEVEL: "info" }, creatorAuth);
     const operationId = "00000000-0000-7000-8000-00000000cf90";

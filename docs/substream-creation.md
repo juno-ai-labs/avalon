@@ -483,6 +483,9 @@ controls are not exposed inside child previews.
 
 ## Failure modes and limits
 
+Private Breakouts branch from Main only (`sourceSubstreamId: "0"`); they cannot
+branch from another Breakout.
+
 An inference failure leaves the operation and capture available for retry, and
 reaches the person as an error under the composer with their message still in
 it. A completed part is reused rather than intentionally regenerated. No
