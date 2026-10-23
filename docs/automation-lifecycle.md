@@ -118,6 +118,16 @@ Terminal authorization and desktop/web controls are tracked by the
 [implementation plan](PRDs/2026-10-22_sidekick-delegation/plan.md) until all
 acceptance evidence is complete.
 
+Delegation list responses include the creator's existing public identity even
+after withdrawal, current public delegate presentation and a `canManage`
+projection from the same check used by mutations. Membership and viewer checks
+still guard the read. The shared Sidekick screen renders these identities,
+self-service and manager removal without adding authority. Its creation surface
+shows the standing-consent/history disclosure before sending the direct human
+create action. [Shared UI](shared-ui.md#sidekick-delegation) owns pending,
+uncertain-response and offline behavior. Account withdrawal UI and serving-
+account activity presentation remain tracked acceptance work.
+
 Consent receipt reconciliation is a read through
 `sidekickReadMyDelegationReceipt`, keyed by the host's original effect ID. It
 compares the exact self-action and source against its durable preparation and

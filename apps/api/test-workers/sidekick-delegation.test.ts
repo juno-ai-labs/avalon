@@ -25,6 +25,7 @@ useHeldEffectQueue();
 beforeEach(async () => {
   await reset();
   await seedWorkspaceControlPlane(env.DB, { workspaceId, userId: creator, sessionId: crypto.randomUUID() });
+  await env.DB.exec("ALTER TABLE users ADD COLUMN presentation_json TEXT");
   await env.DB.batch([
     env.DB.prepare(`INSERT INTO workspace_members(workspace_id,user_id,status,role) VALUES (?,?,'active','member')`).bind(workspaceId, other),
     env.DB.prepare(`INSERT INTO users(id,name) VALUES (?,'Other person')`).bind(other),
@@ -122,6 +123,11 @@ describe("Sidekick consent authority in real workerd", () => {
     await stub().sidekickSetMyDelegation(await prepare(false));
     expect(await create(true)).toEqual({ created: false });
     expect((await own()).delegations).toEqual([{ sidekickId, label: "New Sidekick", allowed: false, eligible: false }]);
+    expect(await stub().sidekickReadDelegation({ ...address, actor: { userId: creator, participantOfOwningWorkstream: false } })).toEqual({
+      sidekickId, creatorUserId: creator, canManage: true,
+      creator: { userId: creator, displayName: "Member", avatarUrl: null, presentation: null },
+      you: { userId: creator, allowed: false }, delegates: [],
+    });
   });
 
   it("does not infer consent from the creator identity of autonomous or old callers", async () => {
@@ -137,10 +143,12 @@ describe("Sidekick consent authority in real workerd", () => {
     await stub().sidekickSetMyDelegation(await prepare(true, other));
     const list = await stub().sidekickReadDelegation({ ...address, actor: { userId: other, participantOfOwningWorkstream: false } });
     expect(list).toEqual({
-      sidekickId, creatorUserId: creator, you: { userId: other, allowed: true },
+      sidekickId, creatorUserId: creator, canManage: false,
+      creator: { userId: creator, displayName: "Member", avatarUrl: null, presentation: null },
+      you: { userId: other, allowed: true },
       delegates: [
-        { userId: creator, displayName: "Member", eligible: true },
-        { userId: other, displayName: "Other person", eligible: true },
+        { userId: creator, displayName: "Member", eligible: true, avatarUrl: null, presentation: null },
+        { userId: other, displayName: "Other person", eligible: true, avatarUrl: null, presentation: null },
       ],
     });
     await runInDurableObject(stub(), async (instance) => {
@@ -148,6 +156,7 @@ describe("Sidekick consent authority in real workerd", () => {
     });
     const detail = AutomationDetailSchema.parse(await stub().sidekickReadDetail({ ...address, actor: { userId: creator, participantOfOwningWorkstream: false } }));
     expect(detail.runAsUserId).toBe(creator);
+    expect((await stub().sidekickReadDelegation({ ...address, actor: { userId: creator, participantOfOwningWorkstream: false } })).canManage).toBe(true);
   });
 
   it("withdraws an absent grant and rejects both delayed first delivery and refreshed preparation of the old allow", async () => {
