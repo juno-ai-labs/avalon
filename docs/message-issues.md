@@ -103,6 +103,9 @@ own binding and migration application. Report content remains in the submitting
 Organization's configured deployment. `db:migrate` includes the local schema;
 the API deployment applies it before promoting the new Worker.
 
+Engineers query this store through [Engineering MCP's `run_d1_sql`](engineering-mcp.md#d1)
+using `MESSAGE_ISSUES_DB` in the Organization's region.
+
 ## Changelog
 
 ### 2026-10-22 — Explicit message issues have their own store
