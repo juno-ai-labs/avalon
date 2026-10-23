@@ -35,8 +35,8 @@ import { ToolPageError, ToolPageStorage, type PageClaim, type PageIssueSchema, t
 import type { z } from "zod";
 import type { ToolExecutionAccount, ToolExecutionAccountRecord } from "@rally/contracts";
 import {
-  TOOL_ACCOUNT_CHECKPOINT, readToolExecutionAccount, completedToolResourceAccounts,
-  ExecutionAccountReadSchema, ResourceExecutionAccountsSchema, RecordExecutionAccountSchema, parseExecutionAccountRequest,
+  TOOL_ACCOUNT_CHECKPOINT, readToolExecutionAccount,
+  ExecutionAccountReadSchema, RecordExecutionAccountSchema, parseExecutionAccountRequest,
 } from "./tool-execution-account";
 import {
   WorkstreamTranscriptStorage,
@@ -279,15 +279,10 @@ export class WorkstreamToolReceiptStorage {
     return readToolExecutionAccount(this.sql, input.runId, input.effectIntentId);
   }
 
-  resourceExecutionAccounts(raw: { runId: string | null; resourceKeys?: string[] }): ToolExecutionAccountRecord[] {
-    const input = parseExecutionAccountRequest(ResourceExecutionAccountsSchema, raw);
-    return completedToolResourceAccounts(this.sql, input.runId, input.resourceKeys);
-  }
-
   /** Persist before provider dispatch. Only a definite refusal permits another account. */
   recordExecutionAccount(raw: {
     effectIntentId: string; fence: ToolReceiptFence; now: number;
-    phase: ToolExecutionAccountRecord["phase"]; account: ToolExecutionAccount; resourceKeys: string[];
+    phase: ToolExecutionAccountRecord["phase"]; account: ToolExecutionAccount;
   }): ToolExecutionAccountRecord {
     const input = parseExecutionAccountRequest(RecordExecutionAccountSchema, raw);
     return this.storage.transactionSync(() => {
@@ -302,7 +297,6 @@ export class WorkstreamToolReceiptStorage {
       const prior = this.executionAccount({ runId: input.fence.runId, effectIntentId: input.effectIntentId });
       const record: ToolExecutionAccountRecord = {
         phase: input.phase, account: input.account, originalAccount: prior?.originalAccount ?? input.account,
-        resourceKeys: [...new Set([...(prior?.resourceKeys ?? []), ...input.resourceKeys])],
       };
       const sameAccount = prior && prior.account.connectionId === record.account.connectionId
         && JSON.stringify(prior.account.principal) === JSON.stringify(record.account.principal)

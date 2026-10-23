@@ -592,7 +592,6 @@ export function orderedTranscriptMessages(
           toolEvent: {
             id: block.toolCallId,
             toolCallId: block.toolCallId,
-            ...(block.account ? { account: block.account } : {}),
             ...(block.pluginId ? { pluginId: block.pluginId } : {}),
             ...(pluginName === undefined ? {} : { pluginName }),
             ...((run?.connectorType ?? owner?.connectorType) ? { connectorType: run?.connectorType ?? owner?.connectorType } : {}),
@@ -1534,7 +1533,6 @@ export function withoutAgentWork(
  */
 export function groupPluginToolMessages(messages: readonly Message[]): Message[] {
   interface GroupTiming {
-    operations: Map<string, NonNullable<PluginActivityData['operations']>[number]>;
     row: number;
     identity: Pick<PluginActivityData, 'activeVerb' | 'completedVerb' | 'groupKey' | 'icon' | 'name'>;
     active: boolean;
@@ -1608,7 +1606,6 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
     if (!group) {
       const { activeVerb, completedVerb, groupKey, icon, name } = contribution.activity;
       group = {
-        operations: new Map(),
         row: rows.length,
         identity: { activeVerb, completedVerb, groupKey, icon, name },
         active: false,
@@ -1647,12 +1644,6 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
       });
     }
     group.active ||= contribution.activity.active;
-    const tool = message.toolEvent;
-    if (tool?.account) {
-      const id = tool.toolCallId ?? tool.id;
-      group.operations.set(id, { id, name: tool.wireName ?? tool.name, status: tool.status, account: tool.account });
-    }
-    for (const operation of message.pluginActivity?.operations ?? []) group.operations.set(operation.id, operation);
     group.count += 1;
     if (message.toolEvent === undefined && message.attentionSequenceNumber != null) {
       group.attentionSequenceNumber = Math.max(
@@ -1738,7 +1729,6 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
       workSpans: spans,
       pluginActivity: {
         ...group.identity,
-        ...(group.operations.size > 0 ? { operations: [...group.operations.values()] } : {}),
         active: group.active,
         durationMs: group.sawActivity
           ? group.activityDurationKnown ? group.activityDurationMs : null

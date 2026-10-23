@@ -1658,19 +1658,13 @@ identity to the canonical resource transaction. `check_resource_access` omits
 this internal registration metadata from its existing access-only result. See [Sidekick resource binding](automation-lifecycle.md) for setup
 and receipt replay.
 
-### Authored operation identities
+### Sidekick delegation and provider recovery
 
-An adapter may declare `operationIdentity` and `operationResultKeys`. These are
-host-owned code, never fields accepted from remote MCP inventories. Google
-marks globally addressed Drive/Docs/Sheets files as portable, while Gmail and
-Calendar queries, references and created IDs retain account semantics. A new
-unqualified search starts in the Sidekick's task account; returned mail/query,
-draft and calendar references bind follow-up operations to their serving account.
-The host uses the existing pre-effect resource-access refusal contract for
-fallback and never interprets empty results, transient failures or uncertain
-writes as permission to try another account. Undeclared and hosted MCP tools
-retain their explicitly selected connection. [Agent harness](agent-harness.md)
-owns selection and durable account receipts.
+Native tools reuse the existing pre-effect access-refusal contract for eligible
+delegate fallback. Empty results, transient failures and uncertain effects do
+not trigger fallback. Hosted MCP inventories remain tied to their selected
+connection. Each operation selects independently, without task-account,
+resource/reply/page bindings or model account selectors.
 
 Calendar creation uses the existing receipt-derived provider key as a stable
 event ID for timed, all-day and recurring events. A duplicate-ID response reads
@@ -1689,13 +1683,8 @@ creates without a recorded provider key cannot use this recovery path.
 **What changed:** Matching and delivery accept a personal event for any Sidekick
 scope through the eligible source owner's consent. Restricted workspace events
 require an eligible delegate inside their actual audience. Authored Google
-operation identities permit known-file fallback across consenting owners;
-account-relative work and provider-created IDs retain their original account.
-The optional authored `activityResourceIdentity` projection also maps canonical
-normalized event subjects/resources into those same keys, so an activation
-reference has an origin before any tool has returned a result. Event metadata
-does not supply the account or these keys. Its resource/account distinction
-also controls source expansion: Google files can register through eligible
+tools permit access-refusal fallback across eligible owners. The authored
+`isPortableActivityResource` distinction controls configured-source expansion: Google files can register through eligible
 delegates' connections using canonical provider IDs; Gmail and Calendar IDs
 remain on their configured account. Google Drive file observations share a
 provider-version occurrence key across accounts, preserving one run when the
@@ -1714,8 +1703,7 @@ the original account alone cannot establish whether its effect happened.
 would restrict the requested standing consent for configured work and shared
 Sidekick history.
 
-**Consequences:** Consent disclosure must explain retained history and configured
-sharing. Ordinary resource attachments retain their existing audience rules.
+**Consequences:** Ordinary resource attachments retain their existing audience rules.
 Authorization uses normal eventually consistent views, with no extra provider
 preflight. [Sidekick lifecycle](automation-lifecycle.md#2026-10-22--record-consent-independently-of-sidekick-ownership)
 owns the complete mechanism and rollout constraints.

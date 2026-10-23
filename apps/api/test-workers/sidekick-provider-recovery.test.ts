@@ -85,13 +85,13 @@ describe("Sidekick provider recovery on real workerd", () => {
     if (first.state !== "claimed") throw new Error("provider_recovery_claim_failed");
     const inventory = await __integrationTesting.loadHarnessTools(withWorkspaceRuntimeDatabase(env, workspaceId), input,
       undefined, undefined, undefined, undefined, first.lease);
-    const plugin = inventory.plugins.find((candidate) => candidate.canonicalId === `connection:${creatorConnection}`)!;
+    const plugin = inventory.plugins.find((candidate) => candidate.canonicalId === `connection:${mayaConnection}`)!;
     const tool = plugin.tools.find((candidate) => candidate.definition.name === "calendar.create_event")!;
     const receipts = createToolReceiptObjectPort(env, workspaceId, sidekickId);
     const effectIntentId = crypto.randomUUID();
-    const args = { calendarId, summary: "Review", start: "2026-10-23T09:00:00Z", end: "2026-10-23T10:00:00Z", rallyAccount: { userId: maya } };
+    const args = { calendarId, summary: "Review", start: "2026-10-23T09:00:00Z", end: "2026-10-23T10:00:00Z" };
     await receipts.admit({ effectIntentId, runId: input.harnessRunId, toolCallId: "create", toolName: "calendar.create_event",
-      mode: "write", connectionId: creatorConnection, requestHash: "create-request", inputJson: JSON.stringify(args),
+      mode: "write", connectionId: mayaConnection, requestHash: "create-request", inputJson: JSON.stringify(args),
       executionPlanHash: "create-plan", executionPlanJson: JSON.stringify({ pluginId: plugin.canonicalId,
         canonicalToolName: tool.definition.name, capability: tool.definition.capability, mode: "write", idempotency: "provider_key" }),
       compatiblePriorPlanHashes: [], providerIdempotencyKey: "calendar-effect-1",
@@ -121,7 +121,7 @@ describe("Sidekick provider recovery on real workerd", () => {
       return;
     }
     expect(recovered).toMatchObject({ outcome: "completed", result: { providerOperationId: eventId,
-      output: { id: eventId, servedThrough: { userId: maya, connectionId: mayaConnection } } } });
+      output: { id: eventId } } });
     expect(requests).toEqual([{ method: "POST", token: "Bearer maya-token", id: eventId },
       { method: "POST", token: "Bearer maya-token", id: eventId }, { method: "GET", token: "Bearer maya-token" }]);
     expect(await receipts.executionAccount({ runId: input.harnessRunId, effectIntentId })).toMatchObject({
@@ -131,6 +131,6 @@ describe("Sidekick provider recovery on real workerd", () => {
     const completed = (await receipts.receiptForCall({ runId: input.harnessRunId, toolCallId: "create" }))!;
     expect(completed.status).toBe("completed");
     expect(await (await env.PAYLOADS.get(completed.outputRef!))!.json()).toMatchObject({ replayVersion: 1,
-      output: { id: eventId, servedThrough: { userId: maya, connectionId: mayaConnection } } });
+      output: { id: eventId } });
   });
 });

@@ -4,7 +4,6 @@ import {
   agentAddressForId, agentIdForAddress, AgentIdSchema, asSubstreamId, modelAgentId,
   asUserId, asWorkstreamId, type AgentExchangeNotice, type AgentId, type AgentMessageResult, type StartAgentInput,
   type StartAgentResult, type SendAgentMessageInput, type ReplyToAgentMessageInput, type WorkstreamWorkflowInput,
-  type SidekickAccountReference,
 } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
 import type { AuthContext, Env } from "../env";
@@ -15,7 +14,6 @@ import { createIdentityObjectPort } from "../runtime/identity-port";
 import { createConversationResourceLinks } from "../runtime/resource-port";
 import { conversationParentStub } from "./conversation-parent-client";
 import { createAutomation } from "./automation-service";
-import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 
 // The wire names this service asks about — a message, and the delegation that
 // also counts as handing work on — are in `@rally/contracts` beside the schemas
@@ -228,13 +226,11 @@ export class AgentCommunicationService {
     const address = agentAddressForId(target.recipientAgentId);
     const recipient = await this.conversation(target.recipientAgentId);
     const attachmentIds = await this.validateAttachments(args.attachmentIds);
-    const accountReferences = await this.accountReferences(address);
     const result = await recipient.admitAgentMessage({ workspaceId: this.input.workspaceId,
       workstreamId: asWorkstreamId(address.parentId), messageId, clientMessageId: `agent-message:${messageId}`,
       recipientAgentId: target.recipientAgentId, resumeStopped, text: args.message, attachmentIds,
       agentExchange: {
         teamId: AgentIdSchema.parse(target.teamId), senderAgentId: this.senderId, messageId,
-        ...(accountReferences?.length ? { sidekickAccountReferences: accountReferences } : {}),
         ...(notice ? { notice } : {}),
         ...(noticeReason ? { noticeReason } : {}),
       },
@@ -242,28 +238,6 @@ export class AgentCommunicationService {
       origin: "agent_message", now: Date.now() });
     if (!result.accepted) throw new AgentCommunicationError(result.code);
     return { messageId };
-  }
-
-  /** Preserve provider-ID meaning inside one Sidekick, without forwarding credentials or consent. */
-  private async accountReferences(recipient: ReturnType<typeof agentAddressForId>): Promise<SidekickAccountReference[] | undefined> {
-    if (this.input.parentKind !== "automation" || recipient.parentKind !== "automation"
-      || recipient.parentId !== this.input.parentId) return undefined;
-    const receipts = createToolReceiptObjectPort(this.env, this.input.workspaceId, this.input.parentId,
-      undefined, this.input.substreamId ?? "0");
-    const completed = await receipts.resourceExecutionAccounts({
-      runId: this.input.automationRun || this.input.backgroundAgent ? null : this.input.harnessRunId,
-    });
-    const references = new Map<string, SidekickAccountReference>();
-    for (const reference of [...(this.input.agentExchange?.sidekickAccountReferences ?? []),
-      ...completed.map((record) => ({ sidekickId: record.account.sidekickId,
-        connectionId: record.account.connectionId, resourceKeys: record.resourceKeys }))]) {
-      if (reference.sidekickId !== this.input.parentId || reference.resourceKeys.length === 0) continue;
-      const prior = references.get(reference.connectionId);
-      references.set(reference.connectionId, { ...reference,
-        resourceKeys: [...new Set([...(prior?.resourceKeys ?? []), ...reference.resourceKeys])],
-      });
-    }
-    return [...references.values()];
   }
 
   private async contactSidekick(agentId: AgentId, teamId: AgentId) {

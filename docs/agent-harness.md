@@ -165,10 +165,9 @@ The host resolves stored-loadable Sidekicks against execution and conversation a
 | `apps/api/src/runtime/harness-run-runtime.ts` | The host side: admission, the lease, run scope, receipts, terminal state. |
 | `apps/api/src/durable-objects/substream-agent.ts` | The post-cutover full-loop host, durable dispatcher, keep-alive, stream feed, steering, and child-local timers. |
 | `apps/api/src/services/integrations.ts` | Context assembly and `loadRunPromptContext`. |
-| `apps/api/src/services/sidekick-operation-accounts.ts` | Per-operation delegate selection, explicit account constraints, safe fallback and serving-account attribution. |
+| `apps/api/src/services/sidekick-operation-accounts.ts` | Per-operation delegate selection, safe fallback and private debug checkpoints. |
 | `apps/api/src/services/completed-tool-replay.ts` | Read-only tool-owned validation before a historical completed result is presented again. |
-| `packages/agent-harness/src/prompts/sidekick-accounts.ts` | Pure account-selection guidance with account names and IDs quoted as data. |
-| `apps/api/src/durable-objects/tool-execution-account.ts` | Private account checkpoints and completed-result resource bindings in the existing receipt ledger. |
+| `apps/api/src/durable-objects/tool-execution-account.ts` | Private account checkpoints in the existing receipt ledger. |
 | `packages/contracts` — `readStructuredFailure` | The shape a tool's machine-readable failure half is read through. |
 
 ### Completion verification before stopping
@@ -635,7 +634,7 @@ plugin or refusing the call. [`agent-tools.md`](agent-tools.md#multimodal-genera
 owns the exact schemas and resource result.
 
 Loading never widens the frozen scope. At run start and before each model call, Rally verifies run authority. Each connector tool call and built-in write checks again before receipt replay or execution; built-in reads use the preceding model-call decision. Connector calls also check live identity, scope, owner, grants, capability, and disablement. Revocation drops a plugin on a new activation or denies its next tool call. A stored `needs_reconnect` does not: it is a belief about a past moment, and a call it would have withheld now reaches the provider and fails on the provider's answer. Workspace calls use the workspace principal while preserving the initiating user in audit data; personal calls execute as the connection owner. A Sidekick may select an
-eligible consenting owner independently of its fixed coordinator; ordinary
+eligible consenting owner independently of its coordinator; ordinary
 conversations remain limited to their own personal connections.
 
 Revalidation also says why it is asking, because the two occasions need different work. An **activation** — a `load_plugin`, a restored hint, the initial preload — happens a handful of times per run and is checked all the way to the provider. A **continuation** runs before every inference and keeps the activated tool surface visible without reading the connection row again. The model boundary makes one fresh run-authority decision. Ordinary connector calls check live run authority and the connection row before receipt replay or execution. Sidekick calls reuse the inventory delegation snapshot, then check the actual selected connection before a new provider operation; retained completed results remain historical receipt facts. The execution carries its decision through credential preparation and the provider effect without another live check. A revoked connection can therefore remain model-visible until the model tries to use it, and a revocation during an already authorized tool call may let that call finish. The next call checks again. Provider credential refusal still surfaces on tool use.
@@ -676,55 +675,21 @@ continuations and new runs rebuild that snapshot. Each call reuses it and
 checks the actual serving connection and capability before credentials are
 prepared. No healthy operation adds a provider access probe or revocation barrier.
 
-Google declares which operations address portable files and which carry
-account-scoped mail/calendar references. Compatible native tools expose optional
-`rallyAccount: { userId?, connectionId? }`, removed before provider argument
-validation. An unused selector may be null; a selected user can leave its unused
-connection field null. The host strips those fields and enforces a nonempty
-explicit selector. It restricts the eligible set, rather than granting authority.
-Known files prefer a prior successful account, configured sources, the creator,
-and remaining delegates in stable grant order. Only adapter-marked pre-effect
-resource refusals permit fallback. Unqualified account-relative operations use
-the preserved task account, even when another person coordinates the run. An
-empty search, transient failure, cancellation or ambiguous write never changes
-account. A named person does not fall through to a workspace bot.
+Each operation starts with the selected plugin's connection, then tries configured
+source connections, the creator and remaining eligible delegates in stable grant
+order. Duplicate connections are tried once. Only adapter-marked pre-effect
+access refusals permit fallback; cancellation, empty results and uncertain failures
+do not. Remote MCP tools retain their selected connection because inventories
+may differ across accounts. There is no `rallyAccount` selector or special handling
+of inboxes, named senders, replies, returned IDs, handoffs or page continuations.
 
-An external-event opening retains host-derived `sourceAccount` references.
-WorkspaceDO projects canonical provider IDs through the authored adapter; event
-metadata and prose cannot select the connection. Mail/calendar references use
-that originating account on their first operation, while unrelated searches
-still use the task account. Portable file reads prefer the event source and
-retain safe fallback. Older openings can recover this reference from the
-existing canonical event row without replaying the event. A background child
-reads only that reference from its existing root-run authority; it does not
-inherit the root's instruction or plugin configuration. Agent messages within
-the same Sidekick also carry host-derived references from completed tool receipts:
-connection IDs and provider reference keys, never credentials or consent. The
-resolver applies those identity constraints against the receiving inventory's
-eligible delegates. Nested handoffs preserve them; ambiguous private IDs require
-an explicit account. Other Sidekicks and ordinary Threads receive no such context.
-
-The existing receipt checkpoint log records `execution_account` selections
-before dispatch, definite refusals, and the account that served the result.
-It retains both first selection and actual principal, connection and consent
-generation. No credentials or cursors enter account attribution. An unresolved
-effect can select only its recorded account; a definite refusal is the sole
-transition that permits a different account. Only completed effects establish
-bindings for replies, provider-created IDs and writes planned from reads.
-A continued Sidekick occurrence can read completed bindings from its earlier
-execution receipts in the same conversation; each new occurrence has a different
-conversation, and the authoring conversation remains execution-scoped.
-Retained serving-account evidence prevents read-receipt rebinding. Ordinary
-lease and cancellation fences apply; a completion can record an effect already
-in flight after cancellation without licensing another dispatch.
-
-Success output identifies the serving account. Authored page continuations keep
-that account privately alongside their arguments and reauthorize it on
-redemption; model page IDs do not choose a new account. Adapters without an
-authored identity contract, including hosted MCP, retain their explicitly
-selected connection and report that limitation in plugin guidance. They do not
-inherit Google's cross-account replay contract. UI activity details and
-additional source-origin reconciliation remain tracked in the delegation plan.
+The existing receipt checkpoint log records `execution_account` selections before
+dispatch, definite refusals, and the account that served the result. It retains
+first selection, actual principal, connection and grant generation for database
+queries. This debug information is not projected into app activity or tool output.
+Recovery of the exact same uncertain effect retains its original account and
+provider key; separate operations select independently. Normal lease and
+cancellation fences apply, with no synchronous cross-object revocation barrier.
 
 `composeBeforeToolCallHooks` runs policies in order, stops at the first denial,
 and carries the last supplied authorization context through to execution. A
@@ -1701,21 +1666,13 @@ assertions. Autonomous changes to another Organization user are covered too. `ap
 checks shared re-entry semantics and deadline cleanup on reconciliation.
 
 `pnpm --filter @rally/api exec vitest run test/sidekick-operation-accounts.test.ts
- test/connector-resource-access.test.ts test/tool-pagination.test.ts` covers
-account ordering, refusal-only fallback, durable account pins, withdrawal,
-named/empty searches, the assembled Google executor and private page identity.
-The same resolver lane covers completed reference handoff, ambiguous private IDs,
-withdrawal after receipt of a reference and binding across later executions.
-The actual loader's handoff case verifies the provider sees the originating
-account without first trying the creator. Real workerd
-`test-workers/sidekick-run-continuation.test.ts` covers nested handoffs and
-continued input after eviction; its creation path enrolls the creator automatically and distinguishes legacy human-access metadata from the fixed coordinator.
-`test-workers/tool-receipt-authority.test.ts` proves lease, cancellation,
-rollback and eviction against real workerd; run it with the Workers config.
-`test-workers/sidekick-delegation-admission.test.ts` covers canonical event
-references and old openings. Pure guidance tests in
-`packages/agent-harness/src/prompts/sidekick-accounts.test.ts` prove assembly,
-not model behavior. Production-code negative controls are recorded in the
+ test/connector-resource-access.test.ts` covers plugin selection, eligible fallback,
+exact-effect recovery, withdrawal and the assembled Google executor. Real workerd
+`sidekick-run-continuation.test.ts` covers coordinator failover for root runs and
+background workers, including resumed input after eviction.
+`tool-receipt-authority.test.ts` proves checkpoint leases, cancellation and rollback;
+`sidekick-delegation-admission.test.ts` covers event audiences, sources and schedules.
+Production-code negative controls are recorded in the
 [delegation implementation plan](PRDs/2026-10-22_sidekick-delegation/plan.md).
 
 Completion verification is covered by
@@ -1854,47 +1811,27 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 ## Changelog
 
-### 2026-10-22 — Select Sidekick accounts per operation and retain their identity
+### 2026-10-22 — Select eligible Sidekick delegates through existing receipts
 
-**What changed:** Eligible personal connections enter the Sidekick inventory;
-compatible operations select a serving account independently of the coordinator.
-Existing receipt checkpoints retain selections and definite refusals, actual
-serving identity and grant generation. Completed results bind dependent writes,
-provider references and private pagination. Google declares those identities;
-undeclared and hosted MCP surfaces keep one explicitly selected connection.
-Canonical activation events bind their provider references before any tool
-result exists; old run openings recover that reference from the event row.
-Completed delegation acknowledgements also validate current receipt generation
-without repeating the mutation or rewriting their historical completion.
-Interrupted consent recovery reads the accepted receipt too; missing acceptance
-never licenses a fresh preparation of an old allow.
-Completed provider references now survive later executions of an occurrence and
-host-mediated background handoffs within that Sidekick. These references constrain
-identity without granting access under the receiver's refreshed delegation view.
-Native provider-key connector recovery now reuses the ordinary account resolver
-after eviction, preserving the effect's original provider key and delegating
-user. Calendar creation supplies a concrete provider recovery path rather than
-leaving every uncertain connector write unrecoverable.
+**What changed:** Eligible delegates' connections enter the Sidekick inventory.
+Code-authored tools can fall back after a definite pre-effect access refusal.
+Receipt checkpoints record actual accounts privately and retain the original
+account only for recovery of that exact uncertain effect. Delegation changes
+use ordered actor/target receipts, including autonomous mutations. Provider-key
+recovery preserves the original provider key, including Calendar event creation.
 
-**Why:** A Thread-owned Sidekick could have consent to read a sheet through a
-second person, but the connector executor still admitted only the coordinator's
-personal credentials. Blind account retry would change senders, reinterpret
-private IDs or repeat an uncertain write. Rebinding a retained read could also
-erase the evidence its later write relied on.
+**Why:** A Thread-owned Sidekick could use a person's consent for a Sheet event,
+but the connector executor still admitted only the coordinator's credentials.
+The user requested simple delegation and eventual consistency, then explicitly
+removed account-dependent workflows, selectors and user-facing account activity.
 
-**Considered and rejected:** Running the workflow once per delegate, mounting a
-credential pool, preflighting every resource, a separate account-selection
-ledger, and retrying every provider error. The existing receipt log supplies the
-needed durable boundary without extra credentials or a global authz sequencer.
+**Considered and rejected:** Per-person workflow loops, credential pools, access
+preflights, resource/reply/page account bindings and a separate identity selector.
+The existing connector refusal and receipt primitives cover the required behavior.
 
-**Consequences:** New operations observe delegation through normal refreshes.
-Unresolved effects and dependent writes keep their originating account; restored
-access permits authorized reconciliation, not a repeat under another user.
-Adapter identity declarations remain code-owned and credentials remain prepared
-only for the account being used. The user's 2026-10-23 revision removes direct
-human consent restrictions: the same receipt machinery accepts targeted
-Organization-user delegation during autonomous work. It does not add authoring
-controls to activation runs.
+**Consequences:** Each new operation selects independently. Uncertain effects
+remain on their original account to prevent duplicate writes. Account details
+remain queryable in the receipt database and are not exposed in normal app UI.
 
 ### 2026-10-22 — Explain unsupported local browser requests through a skill
 

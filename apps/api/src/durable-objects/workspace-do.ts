@@ -6956,20 +6956,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readRunState(input));
   }
 
-  async sidekickNoteCoordinatorUnavailable(input: Parameters<HostedSidekick["noteCoordinatorUnavailable"]>[0]) {
-    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.noteCoordinatorUnavailable(input));
-  }
 
   async sidekickNotePermissionReportUnavailable(input: Parameters<HostedSidekick["notePermissionReportUnavailable"]>[0]) {
     return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.notePermissionReportUnavailable(input));
   }
 
   async sidekickContinueRun(input: Parameters<HostedSidekick["continueRun"]>[0]) {
-    const result = await this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.continueRun(input));
-    if (result.outcome === "refused" && result.code === "run_coordinator_unavailable") {
-      await this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.noteCoordinatorUnavailable(input));
-    }
-    return result;
+    return this.sidekickCall(input.automationId, input.workspaceId, async (sidekick) => {
+      const result = await sidekick.continueRun(input);
+      if (result.outcome === "refused" && result.code === "run_no_eligible_delegate") {
+        sidekick.noteDelegationAttention("no_eligible_delegate");
+      }
+      return result;
+    });
   }
 
   /** For the provisioning consumer: what to start, or `null` once the run is no longer pending. */

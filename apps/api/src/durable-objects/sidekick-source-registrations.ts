@@ -60,10 +60,9 @@ export function sidekickSourceRegistrations(input: {
          FROM resources WHERE id=? AND workspace_id=?`, evaluator.source.resourceId, workspaceId).toArray()[0] : null;
     if (evaluator.source.resourceId && !resource) throw new Error("sidekick_source_resource_unavailable");
     if (resource?.connection_id && resource.connection_id !== evaluator.source.connectionId) throw new Error("sidekick_source_resource_connection_changed");
-    const portable = resource && adapter.activityResourceIdentity?.({ provider: resource.provider,
-      eventType: evaluator.source.eventType, resourceType: resource.resource_type,
-      providerResourceId: resource.provider_resource_id, subject: {},
-    }).kind === "resource";
+    const portable = resource && adapter.isPortableActivityResource?.({ provider: resource.provider,
+      resourceType: resource.resource_type, providerResourceId: resource.provider_resource_id,
+    });
     for (const connection of connections) {
       if (connection.connector_type !== evaluator.source.connectorType) continue;
       if (connection.scope === "personal"

@@ -4,7 +4,7 @@ import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:tes
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   AutomationDetailSchema, AutomationRunDefinitionV1Schema, AutomationSetEvaluatorRulesInputV1Schema,
-  SidekickExecutionDelegationSchema, asUserId, asWorkspaceId, asHarnessRunId, type AutomationDraft,
+  SidekickExecutionDelegationSchema, asUserId, asWorkspaceId, type AutomationDraft,
   WorkspaceExternalEventMatchResultSchema,
 } from "@rally/contracts";
 import { workspaceDOName } from "../src/durable-objects/names";
@@ -12,7 +12,6 @@ import { AUTOMATION_SCHEDULE_ALARM_KIND } from "../src/durable-objects/automatio
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { insertChannelRow } from "./helpers/hosted-parent";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { readSidekickOperationSource } from "../src/services/sidekick-operation-accounts";
 import { queueSidekickSourceReconciliation } from "../src/durable-objects/sidekick-source-registrations";
 import { ScheduledAlarmStore } from "../src/durable-objects/scheduled-alarms";
 
@@ -226,7 +225,7 @@ describe("shared Sidekick delegation admission", () => {
     expect((await execution()).delegates).toEqual([]);
   });
 
-  it("retains canonical event account references on admission and when reading an older run opening", async () => {
+  it("admits a personal event through its source owner and keeps its registration on that connection", async () => {
     // The held effect queue keeps these assertions before inference.
     await create();
     await consent(other, true);
@@ -273,18 +272,7 @@ describe("shared Sidekick delegation admission", () => {
     expect(await stub().sidekickAdmitExternalEvent({ ...address, registrationId: delivery.registrationId, event: oldEvent, payloadHash: delivery.payloadHash }))
       .toMatchObject({ admitted: true });
     const run = (await runs())[0]!;
-    const source = { connectionId, resourceKeys: ["google:thread:source-thread", "google:message:source-message"] };
-    expect(JSON.parse(run.opening_json!).sourceAccount).toEqual(source);
-    expect(AutomationRunDefinitionV1Schema.parse(await stub().sidekickReadRunDefinition({ ...address, runId: run.run_id })).opening?.sourceAccount).toEqual(source);
-    expect(await readSidekickOperationSource(env, {
-      region: "global", workspaceId, parentKind: "automation", parentId: automationId,
-      loopId: "background-origin", harnessRunId: asHarnessRunId(crypto.randomUUID()), triggerMessageId: null, activityId: null,
-      executionPrincipal: { type: "user", userId: other }, reason: "Read the event's message",
-      backgroundAgent: true, automationDelegation: { runId: run.run_id, stopGeneration: 0 },
-    })).toEqual(source);
-    await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec(
-      "UPDATE sidekick_runs SET opening_json=json_remove(opening_json,'$.sourceAccount') WHERE run_id=?", run.run_id));
-    expect(AutomationRunDefinitionV1Schema.parse(await stub().sidekickReadRunDefinition({ ...address, runId: run.run_id })).opening?.sourceAccount).toEqual(source);
+    expect(run.coordinator_user_id).toBe(other);
   });
 
   it("manual Run prefers an eligible requester as coordinator without opting in or replacing legacy access", async () => {
@@ -303,22 +291,20 @@ describe("shared Sidekick delegation admission", () => {
     expect(detail.recentRuns.find((row) => row.id === run.runId)?.coordinatorUserId).toBe(other);
   });
 
-  it("keeps a run's coordinator fixed after withdrawal while a new occurrence can use another delegate", async () => {
+  it("replaces an unavailable coordinator for continuation and persists it for later reads", async () => {
     await create();
     await activate();
     await consent(other, true);
     const first = await stub().sidekickRunNow({ ...address, actor: actor(), idempotencyKey: "first-coordinator" });
     expect(await stub().sidekickContinueRun({ ...address, runId: first.runId })).toMatchObject({ outcome: "continue", executionPrincipal: { type: "user", userId: creator } });
     await consent(creator, false);
-    expect(await stub().sidekickContinueRun({ ...address, runId: first.runId })).toEqual({ outcome: "refused", code: "run_coordinator_unavailable" });
-    expect(await stub().sidekickReadRunState({ ...address, runId: first.runId })).toMatchObject({ coordinatorEligible: false });
-    await stub().sidekickNoteCoordinatorUnavailable({ ...address, runId: first.runId });
-    expect((await runs()).find((row) => row.run_id === first.runId)).toMatchObject({ state: "needs_input", summary: expect.stringContaining("coordinating delegate is unavailable") });
-    expect(AutomationDetailSchema.parse(await stub().sidekickReadDetail({ ...address, actor: actor() })).delegationAttention?.code).toBe("coordinator_unavailable");
+    expect(await stub().sidekickContinueRun({ ...address, runId: first.runId })).toMatchObject({ outcome: "continue", executionPrincipal: { type: "user", userId: other } });
+    expect((await runs()).find((row) => row.run_id === first.runId)?.coordinator_user_id).toBe(other);
+    expect(AutomationRunDefinitionV1Schema.parse(await stub().sidekickReadRunDefinition({ ...address, runId: first.runId }))).toMatchObject({ coordinatorUserId: other });
     const second = await stub().sidekickRunNow({ ...address, actor: actor(), idempotencyKey: "second-coordinator" });
     expect((await runs()).find((row) => row.run_id === second.runId)?.coordinator_user_id).toBe(other);
     const saved = AutomationRunDefinitionV1Schema.parse(await stub().sidekickReadRunDefinition({ ...address, runId: second.runId }));
-    expect(saved).toMatchObject({ coordinatorUserId: other, runAsUserId: creator, accountUserId: creator });
+    expect(saved).toMatchObject({ coordinatorUserId: other, runAsUserId: creator });
   });
 
   it("records Needs attention without private input when no delegate is eligible", async () => {

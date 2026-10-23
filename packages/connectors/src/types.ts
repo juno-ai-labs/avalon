@@ -226,13 +226,6 @@ export interface ConnectorToolResult {
   externalConversation?: { installationId: string; path: string[] };
 }
 
-/** Code-authored account semantics; remote MCP declarations cannot supply this. */
-export interface ConnectorOperationIdentity {
-  /** Only a provider-stable resource can move between accounts after a safe refusal. */
-  kind: "resource" | "account";
-  resourceKeys: string[];
-}
-
 export interface ConnectorPollResult {
   activities: Omit<NormalizedActivity, "id">[];
   cursor: Record<string, unknown>;
@@ -909,10 +902,8 @@ export interface ConnectorAdapter {
    */
   /** Read capability needed to register a source for this connector's events. */
   resourceRegistrationCapability?: string;
-  operationIdentity?(toolName: string, input: unknown): ConnectorOperationIdentity;
-  operationResultKeys?(toolName: string, input: unknown, result: ConnectorToolResult): string[];
-  /** Canonical activity fields only; metadata and prose never select an account. */
-  activityResourceIdentity?(activity: Pick<NormalizedActivity, "provider" | "eventType" | "resourceType" | "providerResourceId" | "subject">): ConnectorOperationIdentity;
+  /** Whether a configured source has the same provider ID across connections. */
+  isPortableActivityResource?(activity: Pick<NormalizedActivity, "provider" | "resourceType" | "providerResourceId">): boolean;
   probeResourceAccess?(
     connection: AuthorizedConnectorConnection,
     reference: string,

@@ -26,7 +26,7 @@ import { hostedParentStub } from "./conversation-parent-client";
  * `docs/automation-lifecycle.md` owns the mechanism.
  */
 
-/** Ask the Sidekick whether input may continue one of its runs. A read with no side effects. */
+/** Ask the Sidekick whether input may continue one of its runs. Replaces an unavailable coordinator when needed. */
 export async function continueSidekickRun(
   env: Env,
   input: { region: Region; workspaceId: string; automationId: string; runId: string },
@@ -80,6 +80,5 @@ export const SIDEKICK_RUN_REFUSAL_TEXT: Record<SidekickRunContinuationRefusalCod
   sidekick_paused: "This message did not continue the run because its Sidekick is paused.",
   sidekick_deleted: "This message did not continue the run because its Sidekick was archived.",
   run_not_found: "This message did not continue the run because its Sidekick no longer knows the run.",
-  run_principal_changed: "This message did not continue the run because its Sidekick now runs as somebody else.",
-  run_coordinator_unavailable: "This message did not continue the run because its coordinating user is no longer an eligible delegate. Restore their delegation and access, or start a new run with an available delegate.",
+  run_no_eligible_delegate: "This message did not continue the run because no delegated user is available. Add a delegate with access to continue.",
 };

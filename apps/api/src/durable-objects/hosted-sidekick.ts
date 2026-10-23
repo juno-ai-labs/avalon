@@ -684,23 +684,6 @@ export class HostedSidekick {
     return this.coordinator(null, audience, false);
   }
 
-  /** Only the canonical event's source and authored ID projection bind tool accounts. */
-  private eventSourceAccount(eventId: string): NonNullable<AutomationRunDefinitionV1["opening"]>["sourceAccount"] {
-    const event = this.sql.exec<{
-      connection_id: string; connector_type: string; provider: string; event_type: string;
-      resource_type: string | null; provider_resource_id: string | null; subject_json: string;
-    }>(`SELECT connection_id,connector_type,provider,event_type,resource_type,provider_resource_id,subject_json
-         FROM workspace_connector_events WHERE event_id=?`, eventId).toArray()[0];
-    if (!event) return undefined;
-    const registry = connectorRegistryForEnv(this.env);
-    const adapter = registry.list().some((candidate) => candidate.type === event.connector_type) ? registry.get(event.connector_type) : undefined;
-    const resourceKeys = adapter?.activityResourceIdentity?.({ provider: event.provider, eventType: event.event_type,
-      resourceType: event.resource_type, providerResourceId: event.provider_resource_id,
-      subject: JSON.parse(event.subject_json),
-    })?.resourceKeys ?? [];
-    return resourceKeys.length > 0 ? { connectionId: event.connection_id, resourceKeys } : undefined;
-  }
-
   private delegationError(code: keyof typeof SIDEKICK_DELEGATION_ERRORS): ApiError {
     return new ApiError(code === "sidekick_not_found" ? 404 : 409, code, SIDEKICK_DELEGATION_ERRORS[code]);
   }
@@ -1219,7 +1202,7 @@ export class HostedSidekick {
       eventType: request.event.eventType,
       occurredAt: request.event.occurredAt,
       payloadHash: request.payloadHash,
-    }, { ...externalEventOpening(request.event), sourceAccount: this.eventSourceAccount(request.event.id) }, coordinator);
+    }, externalEventOpening(request.event), coordinator);
     return {
       admitted: true,
       outcomeCode: admitted.reused ? "sidekick_occurrence_replayed" : "sidekick_occurrence_admitted",
@@ -1338,11 +1321,9 @@ export class HostedSidekick {
       owningSubstreamId: sidekick.owning_substream_id,
       runAsUserId: sidekick.run_as_user_id,
       coordinatorUserId: run.coordinator_user_id,
-      accountUserId: sidekick.legacy_account_user_id ?? sidekick.author_user_id,
       modelOverride: sidekick.model_override,
       trigger,
-      opening: opening && !opening.sourceAccount && trigger.kind === "external_event"
-        ? { ...opening, sourceAccount: this.eventSourceAccount(trigger.workspaceEventId) } : opening,
+      opening,
       state: run.state,
     });
   }
@@ -1353,14 +1334,12 @@ export class HostedSidekick {
    * continued run can tell a stop it was approved after from one since.
    */
   async readRunState(input: AutomationRunRequest): Promise<{
-    state: RunState; lifecycle: Lifecycle; completedAt: number | null; stopGeneration: number; coordinatorEligible: boolean;
+    state: RunState; lifecycle: Lifecycle; completedAt: number | null; stopGeneration: number;
   } | null> {
     const request = parseRpcInput(AutomationRunRequestSchema, input, "read_run_state");
-    const authority = await this.readExecutionDelegation({ workspaceId: request.workspaceId, automationId: request.automationId });
     const { sidekick, run } = this.assertRunView(this.runView(request.runId), request.workspaceId, request.automationId);
     return run
-      ? { state: run.state, lifecycle: sidekick.lifecycle, completedAt: run.completed_at, stopGeneration: sidekick.stop_generation,
-          coordinatorEligible: authority.delegates.some((grant) => grant.userId === run.coordinator_user_id) }
+      ? { state: run.state, lifecycle: sidekick.lifecycle, completedAt: run.completed_at, stopGeneration: sidekick.stop_generation }
       : null;
   }
 
@@ -1373,27 +1352,16 @@ export class HostedSidekick {
     }
   }
 
-  /** Error-path reporting when authorization stopped execution before a model could report it. */
-  noteCoordinatorUnavailable(input: AutomationRunRequest): void {
-    const request = parseRpcInput(AutomationRunRequestSchema, input, "sidekick_coordinator_unavailable");
-    this.assertSidekick(request.workspaceId, request.automationId);
-    this.storage.transactionSync(() => {
-      this.sql.exec(`UPDATE sidekick_runs SET state='needs_input',summary=?,updated_at=?
-        WHERE sidekick_id=? AND run_id=? AND state IN ('pending','running','needs_input')`,
-      SIDEKICK_DELEGATION_ATTENTION_MESSAGES.coordinator_unavailable, Date.now(), this.sidekickId, request.runId);
-      this.noteDelegationAttention("coordinator_unavailable");
-    });
-  }
-
   /**
    * Whether input that reached a run child may continue the run, and with
    * what: the `automationRun` block and run-as principal, against the
-   * Sidekick's currently accepted revision. A read with no side effects.
+   * Sidekick's currently accepted revision. Replaces an unavailable coordinator.
    */
   async continueRun(input: AutomationRunRequest): Promise<SidekickRunContinuation> {
     const request = parseRpcInput(AutomationRunRequestSchema, input, "continue_run");
     if (!this.row()) return { outcome: "refused", code: "run_not_found" };
-    const authority = await this.readExecutionDelegation({ workspaceId: request.workspaceId, automationId: request.automationId });
+    const preferred = this.runView(request.runId)?.run?.coordinator_user_id ?? null;
+    const coordinator = await this.coordinator(preferred);
     const view = this.runView(request.runId);
     if (!view) return { outcome: "refused", code: "run_not_found" };
     const { sidekick, run } = view;
@@ -1403,9 +1371,10 @@ export class HostedSidekick {
     if (!run || sidekick.lifecycle !== "active" || sidekick.accepted_definition_revision === null) {
       return { outcome: "refused", code: "run_not_found" };
     }
-    const coordinator = run.coordinator_user_id;
-    if (coordinator === null || !authority.delegates.some((grant) => grant.userId === coordinator)) {
-      return { outcome: "refused", code: "run_coordinator_unavailable" };
+    if (coordinator === null) return { outcome: "refused", code: "run_no_eligible_delegate" };
+    if (coordinator !== run.coordinator_user_id) {
+      this.sql.exec("UPDATE sidekick_runs SET coordinator_user_id=?,updated_at=? WHERE sidekick_id=? AND run_id=?",
+        coordinator, Date.now(), this.sidekickId, run.run_id);
     }
     return SidekickRunContinuationSchema.parse({
       outcome: "continue",
@@ -1877,19 +1846,18 @@ export class HostedSidekick {
       );
       return { progressed: true };
     }
-    const coordinator = run.coordinator_user_id ?? run.run_as_user_id ?? await this.coordinator();
-    const authority = await this.readExecutionDelegation({ workspaceId: row.workspace_id, automationId: this.sidekickId });
-    if (coordinator === null || !authority.delegates.some((grant) => grant.userId === coordinator)) {
+    const coordinator = await this.coordinator(run.coordinator_user_id);
+    if (coordinator === null) {
       this.sql.exec("UPDATE sidekick_runs SET state='needs_input',summary=?,updated_at=? WHERE sidekick_id=? AND run_id=? AND state='pending'",
-        "Needs attention: the coordinating delegate is unavailable", now, this.sidekickId, runId);
+        SIDEKICK_DELEGATION_ATTENTION_MESSAGES.no_eligible_delegate, now, this.sidekickId, runId);
       this.touchDirectory(now);
-      this.noteDelegationAttention("coordinator_unavailable");
+      this.noteDelegationAttention("no_eligible_delegate");
       return { progressed: true };
     }
     if (this.row()?.lifecycle !== "active") return { progressed: true };
     this.storage.transactionSync(() => {
       this.sql.exec(
-        `UPDATE sidekick_runs SET run_as_user_id=COALESCE(run_as_user_id,?),coordinator_user_id=COALESCE(coordinator_user_id,?)
+        `UPDATE sidekick_runs SET run_as_user_id=COALESCE(run_as_user_id,?),coordinator_user_id=?
          WHERE sidekick_id=? AND run_id=?`,
         coordinator, coordinator, this.sidekickId, runId,
       );
