@@ -495,7 +495,6 @@ import {
   WorkspaceMemoryTableCreateRequestSchema,
   WorkspaceMemoryTableInsertRowsRequestSchema,
   WorkspaceMemoryTableInvalidateRowsRequestSchema,
-  WorkspaceMemoryTableOpenReceiptRequestSchema,
   WorkspaceMemoryTableQueryRequestSchema,
   WorkspaceMemoryTableRequestSchema,
   WorkspaceMemoryTableRowsByIdRequestSchema,
@@ -510,7 +509,6 @@ import {
   type WorkspaceMemoryTableInsertRowsRequest,
   type WorkspaceMemoryTableInsertRowsResult,
   type WorkspaceMemoryTableInvalidateRowsRequest,
-  type WorkspaceMemoryTableOpenReceiptRequest,
   type WorkspaceMemoryTableQueryRequest,
   type WorkspaceMemoryTableQueryResult,
   type WorkspaceMemoryTableRequest,
@@ -528,7 +526,6 @@ import {
   insertWorkspaceMemoryTableRows,
   invalidateWorkspaceMemoryTableRows,
   queryWorkspaceMemoryTableRows,
-  recordWorkspaceMemoryTableOpenReceipt,
   searchWorkspaceMemoryTables,
   updateWorkspaceMemoryTableRows,
   workspaceMemoryTableMutationReceipt,
@@ -16162,8 +16159,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Create a typed durable table, or answer with the standing table's id so
-   * the service can decide whether the caller reopened it or collided with it.
+   * Create or reopen a typed durable table, reconciling metadata atomically.
+   * A structural conflict returns its table id and incompatible field paths.
    */
   async createMemoryTable(
     input: WorkspaceMemoryTableCreateRequest,
@@ -16172,16 +16169,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(WorkspaceMemoryTableCreateRequestSchema, input, "create_memory_table");
     this.assertWorkspace(request.workspaceId);
     return createWorkspaceMemoryTable(this.state.storage, request);
-  }
-
-  /** Record the create receipt for an idempotent reopen of a standing table. */
-  async recordMemoryTableOpenReceipt(
-    input: WorkspaceMemoryTableOpenReceiptRequest,
-  ): Promise<void> {
-    await this.initialized;
-    const request = parseRpcInput(WorkspaceMemoryTableOpenReceiptRequestSchema, input, "record_memory_table_open_receipt");
-    this.assertWorkspace(request.workspaceId);
-    recordWorkspaceMemoryTableOpenReceipt(this.state.storage, request);
   }
 
   /**

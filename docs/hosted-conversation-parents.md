@@ -369,6 +369,8 @@ would read as Breakouts.
 | `_internal_durable_alarms` | the Organization's own, keyed `<sidekickId>:<key>`; `sidekick_publication` became `sidekick_memory_tables` |
 | `durable_outbox` | none: the directory row is written in place |
 
+Declared execution tables share the activation transaction; [Sidekick publication](automation-lifecycle.md) owns its atomicity and legacy recovery contract.
+
 The facade answers each Sidekick method as `sidekick*` (`sidekickPause`,
 `sidekickRunNow`) and the parent contract under the shared names, with the
 Sidekick tried before the Channel fallback. Callers hold the Organization's
@@ -546,7 +548,8 @@ none for a Channel rename or an owned Sidekick's next run;
 and 82 in one wake and proves migration 82's defaults and live triggers.
 `hosted-sidekick.test.ts` drives a Sidekick through the Organization object's
 `sidekick*` surface: publish, a refused registration leaving nothing applied, a
-refused memory-table step finishing from its entry, pause and resume, a run
+refused memory-table write leaving publication unchanged, all-declaration rollback,
+and consumption of a legacy permanent-conflict entry, pause and resume, a run
 provisioned off the alarm and asked about again until it reports, a pause that
 leaves another Sidekick's run armed, a run's terminal deadline, a principal
 claim that rebinds a plugin whose connection is gone and unbinds one whose

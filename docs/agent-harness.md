@@ -165,6 +165,8 @@ The host resolves stored-loadable Sidekicks against execution and conversation a
 | `apps/api/src/runtime/harness-run-runtime.ts` | The host side: admission, the lease, run scope, receipts, terminal state. |
 | `apps/api/src/durable-objects/substream-agent.ts` | The post-cutover full-loop host, durable dispatcher, keep-alive, stream feed, steering, and child-local timers. |
 | `apps/api/src/services/integrations.ts` | Context assembly and `loadRunPromptContext`. |
+| `apps/api/src/services/memory-table-service.ts` | Table tool schemas, scoped access, actionable conflicts and preparation of declared tables. |
+| `apps/api/src/durable-objects/workspace-memory-storage.ts`, `memory-table-definition.ts` | Atomic table/metadata receipts, structural compatibility and the shared public table projection. |
 | `packages/contracts` — `readStructuredFailure` | The shape a tool's machine-readable failure half is read through. |
 
 ### Completion verification before stopping
@@ -1248,15 +1250,22 @@ insert contention is a separate typed failure because inserts do not have an
 `expectedRevision`; after bounded host retries it directs the model to query by
 the declared natural key and retry only the rows that remain absent.
 
-An automation's definition may describe the tables it keeps (`memoryTables`),
-and a run receives that description from `readRunDefinition`. Publishing an
-accepted definition with triggers creates or reopens those tables in the
-Sidekick's scope. A stored alarm retries materialization if it is deferred;
-table creation does not roll back the published definition. A run can also
-create a table through `rally_tables` under the Sidekick's scope when it needs
-one. Later runs find and reuse it. Table rows never enter a prompt unasked; the
-agent must query only the rows and columns needed for the current run.
+Sidekick definitions may declare tables used across runs; [Sidekick publication](automation-lifecycle.md) owns their provisioning and activation contract.
 
+`table_create` reopens a same-name table when column names (case insensitive),
+types, required/searchable flags and ordered natural-key columns match.
+Declaration order is irrelevant; stored column IDs and order stay stable. Table
+and column descriptions and usage instructions are editable metadata. A reopen
+updates that metadata for every run sharing the table and records its receipt
+atomically, leaving row contents, cell IDs, row revisions, and schema/data
+revisions unchanged. A schema conflict
+returns `memory_table_name_schema_conflict`, the existing `memoryTableId`,
+incompatible field paths and `retryable: false`. The recovery is to call
+`table_describe` and reuse the stored schema, or choose another name and
+explicitly copy/transform rows; retrying unchanged cannot succeed.
+A run can also create a table through `rally_tables` in its authorized scope.
+Table rows never enter a prompt unasked; the agent queries only needed rows and
+columns.
 
 ### Scheduled wake-ups
 
@@ -1729,6 +1738,20 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-10-23 — Table creation supports metadata edits with stable schema
+
+**What changed:** Table creation compares stored schema, reconciles editable
+metadata with its receipt, and returns field-specific recovery for incompatible
+schemas. Unicode case variants update by the matched column's stable ID.
+
+**Why:** Treating descriptions and usage instructions as schema blocked harmless
+edits. A separate metadata write after service-side comparison would still race,
+so compatibility, metadata and receipts belong in the storage transaction.
+
+**Consequences:** Metadata edits apply to every authorized run sharing the table.
+Column IDs, natural-key order and row/cell data must survive these edits; actual
+schema changes require an explicit migration into another table.
 
 ### 2026-10-22 — Updates and final responses carry only what participants need
 
