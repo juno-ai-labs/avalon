@@ -171,6 +171,13 @@ returning content; the projection itself never grants access.
 
 ### Ordered transcript authority
 
+Activity selection and interval hydration bind each input ID set as one JSON
+array, expanded by SQLite's `json_each`. A wide transcript or an ancestor walk
+can exceed 100 activities without exceeding the engine's per-statement parameter
+ceiling. Recursive selection deduplicates shared ancestors, and interval reads
+retain activity/start-time ordering. Opening snapshots include active activities
+outside the visible turns; historical ranges include only their selected graph.
+
 Main `SubstreamAgent("0")` owns one canonical transcript substrate. Semantic
 payloads and facts are stored once; two projections reference them:
 `transcript_sequence` orders participant-visible conversation turns and safe
@@ -1941,6 +1948,25 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-10-22 — Hydrate activity graphs above the SQLite parameter ceiling
+
+**What changed:** Transcript activity selection and interval hydration pass ID
+sets through one bound JSON array instead of expanding one parameter per ID.
+
+**Why:** Production socket upgrades succeeded but snapshot assembly failed on
+activity queries with 211 and 106 parameters. Turn hydration already chunked its
+reads, but recursive activity selection and its expanded ancestor graph still
+crossed Durable Object SQLite's 100-parameter ceiling.
+
+**Considered and rejected:** Capping activities would omit canonical state.
+Chunking these reads would require merging overlapping ancestor graphs and
+repeating active-activity selection; one JSON binding preserves the existing
+single-query selection and ordering without adding a product limit.
+
+**Consequences:** Keep the seed set and expanded interval set independent of
+parameter count. Real-workerd tests cover wide seeds, deep ancestry, shared
+ancestor deduplication, completed interval durations, and active-only inclusion.
 
 ### 2026-10-22 — Classify handoffs against the admitted audience
 

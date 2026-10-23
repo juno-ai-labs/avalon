@@ -38,6 +38,64 @@ interface TranscriptOperationExecutor {
 beforeEach(async () => reset());
 
 describe("work-stream transcript on workerd SQLite", () => {
+  it.each(["wide", "deep"] as const)("hydrates a %s activity graph above SQLite's parameter ceiling", async (shape) => {
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    await runInDurableObject(stub, async (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
+      const transcript = new WorkstreamTranscriptStorage(state.storage);
+      const activity = (activityId: string, parentActivityId: string | null, callIndex: number | null, active = false) => {
+        const edge = {
+          activityId, parentActivityId, callIndex,
+          scope: "tool_call" as const, subjectId: activityId, label: activityId,
+        };
+        transcript.upsertActivity({ ...edge, action: "start", revision: 1, occurredAtUtc: "2026-01-01T00:00:01.000Z" });
+        if (!active) transcript.upsertActivity({
+          ...edge, action: "complete", revision: 2, occurredAtUtc: "2026-01-01T00:00:02.000Z",
+        });
+      };
+      activity("shared-root", null, null);
+      for (let index = 0; index < 105; index += 1) {
+        activity(`activity-${index}`, shape === "wide" || index === 0 ? "shared-root" : `activity-${index - 1}`, index);
+        if (shape === "deep" && index !== 104) continue;
+        const sequence = shape === "wide" ? index + 1 : 1;
+        const turnId = `turn-${index}`;
+        await transcript.seedDevelopmentConversationTurn({
+          turnId, clientMessageId: null, actor: "assistant", authorUserId: null,
+          authorSnapshot: null, externalActorJson: null, messageType: "text",
+          text: `Result ${index}`, structuredContentJson: null, producedByRunId: null,
+          expectedTranscriptSequence: sequence, createdAtUtc: "2026-01-01T00:00:02.000Z",
+        });
+        state.storage.sql.exec(
+          `UPDATE participant_transcript_turns SET activity_id = ? WHERE turn_id = ?`,
+          `activity-${index}`, turnId,
+        );
+      }
+      activity("live-outside-range", null, null, true);
+      activity("unrelated-completed", null, null);
+
+      // Wide exceeds the seed parameter ceiling; deep expands a single seed
+      // past the interval-hydration ceiling. Neither may truncate the graph.
+      const snapshot = transcript.createOpeningSnapshot({
+        unreadHighWaterAttentionOrdinal: null, now: Date.parse("2026-01-01T00:00:03.000Z"),
+      });
+      expect(snapshot.activities).toHaveLength(107);
+      expect(snapshot.activeActivities).toEqual([expect.objectContaining({
+        activityId: "live-outside-range", intervals: [expect.objectContaining({ elapsedMsAtSnapshot: 2_000 })],
+      })]);
+      expect(snapshot.activities.some((entry) => entry.activityId === "unrelated-completed")).toBe(false);
+      const range = transcript.range(snapshot, { startInclusive: 1, endExclusive: snapshot.snapshotThrough + 1 });
+      expect(range.activities).toHaveLength(106);
+      expect(range.activities[0]).toMatchObject({ activityId: "shared-root", parentActivityId: null });
+      expect(range.activities[105]).toMatchObject({ activityId: "activity-104", callIndex: 104 });
+      expect(range.activities.filter((entry) => entry.activityId === "shared-root")).toHaveLength(1);
+      expect(range.activities.every((entry) => entry.state === "completed"
+        && entry.intervals.length === 1 && entry.intervals[0]!.durationMs === 1_000)).toBe(true);
+      expect(range.turns[0]?.blocks[0]).toMatchObject({ type: "text", text: shape === "wide" ? "Result 0" : "Result 104" });
+    });
+  });
+
   it("keeps completion verification consumed across compaction and eviction", async () => {
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
