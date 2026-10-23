@@ -13,18 +13,18 @@ export const SIDEKICK_DELEGATION_SCHEMA_STATEMENTS = [
   `CREATE TABLE sidekick_delegations (
     sidekick_id TEXT NOT NULL, user_id TEXT NOT NULL, grant_json TEXT NOT NULL CHECK(json_valid(grant_json)),
     PRIMARY KEY(sidekick_id,user_id)
-  )`,
+  ) STRICT`,
   `CREATE INDEX sidekick_delegations_by_user ON sidekick_delegations(user_id,sidekick_id)`,
   `CREATE TABLE sidekick_delegation_preparations (
     sidekick_id TEXT NOT NULL, operation_id TEXT NOT NULL, user_id TEXT NOT NULL,
     allowed INTEGER NOT NULL CHECK(allowed IN (0,1)), generation INTEGER NOT NULL,
     PRIMARY KEY(sidekick_id,operation_id)
-  )`,
+  ) STRICT`,
   `CREATE TABLE sidekick_delegation_receipts (
     sidekick_id TEXT NOT NULL, operation_id TEXT NOT NULL, intent_json TEXT NOT NULL CHECK(json_valid(intent_json)),
     result_json TEXT NOT NULL CHECK(json_valid(result_json)), generation INTEGER NOT NULL,
     PRIMARY KEY(sidekick_id,operation_id)
-  )`,
+  ) STRICT`,
 ] as const;
 
 export interface SidekickDelegationMutation {

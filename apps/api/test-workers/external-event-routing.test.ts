@@ -227,6 +227,7 @@ async function activateAutomation(): Promise<void> {
     scope: "personal",
     owningWorkstreamId: null,
     automationId: AUTOMATION_ID,
+    creatorConsent: { requestId: crypto.randomUUID() },
   });
   expect(created.created).toBe(true);
   await workspace().sidekickSubmitDefinition({
@@ -350,7 +351,8 @@ describe("external event routing", () => {
       ashbyConnectionId, WORKSPACE_ID, JSON.stringify({ selectedEvents: [eventType] }), NOW, NOW);
     });
     await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID,
-      scope: "workspace", owningWorkstreamId: null, automationId: AUTOMATION_ID });
+      scope: "workspace", owningWorkstreamId: null, automationId: AUTOMATION_ID,
+      creatorConsent: { requestId: crypto.randomUUID() } });
     await workspace().sidekickSubmitDefinition({ workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID,
       draft: { ...DEFINITION, name: "Ashby watcher", suggestedScope: "workspace",
         triggers: [{ type: "connector_activity", connectorType: "ashby", sourceBindingKey: "ashby_events",
@@ -418,6 +420,7 @@ describe("external event routing", () => {
   });
 
   it("rejects stale registration effects and keeps retry activation boundaries stable", async () => {
+    await activateAutomation();
     const project = (sourceGeneration: number, eventType: string) => workspace().applyExternalEventRegistrations({
       schemaVersion: 1, workspaceId: WORKSPACE_ID, sourceGeneration,
       destination: { kind: "automation", automationId: AUTOMATION_ID },

@@ -95,6 +95,9 @@ function workspaceStub(workspaceId: string): DurableObjectStub<WorkspaceDO> {
 async function seedControlPlane(): Promise<void> {
   await ensureAuditSchema();
   await env.DB.batch([
+    env.DB.prepare(`CREATE TABLE sidekick_delegation_locations (
+      user_id TEXT NOT NULL,workspace_id TEXT NOT NULL,region TEXT NOT NULL,PRIMARY KEY(user_id,workspace_id)
+    )`),
     env.DB.prepare(`CREATE TABLE workstream_authority_control (
       id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
       required_serving_contract_version INTEGER NOT NULL, serving_contract_version INTEGER NOT NULL

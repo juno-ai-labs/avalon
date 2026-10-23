@@ -1370,6 +1370,15 @@ export class HostedSidekick {
       : null;
   }
 
+  /** A refused activation post stays actionable even when the model finishes its reply. */
+  notePermissionReportUnavailable(input: AutomationRunRequest): void {
+    const request = parseRpcInput(AutomationRunRequestSchema, input, "sidekick_permission_report_unavailable");
+    this.assertSidekick(request.workspaceId, request.automationId);
+    if (this.sql.exec("SELECT 1 FROM sidekick_runs WHERE sidekick_id=? AND run_id=?", this.sidekickId, request.runId).toArray().length > 0) {
+      this.noteDelegationAttention("permission_report_unavailable");
+    }
+  }
+
   /** Error-path reporting when authorization stopped execution before a model could report it. */
   noteCoordinatorUnavailable(input: AutomationRunRequest): void {
     const request = parseRpcInput(AutomationRunRequestSchema, input, "sidekick_coordinator_unavailable");

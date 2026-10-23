@@ -336,6 +336,7 @@ async function seedSidekick(home: SubstreamId): Promise<void> {
   await createAutomation(TEST_ENV, {
     workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "workstream",
     owningWorkstreamId: ROOM_ID, owningSubstreamId: home, automationId: AUTOMATION_ID,
+    creatorConsent: { requestId: crypto.randomUUID() },
   });
   const addressed = { workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID };
   await workspace().sidekickSubmitDefinition({ ...addressed, draft: DEFINITION, evaluatorRules: null, submittedByRunId: null });

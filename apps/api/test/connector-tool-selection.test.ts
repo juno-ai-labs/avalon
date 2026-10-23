@@ -279,6 +279,8 @@ class ToolSelectionStatement {
       results = this.database.attachedConnectionIds
         .filter((connectionId) => requested.has(resourceFor(connectionId)))
         .map((connection_id) => ({ connection_id }));
+    } else if (sql.includes("FROM users")) {
+      results = [{ id: USER_ID, name: "Member" }];
     } else if (sql.includes("FROM connector_connections")) {
       if (sql.includes("(scope = 'workspace' OR (scope = 'personal'")) {
         expect(this.values).toEqual([WORKSPACE_ID, USER_ID]);
@@ -360,6 +362,12 @@ afterEach(() => {
  */
 function hostingSidekicks(database: ToolSelectionDatabase): Env["WORKSPACE_DOS"] {
   const sidekicks: Record<string, unknown> = {
+    // Catalog input only. Real consent/admission is exercised in test-workers;
+    // this suite checks tool projection for a supplied eligible-user snapshot.
+    sidekickReadExecutionDelegation: async (request: { automationId: string }) => ({
+      sidekickId: request.automationId, creatorUserId: USER_ID, accountUserId: USER_ID,
+      delegates: [{ userId: USER_ID, generation: 1, grantedAt: 1 }],
+    }),
     sidekickCreate: vi.fn(async (request: Record<string, unknown>) => {
       database.createdAutomations.push(request);
       return { created: false };

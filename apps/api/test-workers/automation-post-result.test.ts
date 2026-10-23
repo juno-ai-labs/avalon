@@ -15,7 +15,7 @@ import { AgentCommunicationService } from "../src/services/agent-communication-s
  */
 
 import { env } from "cloudflare:workers";
-import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -23,6 +23,7 @@ import {
   agentIdForAddress,
   agentAddressForId,
   WorkstreamWorkflowInputSchema,
+  AutomationDetailSchema,
   type WorkstreamWorkflowInput,
   asAutomationId,
   asSubstreamId,
@@ -41,6 +42,7 @@ import {
 import type { AuthContext, Env } from "../src/env";
 import { SlackAgentService } from "../src/services/slack-agent-service";
 import { createAutomation } from "../src/services/automation-service";
+import { conversationToolPorts, createConversationsPlugin } from "../src/services/conversation-tools";
 import { encryptString } from "../src/lib/crypto";
 import { attachWorkstreamRuntimeResource } from "../src/services/workstream-object-client";
 import {
@@ -350,6 +352,7 @@ async function seedRoomAutomation(): Promise<void> {
     scope: "workstream",
     owningWorkstreamId: ROOM_ID,
     automationId: AUTOMATION_ID,
+    creatorConsent: { requestId: crypto.randomUUID() },
   });
   expect(created.created).toBe(true);
   await sidekickHost().sidekickSubmitDefinition({ ...addressed(), draft: DEFINITION, evaluatorRules: null, submittedByRunId: null });
@@ -1878,6 +1881,31 @@ describe("a room Sidekick's run and the room's agents", () => {
     });
     expect(replay).toEqual({ outcome: "replayed", code: "conversation_post_replayed", messageId: posts[0]!.id });
     expect(await postTurns()).toHaveLength(1);
+  });
+
+  it("keeps a refused activation post visible as Needs attention without claiming delivery", async () => {
+    const started = await sidekickHost().sidekickRunNow({ ...addressed(), actor: manager(), idempotencyKey: "refused-permission-report" });
+    await runSidekickAlarms(TEST_ENV, WORKSPACE_ID);
+    const child = runChild(started.runId);
+    const [run] = await settledRun(child);
+    const input = await runInDurableObject(child, (_instance, state) => WorkstreamWorkflowInputSchema.parse(JSON.parse(
+      state.storage.sql.exec<{ execution_context_json: string }>("SELECT execution_context_json FROM runs WHERE run_id=?", run!.run_id)
+        .one().execution_context_json)));
+    const deliveredBefore = (await postTurns()).length;
+    await runInDurableObject(roomParent(), (_instance, state) => state.storage.sql.exec(
+      "UPDATE channels SET archived_at=? WHERE workstream_id=?", Date.now(), ROOM_ID));
+    const plugin = createConversationsPlugin(input, conversationToolPorts(TEST_ENV, input), (tool) => [tool], { home: true })!;
+    const postTool = plugin.tools.find((tool) => tool.definition.name === "post")!;
+    await expect(postTool.execute({ text: "The source cannot be read. Restore its sharing to unblock the summary." }, {
+      workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, harnessRunId: input.harnessRunId,
+      toolCallId: "permission-report", effectIntentId: crypto.randomUUID(), executionPrincipal: input.executionPrincipal,
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({ code: "conversation_archived" });
+    expect((await postTurns()).length).toBe(deliveredBefore);
+    await evictDurableObject(sidekickHost());
+    const details = await sidekickHost().sidekickReadDetails({ workspaceId: WORKSPACE_ID, automationIds: [AUTOMATION_ID], actor: manager() });
+    expect(AutomationDetailSchema.parse(details[0]).delegationAttention).toEqual({ code: "permission_report_unavailable",
+      message: "Needs attention: a message could not reach its destination. Restore conversation access and rerun the blocked work; no delivery was confirmed." });
   });
 
   it("archives the Sidekick when its owning Thread is archived", async () => {

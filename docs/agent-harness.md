@@ -910,8 +910,11 @@ the missing call positions against their durable receipts. A completed or
 failed receipt becomes the corresponding exact tool result; an admitted call is
 terminalized as `not_run`; an executing *read* is failed. An executing **write**
 is not classified from its status: the host re-enters the tool over that same
-receipt, through `reenterInterruptedWriteForRecovery`, which builds the one
-plugin owning the call rather than the run's whole registry. A tool that
+receipt, through `reenterInterruptedWriteForRecovery`. Terminal and consent
+recovery build their owning plugin directly. Authored connector writes with
+provider keys reuse ordinary inventory construction and invoke only the owning
+tool; unused plugin clients are disposed without activation. Remote MCP tools
+cannot opt themselves into this recovery contract. A tool that
 declares `HarnessTool.reenterable` either resolves its own durable effect from
 the receipt — `run_command` reattaches to the `terminal_tasks` row its
 `effect_intent_id` names — or carries a `HarnessTool.reconcileEffect` that
@@ -927,7 +930,14 @@ the stored content whenever the sandbox file had moved on; its reconciler reads
 `author_run_id`, so a publication this run made inside the receipt's window
 reads as landed even after somebody else has revised the document away. A
 `provider_key` tool is re-submitted under the key its receipt was admitted with,
-never a fresh one. Only a tool that is not re-enterable, a plugin that cannot be
+never a fresh one; a missing original key cannot be reconstructed. Calendar
+creates use that key as their event ID and read back a duplicate through the
+original account when the admitted arguments name a stable calendar ID. Omitted
+defaults and calendar names cannot be reconstructed safely and stay unresolved.
+The host passes its existing replay marker to adapters for this check.
+Observed withdrawal leaves recovery unresolved until that
+same delegate is eligible again, including for an Organization connection.
+Only a tool that is not re-enterable, a plugin that cannot be
 built, or a re-entry that threw settles `ambiguous_external_write`, and the
 receipt, the `harness_interrupted_write_recovered` log line and the model's tool
 result all name the tool and the reason. Results are appended with their
@@ -1860,6 +1870,10 @@ never licenses a fresh preparation of an old allow.
 Completed provider references now survive later executions of an occurrence and
 host-mediated background handoffs within that Sidekick. These references constrain
 identity without granting access under the receiver's refreshed delegation view.
+Native provider-key connector recovery now reuses the ordinary account resolver
+after eviction, preserving the effect's original provider key and delegating
+user. Calendar creation supplies a concrete provider recovery path rather than
+leaving every uncertain connector write unrecoverable.
 
 **Why:** A Thread-owned Sidekick could have consent to read a sheet through a
 second person, but the connector executor still admitted only the coordinator's

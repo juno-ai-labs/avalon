@@ -500,7 +500,14 @@ async function consumeOne(message: Message<unknown>, env: Env,
           substreamId: input.destination.substreamId,
           resourceId: input.destination.resourceId,
           registrationId: input.registrationId,
-          event: input.event,
+          // Sidekick source-account authority stays on its own delivery path;
+          // ordinary resource watches retain their existing event contract.
+          event: {
+            id: input.event.id, eventSequence: input.event.eventSequence, eventType: input.event.eventType,
+            title: input.event.title, summary: input.event.summary, textSnippet: input.event.textSnippet,
+            metadata: input.event.metadata, occurredAt: input.event.occurredAt,
+            audienceKind: input.event.audienceKind, audienceUserIds: input.event.audienceUserIds,
+          },
         });
         logInfo(env, "external_event_delivery_terminal", {
           workspace_id: input.workspaceId,

@@ -974,6 +974,13 @@ describe("the connector side of a binding", () => {
 
   it("does not also start the bound Sidekick from a reply its run receives, and still triggers others", async () => {
     await seedSlackConnection();
+    for (const automationId of [SIDEKICK, AUTOMATION]) {
+      await workspace().sidekickCreate({ workspaceId: WORKSPACE_ID, automationId, authorUserId: USER_ID,
+        scope: "workspace", owningWorkstreamId: null, authorityGeneration: 1,
+        creatorConsent: { requestId: crypto.randomUUID() } });
+      await writeSidekickDirectoryRow(env, { automationId, workspaceId: WORKSPACE_ID, authorUserId: USER_ID,
+        lifecycle: "active", scope: "workspace", owningWorkstreamId: null, title: "Reply watcher", description: "Watch replies" });
+    }
     const register = (automationId: string, evaluatorId: string) => workspace().applyExternalEventRegistrations({
       schemaVersion: 1,
       workspaceId: WORKSPACE_ID,

@@ -956,12 +956,14 @@ function createConnectorToolContext(
   signal: AbortSignal,
   providerIdempotencyKey?: string,
   invocationAuthorization?: ConnectorToolContext["invocationAuthorization"],
+  replaying?: boolean,
 ): ConnectorToolContext {
   return {
     connection,
     principal,
     ...(providerIdempotencyKey ? { providerIdempotencyKey } : {}),
     ...(invocationAuthorization ? { invocationAuthorization } : {}),
+    ...(replaying ? { replaying: true } : {}),
     signal,
   };
 }
@@ -5792,6 +5794,8 @@ async function loadHarnessTools(
       if (!connectorCapabilitySupportsScope(adapter, definition.capability, scope)) return [];
       const tool: HarnessTool = {
         definition: delegation && supportsAccountSelection ? sidekickAccountToolDefinition(definition) : definition,
+        ...(!dynamicCapability && definition.mode === "write" && definition.idempotency === "provider_key"
+          ? { reenterable: true } : {}),
         ...(includeStaticInputValidator && (adapter.validateToolInput || (delegation && supportsAccountSelection))
           ? {
               validateInput: (toolInput) => {
@@ -5839,7 +5843,7 @@ async function loadHarnessTools(
               fence: { runId: input.harnessRunId, attemptId: paginationLease.attemptId, owner: paginationLease.owner },
               execute: (candidate) => executeConnectorToolOnConnection(env, input, candidate, operation, definition.capability,
                 parsed.input, context.signal, context.providerIdempotencyKey, undefined, context.effectIntentId,
-                { delegation: authority } satisfies PreparedConnectorAuthorization),
+                { delegation: authority } satisfies PreparedConnectorAuthorization, context.replaying),
               ...(adapter.operationResultKeys ? { resultKeys: (result) => adapter.operationResultKeys!(operation, parsed.input, result) } : {}),
             });
           }
@@ -5863,6 +5867,7 @@ async function loadHarnessTools(
             && candidate.grantedScopes.includes(definition.capability)
             && connectorCapabilitySupportsScope(adapter, definition.capability, candidate.scope)
           )),
+          context.replaying,
           );
         },
       };
@@ -5981,20 +5986,26 @@ async function loadHarnessTools(
   // Verify former Google identities against their complete, unchanged tool
   // surfaces. Identity aliases alone must never make a stale receipt replayable.
   const rememberSurface = async (targets: string[], pluginId: string, tools: HarnessTool[]) => {
-    const [toolSurfaceHash, prePaginationSurfaceHash, legacyToolSurfaceHash] = await Promise.all([
-      connectorToolSurfaceHash(pluginId, tools),
-      connectorToolSurfaceHash(pluginId, priorPaginationTools(tools)),
-      connectorToolSurfaceHash(pluginId, tools, (name) => legacyConnectorCanonicalToolName("google", name) ?? name),
-    ]);
-    for (const target of targets) compatiblePluginSurfaces.set(target, [
-      ...(compatiblePluginSurfaces.get(target) ?? []), { pluginId, toolSurfaceHash, prePaginationSurfaceHash, legacyToolSurfaceHash },
-    ]);
+    // Preserve unrelated completed Google calls across Calendar's provider-key
+    // cutover. The per-call idempotency fence still rejects an old create.
+    const prior = tools.map((tool) => ["calendar.create_event", "calendar.create_all_day_event", "calendar.create_recurring_event"].includes(tool.definition.name)
+      ? { ...tool, definition: { ...tool.definition, idempotency: "record_before_execute" as const } } : tool);
+    const versions = prior.some((tool, index) => tool !== tools[index]) ? [tools, prior] : [tools];
+    for (const version of versions) {
+      const [toolSurfaceHash, prePaginationSurfaceHash, legacyToolSurfaceHash] = await Promise.all([
+        connectorToolSurfaceHash(pluginId, version),
+        connectorToolSurfaceHash(pluginId, priorPaginationTools(version)),
+        connectorToolSurfaceHash(pluginId, version, (name) => legacyConnectorCanonicalToolName("google", name) ?? name),
+      ]);
+      for (const target of targets) compatiblePluginSurfaces.set(target, [
+        ...(compatiblePluginSurfaces.get(target) ?? []), { pluginId, toolSurfaceHash, prePaginationSurfaceHash, legacyToolSurfaceHash },
+      ]);
+    }
   };
   await Promise.all([...frozenConnections.values()].filter((frozen) => frozen.connectorType === "google").flatMap((frozen) => {
     const plugin = plugins.find((candidate) => candidate.canonicalId === frozen.pluginId)!;
     return connectorPluginBindingViews("google", frozen.credentialModelPluginId ?? frozen.modelPluginId, frozen.grantedScopes)
       .map((alias) => connectorPluginCanonicalId(frozen.connectionId, alias.googleBundle))
-      .filter((id) => id !== frozen.pluginId)
       .map((id) => rememberSurface([frozen.pluginId], id, plugin.tools));
   }));
   await Promise.all([...combinedGoogleTools].map(([connectionId, combined]) => {
@@ -6554,10 +6565,11 @@ async function executeAuthorizedConnectorTool(
   effectIntentId?: string,
   authorizationContext?: unknown,
   alternates?: () => readonly FrozenConnectorPlugin[],
+  replaying?: boolean,
 ) {
   try {
     return await executeConnectorToolOnConnection(env, input, frozen, toolName, capability, toolInput,
-      signal, providerIdempotencyKey, ownershipGuard, effectIntentId, authorizationContext);
+      signal, providerIdempotencyKey, ownershipGuard, effectIntentId, authorizationContext, replaying);
   } catch (error) {
     if (!isConnectorResourceAccessRefusal(error)
       || !connectorRegistryForEnv(env).get(frozen.connectorType).probeResourceAccess) {
@@ -6580,7 +6592,7 @@ async function executeAuthorizedConnectorTool(
       if (candidate.scope === "workspace" && carriesResourceAuthorization(refusal)) break;
       try {
         const result = await executeConnectorToolOnConnection(env, input, candidate, toolName, capability,
-          toolInput, signal, providerIdempotencyKey, ownershipGuard, effectIntentId);
+          toolInput, signal, providerIdempotencyKey, ownershipGuard, effectIntentId, undefined, replaying);
         return servedThrough(result, candidate, frozen);
       } catch (next) {
         if (!isConnectorResourceAccessRefusal(next)) throw next;
@@ -6639,6 +6651,7 @@ async function executeConnectorToolOnConnection(
   ownershipGuard?: () => Promise<void>,
   effectIntentId?: string,
   authorizationContext?: unknown,
+  replaying?: boolean,
 ) {
   await ownershipGuard?.();
   const prepared = authorizationContext as PreparedConnectorAuthorization | undefined;
@@ -6687,6 +6700,7 @@ async function executeConnectorToolOnConnection(
               || authorized.credentials.teamId === input.slackOrigin.teamId)
             ? { slackActionToken: input.slackSearchAuthorization.actionToken }
             : undefined,
+          replaying,
         ),
         ...(frozen.connectorType === "google" && ["gmail.create_draft", "gmail.create_reply_draft"].includes(toolName) ? {
           readAttachment: async (resourceId: string) => {
@@ -7394,6 +7408,7 @@ async function reenterInterruptedWrite(input: {
     || !input.policyMatches
     || input.expectedPolicy.definition.mode !== "write"
     || input.expectedPolicy.definition.idempotency === "safe"
+    || (input.expectedPolicy.definition.idempotency === "provider_key" && input.row.providerIdempotencyKey === null)
   ) {
     return null;
   }
@@ -7497,12 +7512,10 @@ export type InterruptedWriteReentry =
 /**
  * Re-enter one interrupted write from *outside* a harness run.
  *
- * Crash repair runs before the run's tool registry exists, so until now it had
- * no way to ask a tool anything and classified every unsettled write as
- * unknowable. It does not need the registry: it needs the one plugin that owns
- * the one call it is repairing. Terminal and the direct-speaker Sidekick
- * consent subset can be built from the same `(env, input)` the repair holds.
- * Consent reconstruction loads no authoring tools or provider clients.
+ * Terminal and direct-speaker consent repair build their owning plugin from
+ * `(env, input)`. Authored provider-key connectors reuse ordinary inventory
+ * admission and account selection, dispose unused clients and invoke only the
+ * owning tool. Catalog construction activates no connector or Terminal sandbox.
  *
  * Built per call rather than cached, because it runs at most once per
  * interrupted batch and building it acquires provider clients a healthy claim
@@ -7543,7 +7556,8 @@ export async function reenterInterruptedWriteForRecovery(
     : receipt.toolName;
   const capability = typeof plan?.capability === "string" ? plan.capability : null;
   const idempotency = plan?.idempotency;
-  if ((pluginId !== TERMINAL_PLUGIN_ID && pluginId !== AUTOMATIONS_PLUGIN_ID) || capability === null) {
+  const keyedConnector = pluginId?.startsWith("connection:") && idempotency === "provider_key";
+  if (pluginId === null || (!keyedConnector && pluginId !== TERMINAL_PLUGIN_ID && pluginId !== AUTOMATIONS_PLUGIN_ID) || capability === null) {
     return { outcome: "unknown", reason: "no_recovery_executor" };
   }
   if (idempotency !== "provider_key" && idempotency !== "record_before_execute") {
@@ -7558,9 +7572,8 @@ export async function reenterInterruptedWriteForRecovery(
   // deliberately: there is no earlier reading of this run's authority to hold
   // the repair to, and re-reading it is the whole point.
   //
-  // `beforeToolCall` also resolves the call against the run's tool registry,
-  // which the repair path has no way to build. The plugin below stands in for
-  // it: it is constructed from this run's own `(env, input)`, so it is the
+  // `beforeToolCall` also resolves the call against the run's tool registry.
+  // The plugin below is constructed from this run's own `(env, input)`, so it is the
   // plugin this run would have had, and `reenterInterruptedWrite` then refuses
   // any tool whose live name, capability, mode, or class disagrees with what
   // the receipt recorded. What is not reproduced here is the Sidekick
@@ -7577,6 +7590,13 @@ export async function reenterInterruptedWriteForRecovery(
     // so repair uses the same address and current access as a live tool call.
     if (pluginId === TERMINAL_PLUGIN_ID) {
       plugin = await createAvalonTerminalPlugin(env, input, inObjectResourceAttacher);
+    } else if (keyedConnector) {
+      // Reuse ordinary inventory admission and account selection. Building a
+      // catalog activates no connector and allocates no Terminal sandbox.
+      const inventory = await loadHarnessTools(withWorkspaceRuntimeDatabase(env, input.workspaceId), input,
+        undefined, inObjectResourceAttacher, undefined, undefined, lease);
+      plugin = inventory.plugins.find((candidate) => candidate.canonicalId === pluginId) ?? null;
+      disposeHarnessPlugins(env, inventory.plugins.filter((candidate) => candidate !== plugin));
     } else {
       const userId = await directSidekickDelegationUser(env, input);
       if (!userId) return { outcome: "unknown", reason: "sidekick_delegation_user_context_required" };
