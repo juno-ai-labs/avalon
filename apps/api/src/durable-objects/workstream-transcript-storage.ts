@@ -3362,10 +3362,9 @@ export class WorkstreamTranscriptStorage {
     includeActive: boolean,
   ): TranscriptActivity[] {
     if (activityIds.length === 0 && !includeActive) return [];
-    const idPlaceholders = activityIds.map(() => "?").join(", ");
     const seedClauses = [
       ...(activityIds.length > 0
-        ? [`SELECT activity_id FROM transcript_activities WHERE activity_id IN (${idPlaceholders})`]
+        ? ["SELECT activity_id FROM transcript_activities WHERE activity_id IN (SELECT value FROM json_each(?))"]
         : []),
       ...(includeActive
         ? ["SELECT activity_id FROM transcript_activities WHERE lifecycle_state = 'active'"]
@@ -3386,7 +3385,7 @@ export class WorkstreamTranscriptStorage {
          FROM transcript_activities activity
          JOIN selected ON selected.activity_id = activity.activity_id
         ORDER BY activity.created_at, activity.parent_activity_id, activity.call_index`,
-      ...activityIds,
+      ...(activityIds.length > 0 ? [JSON.stringify(activityIds)] : []),
     ).toArray();
     return this.hydrateActivities(rows, snapshotAt);
   }
@@ -3397,14 +3396,13 @@ export class WorkstreamTranscriptStorage {
 
   private hydrateActivities(rows: ActivityRow[], snapshotAt: number): TranscriptActivity[] {
     if (rows.length === 0) return [];
-    const placeholders = rows.map(() => "?").join(", ");
     const intervals = this.sql.exec<IntervalRow>(
       `SELECT activity_id, interval_id, started_at, stopped_at, duration_ms,
               boundary_source, timing_accuracy, revision
          FROM transcript_activity_intervals
-        WHERE activity_id IN (${placeholders})
+        WHERE activity_id IN (SELECT value FROM json_each(?))
         ORDER BY activity_id, started_at`,
-      ...rows.map((row) => row.activity_id),
+      JSON.stringify(rows.map((row) => row.activity_id)),
     ).toArray();
     const intervalsByActivity = new Map<string, IntervalRow[]>();
     for (const interval of intervals) {
