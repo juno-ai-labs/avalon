@@ -496,7 +496,6 @@ import {
   WorkspaceMemoryTableCreateRequestSchema,
   WorkspaceMemoryTableInsertRowsRequestSchema,
   WorkspaceMemoryTableInvalidateRowsRequestSchema,
-  WorkspaceMemoryTableOpenReceiptRequestSchema,
   WorkspaceMemoryTableQueryRequestSchema,
   WorkspaceMemoryTableRequestSchema,
   WorkspaceMemoryTableRowsByIdRequestSchema,
@@ -511,7 +510,6 @@ import {
   type WorkspaceMemoryTableInsertRowsRequest,
   type WorkspaceMemoryTableInsertRowsResult,
   type WorkspaceMemoryTableInvalidateRowsRequest,
-  type WorkspaceMemoryTableOpenReceiptRequest,
   type WorkspaceMemoryTableQueryRequest,
   type WorkspaceMemoryTableQueryResult,
   type WorkspaceMemoryTableRequest,
@@ -529,7 +527,6 @@ import {
   insertWorkspaceMemoryTableRows,
   invalidateWorkspaceMemoryTableRows,
   queryWorkspaceMemoryTableRows,
-  recordWorkspaceMemoryTableOpenReceipt,
   searchWorkspaceMemoryTables,
   updateWorkspaceMemoryTableRows,
   workspaceMemoryTableMutationReceipt,
@@ -7695,7 +7692,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       requestId: request.requestId,
       directoryWaterline: this.directoryWaterline(),
       items: mapDirectoryWorkstreams(sql, rows, identity.workspaceId, spaces, viewer, true),
-      stateVersions: rows.map(directoryStateVersion),
+      stateVersions: rows.map((row) => this.directoryStateVersion(row)),
       rails: [],
       nextAfter: page.length === CHANNEL_RAILS_NAMED_LIMIT ? page.at(-1)! : null,
     });
@@ -7823,7 +7820,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         this.state.storage.sql, [row], attachment.workspaceId,
         this.spaceStorage(), viewerOf(attachment), true,
       )[0],
-      stateVersion: directoryStateVersion(row),
+      stateVersion: this.directoryStateVersion(row),
     }));
     for (const peer of this.state.getWebSockets()) {
       const peerAttachment = readAttachment(peer);
@@ -16287,8 +16284,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Create a typed durable table, or answer with the standing table's id so
-   * the service can decide whether the caller reopened it or collided with it.
+   * Create or reopen a typed durable table, reconciling metadata atomically.
+   * A structural conflict returns its table id and incompatible field paths.
    */
   async createMemoryTable(
     input: WorkspaceMemoryTableCreateRequest,
@@ -16297,16 +16294,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(WorkspaceMemoryTableCreateRequestSchema, input, "create_memory_table");
     this.assertWorkspace(request.workspaceId);
     return createWorkspaceMemoryTable(this.state.storage, request);
-  }
-
-  /** Record the create receipt for an idempotent reopen of a standing table. */
-  async recordMemoryTableOpenReceipt(
-    input: WorkspaceMemoryTableOpenReceiptRequest,
-  ): Promise<void> {
-    await this.initialized;
-    const request = parseRpcInput(WorkspaceMemoryTableOpenReceiptRequestSchema, input, "record_memory_table_open_receipt");
-    this.assertWorkspace(request.workspaceId);
-    recordWorkspaceMemoryTableOpenReceipt(this.state.storage, request);
   }
 
   /**
@@ -16813,12 +16800,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * an active member and holds the id, and this names only what a Channel
    * reached through a Breakout already names (`docs/channel-access-requests.md`).
    */
-  async accessRequestSubject(input: { workspaceId: string; parentId: string; substreamId: string }): Promise<{
+  async accessRequestSubject(input: {
+    workspaceId: string; parentId: string; substreamId: string; requesterUserId?: string;
+  }): Promise<{
     kind: "channel" | "breakout";
     title: string;
     appearance: z.infer<typeof WorkstreamAppearanceSchema> | null;
     markId: string;
     createdByUserId: string | null;
+    requestPending: boolean;
+    requestEmailed: boolean;
   } | null> {
     await this.initialized;
     const request = parseRpcInput(AccessRequestSubjectRequestSchema, input, "access_request_subject");
@@ -16838,6 +16829,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ...(breakout ? [request.parentId, request.substreamId] : [request.parentId]),
     ).toArray()[0];
     if (!row) return null;
+    const pendingRequest = request.requesterUserId === undefined ? null
+      : this.accessRequestStorage().pending(request.parentId, request.substreamId, request.requesterUserId);
     return AccessRequestSubjectSchema.parse({
       kind: breakout ? "breakout" : "channel",
       title: row.title,
@@ -16846,6 +16839,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         appearanceJson: row.appearance_json, parentAppearanceJson: row.parent_appearance_json ?? null,
       }),
       createdByUserId: row.created_by_user_id,
+      requestPending: pendingRequest !== null,
+      requestEmailed: pendingRequest?.emailed ?? false,
     });
   }
 
@@ -17704,6 +17699,27 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
+  /** Preserve historical event identities, recording their provenance for investigation. */
+  private directoryStateVersion(row: WorkspaceDirectoryRow) {
+    const version = directoryStateVersion(row);
+    for (const field of ["commonEventId", "viewerEventId"] as const) {
+      const eventId = version[field];
+      if (eventId !== null && eventId[14] !== "7" && IdSchema.safeParse(eventId).success) {
+        logWarn(this.env, "workspace_directory_non_v7_event_id", {
+          workspace_id: this.workspaceId(),
+          workstream_id: row.workstream_id,
+          field,
+          event_id: eventId,
+          uuid_version: eventId[14],
+          authority_generation: version.authorityGeneration,
+          common_waterline: version.commonWaterline,
+          viewer_waterline: version.viewerWaterline,
+        });
+      }
+    }
+    return version;
+  }
+
   /**
    * Apply one directory effect a Channel published *about one of its
    * breakouts*.
@@ -18131,7 +18147,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         this.state.storage.sql, rows, request.workspaceId, this.spaceStorage(),
         { userId: request.userId, accessClass }, withViewerState,
       ),
-      stateVersions: rows.map(directoryStateVersion),
+      stateVersions: rows.map((row) => this.directoryStateVersion(row)),
       nextCursor,
       directoryWaterline: this.directoryWaterline(),
     };
@@ -18491,7 +18507,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const viewerStates = channelViewerStates(this.state.storage.sql, person.userId, visibleIds, shared.background);
     const shown = new Set(visibleIds);
     return rows.map((row) => {
-      const stateVersion = directoryStateVersion(row);
+      const stateVersion = this.directoryStateVersion(row);
       return JSON.stringify(WorkspaceWorkstreamStateEventSchema.parse({
         type: "workspace_workstream_state",
         occurredAt: shared.occurredAt,

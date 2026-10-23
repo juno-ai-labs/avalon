@@ -259,26 +259,14 @@ export const WorkspaceMemoryTableCreateRequestSchema = deferredZodSchema(() => z
   at: TimestampSchema,
 }));
 
-/**
- * `name_exists` carries the standing table's id and writes nothing: whether
- * the schemas match — and therefore whether this is an idempotent reopen or a
- * conflict — is the service's comparison to make, against columns it reads
- * back through `memoryTableWithColumns`.
- */
+/** A reopen reconciles metadata and records its receipt in the same transaction. */
 export const WorkspaceMemoryTableCreateResultSchema = deferredZodSchema(() => z.discriminatedUnion("outcome", [
   z.strictObject({ outcome: z.literal("created") }),
+  z.strictObject({ outcome: z.literal("opened"), memoryTableId: z.string().min(1), resultJson: z.string() }),
   z.strictObject({ outcome: z.literal("replayed"), resultJson: z.string() }),
   z.strictObject({ outcome: z.literal("receipt_mismatch") }),
-  z.strictObject({ outcome: z.literal("name_exists"), memoryTableId: z.string().min(1) }),
+  z.strictObject({ outcome: z.literal("schema_conflict"), memoryTableId: z.string().min(1), fields: z.array(z.string()).min(1) }),
 ]));
-
-export const WorkspaceMemoryTableOpenReceiptRequestSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: IdSchema,
-  memoryTableId: z.string().min(1),
-  memoryScopeId: z.string().min(1),
-  mutation: MemoryTableMutationRecordSchema,
-  at: TimestampSchema,
-}));
 
 const MemoryTableCellSchema = deferredZodSchema(() => z.strictObject({
   memoryTableColumnId: z.string().min(1),
@@ -374,7 +362,6 @@ export type WorkspaceMemoryTableQueryRequest = z.infer<typeof WorkspaceMemoryTab
 export type WorkspaceMemoryTableQueryResult = z.infer<typeof WorkspaceMemoryTableQueryResultSchema>;
 export type WorkspaceMemoryTableCreateRequest = z.infer<typeof WorkspaceMemoryTableCreateRequestSchema>;
 export type WorkspaceMemoryTableCreateResult = z.infer<typeof WorkspaceMemoryTableCreateResultSchema>;
-export type WorkspaceMemoryTableOpenReceiptRequest = z.infer<typeof WorkspaceMemoryTableOpenReceiptRequestSchema>;
 export type WorkspaceMemoryTableCell = z.infer<typeof MemoryTableCellSchema>;
 export type WorkspaceMemoryTableInsertRowsRequest = z.infer<typeof WorkspaceMemoryTableInsertRowsRequestSchema>;
 export type WorkspaceMemoryTableInsertRowsResult = z.infer<typeof WorkspaceMemoryTableInsertRowsResultSchema>;

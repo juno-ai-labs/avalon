@@ -284,6 +284,16 @@ Organization members bypass confirmation in Organization-visible conversations;
 guests without participation and people joining personal conversations require
 confirmation. Rejected mention ranges never seat anyone.
 
+Ordinary follow-up admission reads the active participant count after preparing
+participant access. Parent-owned admission has already projected the mentioned
+people into the roster. Locally owned admission (including Sidekick conversations)
+seats them atomically with the message, so the invocation decision also counts
+accepted recipients and the author who are still unseated after preparation.
+Already projected seats are not counted twice. A message that adds a second
+person therefore reaches addressing and continuation classification instead of
+the solo-conversation automatic invocation path. The pre-admission recipient
+count is only used to report how many people were added.
+
 Message admissions carry `participationReason: "message"` through grant receipts
 and participant projections. They leave earlier history read and emit only the
 mention notification. Ordinary participant additions keep their added notice.
@@ -1761,13 +1771,16 @@ A child's envelope arrives by Queue, and the parent commits receipt, child
 value, aggregate, state change and the Organization's directory row inside one
 `WorkspaceDO` transaction.
 
-Each common or viewer UUIDv7 message/event ID is time sortable to milliseconds
-and remains identical for that row on the Channel control socket, the
+New common and viewer message/event IDs are UUIDv7 and time sortable to milliseconds.
+Historical state-event IDs may be any valid UUID and remain identical for that row on the Channel control socket, the
 `channels` or `channel_viewers` source row, and the workspace socket. A
 complete snapshot carries both IDs separately. Independent objects can generate
 same-millisecond IDs in random order, so freshness always compares authority
 generation and the relevant common/viewer waterline, never UUID lexical order
-alone.
+alone. Directory reads log `workspace_directory_non_v7_event_id` for historical
+non-v7 IDs, with Organization, Thread, declared field, event ID, UUID version,
+authority generation and both waterlines. They preserve the stored identity;
+no read rewrites IDs or advances versions. Invalid UUIDs still fail validation.
 
 ### Hosted Sidekicks
 
@@ -1931,6 +1944,64 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-10-23 — Preserve loop time and historical state identities
+
+**What changed:** Pending-input activation clamps the loop's `updated_at` with
+`MAX(updated_at, ?)`, and the claimant samples its clock after ensuring the loop
+exists. Directory response contracts accept any valid UUID for state-event IDs;
+Organization directory reads warn when an ID is not v7, retaining its identity
+and the generation and waterlines that establish ordering.
+
+**Why:** A claim could sample time before initializing its loop and then violate
+`updated_at >= created_at`. Separately, historical UUIDv4 projection IDs made
+otherwise valid Organization socket snapshots fail the UUIDv7 response refinement.
+
+**Considered and rejected:** Removing the timestamp CHECK or rewriting old event
+IDs would weaken durable invariants or change identities during a read. Neither
+is necessary: bookkeeping time is monotonic, while waterlines determine freshness.
+
+**Consequences:** New producers still mint UUIDv7. Investigate the warning's
+stored event ID and Thread rather than inferring ordering from its UUID version.
+
+### 2026-10-22 — Hydrate activity graphs above the SQLite parameter ceiling
+
+**What changed:** Transcript activity selection and interval hydration pass ID
+sets through one bound JSON array instead of expanding one parameter per ID.
+
+**Why:** Production socket upgrades succeeded but snapshot assembly failed on
+activity queries with 211 and 106 parameters. Turn hydration already chunked its
+reads, but recursive activity selection and its expanded ancestor graph still
+crossed Durable Object SQLite's 100-parameter ceiling.
+
+**Considered and rejected:** Capping activities would omit canonical state.
+Chunking these reads would require merging overlapping ancestor graphs and
+repeating active-activity selection; one JSON binding preserves the existing
+single-query selection and ordering without adding a product limit.
+
+**Consequences:** Keep the seed set and expanded interval set independent of
+parameter count.
+
+### 2026-10-22 — Classify handoffs against the admitted audience
+
+**What changed:** Follow-up messages read the participant count after participant
+access preparation and include accepted local recipients still awaiting message
+commit, before deciding whether the solo-conversation invocation shortcut applies.
+
+**Why:** Katherine's handoff to Anderson, explicitly telling Rally not to
+respond, started Rally because admission reused the old one-person count even
+after Anderson joined. Addressing never received that handoff.
+
+**Considered and rejected:** Preserving the pre-admission solo count, retained
+in #1364 to align participant-storage paths, made those paths consistently
+bypass the classifier for a message addressed to a newly added person.
+
+**Consequences:** Parent-owned participant admission completes before the
+invocation decision. Locally owned seats retain their atomic message commit;
+the decision includes those accepted recipients without an extra RPC or await.
+Ordinary messages with no new participants add no queries. Opening-message
+classification and the attachment, annotation and forced-run paths retain their
+existing rules; this change does not redefine those gates.
 
 ### 2026-10-21 — Preserve the opening feed when live authority replaces its preview
 

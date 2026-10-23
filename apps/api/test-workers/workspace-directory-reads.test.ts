@@ -17,7 +17,7 @@
 
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   asSpaceId,
@@ -700,6 +700,39 @@ describe("what the workspace object answers about its work streams", () => {
       expect(JSON.parse(String((await initial).data))).toMatchObject({ type: "workspace_sync" });
       return response.webSocket;
     }
+
+    it("serves UUIDv4 common and viewer state on the real socket and warns about their origin", async () => {
+      const workstreamId = await seedWorkstream({ title: "Historical identities", lastActivityAt: "2026-10-23T00:00:00.000Z" });
+      const commonEventId = "00000000-0000-4000-8000-000000000901";
+      const viewerEventId = "00000000-0000-4000-8000-000000000902";
+      await runInDurableObject(workspace(), (instance, state) => {
+        state.storage.sql.exec("UPDATE channels SET source_event_id = ? WHERE workstream_id = ?", commonEventId, workstreamId);
+        state.storage.sql.exec("UPDATE channel_viewers SET source_event_id = ? WHERE workstream_id = ? AND user_id = ?", viewerEventId, workstreamId, OWNER);
+        const host = instance as unknown as { env: { LOG_LEVEL: string } };
+        host.env = new Proxy(host.env, { get: (target, key, receiver) => key === "LOG_LEVEL" ? "warn" : Reflect.get(target, key, receiver) });
+      });
+      const page = await workspace().listWorkstreams({ workspaceId: WORKSPACE_ID, userId: OWNER, includeSystem: false, limit: 50 });
+      expect(page.stateVersions).toEqual([expect.objectContaining({ workstreamId, commonEventId, viewerEventId })]);
+      const warnings = vi.spyOn(console, "warn");
+      let socket: WebSocket | undefined;
+      try {
+        socket = await connect(OWNER, "000000000903");
+        const answer = nextMessage(socket);
+        socket.send(JSON.stringify({ type: "list_workstreams", requestId: "00000000-0000-7000-8000-000000000904", limit: 50, includeSystem: false }));
+        expect(JSON.parse(String((await answer).data))).toMatchObject({
+          type: "workspace_workstream_page", stateVersions: [expect.objectContaining({ workstreamId, commonEventId, viewerEventId })],
+        });
+        for (const [field, eventId] of [["commonEventId", commonEventId], ["viewerEventId", viewerEventId]]) {
+          expect(warnings).toHaveBeenCalledWith(expect.objectContaining({
+            event: "workspace_directory_non_v7_event_id", field, event_id: eventId,
+            workspace_id: WORKSPACE_ID, workstream_id: workstreamId, uuid_version: "4",
+          }));
+        }
+      } finally {
+        socket?.close();
+        warnings.mockRestore();
+      }
+    });
 
     it("caps a personal row at three newest participant ids and an overflow", async () => {
       await admitExtraMembers();

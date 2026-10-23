@@ -19,7 +19,7 @@ import {
 } from "@rally/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
-import { clientReadsResolutionSuggestions } from "../lib/client-contract";
+import { clientReadsPendingAccessRequests, clientReadsResolutionSuggestions } from "../lib/client-contract";
 import { ApiError } from "../lib/api-error";
 import { requestDeferral } from "../lib/defer";
 import { workspaceRealtimeInvalidation } from "../middleware/workspace-realtime";
@@ -44,6 +44,7 @@ const parentParam = z.object({ parentId: IdSchema });
 const resourceParam = parentParam.extend({ resourceId: IdSchema });
 const resourceBody = z.object({ resourceId: IdSchema });
 const substreamSocketParam = parentParam.extend({ substreamId: z.union([z.literal("0"), IdSchema]) });
+const LegacyConversationAccessPreviewSchema = ConversationAccessPreviewSchema.omit({ requestPending: true, requestEmailed: true });
 /**
  * `ticketId` is part of the response so the desktop can print the id the room
  * will report consuming — a socket upgrade carries no request id of its own, so
@@ -249,9 +250,11 @@ conversationRoutes.post("/:parentId/substreams/:substreamId/participants", zVali
  */
 conversationRoutes.get("/:parentId/substreams/:substreamId/access-preview", zValidator("param", substreamSocketParam), async (c) => {
   const param = c.req.valid("param");
-  return c.json(ConversationAccessPreviewSchema.parse(
-    await new ConversationAccessRequestService(c.env, getWorkspaceAuth(c)).preview(param.parentId, param.substreamId),
-  ));
+  const preview = await new ConversationAccessRequestService(c.env, getWorkspaceAuth(c)).preview(param.parentId, param.substreamId);
+  if (clientReadsPendingAccessRequests((name) => c.req.header(name))) {
+    return c.json(ConversationAccessPreviewSchema.parse(preview));
+  }
+  return c.json(LegacyConversationAccessPreviewSchema.parse(preview));
 });
 /** The approver settles a request from the app: the attention menu's buttons, or the menu bar's modal. */
 conversationRoutes.post("/access-requests/:requestId/:decision", zValidator("param", z.strictObject({

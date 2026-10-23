@@ -2715,7 +2715,8 @@ export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
   }
 });
 
-const WorkstreamStateEventIdSchema = IdSchema.refine((value) => value[14] === "7", "must be UUIDv7");
+// New publishers use UUIDv7; historical event identities remain valid UUIDs.
+const WorkstreamStateEventIdSchema = IdSchema;
 
 /**
  * Coordinates one complete work-stream UI snapshot across its two authorities.
@@ -2724,8 +2725,9 @@ const WorkstreamStateEventIdSchema = IdSchema.refine((value) => value[14] === "7
  * `viewerWaterline` orders the authenticated user's row. They are deliberately
  * independent: Cloudflare Queues is unordered, so advancing one must never
  * cause a delayed update for the other to be discarded. Each field carries
- * the UUIDv7 identity of its own state row unchanged over both socket paths;
- * those IDs are time-sortable traces, not a distributed total-order clock.
+ * the UUID identity of its own state row unchanged over both socket paths.
+ * New IDs are UUIDv7 traces; historical UUIDs remain valid. The waterlines,
+ * rather than an ID's version or timestamp, determine ordering.
  */
 export const WorkstreamStateVersionSchema = z.strictObject({
   commonEventId: WorkstreamStateEventIdSchema,

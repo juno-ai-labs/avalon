@@ -538,6 +538,12 @@ Google identity and connector authorization are separate. Connector authorizatio
 
 The capability check is enforced for every tool invocation.
 
+Sheets value reads set `truncated` when rows, cells or cell text are shortened.
+`cellTextTruncated` distinguishes shortened text: smaller ranges cannot recover
+that cell's full value. The existing per-cell and response limits are unchanged;
+shortened text does not discard following rows.
+
+
 Every Google tool parses its arguments with a strict schema, so an undeclared key is an error naming the key rather than a silently dropped intent, and every list-shaped result returns `items` with an optional `nextPageToken` so one tool's shape generalizes to the rest. Header hydration degrades per hit: a message that cannot be fetched — deleted or refused — keeps its identifiers and reports `headersUnavailable`, so one rate-limited hit in a fan-out of up to fifty costs that row rather than the whole search. A revoked grant is the exception and is raised, because reporting it per row would read as an empty mailbox rather than a connection to reconnect. Address headers are truncated at the end of the last address that fits, never mid-address, because a fragment cut inside a domain still parses as an address and would be reported as a real correspondent.
 
 Google always exposes two logical plugins: **Google Mail + Calendar** and
@@ -657,7 +663,7 @@ Every tool that returns something a person can open returns it as **`webUrl`** �
 
 `google_drive_download` also reads Word, Excel, PowerPoint and PDF files stored in Drive, through the registry's document reader (see [Reading provider files](#reading-provider-files)). `fileType` accepts `word`, `excel`, and `powerpoint`, and a Docs or Sheets tool handed one of those ids fails as `wrong_id_family` naming `drive.download`.
 
-Docs and Sheets operations use their native provider APIs. Docs reads return bounded document structure and text; writes create a document, append plain text, or replace exact text. Sheets reads return bounded spreadsheet metadata or formatted values from an explicit A1 range; writes create a spreadsheet or update/append bounded row values. Drive download/export remains available for file-oriented retrieval, but it does not replace the native Docs and Sheets operations.
+Docs and Sheets operations use their native provider APIs. Docs reads return bounded document structure and text; writes create a document, append plain text, or replace exact text. Sheets reads return bounded spreadsheet metadata or formatted values from an explicit A1 range; writes create a spreadsheet or update/append bounded row values. Drive download/export and Docs reads page their text; [connector text pages](connector-text-pages.md) owns file-type routing, export refusals, snapshot storage, and source versus page budgets.
 
 The production-approved Google scope set uses `drive.readonly` for Drive discovery and native Docs/Sheets reads, and `drive.file` for native writes. Newly created Docs and Sheets can be edited. An existing file is writable only after it has been explicitly opened with Rally under Google's per-file authorization model; an arbitrary existing file discovered through Drive search remains read-only. Drive search and metadata results expose `isAppAuthorized`, `canEdit`, and the derived `writableByRally`; Docs/Sheets update tools preflight the same metadata and fail without attempting a mutation when the user cannot edit the file. When the user can edit but `isAppAuthorized` is false, the failure also carries the generic `connector_resource_authorization` recovery descriptor. The desktop opens the provider's resource-grant flow, and a successful callback appends an ordinary user-authored `Document “<name>” was authorized.` message. That visible message, not hidden tool replay, starts the continuation run. The generic host contract contains connection, capability, operation, resource, and conversation identity; the connector adapter alone owns provider URL construction and post-callback verification. Google is the first adapter and uses its one-file Picker flow. The preflight is a fail-closed model-guidance and user-experience guard, not the security boundary: Google enforces the current authorization again when it receives the mutation.
 
@@ -1677,6 +1683,22 @@ interruption, so it stays unresolved instead of risking a second event. Old
 creates without a recorded provider key cannot use this recovery path.
 
 ## Changelog
+
+### 2026-10-22 — Report shortened Sheets cell text
+
+**What changed:** Sheets reads include shortened cell strings in `truncated` and
+expose `cellTextTruncated`, while preserving subsequent cells and rows.
+
+**Why:** The previous flag covered dropped rows and cells but silently ignored
+text shortening. An agent could accept incomplete copy as a complete source and
+pass field validation against that shortened input. Extra skill instructions
+could not detect information the connector never exposed.
+
+**Consequences:** Existing limits remain unchanged. Callers can distinguish a
+range that can be split from a shortened cell that requires a complete alternate
+source or an explicit report of missing data.
+
+Pull request: [#1421](https://github.com/juno-ai-labs/avalon/pull/1421).
 
 ### 2026-10-22 — Admit Sidekick events through explicit delegation
 

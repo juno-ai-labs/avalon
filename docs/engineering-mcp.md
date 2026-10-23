@@ -270,14 +270,19 @@ because the person may open its parent Thread.
 
 ### D1
 
-`run_d1_sql` runs SQL against four of the five D1 databases the regional API
-Worker binds: `DB`, `TELEMETRY_DB`, `USAGE_DB` and `PLATFORM_DB`. `AUDIT_DB`
+`run_d1_sql` runs SQL against five of the six D1 databases the regional API
+Worker binds: `DB`, `TELEMETRY_DB`, `USAGE_DB`, `PLATFORM_DB` and
+`MESSAGE_ISSUES_DB` (Oopsie message issue reports). `AUDIT_DB`
 is left out: it records privileged actions such as impersonation and support
 access, D1 offers no read-only binding, and this Worker's log does not record
 the SQL it ran, so a write there would erase the record without leaving one.
 The caller names the region and the binding, and the bridge's `runD1Sql` runs
 the statement through that binding. `PLATFORM_DB` is one database every region
 binds, so any region reaches the same rows.
+
+`MESSAGE_ISSUES_DB` holds Oopsie reports in the submitting Organization's region
+(only `global` today); the report columns and provenance are documented in
+[message issues](message-issues.md#data-model).
 
 The result has the Durable Object tools' shape, with two differences D1
 forces. D1 returns rows as objects, so `columns` comes from the first row and is
@@ -489,6 +494,10 @@ all-visible mode, per-kind pagination and independent child visibility.
 on real WorkspaceDO and SubstreamAgent instances under workerd.
 It proves bound writes, reads, SQLite metadata, and BLOB serialization.
 
+`apps/api/test-workers/engineering-d1-inspection.test.ts` proves binding-selected
+D1 writes and reads, including `MESSAGE_ISSUES_DB`, and that `AUDIT_DB` is refused
+before execution.
+
 `apps/api/test-workers/engineering-workspace-inspection.test.ts` proves that a
 workspace is inventoried as active, resolves at the open generation, and
 and executes against its initialized WorkspaceDO from regional identity alone.
@@ -597,6 +606,15 @@ each selected model's configured default; an explicit value applies to the
 primary and fallbacks. Ace owns validation and the atomic write.
 
 ## Changelog
+
+### 2026-10-23 — Inspect Oopsie reports through the D1 console
+
+Added `MESSAGE_ISSUES_DB` to the shared D1 allowlist and tool description because
+Oopsie reports have their own regional store but the console still admitted
+only the earlier databases. Reuse the existing binding-selected SQL path rather
+than adding a separate report tool or copying feedback into another database.
+Deploy the regional API bridge before the MCP Worker so both accept the new
+binding; the audit database remains excluded.
 
 ### 2026-10-22 — Advertise purpose and operator guidance in initialization
 

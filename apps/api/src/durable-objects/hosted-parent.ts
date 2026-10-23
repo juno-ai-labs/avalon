@@ -282,7 +282,7 @@ export function visiblePrivateChildren(
       ...(child.resolved === 1 ? { resolved: true } : {}),
       ...(child.effect_json
         ? (() => {
-          const common = WorkstreamDirectoryCommonEffectSchema.parse(JSON.parse(child.effect_json));
+          const common = parseRpcInput(WorkstreamDirectoryCommonEffectSchema, JSON.parse(child.effect_json), "directory_common_projection");
           return {
             ...(common.appearance ? { appearance: common.appearance } : {}),
             harnessStatus: harnessStatus(common.state),
@@ -292,7 +292,7 @@ export function visiblePrivateChildren(
         : {}),
       ...(child.user_effect_json
         ? (() => {
-          const viewer = WorkstreamDirectoryUserEffectSchema.parse(JSON.parse(child.user_effect_json));
+          const viewer = parseRpcInput(WorkstreamDirectoryUserEffectSchema, JSON.parse(child.user_effect_json), "directory_user_projection");
           return { unreadCount: viewer.unreadCount, youAreMentioned: viewer.youAreMentioned, unseen: viewer.unseen ?? false };
         })()
         : {}),
@@ -977,7 +977,7 @@ export class HostedParent {
       `SELECT effect_json FROM parent_child_projections WHERE parent_id = ? AND substream_id = '0'`,
       this.parentId,
     ));
-    return row ? WorkstreamDirectoryCommonEffectSchema.parse(JSON.parse(row.effect_json)) : null;
+    return row ? parseRpcInput(WorkstreamDirectoryCommonEffectSchema, JSON.parse(row.effect_json), "directory_common_projection") : null;
   }
 
   /**
@@ -1028,7 +1028,7 @@ export class HostedParent {
       `SELECT effect_json FROM parent_child_viewer_projections WHERE parent_id = ? AND substream_id = '0' AND user_id = ?`,
       this.parentId, userId,
     ));
-    return row ? WorkstreamDirectoryUserEffectSchema.parse(JSON.parse(row.effect_json)) : null;
+    return row ? parseRpcInput(WorkstreamDirectoryUserEffectSchema, JSON.parse(row.effect_json), "directory_user_projection") : null;
   }
 
   /**
@@ -2197,12 +2197,12 @@ export class HostedParent {
     const facts = this.conversationReadFacts(request);
     const projections = new Map(this.sql.exec<{ substream_id: string; effect_json: string }>(
       "SELECT substream_id, effect_json FROM parent_child_projections WHERE parent_id = ?", this.parentId,
-    ).toArray().map((row) => [row.substream_id, WorkstreamDirectoryCommonEffectSchema.parse(JSON.parse(row.effect_json))]));
+    ).toArray().map((row) => [row.substream_id, parseRpcInput(WorkstreamDirectoryCommonEffectSchema, JSON.parse(row.effect_json), "directory_common_projection")]));
     const viewerProjections = request.includeAttention
       ? new Map(this.sql.exec<{ substream_id: string; effect_json: string }>(
         "SELECT substream_id, effect_json FROM parent_child_viewer_projections WHERE parent_id = ? AND user_id = ?",
         this.parentId, request.userId,
-      ).toArray().map((row) => [row.substream_id, WorkstreamDirectoryUserEffectSchema.parse(JSON.parse(row.effect_json))]))
+      ).toArray().map((row) => [row.substream_id, parseRpcInput(WorkstreamDirectoryUserEffectSchema, JSON.parse(row.effect_json), "directory_user_projection")]))
       : null;
     const conversations = this.sql.exec<{
       substream_id: string; title: string | null; archived_at: number | null; audience: "restricted" | "inherits_workstream";

@@ -42,7 +42,8 @@ describe("authored connector pagination contracts", () => {
   // Enumerate declarations, not a second list of paginated tools: a new marker
   // without an executor continuation must fail this sweep.
   for (const adapter of adapters) {
-    for (const definition of adapter.manifest.tools.filter((tool) => tool.pagination)) {
+    // Text snapshots have no provider cursor; google-file-text.test.ts exercises their pages.
+    for (const definition of adapter.manifest.tools.filter((tool) => tool.pagination && tool.pagination.cursorParameter !== "textPage")) {
       it(`${adapter.manifest.type}.${definition.name} preserves and sends a real continuation`, async () => {
         requests.length = 0;
         const connection = authorizedConnection({ id: "connection", workspaceId, scope: "workspace", ownerUserId: null,

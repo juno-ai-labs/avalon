@@ -24,7 +24,7 @@ const ShortTextSchema = z.string().max(500);
 export const WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT = 10_000;
 
 /** A child's, or a parent's aggregated, common state. */
-export const WorkstreamDirectoryCommonEffectSchema = z.strictObject({
+export const WorkstreamDirectoryCommonEffectSchema = z.object({
   kind: z.literal("directory_common"),
   /** Internal classification for a parent's aggregate running-agent count. */
   backgroundAgent: z.boolean().optional(),
@@ -53,7 +53,7 @@ export const WorkstreamDirectoryCommonEffectSchema = z.strictObject({
   nextWakeupDueAt: NullableTimestampSchema.optional(),
   nextWakeupPrompt: z.string().max(500).nullable().optional(),
   nextTerminalActionAt: NullableTimestampSchema.optional(),
-  resourceLinks: z.array(z.strictObject({
+  resourceLinks: z.array(z.object({
     resourceId: IdSchema,
     watchEnabled: z.boolean(),
     relationshipType: ResourceRelationshipTypeSchema,
@@ -63,7 +63,7 @@ export const WorkstreamDirectoryCommonEffectSchema = z.strictObject({
    * the Channel rail's list. Absent on an envelope written before it existed.
    */
   sidekickAttachmentIds: z.array(IdSchema).optional(),
-  attachmentReservationReleases: z.array(z.strictObject({
+  attachmentReservationReleases: z.array(z.object({
     inputId: IdSchema,
     resourceId: IdSchema,
   })).max(WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT).optional(),
@@ -71,7 +71,7 @@ export const WorkstreamDirectoryCommonEffectSchema = z.strictObject({
   updatedAt: TimestampSchema.optional(),
 });
 
-export const WorkstreamDirectoryUserEffectSchema = z.strictObject({
+export const WorkstreamDirectoryUserEffectSchema = z.object({
   kind: z.literal("directory_user"),
   userId: IdSchema,
   isParticipant: z.boolean(),

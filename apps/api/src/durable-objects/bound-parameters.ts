@@ -8,6 +8,8 @@
  * A read that expands a caller's id list into `IN (?, ?, …)` therefore has a
  * size past which the statement is refused outright, and the failure is the
  * whole read rather than a truncated one.
+ * A statement that must stay whole, such as a recursive CTE, can instead bind
+ * the list as one JSON array and expand it through `json_each(?)`.
  *
  * That is a real ceiling rather than a defensive choice, which is why this
  * constant is not the team's to set: the only decision here is the margin
