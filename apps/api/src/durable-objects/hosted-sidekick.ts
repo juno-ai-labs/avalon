@@ -64,7 +64,7 @@ import {
 } from "@rally/contracts/conversation-parent";
 
 import type { Env } from "../env";
-import { ApiError } from "../lib/api-error";
+import { ApiError, asApiError } from "../lib/api-error";
 import { connectorPluginBindingViews } from "../lib/connector-plugin-views";
 import { connectorActivityTriggerDescriptors, storedConnectionScope } from "../lib/connector-activity-triggers";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
@@ -76,7 +76,10 @@ import { uuidV7 } from "../lib/uuid-v7";
 import { logWarn } from "../observability/logger";
 import { ConversationAuthorizationRequestSchema, type ConversationAuthorizationRequest } from "../services/authorization-policy";
 import { validateDraftEvaluatorRules } from "../services/external-event-evaluator";
-import { materializeAutomationMemoryTables } from "../services/memory-table-service";
+import {
+  automationMemoryTableResult, prepareAutomationMemoryTables, type PreparedAutomationMemoryTable,
+} from "../services/memory-table-service";
+import { createWorkspaceMemoryTable, ensureWorkspaceMemoryScope } from "./workspace-memory-storage";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 import {
   AutomationActorRequestSchema,
@@ -131,9 +134,9 @@ import { SCHEDULED_ALARM_RETRY_BASE_MS, scheduledAlarmRetryDelay, type Scheduled
  *
  * Every change to what the Sidekick has registered (publish, pause, resume,
  * remove, its home's archive) commits the definition row, the schedules, their
- * alarm entries and the connector registrations in one transaction. The one
- * effect that cannot join it, declared memory tables, is a stored alarm entry
- * armed in that transaction. `docs/automation-lifecycle.md` owns the lifecycle;
+ * alarm entries, connector registrations and declared memory tables in one
+ * transaction. Hash preparation may yield; table compatibility and metadata
+ * reconciliation are synchronous at commit. `docs/automation-lifecycle.md` owns the lifecycle;
  * `docs/hosted-conversation-parents.md` owns the hosting.
  */
 
@@ -660,8 +663,8 @@ export class HostedSidekick {
    * revision, replaces the schedules and their alarm entries, and replaces the
    * connector registrations. A registration that cannot be written fails the
    * whole change, so a Sidekick is never active with its registrations
-   * missing. Declared memory tables are owed by a stored entry armed in the
-   * same transaction, and attempted once straight after it.
+   * missing. Declared memory tables and their metadata commit in that same
+   * transaction; a conflict preserves the previously accepted revision.
    *
    * A paused Sidekick keeps its pause: only `resume` lifts it. An archived
    * Sidekick refuses edits and cannot be activated again.
@@ -690,14 +693,18 @@ export class HostedSidekick {
       workspaceId: row.workspace_id,
       automationSubscriptionId: row.automation_id,
     }) : { emailAddress: row.email_address };
+    const memory = await this.prepareMemoryTables(row, revision.definition_revision, definition);
     const now = Date.now();
     this.storage.transactionSync(() => {
       const current = this.row();
       if (!current || current.current_definition_revision !== revision.definition_revision
         || current.lifecycle !== row.lifecycle || current.run_as_user_id !== row.run_as_user_id
-        || current.scope !== row.scope || current.owning_room_archived_at !== row.owning_room_archived_at) {
+        || current.scope !== row.scope || current.owning_room_archived_at !== row.owning_room_archived_at
+        || current.accepted_definition_revision !== row.accepted_definition_revision) {
         throw new ApiError(409, "sidekick_revision_changed", "The Sidekick changed while saving; retry the latest revision");
       }
+      this.commitMemoryTables(row, memory, now);
+      this.host.alarms.cancelByKeyPrefix([SIDEKICK_MEMORY_TABLES_ALARM_KIND], `${this.sidekickId}:`);
       const paused = current.lifecycle === "paused";
       this.replaceSchedules(revision.definition_revision, prepared.schedules, paused, now);
       this.sql.exec(
@@ -718,23 +725,9 @@ export class HostedSidekick {
         this.sidekickId,
       );
       const effectiveAfter = this.writeRegistrations(paused ? [] : prepared.evaluators);
-      if (definition.triggers.length > 0 && definition.memoryTables.length > 0) {
-        this.host.alarms.schedule({
-          kind: SIDEKICK_MEMORY_TABLES_ALARM_KIND,
-          key: sidekickAlarmKey(this.sidekickId, String(revision.definition_revision)),
-          dueAt: now,
-        }, now);
-      }
       this.touchDirectory(now, effectiveAfter);
     });
     await this.host.afterRegistrations(this.sidekickId, revision.definition_revision, prepared.evaluators);
-    await this.materializeMemoryTables(revision.definition_revision).catch((error: unknown) => {
-      // The stored entry retries on its own backoff; the publish has committed.
-      logWarn(this.env, "sidekick_memory_tables_deferred", {
-        ...this.logFields(), definition_revision: revision.definition_revision,
-        code: error instanceof Error ? error.message : "sidekick_memory_tables_failed",
-      });
-    });
     return this.detail(request.actor.userId);
   }
 
@@ -1483,7 +1476,17 @@ export class HostedSidekick {
     }
     if (alarm.kind === AUTOMATION_RUN_ALARM_KIND) return this.startRun(innerKey, alarm.attempt);
     if (alarm.kind === SIDEKICK_MEMORY_TABLES_ALARM_KIND) {
-      await this.materializeMemoryTables(Number(innerKey));
+      try {
+        await this.materializeMemoryTables(Number(innerKey));
+      } catch (error) {
+        const permanent = asApiError(error);
+        if (permanent?.details?.retryable !== false) throw error;
+        this.host.alarms.cancel(SIDEKICK_MEMORY_TABLES_ALARM_KIND, alarm.key);
+        logWarn(this.env, "sidekick_memory_tables_rejected", {
+          ...this.logFields(), definition_revision: Number(innerKey), code: permanent.code,
+          diagnostic_code: permanent.diagnosticCode, retryable: false,
+        });
+      }
       return { progressed: true };
     }
     throw new Error(`sidekick_unknown_alarm_kind:${alarm.kind}`);
@@ -1657,6 +1660,42 @@ export class HostedSidekick {
     });
   }
 
+  private async prepareMemoryTables(row: HostedSidekickRow, definitionRevision: number, definition: AutomationDraft) {
+    const scopeId = first(this.sql.exec<{ memory_scope_id: string }>(
+      `SELECT memory_scope_id FROM memory_scopes WHERE workspace_id = ? AND kind = 'sidekick' AND owner_id = ?`,
+      row.workspace_id, this.sidekickId,
+    ))?.memory_scope_id ?? uuidV7();
+    const tables = await prepareAutomationMemoryTables({
+      workspaceId: row.workspace_id, automationId: this.sidekickId,
+      definitionRevision, runAsUserId: row.run_as_user_id,
+      memoryScopeId: scopeId, tables: definition.triggers.length > 0 ? definition.memoryTables : [],
+    });
+    return { scopeId, tables };
+  }
+
+  private commitMemoryTables(
+    row: HostedSidekickRow,
+    { scopeId, tables }: { scopeId: string; tables: PreparedAutomationMemoryTable[] },
+    now: number,
+  ): void {
+    if (tables.length > 0) {
+      const scope = ensureWorkspaceMemoryScope(this.storage, {
+        workspaceId: row.workspace_id, proposedScopeId: scopeId, kind: "sidekick", ownerId: this.sidekickId,
+        at: new Date(now).toISOString(),
+      });
+      if (scope.memoryScopeId !== scopeId) {
+        throw new ApiError(409, "sidekick_memory_scope_changed", "The Sidekick's memory scope changed while saving; retry publication.");
+      }
+      for (const [index, { request: table, legacyInputHash }] of tables.entries()) {
+        let outcome = createWorkspaceMemoryTable(this.storage, table);
+        if (outcome.outcome === "receipt_mismatch") outcome = createWorkspaceMemoryTable(this.storage, {
+          ...table, mutation: { ...table.mutation, inputHash: legacyInputHash },
+        });
+        automationMemoryTableResult(outcome, table, index);
+      }
+    }
+  }
+
   /**
    * Materialize the memory tables an accepted revision declares. A revision
    * that is no longer the accepted one owes nothing, so an older publish never
@@ -1671,16 +1710,14 @@ export class HostedSidekick {
     const revision = this.revision(definitionRevision);
     if (!revision) throw new Error("sidekick_accepted_revision_missing");
     const definition = AutomationDraftSchema.parse(JSON.parse(revision.definition_json));
-    if (definition.triggers.length > 0) {
-      await materializeAutomationMemoryTables(this.env, {
-        workspaceId: row.workspace_id,
-        automationId: row.automation_id,
-        definitionRevision,
-        runAsUserId: row.run_as_user_id,
-        tables: definition.memoryTables,
-      });
-    }
-    this.host.alarms.cancel(SIDEKICK_MEMORY_TABLES_ALARM_KIND, sidekickAlarmKey(this.sidekickId, String(definitionRevision)));
+    const memory = await this.prepareMemoryTables(row, definitionRevision, definition);
+    this.storage.transactionSync(() => {
+      const current = this.row();
+      if (current && current.lifecycle !== "deleted" && current.accepted_definition_revision === definitionRevision) {
+        this.commitMemoryTables(current, memory, Date.now());
+      }
+      this.host.alarms.cancel(SIDEKICK_MEMORY_TABLES_ALARM_KIND, sidekickAlarmKey(this.sidekickId, String(definitionRevision)));
+    });
   }
 
   // ---------------------------------------------------------------------------

@@ -20,12 +20,15 @@ import {
   WorkspaceMemoryTableRowListSchema,
   WorkspaceMemoryTableSearchResultSchema,
   WorkspaceMemoryTableWriteResultSchema,
+  type WorkspaceMemoryTableCreateRequest,
+  type WorkspaceMemoryTableCreateResult,
   type WorkspaceMemoryTableCell,
   type WorkspaceMemoryTableColumn,
   type WorkspaceMemoryTableFilter,
   type WorkspaceMemoryTableRow,
   type WorkspaceMemoryTableRowRecord,
 } from "../durable-objects/workspace-memory-protocol";
+import { memoryTableSchemaRecovery, publicMemoryTable } from "../durable-objects/memory-table-definition";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import {
   MEMORY_SCOPE_KINDS,
@@ -137,7 +140,7 @@ class MemoryTableToolError extends Error {
   constructor(
     readonly code: string,
     message: string,
-    readonly details: { reason: string },
+    readonly details: { reason: string; field?: string; retryable?: boolean },
   ) {
     super(message);
   }
@@ -230,7 +233,7 @@ function decodeCursor(cursor: string | undefined): { offset: number; dataRevisio
  *
  * Produced by {@link automationScopeMemoryTables} from whatever lives in the
  * automation's memory scope: the tables its definition declared, created at
- * apply by {@link materializeAutomationMemoryTables}, and any a run made for
+ * apply from {@link prepareAutomationMemoryTables}, and any a run made for
  * itself with the `create` tool.
  */
 export interface MaterializedMemoryTable {
@@ -276,27 +279,7 @@ async function loadAuthorizedTable(
 }
 
 function publicTable(table: AuthorizedTable) {
-  const keyIds = new Set(table.keyColumns.map((column) => column.memoryTableColumnId));
-  return {
-    memoryTableId: table.table.memoryTableId,
-    memoryScopeId: table.table.memoryScopeId,
-    scopeKind: table.table.scopeKind,
-    name: table.table.name,
-    description: table.table.description,
-    usageInstructions: table.table.usageInstructions,
-    schemaRevision: table.table.schemaRevision,
-    dataRevision: table.table.dataRevision,
-    keyColumns: table.keyColumns.map((column) => column.name),
-    columns: table.columns.map((column) => ({
-      memoryTableColumnId: column.memoryTableColumnId,
-      name: column.name,
-      description: column.description,
-      type: column.valueType,
-      required: column.isRequired,
-      searchable: column.isSearchable,
-      key: keyIds.has(column.memoryTableColumnId),
-    })),
-  };
+  return publicMemoryTable(table.table, table.columns);
 }
 
 function compactTable(table: AuthorizedTable) {
@@ -674,19 +657,6 @@ async function queryTable(env: Env, input: WorkstreamWorkflowInput, raw: unknown
   };
 }
 
-function tableSchemaMatches(table: AuthorizedTable, declaration: z.infer<typeof CreateSchema>): boolean {
-  const keyNames = table.keyColumns.map((column) => column.name.toLocaleLowerCase());
-  return table.table.description === declaration.description
-    && table.table.usageInstructions === declaration.usageInstructions
-    && stableJson(keyNames) === stableJson(declaration.keyColumns.map((name) => name.toLocaleLowerCase()))
-    && stableJson(table.columns.map((column) => ({
-      name: column.name.toLocaleLowerCase(),
-      description: column.description,
-      type: column.valueType,
-      required: column.isRequired,
-      searchable: column.isSearchable,
-    }))) === stableJson(declaration.columns.map((column) => ({ ...column, name: column.name.toLocaleLowerCase() })));
-}
 
 async function createTable(
   env: Env,
@@ -772,26 +742,17 @@ async function createTable(
     }),
     at,
   }));
-  if (outcome.outcome === "replayed") {
+  if (outcome.outcome === "replayed" || outcome.outcome === "opened") {
     const recorded = JSON.parse(outcome.resultJson) as Record<string, unknown>;
-    return { output: recorded, summary: `Created durable table “${args.name}”`, providerOperationId: String(recorded.memoryTableId) };
+    return { output: recorded, summary: `${outcome.outcome === "opened" ? "Opened" : "Created"} durable table “${args.name}”`, providerOperationId: String(recorded.memoryTableId) };
   }
   if (outcome.outcome === "receipt_mismatch") throw new Error("memory_table_mutation_receipt_mismatch");
-  if (outcome.outcome === "name_exists") {
-    const existing = await loadAuthorizedTable(env, input, outcome.memoryTableId, true);
-    if (!tableSchemaMatches(existing, args)) throw new Error("memory_table_name_schema_conflict");
-    const opened = publicTable(existing);
-    await workspace.recordMemoryTableOpenReceipt({
-      workspaceId: input.workspaceId,
-      memoryTableId: existing.table.memoryTableId,
-      memoryScopeId: scope.memoryScopeId,
-      mutation: mutationRecord(input, {
-        mutationId, receiptId, operation: "create", rationale: args.rationale,
-        inputHash, mutation: args, result: opened,
-      }),
-      at: nowIso(),
-    });
-    return { output: opened, summary: `Opened durable table “${args.name}”`, providerOperationId: existing.table.memoryTableId };
+  if (outcome.outcome === "schema_conflict") {
+    throw new MemoryTableToolError("memory_table_name_schema_conflict",
+      `Table “${args.name}” already exists; incompatible fields: ${outcome.fields.join(", ")}.`,
+      // Only reason/field/retryable survive the harness failure envelope;
+      // put the concrete recovery call (including its ID) in reason.
+      { field: outcome.fields[0]!, retryable: false, reason: memoryTableSchemaRecovery(outcome.memoryTableId) });
   }
   return { output: result, summary: `Created durable table “${args.name}”`, providerOperationId: memoryTableId };
 }
@@ -1224,7 +1185,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
               enum: MEMORY_SCOPE_KINDS,
               description: "How long the table should outlive this run, narrowest first: `workstream` for this thread alone, `sidekick` for future runs of this installed Sidekick, `user` for one person, `workspace` for everyone in the organization. Not every run authorizes every kind; a refusal names the ones this run does have.",
             },
-            name: { type: "string", description: "A short name for the table, for example \"Reviewed repositories\". A table already under this name in the chosen scope is reopened rather than duplicated, but only when this call declares it identically — same description, usage instructions, key columns, and columns. Any other difference is refused as a name conflict, and since columns cannot be added to a table later, a table that turns out to be too narrow needs a new name rather than a re-create." },
+            name: { type: "string", description: "A short name for the table, for example \"Reviewed repositories\". A table already under this name in the chosen scope is reopened when its schema matches: column names, types, required/searchable flags, and ordered key columns. Reopening overwrites description, usage instructions, and column descriptions for every run sharing that table, without changing rows or IDs. On a schema conflict, call table_describe with the returned memoryTableId and reuse that schema, or choose a new name and explicitly migrate rows. Do not retry unchanged." },
             description: { type: "string", description: "What the table holds and why it exists, in a sentence or two. This is what table_search matches, so write the words someone would look for." },
             usageInstructions: { type: "string", description: "How a later run should use this table: when to insert, when to update, and what each unusual column means. Write it for a run that has never seen this table and cannot ask you." },
             columns: { type: "array", items: columnJsonSchema, description: "The table's columns, at least one. Columns cannot be added or renamed afterwards, so declare the ones the work will need rather than the minimum for the first row." },
@@ -1348,21 +1309,25 @@ export const __memoryTableTesting = {
  * table: a revision that stops declaring one leaves it and its rows in the
  * scope.
  */
-export async function materializeAutomationMemoryTables(
-  env: Env,
-  input: {
-    workspaceId: string;
-    automationId: string;
-    definitionRevision: number;
-    runAsUserId: string;
-    tables: readonly AutomationMemoryTable[];
-  },
-): Promise<Array<{ name: string; memoryTableId: string; outcome: "created" | "opened" }>> {
-  if (input.tables.length === 0) return [];
-  const scope = await ensureScope(env, input.workspaceId, "sidekick", input.automationId, true);
-  const workspace = await workspaceMemoryObject(env, input.workspaceId);
+export interface AutomationMemoryTablesInput {
+  workspaceId: string;
+  automationId: string;
+  definitionRevision: number;
+  runAsUserId: string;
+  tables: readonly AutomationMemoryTable[];
+}
+
+export interface PreparedAutomationMemoryTable {
+  request: WorkspaceMemoryTableCreateRequest;
+  legacyInputHash: string;
+}
+
+/** Hashes and IDs may yield; every storage decision happens later at commit. */
+export async function prepareAutomationMemoryTables(
+  input: AutomationMemoryTablesInput & { memoryScopeId: string },
+): Promise<PreparedAutomationMemoryTable[]> {
   const harnessRunId = `automation-apply:${input.automationId}:${input.definitionRevision}`;
-  const results: Array<{ name: string; memoryTableId: string; outcome: "created" | "opened" }> = [];
+  const prepared: PreparedAutomationMemoryTable[] = [];
   for (const [index, declared] of input.tables.entries()) {
     const declaration = {
       scopeKind: "sidekick" as const,
@@ -1395,7 +1360,7 @@ export async function materializeAutomationMemoryTables(
       rationale: "Declared by the automation's definition",
     });
     const mutationId = await deterministicId("mtm", harnessRunId, receiptId);
-    const memoryTableId = await deterministicId("mtt", scope.memoryScopeId, declared.name.toLocaleLowerCase());
+    const memoryTableId = await deterministicId("mtt", input.memoryScopeId, declared.name.toLocaleLowerCase());
     const columns = declared.columns.map((column, position) => ({
       memoryTableColumnId: `${memoryTableId}:column:${position}`,
       name: column.name,
@@ -1419,10 +1384,10 @@ export async function materializeAutomationMemoryTables(
       mutationJson: JSON.stringify(declaration),
       resultJson: JSON.stringify({ memoryTableId, name: declared.name }),
     };
-    const create = async (hash: string) => WorkspaceMemoryTableCreateResultSchema.parse(await workspace.createMemoryTable({
+    prepared.push({ legacyInputHash, request: {
       workspaceId: input.workspaceId,
       memoryTableId,
-      memoryScopeId: scope.memoryScopeId,
+      memoryScopeId: input.memoryScopeId,
       name: declared.name,
       description: declared.description,
       usageInstructions: declared.usageInstructions,
@@ -1433,27 +1398,35 @@ export async function materializeAutomationMemoryTables(
         definitionRevision: input.definitionRevision,
       }),
       columns,
-      mutation: { ...mutation, inputHash: hash },
+      mutation,
       at: nowIso(),
-    }));
-    let outcome = await create(inputHash);
-    if (outcome.outcome === "receipt_mismatch") outcome = await create(legacyInputHash);
-    if (outcome.outcome === "receipt_mismatch") throw new Error("memory_table_mutation_receipt_mismatch");
-    if (outcome.outcome === "name_exists") {
-      const existing = await scopeTable(env, input.workspaceId, scope, outcome.memoryTableId);
-      if (!existing || !tableSchemaMatches(existing, declaration)) {
-        throw new ApiError(
-          422,
-          "sidekick_memory_table_conflict",
-          `A durable table named "${declared.name}" already exists in this Sidekick's memory with a different shape`,
-        );
-      }
-      results.push({ name: declared.name, memoryTableId: outcome.memoryTableId, outcome: "opened" });
-      continue;
-    }
-    results.push({ name: declared.name, memoryTableId, outcome: outcome.outcome === "replayed" ? "opened" : "created" });
+    } });
   }
-  return results;
+  return prepared;
+}
+
+/** The same permanent failure and recovery contract for publication and old alarms. */
+export function automationMemoryTableResult(
+  outcome: WorkspaceMemoryTableCreateResult,
+  request: WorkspaceMemoryTableCreateRequest,
+  index: number,
+): { name: string; memoryTableId: string; outcome: "created" | "opened" } {
+  if (outcome.outcome === "receipt_mismatch") {
+    throw new ApiError(422, "memory_table_mutation_receipt_mismatch",
+      "This table declaration's receipt belongs to different input. Submit a new Sidekick revision; do not retry this revision.",
+      { retryable: false, field: `memoryTables.${index}` },
+      `memory_table_mutation_receipt_mismatch:memoryTables.${index}`);
+  }
+  if (outcome.outcome === "schema_conflict") {
+    throw new ApiError(422, "sidekick_memory_table_conflict",
+      `Table “${request.name}” has incompatible fields: ${outcome.fields.join(", ")}. ${memoryTableSchemaRecovery(outcome.memoryTableId)}`,
+      { memoryTableId: outcome.memoryTableId, fields: outcome.fields.map((field) => `memoryTables.${index}.${field}`),
+        field: `memoryTables.${index}.${outcome.fields[0]}`, reason: memoryTableSchemaRecovery(outcome.memoryTableId), retryable: false },
+      `sidekick_memory_table_conflict:memoryTables.${index}.${outcome.fields[0]}`);
+  }
+  const memoryTableId = outcome.outcome === "created" ? request.memoryTableId
+    : String((JSON.parse(outcome.resultJson) as { memoryTableId: string }).memoryTableId);
+  return { name: request.name, memoryTableId, outcome: outcome.outcome === "created" ? "created" : "opened" };
 }
 
 /**

@@ -1,3 +1,4 @@
+import { memoryTableSchemaConflicts, publicMemoryTable } from "./memory-table-definition";
 import {
   WorkspaceMemoryReceiptResultSchema,
   WorkspaceMemoryScopeSchema,
@@ -18,7 +19,6 @@ import {
   type WorkspaceMemoryTableInsertRowsRequest,
   type WorkspaceMemoryTableInsertRowsResult,
   type WorkspaceMemoryTableInvalidateRowsRequest,
-  type WorkspaceMemoryTableOpenReceiptRequest,
   type WorkspaceMemoryTableQueryRequest,
   type WorkspaceMemoryTableQueryResult,
   type WorkspaceMemoryTableRequest,
@@ -420,15 +420,13 @@ function insertTableMutation(
   mutation: MutationRecord,
   resultJson: string,
   at: string,
-  onConflictIgnore = false,
 ): void {
   storage.sql.exec(
     `INSERT INTO memory_table_mutations
        (memory_table_mutation_id, receipt_id, memory_table_id, memory_scope_id,
         workspace_id, operation, actor_principal_json, harness_run_id, workstream_id,
         rationale, input_hash, mutation_json, result_json, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ${onConflictIgnore ? "ON CONFLICT(harness_run_id, receipt_id) DO NOTHING" : ""}`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     mutation.memoryTableMutationId ?? null,
     mutation.receiptId,
     memoryTableId,
@@ -490,10 +488,36 @@ export function createWorkspaceMemoryTable(
       request.name,
     ).toArray()[0];
     if (existing) {
-      return WorkspaceMemoryTableCreateResultSchema.parse({
-        outcome: "name_exists",
-        memoryTableId: existing.memory_table_id,
+      const found = workspaceMemoryTableWithColumns(storage, {
+        workspaceId: request.workspaceId, memoryTableId: existing.memory_table_id,
       });
+      if (found.outcome !== "found") throw new Error("memory_table_existing_missing");
+      const fields = memoryTableSchemaConflicts(found.table, found.columns, request);
+      if (fields.length > 0) return {
+        outcome: "schema_conflict", memoryTableId: existing.memory_table_id, fields,
+      };
+      storage.sql.exec(
+        `UPDATE memory_tables SET description = ?, usage_instructions = ?, last_mutation_id = ?, updated_at = ?
+          WHERE memory_table_id = ?`,
+        request.description, request.usageInstructions, request.mutation.memoryTableMutationId,
+        request.at, existing.memory_table_id,
+      );
+      const declaredByName = new Map(request.columns.map((column) => [column.name.toLocaleLowerCase(), column]));
+      for (const column of found.columns) {
+        const declared = declaredByName.get(column.name.toLocaleLowerCase())!;
+        storage.sql.exec(
+          `UPDATE memory_table_columns SET description = ? WHERE memory_table_column_id = ?`,
+          declared.description, column.memoryTableColumnId,
+        );
+      }
+      const resultJson = JSON.stringify(publicMemoryTable({ ...found.table,
+        description: request.description, usageInstructions: request.usageInstructions,
+      }, found.columns.map((column) => ({ ...column,
+        description: declaredByName.get(column.name.toLocaleLowerCase())!.description,
+      }))));
+      insertTableMutation(storage, request.workspaceId, existing.memory_table_id, request.memoryScopeId,
+        "create", request.mutation, resultJson, request.at);
+      return { outcome: "opened", memoryTableId: existing.memory_table_id, resultJson };
     }
     storage.sql.exec(
       `INSERT INTO memory_tables
@@ -536,21 +560,6 @@ export function createWorkspaceMemoryTable(
     );
     return WorkspaceMemoryTableCreateResultSchema.parse({ outcome: "created" });
   });
-}
-
-/**
- * Record the create receipt for a table that already existed with the same
- * schema, so replaying the same idempotency key keeps answering the same
- * opened table. `DO NOTHING` because two attempts under one key may race.
- */
-export function recordWorkspaceMemoryTableOpenReceipt(
-  storage: DurableObjectStorage,
-  request: WorkspaceMemoryTableOpenReceiptRequest,
-): void {
-  insertTableMutation(
-    storage, request.workspaceId, request.memoryTableId, request.memoryScopeId,
-    "create", request.mutation, request.mutation.resultJson ?? "{}", request.at, true,
-  );
 }
 
 /**
