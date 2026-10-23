@@ -171,13 +171,6 @@ returning content; the projection itself never grants access.
 
 ### Ordered transcript authority
 
-Activity selection and interval hydration bind each input ID set as one JSON
-array, expanded by SQLite's `json_each`. A wide transcript or an ancestor walk
-can exceed 100 activities without exceeding the engine's per-statement parameter
-ceiling. Recursive selection deduplicates shared ancestors, and interval reads
-retain activity/start-time ordering. Opening snapshots include active activities
-outside the visible turns; historical ranges include only their selected graph.
-
 Main `SubstreamAgent("0")` owns one canonical transcript substrate. Semantic
 payloads and facts are stored once; two projections reference them:
 `transcript_sequence` orders participant-visible conversation turns and safe
@@ -1965,8 +1958,7 @@ repeating active-activity selection; one JSON binding preserves the existing
 single-query selection and ordering without adding a product limit.
 
 **Consequences:** Keep the seed set and expanded interval set independent of
-parameter count. Real-workerd tests cover wide seeds, deep ancestry, shared
-ancestor deduplication, completed interval durations, and active-only inclusion.
+parameter count.
 
 ### 2026-10-22 — Classify handoffs against the admitted audience
 
