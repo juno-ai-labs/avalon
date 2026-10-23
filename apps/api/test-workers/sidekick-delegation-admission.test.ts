@@ -90,6 +90,115 @@ async function webhook() {
 }
 
 describe("shared Sidekick delegation admission", () => {
+  it.each([false, true])("reconciles configured files, queued events and shared occurrences (connection added later: %s)", async (lateConnection) => {
+    await create();
+    const secondConnection = crypto.randomUUID(), unconsentedConnection = crypto.randomUUID(), wrongResource = crypto.randomUUID();
+    await runInDurableObject(stub(), (_instance, state) => {
+      for (const [id, owner] of [[connectionId, creator], [secondConnection, other], [unconsentedConnection, crypto.randomUUID()]]) {
+        state.storage.sql.exec(`INSERT INTO connector_connections(id,workspace_id,connector_type,scope,owner_user_id,
+          display_name,model_plugin_id,granted_scopes_json,status,created_at,updated_at)
+          VALUES (?,?,'google','personal',?,'Calendar account',?,'["drive.read","sheets.read"]',?,?,?)`,
+        id!, workspaceId, owner!, id === connectionId ? "plugin_google" : `plugin_${id!.replaceAll("-", "")}`,
+        id === secondConnection && lateConnection ? "disabled" : "healthy", now, now);
+      }
+      for (const [id, connection, file] of [[resourceId, connectionId, "configured-sheet"], [wrongResource, secondConnection, "another-sheet"]]) {
+        state.storage.sql.exec(`INSERT INTO resources(id,workspace_id,connection_id,resource_type,provider,provider_resource_id,title,metadata_json,created_at,updated_at)
+          VALUES (?,?,?,'google_sheet','google',?,'Same title','{}',?,?)`, id!, workspaceId, connection!, file!, now, now);
+      }
+    });
+    const eventType = "sheets.spreadsheet_changed";
+    await activate({ ...definition, triggers: [{ type: "connector_activity", connectorType: "google", sourceBindingKey: "sheet",
+      suggestedSourcePluginId: "plugin_google", eventTypes: [eventType], deterministicFilters: {} }] },
+    AutomationSetEvaluatorRulesInputV1Schema.parse({ schemaVersion: 1, evaluators: [{ evaluatorKey: "changed", source: {
+      sourceBindingKey: "sheet", suggestedSourcePluginId: "plugin_google", resourceId, event: { kind: "event_type", eventType },
+    }, when: { kind: "always" } }] }));
+    const registrations = () => runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec<{
+      registration_id: string; connection_id: string; resource_id: string; effective_after_event_sequence: number;
+    }>(`SELECT registration_id,connection_id,resource_id,effective_after_event_sequence FROM workspace_external_event_registrations
+          WHERE automation_id=? AND state='active' ORDER BY connection_id`, automationId).toArray());
+    async function changed(connection: string, version: string, file = "configured-sheet") {
+      const id = crypto.randomUUID();
+      await stub().ingestConnectorEvent({ workspaceId, ingressEventId: id, payloadHash: `sha256:${"a".repeat(64)}`, event: { connectorType: "google", activity: {
+        id, workspaceId, region: "global", connectionId: connection, connectionScope: "personal", connectionOwnerUserId: connection === connectionId ? creator : other,
+        provider: "google", providerEventId: `${file}:${version}`, occurrenceKey: `google:${eventType}:drive:${file}:${version}`,
+        eventType, resourceType: "google_sheet", providerResourceId: file, actor: {}, subject: { fileId: file },
+        occurredAt: now, receivedAt: now, title: "Same title", summary: "Sheet changed", textSnippet: version, payloadRef: null,
+        visibility: { kind: "personal" }, targetUserIds: [], entityKeys: [], dedupeKey: `${file}:${version}`, rawContentHash: version,
+        metadata: { modifiedTime: version }, externalPeople: [],
+      } } });
+      return WorkspaceExternalEventMatchResultSchema.parse(await stub().matchExternalEventDestinations({ workspaceId, eventId: id }));
+    }
+    await runDurableObjectAlarm(stub());
+    await expect.poll(async () => runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
+      "SELECT count(*) AS count FROM _internal_durable_alarms WHERE kind='sidekick_delegation_sources'",
+    ).one().count)).toBe(0);
+    const queued = (await changed(connectionId, "v1")).deliveries[0]!;
+    const original = (await registrations()).find((entry) => entry.connection_id === connectionId)!;
+    if (!lateConnection) {
+      const request = { ...address, userId: other, allowed: true, operationId: crypto.randomUUID() };
+      const prepared = await stub().sidekickPrepareMyDelegation(request);
+      await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec(`CREATE TRIGGER fail_source_wake
+        BEFORE INSERT ON _internal_durable_alarms WHEN NEW.kind='sidekick_delegation_sources'
+        BEGIN SELECT RAISE(ABORT,'source_wake_fault'); END`));
+      await runInDurableObject(stub(), async (instance) => {
+        await expect(instance.sidekickSetMyDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" }))
+          .rejects.toThrow("source_wake_fault");
+      });
+      expect((await execution()).delegates.map((grant) => grant.userId)).toEqual([creator]);
+      expect(await stub().sidekickReadMyDelegationReceipt({ ...request, source: "self_service" })).toEqual({ outcome: "missing" });
+      await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec("DROP TRIGGER fail_source_wake"));
+      await stub().sidekickSetMyDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
+    } else await consent(other, true);
+    await runDurableObjectAlarm(stub());
+    if (lateConnection) {
+      expect(await registrations()).toHaveLength(1);
+      const parkedAlarm = Date.now() + 3_600_000;
+      await runInDurableObject(stub(), async (_instance, state) => { await state.storage.setAlarm(parkedAlarm); });
+      const connected = await stub().executeRuntimeSql({ workspaceId, requestId: crypto.randomUUID(), statements: [{
+        sql: "UPDATE connector_connections SET status='healthy' WHERE id=?", params: [secondConnection],
+      }] });
+      expect(connected.status).toBe(200);
+      const wake = await runInDurableObject(stub(), async (_instance, state) => state.storage.getAlarm());
+      // An already fired source wake is also observable in the registered set.
+      if (wake === null) expect(await registrations()).toHaveLength(2);
+      else expect(wake).toBeLessThan(parkedAlarm);
+      await runDurableObjectAlarm(stub());
+    }
+    await expect.poll(async () => (await registrations()).length).toBe(2);
+    const expanded = await registrations();
+    expect(expanded.find((entry) => entry.connection_id === connectionId)).toEqual(original);
+    const alias = expanded.find((entry) => entry.connection_id === secondConnection)!;
+    expect(alias.resource_id).not.toBe(resourceId);
+    expect(alias.resource_id).not.toBe(wrongResource);
+    expect(expanded.some((entry) => entry.connection_id === unconsentedConnection)).toBe(false);
+    expect(WorkspaceExternalEventMatchResultSchema.parse(await stub().matchExternalEventDestinations({
+      workspaceId, eventId: queued.event.id,
+    })).deliveries).toHaveLength(1);
+    const admit = (delivery: typeof queued) => stub().sidekickAdmitExternalEvent({ ...address, registrationId: delivery.registrationId,
+      event: delivery.event, payloadHash: delivery.payloadHash });
+    expect(await admit(queued)).toMatchObject({ admitted: true, outcomeCode: "sidekick_occurrence_admitted" });
+    const observedAgain = (await changed(secondConnection, "v1")).deliveries;
+    expect(observedAgain).toHaveLength(1);
+    expect(await admit(observedAgain[0]!)).toMatchObject({ admitted: true, outcomeCode: "sidekick_occurrence_replayed" });
+    expect(await runs()).toHaveLength(1);
+    expect((await changed(secondConnection, "unrelated", "another-sheet")).deliveries).toEqual([]);
+    await consent(creator, false);
+    await runDurableObjectAlarm(stub());
+    await expect.poll(async () => (await registrations()).map((entry) => entry.connection_id)).toEqual([secondConnection]);
+    expect(await admit(queued)).toMatchObject({ admitted: false, outcomeCode: "sidekick_no_eligible_delegate" });
+    const next = (await changed(secondConnection, "v2")).deliveries;
+    expect(next).toHaveLength(1);
+    expect(await admit(next[0]!)).toMatchObject({ admitted: true });
+    expect((await runs()).map((run) => run.coordinator_user_id)).toEqual([creator, other]);
+    expect((await execution()).delegates.map((grant) => grant.userId)).toEqual([other]);
+    await stub().applyMemberStatus({ workspaceId, sequence: 1, removed: true, relationship: {
+      workspaceId, userId: other, status: "active", role: "admin", accessClass: "member", incarnation: "existing-member", revision: 1,
+    } });
+    await runDurableObjectAlarm(stub());
+    await expect.poll(registrations).toEqual([]);
+    expect((await execution()).delegates).toEqual([]);
+  });
+
   it("retains canonical event account references on admission and when reading an older run opening", async () => {
     // The held effect queue keeps these assertions before inference.
     await create();
@@ -98,13 +207,24 @@ describe("shared Sidekick delegation admission", () => {
       state.storage.sql.exec(`INSERT INTO connector_connections(id,workspace_id,connector_type,scope,owner_user_id,
         display_name,model_plugin_id,granted_scopes_json,status,created_at,updated_at)
         VALUES (?,?,'google','personal',?,'Maya mail','plugin_google','["gmail.read"]','healthy',?,?)`, connectionId, workspaceId, other, now, now);
+      state.storage.sql.exec(`INSERT INTO resources(id,workspace_id,connection_id,resource_type,provider,provider_resource_id,title,metadata_json,created_at,updated_at)
+        VALUES (?,?,?,'gmail_thread','google','source-thread','Mail thread','{}',?,?)`, resourceId, workspaceId, connectionId, now, now);
     });
     const eventType = "email.received";
     await activate({ ...definition, triggers: [{ type: "connector_activity", connectorType: "google", sourceBindingKey: "mail",
       suggestedSourcePluginId: "plugin_google", eventTypes: [eventType], deterministicFilters: {} }] },
     AutomationSetEvaluatorRulesInputV1Schema.parse({ schemaVersion: 1, evaluators: [{ evaluatorKey: "received", source: {
       sourceBindingKey: "mail", suggestedSourcePluginId: "plugin_google", event: { kind: "event_type", eventType },
+      resourceId,
     }, when: { kind: "always" } }] }));
+    await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec(`INSERT INTO connector_connections
+      (id,workspace_id,connector_type,scope,owner_user_id,display_name,model_plugin_id,granted_scopes_json,status,created_at,updated_at)
+      VALUES (?,?,'google','personal',?,'Another inbox','plugin_other_mail','["gmail.read"]','healthy',?,?)`,
+    crypto.randomUUID(), workspaceId, creator, now, now));
+    await runDurableObjectAlarm(stub());
+    expect(await runInDurableObject(stub(), (_instance, state) => state.storage.sql.exec<{ connection_id: string }>(
+      "SELECT connection_id FROM workspace_external_event_registrations WHERE automation_id=? AND state='active'", automationId).toArray()))
+      .toEqual([{ connection_id: connectionId }]);
     const eventId = crypto.randomUUID();
     await stub().ingestConnectorEvent({ workspaceId, ingressEventId: eventId, payloadHash: `sha256:${"b".repeat(64)}`, event: {
       connectorType: "google", activity: { id: eventId, workspaceId, region: "global", connectionId, connectionScope: "personal", connectionOwnerUserId: other,

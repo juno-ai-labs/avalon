@@ -1681,10 +1681,16 @@ scope through the eligible source owner's consent. Restricted workspace events
 require an eligible delegate inside their actual audience. Authored Google
 operation identities permit known-file fallback across consenting owners;
 account-relative work and provider-created IDs retain their original account.
-The optional authored `activityResourceKeys` projection also maps canonical
+The optional authored `activityResourceIdentity` projection also maps canonical
 normalized event subjects/resources into those same keys, so an activation
 reference has an origin before any tool has returned a result. Event metadata
-does not supply the account or these keys.
+does not supply the account or these keys. Its resource/account distinction
+also controls source expansion: Google files can register through eligible
+delegates' connections using canonical provider IDs; Gmail and Calendar IDs
+remain on their configured account. Google Drive file observations share a
+provider-version occurrence key across accounts, preserving one run when the
+same change arrives through several registrations. No such cross-account
+identity is asserted for private mail or calendar observations.
 
 **Why:** The ownership-scope shortcut discarded a Thread-owned Sidekick's
 authorized Sheet changes while an hourly read could proceed.

@@ -11,7 +11,7 @@ import { createCanvaConnector, type CanvaConnectorConfig } from "./canva";
 export { createCanvaConnector, CanvaCapabilities, CanvaAgentPluginDescriptor, type CanvaConnectorConfig } from "./canva";
 import { RegionSchema } from "@rally/contracts/regions";
 import { paginatedResult } from "./tool-pagination";
-import { googleOperationIdentity, googleOperationResultKeys, googleActivityResourceKeys } from "./google-operation-identity";
+import { googleOperationIdentity, googleOperationResultKeys, googleActivityResourceIdentity } from "./google-operation-identity";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   ConnectorManifestSchema,
@@ -2599,7 +2599,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
     resourceRegistrationCapability: "drive.read",
     operationIdentity: googleOperationIdentity,
     operationResultKeys: googleOperationResultKeys,
-    activityResourceKeys: googleActivityResourceKeys,
+    activityResourceIdentity: googleActivityResourceIdentity,
 
     async probeResourceAccess(connection, reference, signal): Promise<ConnectorResourceAccess> {
       const fileId = googleDriveFileIdFromReference(reference);
@@ -3943,6 +3943,7 @@ function normalizeDriveActivity(
   const identity = `drive:${fileId}:${version}`;
   return {
     ...googleActivityScope(connection),
+    occurrenceKey: `google:${eventType}:${identity}`,
     provider: "google",
     providerEventId: identity,
     eventType,

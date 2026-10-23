@@ -51,6 +51,30 @@ function bootstrapEntries(database: DatabaseSync): { alarm_key: string; due_at: 
 }
 
 describe("the WorkspaceDO alarm migrations", () => {
+  it("wakes only existing active configured Sidekicks when delegated source reconciliation is installed", () => {
+    const database = new DatabaseSync(":memory:");
+    try {
+      apply(database, 129);
+      seedIdentity(database);
+      for (const [id, lifecycle] of [["00000000-0000-7000-8000-000000001301", "active"],
+        ["00000000-0000-7000-8000-000000001302", "paused"], ["00000000-0000-7000-8000-000000001303", "active"]]) {
+        database.prepare(`INSERT INTO automation_directory
+          (automation_id,workspace_id,author_user_id,source_version,payload_hash,lifecycle,scope,title,description,projected_at)
+          VALUES (?,?,'00000000-0000-7000-8000-000000001304',1,'source-fixture',?,'workspace','Source','Source',1)`).run(id!, WORKSPACE_ID, lifecycle!);
+      }
+      database.prepare("UPDATE automation_directory SET region='global',evaluator_projection_json=?").run(JSON.stringify([{
+        evaluatorId: "00000000-0000-7000-8000-000000001305", source: { connectorType: "google",
+          connectionId: "00000000-0000-7000-8000-000000001306", eventType: "sheets.spreadsheet_changed" }, when: { kind: "always" },
+      }]));
+      database.exec("UPDATE automation_directory SET evaluator_projection_json='[]' WHERE automation_id='00000000-0000-7000-8000-000000001303'");
+      apply(database, 130, 129);
+      const wakes = database.prepare(`SELECT substr(alarm_key,1,instr(alarm_key,':')-1) AS sidekick
+        FROM _internal_durable_alarms WHERE kind='sidekick_delegation_sources'`).all();
+      expect(wakes).toEqual([{ sidekick: "00000000-0000-7000-8000-000000001301" }]);
+      expect(database.prepare("SELECT count(*) AS count FROM automation_directory").get()).toEqual({ count: 3 });
+    } finally { database.close(); }
+  });
+
   it("reconciles a workspace that already existed when the scheduler was deleted", () => {
     const database = new DatabaseSync(":memory:");
     database.exec("PRAGMA foreign_keys = ON");
