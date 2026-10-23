@@ -1250,34 +1250,22 @@ insert contention is a separate typed failure because inserts do not have an
 `expectedRevision`; after bounded host retries it directs the model to query by
 the declared natural key and retry only the rows that remain absent.
 
-A Sidekick's definition may describe the tables it keeps (`memoryTables`),
-and a run receives that description from `readRunDefinition`. A triggered
-publication commits every table, metadata update, receipt, schedule and the
-accepted revision in one WorkspaceDO transaction. A conflict in any declaration
-rolls back the whole publication; the prior accepted revision stays active.
-Instruction-only Sidekicks do not provision execution tables.
+Sidekick definitions may declare tables used across runs; [Sidekick publication](automation-lifecycle.md) owns their provisioning and activation contract.
 
 `table_create` reopens a same-name table when column names (case insensitive),
 types, required/searchable flags and ordered natural-key columns match.
 Declaration order is irrelevant; stored column IDs and order stay stable. Table
 and column descriptions and usage instructions are editable metadata. A reopen
-updates that metadata and records its receipt atomically, leaving row contents,
-cell IDs, row revisions, and schema/data revisions unchanged. A schema conflict
+updates that metadata for every run sharing the table and records its receipt
+atomically, leaving row contents, cell IDs, row revisions, and schema/data
+revisions unchanged. A schema conflict
 returns `memory_table_name_schema_conflict`, the existing `memoryTableId`,
 incompatible field paths and `retryable: false`. The recovery is to call
 `table_describe` and reuse the stored schema, or choose another name and
 explicitly copy/transform rows; retrying unchanged cannot succeed.
-The concrete `table_describe` call is in the forwarded `reason`, with the first
-incompatible path in `field`; the harness's failure sanitizer drops arbitrary
-detail keys, so a table ID held only in an extra detail field would be lost.
-
-Legacy `sidekick_memory_tables` alarms use the same storage primitive under an
-accepted-revision fence. Permanent schema or receipt conflicts are logged once
-with a diagnostic field path and consumed; unknown failures keep the existing
-backoff. New publications do not create these alarms. A run can also create a
-table through `rally_tables` in its authorized scope. Table rows never enter a
-prompt unasked; the agent queries only needed rows and columns.
-
+A run can also create a table through `rally_tables` in its authorized scope.
+Table rows never enter a prompt unasked; the agent queries only needed rows and
+columns.
 
 ### Scheduled wake-ups
 
@@ -1751,24 +1739,19 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 ## Changelog
 
-### 2026-10-23 — Table metadata edits preserve schemas and publication is atomic
+### 2026-10-23 — Table creation supports metadata edits with stable schema
 
-**What changed:** Table creation compares only stored schema, reconciles editable
+**What changed:** Table creation compares stored schema, reconciles editable
 metadata with its receipt, and returns field-specific recovery for incompatible
-schemas. Hosted Sidekick publication commits all declared tables alongside the
-accepted revision. Legacy permanent-conflict alarms terminate.
+schemas. Unicode case variants update by the matched column's stable ID.
 
-**Why:** Description and instruction edits to two populated Sidekick tables were
-rejected as schema changes, while publication had already activated the new
-revision. The alarms retried deterministic failures hundreds of times. A schema
-check in the service followed by a separate metadata write would still race;
-the WorkspaceDO transaction now owns compatibility, metadata and receipts.
+**Why:** Treating descriptions and usage instructions as schema blocked harmless
+edits. A separate metadata write after service-side comparison would still race,
+so compatibility, metadata and receipts belong in the storage transaction.
 
-**Consequences:** Column IDs, natural-key order and row/cell data must survive
-metadata edits. Real schema changes require an explicit migration into another
-table. Silently accepting different schemas or deleting populated tables was
-rejected. Workerd tests cover data retention and publication rollback; the tool
-integration test covers actionable recovery.
+**Consequences:** Metadata edits apply to every authorized run sharing the table.
+Column IDs, natural-key order and row/cell data must survive these edits; actual
+schema changes require an explicit migration into another table.
 
 ### 2026-10-22 — Updates and final responses carry only what participants need
 

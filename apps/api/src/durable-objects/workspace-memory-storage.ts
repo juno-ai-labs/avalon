@@ -19,7 +19,6 @@ import {
   type WorkspaceMemoryTableInsertRowsRequest,
   type WorkspaceMemoryTableInsertRowsResult,
   type WorkspaceMemoryTableInvalidateRowsRequest,
-  type WorkspaceMemoryTableOpenReceiptRequest,
   type WorkspaceMemoryTableQueryRequest,
   type WorkspaceMemoryTableQueryResult,
   type WorkspaceMemoryTableRequest,
@@ -421,15 +420,13 @@ function insertTableMutation(
   mutation: MutationRecord,
   resultJson: string,
   at: string,
-  onConflictIgnore = false,
 ): void {
   storage.sql.exec(
     `INSERT INTO memory_table_mutations
        (memory_table_mutation_id, receipt_id, memory_table_id, memory_scope_id,
         workspace_id, operation, actor_principal_json, harness_run_id, workstream_id,
         rationale, input_hash, mutation_json, result_json, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ${onConflictIgnore ? "ON CONFLICT(harness_run_id, receipt_id) DO NOTHING" : ""}`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     mutation.memoryTableMutationId ?? null,
     mutation.receiptId,
     memoryTableId,
@@ -505,16 +502,18 @@ export function createWorkspaceMemoryTable(
         request.description, request.usageInstructions, request.mutation.memoryTableMutationId,
         request.at, existing.memory_table_id,
       );
-      for (const column of request.columns) {
+      const declaredByName = new Map(request.columns.map((column) => [column.name.toLocaleLowerCase(), column]));
+      for (const column of found.columns) {
+        const declared = declaredByName.get(column.name.toLocaleLowerCase())!;
         storage.sql.exec(
-          `UPDATE memory_table_columns SET description = ? WHERE memory_table_id = ? AND name = ? COLLATE NOCASE`,
-          column.description, existing.memory_table_id, column.name,
+          `UPDATE memory_table_columns SET description = ? WHERE memory_table_column_id = ?`,
+          declared.description, column.memoryTableColumnId,
         );
       }
       const resultJson = JSON.stringify(publicMemoryTable({ ...found.table,
         description: request.description, usageInstructions: request.usageInstructions,
       }, found.columns.map((column) => ({ ...column,
-        description: request.columns.find((declared) => declared.name.toLocaleLowerCase() === column.name.toLocaleLowerCase())!.description,
+        description: declaredByName.get(column.name.toLocaleLowerCase())!.description,
       }))));
       insertTableMutation(storage, request.workspaceId, existing.memory_table_id, request.memoryScopeId,
         "create", request.mutation, resultJson, request.at);
@@ -561,21 +560,6 @@ export function createWorkspaceMemoryTable(
     );
     return WorkspaceMemoryTableCreateResultSchema.parse({ outcome: "created" });
   });
-}
-
-/**
- * Record the create receipt for a table that already existed with the same
- * schema, so replaying the same idempotency key keeps answering the same
- * opened table. `DO NOTHING` because two attempts under one key may race.
- */
-export function recordWorkspaceMemoryTableOpenReceipt(
-  storage: DurableObjectStorage,
-  request: WorkspaceMemoryTableOpenReceiptRequest,
-): void {
-  insertTableMutation(
-    storage, request.workspaceId, request.memoryTableId, request.memoryScopeId,
-    "create", request.mutation, request.mutation.resultJson ?? "{}", request.at, true,
-  );
 }
 
 /**

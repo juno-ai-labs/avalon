@@ -268,14 +268,6 @@ export const WorkspaceMemoryTableCreateResultSchema = deferredZodSchema(() => z.
   z.strictObject({ outcome: z.literal("schema_conflict"), memoryTableId: z.string().min(1), fields: z.array(z.string()).min(1) }),
 ]));
 
-export const WorkspaceMemoryTableOpenReceiptRequestSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: IdSchema,
-  memoryTableId: z.string().min(1),
-  memoryScopeId: z.string().min(1),
-  mutation: MemoryTableMutationRecordSchema,
-  at: TimestampSchema,
-}));
-
 const MemoryTableCellSchema = deferredZodSchema(() => z.strictObject({
   memoryTableColumnId: z.string().min(1),
   valueType: MemoryTableColumnTypeSchema,
@@ -370,7 +362,6 @@ export type WorkspaceMemoryTableQueryRequest = z.infer<typeof WorkspaceMemoryTab
 export type WorkspaceMemoryTableQueryResult = z.infer<typeof WorkspaceMemoryTableQueryResultSchema>;
 export type WorkspaceMemoryTableCreateRequest = z.infer<typeof WorkspaceMemoryTableCreateRequestSchema>;
 export type WorkspaceMemoryTableCreateResult = z.infer<typeof WorkspaceMemoryTableCreateResultSchema>;
-export type WorkspaceMemoryTableOpenReceiptRequest = z.infer<typeof WorkspaceMemoryTableOpenReceiptRequestSchema>;
 export type WorkspaceMemoryTableCell = z.infer<typeof MemoryTableCellSchema>;
 export type WorkspaceMemoryTableInsertRowsRequest = z.infer<typeof WorkspaceMemoryTableInsertRowsRequestSchema>;
 export type WorkspaceMemoryTableInsertRowsResult = z.infer<typeof WorkspaceMemoryTableInsertRowsResultSchema>;

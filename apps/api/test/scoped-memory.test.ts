@@ -119,7 +119,6 @@ const MEMORY_OBJECT_METHODS = [
   "memoryTableRowsById",
   "memoryTableMutationReceipt",
   "createMemoryTable",
-  "recordMemoryTableOpenReceipt",
   "insertMemoryTableRows",
   "updateMemoryTableRows",
   "invalidateMemoryTableRows",
@@ -429,12 +428,11 @@ describe("memory scopes and durable tables", () => {
     }, toolContext(run, "metadata-conflict")).catch((error: unknown) => error);
     expect(conflict).toMatchObject({
       code: "memory_table_name_schema_conflict",
-      details: { memoryTableId, fields: ["columns.0.required"], retryable: false,
-        reason: expect.stringContaining("Call table_describe"),
+      details: { field: "columns.0.required", retryable: false,
+        reason: expect.stringContaining(JSON.stringify(memoryTableId)),
       },
     });
-    // This is the failure envelope Bind actually forwards; arbitrary details
-    // such as memoryTableId/fields are stripped, so the reason must retain the call.
+    // Assert the recovery envelope Bind actually forwards to the agent.
     expect(readStructuredFailure(conflict)).toEqual({ code: "memory_table_name_schema_conflict", details: {
       field: "columns.0.required", retryable: false,
       reason: `Call table_describe with memoryTableId "${memoryTableId}"; reuse its columns and ordered keyColumns. Metadata may change. For a different schema, use a new table name and explicitly copy/transform rows. Do not retry unchanged or delete existing data.`,
@@ -444,8 +442,11 @@ describe("memory scopes and durable tables", () => {
       ["searchable", [{ ...declaration.columns[0], searchable: true }, declaration.columns[1]], ["url"], ["columns.0.searchable"]],
       ["keys", declaration.columns, ["title", "url"], ["keyColumns"]],
     ] as const) {
-      await expect(tableTool(env, run, "create").execute({ ...declaration, columns, keyColumns }, toolContext(run, `schema-${suffix}`)))
-        .rejects.toMatchObject({ code: "memory_table_name_schema_conflict", details: { memoryTableId, fields, retryable: false } });
+      const rejected = await tableTool(env, run, "create").execute({ ...declaration, columns, keyColumns }, toolContext(run, `schema-${suffix}`))
+        .catch((error: unknown) => error);
+      expect(readStructuredFailure(rejected)).toMatchObject({ code: "memory_table_name_schema_conflict", details: {
+        field: fields[0], retryable: false, reason: expect.stringContaining(JSON.stringify(memoryTableId)),
+      } });
     }
     const described = await tableTool(env, run, "describe").execute({ memoryTableId }, toolContext(run, "metadata-describe"));
     expect(described.output).toMatchObject({ description: "Updated description", dataRevision: 1,
