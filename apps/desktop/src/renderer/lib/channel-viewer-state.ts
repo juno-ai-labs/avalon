@@ -146,17 +146,6 @@ function roster(directory: WorkstreamChildDirectory | undefined): string | null 
     : null;
 }
 
-/**
- * The socket owns these entries for the whole session, whether or not a
- * screen observes them: a Channel opened an hour after its last push must still
- * find its breakouts. Pinned before the first write, because a default applies
- * only to a query built after it is set. Eviction of a Channel removes them.
- */
-function pinChannelViewerState(queryClient: QueryClient): void {
-  queryClient.setQueryDefaults(['workstream-children'], { gcTime: Number.POSITIVE_INFINITY });
-  queryClient.setQueryDefaults(['workstream-background-agents'], { gcTime: Number.POSITIVE_INFINITY });
-}
-
 /** A Channel's breakout list as the device keeps it, by Channel id. */
 export type ChannelBreakoutLists = Record<string, NonNullable<Workstream['privateChildren']>>;
 
@@ -181,7 +170,6 @@ export function heldChannelBreakouts(queryClient: QueryClient, workstreamIds: re
  * says nothing about what may be removed from the disk.
  */
 export function seedChannelBreakouts(queryClient: QueryClient, lists: ChannelBreakoutLists): void {
-  pinChannelViewerState(queryClient);
   for (const [workstreamId, privateChildren] of Object.entries(lists)) {
     const key = workstreamChildrenQueryKey(workstreamId);
     if (queryClient.getQueryData(key) !== undefined) continue;
@@ -201,7 +189,6 @@ export function applyChannelViewerState(
 ): void {
   if (row.railWaterline !== undefined) noteRailWaterline(queryClient, row.id, row.railWaterline);
   if (row.privateChildren === undefined && row.backgroundAgentCounts === undefined) return;
-  pinChannelViewerState(queryClient);
   if (row.backgroundAgentCounts !== undefined) {
     queryClient.setQueryData(workstreamBackgroundAgentsQueryKey(row.id), row.backgroundAgentCounts);
   }

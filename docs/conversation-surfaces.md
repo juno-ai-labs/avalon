@@ -33,6 +33,10 @@ Running Sidekicks share background agents' animated indicator above the input.
 The host supplies independent counts to `WorkstreamComposer`, so both rows can
 stack and clear independently. [Sidekick lifecycle](automation-lifecycle.md#activity-above-the-composer)
 owns the activity read and update signal.
+The query client retains socket-owned counts and breakout lists across navigation.
+Losing that socket or unmounting its owner resets both kinds of count to unknown;
+the labels stay hidden until fresh directory and Sidekick subscription answers
+arrive after reconnect.
 
 ## Where the code lives
 
@@ -788,6 +792,10 @@ alone passes just as well in the scroller that hides it from a reader who has
 scrolled up, which is the defect that shipped to review. Any visible
 change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
+`query-client.test.ts` covers observers created before the first socket row,
+unmounted before a rerender, and revisited after the default cache lifetime.
+`workspace-socket.test.tsx` renders running labels through disconnect and
+reconnect and protects fresh activity from a retired owner's delayed close.
 
 ## Slow model notice
 
@@ -814,6 +822,18 @@ consume unrelated pins. [Artifact annotations](artifact-annotations.md) owns the
 selection and message protocol.
 
 ## Changelog
+
+### 2026-10-23 — Keep running counts through navigation, discard them on disconnect
+
+The query client installs session-long retention for both counts and breakout
+lists before any observer or socket write can create an entry. Installing it
+lazily could leave an observer-created entry with five-minute garbage collection
+if navigation beat its rerender; reopening then lost state with no fetcher.
+Socket loss and owner teardown reset background and Sidekick activity to unknown,
+so disconnected counts cannot remain live claims. Teardown releases transport
+ownership before closing it, preventing a delayed close from clearing a
+replacement owner's fresh counts. Reconnect uses the existing directory and
+target subscription deliveries, without new requests.
 
 ### 2026-10-21 — Deliver dictation independently of arrival timing
 

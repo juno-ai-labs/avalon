@@ -970,6 +970,12 @@ export function WorkspaceSocketProvider({
       if (served.length === 0) return;
       await requestRails(served);
     };
+    const clearAgentActivity = (): void => {
+      // Running is a live claim: retain no count across a lost producer.
+      // Reset preserves observers; reconnect supplies each target's current count.
+      void queryClient.resetQueries({ queryKey: ['workstream-background-agents'] });
+      void queryClient.resetQueries({ queryKey: ['sidekick-activity'] });
+    };
     /** What every end of a socket's life resets, whoever ended it. */
     const releaseSocket = (): void => {
       clearSocketTimers();
@@ -977,6 +983,7 @@ export function WorkspaceSocketProvider({
       conversationViewsAvailable = false;
       socket = null;
       setPresenceUserIdsByWorkstream({});
+      clearAgentActivity();
       rejectPendingRailRequests(new ApiError('The organization connection closed.', 0, 'workspace_socket_closed'));
       rejectPendingSpaceRequests(new ApiError('The organization connection closed.', 0, 'workspace_socket_closed'));
     };
@@ -1689,12 +1696,12 @@ export function WorkspaceSocketProvider({
       document.removeEventListener('visibilitychange', observeWindowFocus);
       stopApplicationFocus();
       reportPresenceRef.current = () => undefined;
-      subscribed = false;
       clearReconnect();
-      clearSocketTimers();
       activeTicketAbort?.abort();
       activeTicketAbort = null;
-      socket?.close();
+      const retired = socket;
+      releaseSocket();
+      retired?.close();
     };
   }, [api, localCacheScope, onAccessRevoked, ownSocket, queryClient, region, relay, workspaceId]);
 
