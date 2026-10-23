@@ -1032,8 +1032,8 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const breakoutExpandAction = expandToggle(breakoutExpanded, shownMode === 'split', setBreakoutExpanded);
 
   const mainPane = !mainVisible ? null : <ConversationSurface
-    onResolve={!threadArchived && !conversationScoped ? () => { void resolve({ substreamId: '0' }); } : undefined}
-    resolveDisabled={substreamPending}
+    onResolve={mainActions?.onResolve ? () => { void resolve({ substreamId: '0' }); } : undefined}
+    resolveDisabled={mainActions?.resolveDisabled}
     resolved={Boolean(threadResolved)}
     linkSpaceId={linkSpaceId}
     breakouts={breakoutMarks}
@@ -1082,8 +1082,8 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     }}
     workstreamContext={conversationScoped ? undefined : parent.data}
   /> : <ConversationSurface
-    onResolve={!breakoutArchived && !threadArchived ? () => { void resolve({ substreamId: openBreakoutId ?? '0' }); } : undefined}
-    resolveDisabled={substreamPending}
+    onResolve={substreamActions.onResolve ? () => { void resolve({ substreamId: openBreakoutId ?? '0' }); } : undefined}
+    resolveDisabled={substreamActions.resolveDisabled}
     resolved={Boolean(breakoutResolved)}
     linkSpaceId={linkSpaceId}
     mergeRequest={mergeRequest && mergeRequest.substreamId === openBreakoutId ? mergeRequest.nonce : null}
