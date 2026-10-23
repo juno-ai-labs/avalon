@@ -278,7 +278,6 @@ describe('SessionGate identity-first ordering', () => {
     renderGate();
 
     expect(await screen.findByText('Regional service unavailable.')).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
     await vi.waitFor(() => expect(workstreamFeedOpenAttemptId(workstreamId)).toBeUndefined());
 
     sessionState.api.getWorkspace.mockResolvedValueOnce({
@@ -287,11 +286,30 @@ describe('SessionGate identity-first ordering', () => {
       region: 'global',
       currentUser: { id: 'user-1', email: 'adam@example.com', name: 'Adam', role: 'owner' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Retry connection' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(await screen.findByText('workstream')).toBeVisible();
 
     const retryAttempt = markWorkstreamFeedOpenStarted(workstreamId, 'recent', 'cold', 60_100);
     expect(retryAttempt).not.toBe(firstAttempt);
+  });
+
+  it('says Rally cannot connect without opening a dialog, and plays Pong while it waits', async () => {
+    sessionState.session = {
+      ...identitySession,
+      workspace: { id: 'workspace-1', name: 'Rally Studio', region: 'global', role: 'owner' },
+    };
+    sessionState.api.getWorkspace.mockRejectedValueOnce(new ApiError('Rally could not reach the selected regional service.', 0, 'network_error'));
+    renderGate();
+
+    expect(await screen.findByRole('heading', { name: 'Rally can’t connect' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'OK' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Rally 0 · Best 0')).not.toBeInTheDocument();
+
+    fireEvent.keyDown(document.body, { key: ' ' });
+    expect(screen.getByText('Rally 0 · Best 0')).toBeVisible();
+
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(screen.queryByText('Rally 0 · Best 0')).not.toBeInTheDocument();
   });
 
   it('surrenders the active organization credential after a membership revocation', async () => {
@@ -413,7 +431,6 @@ describe('SessionGate identity-first ordering', () => {
       sessionState.api.getWorkspace.mockRejectedValueOnce(new Error('Regional service unavailable.'));
       renderGate();
       expect(await screen.findByText('Regional service unavailable.')).toBeVisible();
-      fireEvent.click(screen.getByRole('button', { name: 'OK' }));
 
       fireEvent.keyDown(document.body, { key: 'Escape' });
 
