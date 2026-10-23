@@ -11,36 +11,36 @@ const TEST_ENV: Env = env;
 
 beforeEach(async () => {
   await reset();
-  await env.TELEMETRY_DB.prepare("CREATE TABLE inspected (id INTEGER PRIMARY KEY, label TEXT, payload BLOB)").run();
 });
 
 describe("engineering inspection of a D1 database", () => {
-  it("writes and reads the named binding's database, BLOBs included", async () => {
+  it.each(["TELEMETRY_DB", "MESSAGE_ISSUES_DB"] as const)("writes and reads %s, BLOBs included", async (database) => {
+    await env[database].prepare("CREATE TABLE inspected (id INTEGER PRIMARY KEY, label TEXT, payload BLOB)").run();
     const inspection = new EngineeringInspectionBridge(createExecutionContext(), TEST_ENV);
 
     await expect(inspection.runD1Sql({
-      database: "TELEMETRY_DB",
+      database,
       query: { sql: "INSERT INTO inspected (id, label, payload) VALUES (?, ?, X'0102FF')", bindings: [1, "first"] },
     })).resolves.toMatchObject({
       region: "global",
-      database: "TELEMETRY_DB",
+      database,
       result: { rows: [], rowsWritten: 1 },
     });
 
     await expect(inspection.runD1Sql({
-      database: "TELEMETRY_DB",
+      database,
       query: { sql: "SELECT id, label, payload FROM inspected", bindings: [] },
     })).resolves.toMatchObject({
       region: "global",
-      database: "TELEMETRY_DB",
+      database,
       result: {
         columns: ["id", "label", "payload"],
         rows: [{ id: 1, label: "first", payload: { type: "blob", base64: "AQL/" } }],
       },
     });
 
-    const telemetry = await env.TELEMETRY_DB.prepare("SELECT label FROM inspected").all();
-    expect(telemetry.results).toEqual([{ label: "first" }]);
+    const stored = await env[database].prepare("SELECT label FROM inspected").all();
+    expect(stored.results).toEqual([{ label: "first" }]);
     await expect(inspection.runD1Sql({
       database: "DB",
       query: { sql: "SELECT label FROM inspected", bindings: [] },

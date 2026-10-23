@@ -9029,8 +9029,14 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .suggestion-chip-excerpt { color: var(--av-sys-color-text-muted); display: block; font-size: 12px; line-height: 17px; margin: 1px 0 0; min-width: 0; overflow: hidden; white-space: nowrap; }
 .suggestion-chip-excerpt.is-pending { align-items: center; display: flex; gap: 3px; }
 .suggestion-chip-excerpt.is-pending .skeleton-bar { height: 10px; width: min(260px, 72%); }
-.suggestion-chip-controls { align-items: center; display: flex; flex: none; gap: 8px; margin-top: 1px; }
-.suggestion-chip-action {
+.suggestion-chip-controls { align-items: flex-start; display: flex; flex: none; gap: 8px; margin-top: 1px; }
+.suggestion-chip-actions { align-items: flex-end; display: flex; flex-direction: column; gap: 6px; }
+.suggestion-chip.is-merge { align-items: stretch; flex-direction: column; position: relative; width: 100%; }
+.suggestion-chip.is-merge .suggestion-chip-title { padding-right: 26px; }
+.suggestion-chip.is-merge .suggestion-chip-excerpt { overflow-wrap: anywhere; white-space: normal; }
+.suggestion-chip.is-merge .suggestion-chip-actions { align-items: center; flex-direction: row; flex-wrap: wrap; }
+.suggestion-chip.is-merge .suggestion-chip-dismiss { position: absolute; right: 12px; top: 10px; }
+.suggestion-chip-action, .suggestion-chip-secondary-action {
   align-items: center;
   border: 0;
   border-radius: var(--av-sys-size-radius-pill);
@@ -9048,8 +9054,18 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .suggestion-chip.is-breakout .suggestion-chip-action { background: var(--av-sys-color-surface-sunken); color: var(--av-sys-color-text-default); }
 .suggestion-chip-action:hover:not(:disabled) { filter: brightness(.97); }
 .suggestion-chip-action:disabled { cursor: default; opacity: .45; }
+.suggestion-chip-secondary-action { background: var(--av-sys-color-surface-subtle); border: 1px solid var(--av-sys-color-border-default); color: var(--av-sys-color-text-subtle); font-weight: 400; }
+.suggestion-chip-secondary-action:hover:not(:disabled) { background-image: var(--hover-layer); border-color: var(--av-ref-color-line-4); color: var(--av-sys-color-text-default); }
+.suggestion-chip-secondary-action:disabled { cursor: default; opacity: .45; }
 .suggestion-chip-dismiss { background: transparent; border: 0; border-radius: 50%; color: var(--av-sys-color-text-muted); cursor: pointer; display: inline-grid; flex: none; height: 22px; padding: 0; place-items: center; width: 22px; }
 .suggestion-chip-dismiss:hover { background: var(--av-sys-color-surface-sunken); color: var(--av-sys-color-text-default); }
+.suggestion-chip-discard { background: transparent; border-color: transparent; color: var(--av-sys-color-text-muted); display: none; }
+.suggestion-chip-discard:hover:not(:disabled) { border-color: transparent; }
+@media (min-width: 641px) {
+  .suggestion-chip-discard { display: inline-flex; }
+  .suggestion-chip.is-merge .suggestion-chip-dismiss { display: none; }
+  .suggestion-chip.is-merge .suggestion-chip-title { padding-right: 0; }
+}
 /* The response card: the merge as the parent will draw it, editable, under
    the turn it was asked from or at the end of the feed
    (docs/conversation-merge.md). A solid card, where the chip was dashed:

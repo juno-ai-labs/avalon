@@ -14,6 +14,7 @@ import {
 } from "../src/services/memory-service";
 import { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { createMemoryTableTools } from "../src/services/memory-table-service";
+import { readStructuredFailure } from "@rally/contracts";
 import { validateToolArguments } from "@rally/agent-harness";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-object-rpcs";
@@ -118,7 +119,6 @@ const MEMORY_OBJECT_METHODS = [
   "memoryTableRowsById",
   "memoryTableMutationReceipt",
   "createMemoryTable",
-  "recordMemoryTableOpenReceipt",
   "insertMemoryTableRows",
   "updateMemoryTableRows",
   "invalidateMemoryTableRows",
@@ -388,6 +388,70 @@ describe("memory scopes and durable tables", () => {
     } finally {
       ensure.mockRestore();
     }
+  });
+
+  it("updates table metadata without touching rows and gives schema conflicts an actionable recovery", async () => {
+    const { env } = fixture();
+    const run = input("owner");
+    const declaration = {
+      scopeKind: "workspace", name: "Tracked URLs", description: "Original description",
+      usageInstructions: "Original instructions", rationale: "Track sources",
+      columns: [
+        { name: "url", description: "Original URL description", type: "url", required: true, searchable: false },
+        { name: "title", description: "Original title", type: "string", required: false, searchable: true },
+      ],
+      keyColumns: ["url"],
+    };
+    const created = await tableTool(env, run, "create").execute(declaration, toolContext(run, "metadata-create"));
+    const memoryTableId = (created.output as { memoryTableId: string }).memoryTableId;
+    const inserted = await tableTool(env, run, "insert_rows").execute({ memoryTableId,
+      rows: [{ url: "https://example.com/kept", title: "Keep this row" }], rationale: "Retain evidence",
+    }, toolContext(run, "metadata-insert"));
+    const changed = { ...declaration, description: "Updated description", usageInstructions: "Updated instructions",
+      columns: [...declaration.columns].reverse().map((column) => ({ ...column, description: "Updated column metadata" })),
+    };
+    const reopened = await tableTool(env, run, "create").execute(changed, toolContext(run, "metadata-update"));
+    expect(reopened.output).toMatchObject({ memoryTableId, description: "Updated description",
+      usageInstructions: "Updated instructions", schemaRevision: 1, dataRevision: 1,
+      columns: [
+        { name: "url", description: "Updated column metadata" },
+        { name: "title", description: "Updated column metadata" },
+      ],
+    });
+    expect(await tableTool(env, run, "create").execute(changed, toolContext(run, "metadata-update")))
+      .toMatchObject({ output: reopened.output });
+    const query = await tableTool(env, run, "query").execute({ memoryTableId }, toolContext(run, "metadata-query"));
+    expect(query.output).toMatchObject({ rows: [{ values: { url: "https://example.com/kept", title: "Keep this row" }, revision: 1 }] });
+    expect(inserted.output).toMatchObject({ insertedCount: 1 });
+    const conflict = await tableTool(env, run, "create").execute({ ...changed,
+      columns: [{ ...changed.columns[0], required: true }, changed.columns[1]],
+    }, toolContext(run, "metadata-conflict")).catch((error: unknown) => error);
+    expect(conflict).toMatchObject({
+      code: "memory_table_name_schema_conflict",
+      details: { field: "columns.0.required", retryable: false,
+        reason: expect.stringContaining(JSON.stringify(memoryTableId)),
+      },
+    });
+    // Assert the recovery envelope Bind actually forwards to the agent.
+    expect(readStructuredFailure(conflict)).toEqual({ code: "memory_table_name_schema_conflict", details: {
+      field: "columns.0.required", retryable: false,
+      reason: `Call table_describe with memoryTableId "${memoryTableId}"; reuse its columns and ordered keyColumns. Metadata may change. For a different schema, use a new table name and explicitly copy/transform rows. Do not retry unchanged or delete existing data.`,
+    } });
+    for (const [suffix, columns, keyColumns, fields] of [
+      ["type", [{ ...declaration.columns[0], type: "string" }, declaration.columns[1]], ["url"], ["columns.0.type"]],
+      ["searchable", [{ ...declaration.columns[0], searchable: true }, declaration.columns[1]], ["url"], ["columns.0.searchable"]],
+      ["keys", declaration.columns, ["title", "url"], ["keyColumns"]],
+    ] as const) {
+      const rejected = await tableTool(env, run, "create").execute({ ...declaration, columns, keyColumns }, toolContext(run, `schema-${suffix}`))
+        .catch((error: unknown) => error);
+      expect(readStructuredFailure(rejected)).toMatchObject({ code: "memory_table_name_schema_conflict", details: {
+        field: fields[0], retryable: false, reason: expect.stringContaining(JSON.stringify(memoryTableId)),
+      } });
+    }
+    const described = await tableTool(env, run, "describe").execute({ memoryTableId }, toolContext(run, "metadata-describe"));
+    expect(described.output).toMatchObject({ description: "Updated description", dataRevision: 1,
+      columns: [{ name: "url", required: true }, { name: "title", required: false }],
+    });
   });
 
   it("shares workspace tables across runs and queries only matching projected rows", async () => {

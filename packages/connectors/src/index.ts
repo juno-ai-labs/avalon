@@ -12,6 +12,7 @@ export { createCanvaConnector, CanvaCapabilities, CanvaAgentPluginDescriptor, ty
 import { RegionSchema } from "@rally/contracts/regions";
 import { paginatedResult } from "./tool-pagination";
 import { isPortableGoogleActivityResource } from "./google-operation-identity";
+import { ConnectorTextCursorSchema, readConnectorTextPage } from "./text-pages";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   ConnectorManifestSchema,
@@ -50,6 +51,7 @@ import {
   type ConnectorObserver,
   type ConnectorResourceAccess,
   type ConnectorToolContext,
+  type ConnectorToolResult,
   type ResolvedConnectorAdapter,
 } from "./types";
 import { isProviderCredentialRejection, withProviderReauthorization } from "./provider-utils";
@@ -152,6 +154,7 @@ export {
   type ConnectorPollingActivityStream,
   type ResolvedConnectorAdapter,
   type ConnectorToolContext,
+  type ConnectorTextPages,
   type ConnectorToolResult,
   type ConnectorNativeAgentAdapter,
   type ConnectorNativeAgentExecutionContext,
@@ -1096,7 +1099,8 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "drive.download",
-    description: "Read bounded text from a Drive file; binary content is never returned to the model.",
+    pagination: { cursorParameter: "textPage" },
+    description: "Read file text in pages. Google Docs use the native document reader; spreadsheets must be read with sheets.read_spreadsheet and sheets.read_values. Uploaded Word, Excel, PowerPoint and PDF files use the document converter.",
     capability: "drive.read",
     mode: "read",
     idempotency: "safe",
@@ -1104,10 +1108,11 @@ export const googleTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
+        textPage: z.toJSONSchema(ConnectorTextCursorSchema),
         fileId: {
           type: "string",
           minLength: 1,
-          description: "The Drive file id, as drive.search returns it, for example `1A2b3C4d5E6f7G8h9I0j`. Use drive.export instead for a Google Doc, Sheet, or Slides file, which has no downloadable body of its own.",
+          description: "The Drive file id, as drive.search returns it, for example `1A2b3C4d5E6f7G8h9I0j`. Google Docs are read natively and Slides are exported to text. For a Google Sheet, use sheets.read_spreadsheet to find its tabs and sheets.read_values to read an explicit cell range.",
         }
       },
       required: ["fileId"]
@@ -1115,7 +1120,8 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "drive.export",
-    description: "Export a Google Workspace document to plain text or PDF.",
+    pagination: { cursorParameter: "textPage" },
+    description: "Export Google Docs or Slides to paged plain text, or a Google Sheet to paged CSV (first sheet only). Uploaded files are read with drive.download.",
     capability: "drive.read",
     mode: "read",
     idempotency: "safe",
@@ -1123,18 +1129,20 @@ export const googleTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
+        textPage: z.toJSONSchema(ConnectorTextCursorSchema),
         fileId: {
           type: "string",
           minLength: 1,
           description: "The Drive file id of a Google Doc, Sheet, or Slides file, as drive.search returns it, for example `1A2b3C4d5E6f7G8h9I0j`. An uploaded PDF or image is not a Workspace document; read one with drive.download.",
         },
-        mimeType: { type: "string", enum: ["text/plain", "application/pdf"], description: "What to convert the document to. Use `text/plain`, which returns the document's text. `application/pdf` returns metadata only and no content — binary PDF data is never put in front of the model — so choose it only to confirm a PDF export is possible, never to read the document." }
+        mimeType: { type: "string", enum: ["text/plain", "text/csv", "application/pdf"], description: "Use text/plain for Google Docs or Slides, or text/csv for a Google Sheet (first sheet only; use sheets.read_values for other tabs). `application/pdf` returns metadata only and no content — binary PDF data is never put in front of the model — so choose it only to confirm a PDF export is possible, never to read the document." }
       },
       required: ["fileId", "mimeType"]
     }
   },
   {
     name: "docs.read_document",
+    pagination: { cursorParameter: "textPage" },
     description: "Read the structure and bounded text of a Google Doc.",
     capability: "docs.read",
     mode: "read",
@@ -1143,6 +1151,7 @@ export const googleTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
+        textPage: z.toJSONSchema(ConnectorTextCursorSchema),
         documentId: {
           type: "string",
           minLength: 1,
@@ -1415,6 +1424,73 @@ const GOOGLE_MAX_HYDRATED_MESSAGES = 50;
 const GOOGLE_MAX_HYDRATED_TEXT_BYTES = 256_000;
 const GOOGLE_TOOL_RESPONSE_BYTES = 512_000;
 const GOOGLE_TOOL_TEXT_BYTES = 128_000;
+
+async function googleTextPage(
+  operation: string,
+  input: Record<string, unknown>,
+  context: ConnectorToolContext,
+  fileId: string,
+  textField: "text" | "textContent",
+  text?: string,
+  metadata: Record<string, unknown> = {},
+): Promise<ConnectorToolResult> {
+  const cursor = input.textPage === undefined ? undefined : ConnectorTextCursorSchema.parse(input.textPage);
+  const page = await readConnectorTextPage({ text, cursor, store: context.textPages, pageBytes: GOOGLE_TOOL_TEXT_BYTES });
+  const sourceTruncated = cursor?.sourceTruncated === true || metadata.sourceTruncated === true || metadata.contentTruncated === true;
+  return {
+    output: boundedToolOutput({ ...metadata, [textField]: page.text, bytes: page.bytes,
+      startByte: page.startByte, totalBytes: page.totalBytes, hasMore: page.hasMore, contentIncluded: true,
+      sourceTruncated, contentTruncated: page.hasMore || sourceTruncated,
+      ...(operation === "docs.read_document" ? { textTruncated: page.hasMore || sourceTruncated } : {}) }),
+    summary: `Read ${page.bytes} bytes of file text${page.hasMore ? "; more text is available" : ""}`,
+    providerOperationId: fileId,
+    pagination: { continuations: page.cursor ? [{ operation, slot: "nextPageId", input: {
+      ...input, textPage: { ...page.cursor, ...(sourceTruncated ? { sourceTruncated: true } : {}) },
+    } }] : [] },
+  };
+}
+
+function assertGoogleExportFormat(metadata: Record<string, unknown>, mimeType: string, scopes: readonly string[]): void {
+  const actual = GOOGLE_DRIVE_FILE_TYPES.find((type) => GOOGLE_DRIVE_FILE_TYPE_MIME[type] === readString(metadata, "mimeType"));
+  if (actual !== "document" && actual !== "spreadsheet" && actual !== "presentation" && actual !== "drawing") {
+    const remedy = actual ? GOOGLE_DRIVE_FILE_TYPE_TOOL[actual] : null;
+    throw new ConnectorError("invalid_payload", `fileId: this file is not a native Google Workspace file and cannot be exported.${remedy && scopes.includes(remedy.capability) ? ` ${remedy.remedy}` : " Read uploaded files with drive.download."}`,
+      { field: "fileId", reason: "file_not_exportable" });
+  }
+  if (mimeType === "application/pdf" || (mimeType === "text/csv" && actual === "spreadsheet")
+    || (mimeType === "text/plain" && (actual === "document" || actual === "presentation"))) return;
+  const remedy = actual === "spreadsheet"
+    ? "Use sheets.read_spreadsheet and sheets.read_values to read its tabs and cells, or request text/csv for the first sheet only."
+    : actual === "drawing" ? "A Google drawing supports PDF export, not text." : "Use text/plain for this document.";
+  throw new ConnectorError("invalid_payload", `mimeType: the requested format is not supported for this Google file type. ${remedy}`,
+    { field: "mimeType", reason: "unsupported_export_format" });
+}
+
+function assertGoogleSnapshotDownloadAllowed(metadata: Record<string, unknown>): void {
+  if (readRecord(metadata, "capabilities")?.canDownload !== true) {
+    throw connectorResourceAccessRefused("fileId: Google does not allow this connection to download the file. Check its download permissions or use a connection with access.",
+      { field: "fileId", reason: "download_restricted" });
+  }
+}
+
+/** Only declared provider reasons cross the tool boundary; provider messages are data. */
+function googleExportRejection(payload: Record<string, unknown>): { reason: string; field: string; message: string } | null {
+  const errors = recordArray(readRecord(payload, "error") ?? {}, "errors");
+  const known: Record<string, { field: string; message: string }> = {
+    exportSizeLimitExceeded: { field: "fileId", message: "Google's export size limit was exceeded. Read the Google Doc with docs.read_document, or read spreadsheet ranges with sheets.read_values." },
+    fileNotExportable: { field: "fileId", message: "This file cannot be exported by Google. Read uploaded files with drive.download." },
+    cannotExportFile: { field: "fileId", message: "Google cannot export this file. Use its native Docs or Sheets reader, or drive.download for an uploaded file." },
+    insufficientFilePermissions: { field: "fileId", message: "This Google connection lacks permission to export the file. Use a connection with access or ask the owner to share it." },
+    appNotAuthorizedToFile: { field: "fileId", message: "This Google connection is not authorized to access the file. Use a connection with access." },
+    downloadRestrictedForRevision: { field: "fileId", message: "Google restricts downloading this file revision. Check the file's download permissions." },
+    unsupportedExportFormat: { field: "mimeType", message: "Google does not support this export format. Use a format supported by the file type." },
+  };
+  for (const error of errors) {
+    const reason = readString(error, "reason");
+    if (reason && Object.hasOwn(known, reason)) return { reason, ...known[reason]! };
+  }
+  return null;
+}
 const GOOGLE_TOOL_GMAIL_MESSAGES = 25;
 const GOOGLE_TOOL_HEADER_CONCURRENCY = 5;
 /** What a reader needs to see of a recipient list. */
@@ -1599,6 +1675,10 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         const rejectedArgument = response.status === 400
           ? googleRejectedArgument(details, argumentByParameter)
           : null;
+        const exportRejection = argumentByParameter?.mimeType === "mimeType" ? googleExportRejection(details) : null;
+        if (exportRejection) throw new ConnectorError("provider_error",
+          `${exportRejection.field}: ${exportRejection.message}`,
+          { reason: exportRejection.reason, field: exportRejection.field, error: { code: response.status } });
         throw new ConnectorError(
           "provider_error",
           rejectedArgument
@@ -3232,15 +3312,21 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "docs.read_document") {
-        const args = z.strictObject({ documentId: z.string().min(1).max(500) }).parse(rawArgs);
+        const args = z.strictObject({ documentId: z.string().min(1).max(500), textPage: ConnectorTextCursorSchema.optional() }).parse(rawArgs);
+        if (args.textPage) {
+          const metadata = await withGoogleReadAccess(() => api(context.connection, googleDriveMetadataUrl(args.documentId).toString(), { signal: context.signal })
+            .then(response => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)));
+          assertGoogleSnapshotDownloadAllowed(metadata);
+          return googleTextPage(name, args, context, args.documentId, "textContent", undefined,
+            { resourceType: "google_doc", documentId: args.documentId, webUrl: `https://docs.google.com/document/d/${encodeURIComponent(args.documentId)}/edit` });
+        }
         const payload = await withGoogleReadAccess(() => withGoogleFileFamilyHint(
           context, args.documentId, "document",
-          () => readGoogleDocument(api, context.connection, args.documentId, context.signal)));
-        return {
-          output: boundedToolOutput(sanitizeGoogleDocument(payload)),
-          summary: "Read bounded Google Doc content",
-          providerOperationId: args.documentId
-        };
+          () => readGoogleDocument(api, context.connection, args.documentId, context.signal, context.textPages?.maxSourceBytes)));
+        const extracted = extractGoogleDocumentText(payload, context.textPages?.maxSourceBytes ?? GOOGLE_TOOL_RESPONSE_BYTES);
+        const metadata = sanitizeGoogleDocumentMetadata(payload);
+        return googleTextPage(name, args, context, args.documentId, "textContent", extracted.text,
+          { ...metadata, sourceTruncated: extracted.truncated });
       }
       if (name === "docs.create_document") {
         const args = z.strictObject({
@@ -3455,7 +3541,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "drive.get_metadata" || name === "drive.download") {
-        const args = z.strictObject({ fileId: z.string().min(1).max(500) }).parse(rawArgs);
+        const args = z.strictObject({ fileId: z.string().min(1).max(500), textPage: ConnectorTextCursorSchema.optional() }).parse(rawArgs);
         const metadataUrl = googleDriveMetadataUrl(args.fileId);
         const payload = await withGoogleReadAccess(() => api(context.connection, metadataUrl.toString(), { signal: context.signal })
           .then((response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)));
@@ -3467,40 +3553,63 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
             providerOperationId: args.fileId
           };
         }
+        const mimeType = readString(payload, "mimeType");
+        if (mimeType === GOOGLE_DRIVE_FILE_TYPE_MIME.spreadsheet) {
+          const remedy = context.connection.grantedScopes.includes("sheets.read")
+            ? "Use sheets.read_spreadsheet to find its tabs and sheets.read_values with an explicit cell range."
+            : "Load a Google connection with sheets.read to read its tabs and cell ranges.";
+          throw new ConnectorError("invalid_payload", `fileId: this is a native Google spreadsheet and reading it requires a cell range. ${remedy}`,
+            { reason: "native_spreadsheet_requires_range", field: "fileId" });
+        }
+        if (args.textPage) {
+          assertGoogleSnapshotDownloadAllowed(payload);
+          return googleTextPage(name, args, context, args.fileId, "textContent", undefined, metadata);
+        }
+        if (mimeType === GOOGLE_DRIVE_FILE_TYPE_MIME.document) {
+          const document = await withGoogleReadAccess(() => readGoogleDocument(api, context.connection, args.fileId, context.signal, context.textPages?.maxSourceBytes));
+          const extracted = extractGoogleDocumentText(document, context.textPages?.maxSourceBytes ?? GOOGLE_TOOL_RESPONSE_BYTES);
+          return googleTextPage(name, args, context, args.fileId, "textContent", extracted.text, { ...metadata, sourceTruncated: extracted.truncated });
+        }
+        if (mimeType === GOOGLE_DRIVE_FILE_TYPE_MIME.presentation) {
+          const response = await withGoogleReadAccess(() => api(context.connection,
+            `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(args.fileId)}/export?mimeType=text%2Fplain`,
+            { signal: context.signal }, [], { mimeType: "mimeType", fileId: "fileId" }));
+          const bytes = await readBounded(response, context.textPages?.maxSourceBytes ?? GOOGLE_TOOL_RESPONSE_BYTES);
+          return googleTextPage(name, args, context, args.fileId, "textContent", new TextDecoder().decode(bytes), metadata);
+        }
         const content = await withGoogleReadAccess(() =>
-          readDriveTextContent(api, context.connection, args.fileId, payload, context.signal, GOOGLE_TOOL_TEXT_BYTES, config.documents));
-        return {
-          output: boundedToolOutput({ ...metadata, ...content }),
-          summary: content.textContent == null ? "Read Drive metadata; binary or large content was omitted" : "Read bounded Drive text content",
-          providerOperationId: args.fileId
+          readDriveTextContent(api, context.connection, args.fileId, payload, context.signal,
+            context.textPages?.maxSourceBytes ?? GOOGLE_TOOL_RESPONSE_BYTES, config.documents));
+        if (content.textContent == null) return {
+          output: boundedToolOutput({ ...metadata, ...content }), pagination: { continuations: [] },
+          summary: "Drive file content is unavailable; inspect contentOmittedReason", providerOperationId: args.fileId,
         };
+        return googleTextPage(name, args, context, args.fileId, "textContent", content.textContent, { ...metadata, ...content, textContent: undefined });
       }
       if (name === "drive.export") {
-        const args = z.strictObject({ fileId: z.string().min(1).max(500), mimeType: z.enum(["text/plain", "application/pdf"]) }).parse(rawArgs);
-        if (args.mimeType === "application/pdf") {
-          return {
-            output: {
-              fileId: args.fileId,
-              mimeType: args.mimeType,
-              contentIncluded: false,
-              reason: "Binary PDF data is not exposed to the model; attach or download it through an authorized resource flow"
-            },
-            summary: "PDF export omitted from model context for safety",
-            providerOperationId: args.fileId
-          };
+        const args = z.strictObject({ fileId: z.string().min(1).max(500), mimeType: z.enum(["text/plain", "text/csv", "application/pdf"]), textPage: ConnectorTextCursorSchema.optional() }).parse(rawArgs);
+        const metadata = await withGoogleReadAccess(() => api(context.connection, googleDriveMetadataUrl(args.fileId).toString(), { signal: context.signal })
+          .then((response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)));
+        assertGoogleExportFormat(metadata, args.mimeType, context.connection.grantedScopes);
+        if (args.mimeType === "application/pdf") return {
+          output: { fileId: args.fileId, mimeType: args.mimeType, contentIncluded: false,
+            reason: "Binary PDF data is not exposed to the model; attach or download it through an authorized resource flow" },
+          pagination: { continuations: [] }, summary: "PDF export omitted from model context for safety", providerOperationId: args.fileId,
+        };
+        const csvNotice = args.mimeType === "text/csv" ? {
+          contentScope: "first_sheet_csv", contentNotice: "CSV export contains only the first sheet; use sheets.read_values for other tabs.",
+        } : {};
+        if (args.textPage) {
+          assertGoogleSnapshotDownloadAllowed(metadata);
+          return googleTextPage(name, args, context, args.fileId, "text", undefined, { mimeType: args.mimeType, ...csvNotice });
         }
         const response = await withGoogleReadAccess(() => api(
           context.connection,
           `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(args.fileId)}/export?mimeType=${encodeURIComponent(args.mimeType)}`,
-          { signal: context.signal }
+          { signal: context.signal }, [], { mimeType: "mimeType", fileId: "fileId" }
         ));
-        const bytes = await readBounded(response, GOOGLE_TOOL_TEXT_BYTES);
-        const text = new TextDecoder().decode(bytes);
-        return {
-          output: boundedToolOutput({ text, mimeType: args.mimeType, bytes: bytes.byteLength }),
-          summary: `Exported ${text.length} characters`,
-          providerOperationId: args.fileId
-        };
+        const bytes = await readBounded(response, context.textPages?.maxSourceBytes ?? GOOGLE_TOOL_RESPONSE_BYTES);
+        return googleTextPage(name, args, context, args.fileId, "text", new TextDecoder().decode(bytes), { mimeType: args.mimeType, ...csvNotice });
       }
       throw new ConnectorError("unsupported_capability", `Unsupported Google tool: ${name}`);
     },
@@ -4626,12 +4735,13 @@ async function readGoogleDocument(
   api: GoogleApiRequester,
   connection: ConnectorConnectionContext,
   documentId: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  maximumBytes = GOOGLE_TOOL_RESPONSE_BYTES
 ): Promise<Record<string, unknown>> {
   const url = new URL(`https://docs.googleapis.com/v1/documents/${encodeURIComponent(documentId)}`);
   url.searchParams.set("includeTabsContent", "true");
   return api(connection, url.toString(), { signal }).then((response) =>
-    safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)
+    safeJsonBounded(response, maximumBytes)
   );
 }
 
@@ -4651,6 +4761,10 @@ async function updateGoogleDocument(
 
 function sanitizeGoogleDocument(payload: Record<string, unknown>): Record<string, unknown> {
   const extracted = extractGoogleDocumentText(payload, GOOGLE_TOOL_TEXT_BYTES);
+  return { ...sanitizeGoogleDocumentMetadata(payload), textContent: extracted.text, textTruncated: extracted.truncated };
+}
+
+function sanitizeGoogleDocumentMetadata(payload: Record<string, unknown>): Record<string, unknown> {
   return {
     resourceType: "google_doc",
     documentId: readString(payload, "documentId"),
@@ -4658,8 +4772,6 @@ function sanitizeGoogleDocument(payload: Record<string, unknown>): Record<string
     revisionId: readString(payload, "revisionId"),
     suggestionsViewMode: readString(payload, "suggestionsViewMode"),
     tabs: sanitizeGoogleDocumentTabs(recordArray(payload, "tabs")),
-    textContent: extracted.text,
-    textTruncated: extracted.truncated,
     webUrl: readString(payload, "documentId")
       ? `https://docs.google.com/document/d/${encodeURIComponent(requiredString(payload, "documentId", "Missing document ID"))}/edit`
       : null
@@ -4758,6 +4870,7 @@ function sanitizeGoogleSheetValues(payload: Record<string, unknown>): Record<str
   const values: unknown[][] = [];
   let cells = 0;
   let truncated = false;
+  let cellTextTruncated = false;
   for (const rawRow of rawValues) {
     if (!Array.isArray(rawRow) || values.length >= 500) {
       truncated = true;
@@ -4769,7 +4882,9 @@ function sanitizeGoogleSheetValues(payload: Record<string, unknown>): Record<str
         truncated = true;
         break;
       }
-      row.push(typeof value === "string" ? truncateText(value, 50_000) : value);
+      const boundedValue = typeof value === "string" ? truncateText(value, 50_000) : value;
+      if (boundedValue !== value) cellTextTruncated = true;
+      row.push(boundedValue);
       cells += 1;
     }
     values.push(row);
@@ -4781,7 +4896,8 @@ function sanitizeGoogleSheetValues(payload: Record<string, unknown>): Record<str
     values,
     rowCount: values.length,
     cellCount: cells,
-    truncated: truncated || rawValues.length > values.length
+    truncated: truncated || cellTextTruncated || rawValues.length > values.length,
+    cellTextTruncated
   };
 }
 
@@ -4863,7 +4979,7 @@ function googleDriveMetadataUrl(fileId: string): URL {
   url.searchParams.set("supportsAllDrives", "true");
   url.searchParams.set(
     "fields",
-    "id,name,mimeType,modifiedTime,createdTime,webViewLink,trashed,owners(displayName,emailAddress),lastModifyingUser(displayName,emailAddress),size,md5Checksum,parents,description,isAppAuthorized,capabilities(canEdit)"
+    "id,name,mimeType,modifiedTime,createdTime,webViewLink,trashed,owners(displayName,emailAddress),lastModifyingUser(displayName,emailAddress),size,md5Checksum,parents,description,isAppAuthorized,capabilities(canEdit,canDownload)"
   );
   return url;
 }
@@ -4964,7 +5080,7 @@ async function readDriveTextContent(
     return {
       textContent: null,
       contentIncluded: false,
-      contentOmittedReason: `File exceeds the ${maximumBytes}-byte model-context limit`
+      contentOmittedReason: `File exceeds the ${maximumBytes}-byte source ingestion allowance`
     };
   }
   let url: URL | null = null;
@@ -5005,7 +5121,7 @@ async function readDriveTextContent(
       return {
         textContent: null,
         contentIncluded: false,
-        contentOmittedReason: `File exceeds the ${maximumBytes}-byte model-context limit`
+        contentOmittedReason: `File exceeds the ${maximumBytes}-byte source ingestion allowance`
       };
     }
     throw error;

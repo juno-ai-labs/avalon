@@ -164,6 +164,42 @@ configure work using a consenting delegate's personal connection
 The model generates internal instructions and a user-friendly description. An
 incomplete submission does not replace the accepted revision. Edits preserve a
 person's pause; an archived owning room still refuses publication.
+Authoring has two paths. An instruction-only Sidekick is a reusable Skill loaded
+into another conversation: its instructions contain the actual knowledge, rules
+or procedure, when to use it, and any needed context, constraints or expected
+output. It has no triggers or dedicated runs. Tools, resources and delivery steps
+are included only when its method needs them. Triggered work instead starts
+independent runs and needs a runbook.
+Saving a Skill makes its instructions available to load without starting a run.
+The authoring guidance follows the setup sequence: preserve scope and read the
+current definition, discover resources and capabilities, choose triggers and
+test the method, write the runbook, then save and report. Missing required
+information calls for a partial draft and a question to the requester; connection
+status and another agent's blocker claim are not themselves publication refusals.
+The tool descriptions follow the same rules: keep the selected scope, ask the
+requesting agent for missing information on delegated setup, and describe saved
+behavior without implying a separate approval step.
+The legacy `resource_watch` trigger remains in the schema for compatibility;
+authoring uses declared connector events or polling because that trigger has no
+Sidekick activation path, as `polling-for-events` also explains.
+
+Before submitting executable behavior as ready, the wizard discovers authorized
+tools and skills, inspects real resources and sample inputs, resolves their IDs,
+and tests the workflow with available reads or non-destructive trials. Schema
+inspection is discovery, not a workflow test: the wizard retrieves and transforms
+data to produce a representative result, saving working queries or tool arguments
+when reusable. It records
+what worked, what it could not test, and remaining assumptions. Draft acceptance
+is not a workflow test. Future deliveries and other effects stay with future runs
+unless requested during setup.
+
+For triggered work, saved instructions form a runbook usable without the setup
+conversation:
+resources, tools and skills, input formats, ordered steps and decisions, state and
+duplicate handling, delivery, success checks, no-op conditions, and recovery from
+missing inputs, changed resources, or failures. Verified setup facts, untested
+assumptions, and data to refresh each run are explicit. Runs execute the discovered
+method rather than repeating setup discovery.
 
 The authoring wizard has its own model route, `sidekick_authoring`, defaulting
 to Sol independently of the ordinary Thread and activation route. Explicit model
@@ -577,13 +613,24 @@ The object's current revision and lifecycle are checked again after asynchronous
 preparation, before committing publication. An archived owning workstream refuses
 publication; an ordinary pause is preserved by editing.
 
-One transaction replaces schedules, stores bindings and evaluator projections,
-writes the accepted revision and computed `loadable`, emits the directory
-projection and records a publication alarm. The durable tail reconciles schedule
-alarms, external-event registrations and triggered memory tables. It records
-`applied_effects_revision` only after the tail succeeds. A partial tail retries
-from the accepted revision's persisted setup, without asking the user to press
-Apply. Removing triggers leaves admitted runs pinned to their original revision.
+Publication prepares table IDs and receipt hashes asynchronously, then rechecks
+the revision, accepted revision, lifecycle, principal and owning-room fences.
+One transaction creates/reopens every declared execution table, updates compatible
+metadata and receipts, replaces schedules, stores bindings and evaluator
+projections, writes the accepted revision and computed `loadable`, and advances
+the directory. A table conflict rolls back all of those changes. The submitted
+revision remains editable through a new immutable revision, while the previous
+accepted revision stays active. Instruction-only definitions skip execution
+provisioning. Removing triggers leaves admitted runs pinned to their original
+revision.
+
+New publications do not arm a table-materialization alarm. Existing
+`sidekick_memory_tables` entries are a legacy recovery path: they recheck the
+accepted revision after hashing and commit all table changes together. Schema
+and receipt conflicts are permanent, produce `sidekick_memory_tables_rejected`
+with the code and diagnostic field path, and consume the entry. Unknown failures
+retain the scheduler's backoff. Publishing a corrected revision clears obsolete
+table-materialization entries for that Sidekick.
 
 `HostedSidekick.reconcileLoadable` is the explicit object-owned operation for a future
 policy change. It reads the accepted definition, preserves legacy implicit email
@@ -1371,6 +1418,56 @@ The Sidekick authoring prompt carries no Google-specific lookup or attachment
 instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
+
+### 2026-10-23 — Publication includes its declared tables
+
+**What changed:** Tables and editable metadata now commit in the same transaction
+as activation, schedules and registrations. Conflicts name the table and fields
+and explain how to reuse its schema or explicitly migrate. Legacy alarms consume
+permanent conflicts instead of retrying indefinitely.
+
+**Why:** The old post-activation provisioning tail left Sidekicks active with
+incompatible declarations and retried immutable failures (960 and 185 attempts
+in the investigated Organization). Hosting brought the tables and Sidekick into
+one SQLite authority, so there is no longer a cross-object effect to defer.
+
+**Consequences:** Failed publication preserves the previous accepted revision
+and rolls back even earlier declarations in the batch. Keep hashes outside the
+transaction and recheck authority fences at commit. A retry ceiling was rejected:
+it would delay and hide the same deterministic failure rather than distinguish
+it from recoverable storage errors.
+
+### 2026-10-22 — Authoring investigates the workflow and saves the execution procedure
+
+**What changed:** Sidekick authoring follows an ordered setup guide, from scope
+and discovery through workflow testing, the runbook, and publication. Executable
+work requires reusable discovery and non-destructive validation during setup and
+revision. Saved instructions carry the procedure, verified facts, remaining
+assumptions, per-run checks, delivery and recovery behavior. Missing required
+information and publication refusals have distinct next steps. Tool descriptions
+share the same scope, requester and immediate-publication rules.
+Instruction-only authoring has its own reusable-guidance path without imposing
+triggered-run requirements.
+Workflow testing exercises data retrieval and transformation for a representative
+result; schema inspection alone does not qualify. Reusable queries and tool
+arguments are saved with the method.
+
+**Why:** Authoring and execution can have different reasoning capabilities. A
+brief objective leaves each independent activation to rediscover the method and
+resolve decisions the wizard could have settled once. Configuration acceptance
+checks shape and bindings, so it cannot stand in for validating the method.
+
+**Considered and rejected:** Relying on each activation to reconstruct the setup
+conversation's reasoning, or treating a successful submission as proof that the
+workflow works. Requiring a full live run during setup would also perform future
+deliveries and other effects before their requested time.
+
+**Consequences:** The wizard owns reusable investigation, while each activation
+owns current inputs and execution. The wizard records validation evidence without
+freezing changing inputs; activations still fetch current data and follow the saved
+failure and no-op rules. This is authoring guidance, not a new publication gate.
+
+Pull request: [#1425](https://github.com/juno-ai-labs/avalon/pull/1425).
 
 ### 2026-10-22 — Record consent independently of Sidekick ownership
 

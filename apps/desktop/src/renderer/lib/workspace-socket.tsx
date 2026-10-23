@@ -82,7 +82,7 @@ import { reportTelemetryProductIntent, telemetryJourneyDuration, uuidV7 } from '
 import type { WorkstreamSummary } from './types';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import { memberPreferencesQueryKey } from './use-member-preferences';
-import { accessRequestsQueryKey } from './access-requests';
+import { accessRequestsQueryKey, CONVERSATION_ACCESS_RECOVERY_QUERY_KEY, refreshConversationAccessPreviews } from './access-requests';
 import { hydrateWorkspaceDirectory, mirrorWorkspaceDirectory } from './workspace-directory-cache';
 import {
   applyVersionedWorkstreamState,
@@ -467,6 +467,7 @@ export function WorkspaceSocketProvider({
       SPACES_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, SPACES_READY_QUERY_KEY,
       PERSONAL_ORDER_QUERY_KEY, PINNED_ORDER_QUERY_KEY,
       CLIENT_FEATURE_FLAGS_QUERY_KEY,
+      CONVERSATION_ACCESS_RECOVERY_QUERY_KEY,
       WORKSTREAM_STATE_WATERLINES_KEY, WORKSPACE_DIRECTORY_WATERLINES_KEY,
     ]);
     let stopped = false;
@@ -969,6 +970,12 @@ export function WorkspaceSocketProvider({
       if (served.length === 0) return;
       await requestRails(served);
     };
+    const clearAgentActivity = (): void => {
+      // Running is a live claim: retain no count across a lost producer.
+      // Reset preserves observers; reconnect supplies each target's current count.
+      void queryClient.resetQueries({ queryKey: ['workstream-background-agents'] });
+      void queryClient.resetQueries({ queryKey: ['sidekick-activity'] });
+    };
     /** What every end of a socket's life resets, whoever ended it. */
     const releaseSocket = (): void => {
       clearSocketTimers();
@@ -976,6 +983,7 @@ export function WorkspaceSocketProvider({
       conversationViewsAvailable = false;
       socket = null;
       setPresenceUserIdsByWorkstream({});
+      clearAgentActivity();
       rejectPendingRailRequests(new ApiError('The organization connection closed.', 0, 'workspace_socket_closed'));
       rejectPendingSpaceRequests(new ApiError('The organization connection closed.', 0, 'workspace_socket_closed'));
     };
@@ -1132,6 +1140,9 @@ export function WorkspaceSocketProvider({
             }
             if (!subscribed) {
               subscribed = true;
+              // Reach nudges are not replayed. Recheck a waiting conversation
+              // if access changed while this Organization socket was away.
+              void refreshConversationAccessPreviews(queryClient);
               sendPresence();
               sendConversationViewRequestsRef.current();
               sendSidekickActivityRef.current();
@@ -1390,6 +1401,9 @@ export function WorkspaceSocketProvider({
           }
           const reachChanged = safeParseSocketEvent(WorkspaceReachChangedEventSchema, decoded);
           if (reachChanged.success) {
+            // Approval and direct participant adds both move reach. The waiting
+            // screen retries its socket only after its own preview admits it.
+            void refreshConversationAccessPreviews(queryClient);
             void queryClient.invalidateQueries({ queryKey: MERGE_CHANNELS_QUERY_KEY });
             // This person joined or left a Channel or Breakout. A member's
             // sidebar already moved: the Channel row and the Space pages are
@@ -1682,12 +1696,12 @@ export function WorkspaceSocketProvider({
       document.removeEventListener('visibilitychange', observeWindowFocus);
       stopApplicationFocus();
       reportPresenceRef.current = () => undefined;
-      subscribed = false;
       clearReconnect();
-      clearSocketTimers();
       activeTicketAbort?.abort();
       activeTicketAbort = null;
-      socket?.close();
+      const retired = socket;
+      releaseSocket();
+      retired?.close();
     };
   }, [api, localCacheScope, onAccessRevoked, ownSocket, queryClient, region, relay, workspaceId]);
 

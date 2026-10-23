@@ -1297,6 +1297,9 @@ export interface ConversationSurfaceProps {
   workstreamContext?: WorkstreamDetail;
   /** Shared directory state, including resolution from title menus or merges. */
   resolved?: boolean;
+  /** The host owns resolution, including navigation, pending state and failures. */
+  onResolve?: () => void;
+  resolveDisabled?: boolean;
   sidebarScope?: "workstream" | "conversation";
   /** Opens the launch pane at a turn; a suggestion passes the drafted opening prompt to seed it with. */
   onStartSubstream?: (throughTurnId: string, initialDraft?: string) => void;
@@ -1393,6 +1396,8 @@ function ConversationSurfaceContent({
   substreamId,
   workstreamContext,
   resolved = false,
+  onResolve,
+  resolveDisabled = false,
   sidebarScope = "workstream",
   renderHeader,
   renderOpeningSidebar,
@@ -3309,7 +3314,7 @@ function ConversationSurfaceContent({
     && !dismissedSuggestionIds.has(suggestion.suggestionId)
     && suggestionTurnIsVisible(suggestion.judgedTurnId, readableTurnIds)
     && (suggestion.kind === 'mark_resolved' ? !resolved && parentKind === 'workstream' && Boolean(api)
-      : suggestion.kind === 'merge_up' ? merge !== null && startMerge !== undefined : canStartBreakout));
+      : suggestion.kind === 'merge_up' ? !resolved && merge !== null && startMerge !== undefined : canStartBreakout));
   const afterTurn = new Map<string, React.ReactNode>();
   for (const suggestion of visibleSuggestions) {
     if (mergeCard?.anchorTurnId === suggestion.judgedTurnId) continue;
@@ -3336,6 +3341,7 @@ function ConversationSurfaceContent({
         action={{ label: 'Merge', onAct: () => startMerge?.(words, suggestion.judgedTurnId) }}
         excerpt={pending ? null : suggestionExcerpt(words)}
         kind="merge_up"
+        resolveAction={onResolve ? { label: 'Resolve without merge', onAct: onResolve, disabled: resolveDisabled } : undefined}
         label={`Suggestion: merge to ${mergeTargetName ?? ''}`}
         onDismiss={() => dismissSuggestion(suggestion)}
         pending={pending}

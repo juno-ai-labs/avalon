@@ -826,7 +826,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     parentKind: 'workstream', substreamId: '0', guest, thread: parent.data, placements: row?.spaceIds,
     eligible: eligibleMergeChannels, spaces: activeSpaces?.items ?? [],
   });
-  const resolve = async (target: ConversationRowTarget): Promise<void> => {
+  const resolve = async (target: Pick<ConversationRowTarget, 'substreamId'>): Promise<void> => {
     if (!api || substreamPending) return;
     const visit = routeRef.current.visit;
     const parentId = id;
@@ -1032,6 +1032,8 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   const breakoutExpandAction = expandToggle(breakoutExpanded, shownMode === 'split', setBreakoutExpanded);
 
   const mainPane = !mainVisible ? null : <ConversationSurface
+    onResolve={mainActions?.onResolve ? () => { void resolve({ substreamId: '0' }); } : undefined}
+    resolveDisabled={mainActions?.resolveDisabled}
     resolved={Boolean(threadResolved)}
     linkSpaceId={linkSpaceId}
     breakouts={breakoutMarks}
@@ -1080,6 +1082,8 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     }}
     workstreamContext={conversationScoped ? undefined : parent.data}
   /> : <ConversationSurface
+    onResolve={substreamActions.onResolve ? () => { void resolve({ substreamId: openBreakoutId ?? '0' }); } : undefined}
+    resolveDisabled={substreamActions.resolveDisabled}
     resolved={Boolean(breakoutResolved)}
     linkSpaceId={linkSpaceId}
     mergeRequest={mergeRequest && mergeRequest.substreamId === openBreakoutId ? mergeRequest.nonce : null}
