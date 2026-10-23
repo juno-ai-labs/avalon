@@ -193,9 +193,9 @@ For withdrawal, a known Sidekick ID is sufficient. If it is unknown, call
 `sidekick_my_delegations_list`, choose that person's own grant, and set
 `allowed: false`. Never require `delegates_list` or viewer-only discovery first.
 Reconcile with `my_delegations_list` after an uncertain response or stale receipt;
-it also returns the withdrawn entry's current state. The UI equivalent is
-Settings → Account → Sidekick delegation. This is a self-withdrawal path, not a
-new way to enroll or read a Sidekick after losing access.
+it also returns the withdrawn entry's current state. This is an agent
+self-withdrawal path, not a new way to enroll or read a Sidekick after losing
+access. The dedicated Account settings withdrawal feature is removed.
 
 ### Mutation ordering and replay
 
@@ -238,7 +238,7 @@ appropriate. Never expose raw provider errors or untrusted rejected values.
 | `sidekick_delegation_membership_unavailable` | “Your Organization membership is unavailable. Restore membership before allowing this Sidekick to act as you. You can still withdraw an existing grant.” |
 | `sidekick_delegation_unavailable` | “This Sidekick cannot accept enrollment. Refresh its details before trying again. You can still withdraw your own grant.” |
 | `sidekick_delegation_stale_action` | “This delegation changed after this request was prepared. Read your current grant. Only a new request from you can allow it again.” |
-| `sidekick_delegation_list_too_large` | “This delegation list exceeds the tool output budget. Inspect it in the Sidekick screen, or Settings → Account → Sidekick delegation for your own grants.” |
+| `sidekick_delegation_list_too_large` | “This delegation list exceeds the tool output budget. Inspect it in the Sidekick screen.” |
 
 Unauthorized list/allow uses `sidekick_not_found` without revealing existence.
 Self-withdrawal remains allowed after access loss, archival or deletion. It
