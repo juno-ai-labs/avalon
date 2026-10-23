@@ -252,7 +252,10 @@ describe("Sidekick consent authority in real workerd", () => {
     await create(true, "personal");
     await runInDurableObject(stub(), async (instance) => {
       await expect(instance.sidekickReadDelegation({ ...address, actor: { userId: other, participantOfOwningWorkstream: false } })).rejects.toThrow("This Sidekick is unavailable to you");
-      await expect(instance.sidekickPrepareMyDelegation({ ...address, userId: other, allowed: true, operationId: crypto.randomUUID() })).rejects.toThrow("This Sidekick is unavailable to you");
+      const request = { ...address, userId: other, operationId: crypto.randomUUID(), allowed: true };
+      const prepared = await instance.sidekickPrepareMyDelegation(request);
+      await expect(instance.sidekickSetMyDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" }))
+        .rejects.toThrow("This Sidekick is unavailable to you");
     });
     expect(await own(other)).toEqual({ userId: other, delegations: [] });
   });

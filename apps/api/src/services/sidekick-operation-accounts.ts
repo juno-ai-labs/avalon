@@ -95,7 +95,9 @@ export async function executeSidekickAccountOperation<C extends SidekickAccountC
   const address = { runId: context.harnessRunId, effectIntentId };
   const [prior, bindings] = await Promise.all([
     receipts.executionAccount(address),
-    receipts.resourceExecutionAccounts({ runId: context.harnessRunId, resourceKeys: identity.resourceKeys }),
+    identity.resourceKeys.length > 0
+      ? receipts.resourceExecutionAccounts({ runId: context.harnessRunId, resourceKeys: identity.resourceKeys })
+      : Promise.resolve([]),
   ]);
   const grants = new Map(authority.delegates.map((grant) => [grant.userId, grant]));
   const sourceOrder = new Map(options.sourceConnectionIds.map((id, index) => [id, index]));

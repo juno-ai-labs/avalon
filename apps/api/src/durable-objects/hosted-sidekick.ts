@@ -7,7 +7,7 @@ import {
   ExternalEventEvaluatorV1Schema, PersonalPresentationSchema,
 } from "@rally/contracts";
 import { SidekickDelegationStorage } from "./sidekick-delegation-storage";
-import { sidekickSourceRegistrations } from "./sidekick-source-registrations";
+import { queueSidekickSourceReconciliation, sidekickSourceRegistrations } from "./sidekick-source-registrations";
 import { rememberSidekickDelegationLocation } from "../services/sidekick-delegation-service";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import {
@@ -624,7 +624,7 @@ export class HostedSidekick {
         });
       }
       this.sql.exec("UPDATE automation_directory SET delegation_migrated=1 WHERE automation_id=?", this.sidekickId);
-      this.scheduleSourceReconciliation(uuidV7());
+      this.scheduleSourceReconciliation();
     });
   }
 
@@ -726,7 +726,8 @@ export class HostedSidekick {
   async prepareMyDelegation(input: z.input<typeof SidekickPrepareDelegationRequestSchema>): Promise<{ generation: number }> {
     const request = parseRpcInput(SidekickPrepareDelegationRequestSchema, input, "sidekick_delegation_prepare");
     if (request.automationId !== this.sidekickId) throw new Error("sidekick_identity_mismatch");
-    if (request.allowed) await this.assertDelegationEnrollment(request.workspaceId, request.userId);
+    // Preparation records intent, not permission; enrollment is authorized once,
+    // at the mutation that could actually grant authority.
     return this.delegations().prepare(this.sidekickId, request.userId, request.operationId, request.allowed);
   }
 
@@ -752,7 +753,7 @@ export class HostedSidekick {
         label: enrollment?.row.title || "Unavailable Sidekick",
       });
       if (this.row()) this.host.noteDirectoryChanged(this.sidekickId, false, Date.now());
-      this.scheduleSourceReconciliation(request.operationId);
+      this.scheduleSourceReconciliation();
       return result;
     });
   }
@@ -779,7 +780,7 @@ export class HostedSidekick {
         membershipIncarnation: null, source: "manager_removal", label: "Unavailable Sidekick",
       });
       this.host.noteDirectoryChanged(this.sidekickId, false, Date.now());
-      this.scheduleSourceReconciliation(request.operationId);
+      this.scheduleSourceReconciliation();
       return result;
     });
   }
@@ -974,7 +975,7 @@ export class HostedSidekick {
         this.sidekickId,
       );
       const effectiveAfter = this.writeRegistrations(paused ? [] : prepared.evaluators);
-      if (!paused) this.scheduleSourceReconciliation(uuidV7());
+      if (!paused) this.scheduleSourceReconciliation();
       if (definition.triggers.length > 0 && definition.memoryTables.length > 0) {
         this.host.alarms.schedule({
           kind: SIDEKICK_MEMORY_TABLES_ALARM_KIND,
@@ -1450,7 +1451,7 @@ export class HostedSidekick {
         source: "self_service", label: row.title || "Unavailable Sidekick",
       });
       const accessChanged = this.delegations().grantClaimAccess(this.sidekickId, claimant);
-      this.scheduleSourceReconciliation(operationId);
+      this.scheduleSourceReconciliation();
       if (result.changed || accessChanged) this.touchDirectory(Date.now());
       return result.changed || accessChanged;
     });
@@ -2026,7 +2027,7 @@ export class HostedSidekick {
     if (!resumed) throw new Error("sidekick_missing");
     const evaluators = JSON.parse(resumed.evaluator_projection_json) as unknown[];
     this.touchDirectory(now, this.writeRegistrations(evaluators));
-    this.scheduleSourceReconciliation(uuidV7());
+    this.scheduleSourceReconciliation();
     return evaluators;
   }
 
@@ -2089,11 +2090,8 @@ export class HostedSidekick {
   }
 
   /** Host-owned invalidations use the same durable source refresh as self-service. */
-  scheduleSourceReconciliation(actionId: string): void {
-    const row = this.row();
-    if (row?.lifecycle !== "active" || row.evaluator_projection_json === "[]") return;
-    this.host.alarms.schedule({ kind: SIDEKICK_DELEGATION_SOURCES_ALARM_KIND,
-      key: sidekickAlarmKey(this.sidekickId, actionId), dueAt: Date.now() });
+  scheduleSourceReconciliation(): void {
+    queueSidekickSourceReconciliation(this.storage, this.sidekickId);
   }
 
   private async reconcileSourceRegistrations(): Promise<void> {

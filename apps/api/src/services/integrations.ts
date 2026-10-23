@@ -3836,15 +3836,14 @@ export async function runWorkstreamHarness(
           return { allowed: true };
         }
         if (input.parentKind === "automation") {
-          const [, , delegation] = await Promise.all([
+          await Promise.all([
             liveness.pulse("before_tool", true),
             assertRunAuthorityStillValid(env, input, runAuthoritySnapshot),
-            readSidekickOperationDelegation(env, input),
           ]);
           // The requested plugin identifies the authored operation. Its serving
           // account is selected below; authorizing its old owner here would
           // prevent a known-resource read from using another eligible delegate.
-          return { allowed: true, authorizationContext: { delegation } };
+          return { allowed: true, authorizationContext: { delegation: harnessTools.delegation } };
         }
         const [, , row] = await Promise.all([
           liveness.pulse("before_tool", true),
@@ -5531,6 +5530,7 @@ async function loadHarnessTools(
   connectionByTool: Map<string, string>;
   idempotencyByTool: Map<string, "safe" | "provider_key" | "record_before_execute">;
   modeByTool: Map<string, "read" | "write">;
+  delegation: SidekickExecutionDelegation | null;
 }> {
   const [[attachedLinks, connectionRows], runDefinition, delegation, backgroundSource] = await Promise.all([
     inventoryPreparation.get(), runDefinitionPreparation.get(), readSidekickOperationDelegation(env, input), readSidekickOperationSource(env, input),
@@ -5608,6 +5608,7 @@ async function loadHarnessTools(
     env,
     input,
     inObjectResourceAttacher,
+    { delegation },
   );
   const multimodalGenerationPlugin = createAvalonMultimodalGenerationPlugin(
     env,
@@ -5806,10 +5807,13 @@ async function loadHarnessTools(
           : {}),
         execute: async (toolInput, context) => {
           if (delegation) {
-            const prepared = context.authorizationContext as PreparedConnectorAuthorization | undefined;
-            const authority = prepared?.delegation ?? await readSidekickOperationDelegation(env, input);
-            if (!authority || !paginationLease) throw new ConnectorError("unauthorized", "Sidekick account execution requires current delegation and a durable run receipt.");
-            if (!prepared?.delegation) await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
+            // Consent refreshes with this inventory, including on continuation.
+            // Selected connection credentials/capabilities are still checked at dispatch.
+            const authority = delegation;
+            if (!paginationLease) throw new ConnectorError("unauthorized", "Sidekick account execution requires a durable run receipt.");
+            if (!(context.authorizationContext as PreparedConnectorAuthorization | undefined)?.delegation) {
+              await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
+            }
             const parsed = supportsAccountSelection ? splitSidekickAccount(toolInput)
               : { input: toolInput, selection: { connectionId: frozen.connectionId } };
             const operation = definition.providerOperationName ?? definition.name;
@@ -6020,6 +6024,7 @@ async function loadHarnessTools(
     connectionByTool,
     idempotencyByTool,
     modeByTool,
+    delegation,
   };
 }
 
@@ -6036,6 +6041,7 @@ function profileHarnessTools(corePlugins: HarnessPlugin[]): Awaited<ReturnType<t
     definition: tool.definition,
   })));
   return {
+    delegation: null,
     coreTools,
     corePlugins,
     tools: coreTools,
