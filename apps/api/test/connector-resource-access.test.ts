@@ -250,10 +250,18 @@ describe("reaching one resource through whichever connection can", () => {
     await workspaceObject.instance.sidekickSetMyDelegation({ ...revoke, expectedGeneration: revocation.generation, source: "self_service" });
     seedToolReceipt(objectStore, { id: "after-withdrawal", runId: HARNESS_RUN_ID, toolCallId: "after-withdrawal", position: 2,
       toolName: "sheets.update_values", status: "executing", mode: "write", executionPlanJson: '{"mode":"write"}' });
-    await expect(tool.execute({ ...write, rallyAccount: { userId: other } }, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID,
+    const afterWithdrawal = { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID,
       harnessRunId: HARNESS_RUN_ID, toolCallId: "after-withdrawal", effectIntentId: "after-withdrawal",
-      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal })).rejects.toThrow("not an eligible Sidekick delegate");
-    expect(writes).toEqual(["workspace-token"]);
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    // Consent propagates with inventory refresh, not with a grant RPC per call.
+    await expect(tool.execute({ ...write, rallyAccount: { userId: other } }, afterWithdrawal))
+      .resolves.toMatchObject({ output: { updatedCells: 2 } });
+    const refreshed = await __integrationTesting.loadHarnessTools(env, input, undefined, undefined, runDefinition, undefined, lease);
+    const refreshedTool = refreshed.plugins.find((candidate) => candidate.canonicalId === plugin.canonicalId)!
+      .tools.find((candidate) => candidate.definition.name === "sheets.update_values")!;
+    await expect(refreshedTool.execute({ ...write, rallyAccount: { userId: other } }, afterWithdrawal))
+      .rejects.toThrow("not an eligible Sidekick delegate");
+    expect(writes).toEqual(["workspace-token", "workspace-token"]);
   });
 
   it("writes through the Organization's connection when the person's own cannot reach the file", async () => {

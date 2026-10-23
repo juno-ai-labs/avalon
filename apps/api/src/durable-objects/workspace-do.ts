@@ -6550,7 +6550,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** Set by a hosted Sidekick write that moved a directory row; the sidebar list is published after it. */
   private sidekickDirectoryMoved = false;
 
-  private queueSidekickSourcesForUsers(userIds: readonly string[], actionId: string): boolean {
+  private queueSidekickSourcesForUsers(userIds: readonly string[]): boolean {
     if (userIds.length === 0) return false;
     const targets = this.state.storage.sql.exec<{ automation_id: string }>(
       `SELECT DISTINCT directory.automation_id FROM automation_directory directory
@@ -6560,7 +6560,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       JSON.stringify(userIds),
     ).toArray();
     const host = this.hostedSidekickHost();
-    for (const target of targets) new HostedSidekick(host, target.automation_id).scheduleSourceReconciliation(actionId);
+    for (const target of targets) new HostedSidekick(host, target.automation_id).scheduleSourceReconciliation();
     return targets.length > 0;
   }
 
@@ -13984,7 +13984,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * caller, which sends both once for the whole pass.
    */
   private async runDirectoryFollowUp(followUp: DirectoryFollowUp, rows: ChannelRowPlan): Promise<void> {
-    if (this.queueSidekickSourcesForUsers(followUp.reachChangedUsers, `reach-${uuidV7()}`)) await this.armNextAlarm();
+    if (this.queueSidekickSourcesForUsers(followUp.reachChangedUsers)) await this.armNextAlarm();
     const commonChanges = new Set(followUp.commonChanges);
     const viewerChanges = new Map(followUp.viewerChanges.map(([id, users]) => [id, new Set(users)]));
     const breakoutChanges = new Set(followUp.breakoutChanges);
@@ -14247,7 +14247,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         request.removed ? request.relationship.incarnation : null, active ? 1 : 0,
         request.sequence, Date.now(),
       );
-      this.queueSidekickSourcesForUsers([userId], `membership-${userId}-${request.sequence}`);
+      this.queueSidekickSourcesForUsers([userId]);
       if (!active) {
         // Leaving a Channel's participants changes its facepile for everyone,
         // leaving any row changes this person's reach, and leaving a Space's

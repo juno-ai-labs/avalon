@@ -13,6 +13,8 @@ import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { insertChannelRow } from "./helpers/hosted-parent";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { readSidekickOperationSource } from "../src/services/sidekick-operation-accounts";
+import { queueSidekickSourceReconciliation } from "../src/durable-objects/sidekick-source-registrations";
+import { ScheduledAlarmStore } from "../src/durable-objects/scheduled-alarms";
 
 const workspaceId = asWorkspaceId("00000000-0000-7000-8000-00000000da00");
 const creator = asUserId("00000000-0000-7000-8000-00000000da01");
@@ -90,6 +92,31 @@ async function webhook() {
 }
 
 describe("shared Sidekick delegation admission", () => {
+  it("coalesces source changes without losing a wake behind an older handler", async () => {
+    await webhook();
+    const observed = await runInDurableObject(stub(), (_instance, state) => {
+      const alarms = new ScheduledAlarmStore(state.storage.sql);
+      const kind = "sidekick_delegation_sources", key = `${automationId}:sources`;
+      alarms.cancelKind(kind);
+      const dueAt = Date.now() + 60_000;
+      alarms.schedule({ kind, key, dueAt });
+      const running = alarms.get(kind, key)!;
+      state.storage.sql.exec("UPDATE connector_connections SET status='disabled' WHERE id=?", connectionId);
+      const connectionWake = alarms.get(kind, key)!;
+      state.storage.sql.exec("UPDATE connector_connections SET status='healthy' WHERE id=?", connectionId);
+      queueSidekickSourceReconciliation(state.storage, automationId);
+      const latest = alarms.get(kind, key)!;
+      const pending = alarms.list(kind).length;
+      alarms.settle(running, Date.now());
+      const afterOlderHandler = alarms.list(kind).length;
+      alarms.settle(latest, Date.now());
+      return { pending, connectionAdvance: connectionWake.dueAt - dueAt,
+        totalAdvance: latest.dueAt - dueAt, afterOlderHandler, afterLatestHandler: alarms.list(kind).length };
+    });
+    expect(observed).toEqual({ pending: 1, connectionAdvance: 1, totalAdvance: 3,
+      afterOlderHandler: 1, afterLatestHandler: 0 });
+  });
+
   it.each([false, true])("reconciles configured files, queued events and shared occurrences (connection added later: %s)", async (lateConnection) => {
     await create();
     const secondConnection = crypto.randomUUID(), unconsentedConnection = crypto.randomUUID(), wrongResource = crypto.randomUUID();

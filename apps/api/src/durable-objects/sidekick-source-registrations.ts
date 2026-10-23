@@ -4,22 +4,32 @@ import { connectorActivityTriggerDescriptors, storedConnectionScope } from "../l
 import { uuidV7 } from "../lib/uuid-v7";
 import { resolveWorkspaceConnectorResource } from "./workspace-resources-storage";
 
-const sourceWake = `INSERT INTO _internal_durable_alarms(kind,alarm_key,due_at,created_at,updated_at)
-  SELECT 'sidekick_delegation_sources',automation_id || ':connection:' || lower(hex(randomblob(16))),
+function sourceWake(predicate = ""): string {
+  return `INSERT INTO _internal_durable_alarms(kind,alarm_key,due_at,created_at,updated_at)
+  SELECT 'sidekick_delegation_sources',automation_id || ':sources',
     unixepoch()*1000,unixepoch()*1000,unixepoch()*1000 FROM automation_directory
-    WHERE lifecycle='active' AND region IS NOT NULL AND evaluator_projection_json<>'[]'`;
+    WHERE lifecycle='active' AND region IS NOT NULL AND evaluator_projection_json<>'[]' ${predicate}
+  ON CONFLICT(kind,alarm_key) DO UPDATE SET
+    due_at=MAX(excluded.due_at,_internal_durable_alarms.due_at+1),
+    retry_at=0,attempt=0,updated_at=excluded.updated_at`;
+}
+
+/** One pending refresh per Sidekick. Moving the instant fences an older handler's settlement. */
+export function queueSidekickSourceReconciliation(storage: DurableObjectStorage, sidekickId: string): void {
+  storage.sql.exec(sourceWake("AND automation_id=?"), sidekickId);
+}
 
 /** Connection authority changes wake configured sources; cursor/token renewal does not. */
 export const SIDEKICK_SOURCE_CONNECTION_SCHEMA_STATEMENTS = [
-  `CREATE TRIGGER sidekick_sources_connection_insert AFTER INSERT ON connector_connections BEGIN ${sourceWake}; END`,
-  `CREATE TRIGGER sidekick_sources_connection_delete AFTER DELETE ON connector_connections BEGIN ${sourceWake}; END`,
+  `CREATE TRIGGER sidekick_sources_connection_insert AFTER INSERT ON connector_connections BEGIN ${sourceWake()}; END`,
+  `CREATE TRIGGER sidekick_sources_connection_delete AFTER DELETE ON connector_connections BEGIN ${sourceWake()}; END`,
   `CREATE TRIGGER sidekick_sources_connection_update
     AFTER UPDATE OF connector_type,scope,owner_user_id,model_plugin_id,granted_scopes_json,status,config_json ON connector_connections
     WHEN NEW.connector_type IS NOT OLD.connector_type OR NEW.scope IS NOT OLD.scope
       OR NEW.owner_user_id IS NOT OLD.owner_user_id OR NEW.model_plugin_id IS NOT OLD.model_plugin_id
       OR NEW.granted_scopes_json IS NOT OLD.granted_scopes_json OR NEW.status IS NOT OLD.status OR NEW.config_json IS NOT OLD.config_json
-    BEGIN ${sourceWake}; END`,
-  sourceWake,
+    BEGIN ${sourceWake()}; END`,
+  sourceWake(),
 ] as const;
 
 /** Runs inside the owning WorkspaceDO's registration transaction; no provider I/O. */

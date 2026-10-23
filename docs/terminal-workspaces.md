@@ -66,8 +66,9 @@ delegated. Each shared caller records its actual execution conversation on its
 mutation lease. That lets the sandbox owner check the holder's liveness in the
 correct object. Overlapping tool mutations contend for the existing lease;
 sharing a sandbox does not make a whole multi-tool workflow atomic.
-The plugin checks current Sidekick delegation before preparation and every tool
-call, including reads using a cached acquisition. Only eligible delegates can
+The plugin loads Sidekick delegation with its tool inventory and reuses that
+snapshot for preparation and tool calls, including cached reads. Continuations
+and later runs rebuild the inventory; a stale snapshot may finish work. Only eligible delegates can
 use its files; management rights alone do not grant Terminal access. The
 Sidekick retains a stable file identity across coordinating users, using its
 preserved legacy account identity (or creator for a new Sidekick) to keep
@@ -1328,8 +1329,9 @@ update lag before changing the default.
 
 ### 2026-10-22 — Retain Sidekick files across eligible delegates
 
-**What changed:** Sidekick Terminal access follows current eligible delegation,
-including cached reads. Its file identity remains stable across coordinating
+**What changed:** Sidekick Terminal access follows an inventory-scoped eligible
+delegation snapshot, including cached reads. A refreshed inventory observes
+withdrawal without synchronous grant RPCs for every command. Its file identity remains stable across coordinating
 users and retains the pre-delegation fingerprint. Completed imports remain
 shared. A selected personal GitHub connection keeps its own identity and loses
 its mounted secrets when its owner is no longer eligible; local files survive.
@@ -1338,8 +1340,8 @@ cleans up its deadline when a reconciler returns or refuses before execution.
 
 **Why:** The old run-as fence prevented an eligible delegate from continuing
 shared work and erased retained content when coordination moved to another
-person. Reusing its old GitHub credential without checking that owner's consent
-would allow new provider operations after withdrawal. A recovered effect
+person. Reusing its old GitHub credential after an authorization refresh observes
+withdrawal would allow new provider operations under unavailable consent. A recovered effect
 without the reconciliation settlement flag stayed ambiguous despite proof of
 completion; an early reconciler return also left its deadline timer running.
 

@@ -638,7 +638,7 @@ Loading never widens the frozen scope. At run start and before each model call, 
 eligible consenting owner independently of its fixed coordinator; ordinary
 conversations remain limited to their own personal connections.
 
-Revalidation also says why it is asking, because the two occasions need different work. An **activation** — a `load_plugin`, a restored hint, the initial preload — happens a handful of times per run and is checked all the way to the provider. A **continuation** runs before every inference and keeps the activated tool surface visible without reading the connection row again. The model boundary makes one fresh run-authority decision. Ordinary connector calls check live run authority and the connection row before receipt replay or execution. Sidekick calls refresh delegation first, then check the actual selected connection before a new provider operation; retained completed results remain historical receipt facts. The execution carries its decision through credential preparation and the provider effect without another live check. A revoked connection can therefore remain model-visible until the model tries to use it, and a revocation during an already authorized tool call may let that call finish. The next call checks again. Provider credential refusal still surfaces on tool use.
+Revalidation also says why it is asking, because the two occasions need different work. An **activation** — a `load_plugin`, a restored hint, the initial preload — happens a handful of times per run and is checked all the way to the provider. A **continuation** runs before every inference and keeps the activated tool surface visible without reading the connection row again. The model boundary makes one fresh run-authority decision. Ordinary connector calls check live run authority and the connection row before receipt replay or execution. Sidekick calls reuse the inventory delegation snapshot, then check the actual selected connection before a new provider operation; retained completed results remain historical receipt facts. The execution carries its decision through credential preparation and the provider effect without another live check. A revoked connection can therefore remain model-visible until the model tries to use it, and a revocation during an already authorized tool call may let that call finish. The next call checks again. Provider credential refusal still surfaces on tool use.
 
 Completed receipts may have a tool-owned `validateCompletedReplay` read. The
 host runs it before loading or emitting the old success. A refusal is a typed
@@ -671,8 +671,9 @@ receipt through its existing reconciliation flag.
 A Sidekick inventory includes its eligible delegates' connections. Its coordinator
 continues to own the run, conversation and personal run preferences; selecting a
 provider account does not replace that identity or grant human access. The tool
-boundary refreshes delegation through WorkspaceDO's ordinary authorization view,
-then checks the actual serving connection and capability before credentials are
+inventory loads delegation through WorkspaceDO's ordinary authorization view;
+continuations and new runs rebuild that snapshot. Each call reuses it and
+checks the actual serving connection and capability before credentials are
 prepared. No healthy operation adds a provider access probe or revocation barrier.
 
 Google declares which operations address portable files and which carry

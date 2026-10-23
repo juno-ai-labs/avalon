@@ -18,7 +18,9 @@ request provenance. Eligibility requires the same current incarnation and viewer
 access. Pausing retains consent; removing a membership and rejoining never
 reactivates the old incarnation's authority.
 
-The host prepares a mutation before dispatch. Preparation durably retains that
+The host prepares a mutation before dispatch. Preparation records intent without
+an enrollment check; the actual mutation authorizes membership and visibility
+once before it can grant authority. Preparation durably retains that
 operation's observed generation, including across a lost response. Allow checks
 it atomically; withdrawal always advances a tombstone, even for an absent grant.
 Accepted intents and outcomes have immutable receipts. Replaying an accepted
@@ -106,7 +108,9 @@ The existing WorkspaceDO alarm lane stores `sidekick_delegation_sources` work
 in the same transaction as consent changes. Apply, resume and legacy enrollment
 also queue it. Connection authority changes queue it through migration 130's
 SQL triggers, while membership and reader reach use their existing invalidation
-paths. Cursor and token renewal do not trigger it. The connection RPC arms the
+paths. Pending changes coalesce into one entry per Sidekick; each enqueue moves
+the due instant so an older handler cannot settle a newer change. Cursor and
+token renewal do not trigger it. The connection RPC arms the
 native alarm after committing the wake. Migration 130 also wakes existing
 active configured Sidekicks. The handler refreshes ordinary eligibility and
 commits only against the still-current active definition revision. This permits
