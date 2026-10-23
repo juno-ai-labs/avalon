@@ -35,13 +35,12 @@ unless a query opts in, and no retry for a rejected 4xx request.
 
 ## Sidekick delegation
 
-`components/sidekick-delegation.tsx` renders the allowed people and the shared
-standing-consent/history disclosure. Desktop's adapter of the same name supplies
-the API reads and actions to both desktop and web screens. Creator identity is
-separate from active grants, so withdrawal retains the Creator marker without
-presenting an allowed user. Remove actions depend on the owner's `canManage`
-projection; they never turn a viewer into a manager. Existing identity avatars
-and personal presentation are reused.
+`components/sidekick-delegation.tsx` renders allowed users, availability,
+Creator/You markers and the user's explanation sentence. Desktop's adapter
+supplies the API reads and self allow/withdraw actions to desktop and web.
+Creator identity remains visible after withdrawal. There is no manager removal
+control, permission projection for such a control, or shared-history disclosure.
+Existing avatars and personal presentation are reused.
 
 The query lives under `['automation', id, 'delegation']`, using the existing
 automation invalidation and window relay. It refreshes on reconnect/focus too.
@@ -53,13 +52,10 @@ repeat of the write. If that read also fails, the last confirmed list stays and
 Refresh is required before another mutation. Offline actions are disabled and
 never queued for reconnect. Failures use the ordinary acknowledged error popup.
 
-New Sidekick opens a creation surface with the delegation/history disclosure;
-the normal Create action submits the request. It adds no separate consent
-confirmation. Leaving a pending creation does not navigate back when it finishes,
-and an uncertain response sends the person to inspect their Sidekicks rather
-than automatically creating another. Delegation appears inside the profile's
-padded layout ahead of timing. An existing delegate can expand the full scope
-explanation; a person opting in sees it before the action.
+New Sidekick creates immediately when its route opens. Creation enrolls the
+creator in the backend for direct and autonomous callers, with no disclosure
+screen or extra Create action. The delegation list appears in the profile's
+padded layout ahead of timing.
 
 Run history preserves the coordinating user independently of the legacy run-as
 field. Names reuse the delegation query already mounted by the Sidekick screen;
@@ -284,30 +280,26 @@ component test runner is needed for the same implementations.
 
 ## Changelog
 
-### 2026-10-22 — Show standing Sidekick delegation before and after consent
+### 2026-10-23 — Show Sidekick delegates with immediate creation
 
-**What changed:** The shared Sidekick screen displays allowed identities,
-availability, You/Creator markers, self allow/withdraw and manager removal.
-Creation shows the standing-work and existing-history disclosure before the
-request. Acknowledged writes update the confirmed list and refresh in the
-background. An uncertain response requires successful reconciliation before
-another change; a failed background read alone does not lock confirmed controls.
+**What changed:** The shared profile lists allowed identities, availability and
+Creator/You markers with self allow/withdraw. Acknowledged writes update the
+confirmed list before background refresh. Unknown outcomes require a successful
+read before another mutation. New Sidekick creates immediately. Manager removal,
+creator disclosure/opt-in screens and shared-history disclosure are removed.
 
-**Why:** People need to understand whose access a Sidekick can use and withdraw
-their own grant without replacing another person or acquiring management rights.
-Automatic creator opt-in also needs its explanation before creation.
+**Why:** The user requested a smaller delegation surface and automatic creator
+enrollment, including autonomous creation. The allowed-user list and self
+withdrawal are sufficient; creation does not need another action.
 
-**Considered and rejected:** Waiting for a second successful read after an
-acknowledged mutation blocks confirmed controls during an unrelated read failure.
-Optimistic grants or offline queued consent could
-present permission the authority never accepted. A separate confirmation dialog
-would repeat the normal create/allow action instead of explaining it in place.
+**Considered and rejected:** A separate creation disclosure and manager removal
+were removed by product direction. Optimistic grants and offline queued writes
+can still present authority the backend never accepted, so acknowledged state
+and uncertain-outcome recovery remain.
 
-**Consequences:** Pending actions are scoped to the affected person. Other
-windows use the existing invalidation path. Run history preserves the coordinator,
-while activity shows receipt-backed serving accounts through the work breakdown.
-The dedicated Account withdrawal feature was removed at the user's request.
-Sidekick-screen self-withdrawal remains.
+**Consequences:** Existing invalidations synchronize other windows. Run history
+retains the coordinator and activity details retain operation accounts. There
+is no Account withdrawal screen. Self-service remains available on the Sidekick.
 
 ### 2026-10-22 — Share explained disabled controls
 

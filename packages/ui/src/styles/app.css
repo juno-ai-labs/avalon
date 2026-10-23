@@ -7334,11 +7334,6 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .sidekick-delegate-copy > span { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
 .sidekick-delegate-copy small { font-size: 11px; color: var(--av-sys-color-text-muted); }
 .sidekick-delegation > button { margin: 4px 0; max-width: 100%; white-space: normal; text-align: left; }
-.sidekick-create { padding: 56px 24px 24px; overflow: auto; }
-.sidekick-create-card { max-width: 480px; margin: 48px auto; }
-.sidekick-create-card h1 { font-size: 24px; font-weight: 600; margin: 0 0 12px; }
-.sidekick-create-card > p { line-height: 1.5; }
-.sidekick-create-card > button { margin: 12px 12px 0 0; }
 .settings-account-profile { display: grid; gap: 12px; }
 .settings-support-note { color: var(--av-sys-color-text-muted); font-size: 12px; margin: 0; padding: 0 8px; }
 .settings-account-profile .settings-profile-card { border-radius: 0; }

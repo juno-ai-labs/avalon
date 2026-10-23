@@ -273,7 +273,6 @@ import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
 import { withToolPagination } from "./tool-pagination";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
-import { directSidekickDelegationUser } from "./sidekick-delegation-service";
 import { sidekickDelegationTools, sidekickDelegationGuidance } from "./sidekick-delegation-tools";
 import { createTranscriptObjectPort } from "../runtime/transcript-port";
 import { renderSubstreamInitialContext } from "./substream-initial-context";
@@ -1778,8 +1777,8 @@ function createAvalonAutomationsPlugin(
   input: WorkstreamWorkflowInput,
   loadedPluginIds: Set<string>,
   expandPages: (tool: HarnessTool, prefix: string, connectionId: string | null) => HarnessTool[],
-  delegationUser: UserId | null = null,
 ): HarnessPlugin {
+  const delegationUser = input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null;
   const catalog: AutomationCreatorPluginCatalogEntry[] = [];
   const inspectedPluginIds = new Set<string>();
   const resolvedResources = new Map<string, {
@@ -1839,7 +1838,7 @@ function createAvalonAutomationsPlugin(
     if (delegationUser) tools.push(...sidekickDelegationTools(env, input, delegationUser, true));
     return { canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_skill_recommendations", shortWireName: "",
       displayName: "Skill recommendations",
-      description: `Choose which reusable skills to recommend for future runs in this thread. To use a skill now, call load_skill.${delegationUser ? " Inspect Sidekick delegates and allow or stop allowing a Sidekick to act as you." : ""}`,
+      description: `Choose which reusable skills to recommend for future runs in this thread. To use a skill now, call load_skill.${delegationUser ? " Inspect and manage Sidekick delegates for Organization users." : ""}`,
       searchAliases: ["skill", "instructions", "knowledge", "recommend", "procedure",
         ...(delegationUser ? ["sidekick", "delegate", "delegation", "account", "consent", "allow", "withdraw"] : [])],
       systemMessage: `Use list_skill_recommendations, recommend_skill and unrecommend_skill to manage this thread's skill recommendations. Recommendations affect future executions; call load_skill with a name from the Skills catalog to use instructions now. To set up delegated work, use the separate sidekicks_list and create_sidekick agent tools.${delegationUser ? ` ${sidekickDelegationGuidance(true)}` : ""}`,
@@ -5622,8 +5621,13 @@ async function loadHarnessTools(
   const loadedAutomationPluginIds = new Set<string>();
   const automationsPlugin = input.executionPrincipal.type === "user" && !input.automationRun && (input.parentKind === "workstream"
     || (input.parentKind === "automation" && (input.substreamId ?? "0") === "0"))
-    ? createAvalonAutomationsPlugin(env, input, loadedAutomationPluginIds, expandPages, await directSidekickDelegationUser(env, input))
-    : null;
+    ? createAvalonAutomationsPlugin(env, input, loadedAutomationPluginIds, expandPages)
+    : input.executionPrincipal.type === "user" ? {
+      canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_sidekicks", shortWireName: "sidekick",
+      displayName: "Sidekick delegation", description: "Inspect and manage Sidekick delegation for Organization users.",
+      preload: false, explicit: false, systemMessage: sidekickDelegationGuidance(false),
+      tools: sidekickDelegationTools(env, input, input.executionPrincipal.userId, false),
+    } : null;
   // List, read and post to Rally conversations, scoped by the loop: a
   // Breakout loop reaches its own conversation and its Channel's Main; a
   // Sidekick's configuration conversation and runs reach its home and
@@ -7598,11 +7602,11 @@ export async function reenterInterruptedWriteForRecovery(
       plugin = inventory.plugins.find((candidate) => candidate.canonicalId === pluginId) ?? null;
       disposeHarnessPlugins(env, inventory.plugins.filter((candidate) => candidate !== plugin));
     } else {
-      const userId = await directSidekickDelegationUser(env, input);
-      if (!userId) return { outcome: "unknown", reason: "sidekick_delegation_user_context_required" };
+      const userId = input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null;
+      if (!userId) return { outcome: "unknown", reason: "sidekick_delegation_user_required" };
       const room = input.parentKind !== "automation";
       plugin = { canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: room ? "rally_skill_recommendations" : "rally_sidekicks",
-        shortWireName: room ? "" : "sidekick", description: "Sidekick consent recovery", preload: false,
+        shortWireName: room ? "" : "sidekick", description: "Sidekick delegation recovery", preload: false,
         tools: sidekickDelegationTools(env, input, userId, room) };
     }
   } catch (error) {

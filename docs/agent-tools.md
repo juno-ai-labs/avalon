@@ -797,15 +797,17 @@ them, so give it a sentinel in `EXPECTED_TOOLS` too.
 ## Sidekick delegation tools
 
 The existing `rally:sidekicks` plugin offers `sidekick_my_delegations_list`,
-`sidekick_delegates_list` and `sidekick_set_my_delegation` in direct human turns.
+`sidekick_delegates_list` and `sidekick_set_delegation` in direct and autonomous work.
 Authoring's `sidekick` prefix and the room recommendation presentation's full
 canonical names produce the same wire names. The two presentations retain their
 existing discovery and recommendation tools. UUIDs, canonical Rally links and
 exact visible names resolve through viewer authority, not editing authority.
 
 Inputs and model-visible outputs are strict shared schemas in
-`packages/contracts/src/sidekick-delegation.ts`. Neither actor identity nor grant
-generation is a model input. Own lists include safe stored labels after access
+`packages/contracts/src/sidekick-delegation.ts`. Mutation accepts the target
+Organization userId; the execution actor and grant generation remain host-owned.
+The actor needs Sidekick access to change another user, who must have active
+Organization membership. Self-service UI has no manager removal action. Own lists include safe stored labels after access
 loss; withdrawal needs no viewer-only discovery. Completed mutation acknowledgements
 are checked against the original consent receipt and current generation before
 replay. A stale replay reports the recovery sentence without invoking the

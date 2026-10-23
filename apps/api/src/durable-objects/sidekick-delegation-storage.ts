@@ -98,7 +98,7 @@ export class SidekickDelegationStorage {
   }
 
   /** Inspect an exact accepted self-action without preparing or mutating consent. */
-  receipt(input: { sidekickId: string; userId: string; operationId: string; allowed: boolean; source: "self_service" | "agent_request" }): SidekickDelegationReceiptResult {
+  receipt(input: { sidekickId: string; userId: string; actorUserId?: string; operationId: string; allowed: boolean; source: "self_service" | "agent_request" }): SidekickDelegationReceiptResult {
     const row = this.storage.sql.exec<{ intent_json: string; result_json: string; generation: number; prepared_generation: number }>(
       `SELECT receipt.intent_json,receipt.result_json,receipt.generation,preparation.generation AS prepared_generation
          FROM sidekick_delegation_receipts receipt
@@ -106,7 +106,7 @@ export class SidekickDelegationStorage {
         WHERE receipt.sidekick_id=? AND receipt.operation_id=?`, input.sidekickId, input.operationId,
     ).toArray()[0];
     if (!row) return { outcome: "missing" };
-    const intent = JSON.stringify({ sidekickId: input.sidekickId, userId: input.userId, actorUserId: input.userId,
+    const intent = JSON.stringify({ sidekickId: input.sidekickId, userId: input.userId, actorUserId: input.actorUserId ?? input.userId,
       operationId: input.operationId, allowed: input.allowed, expectedGeneration: row.prepared_generation, source: input.source });
     const grant = this.read(input.sidekickId, input.userId);
     if (row.intent_json !== intent || !grant || grant.generation !== row.generation) return { outcome: "stale" };

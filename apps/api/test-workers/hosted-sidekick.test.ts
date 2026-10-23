@@ -313,8 +313,7 @@ async function createDraft(owningWorkstreamId: string | null = null): Promise<vo
     authorUserId: AUTHOR_ID,
     scope: owningWorkstreamId ? "workstream" : "personal",
     owningWorkstreamId,
-    automationId: AUTOMATION_ID,
-    creatorConsent: { requestId: AUTOMATION_ID },
+    automationId: AUTOMATION_ID
   });
   expect(created).toEqual({ automationId: AUTOMATION_ID, created: true });
 }
@@ -1472,7 +1471,7 @@ describe("a hosted Sidekick", () => {
   it("pauses one Sidekick without touching another's pending run", async () => {
     await activeAutomation();
     const otherId = asAutomationId(AUTOMATION_ID.replace(/ad0$/u, "ad9"));
-    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "personal", owningWorkstreamId: null, automationId: otherId, creatorConsent: { requestId: otherId } });
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "personal", owningWorkstreamId: null, automationId: otherId });
     const other = { workspaceId: WORKSPACE_ID, automationId: otherId };
     await workspaceStub().sidekickSubmitDefinition({ ...other, draft: DEFINITION, evaluatorRules: null, submittedByRunId: null });
     await runInDurableObject(workspaceStub(), (instance: WorkspaceDO) => instance.sidekickApply({ ...other, actor: actor() }));

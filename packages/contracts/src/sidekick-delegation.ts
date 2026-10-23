@@ -5,7 +5,7 @@ import { PersonalPresentationSchema } from "./onboarding";
 /** Shared runtime/advertised inputs: the host supplies identity and provenance. */
 export const SidekickMyDelegationsInputSchema = z.strictObject({});
 export const SidekickDelegatesInputSchema = z.strictObject({ sidekick: z.string().min(1) });
-export const SidekickSetMyDelegationInputSchema = z.strictObject({ sidekickId: IdSchema, allowed: z.boolean() });
+export const SidekickSetDelegationInputSchema = z.strictObject({ sidekickId: IdSchema, userId: UserIdSchema, allowed: z.boolean() });
 
 export const SidekickDelegationMutationResultSchema = z.strictObject({
   sidekickId: IdSchema,
@@ -23,7 +23,6 @@ export const SidekickDelegatesResultSchema = z.strictObject({
   sidekickId: IdSchema,
   creatorUserId: UserIdSchema,
   creator: SidekickDelegateIdentitySchema.optional(),
-  canManage: z.boolean().optional(),
   you: z.strictObject({ userId: UserIdSchema, allowed: z.boolean() }),
   delegates: z.array(SidekickDelegateIdentitySchema.extend({ eligible: z.boolean() })),
 });
@@ -101,9 +100,8 @@ export const SIDEKICK_DELEGATION_ATTENTION_MESSAGES: Record<SidekickDelegationAt
 export const SIDEKICK_DELEGATION_ERRORS = {
   sidekick_not_found: "This Sidekick is unavailable to you. Use Sidekick discovery for enrollment, or sidekick_my_delegations_list to withdraw your own grant.",
   sidekick_delegation_ambiguous_target: "More than one visible Sidekick has that name. Choose the intended Sidekick from the screen and use its Rally link or UUID.",
-  sidekick_delegation_user_context_required: "Delegation changes require a direct signed-in user conversation. Use the Sidekick screen or its setup conversation.",
-  sidekick_delegation_membership_unavailable: "Your Organization membership is unavailable. Restore membership before allowing this Sidekick to act as you. You can still withdraw an existing grant.",
+  sidekick_delegation_membership_unavailable: "The required user's Organization membership is unavailable. Restore membership before adding delegation. Existing grants can still be withdrawn.",
   sidekick_delegation_unavailable: "This Sidekick cannot accept enrollment. Refresh its details before trying again. You can still withdraw your own grant.",
-  sidekick_delegation_stale_action: "This delegation changed after this request was prepared. Read your current grant. Only a new request from you can allow it again.",
+  sidekick_delegation_stale_action: "This delegation changed after this request was prepared. Read the current delegation state. Use a new delegation change to allow it again.",
   sidekick_delegation_list_too_large: "This delegation list exceeds the tool output budget. Inspect it in the Sidekick screen.",
 } as const;

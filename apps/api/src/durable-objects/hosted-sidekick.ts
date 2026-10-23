@@ -11,7 +11,7 @@ import { queueSidekickSourceReconciliation, sidekickSourceRegistrations } from "
 import { rememberSidekickDelegationLocation } from "../services/sidekick-delegation-service";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import {
-  SidekickPrepareDelegationRequestSchema, SidekickSetMyDelegationRequestSchema, SidekickReadDelegationReceiptRequestSchema, SidekickRemoveDelegateRequestSchema,
+  SidekickPrepareDelegationRequestSchema, SidekickSetDelegationRequestSchema, SidekickReadDelegationReceiptRequestSchema,
 } from "./automation-do-protocol";
 import { type SidekickAttachment, SidekickAttachmentSchema } from "@rally/contracts";
 import type { Region } from "@rally/contracts/regions";
@@ -523,9 +523,8 @@ export class HostedSidekick {
       this.assertSidekick(request.workspaceId, request.automationId);
       return { created: false };
     }
-    const creatorRelationship = request.creatorConsent
-      ? await this.host.readRelationship(request.workspaceId, request.authorUserId) : null;
-    if (request.creatorConsent && creatorRelationship?.status !== "active") {
+    const creatorRelationship = await this.host.readRelationship(request.workspaceId, request.authorUserId);
+    if (creatorRelationship?.status !== "active") {
       throw this.delegationError("sidekick_delegation_membership_unavailable");
     }
     const now = Date.now();
@@ -565,9 +564,9 @@ export class HostedSidekick {
             current_definition_revision, accepted_definition_revision, connector_bindings_json,
             default_plugin_ids_json, activity_source_plugin_ids_json, evaluator_projection_json,
             model_override, email_address, effective_after_event_sequence, authority_generation,
-            stop_generation, chat_appearance_json, created_at, updated_at)
+            stop_generation, chat_appearance_json, delegation_migrated, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, 1, 'hosted', 'draft', NULL, ?, ?, ?, NULL, '', '', NULL, ?, 0, ?,
-                 0, NULL, '{}', '[]', '{}', '[]', NULL, NULL, NULL, ?, 0, NULL, ?, ?)
+                 0, NULL, '{}', '[]', '{}', '[]', NULL, NULL, NULL, ?, 0, NULL, 1, ?, ?)
          ON CONFLICT(automation_id) DO NOTHING
          RETURNING automation_id`,
         request.automationId,
@@ -589,10 +588,10 @@ export class HostedSidekick {
         return { created: false };
       }
       this.registerChild("0", "main", request.authorUserId, now);
-      if (request.creatorConsent && creatorRelationship && !this.delegations().read(this.sidekickId, request.authorUserId)) {
+      if (!this.delegations().read(this.sidekickId, request.authorUserId)) {
         this.delegations().mutate({
           sidekickId: this.sidekickId, userId: request.authorUserId, actorUserId: request.authorUserId,
-          operationId: request.creatorConsent.requestId, allowed: true, expectedGeneration: 0,
+          operationId: request.automationId, allowed: true, expectedGeneration: 0,
           membershipIncarnation: creatorRelationship.incarnation, source: "creation", label: "New Sidekick",
         }, now);
       }
@@ -605,23 +604,28 @@ export class HostedSidekick {
     return new SidekickDelegationStorage(this.storage);
   }
 
-  /** Install only established legacy claims, once; absence of creation provenance is not consent. */
+  /** Enroll missing legacy creators and retain the previous task account's grant. */
   private async migrateDelegation(): Promise<void> {
     const row = this.row();
-    if (!row || row.legacy_account_user_id === null || row.delegation_migrated === 1) return;
-    const legacyUser = row.legacy_account_user_id;
-    const relationship = legacyUser !== row.author_user_id
-      ? await this.host.readRelationship(row.workspace_id, legacyUser) : null;
-    if (relationship?.status === "active") await rememberSidekickDelegationLocation(this.env, row.workspace_id, legacyUser);
+    if (!row || row.delegation_migrated === 1) return;
+    const users = [...new Set([row.author_user_id, ...(row.legacy_account_user_id ? [row.legacy_account_user_id] : [])])];
+    const relationships = await Promise.all(users.map(async (userId) => ({ userId,
+      relationship: await this.host.readRelationship(row.workspace_id, userId),
+    })));
+    for (const { userId, relationship } of relationships) {
+      if (relationship?.status === "active") await rememberSidekickDelegationLocation(this.env, row.workspace_id, userId);
+    }
     this.storage.transactionSync(() => {
       const current = this.row();
       if (!current || current.delegation_migrated === 1) return;
-      if (relationship?.status === "active" && !this.delegations().read(this.sidekickId, legacyUser)) {
-        this.delegations().mutate({
-          sidekickId: this.sidekickId, userId: legacyUser, actorUserId: legacyUser,
-          operationId: uuidV7(), allowed: true, expectedGeneration: 0,
-          membershipIncarnation: relationship.incarnation, source: "migration", label: current.title || "Unavailable Sidekick",
-        });
+      for (const { userId, relationship } of relationships) {
+        if (relationship?.status === "active" && !this.delegations().read(this.sidekickId, userId)) {
+          this.delegations().mutate({
+            sidekickId: this.sidekickId, userId, actorUserId: userId,
+            operationId: uuidV7(), allowed: true, expectedGeneration: 0,
+            membershipIncarnation: relationship.incarnation, source: "migration", label: current.title || "Unavailable Sidekick",
+          });
+        }
       }
       this.sql.exec("UPDATE automation_directory SET delegation_migrated=1 WHERE automation_id=?", this.sidekickId);
       this.scheduleSourceReconciliation();
@@ -731,23 +735,27 @@ export class HostedSidekick {
     return this.delegations().prepare(this.sidekickId, request.userId, request.operationId, request.allowed);
   }
 
-  private async assertDelegationEnrollment(workspaceId: string, userId: string): Promise<{ row: HostedSidekickRow; relationship: WorkspaceRelationship }> {
+  private async assertDelegationEnrollment(workspaceId: string, userId: string, organizationTarget = false): Promise<{ row: HostedSidekickRow; relationship: WorkspaceRelationship }> {
     const row = this.row();
     if (!row || row.workspace_id !== workspaceId || row.lifecycle === "deleted") throw this.delegationError("sidekick_not_found");
     const relationship = await this.host.readRelationship(workspaceId, userId);
     if (!relationship || relationship.status !== "active") throw this.delegationError("sidekick_delegation_membership_unavailable");
-    if (!await sidekickReaderAllows(row, { userId, actorRole: relationship.role }, this.host)) throw this.delegationError("sidekick_not_found");
+    if (!organizationTarget && !await sidekickReaderAllows(row, { userId, actorRole: relationship.role }, this.host)) throw this.delegationError("sidekick_not_found");
     return { row, relationship };
   }
 
-  async setMyDelegation(input: z.input<typeof SidekickSetMyDelegationRequestSchema>): Promise<SidekickDelegationMutationResult> {
-    const request = parseRpcInput(SidekickSetMyDelegationRequestSchema, input, "sidekick_delegation_set");
+  async setDelegation(input: z.input<typeof SidekickSetDelegationRequestSchema>): Promise<SidekickDelegationMutationResult> {
+    const request = parseRpcInput(SidekickSetDelegationRequestSchema, input, "sidekick_delegation_set");
     if (request.automationId !== this.sidekickId) throw new Error("sidekick_identity_mismatch");
-    const enrollment = request.allowed ? await this.assertDelegationEnrollment(request.workspaceId, request.userId) : null;
+    const actorUserId = request.actorUserId ?? request.userId;
+    if (actorUserId !== request.userId) {
+      await this.assertDelegationEnrollment(request.workspaceId, actorUserId);
+    }
+    const enrollment = request.allowed ? await this.assertDelegationEnrollment(request.workspaceId, request.userId, actorUserId !== request.userId) : null;
     if (request.allowed && this.row()?.lifecycle === "deleted") throw this.delegationError("sidekick_delegation_unavailable");
     return this.storage.transactionSync(() => {
       const result = this.delegations().mutate({
-        sidekickId: this.sidekickId, userId: request.userId, actorUserId: request.userId,
+        sidekickId: this.sidekickId, userId: request.userId, actorUserId,
         operationId: request.operationId, allowed: request.allowed, expectedGeneration: request.expectedGeneration,
         membershipIncarnation: enrollment?.relationship.incarnation ?? null, source: request.source,
         label: enrollment?.row.title || "Unavailable Sidekick",
@@ -762,27 +770,14 @@ export class HostedSidekick {
   async readMyDelegationReceipt(input: z.input<typeof SidekickReadDelegationReceiptRequestSchema>) {
     const request = parseRpcInput(SidekickReadDelegationReceiptRequestSchema, input, "sidekick_delegation_receipt");
     if (request.automationId !== this.sidekickId) throw new Error("sidekick_identity_mismatch");
-    const found = this.delegations().receipt({ ...request, sidekickId: this.sidekickId });
+    if (request.actorUserId && request.actorUserId !== request.userId) {
+      await this.assertDelegationEnrollment(request.workspaceId, request.actorUserId);
+    }
+    const found = this.delegations().receipt({ ...request, actorUserId: request.actorUserId ?? request.userId, sidekickId: this.sidekickId });
     if (found.outcome === "accepted" && found.result.allowed && !await this.delegationEligible(found.grant)) {
       return { outcome: "unavailable" as const };
     }
     return found;
-  }
-
-  async removeDelegate(input: z.input<typeof SidekickRemoveDelegateRequestSchema>): Promise<SidekickDelegationMutationResult> {
-    const request = parseRpcInput(SidekickRemoveDelegateRequestSchema, input, "sidekick_delegation_remove");
-    const row = this.assertSidekick(request.workspaceId, request.automationId);
-    await this.assertManager(row, request.actor);
-    return this.storage.transactionSync(() => {
-      const result = this.delegations().mutate({
-        sidekickId: this.sidekickId, userId: request.userId, actorUserId: request.actor.userId,
-        operationId: request.operationId, allowed: false, expectedGeneration: 0,
-        membershipIncarnation: null, source: "manager_removal", label: "Unavailable Sidekick",
-      });
-      this.host.noteDirectoryChanged(this.sidekickId, false, Date.now());
-      this.scheduleSourceReconciliation();
-      return result;
-    });
   }
 
   async readDelegation(input: AutomationActorRequest): Promise<SidekickDelegatesResult> {
@@ -806,7 +801,6 @@ export class HostedSidekick {
     return SidekickDelegatesResultSchema.parse({
       sidekickId: this.sidekickId, creatorUserId: row.author_user_id,
       creator: identity(row.author_user_id),
-      canManage: await this.managerAllows(row, { ...request.actor, actorRole: relationship.role }),
       you: { userId: request.actor.userId, allowed: this.delegations().read(this.sidekickId, request.actor.userId)?.allowed ?? false },
       delegates: await Promise.all(grants.map(async (grant) => ({
         ...identity(grant.userId), eligible: await this.delegationEligible(grant),

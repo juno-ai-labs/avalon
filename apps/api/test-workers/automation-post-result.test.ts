@@ -351,8 +351,7 @@ async function seedRoomAutomation(): Promise<void> {
     authorUserId: AUTHOR_ID,
     scope: "workstream",
     owningWorkstreamId: ROOM_ID,
-    automationId: AUTOMATION_ID,
-    creatorConsent: { requestId: crypto.randomUUID() },
+    automationId: AUTOMATION_ID
   });
   expect(created.created).toBe(true);
   await sidekickHost().sidekickSubmitDefinition({ ...addressed(), draft: DEFINITION, evaluatorRules: null, submittedByRunId: null });
@@ -1039,6 +1038,13 @@ describe("a room Sidekick's run and the room's agents", () => {
     const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
       toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
       executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    // The different creator is a real Organization member; the caller's access
+    // still comes from the room and must disappear when that room grant does.
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO users(id,name) VALUES (?, 'Other creator')").bind("00000000-0000-7000-8000-00000000ad99"),
+      env.DB.prepare("INSERT INTO workspace_members(workspace_id,user_id,status,role) VALUES (?,?,'active','member')")
+        .bind(WORKSPACE_ID, "00000000-0000-7000-8000-00000000ad99"),
+    ]);
     const created = await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID,
       authorUserId: "00000000-0000-7000-8000-00000000ad99", scope: "workstream", owningWorkstreamId: ROOM_ID });
     const agentId = agentIdForAddress({ parentKind: "automation", parentId: created.automationId, substreamId: asSubstreamId("0") });

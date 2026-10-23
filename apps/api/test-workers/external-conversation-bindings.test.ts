@@ -976,8 +976,7 @@ describe("the connector side of a binding", () => {
     await seedSlackConnection();
     for (const automationId of [SIDEKICK, AUTOMATION]) {
       await workspace().sidekickCreate({ workspaceId: WORKSPACE_ID, automationId, authorUserId: USER_ID,
-        scope: "workspace", owningWorkstreamId: null, authorityGeneration: 1,
-        creatorConsent: { requestId: crypto.randomUUID() } });
+        scope: "workspace", owningWorkstreamId: null, authorityGeneration: 1 });
       await writeSidekickDirectoryRow(env, { automationId, workspaceId: WORKSPACE_ID, authorUserId: USER_ID,
         lifecycle: "active", scope: "workspace", owningWorkstreamId: null, title: "Reply watcher", description: "Watch replies" });
     }

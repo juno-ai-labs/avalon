@@ -71,7 +71,7 @@ async function seed(): Promise<void> {
     await workspace().sidekickCreate({ workspaceId: WORKSPACE_ID, automationId: id,
       authorUserId: id === AUTOMATIONS.personalOfOther ? OTHER_MEMBER_ID : AUTHOR_ID,
       scope: id === AUTOMATIONS.workspaceWide ? "workspace" : "personal", owningWorkstreamId: null,
-      authorityGeneration: 1, creatorConsent: { requestId: crypto.randomUUID() } });
+      authorityGeneration: 1 });
     // Routing needs active authority, without publishing a workflow to execute.
     await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
       "UPDATE automation_directory SET lifecycle='active',title=? WHERE automation_id=?", id, id));

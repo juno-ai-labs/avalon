@@ -13,8 +13,6 @@ import { copySidekickLink } from '../lib/copy-workstream-link';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { ConversationSurface } from './conversation-surface';
 import { SidekickDelegation, useSidekickDelegates } from '../components/sidekick-delegation';
-import { SidekickDelegationDisclosure } from '@rally/ui/components/sidekick-delegation';
-import { useOnline } from '../lib/use-online';
 
 /**
  * One route host for automations.
@@ -50,41 +48,42 @@ function NewAutomationScreen(): React.JSX.Element {
   const { api } = useCollaborationSession();
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const online = useOnline();
-  // One normal create action after disclosure; repeated clicks share it.
+  // One request per visit, held in a ref rather than started by the effect
+  // directly: React mounts an effect twice in development, and a request
+  // started by the first run and abandoned by its cleanup would create an
+  // automation nobody is then taken to. The promise survives the re-run, and
+  // the re-run simply waits on it.
   const creation = useRef<Promise<{ automationId: string }> | null>(null);
-  const mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  const create = (): void => {
-    if (!api || creation.current || !navigator.onLine) return;
-    setError(null);
-    setCreating(true);
-    creation.current = api.createAutomation();
-    void creation.current.then(({ automationId }) => {
-      if (mounted.current) void navigate(`/sidekicks/${automationId}`, { replace: true });
-    })
+  useEffect(() => {
+    if (!api) return;
+    let mounted = true;
+    creation.current ??= api.createAutomation();
+    creation.current
+      .then(({ automationId }) => {
+        if (mounted) void navigate(`/sidekicks/${automationId}`, { replace: true });
+      })
       .catch((cause: unknown) => {
-        if (!mounted.current) return;
-        // Do not repeat an uncertain creation automatically.
-        setError(cause instanceof Error ? cause.message : 'The Sidekick could not be created.');
-        setCreating(false);
+        if (!mounted) return;
+        setError(cause instanceof Error ? cause.message : 'The automation could not be created.');
       });
-  };
-  return <main className="sidekick-create screen-with-titlebar">
-    <div className="screen-drag-strip window-drag" />
-    <div className="sidekick-create-card">
-      <h1>Create a Sidekick</h1>
-      <p>Creating this Sidekick allows it to act as you. You can stop allowing it at any time.</p>
-      <SidekickDelegationDisclosure />
-      {error && <ErrorNotice title="Sidekick could not be created">{error}</ErrorNotice>}
-      {error ? <p role="status">Check your Sidekicks before creating another one; this request may have completed.</p> :
-        <Button disabledReason={!api ? 'Connect to Rally to create a Sidekick.' : !online ? 'Go online to create a Sidekick.' : creating ? 'Creating your Sidekick.' : undefined} onClick={create}>
-          {creating ? 'Creating…' : 'Create Sidekick'}
-        </Button>}
-      <Button onClick={() => void navigate('/sidekicks')}>{error ? 'View Sidekicks' : 'Cancel'}</Button>
-    </div>
-  </main>;
+    return () => {
+      mounted = false;
+    };
+  }, [api, error, navigate]);
+  if (error) {
+    return (
+      <div className="screen-error-state screen-with-titlebar">
+        <div className="screen-drag-strip window-drag" />
+        <ErrorNotice title="Sidekick could not be created">{error}</ErrorNotice>
+        <EmptyState
+          action={<ErrorActions onRetry={() => { creation.current = null; setError(null); }} />}
+          description="Try creating your Sidekick again."
+          title="Sidekick"
+        />
+      </div>
+    );
+  }
+  return <OpeningState label="Creating Sidekick…" />;
 }
 
 function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
