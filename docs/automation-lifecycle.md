@@ -113,7 +113,11 @@ resolver creates or finds that connection's Rally resource ID by provider ID;
 titles never identify a source. Expanded registrations retain their saved
 `sourceEvaluatorId`, so queued delivery still checks the current definition.
 Unchanged active registrations keep their ID and event-sequence cutoff. New
-ones start at the current cutoff; reconciliation does not replay history.
+or reactivated ones start at the current cutoff; reconciliation does not replay
+history. Delivery reads the registration's active state and cutoff from its
+existing row read. A removed source refuses a delayed envelope; after
+reactivation, an older envelope can only replay an already admitted occurrence,
+never create historical work.
 Global Google file observations carry a common occurrence key across accounts.
 Providers without a common identity keep their existing deduplication semantics.
 
@@ -618,8 +622,8 @@ reasonably concluded the connection was usable.
 Instruction-only definitions bypass connector binding, schedule preparation,
 email reservation and memory-table creation. Triggered definitions reuse the
 existing validation and execution setup: bindings resolve against WorkspaceDO,
-workspace Sidekicks require workspace credentials, evaluator rules must name
-inspected sources, and schedules use their explicit or resolved timezone. Google bundle plugin IDs resolve through the same
+every Sidekick scope may bind an eligible delegate's personal connection,
+evaluator rules must name inspected sources, and schedules use their explicit or resolved timezone. Google bundle plugin IDs resolve through the same
 connection views used by the model catalog: Mail + Calendar and Drive + Docs +
 Sheets can bind one credential without sharing tools or trigger descriptors.
 Saved combined IDs remain binding aliases; see [connectors](connectors.md).
@@ -854,9 +858,10 @@ one identity and one history, and can complete more than once.
    `root_substream_id`, including through nested delegation. A refusal lands
    the assignment without starting execution. Approval uses the current eligible coordinator and records only `automationDelegation` (root run ID and
    stop generation), without loading the run's instructions or tools. The normal
-   model/tool authority check revalidates that reference, the principal and the
-   stop generation, so a later pause, pause/resume, deletion or principal change
-   revokes an already activated worker. Authoring-rooted workers (`"0"`) keep the
+   model/tool authority check reads root lifecycle and stop generation, so a
+   later pause, pause/resume or deletion fences an already activated worker.
+   Delegate eligibility and coordinator selection refresh on activation; changing
+   the coordinator does not revoke a worker's current eligibility snapshot. Authoring-rooted workers (`"0"`) keep the
    ordinary background-agent path, as authoring itself is not paused.
 2. `continueRun` can replace an unavailable coordinator. It answers a refusal code, or
    the `automationRun` block and run-as `executionPrincipal` the scheduled
@@ -1253,7 +1258,10 @@ those gates. It also checks that detail reads do not scan eligibility, preferred
 and personal-event selection avoids unrelated delegates, and matching shares
 pending checks only within one request while delivery still observes withdrawal.
 Restoring the unnecessary scans or removing request-local sharing fails those
-regressions. The same workerd lane verifies canonical source-account capture,
+regressions. Delayed-delivery cases prove removed connections cannot start work,
+reactivation refuses old unadmitted events, and accepted occurrences still
+replay; both new refusals failed against the preceding production code.
+The same workerd lane verifies canonical source-account capture,
 legacy-opening recovery and rooted background origin reads; metadata cannot
 forge that projection. `test/run-authority-validity.test.ts` checks the model/tool boundary's
 specific coordinator failure and error-path attention recording.
@@ -1504,7 +1512,9 @@ checkpoint I/O. Background model/tool boundaries reuse activation eligibility an
 retain only the root lifecycle and stop-generation check. Coordinator selection
 short-circuits preferred users and narrows candidates by audience. Matching shares
 pending eligibility within one request; delegation-list identity/eligibility
-reads run together. Details omit the unused derived delegation status. Self-action
+reads run together. Details omit the unused derived delegation status. Delivery
+also enforces reconciled registration state/cutoffs, preserving existing
+occurrence replay without admitting historical work after reactivation. Self-action
 receipt inspection prevents the outer completed-tool cache from presenting a
 withdrawn grant as current without replaying its mutation. Interrupted actions
 are reconciled by that same receipt instead of minting a fresh consent intent.
@@ -1519,7 +1529,9 @@ authorization barrier is unnecessary because eventual authorization propagation
 is the agreed product contract. Repeated background eligibility scans and account
 checkpoints for reads would add durable work to every step without helping
 uncertain-write recovery. Recomputing unused detail status and repeating matching
-checks likewise adds work without changing the product outcome.
+checks likewise adds work without changing the product outcome. Checking only
+the Sidekick-wide event cutoff ignored source removal/reactivation, allowing
+delayed envelopes to admit work after the reconciled source boundary moved.
 A blocked report must also remain visible after the model finishes explaining
 it, since an attempted post is not confirmation that anyone received it.
 

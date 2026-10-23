@@ -1150,17 +1150,27 @@ export class HostedSidekick {
   ): AutomationExternalEventPlan {
     if (row.lifecycle !== "active") return { kind: "refuse", outcomeCode: `sidekick_${row.lifecycle}` };
     const definition = row.accepted_definition_json ? AutomationDraftSchema.parse(JSON.parse(row.accepted_definition_json)) : null;
+    const registration = this.sql.exec<{ evaluator_json: string; state: string; effective_after_event_sequence: number }>(
+      "SELECT evaluator_json,state,effective_after_event_sequence FROM workspace_external_event_registrations WHERE registration_id=? AND automation_id=?",
+      request.registrationId, this.sidekickId,
+    ).toArray()[0];
+    if (!registration || registration.state !== "active") return { kind: "refuse", outcomeCode: "sidekick_trigger_removed" };
     if (definition?.definitionVersion === 2) {
       const sources = z.array(z.object({ evaluatorId: z.string(), source: z.object({ eventType: z.string() }) })).parse(JSON.parse(row.evaluator_projection_json));
-      const registration = this.sql.exec<{ evaluator_json: string }>(
-        "SELECT evaluator_json FROM workspace_external_event_registrations WHERE registration_id=? AND automation_id=?",
-        request.registrationId, this.sidekickId,
-      ).toArray()[0];
-      const registered = registration ? ExternalEventEvaluatorV1Schema.parse(JSON.parse(registration.evaluator_json)) : null;
-      const configuredId = registered?.sourceEvaluatorId ?? registered?.evaluatorId;
+      const registered = ExternalEventEvaluatorV1Schema.parse(JSON.parse(registration.evaluator_json));
+      const configuredId = registered.sourceEvaluatorId ?? registered.evaluatorId;
       if (!definition.triggers.some(isExternalEventTrigger) || !sources.some((entry) => entry.evaluatorId === configuredId && entry.source.eventType === request.event.eventType)) {
         return { kind: "refuse", outcomeCode: "sidekick_trigger_removed" };
       }
+    }
+    if (request.event.eventSequence <= registration.effective_after_event_sequence) {
+      // Reactivation begins at a new source cutoff. An accepted occurrence
+      // may replay its receipt, but a delayed envelope cannot start old work.
+      const accepted = this.sql.exec(
+        "SELECT 1 FROM sidekick_runs WHERE sidekick_id=? AND occurrence_key=?",
+        this.sidekickId, externalEventOccurrenceKey(request.event),
+      ).toArray().length > 0;
+      if (!accepted) return { kind: "refuse", outcomeCode: "sidekick_event_before_activation_boundary" };
     }
     if (row.effective_after_event_sequence === null
       || request.event.eventSequence <= row.effective_after_event_sequence) {

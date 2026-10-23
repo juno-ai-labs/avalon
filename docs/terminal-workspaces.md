@@ -57,7 +57,10 @@ activations, and background agents all use the sandbox owned by that Sidekick's
 wizard. Each activation retains its own transcript, execution records and direct
 attachments, plus resources visible to its execution user in the
 Sidekick's home and explicitly attached conversations. Sharing files does not
-copy conversation context.
+copy conversation context. Activation inventories supply their eligible-delegate
+snapshot to Terminal. Authoring connector inventories remain caller-only and
+supply no snapshot; Terminal then reads its own eligible-delegate view once
+at composition so an enrolled creator can use the shared files.
 Different Sidekicks and the Thread that requested one remain separate.
 
 A work-stream background agent uses the sandbox of the conversation that
@@ -920,7 +923,10 @@ Sidekick activation or worker retains a pre-delegation generation across a
 coordinator change. The plugin integration suite checks that consent withdrawal
 blocks cached callers, retained imports survive, and a withdrawn repository
 owner cannot bootstrap fresh credentials or use the typed publisher. Existing
-mounts follow their normal lifecycle. Earlier negative controls for credential
+mounts follow their normal lifecycle. An assembled authoring-inventory regression
+also reads a file through the Terminal provider RPC seam as the enrolled creator;
+restoring the null snapshot handoff makes it fail with an authority mismatch.
+Earlier negative controls for credential
 removal are historical evidence for scope since removed; consent and shared-file
 identity checks remain. On real workerd, `test-workers/terminal-sidekick-sandbox.test.ts`
 proves that the wizard and successive activations share the same persisted
@@ -1372,6 +1378,8 @@ shared. Repository bootstrap and the typed publisher check the selected personal
 connection owner against the loaded delegation snapshot using the selection and
 connection-policy reads they already perform. The plugin adds no separate
 repository selection or connection query for delegation; local files survive.
+Authoring omits an absent connector-delegation snapshot so Terminal resolves its
+own eligible-delegate view instead of treating null as an empty authority.
 Mounted credentials retain their normal lifecycle, without a new cleanup protocol.
 The shared recovery path also durably settles proven ambiguous results and
 cleans up its deadline when a reconciler returns or refuses before execution.
@@ -1381,7 +1389,10 @@ shared work and erased retained content when coordination moved to another
 person. Fresh GitHub bootstrap and typed publication still need an eligible
 connection owner. Repeating repository selection and connection reads in an
 outer delegation guard added serial work; the existing repository authorization
-read has all the facts needed for that decision. A recovered effect
+read has all the facts needed for that decision. Treating an authoring inventory's
+absent connector-delegation snapshot as supplied authority blocked the creator's
+shared-file setup; authoring now leaves Terminal to resolve that boundary.
+A recovered effect
 without the reconciliation settlement flag stayed ambiguous despite proof of
 completion; an early reconciler return also left its deadline timer running.
 
