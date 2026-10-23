@@ -176,6 +176,8 @@ submission, including its unfinished draft. A rejected submission preserves the
 addresses and opens a fresh notice on each attempt without a network request.
 The invitation API owns server validation.
 
+PR: [#1437](https://github.com/juno-ai-labs/avalon/pull/1437).
+
 ### 2026-10-13 — Prefill the organization name from the email domain
 
 **What changed:** The create-organization card on the Mac app and in the
