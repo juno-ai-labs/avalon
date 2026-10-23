@@ -1942,6 +1942,24 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 
 ## Changelog
 
+### 2026-10-22 — Hydrate activity graphs above the SQLite parameter ceiling
+
+**What changed:** Transcript activity selection and interval hydration pass ID
+sets through one bound JSON array instead of expanding one parameter per ID.
+
+**Why:** Production socket upgrades succeeded but snapshot assembly failed on
+activity queries with 211 and 106 parameters. Turn hydration already chunked its
+reads, but recursive activity selection and its expanded ancestor graph still
+crossed Durable Object SQLite's 100-parameter ceiling.
+
+**Considered and rejected:** Capping activities would omit canonical state.
+Chunking these reads would require merging overlapping ancestor graphs and
+repeating active-activity selection; one JSON binding preserves the existing
+single-query selection and ordering without adding a product limit.
+
+**Consequences:** Keep the seed set and expanded interval set independent of
+parameter count.
+
 ### 2026-10-22 — Classify handoffs against the admitted audience
 
 **What changed:** Follow-up messages read the participant count after participant
