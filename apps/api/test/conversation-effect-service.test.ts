@@ -898,7 +898,7 @@ describe("the activity Queue consumer's effect legs", () => {
   it("strips unknown directory fields before forwarding an effect to its parent", async () => {
     const database = seedAuthority();
     const workspace = workspaceSyncNamespace();
-    const receiveChildEffects = vi.fn(async (_input: unknown) => undefined);
+    const receiveChildEffects = vi.fn<(input: unknown) => Promise<void>>(async () => undefined);
     const env = regionalEnv(database, workspace, { workstreamReceive: receiveChildEffects });
     const envelope = childMessage(directoryCommon(), {
       messageId: MESSAGE_ID, parentKind: "workstream", parentId: WORKSTREAM_ID,
