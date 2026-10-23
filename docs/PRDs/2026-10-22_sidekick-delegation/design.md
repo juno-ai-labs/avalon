@@ -61,6 +61,8 @@ selector or account-dependent read/reply/page/handoff feature. Only recovery of
 an exact uncertain effect retains its original account and provider key.
 Added/withdrawn grants propagate through ordinary authorization refreshes; stale
 snapshots and in-flight operations may settle without per-call grant reads.
+Background model/tool checks read only root lifecycle and stop generation;
+eligibility and coordinator selection refresh at activation.
 
 ## Agent tools
 
@@ -115,10 +117,11 @@ creates immediately on opening the route. There is no Account withdrawal screen.
 
 ## Attribution and shared state
 
-Existing receipt checkpoints retain actual principal, connection, grant
+Existing write receipt checkpoints retain actual principal, connection, grant
 generation, original selection and effect state for database debugging and exact
-effect recovery. These fields are absent from normal app activity and model tool
-output. Do not write credentials into them.
+effect recovery. Reads skip account-checkpoint reads and writes. These fields
+are absent from normal app activity and model tool output. Do not write
+credentials into them.
 
 GitHub uses its existing mounted-credential lifecycle. Repository bootstrap and
 typed publishing check the selected connection owner against the inventory's

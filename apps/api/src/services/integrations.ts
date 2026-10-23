@@ -14,7 +14,6 @@ import { agentCoordinationRoleGuidance } from './agent-communication-prompts';
 import { conversationParentStub, hostedParentStub } from "./conversation-parent-client";
 import { AgentCommunicationService } from "./agent-communication-service";
 import { createAgentCommunicationPlugin } from "./agent-communication-plugin";
-import { continueSidekickRun } from "./sidekick-run-continuation";
 import {
   executeSidekickAccountOperation, readSidekickOperationDelegation,
 } from "./sidekick-operation-accounts";
@@ -5842,6 +5841,7 @@ async function loadHarnessTools(
               sourceConnectionIds: runDefinition ? Object.values(runDefinition.activitySourcePluginIds)
                 .flatMap((pluginId) => runDefinition.connectorBindings[pluginId] ? [runDefinition.connectorBindings[pluginId]!] : []) : [],
               canFallback: !dynamicCapability && Boolean(adapter.probeResourceAccess),
+              mode: definition.mode,
               context, receipts: pageReceipts,
               fence: { runId: input.harnessRunId, attemptId: paginationLease.attemptId, owner: paginationLease.owner },
               execute: (candidate) => executeConnectorToolOnConnection(env, input, candidate, operation, definition.capability,
@@ -6897,25 +6897,23 @@ async function readRunAuthority(
     throw new ConnectorError("unauthorized", "Work stream is no longer active");
   }
 
-  // Delegated work keeps its own instructions and principal, but cannot
-  // outlive the root Sidekick run's consent. Check again at every model/tool
-  // boundary, including after a pause followed by a resume.
+  // Eligibility is selected at activation and reused during this attempt.
+  // Model/tool boundaries only check the root lifecycle and stop generation,
+  // including a pause followed by a resume; they do not rescan delegates.
   if (input.automationDelegation) {
     const delegation = input.automationDelegation;
     if (!input.backgroundAgent || input.parentKind !== "automation") {
       throw new ConnectorError("unauthorized", "Sidekick delegation requires a background worker");
     }
     startedAt = Date.now();
-    const live = await continueSidekickRun(env, {
-      region: input.region,
+    const live = await (await hostedParentStub(env, input.workspaceId)).sidekickReadRunState({
       workspaceId: input.workspaceId,
       automationId: input.parentId,
       runId: delegation.runId,
     });
     recordOptionalTiming(onTiming, "automation", startedAt);
-    if (live.outcome !== "continue" || live.stopGeneration !== delegation.stopGeneration
-      || input.executionPrincipal.type !== "user" || live.executionPrincipal.type !== "user"
-      || live.executionPrincipal.userId !== input.executionPrincipal.userId) {
+    if (!live || live.lifecycle !== "active" || live.stopGeneration !== delegation.stopGeneration
+      || input.executionPrincipal.type !== "user") {
       throw new ConnectorError("unauthorized", "This Sidekick delegation is no longer authorized");
     }
   }
