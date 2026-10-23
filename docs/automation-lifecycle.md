@@ -609,10 +609,11 @@ hands a normalized event to `WorkspaceDO.ingestConnectorEvent`; a second,
 ID-only delivery claims it for processing and calls
 `matchExternalEventDestinations`, which selects active registrations by
 connection, connector type, event type, and
-`effective_after_event_sequence`, applies the audience rule (a restricted
-activity never reaches a `workspace` automation and reaches a `personal` one
-only when its author is inside the audience), evaluates each registration's
-predicate with no model inference, and returns one complete
+`effective_after_event_sequence`, applies the delegation audience rule (a
+personal activity requires its source owner's eligible grant, and a restricted
+workspace activity requires an eligible delegate inside its actual audience),
+evaluates each registration's predicate with no model inference, and returns
+one complete
 `workspace_external_event_delivery_v1` message per match carrying the
 registration, the destination, and the event. There is no delivery ledger and
 no lease: the consumer sends each message to the Queue, and the destination is
