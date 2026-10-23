@@ -492,7 +492,11 @@ participants". `spaces_individual_owner_idx` holds one per member.
   call. The creator is General's creator, so already its participant.
 - **Anyone becoming an active member** (accepting an invitation, a guest
   promoted, the creator's own first relationship event). The relationship
-  change handler (`applyWorkspaceRelationshipChange`) calls
+  event is dispatched by the membership writer: invitation acceptance also
+  redispatches a pending event on replay, without waiting for the cron sweep.
+  A failed dispatch read is logged and leaves the durable event for recovery;
+  it does not interrupt an already-committed acceptance or its Channel invitations.
+  The relationship change handler (`applyWorkspaceRelationshipChange`) calls
   `seatOrganizationMember` last. WorkspaceDO checks its own copy of the
   relationship, seats the person in General and in their Personal Channel if it
   exists, and answers `absent` when it does not; the service then writes the D1
@@ -2029,6 +2033,34 @@ while Spaces are not open, and closing the cutover queues it again when a
 member is still unseated.
 
 ## Changelog
+
+### 2026-10-22 — Dispatch invitation seating promptly and treat refused Channel reads as unavailable
+
+**What changed:** Invitation acceptance immediately publishes its durable
+membership event, including a retry whose earlier dispatch marker was lost.
+The Channel screen treats `space_access_denied` and `space_not_found` as
+**Channel not found**, even while its directory row is cached, and reports
+read-position failures only after the feed has admitted the reader and its
+current fetch has settled. Dispatch read failures leave committed acceptance
+successful so Channel invitations and acceptance notifications can still run.
+
+**Why:** Local end-to-end testing found new members waiting for the five-minute
+recovery sweep before receiving General participation and their Personal Channel.
+Forbidden links also queued feed and read-position dialogs that could outlive
+the refused screen and interrupt the next Channel.
+
+**Considered and rejected:** Seating through a second invitation-specific path
+would duplicate the relationship consumer's authority and retry handling.
+Suppressing every feed error would hide genuine loading failures; only access
+refusals use the unavailable state.
+
+**Consequences:** Queue acceptance remains distinct from completed seating, and
+failed dispatches retain the existing scheduled recovery. The server's feed
+refusal wins over a cached directory row; transport and Organization setup
+failures still report errors. Cached feed data during a refetch is not proof
+that the reader still has access.
+
+PR: [#1426](https://github.com/juno-ai-labs/avalon/pull/1426).
 
 ### 2026-10-21 — Archive exclusive threads with their Channel
 
