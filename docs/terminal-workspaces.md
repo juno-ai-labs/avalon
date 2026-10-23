@@ -199,7 +199,10 @@ the generation.
 
 Transient failures reading a named session, polling its command, or collecting
 its logs retry within the existing command observation budget (command timeout
-plus 15 seconds), with the existing 250 ms to 2 second backoff. Only a session
+plus 15 seconds), with the existing 250 ms to 2 second backoff. A cancellable
+timer bounds each read by the remaining budget and is disposed afterward. The
+SDK exposes no per-read abort option, so deadline expiry abandons only the
+read-only observation; submission is never raced against that timer. Only a session
 lookup's 404 permits session creation. Other client refusals (except 408/429)
 fail immediately. A failed log stream discards that attempt's partial prefix
 before retrying, so the final output cannot duplicate it. Submission itself is
@@ -1317,6 +1320,8 @@ update lag before changing the default.
 transient failures within the existing observation deadline and backoff. Only
 404 authorizes session creation. Failed provider measurements retain a
 content-free error code; repeated log reads discard partial earlier output.
+Each read is bounded by the remaining observation time, including a stalled SDK
+request, rather than waiting for its independent 120-second HTTP timeout.
 
 **Why:** A single failed provider read stranded an accepted command as ambiguous
 and stopped its run. A failed GET also entered the session-creation path without
@@ -1329,7 +1334,6 @@ observation already has a deadline and safe stable command identity.
 **Consequences:** Recovery observes the same command and settles the existing
 durable task. Cancellation, non-transient refusals and exhausted observation
 still retain the existing fail-closed recovery behavior.
-
 
 ### 2026-10-22 — Give setup the same home publication identity as activations
 
