@@ -1,7 +1,8 @@
 # Implementation plan
 
-The PRD and design define the current acceptance contract. This branch is local,
-unpushed and not deployed.
+The PRD and design define the current acceptance contract. Implementation and
+local validation are complete. Review and CI status belong to the pull request;
+the feature is not deployed.
 
 ## Current scope: 2026-10-23 simplification
 
