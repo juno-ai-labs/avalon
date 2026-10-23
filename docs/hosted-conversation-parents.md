@@ -369,6 +369,15 @@ would read as Breakouts.
 | `_internal_durable_alarms` | the Organization's own, keyed `<sidekickId>:<key>`; `sidekick_publication` became `sidekick_memory_tables` |
 | `durable_outbox` | none: the directory row is written in place |
 
+Declared execution tables share this same database. Publication prepares hashes
+before committing, then reconciles every table and metadata receipt inside the
+transaction that accepts the revision and writes schedules and registrations.
+A conflict rolls everything back; no new table-materialization alarm is needed.
+The old `sidekick_memory_tables` kind remains only to recover previously stored
+entries, consuming permanent conflicts and retrying unknown failures. The
+lifecycle and tool contracts are in [Sidekicks](automation-lifecycle.md) and the
+[agent harness](agent-harness.md).
+
 The facade answers each Sidekick method as `sidekick*` (`sidekickPause`,
 `sidekickRunNow`) and the parent contract under the shared names, with the
 Sidekick tried before the Channel fallback. Callers hold the Organization's
@@ -546,7 +555,8 @@ none for a Channel rename or an owned Sidekick's next run;
 and 82 in one wake and proves migration 82's defaults and live triggers.
 `hosted-sidekick.test.ts` drives a Sidekick through the Organization object's
 `sidekick*` surface: publish, a refused registration leaving nothing applied, a
-refused memory-table step finishing from its entry, pause and resume, a run
+refused memory-table write leaving publication unchanged, all-declaration rollback,
+and consumption of a legacy permanent-conflict entry, pause and resume, a run
 provisioned off the alarm and asked about again until it reports, a pause that
 leaves another Sidekick's run armed, a run's terminal deadline, a principal
 claim that rebinds a plugin whose connection is gone and unbinds one whose
@@ -617,6 +627,20 @@ Space in an Organization now shares one SQLite database and one socket set.
   deleting those objects is its own decision.
 
 ## Changelog
+
+### 2026-10-23 — Use the shared table authority during Sidekick publication
+
+**What changed:** Hosted Sidekicks commit their execution tables and metadata in
+the activation transaction. Only legacy table-materialization alarms remain.
+
+**Why:** Deferring a write to this same SQLite authority retained a cross-object
+failure mode after the objects had been combined. Metadata-only edits could
+activate a revision whose table provisioning would never converge.
+
+**Consequences:** Keep asynchronous preparation outside the transaction and
+recheck the accepted revision before a legacy alarm writes. Do not restore a
+self-RPC provisioning tail; publication rollback and permanent-alarm tests in
+`hosted-sidekick.test.ts` guard the boundary.
 
 ### 2026-10-22 — Preserve irreversible archive cascades across restore snapshots
 

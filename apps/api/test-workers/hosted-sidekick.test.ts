@@ -32,6 +32,7 @@ import {
   agentAddressForId,
   WorkstreamWorkflowInputSchema,
   AutomationSetEvaluatorRulesModelInputV1Schema,
+  AutomationDetailSchema,
   type AutomationDraft,
 } from "@rally/contracts";
 import {
@@ -330,6 +331,11 @@ async function submit(draft: AutomationDraft = DEFINITION): Promise<{ definition
 async function apply(userId = AUTHOR_ID) {
   return runInDurableObject(workspaceStub(), (instance: WorkspaceDO) =>
     instance.sidekickApply({ ...addressed(), actor: actor(userId) }));
+}
+
+/** Validate the native RPC's detail envelope at the serialization boundary. */
+async function applyViaRpc() {
+  return AutomationDetailSchema.parse(await workspaceStub().sidekickApply({ ...addressed(), actor: actor() }));
 }
 
 async function activeAutomation(draft: AutomationDraft = DEFINITION): Promise<void> {
@@ -705,39 +711,28 @@ describe("a hosted Sidekick", () => {
     expect((await workspaceStub().sidekickReadSkillSource(request))?.loadable).toBe(true);
   });
 
-  it("retries a refused memory-table step from its stored entry, without another submission", async () => {
-    const declared = [{
+  it("keeps a failed table write unpublished and retries the same submitted revision atomically", async () => {
+    const declared: AutomationDraft["memoryTables"] = [{
       name: "Deploys", description: "One row per deploy.", usageInstructions: "Insert a row per deploy.",
       columns: [{ name: "service", description: "The service.", type: "string", required: true, searchable: true }],
       keyColumns: ["service"],
-    }] as AutomationDraft["memoryTables"];
+    }];
     await createDraft();
-    // The Organization's memory-table write refuses once, the way a storage
-    // hiccup would after the publish has committed.
-    await runInDurableObject(workspaceStub(), (instance) => {
-      const target = instance as unknown as { createMemoryTable: (...args: unknown[]) => Promise<unknown>; refusedMemoryWrites?: number };
-      const original = target.createMemoryTable.bind(target);
-      target.createMemoryTable = async () => {
-        target.createMemoryTable = original;
-        target.refusedMemoryWrites = (target.refusedMemoryWrites ?? 0) + 1;
-        throw new Error("memory_table_write_interrupted");
-      };
-    });
     await submit({ ...DEFINITION, memoryTables: declared });
-    expect((await apply()).acceptedDefinitionRevision).toBe(1);
-    // Apply's own attempt reached the write and was refused.
-    expect(await runInDurableObject(workspaceStub(), (instance) =>
-      (instance as unknown as { refusedMemoryWrites?: number }).refusedMemoryWrites)).toBe(1);
-
-    // The stored entry finishes the job on the Organization's alarm, with no
-    // second submission or apply, and then leaves.
-    const tables = () => runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{ name: string }>(
-      `SELECT t.name FROM memory_tables t JOIN memory_scopes s ON s.memory_scope_id = t.memory_scope_id
-        WHERE s.owner_id = ? AND t.invalidated_at IS NULL`, AUTOMATION_ID,
-    ).toArray().map((row) => row.name));
-    await runDurableObjectAlarm(workspaceStub());
-    await expect.poll(tables, { timeout: RUN_SETTLE_TIMEOUT_MS }).toEqual(["Deploys"]);
-    await expect.poll(async () => (await alarms()).map((alarm) => alarm.kind)).not.toContain(SIDEKICK_MEMORY_TABLES_ALARM_KIND);
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(`CREATE TRIGGER reject_table_write BEFORE INSERT ON memory_tables
+        BEGIN SELECT RAISE(ABORT, 'memory_table_write_interrupted'); END`);
+    });
+    const error = await applyViaRpc().catch((error: unknown) => error);
+    expect(error).toMatchObject({ message: expect.stringContaining("memory_table_write_interrupted") });
+    expect(await automationRow()).toMatchObject({ lifecycle: "draft", accepted_definition_revision: null });
+    expect((await alarms()).filter((alarm) => alarm.kind === SIDEKICK_MEMORY_TABLES_ALARM_KIND)).toEqual([]);
+    expect(await runInDurableObject(workspaceStub(), (_instance, state) =>
+      state.storage.sql.exec(`SELECT COUNT(*) AS n FROM memory_tables`).one())).toEqual({ n: 0 });
+    await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec(`DROP TRIGGER reject_table_write`));
+    expect((await applyViaRpc()).acceptedDefinitionRevision).toBe(1);
+    expect(await runInDurableObject(workspaceStub(), (_instance, state) =>
+      state.storage.sql.exec(`SELECT name FROM memory_tables`).toArray())).toEqual([{ name: "Deploys" }]);
   });
 
   it("reconciles stored policy and republishes discovery without accepting a caller boolean", async () => {
@@ -1345,6 +1340,90 @@ describe("a hosted Sidekick", () => {
     expect(await automationRow()).toMatchObject({ lifecycle: "deleted", paused_by: null });
     await expect(runInDurableObject(workspaceStub(), (instance: WorkspaceDO) => instance.sidekickResume({ ...addressed(), actor: actor() })))
       .rejects.toMatchObject({ code: "sidekick_not_found" });
+  });
+
+  it("rolls back all table and publication changes when a later declaration conflicts", async () => {
+    const table: AutomationDraft["memoryTables"][number] = {
+      name: "Evidence", description: "Original metadata", usageInstructions: "Keep the rows",
+      columns: [{ name: "url", description: "Source", type: "url", required: true, searchable: false }],
+      keyColumns: ["url"],
+    };
+    await activeAutomation({ ...DEFINITION, memoryTables: [table, { ...table, name: "Second table" }] });
+    await submit({ ...DEFINITION, memoryTables: [
+      { ...table, description: "Must roll back" },
+      { ...table, name: "Must not be created" },
+      { ...table, name: "Second table", columns: [{ ...table.columns[0]!, type: "string" }] },
+    ] });
+    // The RPC is the product admission boundary. Capture its serialized error
+    // without leaving a second unhandled rejected RPC promise in workerd.
+    const error = await applyViaRpc().catch((error: unknown) => error);
+    expect(error).toMatchObject({ code: "sidekick_memory_table_conflict",
+      details: { retryable: false, fields: ["memoryTables.2.columns.0.type"], memoryTableId: expect.any(String) },
+      message: expect.stringContaining("table_describe"),
+    });
+    expect(await automationRow()).toMatchObject({ lifecycle: "active", accepted_definition_revision: 1 });
+    const tables = await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec(
+      `SELECT name, description FROM memory_tables ORDER BY name`,
+    ).toArray());
+    expect(tables).toEqual([{ name: "Evidence", description: "Original metadata" }, { name: "Second table", description: "Original metadata" }]);
+    expect((await alarms()).filter((alarm) => alarm.kind === SIDEKICK_MEMORY_TABLES_ALARM_KIND)).toEqual([]);
+  });
+
+  it("consumes a legacy permanent table conflict instead of scheduling another attempt", async () => {
+    const table: AutomationDraft["memoryTables"][number] = {
+      name: "Legacy evidence", description: "Keep", usageInstructions: "Keep",
+      columns: [{ name: "url", description: "URL", type: "url", required: true, searchable: false }], keyColumns: ["url"],
+    };
+    await activeAutomation({ ...DEFINITION, memoryTables: [table] });
+    await submit({ ...DEFINITION, memoryTables: [{ ...table, columns: [{ ...table.columns[0]!, type: "string" }] }] });
+    await runInDurableObject(workspaceStub(), async (_instance, state) => {
+      // State written by the old publication path: acceptance precedes tables.
+      state.storage.sql.exec(`UPDATE automation_directory SET accepted_definition_revision = 2 WHERE automation_id = ?`, AUTOMATION_ID);
+      state.storage.sql.exec(`INSERT INTO _internal_durable_alarms
+        (kind, alarm_key, due_at, retry_at, attempt, created_at, updated_at) VALUES (?, ?, 0, 0, 185, 0, 0)`,
+        SIDEKICK_MEMORY_TABLES_ALARM_KIND, `${AUTOMATION_ID}:2`);
+      await state.storage.setAlarm(Date.now());
+    });
+    await runDurableObjectAlarm(workspaceStub());
+    await expect.poll(async () => (await alarms()).filter((alarm) => alarm.kind === SIDEKICK_MEMORY_TABLES_ALARM_KIND), { timeout: RUN_SETTLE_TIMEOUT_MS }).toEqual([]);
+    const tableState = await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec(
+      `SELECT name, value_type FROM memory_table_columns`,
+    ).toArray());
+    expect(tableState).toEqual([{ name: "url", value_type: "url" }]);
+  });
+
+  it("keeps a legacy storage failure retryable and finishes after storage recovers", async () => {
+    const table: AutomationDraft["memoryTables"][number] = {
+      name: "Recoverable evidence", description: "Original", usageInstructions: "Keep",
+      columns: [{ name: "url", description: "URL", type: "url", required: true, searchable: false }], keyColumns: ["url"],
+    };
+    await activeAutomation({ ...DEFINITION, memoryTables: [table] });
+    await submit({ ...DEFINITION, memoryTables: [{ ...table, description: "Recovered" }] });
+    await runInDurableObject(workspaceStub(), async (_instance, state) => {
+      state.storage.sql.exec(`UPDATE automation_directory SET accepted_definition_revision = 2 WHERE automation_id = ?`, AUTOMATION_ID);
+      state.storage.sql.exec(`CREATE TRIGGER interrupt_table_metadata BEFORE UPDATE ON memory_tables
+        BEGIN SELECT RAISE(ABORT, 'storage_temporarily_unavailable'); END`);
+      state.storage.sql.exec(`INSERT INTO _internal_durable_alarms
+        (kind, alarm_key, due_at, retry_at, attempt, created_at, updated_at) VALUES (?, ?, 0, 0, 0, 0, 0)`,
+        SIDEKICK_MEMORY_TABLES_ALARM_KIND, `${AUTOMATION_ID}:2`);
+      await state.storage.setAlarm(Date.now());
+    });
+    await runDurableObjectAlarm(workspaceStub());
+    await expect.poll(() => runInDurableObject(workspaceStub(), (_instance, state) =>
+      state.storage.sql.exec<{ attempt: number }>(`SELECT attempt FROM _internal_durable_alarms WHERE kind = ? AND alarm_key = ?`,
+        SIDEKICK_MEMORY_TABLES_ALARM_KIND, `${AUTOMATION_ID}:2`).toArray()[0]?.attempt ?? 0),
+    { timeout: RUN_SETTLE_TIMEOUT_MS }).toBeGreaterThanOrEqual(1);
+    await runInDurableObject(workspaceStub(), async (_instance, state) => {
+      state.storage.sql.exec(`DROP TRIGGER interrupt_table_metadata`);
+      state.storage.sql.exec(`UPDATE _internal_durable_alarms SET retry_at = 0 WHERE kind = ? AND alarm_key = ?`,
+        SIDEKICK_MEMORY_TABLES_ALARM_KIND, `${AUTOMATION_ID}:2`);
+      await state.storage.setAlarm(Date.now());
+    });
+    await runDurableObjectAlarm(workspaceStub());
+    await expect.poll(async () => (await alarms()).filter((alarm) => alarm.kind === SIDEKICK_MEMORY_TABLES_ALARM_KIND),
+      { timeout: RUN_SETTLE_TIMEOUT_MS }).toEqual([]);
+    expect(await runInDurableObject(workspaceStub(), (_instance, state) =>
+      state.storage.sql.exec(`SELECT description FROM memory_tables`).toArray())).toEqual([{ description: "Recovered" }]);
   });
 
   it("creates the tables a definition declares in the automation's memory scope, once", async () => {

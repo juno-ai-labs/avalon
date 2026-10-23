@@ -16162,8 +16162,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Create a typed durable table, or answer with the standing table's id so
-   * the service can decide whether the caller reopened it or collided with it.
+   * Create or reopen a typed durable table, reconciling metadata atomically.
+   * A structural conflict returns its table id and incompatible field paths.
    */
   async createMemoryTable(
     input: WorkspaceMemoryTableCreateRequest,
