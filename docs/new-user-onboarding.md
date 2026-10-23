@@ -70,6 +70,8 @@ empty and untouched, so the suggestion never replaces what the person typed or
 a remembered name.
 
 The invite page uses manual email chips separated by spaces, commas or semicolons.
+Invite stays enabled: invalid chips are highlighted, and clicking Invite checks
+every address for `something@something` before sending any invitations.
 Before sending, it reconciles pending invitations and active members so retrying a
 lost response does not replace an invitation already sent. Failed addresses stay
 editable. Onboarding has no teammate discovery API.
@@ -138,6 +140,9 @@ Run API Node tests `account-onboarding.test.ts`,
 retired-stage cases cover reading old rows. The desktop journey itself is
 covered by `src/renderer/screens/guided-onboarding.test.tsx`. Account tests apply the actual regional
 migrations; journey tests apply the actual WorkspaceDO migrations in workerd.
+The desktop tests use the real error-notice provider to cover editing without a
+popup, rejected submissions without invitation requests, repeatable notices,
+invalid chips, and the intentionally relaxed client email check.
 The write-loss and profile-update mutation checks demonstrate those integration
 tests fail when persistence is broken. Desktop session-gate and app-session suites
 cover existing authentication and activation behavior.
@@ -147,6 +152,28 @@ inventory is [the PRD motion audit](PRDs/2026-09-05_new-user-onboarding/motion-r
 Onboarding no longer starts an agent run or a connector authorization.
 
 ## Changelog
+
+### 2026-10-23 — Let creators finish typing invitation addresses
+
+**What changed:** Invite stays enabled, and invalid addresses open a modal only
+when it is clicked, before any invitation is sent. Invalid chips have a pastel
+red fill. The client checks for `something@something` without requiring a dot
+in the domain. Failed invitation attempts still show their error.
+
+**Why:** During signup, entering the first letter of an address immediately
+opened a modal and interrupted typing. Draft validation used the same automatic
+error notice as an operational failure.
+
+**Considered and rejected:** Opening the popup during typing or blur interrupts
+editing. Disabling Invite for invalid addresses gives no explanation when a
+person tries to proceed, so validation runs when they click it instead.
+
+**Consequences:** Use the same lightweight check for chip highlighting and for
+submission, including its unfinished draft. A rejected submission preserves the
+addresses and opens a fresh notice on each attempt without a network request.
+The invitation API owns server validation.
+
+PR: [#1437](https://github.com/juno-ai-labs/avalon/pull/1437).
 
 ### 2026-10-13 — Prefill the organization name from the email domain
 
