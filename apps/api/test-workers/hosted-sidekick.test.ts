@@ -1731,6 +1731,27 @@ describe("a hosted Sidekick", () => {
     expect(message).toContain("draft.triggers");
   });
 
+  it("rechecks the email trigger after delegate authorization yields", async () => {
+    await activeAutomation();
+    await submit({ ...DEFINITION, definitionVersion: 2, triggers: [{ type: "manual" }] });
+    const result = await runInDurableObject(workspaceStub(), async (instance) => {
+      const host = (instance as unknown as { hostedSidekickHost: () => HostedSidekickHost }).hostedSidekickHost();
+      const readRelationship = host.readRelationship;
+      host.readRelationship = async (...args) => {
+        // Publishing can remove the trigger while admission reads authority.
+        await new HostedSidekick({ ...host, readRelationship }, AUTOMATION_ID).apply({ ...addressed(), actor: actor() });
+        return readRelationship(...args);
+      };
+      return new HostedSidekick(host, AUTOMATION_ID).admitInboundEmail({
+        ...addressed(), emailAddress: EMAIL_ADDRESS, resendEmailId: "removed-email-trigger",
+        senderUserId: AUTHOR_ID, receivedAt: Date.parse(NOW), payloadRef: "emails/removed-trigger",
+        resourceId: RESOURCE_ID, textContent: "Please summarize this.", structuredContent: { subject: "Summary" },
+      });
+    });
+    expect(result).toEqual({ admitted: false, duplicate: false, outcomeCode: "sidekick_email_route_mismatch", runId: null });
+    expect(await runRows()).toEqual([]);
+  });
+
   it("admits an inbound email once, answers a resend retry from its receipt, and refuses a stranger", async () => {
     await activeAutomation();
     const email = {

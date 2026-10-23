@@ -405,9 +405,9 @@ does not restart them or replay historical events automatically.
 
 Older clients retain the `runAsUserId` response field's legacy meaning. New
 run details expose the coordinator separately. Their claim operation becomes
-authenticated self-opt-in while preserving the existing explicit management
-and reader entitlement of a successful authorized claim;
-it cannot replace the creator preference, remove other delegates or bypass the
+authenticated self-opt-in without creating additional management or reader
+entitlements; existing access continues to follow the normal access rules.
+It cannot replace the creator preference, remove other delegates or bypass the
 new authority. Rollback stops new
 delegation-aware admissions or restores a compatible single-identity executor
 that still observes grants through normal authz propagation; it never restores an executor that ignores

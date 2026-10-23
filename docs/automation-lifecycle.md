@@ -41,13 +41,16 @@ to editable Sidekicks; ambiguous visible names refuse with a stable code.
 Sidekick routes serve `/sidekicks/:id/delegation`. There is no Account settings
 withdrawal screen or dedicated account HTTP endpoint. The agent's own-grant
 lookup and self-withdrawal retain a person's stored grant and safe label after
-access loss. D1's `sidekick_delegation_locations` supplies only the user/
-Organization/region routing references for those tools; WorkspaceDO supplies
-every grant result. The reference confers no access or execution authority.
+access loss within the current Organization. The tools never discover or route
+to grants in other Organizations. The old D1 `sidekick_delegation_locations`
+table is unused; its migration remains immutable.
 
 The `rally:sidekicks` plugin exposes `my_delegations_list`, `delegates_list` and
 `set_delegation` during direct and autonomous work. Authoring and Sidekick
 activations use the `sidekick` prefix; room presentations use full wire names.
+Both presentations teach the resulting `sidekick_` wire names. Configuration
+chats use the chatting person's accounts; only activations and delegated work
+receive the Sidekick's eligible account pool.
 The mutation accepts `{ sidekickId, userId, allowed }`: the model selects a
 current Organization user, while the host supplies the execution actor. The
 actor needs existing Sidekick access to change another person; the target needs
@@ -68,7 +71,10 @@ never rejects an otherwise eligible event.
 
 An occurrence with no delegate gets a `needs_input` run and safe recovery summary;
 an unauthorized event retains no private payload in the Sidekick. Its directory
-has a safe `delegationAttention` code and recovery message. New consent applies
+has a safe `delegationAttention` code and recovery message. Source reconciliation
+clears a source warning when coverage returns; unrelated manual or scheduled
+admissions do not clear it. Permission-report warnings survive source recovery.
+New consent applies
 to future occurrences rather than replaying blocked historical work. A continued
 run retains its coordinator while eligible and selects another eligible delegate
 when that person becomes unavailable. The new coordinator is persisted on the
@@ -79,8 +85,8 @@ preserves existing human access. A durable alarm enrolls missing
 creators and established previous task-account users without reconstructing
 historical consent provenance. Existing grants and withdrawal tombstones are
 never overwritten. A follow-up migration queues creators that an earlier local
-version left ungranted. The legacy claim endpoint now records self-consent and retains its explicit human
-entitlement in `sidekick_claim_access`, without rebinding configured sources or
+version left ungranted. The legacy claim endpoint records self-consent without new human access
+entitlements, rebinding configured sources or
 changing creator preference. Neither these grants nor coordinator selection
 replace the directory's existing reader/manager entitlements.
 
@@ -928,10 +934,8 @@ automation. Who may view (`assertViewer`, and `authorizeViewer` for the
 conversation): a `workspace` automation by any member, otherwise the author,
 the run-as principal, or a participant of the owning room.
 `claimExecutionPrincipal` is installed-client compatibility for authenticated
-self-consent. Successful authorized claims retain their explicit human access
-in `sidekick_claim_access`; configured bindings and the creator preference stay
-independent. Granting consent through the ordinary self-service tools or UI
-never creates that management entitlement.
+self-consent. Configured bindings, creator preference and human access remain
+independent. A successful claim creates no management entitlement.
 
 ### The directory row
 
@@ -1151,7 +1155,7 @@ or the memory store the automation scope lives in.
   `substream_loop_drain_failed`, and the child's alarm claims the input again;
   the input stays at the head of the queue until the Sidekick answers.
 - **Input the Sidekick refuses** (`sidekick_paused`, `sidekick_deleted`,
-  `run_not_found`, `run_principal_changed`) lands as a delivered turn with a `sidekick_run_refused`
+  `run_not_found`, `run_no_eligible_delegate`) lands as a delivered turn with a `sidekick_run_refused`
   system row naming the code, and logs `sidekick_run_continuation_refused`.
   What a sender outside Rally sees is the bound thread's to decide. A refused
   answer to a question the run asked lands the same way, as a turn with no
@@ -1325,7 +1329,7 @@ Binding records configured sources and retains an existing source while its
 delegate is unavailable. An owner can configure their own connection during
 setup; execution still requires eligible delegation. Every Sidekick scope uses
 the same consent policy. `claimExecutionPrincipal` records only the authenticated
-claimant's consent and compatibility human entitlement; it cannot replace other
+claimant's consent; it adds no human access entitlement and cannot replace other
 delegates, configured sources or creator preference.
 
 Losing access closes an open conversation. The automation holds no socket of
@@ -1404,8 +1408,9 @@ ordering belongs in the one existing owning object.
 
 **Consequences:** Execution consumers use these grants without deriving
 human access from selected accounts. Migration and creator initialization cannot
-overwrite tombstones. The regional routing index is recovery metadata only;
-consent remains in WorkspaceDO. Configured sources expand only through authored
+overwrite tombstones. Recovery stays within the current Organization; the unused
+regional routing index no longer participates. Consent remains in WorkspaceDO.
+Configured sources expand only through authored
 portable resource identity; differential registration updates preserve queued
 event boundaries. Ordinary connection, membership and reach invalidations wake
 reconciliation through the existing alarm lane, with no provider preflight.

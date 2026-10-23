@@ -7,29 +7,21 @@ import {
 } from "@rally/contracts";
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
-import {
-  SidekickDelegationService, ownSidekickDelegationsAcrossOrganizations,
-} from "./sidekick-delegation-service";
+import { SidekickDelegationService } from "./sidekick-delegation-service";
 
-export function sidekickDelegationGuidance(room: boolean): string {
-  const name = (local: string) => room ? `sidekick_${local}` : local;
+export function sidekickDelegationGuidance(): string {
+  const name = (local: string) => `sidekick_${local}`;
   return `Use ${name("delegates_list")} to inspect a Sidekick's allowed users. Use ${name("set_delegation")} with a Sidekick ID and an Organization userId to add or withdraw that user's delegation. This is available during autonomous work too. For your own withdrawal after access loss, use ${name("my_delegations_list")} or a known Sidekick ID. Changing delegation starts no run. The harness handles eligible-account fallback after definite access refusals.`;
 }
 
 /** The execution user supplies authority; the tool selects an Organization user. */
 export function sidekickDelegationTools(env: Env, input: WorkstreamWorkflowInput, userId: UserId, room: boolean): HarnessTool[] {
   const service = new SidekickDelegationService(env, input.workspaceId, userId);
-  const targetFor = async (args: z.infer<typeof SidekickSetDelegationInputSchema>) => {
-    if (args.allowed || args.userId !== userId) return service;
-    const own = await ownSidekickDelegationsAcrossOrganizations(env, userId);
-    const location = own.organizations.find((organization) => organization.delegations.some((grant) => grant.sidekickId === args.sidekickId));
-    return location ? new SidekickDelegationService(env, location.workspaceId, userId) : service;
-  };
   const name = (local: string) => room ? `sidekick_${local}` : local;
   const definitions = [
     {
       name: name("my_delegations_list"),
-      description: "List your own Sidekick delegations, including unavailable Sidekicks. Use their sidekickId to inspect or withdraw your own grant.",
+      description: "List your own Sidekick delegations, in this Organization, including unavailable Sidekicks. Use their sidekickId to inspect or withdraw your own grant.",
       capability: "rally.sidekick.delegation.own_list", mode: "read" as const, idempotency: "safe" as const,
       inputSchema: z.toJSONSchema(SidekickMyDelegationsInputSchema),
     },
@@ -51,8 +43,7 @@ export function sidekickDelegationTools(env: Env, input: WorkstreamWorkflowInput
     validateInput: (raw) => SidekickMyDelegationsInputSchema.safeParse(raw).error ?? null,
     execute: async (raw) => {
       SidekickMyDelegationsInputSchema.parse(raw);
-      const own = await ownSidekickDelegationsAcrossOrganizations(env, userId);
-      return { output: { userId, delegations: own.organizations.flatMap((organization) => organization.delegations) }, summary: "Listed your Sidekick delegations" };
+      return { output: await service.listOwn(), summary: "Listed your Sidekick delegations in this Organization" };
     },
   }, {
     definition: definitions[1]!,
@@ -63,8 +54,7 @@ export function sidekickDelegationTools(env: Env, input: WorkstreamWorkflowInput
     validateInput: (raw) => SidekickSetDelegationInputSchema.safeParse(raw).error ?? null,
     reconcileEffect: async (raw, context) => {
       const args = SidekickSetDelegationInputSchema.parse(raw);
-      const target = await targetFor(args);
-      const receipt = await target.readReceipt(args.sidekickId, args.userId, args.allowed, IdSchema.parse(context.effectIntentId), "agent_request");
+      const receipt = await service.readReceipt(args.sidekickId, args.userId, args.allowed, IdSchema.parse(context.effectIntentId), "agent_request");
       if (receipt.outcome === "accepted") return { outcome: "landed", result: { output: receipt.result,
         summary: args.allowed ? "Allowed this Sidekick to act as the selected user" : "Withdrew delegation for the selected user" } };
       // Missing acceptance proves no consent to recover, not permission to
@@ -74,8 +64,7 @@ export function sidekickDelegationTools(env: Env, input: WorkstreamWorkflowInput
     },
     validateCompletedReplay: async (raw, context) => {
       const args = SidekickSetDelegationInputSchema.parse(raw);
-      const target = await targetFor(args);
-      const receipt = await target.readReceipt(args.sidekickId, args.userId, args.allowed, IdSchema.parse(context.effectIntentId), "agent_request");
+      const receipt = await service.readReceipt(args.sidekickId, args.userId, args.allowed, IdSchema.parse(context.effectIntentId), "agent_request");
       if (receipt.outcome === "accepted") return { allowed: true };
       const code = receipt.outcome === "unavailable" ? "sidekick_delegation_unavailable" : "sidekick_delegation_stale_action";
       return { allowed: false, code, message: SIDEKICK_DELEGATION_ERRORS[code] };
@@ -84,8 +73,7 @@ export function sidekickDelegationTools(env: Env, input: WorkstreamWorkflowInput
       const args = SidekickSetDelegationInputSchema.parse(raw);
       // Every retry uses the durable effect receipt's identity; never mint a new intent here.
       const operationId = IdSchema.parse(context.effectIntentId);
-      const target = await targetFor(args);
-      return { output: await target.setFor(args.sidekickId, args.userId, args.allowed, operationId, "agent_request"),
+      return { output: await service.setFor(args.sidekickId, args.userId, args.allowed, operationId, "agent_request"),
         summary: args.allowed ? "Allowed this Sidekick to act as the selected user" : "Withdrew delegation for the selected user" };
     },
   }];

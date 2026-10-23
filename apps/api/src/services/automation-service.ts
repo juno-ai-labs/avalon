@@ -20,7 +20,6 @@ import { workspaceDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
-import { rememberSidekickDelegationLocation } from "./sidekick-delegation-service";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
@@ -50,7 +49,6 @@ export async function createAutomation(env: Env, input: {
   const authority = await readWorkstreamAuthorityControl(env);
   const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
     workspaceDOName(env.AVALON_REGION, workspaceId));
-  await rememberSidekickDelegationLocation(env, workspaceId, input.authorUserId);
   const { created } = await workspace.sidekickCreate({
     workspaceId,
     automationId,

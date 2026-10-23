@@ -390,6 +390,11 @@ describe("the conversations plugin", () => {
     expect(full).not.toContain("isParent");
   });
 
+  it("gives permission reporting guidance to the run's conversation plugin", () => {
+    expect(createConversationsPlugin(runLoop(), new Ports(), expand, { home: true })!.systemMessage)
+      .toContain("use conversation_post to tell the owning conversation what is blocked");
+  });
+
   it("tells a run that its final message stays in the run, and nobody else", () => {
     const instruction = "Your final message stays in this run; when the instructions say a conversation should hear something, post it with conversation_post, once, in full, after the work is done.";
     expect(createConversationsPlugin(runLoop(), new Ports(), expand, { home: true })!.systemMessage)
@@ -490,6 +495,26 @@ describe("a refusal", () => {
 });
 
 describe("conversation_post", () => {
+  it("preserves the posting refusal when recording permission attention fails", async () => {
+    const notice = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const input = runLoop();
+      // The real diagnostic callback must tolerate a failed WorkspaceDO RPC.
+      const record = vi.fn(async () => { throw new Error("attention_storage_failed"); });
+      const env = createTestEnv({ APP_ENV: "development", AVALON_REGION: "global", WORKSPACE_DOS: {
+        idFromName: () => ({ toString: () => "test-workspace" }),
+        get: () => ({ sidekickNotePermissionReportUnavailable: record }),
+      } });
+      const ports = Object.assign(new Ports(), { notePostRefused: conversationToolPorts(env, input).notePostRefused });
+      ports.refusal = "conversation_access_denied";
+      await expect(tools(input, ports).get("conversation_post")!.execute({ text: "Please restore access." }, context("permission-report")))
+        .rejects.toMatchObject({ code: "conversation_access_denied" });
+      expect(record).toHaveBeenCalledWith({ workspaceId: WORKSPACE_ID, automationId: SIDEKICK_ID, runId: RUN_ID });
+      expect(notice).toHaveBeenCalled();
+      expect(ports.posted).toEqual([]);
+    } finally { notice.mockRestore(); }
+  });
+
   it("keys a post on the harness run and the receipt, so a replayed receipt lands once", async () => {
     const ports = new Ports();
     const post = tools(runLoop(), ports).get("conversation_post")!;

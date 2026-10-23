@@ -35,6 +35,8 @@ describe("Sidekick delegation plugin presentations", () => {
     expect(room.systemMessage).toContain("sidekick_set_delegation");
     expect(room.systemMessage).toContain("separate sidekicks_list and create_sidekick");
     expect(authoring.systemMessage).toContain("This is available during autonomous work too");
+    expect(authoring.systemMessage).toContain("sidekick_set_delegation");
+    expect(authoring.systemMessage).toContain("sidekick_delegates_list");
     expect(room.searchAliases).toContain("delegation");
   });
 

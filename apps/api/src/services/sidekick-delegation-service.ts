@@ -1,19 +1,13 @@
 import {
   IdSchema, SIDEKICK_DELEGATION_ERRORS, LEGACY_WORKSTREAM_LINK_ORIGINS,
   SidekickDelegatesResultSchema, SidekickMyDelegationsResultSchema, SidekickDelegationReceiptResultSchema,
-  asUserId, asWorkspaceId, parseSidekickLinkPathTarget,
+  asWorkspaceId, parseSidekickLinkPathTarget,
   type UserId, type WorkspaceId,
 } from "@rally/contracts";
 import type { Env } from "../env";
-import { ApiError } from "../lib/api-error";
+import { ApiError, asApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { workspaceDOName } from "../durable-objects/names";
-/** Record a routing hint before consent can commit, so response loss cannot hide a grant. */
-export async function rememberSidekickDelegationLocation(env: Env, workspaceId: string, userId: string): Promise<void> {
-  await env.DB.prepare(`INSERT INTO sidekick_delegation_locations(user_id,workspace_id,region)
-    VALUES (?,?,?) ON CONFLICT(user_id,workspace_id) DO NOTHING`).bind(userId, workspaceId, env.AVALON_REGION).run();
-}
-
 /** The host supplies the actor; agent tools may select another Organization user. */
 export class SidekickDelegationService {
   private readonly workspaceId: WorkspaceId;
@@ -63,7 +57,6 @@ export class SidekickDelegationService {
   async setFor(sidekickId: string, userId: UserId, allowed: boolean, operationId: string, source: "self_service" | "agent_request") {
     IdSchema.parse(sidekickId);
     IdSchema.parse(operationId);
-    if (allowed) await rememberSidekickDelegationLocation(this.env, this.workspaceId, userId);
     const workspace = await this.workspace();
     const request = { workspaceId: this.workspaceId, automationId: sidekickId, userId, allowed, operationId };
     const { generation } = await workspace.sidekickPrepareMyDelegation(request);
@@ -75,24 +68,21 @@ export class SidekickDelegationService {
   }
 
   async readReceipt(sidekickId: string, userId: UserId, allowed: boolean, operationId: string, source: "self_service" | "agent_request") {
-    return SidekickDelegationReceiptResultSchema.parse(await (await this.workspace()).sidekickReadMyDelegationReceipt({
-      workspaceId: this.workspaceId, automationId: IdSchema.parse(sidekickId), userId, actorUserId: this.userId,
-      operationId: IdSchema.parse(operationId), allowed, source,
-    }));
+    try {
+      return SidekickDelegationReceiptResultSchema.parse(await (await this.workspace()).sidekickReadMyDelegationReceipt({
+        workspaceId: this.workspaceId, automationId: IdSchema.parse(sidekickId), userId, actorUserId: this.userId,
+        operationId: IdSchema.parse(operationId), allowed, source,
+      }));
+    } catch (error) {
+      const refusal = asApiError(error);
+      if (refusal && ["sidekick_not_found", "sidekick_delegation_membership_unavailable"].includes(refusal.code)) {
+        return { outcome: "unavailable" as const };
+      }
+      throw error;
+    }
   }
 
   private unavailable(): ApiError {
     return new ApiError(404, "sidekick_not_found", SIDEKICK_DELEGATION_ERRORS.sidekick_not_found);
   }
-}
-
-/** Regional account recovery does not consult current Organization membership. */
-export async function ownSidekickDelegationsAcrossOrganizations(env: Env, userId: UserId) {
-  const locations = await env.DB.prepare("SELECT workspace_id FROM sidekick_delegation_locations WHERE user_id=? AND region=? ORDER BY workspace_id")
-    .bind(userId, env.AVALON_REGION).all<{ workspace_id: string }>();
-  const organizations = await Promise.all(locations.results.map(async (location) => ({
-    workspaceId: asWorkspaceId(location.workspace_id),
-    ...(await new SidekickDelegationService(env, location.workspace_id, asUserId(userId)).listOwn()),
-  })));
-  return { organizations };
 }

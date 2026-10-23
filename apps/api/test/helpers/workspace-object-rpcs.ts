@@ -50,6 +50,7 @@ export function createTestWorkspaceDO(input: {
   workspaceId: string;
   /** The regional database the object's own D1 reads should see. */
   regionalDatabase: DatabaseSync;
+  environment?: Partial<Env>;
   region?: string;
   /** Registered so the caller can close it with its other databases. */
   register?: (database: DatabaseSync) => void;
@@ -79,6 +80,7 @@ export function createTestWorkspaceDO(input: {
       storage,
     }),
     createTestEnv({
+      ...input.environment,
       DB: sqliteD1(input.regionalDatabase),
       AVALON_REGION: input.region ?? "global",
       APP_ENV: "test",

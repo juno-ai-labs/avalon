@@ -207,7 +207,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           sidekick: workstreamAutomation,
         }),
-        hash: "be86b8b6a4a7b6fc94bc99f3da991f0a8f9c26a1190fe40fbdc96719c46a09f2",
+        hash: "a18d299662396d854b45e818e5eb462b15baf871866971d1199a5ab9b1a0147c",
       },
       workstreamName: {
         actual: renderWorkstreamNameMessages({
@@ -409,7 +409,8 @@ describe("prompt renderers", () => {
     expect(prompt).toContain("You are executing one activation of the existing Sidekick");
     expect(prompt).toContain("Do not create a replacement Sidekick or schedule its next regular activation just to keep it running.");
     expect(prompt).not.toContain("post_result");
-    expect(prompt).toContain("use conversation_post to tell the owning conversation what is blocked");
+    expect(prompt).not.toMatch(/conversation_[a-z_]+/u);
+    expect(prompt).toContain("alert the owning conversation");
     expect(prompt).toContain("Successful fallback needs no permission-error message");
     expect(prompt).toContain("report the unresolved problem once for this run");
     expect(prompt).toContain("do not claim delivery");
