@@ -52,7 +52,21 @@ turn an implementation checklist into an assertion that its tests passed.
   Lint and repository-wide typecheck passed. Production-code negative controls
   restored per-call grant reads or dropped wake advancement; the targeted
   assertions failed for stale-snapshot rejection and erasure of the newer wake.
-  Full-suite, remaining UI simplification and model behavior evidence are open.
+  Full-suite and model behavior evidence remain open.
+- UI acknowledgements now update the confirmed delegation list immediately;
+  ordinary background refetch failures leave accepted actions usable. Unknown
+  mutation outcomes still require successful reconciliation. The removed Account
+  surface's unused query invalidation is deleted.
+- The shared desktop adapter's seven component cases cover stalled/failed
+  background reads, uncertain response recovery, offline behavior, retained
+  creator identity and overlapping self/manager acknowledgements. Real Electron
+  response/cache fixtures were inspected at native 960×720 and compact 800×720:
+  pending, accepted while refreshing, refresh error with usable controls,
+  uncertain withdrawal with disabled controls, successful refresh recovery,
+  unavailable delegate and pending manager removal. Independent acknowledgements
+  preserved the self grant after the other delegate's removal. These fixtures
+  made no provider or consent writes and do not replace full browser-host,
+  model or multi-session authorization acceptance.
 
 ### Consent installation
 
