@@ -276,7 +276,7 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
   const statsReady = stats !== undefined && !channelStats.isStale && !channelStats.isFetching && !channelStats.isError;
   // Only an admitted feed needs a reading-position error. A stale directory
   // row can still be here while the feed's authority refuses a private Channel.
-  const statsUnavailable = feed.isSuccess && (channelStats.isError
+  const statsUnavailable = feed.isSuccess && !feed.isFetching && (channelStats.isError
     || (!stats && statsAttempt.current === channelId && !channelStats.isFetching));
   useEffect(() => {
     if (!api || !space) return;
@@ -509,7 +509,8 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
   }, [highlightedId]);
 
   if (active.data === undefined) return <LoadingState label="Opening channel…" />;
-  if (!space || (feed.error instanceof ApiError && (feed.error.status === 403 || feed.error.status === 404))) {
+  if (!space || (feed.error instanceof ApiError
+    && (feed.error.code === 'space_access_denied' || feed.error.code === 'space_not_found'))) {
     return <EmptyState description="It may have been archived, made private, or you may no longer have access." title="Channel not found" />;
   }
   const openThread = (threadId: string): void => void navigate(threadRoute(threadId, channelId), { state: OPEN_EXPANDED });

@@ -494,6 +494,8 @@ participants". `spaces_individual_owner_idx` holds one per member.
   promoted, the creator's own first relationship event). The relationship
   event is dispatched by the membership writer: invitation acceptance also
   redispatches a pending event on replay, without waiting for the cron sweep.
+  A failed dispatch read is logged and leaves the durable event for recovery;
+  it does not interrupt an already-committed acceptance or its Channel invitations.
   The relationship change handler (`applyWorkspaceRelationshipChange`) calls
   `seatOrganizationMember` last. WorkspaceDO checks its own copy of the
   relationship, seats the person in General and in their Personal Channel if it
@@ -2036,9 +2038,11 @@ member is still unseated.
 
 **What changed:** Invitation acceptance immediately publishes its durable
 membership event, including a retry whose earlier dispatch marker was lost.
-The Channel screen treats a feed's 403/404 as **Channel not found**, even while
-its directory row is cached, and reports read-position failures only after the
-feed has admitted the reader.
+The Channel screen treats `space_access_denied` and `space_not_found` as
+**Channel not found**, even while its directory row is cached, and reports
+read-position failures only after the feed has admitted the reader and its
+current fetch has settled. Dispatch read failures leave committed acceptance
+successful so Channel invitations and acceptance notifications can still run.
 
 **Why:** Local end-to-end testing found new members waiting for the five-minute
 recovery sweep before receiving General participation and their Personal Channel.
@@ -2052,7 +2056,9 @@ refusals use the unavailable state.
 
 **Consequences:** Queue acceptance remains distinct from completed seating, and
 failed dispatches retain the existing scheduled recovery. The server's feed
-refusal wins over a cached directory row; transport failures still report errors.
+refusal wins over a cached directory row; transport and Organization setup
+failures still report errors. Cached feed data during a refetch is not proof
+that the reader still has access.
 
 PR: [#1426](https://github.com/juno-ai-labs/avalon/pull/1426).
 

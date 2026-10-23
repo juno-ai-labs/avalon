@@ -234,7 +234,11 @@ export async function acceptInvitationForUser(
     if (invitation.accepted_by_user_id !== user.id) {
       throw new ApiError(404, "invitation_invalid", "This invitation is invalid, expired, or no longer available");
     }
-    await dispatchWorkspaceRelationshipChanges(env, { workspaceId: invitation.workspace_id, userId: user.id });
+    await dispatchWorkspaceRelationshipChanges(env, { workspaceId: invitation.workspace_id, userId: user.id })
+      .catch((error: unknown) => logWarn(env, "workspace_relationship_dispatch_failed", {
+        workspace_id: invitation.workspace_id, user_id: user.id,
+        error: diagnosticErrorCode(error, "workspace_relationship_dispatch_failed"),
+      }));
     await adoptSlackWorkstreamsForMember(env, invitation.workspace_id, user);
     return invitation.workspace_id;
   }
@@ -276,7 +280,11 @@ export async function acceptInvitationForUser(
   }
   // The membership trigger recorded the delivery with the write. Dispatch now
   // so General and the Personal Channel do not wait for scheduled recovery.
-  await dispatchWorkspaceRelationshipChanges(env, { workspaceId: invitation.workspace_id, userId: user.id });
+  await dispatchWorkspaceRelationshipChanges(env, { workspaceId: invitation.workspace_id, userId: user.id })
+    .catch((error: unknown) => logWarn(env, "workspace_relationship_dispatch_failed", {
+      workspace_id: invitation.workspace_id, user_id: user.id,
+      error: diagnosticErrorCode(error, "workspace_relationship_dispatch_failed"),
+    }));
   if (transitioned) {
     // The membership is committed; project the new member's search decisions
     // so their first search is complete. A failed publish leaves that member

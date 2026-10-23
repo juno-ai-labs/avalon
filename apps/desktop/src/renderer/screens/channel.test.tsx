@@ -196,20 +196,34 @@ describe('a Channel', () => {
     ] });
   });
 
-  it.each([403, 404])('shows not found without error dialogs when a cached Channel loses read access (%s)', async (status) => {
+  it.each([
+    [403, 'space_access_denied', false], [404, 'space_not_found', false],
+    [403, 'space_access_denied', true], [404, 'space_not_found', true],
+  ] as const)('shows not found without error dialogs when a cached Channel loses read access (%s, %s, cached feed %s)', async (status, code, cachedFeed) => {
     let refuseFeed: (error: Error) => void = () => { throw new Error('feed has not started'); };
     api.getChannelFeed.mockImplementation(() => new Promise((_resolve, reject) => { refuseFeed = reject; }));
     api.getChannelStats.mockResolvedValue([]);
-    const { client } = renderChannel('/channels/outbound', (seeded) => seeded.removeQueries({ queryKey: CHANNEL_STATS_QUERY_KEY }));
+    const { client } = renderChannel('/channels/outbound', (seeded) => {
+      seeded.removeQueries({ queryKey: CHANNEL_STATS_QUERY_KEY });
+      if (cachedFeed) seeded.setQueryData(channelFeedQueryKey('outbound'), { pages: [numberedFeed([1])], pageParams: [null] });
+    });
 
     await waitFor(() => expect(client.getQueryState(CHANNEL_STATS_QUERY_KEY))
       .toMatchObject({ status: 'success', fetchStatus: 'idle' }), { timeout: 5_000 });
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
-    await act(async () => { refuseFeed(new ApiError('Channel not found', status, 'space_not_found')); });
+    await act(async () => { refuseFeed(new ApiError('Channel not found', status, code)); });
 
     expect(await screen.findByText('Channel not found')).toBeVisible();
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Retry reading position' })).not.toBeInTheDocument();
+  });
+
+  it('reports Organization setup errors instead of calling the Channel unavailable', async () => {
+    api.getChannelFeed.mockRejectedValue(new ApiError('Choose or join a workspace to continue', 403, 'workspace_setup_required'));
+    renderChannel();
+
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('The threads in this channel couldn’t be loaded.');
+    expect(screen.queryByText('Channel not found')).not.toBeInTheDocument();
   });
 
   it('still reports an actual Channel feed outage', async () => {
