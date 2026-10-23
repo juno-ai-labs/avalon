@@ -699,6 +699,79 @@ describe("Daytona Terminal provider", () => {
     expect(get).toHaveBeenNthCalledWith(2, "sandbox-1");
   });
 
+  it("does not create a command session after a rejected lookup", async () => {
+    const createSession = vi.fn();
+    const executeSessionCommand = vi.fn();
+    const refused = Object.assign(new Error("provider authentication rejected"), { statusCode: 401 });
+    const provider = createDaytonaTerminalProvider({ capability: "supported", apiKey: "fixture",
+      apiUrl: "https://daytona.example.test", target: "us", snapshot: "fixture", emergencyDisabled: false,
+    }, () => ({ create: vi.fn(), get: async () => ({ id: "sandbox", name: "fixture", state: "started",
+      process: { createSession, executeSessionCommand, deleteSession: vi.fn(),
+        getSession: async () => { throw refused; }, getSessionCommand: vi.fn(), getSessionCommandLogs: vi.fn() },
+    }) }));
+    await expect(provider.runCommand("sandbox", { taskName: "stable", command: "printf ok", cwd: "/workspace",
+      timeoutMs: 1_000, retainSessionForRecovery: true,
+    })).rejects.toBe(refused);
+    expect(createSession).not.toHaveBeenCalled();
+    expect(executeSessionCommand).not.toHaveBeenCalled();
+  });
+
+  it("retains the accepted command when transient observations exhaust the existing deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const unavailable = Object.assign(new Error("provider unavailable"), { statusCode: 503 });
+      const executeSessionCommand = vi.fn(async () => ({ cmdId: "accepted-command", exitCode: null }));
+      const deleteSession = vi.fn();
+      const provider = createDaytonaTerminalProvider({ capability: "supported", apiKey: "fixture",
+        apiUrl: "https://daytona.example.test", target: "us", snapshot: "fixture", emergencyDisabled: false,
+      }, () => ({ create: vi.fn(), get: async () => ({ id: "sandbox", name: "fixture", state: "started",
+        process: { createSession: vi.fn(), executeSessionCommand, deleteSession,
+          getSession: async () => { throw Object.assign(new Error("missing"), { statusCode: 404 }); },
+          getSessionCommand: async () => { throw unavailable; }, getSessionCommandLogs: vi.fn() },
+      }) }));
+      const pending = expect(provider.runCommand("sandbox", { taskName: "stable", command: "printf ok", cwd: "/workspace",
+        timeoutMs: 1_000, retainSessionForRecovery: true,
+      })).rejects.toBe(unavailable);
+      await vi.runAllTimersAsync();
+      await pending;
+      expect(executeSessionCommand).toHaveBeenCalledOnce();
+      expect(deleteSession).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["get", "poll", "logs"] as const)("returns to recovery when a session %s read hangs beyond the remaining budget", async (stage) => {
+    vi.useFakeTimers();
+    try {
+      const hang = () => new Promise<never>(() => undefined);
+      const executeSessionCommand = vi.fn(async (): Promise<{ cmdId: string; exitCode: number | null }> => ({ cmdId: "accepted-command", exitCode: stage === "poll" ? null : 0 }));
+      const getSession = vi.fn(async () => {
+        if (stage === "get") return hang();
+        throw Object.assign(new Error("missing"), { statusCode: 404 });
+      });
+      const poll = vi.fn(async () => stage === "poll" ? hang() : { id: "accepted-command", command: "opaque", exitCode: 0 });
+      const provider = createDaytonaTerminalProvider({ capability: "supported", apiKey: "fixture",
+        apiUrl: "https://daytona.example.test", target: "us", snapshot: "fixture", emergencyDisabled: false,
+      }, () => ({ create: vi.fn(), get: async () => ({ id: "sandbox", name: "fixture", state: "started",
+        process: { createSession: vi.fn(), executeSessionCommand, deleteSession: vi.fn(), getSession,
+          getSessionCommand: poll, getSessionCommandLogs: hang },
+      }) }));
+      const startedAt = Date.now();
+      const result = expect(provider.runCommand("sandbox", { taskName: "stable", command: "printf ok", cwd: "/workspace",
+        timeoutMs: 1_000, retainSessionForRecovery: true,
+      })).rejects.toMatchObject({ code: "command_observation_deadline" });
+      await vi.advanceTimersByTimeAsync(16_000);
+      await result;
+      expect(Date.now() - startedAt).toBe(16_000);
+      expect(getSession).toHaveBeenCalledOnce();
+      expect(executeSessionCommand).toHaveBeenCalledTimes(stage === "get" ? 0 : 1);
+      if (stage === "poll") expect(poll).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("moves file bytes without host paths and runs one non-interactive session command", async () => {
     const uploadFile = vi.fn(async () => undefined);
     const downloadFile = vi.fn(async () => new Uint8Array([104, 105]));
@@ -712,7 +785,7 @@ describe("Daytona Terminal provider", () => {
       return { cmdId: "cmd-1", exitCode: null };
     });
     const getSession = vi.fn()
-      .mockRejectedValueOnce(new Error("not found"))
+      .mockRejectedValueOnce(Object.assign(new Error("not found"), { statusCode: 404 }))
       .mockResolvedValue({ sessionId: "avalon-task-1", commands: [] });
     const getSessionCommand = vi.fn(async () => ({ id: "cmd-1", command: "envelope", exitCode: 0 }));
     const getSessionCommandLogs = vi.fn(async (_sessionId, _commandId, onStdout?: (chunk: string) => void) => {
@@ -781,7 +854,7 @@ describe("Daytona Terminal provider", () => {
       id: "sandbox-1", name: "sandbox", state: "started", stop,
       process: {
         createSession: vi.fn(async () => undefined),
-        getSession: vi.fn(async () => { throw new Error("not found"); }),
+        getSession: vi.fn(async () => { throw Object.assign(new Error("not found"), { statusCode: 404 }); }),
         getSessionCommand: vi.fn(async () => ({ id: "cmd-cancel", command: "envelope" })),
         getSessionCommandLogs: vi.fn(async () => undefined),
         executeSessionCommand: vi.fn(async () => new Promise<{ exitCode: number; stdout: string; stderr: string }>(() => undefined)),
@@ -814,7 +887,7 @@ describe("Daytona Terminal provider", () => {
       id: "sandbox-1", name: "sandbox", state: "started",
       process: {
         createSession,
-        getSession: vi.fn(async () => { throw new Error("not found"); }),
+        getSession: vi.fn(async () => { throw Object.assign(new Error("not found"), { statusCode: 404 }); }),
         getSessionCommand: vi.fn(),
         getSessionCommandLogs: vi.fn(),
         executeSessionCommand,
@@ -848,7 +921,7 @@ describe("Daytona Terminal provider", () => {
       id: "sandbox-1", name: "sandbox", state: "started",
       process: {
         createSession,
-        getSession: vi.fn(async () => { throw new Error("not found"); }),
+        getSession: vi.fn(async () => { throw Object.assign(new Error("not found"), { statusCode: 404 }); }),
         getSessionCommand: vi.fn(),
         getSessionCommandLogs: vi.fn(),
         executeSessionCommand,
