@@ -39,7 +39,10 @@ Sidekick activation path, as `polling-for-events` also explains.
 
 Before submitting executable behavior as ready, the wizard discovers authorized
 tools and skills, inspects real resources and sample inputs, resolves their IDs,
-and tests the workflow with available reads or non-destructive trials. It records
+and tests the workflow with available reads or non-destructive trials. Schema
+inspection is discovery, not a workflow test: the wizard retrieves and transforms
+data to produce a representative result, saving working queries or tool arguments
+when reusable. It records
 what worked, what it could not test, and remaining assumptions. Draft acceptance
 is not a workflow test. Future deliveries and other effects stay with future runs
 unless requested during setup.
@@ -1274,6 +1277,9 @@ information and publication refusals have distinct next steps. Tool descriptions
 share the same scope, requester and immediate-publication rules.
 Instruction-only authoring has its own reusable-guidance path without imposing
 triggered-run requirements.
+Workflow testing exercises data retrieval and transformation for a representative
+result; schema inspection alone does not qualify. Reusable queries and tool
+arguments are saved with the method.
 
 **Why:** Authoring and execution can have different reasoning capabilities. A
 brief objective leaves each independent activation to rediscover the method and
