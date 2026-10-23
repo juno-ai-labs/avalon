@@ -1,7 +1,7 @@
 import { AutomationGlyph } from './workstream-glyph';
 import { AppearancePicker } from './appearance-picker';
 import { OwningThreadLabel } from './owning-thread-label';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Archive, CirclePause, Copy, Ellipsis, History, Mail, Play } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { ArchiveAutomationDialog } from './archive-automation-dialog';
@@ -16,6 +16,7 @@ export type AutomationHeaderAction = 'pause' | 'resume' | 'archive' | 'run';
 
 export interface AutomationHeaderProps {
   automation: AutomationDetail;
+  delegation?: ReactNode;
   /**
    * Every run the automation has, newest first, from `GET /automations/:id/runs`.
    * `undefined` while loading, in which case the detail's recent runs stand in.
@@ -68,6 +69,7 @@ function runStatus(run: AutomationRun): React.ComponentProps<typeof StatusDot>['
 /** Sidekick profile, lifecycle controls, and activity beside its authoring conversation. */
 export function AutomationHeader({
   automation,
+  delegation,
   runs,
   runsError,
   pending = null,
@@ -181,6 +183,8 @@ export function AutomationHeader({
         </div>
       </div>
       <div className="automation-header-details">
+        {automation.delegationAttention && <p role="status">{automation.delegationAttention.message}</p>}
+        {delegation}
         <section className="sidekick-profile-section">
           <h2>When to expect it</h2>
           {triggerSummaries.length === 0 && !automation.nextRunAt && <p className="automation-timing-empty">No timing details yet.</p>}

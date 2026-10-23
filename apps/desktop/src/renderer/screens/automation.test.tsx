@@ -11,10 +11,12 @@ const getAutomation = vi.hoisted(() => vi.fn());
 const getAutomationRuns = vi.hoisted(() => vi.fn());
 const setAutomationAppearance = vi.hoisted(() => vi.fn());
 const archiveAutomation = vi.hoisted(() => vi.fn());
+const getSidekickDelegates = vi.hoisted(() => vi.fn());
+const createAutomation = vi.hoisted(() => vi.fn());
 const shell = vi.hoisted(() => ({ host: 'desktop' as 'desktop' | 'browser' }));
 vi.mock('../lib/collaboration-session', () => ({
   useOptionalCollaborationSession: () => null,
-  useCollaborationSession: () => ({ api: { archiveAutomation, getAutomation, getAutomationRuns, setAutomationAppearance } }),
+  useCollaborationSession: () => ({ api: { archiveAutomation, getAutomation, getAutomationRuns, setAutomationAppearance, getSidekickDelegates, createAutomation } }),
   useShellCapabilities: () => ({ host: shell.host, guest: false }),
 }));
 // The conversation beside the profile is its own surface with its own sockets,
@@ -54,11 +56,11 @@ async function showProfile(): Promise<void> {
   fireEvent.click(await screen.findByRole('button', { name: 'Details' }));
 }
 
-function renderScreen(client: QueryClient) {
+function renderScreen(client: QueryClient, entry = `/sidekicks/${SIDEKICK_ID}`) {
   return render(
     <QueryClientProvider client={client}>
       <Tooltip.Provider>
-        <MemoryRouter initialEntries={[`/sidekicks/${SIDEKICK_ID}`]}>
+        <MemoryRouter initialEntries={[entry]}>
           <Routes>
             <Route element={<AutomationScreen />} path="/sidekicks/:id" />
             <Route element={<div>Sidekicks library</div>} path="/sidekicks" />
@@ -74,8 +76,35 @@ beforeEach(() => {
   getAutomationRuns.mockReset().mockResolvedValue([]);
   setAutomationAppearance.mockReset();
   archiveAutomation.mockReset().mockResolvedValue(undefined);
+  getSidekickDelegates.mockReset().mockResolvedValue({ sidekickId: SIDEKICK_ID, creatorUserId: 'user-1', you: { userId: 'user-1', allowed: false }, delegates: [] });
+  createAutomation.mockReset().mockResolvedValue({ automationId: SIDEKICK_ID });
   shell.host = 'desktop';
   window.location.hash = '';
+});
+
+describe('Sidekick creator disclosure', () => {
+  it('shows the standing delegation and existing-history disclosure before the create action', async () => {
+    renderScreen(new QueryClient({ defaultOptions: { queries: { retry: false } } }), '/sidekicks/new');
+    expect(screen.getByText('Creating this Sidekick allows it to act as you. You can stop allowing it at any time.')).toBeInTheDocument();
+    expect(screen.getByText(/everyone who can read its existing Sidekick history/u)).toBeInTheDocument();
+    expect(createAutomation).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Create Sidekick' }));
+    await showProfile();
+    expect(screen.getByRole('heading', { name: 'Weekly changelog' })).toBeInTheDocument();
+    expect(createAutomation).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not take the person back into a creation they have left while it was pending', async () => {
+    let acknowledge!: () => void;
+    createAutomation.mockImplementation(() => new Promise((resolve) => { acknowledge = () => resolve({ automationId: SIDEKICK_ID }); }));
+    renderScreen(new QueryClient({ defaultOptions: { queries: { retry: false } } }), '/sidekicks/new');
+    fireEvent.click(screen.getByRole('button', { name: 'Create Sidekick' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByText('Sidekicks library')).toBeInTheDocument();
+    await act(async () => acknowledge());
+    expect(screen.getByText('Sidekicks library')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Weekly changelog' })).not.toBeInTheDocument();
+  });
 });
 
 describe('AutomationScreen load failure', () => {
