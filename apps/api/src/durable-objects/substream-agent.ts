@@ -4089,7 +4089,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     input: WorkstreamWorkflowInput;
     execution: { runId: string; leaseOwner: string; executionEpoch: number };
   } | null> {
-    const now = Date.now();
     const authority = this.state.storage.sql.exec<{ archived_at: number | null }>(
       `SELECT archived_at FROM workstream WHERE id = 1`,
     ).toArray()[0];
@@ -4099,6 +4098,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     ).toArray()[0];
     const backgroundStopped = background?.stopped_at != null;
     let loop = this.ensurePersistentLoop();
+    // Initializing the loop can advance its creation time. Sample after it exists.
+    const now = Date.now();
     // Messages that start no run land first, whatever else holds the loop:
     // they were waiting only on what was sent ahead of them, not on Rally.
     if (loop.status === "idle" && this.transcript.hasLeadingInputWithoutRun()) {

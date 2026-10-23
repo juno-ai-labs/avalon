@@ -147,6 +147,16 @@ exact child's projection is accepted, so Breakouts refresh independently of
 Main's directory waterline. Explicit posting attachments record their library
 and activity refresh in the attachment transaction, including a repeated attach.
 
+### Reading projections from older deployments
+
+Common and viewer directory effect schemas strip unknown fields, including
+nested link and reservation objects. Retired fields such as `originType`,
+`automationSubscriptionId`, `automationRunId` and `plannedFor` therefore cannot
+break shared navigation or escape into its response. Declared fields retain
+their validation. Persisted projection reads use `parseRpcInput` so a malformed
+known field names the projection schema, field and issue code across RPC.
+The read does not rewrite persisted payloads, source versions or hashes.
+
 ### People the member table has never heard of
 
 The directory filters viewer rows by the Organization's own member table (see
@@ -617,6 +627,24 @@ Space in an Organization now shares one SQLite database and one socket set.
   deleting those objects is its own decision.
 
 ## Changelog
+
+### 2026-10-23 — Read historical directory projections without retaining obsolete fields
+
+**What changed:** Common and viewer directory schemas strip unknown properties;
+projection reads preserve declared-field diagnostics across the Durable Object
+RPC boundary.
+
+**Why:** Stored Main projections retained four removed automation fields. Shared
+navigation parsed every projection before choosing authorized conversations, so
+one otherwise valid legacy row aborted the whole batch with an opaque Zod error.
+
+**Considered and rejected:** Passing unknown properties through would expose
+retired data. Rewriting every stored payload would couple compatibility to a
+migration and its hashes; stripping at the existing schema boundary needs neither.
+
+**Consequences:** Access decisions stay at the parent. A malformed declared field
+still fails with a field-specific code rather than being silently discarded.
+
 
 ### 2026-10-22 — Preserve irreversible archive cascades across restore snapshots
 
