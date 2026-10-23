@@ -259,12 +259,15 @@ describe("workspace invitation lifecycle", () => {
     expect(database.batches).toHaveLength(1);
   });
 
-  it("emails the original inviter once after an invitation is accepted", async () => {
+  it.each([false, true])("emails the original inviter once after acceptance, including a failed dispatch read (%s)", async (dispatchReadFails) => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-01T01:00:00.000Z"));
     const database = new StubDatabase(({ sql }) => {
       if (sql.includes("WHERE i.id = ?")) return invitationRow;
       if (sql.includes("FROM workspace_members") && sql.includes("workspace_id != ?")) return null;
+      return undefined;
+    }, ({ sql }) => {
+      if (dispatchReadFails && sql.includes("FROM workspace_relationship_deliveries")) throw new Error("D1 read unavailable");
       return undefined;
     });
     const resend = vi.fn(async () => new Response(JSON.stringify({ id: "accepted-email-id" }), {
@@ -297,13 +300,16 @@ describe("workspace invitation lifecycle", () => {
     expect(String(body.html)).not.toContain("Invitee <Team>");
   });
 
-  it("does not resend an acceptance notification when the same user replays acceptance", async () => {
+  it.each([false, true])("does not resend an acceptance notification on replay, including a failed dispatch read (%s)", async (dispatchReadFails) => {
     const accepted = {
       ...invitationRow,
       accepted_at: "2026-08-01T01:00:00.000Z",
       accepted_by_user_id: ownerAuth.userId,
     };
-    const database = new StubDatabase(({ sql }) => sql.includes("WHERE i.id = ?") ? accepted : undefined);
+    const database = new StubDatabase(({ sql }) => sql.includes("WHERE i.id = ?") ? accepted : undefined, ({ sql }) => {
+      if (dispatchReadFails && sql.includes("FROM workspace_relationship_deliveries")) throw new Error("D1 read unavailable");
+      return undefined;
+    });
     const resend = vi.fn();
     vi.stubGlobal("fetch", resend);
 
