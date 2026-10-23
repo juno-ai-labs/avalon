@@ -2088,22 +2088,6 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 
 /* Easter eggs */
 
-.konami-egg {
-  animation: konami-fade 1.6s ease-out forwards;
-  background: radial-gradient(circle at center, color-mix(in srgb, var(--av-sys-color-accent-base) 45%, transparent), transparent 70%);
-  display: grid;
-  inset: 0;
-  place-items: center;
-  pointer-events: none;
-  position: fixed;
-  z-index: 1000;
-}
-.konami-egg span { color: var(--av-sys-color-text-default); font-size: 44px; font-weight: 700; letter-spacing: -.03em; }
-@media (prefers-reduced-motion: no-preference) {
-  .konami-egg span { animation: konami-rise 1.6s ease-out forwards; }
-}
-@keyframes konami-fade { 0% { opacity: 0; } 15% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; } }
-@keyframes konami-rise { from { transform: translateY(24px) scale(.9); } to { transform: translateY(-24px) scale(1.05); } }
 @media (prefers-reduced-motion: no-preference) {
   /* Every avatar: people, Rally, and Sidekicks. A personal avatar inside an
      .avatar already moves with it, so only a standalone one laps on its own. */
