@@ -1297,6 +1297,9 @@ export interface ConversationSurfaceProps {
   workstreamContext?: WorkstreamDetail;
   /** Shared directory state, including resolution from title menus or merges. */
   resolved?: boolean;
+  /** The host owns resolution, including navigation, pending state and failures. */
+  onResolve?: () => void;
+  resolveDisabled?: boolean;
   sidebarScope?: "workstream" | "conversation";
   /** Opens the launch pane at a turn; a suggestion passes the drafted opening prompt to seed it with. */
   onStartSubstream?: (throughTurnId: string, initialDraft?: string) => void;
@@ -1393,6 +1396,8 @@ function ConversationSurfaceContent({
   substreamId,
   workstreamContext,
   resolved = false,
+  onResolve,
+  resolveDisabled = false,
   sidebarScope = "workstream",
   renderHeader,
   renderOpeningSidebar,
@@ -3336,6 +3341,7 @@ function ConversationSurfaceContent({
         action={{ label: 'Merge', onAct: () => startMerge?.(words, suggestion.judgedTurnId) }}
         excerpt={pending ? null : suggestionExcerpt(words)}
         kind="merge_up"
+        secondaryAction={onResolve ? { label: 'Resolve without merge', onAct: onResolve, disabled: resolveDisabled || resolved } : undefined}
         label={`Suggestion: merge to ${mergeTargetName ?? ''}`}
         onDismiss={() => dismissSuggestion(suggestion)}
         pending={pending}
