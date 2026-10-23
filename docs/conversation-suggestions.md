@@ -185,13 +185,22 @@ sentence are fixed strings with one slot: "Merge to **{target}**" and "This
 might be a good time to merge this back into **{target}**."; "Breakout:
 **{subject}**" and "Want to break this out?". The excerpt is the drafted words
 cut by `suggestionExcerpt` to `SUGGESTION_EXCERPT_CHARACTERS` with the ellipsis
-inside the closing quote; the line itself never wraps, and clips as a guard in
-a pane narrower than the budget was set for. The chip lays the title, the
-sentence and the excerpt in a column with the action pill and the dismiss
-beside them, as the PRD's mockups draw it: the merge pill in the merge target
+inside the closing quote. Merge excerpts wrap across the card's full content
+width; other excerpts stay on one line and clip in a narrower pane. The chip lays the title, the
+sentence and the excerpt in a column. Breakout and resolution suggestions keep
+the action pill and Dismiss beside them. The merge pill uses the merge target
 pill's green, the breakout pill neutral like the breakout chips, so the two
 never read as the same action. While the draft is pending the excerpt is a
 skeleton and the action is disabled; Dismiss works from the first frame.
+Merge suggestions put **Merge** and **Resolve without merge** below the text.
+Desktop widths add **Discard**; mobile keeps the top-right X. The sentence and
+excerpt use the full card width, and merge excerpts wrap in narrow panes.
+Resolution uses the host's existing lifecycle, pending state, failure notice
+and navigation. It needs no drafted words, so it stays available while the
+merge draft is pending; archived conversations omit it. Once the conversation
+is resolved, its merge suggestion is hidden so it cannot offer a contradictory
+Merge action. Resolution does not dismiss the underlying suggestion: the shared
+conversation state decides visibility, while Discard records an explicit dismissal.
 
 **Accept merge** opens the response card in the chip's place, prefilled with
 the drafted note and the suggestion's target; merging goes through the merge
@@ -345,6 +354,16 @@ the Organization only to TypeSafe for the judgement and to the drafting route
 for the words, on the access-controlled inference path.
 
 ## Changelog
+
+### 2026-10-23 — Complete a conversation from its merge suggestion
+
+The merge card now offers resolution without publishing a result to the parent,
+using the same lifecycle and availability rules as the title menu. A finished
+conversation previously required leaving the card to resolve it; dismissal only
+hid the suggestion. Resolution stays independent of draft generation and hides
+merge suggestions when confirmed, keeping all merge entry points consistent.
+The desktop footer has Discard while mobile retains the X, following the
+requested layouts; both record the existing suggestion dismissal.
 
 ### 2026-10-20 — Suggest marking completed conversations resolved
 
