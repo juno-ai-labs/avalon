@@ -496,7 +496,7 @@ export type EngineeringSqlLookup = z.infer<typeof EngineeringSqlLookupSchema>;
  * impersonation and support access, D1 has no read-only binding to offer in
  * its place, and the console's own log never records the SQL it ran.
  */
-export const ENGINEERING_D1_DATABASES = ["DB", "TELEMETRY_DB", "USAGE_DB", "PLATFORM_DB"] as const;
+export const ENGINEERING_D1_DATABASES = ["DB", "TELEMETRY_DB", "USAGE_DB", "PLATFORM_DB", "MESSAGE_ISSUES_DB"] as const;
 export const EngineeringD1DatabaseSchema = z.enum(ENGINEERING_D1_DATABASES);
 export type EngineeringD1Database = z.infer<typeof EngineeringD1DatabaseSchema>;
 
