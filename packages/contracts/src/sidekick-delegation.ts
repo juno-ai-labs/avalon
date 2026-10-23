@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { IdSchema, UserIdSchema, WorkspaceIdSchema } from "./identifiers";
+import { PersonalPresentationSchema } from "./onboarding";
 
 /** Shared runtime/advertised inputs: the host supplies identity and provenance. */
 export const SidekickMyDelegationsInputSchema = z.strictObject({});
@@ -14,11 +15,17 @@ export const SidekickDelegationMutationResultSchema = z.strictObject({
 });
 export type SidekickDelegationMutationResult = z.infer<typeof SidekickDelegationMutationResultSchema>;
 
+const SidekickDelegateIdentitySchema = z.strictObject({
+  userId: UserIdSchema, displayName: z.string(),
+  avatarUrl: z.string().nullable().optional(), presentation: PersonalPresentationSchema.nullable().optional(),
+});
 export const SidekickDelegatesResultSchema = z.strictObject({
   sidekickId: IdSchema,
   creatorUserId: UserIdSchema,
+  creator: SidekickDelegateIdentitySchema.optional(),
+  canManage: z.boolean().optional(),
   you: z.strictObject({ userId: UserIdSchema, allowed: z.boolean() }),
-  delegates: z.array(z.strictObject({ userId: UserIdSchema, displayName: z.string(), eligible: z.boolean() })),
+  delegates: z.array(SidekickDelegateIdentitySchema.extend({ eligible: z.boolean() })),
 });
 export type SidekickDelegatesResult = z.infer<typeof SidekickDelegatesResultSchema>;
 

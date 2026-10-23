@@ -1,5 +1,6 @@
 import { MessageIssueReceiptSchema, type CreateMessageIssue, type MessageIssueReceipt } from '@rally/contracts/message-issues';
 import { connectorAuthorizationStatus } from '@rally/contracts';
+import { SidekickDelegatesResultSchema, SidekickDelegationMutationResultSchema } from '@rally/contracts';
 import type { Annotation } from '@rally/contracts';
 import { ManagedScopeGrantsSchema, RevokeScopeGrantSchema, ScopeGrantMutationResultSchema } from "@rally/contracts/scope-grants";
 import { ScopeSharingOptionsSchema, ScopeInvitationsListSchema, ScopeInvitationResultSchema, type ScopeGrantTarget, type CreateScopeInvitations } from "@rally/contracts/scope-grants";
@@ -604,6 +605,7 @@ function mapAutomationDetail(detail: z.infer<typeof WireAutomationDetailSchema>)
     lifecycle: detail.lifecycle,
     authorUserId: detail.authorUserId,
     runAsUserId: detail.runAsUserId,
+    ...(detail.delegationAttention !== undefined ? { delegationAttention: detail.delegationAttention } : {}),
     currentDefinition: detail.currentDefinition,
     currentDefinitionRevision: detail.currentDefinitionRevision,
     acceptedDefinitionRevision: detail.acceptedDefinitionRevision,
@@ -1316,6 +1318,22 @@ export class RallyApi {
    */
   async createAutomation(): Promise<{ automationId: string }> {
     return this.request('/automations', { method: 'POST', schema: createdAutomationSchema });
+  }
+
+  async getSidekickDelegates(id: string, signal?: AbortSignal): Promise<z.infer<typeof SidekickDelegatesResultSchema>> {
+    return this.request(`/sidekicks/${encodeURIComponent(id)}/delegation`, { schema: SidekickDelegatesResultSchema, signal });
+  }
+
+  async setMySidekickDelegation(id: string, allowed: boolean, operationId: string): Promise<z.infer<typeof SidekickDelegationMutationResultSchema>> {
+    return this.request(`/sidekicks/${encodeURIComponent(id)}/delegation`, {
+      method: 'POST', body: { allowed, operationId }, schema: SidekickDelegationMutationResultSchema,
+    });
+  }
+
+  async removeSidekickDelegate(id: string, userId: string, operationId: string): Promise<z.infer<typeof SidekickDelegationMutationResultSchema>> {
+    return this.request(`/sidekicks/${encodeURIComponent(id)}/delegation/remove`, {
+      method: 'POST', body: { userId, operationId }, schema: SidekickDelegationMutationResultSchema,
+    });
   }
 
   /**

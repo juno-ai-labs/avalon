@@ -263,6 +263,50 @@ turn an implementation checklist into an assertion that its tests passed.
   explicit multi-session acceptance evidence. No provider preflight, global
   authorization barrier, new retry policy or historical-event replay was added.
 
+### Shared Sidekick controls and creator disclosure
+
+- The shared desktop/web Sidekick screen now renders the allowed list,
+  You/Creator markers, public identity presentation, eligibility, self allow/
+  withdraw and manager removal. The creator remains separately identified after
+  withdrawal. The owner computes management capability with the same check used
+  by writes; a viewer's opt-in confers no management right.
+- The ordinary Create action follows the standing-work/configured-sharing/
+  existing-history disclosure. There is no extra confirmation. A response after
+  leaving a pending creation does not navigate the person back; an uncertain
+  creation is not repeated automatically.
+- Writes keep the last confirmed list until acknowledgement and a fresh read.
+  A lost response reads authority rather than repeating consent. If the read
+  also fails, Refresh is required before another mutation. Offline controls
+  neither dispatch nor queue writes. Each person's pending action is separate.
+  Existing automation invalidation and the existing cross-window relay feed the
+  query; no additional socket or authorization barrier was added.
+- Restored checks passed 129 desktop component/API cases and 81 real workerd
+  consent/admission/hosted-Sidekick cases, plus lint, repository-wide typecheck
+  and docs checks. Two production-code negative controls made every viewer a
+  manager in the response, or dropped creator identity when their active grant
+  was absent. Each failed its literal authority assertion and was restored.
+- Real local Electron inspection covered the 960×720 default Sidekicks window,
+  creation before its request, acknowledged creator enrollment, withdrawal,
+  retained creator identity, re-enrollment, offline labeling and disabled
+  actions, and an 800×720 compact Details view. Screenshots exposed missing
+  padding and a below-fold primary action; placing the section inside the
+  profile and avoiding an empty list's spacing fixed those cases. Creator
+  disclosure and populated/withdrawn/offline/error/compact screenshots are saved
+  in this task's visualization artifacts. The profile intentionally scrolls for
+  secondary metadata and longer content.
+- Two independent Electron sessions observed withdrawal and re-enrollment in
+  both directions without manual reload. Dropping the primary session's POST
+  response after the real local server accepted it produced the acknowledged
+  error popup, a fresh withdrawn state in both sessions, and exactly one POST.
+  Physical input on the offline action produced no deferred withdrawal after
+  reconnect. No production data or external provider was involved.
+- Additional manager/unavailable/loading/pending visual states and browser-host
+  inspection remain unverified. Attempting a staged manager visual fixture lost
+  the interactive controller; the orphaned Electron process later showed a
+  native `write EPIPE` alert from its closed output pipe. That fixture did not
+  produce accepted visual evidence. Account recovery UI, serving-account activity
+  and the complete acceptance audit remain outstanding.
+
 ### Next integration constraints
 
 The common admission policy, completed-consent replay checks and interrupted
@@ -290,9 +334,10 @@ removes mounted personal GitHub credentials without deleting files. Actual
 serving-account activity presentation remains part of the remaining UI work.
 Historical direct-creation provenance still needs its final audit against any
 existing creation/tool receipts; no new historical provenance service is planned.
-Creator disclosure and all actual controls still need rendering and inspection.
-Do not land the creator enrollment UI path without that disclosure, or mark
-these foundational checks as evidence for execution, UI or model behavior.
+The Sidekick panel and creator disclosure now have the scoped rendering evidence
+above. Account recovery controls, manager/unavailable/loading/pending visual
+states and browser-host acceptance still need their evidence. Do not mark these
+checks as proof of untested UI states, complete execution or model behavior.
 
 The current harness has no model-visible tool-result byte cap
 (`docs/agent-harness.md`, execution limits). Lists remain complete; do not invent

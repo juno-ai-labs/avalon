@@ -4,7 +4,7 @@ import {
   SidekickExecutionDelegationSchema, type SidekickExecutionDelegation, type WorkspaceExternalEvent,
   SidekickDelegationAttentionCodeSchema, SIDEKICK_DELEGATION_ATTENTION_MESSAGES, type SidekickDelegationAttentionCode,
   type SidekickDelegationGrant, type SidekickDelegationMutationResult, type SidekickDelegatesResult,
-  ExternalEventEvaluatorV1Schema,
+  ExternalEventEvaluatorV1Schema, PersonalPresentationSchema,
 } from "@rally/contracts";
 import { SidekickDelegationStorage } from "./sidekick-delegation-storage";
 import { sidekickSourceRegistrations } from "./sidekick-source-registrations";
@@ -793,15 +793,22 @@ export class HostedSidekick {
       userId: request.actor.userId, actorRole: relationship.role,
     }, this.host)) throw this.delegationError("sidekick_not_found");
     const grants = this.delegations().forSidekick(this.sidekickId).filter((grant) => grant.allowed);
-    const names = grants.length ? await this.env.DB.prepare(
-      "SELECT id,name FROM users WHERE id IN (SELECT value FROM json_each(?))",
-    ).bind(JSON.stringify(grants.map((grant) => grant.userId))).all<{ id: string; name: string | null }>() : { results: [] };
-    const displayNames = new Map(names.results.map((person) => [person.id, person.name]));
+    const people = await this.env.DB.prepare(
+      "SELECT id,name,avatar_url,presentation_json FROM users WHERE id IN (SELECT value FROM json_each(?))",
+    ).bind(JSON.stringify([...new Set([row.author_user_id, ...grants.map((grant) => grant.userId)])]))
+      .all<{ id: string; name: string | null; avatar_url: string | null; presentation_json: string | null }>();
+    const identities = new Map(people.results.map((person) => [person.id, {
+      userId: person.id, displayName: person.name || "Rally user", avatarUrl: person.avatar_url,
+      presentation: person.presentation_json ? PersonalPresentationSchema.parse(JSON.parse(person.presentation_json)) : null,
+    }]));
+    const identity = (userId: string) => identities.get(userId) ?? { userId, displayName: "Rally user", avatarUrl: null, presentation: null };
     return SidekickDelegatesResultSchema.parse({
       sidekickId: this.sidekickId, creatorUserId: row.author_user_id,
+      creator: identity(row.author_user_id),
+      canManage: await this.managerAllows(row, { ...request.actor, actorRole: relationship.role }),
       you: { userId: request.actor.userId, allowed: this.delegations().read(this.sidekickId, request.actor.userId)?.allowed ?? false },
       delegates: await Promise.all(grants.map(async (grant) => ({
-        userId: grant.userId, displayName: displayNames.get(grant.userId) || "Rally user", eligible: await this.delegationEligible(grant),
+        ...identity(grant.userId), eligible: await this.delegationEligible(grant),
       }))),
     });
   }
@@ -2458,21 +2465,24 @@ export class HostedSidekick {
 
   /** Who may change a Sidekick (`sidekickManager`). */
   private async assertManager(row: HostedSidekickRow, actor: AutomationActor): Promise<void> {
-    if (this.delegations().hasClaimAccess(this.sidekickId, actor.userId)) return;
+    if (!await this.managerAllows(row, actor)) throw forbidden();
+  }
+
+  private async managerAllows(row: HostedSidekickRow, actor: AutomationActor): Promise<boolean> {
+    if (this.delegations().hasClaimAccess(this.sidekickId, actor.userId)) return true;
     if (row.scope === "workstream") {
       // Whoever may manage the owning Channel manages it, as a grant or an
       // archive leaves that, and so does the person who asked for it. No
       // Breakout narrowing here: that is the reader's and viewer's rule, and a
       // Channel's managers manage what it owns wherever it is homed.
-      if (row.author_user_id === actor.userId) return;
+      if (row.author_user_id === actor.userId) return true;
       if (row.owning_workstream_id !== null && (await this.host.readManagementAccess({
         workspaceId: row.workspace_id, parentId: row.owning_workstream_id, userId: actor.userId,
-      })).allowed) return;
-      throw forbidden();
+      })).allowed) return true;
+      return false;
     }
-    if (row.author_user_id === actor.userId || row.run_as_user_id === actor.userId) return;
-    if (row.scope === "workspace" && (actor.actorRole === "owner" || actor.actorRole === "admin")) return;
-    throw forbidden();
+    return row.author_user_id === actor.userId || row.run_as_user_id === actor.userId
+      || (row.scope === "workspace" && (actor.actorRole === "owner" || actor.actorRole === "admin"));
   }
 
   /** The management API's read check (`sidekickReader`). */

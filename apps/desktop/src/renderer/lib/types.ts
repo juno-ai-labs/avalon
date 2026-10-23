@@ -3,6 +3,7 @@ import type { WorkstreamAppearance } from '@rally/contracts';
 import type {
   AgentModelOverride,
   AutomationDraft as ContractAutomationDraft,
+  SidekickDelegationAttentionCode,
   AutomationLifecycleState as ContractAutomationLifecycleState,
   AutomationPluginActivity,
   AutomationRunStatus as ContractAutomationRunStatus,
@@ -833,6 +834,7 @@ export interface AutomationDetail extends AutomationSummary {
   lifecycle: AutomationLifecycleState;
   authorUserId: string;
   runAsUserId: string;
+  delegationAttention?: { code: SidekickDelegationAttentionCode; message: string } | null;
   /** The latest submitted definition, or null before the chat has submitted one. */
   currentDefinition: AutomationDefinition | null;
   currentDefinitionRevision: number;
