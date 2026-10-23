@@ -39,7 +39,7 @@ replaces the app when the organization or account cannot be loaded.
 | Egg | Trigger | Effect |
 | --- | --- | --- |
 | Konami code | ↑ ↑ ↓ ↓ ← → ← → B A anywhere in the shell | Every avatar on screen (people, Rally, Sidekicks) runs a small lap: once round a 6 px circle, upright, then a hop, in 1.2 s. The egg sets `data-konami` on the root, so the stylesheet reaches every avatar without the lists knowing, and lowers it when the laps' animations finish. |
-| Credits | Seven clicks on the version in Settings › Application › About within 3 s | A "Made by" card under the version. |
+| Credits | Seven clicks on the version in Settings › Application › About within 3 s (it is a button styled as text, so Enter or Space works too) | A "Made by" card under the version. |
 | Pong | Space on the "can't connect" screen when no control has focus, or a click on the screen's icon | Pong inside the card. Mouse, arrow keys or W/S move the left paddle; Escape or the icon closes it. The score is returns in the current rally and the best this visit. |
 
 ### The "can't connect" screen

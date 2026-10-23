@@ -11,7 +11,7 @@ describe('AboutRally', () => {
 
   it('reveals the credits on the seventh quick click on the version', () => {
     render(<AboutRally version="1.2.3" versionLabel="Version" />);
-    const version = screen.getByText('1.2.3');
+    const version = screen.getByRole('button', { name: '1.2.3' });
     for (let click = 0; click < 6; click += 1) fireEvent.click(version);
     expect(screen.queryByRole('region', { name: 'Credits' })).not.toBeInTheDocument();
     fireEvent.click(version);
