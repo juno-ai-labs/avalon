@@ -484,9 +484,7 @@ controls are not exposed inside child previews.
 ## Failure modes and limits
 
 Private Breakouts branch from Main only (`sourceSubstreamId: "0"`); they cannot
-branch from another Breakout. Invalid preparation input crosses the hosted-parent
-RPC with a `private_child_preparation_invalid` diagnostic naming the rejected
-field, including `sourceSubstreamId`, instead of a bare `ZodError`.
+branch from another Breakout.
 
 An inference failure leaves the operation and capture available for retry, and
 reaches the person as an error under the composer with their message still in
