@@ -2104,6 +2104,18 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 }
 @keyframes konami-fade { 0% { opacity: 0; } 15% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; } }
 @keyframes konami-rise { from { transform: translateY(24px) scale(.9); } to { transform: translateY(-24px) scale(1.05); } }
+@media (prefers-reduced-motion: no-preference) {
+  /* Every avatar: people, Rally, and Sidekicks. A personal avatar inside an
+     .avatar already moves with it, so only a standalone one laps on its own. */
+  :root[data-konami] :is(.avatar, .personal-avatar:not(.avatar .personal-avatar), .automation-glyph) { animation: avatar-lap 1.2s ease-in-out; }
+}
+/* A small circle on the spot, kept upright, then a hop at the finish. */
+@keyframes avatar-lap {
+  0% { transform: rotate(0deg) translateY(-6px) rotate(0deg) translateY(6px); }
+  80% { transform: rotate(360deg) translateY(-6px) rotate(-360deg) translateY(6px); }
+  90% { transform: translateY(-5px) scale(1.08); }
+  100% { transform: none; }
+}
 
 /* Shared screens */
 
