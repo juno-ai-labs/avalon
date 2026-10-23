@@ -19,7 +19,7 @@ replaces the app when the organization or account cannot be loaded.
 | `apps/desktop/src/renderer/components/easter-eggs/rally-pong-physics.ts` | Pong's rules as state and one `stepRally` function, with no canvas. |
 | `apps/desktop/src/renderer/components/easter-eggs/rally-pong.tsx` | Pong's canvas, input and frame loop. |
 | `apps/desktop/src/renderer/App.tsx` (`ServiceSetupState`) | The "can't connect" screen, which opens Pong. |
-| `packages/ui/src/styles/app.css` | `.konami-egg`, `.about-credits`, `.rally-pong` and `.service-setup-*`. |
+| `packages/ui/src/styles/app.css` | `avatar-lap` under `[data-konami]`, `.about-credits`, `.rally-pong` and `.service-setup-*`. |
 
 ## How it works
 
@@ -38,7 +38,7 @@ replaces the app when the organization or account cannot be loaded.
 
 | Egg | Trigger | Effect |
 | --- | --- | --- |
-| Konami code | ↑ ↑ ↓ ↓ ← → ← → B A anywhere in the shell | An accent-colour wash and "+30 lives" (Contra's reward) for 1.6 s, and every avatar on screen (people, Rally, Sidekicks) runs a small lap: once round a 6 px circle, upright, then a hop. The egg sets `data-konami` on the root while it plays, so the stylesheet reaches every avatar without the lists knowing. It removes itself on `animationend`. |
+| Konami code | ↑ ↑ ↓ ↓ ← → ← → B A anywhere in the shell | Every avatar on screen (people, Rally, Sidekicks) runs a small lap: once round a 6 px circle, upright, then a hop, in 1.2 s. The egg sets `data-konami` on the root, so the stylesheet reaches every avatar without the lists knowing, and lowers it when the laps' animations finish. |
 | Credits | Seven clicks on the version in Settings › Application › About within 3 s | A "Made by" card under the version. |
 | Pong | Space on the "can't connect" screen when no control has focus, or a click on the screen's icon | Pong inside the card. Mouse, arrow keys or W/S move the left paddle; Escape or the icon closes it. The score is returns in the current rally and the best this visit. |
 
@@ -78,9 +78,12 @@ or configuration file: the person who sees it cannot act on those.
   handler; effects mount on demand. The repository forbids dynamic `import()`
   (`rally/no-dynamic-import`), so the effects are in the main bundle, and they
   are kept small for that reason.
-- **The Konami effect respects reduced motion.** Under
-  `prefers-reduced-motion: reduce` the text does not move and no avatar laps;
-  the wash only fades.
+- **The Konami lap respects reduced motion.** Under
+  `prefers-reduced-motion: reduce` no avatar laps, so the code does nothing.
+- **The flag comes down when the laps end.** Left up, an avatar that mounts
+  later (a new message, a switched Channel) would lap on arrival. The egg
+  waits on the laps' own animations rather than a timer, so the duration lives
+  in the stylesheet alone. Verified visually, no automated guard.
   Verified visually, no automated guard.
 
 ## Boundary
@@ -113,15 +116,15 @@ web share.
   text-field rule.
 - `rally-pong-physics.test.ts` covers returns, misses, walls and the paddle
   clamp without a canvas.
-- jsdom has no canvas and does not deliver `animationend` to React, so the
-  drawing and the Konami effect's removal are verified in a real window.
+- jsdom has no canvas and no CSS animations, so Pong's drawing and the lap
+  itself are verified in a real window.
 
 ## Changelog
 
 ### 2026-10-23 — Document created, with three eggs and a smaller "can't connect" screen
 
 **What changed:** Added the key-sequence and click-burst triggers, the Konami
-code (with every avatar running a lap), hidden credits in Settings › About, and Pong. Rewrote the "can't connect"
+code (every avatar runs a small lap), hidden credits in Settings › About, and Pong. Rewrote the "can't connect"
 screen: it dropped the region and API endpoint table, the local-development
 advice about `.env.local` and `VITE_` keys, and the dialog that opened on
 arrival.
