@@ -1696,13 +1696,12 @@ export function WorkspaceSocketProvider({
       document.removeEventListener('visibilitychange', observeWindowFocus);
       stopApplicationFocus();
       reportPresenceRef.current = () => undefined;
-      subscribed = false;
-      clearAgentActivity();
       clearReconnect();
-      clearSocketTimers();
       activeTicketAbort?.abort();
       activeTicketAbort = null;
-      socket?.close();
+      const retired = socket;
+      releaseSocket();
+      retired?.close();
     };
   }, [api, localCacheScope, onAccessRevoked, ownSocket, queryClient, region, relay, workspaceId]);
 
