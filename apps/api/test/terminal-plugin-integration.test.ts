@@ -264,7 +264,7 @@ describe("Terminal Bind integration", () => {
       expect(gateway.mintRepositoryToken).toHaveBeenCalledTimes(1);
       await expect(activation!.tools.find((tool) => tool.definition.name === "publish_branch_and_pr")!.execute!(
         { title: "Ship", body: "Update" }, { ...toolContext, harnessRunId: childRun,
-          toolCallId: "publish-after-withdrawal", executionPrincipal: { type: "user", userId: runAsUser } },
+          toolCallId: "publish-after-withdrawal", effectIntentId: crypto.randomUUID(), executionPrincipal: { type: "user", userId: runAsUser } },
       )).rejects.toMatchObject({ code: "repository_delegate_unavailable" });
     }
     // A refreshed inventory blocks the withdrawn caller, while an independent

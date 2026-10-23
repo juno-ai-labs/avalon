@@ -9946,6 +9946,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const boundSidekickId = binding?.outcome === "deliver" && binding.target.parentKind === "automation"
       ? binding.target.parentId
       : null;
+    const delegateEligibility = new Map<string, Promise<boolean>>();
     const matches = await Promise.all(registrations.map(async (registration) => {
       if (registration.resource_id && !resourceIds.includes(registration.resource_id)) return [];
       if (boundSidekickId !== null && registration.automation_id === boundSidekickId) return [];
@@ -9953,7 +9954,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       if (!evaluateExternalEventPredicate(evaluator.when, context)) return [];
       if (registration.destination_kind === "automation") {
         const sidekick = registration.automation_id === null ? null : await this.sidekickParent(registration.automation_id, request.workspaceId);
-        if (!sidekick || await sidekick.eventCoordinator(workspaceEvent, registration.registration_id) === null) {
+        if (!sidekick || await sidekick.eventCoordinator(workspaceEvent, registration.registration_id, delegateEligibility) === null) {
           if (sidekick && registration.automation_id) await this.sidekickCall(registration.automation_id, request.workspaceId,
             (target) => target.noteDelegationAttention("event_no_eligible_delegate"));
           logInfo(this.env, "external_event_delegation_refused", {

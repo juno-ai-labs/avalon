@@ -62,7 +62,12 @@ an exact uncertain effect retains its original account and provider key.
 Added/withdrawn grants propagate through ordinary authorization refreshes; stale
 snapshots and in-flight operations may settle without per-call grant reads.
 Background model/tool checks read only root lifecycle and stop generation;
-eligibility and coordinator selection refresh at activation.
+eligibility and coordinator selection refresh at activation. Coordinator selection
+stops at an eligible preferred user and filters audience constraints before
+checking candidates. Matching shares eligibility promises within one request,
+keyed by Sidekick/user/grant generation; delivery checks afresh. Detail reads
+omit the unused derived delegation status. The delegation-list endpoint fetches
+identities and eligibility concurrently after authorizing its reader.
 
 ## Agent tools
 
@@ -125,7 +130,8 @@ credentials into them.
 
 GitHub uses its existing mounted-credential lifecycle. Repository bootstrap and
 typed publishing check the selected connection owner against the inventory's
-delegation snapshot; local files remain available. No unmount protocol or
+delegation snapshot in the repository's existing connection-policy read; no
+separate selection or connection query is needed. Local files remain available. No unmount protocol or
 per-shell-command delegate scan is required.
 
 The coordinating identity supplies existing personal preferences,

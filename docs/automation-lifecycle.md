@@ -67,7 +67,12 @@ events require their source owner's eligible grant; restricted workspace events
 require an eligible delegate inside their actual audience. Matching and delivery
 both apply this policy, while preserving activation boundaries, deterministic
 filters, semantic conditions and occurrence deduplication. Ownership scope alone
-never rejects an otherwise eligible event.
+never rejects an otherwise eligible event. Coordinator selection checks an
+eligible preferred user first, then configured source owners, the creator and
+remaining grants. Audience restrictions narrow candidates before eligibility
+checks. Matching evaluators share pending eligibility checks only within that
+matching request, keyed by Sidekick, user and grant generation; delayed delivery
+checks again independently.
 
 An occurrence with no delegate gets a `needs_input` run and safe recovery summary;
 an unauthorized event retains no private payload in the Sidekick. Its directory
@@ -133,6 +138,10 @@ Per-operation connector identities, completed-receipt reconciliation, shared
 Terminal authorization and desktop/web controls are tracked by the
 [implementation plan](PRDs/2026-10-22_sidekick-delegation/plan.md) until all
 acceptance evidence is complete.
+
+Sidekick details retain the stored delegation attention message without computing
+an unused eligible-delegate status. The separate delegation list loads public
+identities and eligibility concurrently after reader authorization.
 
 Delegation list responses include the creator's public identity after
 withdrawal and the current allowed users with availability. Membership and
@@ -1240,7 +1249,11 @@ The original Thread-owned personal Google Sheet shape and its Organization-owned
 variant both start an event run and an hourly run through the same delegate.
 Withdrawals, restricted audiences, coordinator identity and retained human
 management are checked independently; production-code negative controls prove
-those gates. The same workerd lane verifies canonical source-account capture,
+those gates. It also checks that detail reads do not scan eligibility, preferred
+and personal-event selection avoids unrelated delegates, and matching shares
+pending checks only within one request while delivery still observes withdrawal.
+Restoring the unnecessary scans or removing request-local sharing fails those
+regressions. The same workerd lane verifies canonical source-account capture,
 legacy-opening recovery and rooted background origin reads; metadata cannot
 forge that projection. `test/run-authority-validity.test.ts` checks the model/tool boundary's
 specific coordinator failure and error-path attention recording.
@@ -1488,7 +1501,10 @@ without reconstructing direct-user consent provenance. Continuation replaces an
 unavailable coordinator and persists the replacement without changing human
 access. Write accounts remain debug-only receipt records; reads skip account
 checkpoint I/O. Background model/tool boundaries reuse activation eligibility and
-retain only the root lifecycle and stop-generation check. Self-action
+retain only the root lifecycle and stop-generation check. Coordinator selection
+short-circuits preferred users and narrows candidates by audience. Matching shares
+pending eligibility within one request; delegation-list identity/eligibility
+reads run together. Details omit the unused derived delegation status. Self-action
 receipt inspection prevents the outer completed-tool cache from presenting a
 withdrawn grant as current without replaying its mutation. Interrupted actions
 are reconciled by that same receipt instead of minting a fresh consent intent.
@@ -1502,7 +1518,8 @@ loss or delayed dispatch from turning an old allow into a new opt-in. A global
 authorization barrier is unnecessary because eventual authorization propagation
 is the agreed product contract. Repeated background eligibility scans and account
 checkpoints for reads would add durable work to every step without helping
-uncertain-write recovery.
+uncertain-write recovery. Recomputing unused detail status and repeating matching
+checks likewise adds work without changing the product outcome.
 A blocked report must also remain visible after the model finishes explaining
 it, since an attempted post is not confirmation that anyone received it.
 
