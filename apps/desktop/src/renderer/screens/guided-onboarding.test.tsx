@@ -6,6 +6,7 @@ import { AccountOnboardingGate, PersonalSetup, WorkspaceOnboardingJourney } from
 import { act } from '@testing-library/react';
 import type { Workspace } from '../lib/types';
 import { MemoryRouter, useLocation, useNavigationType } from 'react-router-dom';
+import { ErrorNoticeProvider } from '@rally/ui/components/error-notice';
 
 const state = vi.hoisted(() => ({
   signedIn: true,
@@ -45,7 +46,7 @@ function show() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   // The journey renders inside the app's HashRouter and leaves through it, so
   // the harness gives it a router and reports where it went.
-  render(<MemoryRouter initialEntries={['/onboarding']}><QueryClientProvider client={client}><AccountOnboardingGate><WorkspaceOnboardingJourney workspace={workspace}><WorkspaceView /></WorkspaceOnboardingJourney></AccountOnboardingGate></QueryClientProvider><Route /></MemoryRouter>);
+  render(<ErrorNoticeProvider><MemoryRouter initialEntries={['/onboarding']}><QueryClientProvider client={client}><AccountOnboardingGate><WorkspaceOnboardingJourney workspace={workspace}><WorkspaceView /></WorkspaceOnboardingJourney></AccountOnboardingGate></QueryClientProvider><Route /></MemoryRouter></ErrorNoticeProvider>);
   return client;
 }
 beforeEach(() => {
@@ -269,6 +270,74 @@ describe('new-account learning paths', () => {
     act(() => client.setQueryData(['account-onboarding', 'person@example.com'], { ...state.account, revision: 2, presentation: null }));
     await waitFor(() => expect(screen.getByLabelText('Avatar initials')).toHaveValue('P'));
   });
+  it('validates mixed invitation input only on click and reopens the notice on another attempt', async () => {
+    state.journey.mockResolvedValue({ path: 'creator', stage: 'people', revision: 2, connectorIds: [] });
+    show();
+    const field = await screen.findByLabelText('Email addresses');
+    state.members.mockClear(); // Exclude the account gate's initial directory read.
+    fireEvent.change(field, { target: { value: 'aspen@example.com' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    fireEvent.change(field, { target: { value: 'x' } });
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    const invite = screen.getByRole('button', { name: 'Invite 2 teammates' });
+    expect(invite).toBeEnabled();
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      fireEvent.click(invite);
+      expect(await screen.findByRole('alertdialog')).toHaveTextContent('One or more of the addresses are not a valid email address.');
+      expect(screen.getByText('aspen@example.com')).toBeInTheDocument();
+      expect(field).toHaveValue('x');
+      expect(state.invitations).not.toHaveBeenCalled();
+      expect(state.members).not.toHaveBeenCalled();
+      expect(state.invite).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'OK' }));
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    }
+  });
+
+  it('explains an empty invitation submission without fetching or sending invitations', async () => {
+    state.journey.mockResolvedValue({ path: 'creator', stage: 'people', revision: 2, connectorIds: [] });
+    show();
+    await screen.findByLabelText('Email addresses');
+    state.members.mockClear();
+    const invite = screen.getByRole('button', { name: 'Invite teammates' });
+    expect(invite).toBeEnabled();
+    fireEvent.click(invite);
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Enter at least one email address.');
+    expect(state.invitations).not.toHaveBeenCalled();
+    expect(state.members).not.toHaveBeenCalled();
+    expect(state.invite).not.toHaveBeenCalled();
+  });
+
+  it.each(['x', 'x@@y'])('marks the invalid committed address %s without interrupting editing', async (email) => {
+    state.journey.mockResolvedValue({ path: 'creator', stage: 'people', revision: 2, connectorIds: [] });
+    show();
+    const field = await screen.findByLabelText('Email addresses');
+    fireEvent.change(field, { target: { value: email } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(screen.getByText(email).closest('.invite-email-chip')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Invite 1 teammate' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Invite 1 teammate' }));
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('One or more of the addresses are not a valid email address.');
+    expect(state.invite).not.toHaveBeenCalled();
+  });
+
+  it('submits a single-label domain through the lightweight client check', async () => {
+    state.journey.mockResolvedValue({ path: 'creator', stage: 'people', revision: 2, connectorIds: [] });
+    state.invite.mockResolvedValue({});
+    state.updateJourney.mockResolvedValue({ path: 'creator', stage: 'complete', revision: 3, connectorIds: [] });
+    show();
+    const field = await screen.findByLabelText('Email addresses');
+    fireEvent.change(field, { target: { value: 'x@y' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(screen.getByText('x@y').closest('.invite-email-chip')).not.toHaveAttribute('aria-invalid');
+    fireEvent.click(screen.getByRole('button', { name: 'Invite 1 teammate' }));
+    await screen.findByText('Ordinary organization');
+    expect(state.invite).toHaveBeenCalledWith('x@y', 'member');
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  });
+
   it('reconciles invitations after a lost response and retries only undelivered addresses', async () => {
     state.journey.mockResolvedValue({ path: 'creator', stage: 'people', revision: 2, connectorIds: [] });
     state.invite.mockRejectedValueOnce(new Error('Response lost'));

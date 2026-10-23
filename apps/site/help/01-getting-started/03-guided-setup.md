@@ -39,7 +39,7 @@ The last step is for bringing your team in. Rally is built for shared chat with 
 
 Everyone you invite here joins as a **Member** and can use your organization connections.
 
-Invalid address chips have a pastel red fill. You can finish typing without a popup. If you click **Invite** while an address is invalid, Rally says **One or more of the addresses are not a valid email address.** and keeps the addresses for you to fix before sending any invitations. Each address needs text before and after a single **@**. If some invitations fail to send, it lists them after **Could not invite:** and leaves them in the box to fix and retry. Retrying never sends a second invitation to someone who already has one, or who is already a member.
+Invalid address chips have a pastel red fill. If you click **Invite** while an address is invalid, Rally says **One or more of the addresses are not a valid email address.** and keeps the addresses for you to fix before sending any invitations. If some invitations fail to send, it lists them after **Could not invite:** and leaves them in the box to fix and retry. Retrying never sends a second invitation to someone who already has one, or who is already a member.
 
 If you are not ready to invite anyone, click **Invite later**. (Once you have sent some, the same button reads **Continue**.) You can invite people, and make some of them administrators, at any time; see [Inviting people](../10-running-an-organization/02-inviting-people.md).
 
