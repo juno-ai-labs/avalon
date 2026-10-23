@@ -1077,9 +1077,11 @@ controls, timing and legacy email summaries, keyboard navigation to unavailable
 menu items, their tooltip reasons, and inert Enter/Space activation. Visual
 placement, disabled hover styling and compact Details view are checked in Electron.
 
-Workstream recommendation coverage lives in `test-workers/automation-do.test.ts`
-(child agent tool attachment, fresh main/sibling catalogs, local loading, combined
-removal) and `test-workers/conversation-parent-contract.test.ts` (v12 migration,
+Workstream recommendation coverage lives in `test-workers/hosted-sidekick.test.ts`
+(child agent tool attachment, fresh main/sibling catalogs, later-created Breakouts,
+instruction bodies reaching inference, local loading across eviction, combined
+removal, owned-source isolation, and Space defaults on a newly born Channel)
+and `test-workers/conversation-parent-contract.test.ts` (v12 migration,
 idempotency, scope, participation, durable sync publication and unsupported
 automation parents). Hidden child tool coverage also proves REST refusal,
 stopped-execution refusal and preservation of Main's loaded attachment.
@@ -1090,7 +1092,7 @@ substreams. Harness `skills.test.ts` proves recommendations do not load bodies.
 
 | Suite | Command | Covers |
 | --- | --- | --- |
-| `apps/api/test-workers/automation-do.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` in WorkspaceDO and deliberately absent from D1: draft, `submitDefinition`, and `apply` binding a workspace connection, reserving the address, and activating; a missing connection refused; a second ready revision re-applied on an active automation; pause stopping the in-flight run and clearing registrations, resume re-arming; delete tombstoning the row and leaving the sidebar; management refused to a member who is neither author nor principal; `runNow` idempotent on its key; `admitExternalEvent` idempotent and refused before the boundary; `admitInboundEmail` answering a retry from its receipt and refusing a stranger; the run provisioned as a child substream whose loop reads its definition by revision, with `runs.state` following the child's state through the effect leg. |
+| `apps/api/test-workers/hosted-sidekick.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` in WorkspaceDO and deliberately absent from D1: draft, `submitDefinition`, and `apply` binding a workspace connection, reserving the address, and activating; a missing connection refused; a second ready revision re-applied on an active automation; pause stopping the in-flight run and clearing registrations, resume re-arming; delete tombstoning the row and leaving the sidebar; management refused to a member who is neither author nor principal; `runNow` idempotent on its key; `admitExternalEvent` idempotent and refused before the boundary; `admitInboundEmail` answering a retry from its receipt and refusing a stranger; the run provisioned as a child substream whose loop reads its definition by revision, with `runs.state` following the child's state through the effect leg. |
 | `apps/api/test-workers/sidekick-run-continuation.test.ts` | `pnpm --filter @rally/api test:workers` | Continuing a finished run as its run-as user; refusals while paused; a pause after a continuation's approval fencing its writes; a run's loop acting while its row still reads `pending`, before provisioning reports it running; and background workers beneath authoring or run conversations executing initial and follow-up assignments with inherited authority. |
 | `apps/api/test-workers/automation-post-result.test.ts` | `pnpm --filter @rally/api test:workers` | The result tool appending into the owning room's substream `0`, and refused for an archived room and a stale generation. |
 | `apps/api/test-workers/automation-directory.test.ts` | `pnpm --filter @rally/api test:workers` | `create` alone putting a draft row in the author's sidebar, a workspace row in everyone's, and a room's row only in `listWorkstreamAutomations`; and `setAppearance` — driven through the object's stub, the boundary `AutomationService` crosses — merging one field at a time, reaching both directory listings through the real effect legs, and refusing somebody who cannot manage the Sidekick; and `AutomationService.listSidekicks` listing each scope to exactly the members it did before while the object sends D1 no `workspace_members` read. |

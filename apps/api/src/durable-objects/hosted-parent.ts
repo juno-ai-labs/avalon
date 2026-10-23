@@ -2502,7 +2502,7 @@ export class HostedParent {
 
   /** Reserve one creator-only nonzero child and its immutable preparation receipt. */
   async beginPrivateChildPreparation(input: BeginPrivateChildPreparationRequest): Promise<PrivateChildPreparationOperation> {
-    const request = BeginPrivateChildPreparationRequestSchema.parse(input);
+    const request = parseRpcInput(BeginPrivateChildPreparationRequestSchema, input, "private_child_preparation");
     this.assertParent(request.workspaceId, request.parentId);
     const initialMembers = [...new Set(request.membershipInitializer.memberUserIds)];
     if (initialMembers.length !== request.membershipInitializer.memberUserIds.length
