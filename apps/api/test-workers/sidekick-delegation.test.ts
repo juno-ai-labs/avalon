@@ -6,7 +6,7 @@ import { AutomationDetailSchema, asUserId, asWorkspaceId, sidekickCanonicalUrl }
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import { seedWorkspaceControlPlane, seedWorkstreamRoot, seedParticipantMessage, seedExecutionReceipt, runInput } from "./helpers/substream-fixture";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { SidekickDelegationService, ownSidekickDelegationsAcrossOrganizations } from "../src/services/sidekick-delegation-service";
+import { SidekickDelegationService } from "../src/services/sidekick-delegation-service";
 import { AgentCommunicationService } from "../src/services/agent-communication-service";
 import { sidekickDelegationTools } from "../src/services/sidekick-delegation-tools";
 import { validateCompletedToolReplay } from "../src/services/completed-tool-replay";
@@ -15,10 +15,10 @@ import { createHarnessRunObjectPort } from "../src/runtime/harness-run-port";
 import { createToolReceiptObjectPort } from "../src/runtime/tool-receipt-port";
 import { claimHarnessAttempt } from "../src/runtime/harness-run-runtime";
 
-const workspaceId = asWorkspaceId("00000000-0000-7000-8000-00000000de00");
-const creator = asUserId("00000000-0000-7000-8000-00000000de01");
-const other = asUserId("00000000-0000-7000-8000-00000000de02");
-const sidekickId = "00000000-0000-7000-8000-00000000de03";
+const workspaceId = asWorkspaceId("00000000-0000-7000-8000-00000000e400");
+const creator = asUserId("00000000-0000-7000-8000-00000000e401");
+const other = asUserId("00000000-0000-7000-8000-00000000e402");
+const sidekickId = "00000000-0000-7000-8000-00000000e403";
 const address = { workspaceId, automationId: sidekickId };
 const stub = () => env.WORKSPACE_DOS.getByName(workspaceDOName("global", workspaceId));
 useHeldEffectQueue();
@@ -290,11 +290,34 @@ describe("Sidekick consent authority in real workerd", () => {
     await stub().applyMemberStatus({ workspaceId, sequence: 1, removed: true, relationship: {
       workspaceId, userId: other, accessClass: "member", role: "member", status: "active", incarnation: "existing-member", revision: 1,
     } });
-    expect(await ownSidekickDelegationsAcrossOrganizations(env, other)).toEqual({ organizations: [{
-      workspaceId, userId: other, delegations: [{ sidekickId, label: "Content calendar", allowed: true, eligible: false }],
-    }] });
+    expect(await service.listOwn()).toEqual({
+      userId: other, delegations: [{ sidekickId, label: "Content calendar", allowed: true, eligible: false }],
+    });
     await service.setOwn(sidekickId, false, crypto.randomUUID(), "self_service");
     expect((await service.listOwn()).delegations[0]).toMatchObject({ allowed: false, eligible: false });
+  });
+
+  it("names the malformed delegate presentation field across RPC without its value", async () => {
+    await create();
+    await env.DB.prepare("UPDATE users SET presentation_json=? WHERE id=?")
+      .bind(JSON.stringify({ revision: "private-value" }), creator).run();
+    const error = await stub().sidekickReadDelegation({ ...address, actor: { userId: creator, participantOfOwningWorkstream: false } })
+      .then(() => null, (cause: unknown) => cause);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/sidekick_delegate_presentation_invalid.*revision/u);
+    expect((error as Error).message).not.toContain("private-value");
+  });
+
+  it("refuses completed grant replay cleanly when its actor loses Organization access", async () => {
+    await create();
+    const operationId = crypto.randomUUID();
+    const service = new SidekickDelegationService(env, workspaceId, other);
+    await service.setFor(sidekickId, creator, true, operationId, "agent_request");
+    await stub().applyMemberStatus({ workspaceId, sequence: 1, removed: true, relationship: {
+      workspaceId, userId: other, accessClass: "member", role: "member", status: "active", incarnation: "existing-member", revision: 1,
+    } });
+    expect(await service.readReceipt(sidekickId, creator, true, operationId, "agent_request")).toEqual({ outcome: "unavailable" });
+    expect((await own()).delegations[0]).toMatchObject({ allowed: true });
   });
 
   it("lets an autonomous execution manage another Organization user's delegation", async () => {

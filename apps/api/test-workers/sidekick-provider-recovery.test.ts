@@ -2,7 +2,7 @@
 import { env } from "cloudflare:workers";
 import { evictDurableObject, reset, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { asUserId, asWorkspaceId, type AutomationDraft } from "@rally/contracts";
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import { encryptString } from "../src/lib/crypto";
 import { createHarnessRunObjectPort } from "../src/runtime/harness-run-port";
@@ -13,12 +13,12 @@ import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-
 import { seedExecutionReceipt, seedWorkspaceControlPlane, seedWorkstreamRoot, runInput } from "./helpers/substream-fixture";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 
-const workspaceId = asWorkspaceId("00000000-0000-7000-8000-00000000cf00");
-const creator = asUserId("00000000-0000-7000-8000-00000000cf01");
-const maya = asUserId("00000000-0000-7000-8000-00000000cf02");
-const sidekickId = "00000000-0000-7000-8000-00000000cf03";
-const creatorConnection = "00000000-0000-7000-8000-00000000cf04";
-const mayaConnection = "00000000-0000-7000-8000-00000000cf05";
+const workspaceId = asWorkspaceId("00000000-0000-7000-8000-00000000e500");
+const creator = asUserId("00000000-0000-7000-8000-00000000e501");
+const maya = asUserId("00000000-0000-7000-8000-00000000e502");
+const sidekickId = "00000000-0000-7000-8000-00000000e503";
+const creatorConnection = "00000000-0000-7000-8000-00000000e504";
+const mayaConnection = "00000000-0000-7000-8000-00000000e505";
 const eventId = "637e7ded325d22be7ba6058201ba155e68316e3d19fc36cac654558b5cda1644";
 const workspace = () => env.WORKSPACE_DOS.getByName(workspaceDOName("global", workspaceId));
 const address = { workspaceId, automationId: sidekickId };
@@ -72,10 +72,19 @@ describe("Sidekick provider recovery on real workerd", () => {
       expect(url.pathname).toBe(`/calendar/v3/calendars/primary/events/${eventId}`);
       return Response.json({ id: eventId, summary: "Review", status: "confirmed" });
     });
-    // The real receipt is admitted, but no inference is activated.
+    const draft: AutomationDraft = { name: "Calendar helper", description: "Create an event", overview: "Create an event",
+      instructions: "Create the requested calendar event.", definitionVersion: 2, triggers: [{ type: "manual" }],
+      requiredCapabilities: [], expectedOutputs: [], defaultBehavior: {}, recommendedPlugins: [], memoryTables: [],
+      suggestedScope: "workspace", followUpQuestion: null, elicitation: null, ready: true };
+    await workspace().sidekickSubmitDefinition({ ...address, draft, evaluatorRules: null, submittedByRunId: null });
+    const actor = { userId: creator, participantOfOwningWorkstream: false };
+    await workspace().sidekickApply({ ...address, actor });
+    const admitted = await workspace().sidekickRunNow({ ...address, actor, idempotencyKey: "calendar-recovery" });
+    // The real receipt and Sidekick run are admitted, but no inference is activated.
     const child = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", workspaceId, sidekickId));
     const input = runInput(crypto.randomUUID(), { workspaceId, parentId: sidekickId, parentKind: "automation",
-      executionPrincipal: { type: "user", userId: creator } });
+      executionPrincipal: { type: "user", userId: creator }, automationRun: { schemaVersion: 1, automationId: sidekickId, runId: admitted.runId, definitionRevision: 1,
+        trigger: { kind: "manual", requestedByUserId: creator } } });
     await runInDurableObject(child, (_instance, state) => {
       seedWorkstreamRoot(state, Date.now(), { workspaceId, workstreamId: sidekickId });
       seedExecutionReceipt(state, input.harnessRunId, input, Date.now());
@@ -83,6 +92,9 @@ describe("Sidekick provider recovery on real workerd", () => {
     const runs = createHarnessRunObjectPort(env, workspaceId, sidekickId);
     const first = await claimHarnessAttempt(runs, input, { attemptId: crypto.randomUUID(), owner: "first", leaseSeconds: 300 });
     if (first.state !== "claimed") throw new Error("provider_recovery_claim_failed");
+    const authoring = await __integrationTesting.loadHarnessTools(withWorkspaceRuntimeDatabase(env, workspaceId),
+      { ...input, automationRun: undefined }, undefined, undefined, undefined, undefined, first.lease);
+    expect(authoring.plugins.some((candidate) => candidate.canonicalId === `connection:${mayaConnection}`)).toBe(false);
     const inventory = await __integrationTesting.loadHarnessTools(withWorkspaceRuntimeDatabase(env, workspaceId), input,
       undefined, undefined, undefined, undefined, first.lease);
     const plugin = inventory.plugins.find((candidate) => candidate.canonicalId === `connection:${mayaConnection}`)!;

@@ -6633,7 +6633,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           kind: "sidekick_run_provision", region: this.env.AVALON_REGION, ...message,
         }));
       },
-      hasSidekickClaimAccess: (automationId, userId) => new SidekickDelegationStorage(this.state.storage).hasClaimAccess(automationId, userId),
     };
   }
 
@@ -6909,7 +6908,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async sidekickReadExecutionDelegation(input: Parameters<HostedSidekick["readExecutionDelegation"]>[0]) {
-    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.readExecutionDelegation(input));
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readExecutionDelegation(input));
   }
 
   /** Own consent records remain readable without membership or Sidekick viewer access. */
@@ -17461,8 +17460,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // participation in that Channel while it is not archived. A Breakout home
       // narrows both to whoever reads that Breakout, as viewer admission does.
       let readable = member && sidekickAdmitsMember({ scope: sidekick.scope,
-        author: sidekick.author_user_id === request.userId, executor: sidekick.run_as_user_id === request.userId
-          || new SidekickDelegationStorage(this.state.storage).hasClaimAccess(sidekick.automation_id, request.userId) });
+        author: sidekick.author_user_id === request.userId, executor: sidekick.run_as_user_id === request.userId });
       if (!readable && hosted && sidekick.scope === "workstream" && sidekick.owning_workstream_id) {
         const owner = await parent(sidekick.owning_workstream_id);
         const metadata = owner.metadataRow();
