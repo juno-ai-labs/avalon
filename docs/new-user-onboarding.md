@@ -70,14 +70,8 @@ empty and untouched, so the suggestion never replaces what the person typed or
 a remembered name.
 
 The invite page uses manual email chips separated by spaces, commas or semicolons.
-Invite stays enabled while the person enters addresses. Clicking it with an
-invalid address opens an error modal before any invitations are sent; clicking
-it with no addresses asks for at least one. Each click can reopen the modal after
-acknowledgement. Invalid chips use the shared pastel red palette fill and its
-matching red ink. The client checks
-for a nonempty local part and domain separated by one `@`, with no whitespace;
-it does not require a dot in the domain. Invitation failures still open an error
-popup.
+Invite stays enabled: invalid chips are highlighted, and clicking Invite checks
+every address for `something@something` before sending any invitations.
 Before sending, it reconciles pending invitations and active members so retrying a
 lost response does not replace an invitation already sent. Failed addresses stay
 editable. Onboarding has no teammate discovery API.
@@ -146,6 +140,9 @@ Run API Node tests `account-onboarding.test.ts`,
 retired-stage cases cover reading old rows. The desktop journey itself is
 covered by `src/renderer/screens/guided-onboarding.test.tsx`. Account tests apply the actual regional
 migrations; journey tests apply the actual WorkspaceDO migrations in workerd.
+The desktop tests use the real error-notice provider to cover editing without a
+popup, rejected submissions without invitation requests, repeatable notices,
+invalid chips, and the intentionally relaxed client email check.
 The write-loss and profile-update mutation checks demonstrate those integration
 tests fail when persistence is broken. Desktop session-gate and app-session suites
 cover existing authentication and activation behavior.
