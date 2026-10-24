@@ -214,7 +214,7 @@ async function openConnection(name: string): Promise<void> {
 }
 
 function openSettingsSection(
-  name: 'Account' | 'Notifications' | 'Organization' | 'Security' | 'Connections' | 'Application',
+  name: 'Account' | 'Notifications' | 'Organization' | 'Members' | 'Security' | 'Connections' | 'Application',
 ): void {
   const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
   fireEvent.click(within(navigation).getByRole('button', { name }));
