@@ -22,7 +22,7 @@ the read-side authorization primitive that composes resource access belongs to
 | `apps/api/src/middleware/auth.ts` | Resolves `auth.role` from `workspace_members` on **every** request, and `requireWorkspaceAdmin` — the route-level gate. |
 | `apps/api/src/services/workspace-service.ts` | `setMemberRole` (the one write that changes a role), `createInvitation` (the role a future membership arrives with), `removeMember` and `leaveWorkspace` (the owner counts that keep a workspace owned), and the private `requireAdmin` every workspace-administration method starts with. |
 | `apps/api/src/routes/workspace.ts` | `PATCH /workspace/members/:userId/role`. |
-| `apps/desktop/src/renderer/screens/workspace-settings.tsx` | The member list (members A-Z by name, then guests A-Z by name), the menu beside each row (promote/demote or make member, and suspend), and the invitation role selector. |
+| `apps/desktop/src/renderer/screens/workspace-settings.tsx` | The member list (members A-Z by name, then guests A-Z by name), the menu beside each row (promote/demote or make member, and suspend), and the invitation role selector. A guest sees the same list, without the row controls. |
 | `apps/desktop/src/renderer/lib/session-workspace.ts` | Why the role the desktop holds is a *presentation* input and never an authorization one. |
 
 ## How it works
@@ -75,6 +75,18 @@ standing to retry — while the no-op return above means a retry could not
 republish anyway. The cost of a lost publish is a stale roster in other open
 windows until something else invalidates it; nothing is mis-authorized by it,
 because `auth.role` is read per request.
+
+### What a guest sees of the roster
+
+`GET /workspace/members` answers members and guests alike. It is mounted
+beside `GET /workspace` on the identity layer, ahead of `requireAuth`, so a
+guest reads the same roster a member does: every active person, other guests
+included, with email and timezone. The desktop reads it through one hook,
+`useWorkspaceMembers` in `apps/desktop/src/renderer/lib/workspace-members.ts`.
+
+It is not where a guest's mention picker looks. Mentioning somebody outside a
+conversation brings them in, so a guest's picker and `messageMentionPayload`
+stay on the conversation's own participants.
 
 ## Invariants
 
@@ -171,6 +183,26 @@ enforces. A test that seeds an owner can never reach the guard, and would have
 proved only that the owner was there.
 
 ## Changelog
+
+### 2026-10-24 — Guests can see who is in the Organization
+
+**What changed:** `GET /workspace/members` moved to the identity layer and now
+answers guests: every active person, guests included, with email and timezone.
+
+**Why:** A guest had no way to see who else was in the Organization, so no way
+to know whom to ask for access or to recognise who they were working with. In
+a shared Channel every member's message and thread read "Someone".
+
+**Considered and rejected:** A separate guest roster without emails, timezones
+or other guests. It was built first and dropped on review: the product wants
+guests to see all three, and a second endpoint that differed only by
+bookkeeping fields was a second list to keep in step. Also rejected: feeding
+the roster to a guest's mention picker, since naming a person outside a
+conversation brings them in. That is an access decision, not a display one.
+
+**Consequences:** Anything added to the roster reaches people outside the
+company. A new surface that names people should read `useWorkspaceMembers`
+rather than gate its own read on `guest`.
 
 ### 2026-09-18 — A workspace can have more than one administrator
 

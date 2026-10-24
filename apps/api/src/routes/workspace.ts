@@ -110,6 +110,15 @@ export async function workspaceProfile(c: Context<HonoAppEnv>) {
 }
 
 /**
+ * The Organization's roster, for members and guests alike. Mounted on the
+ * identity layer beside the profile so a guest sees who they work with: every
+ * active person, guests included, with their email and timezone.
+ */
+export async function workspaceMembers(c: Context<HonoAppEnv>) {
+  return c.json(MemberPageSchema.parse({ items: await new WorkspaceService(c.env, getWorkspaceAuth(c)).listMembers() }));
+}
+
+/**
  * A client reporting its device's zone, for members and guests alike: both
  * receive digests in their own day. Mounted beside the profile for the same
  * reason. See `reportDeviceTimezone`.
@@ -232,9 +241,6 @@ workspaceRoutes.post(
   async (c) => c.json(TerminalWorkspaceSettingsSchema.parse(
     await withTerminalSettingsService(c, (service) => service.apply(c.req.valid("json"))),
   )),
-);
-workspaceRoutes.get("/members", async (c) =>
-  c.json(MemberPageSchema.parse({ items: await new WorkspaceService(c.env, getAuth(c)).listMembers() })),
 );
 /**
  * Make somebody an administrator, or take it back.

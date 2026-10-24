@@ -76,6 +76,7 @@ export interface WorkspaceAccountMenuProps {
 }
 
 const ADD_MEMBERS_DISABLED_REASON = 'Only administrators can add members.';
+const SIDEKICKS_DISABLED_REASON = 'Guests use the Sidekicks a conversation offers.';
 
 /** Deployment tags disambiguate workspaces when multiple deployments are configured. */
 function regionLabel(region: RallyRegion): string {
@@ -150,7 +151,8 @@ export function WorkspaceAccountMenu({
   onStartSupportSession,
 }: WorkspaceAccountMenuProps): React.JSX.Element {
   // A guest attaches the Sidekicks a conversation offers; the library is for
-  // members, who author them.
+  // members, who author them. Every item is drawn for a guest, and the ones a
+  // guest cannot use are disabled with the reason rather than hidden.
   const { guest } = useShellCapabilities();
   const [invitation, setInvitation] = useState<DesktopPendingWorkspaceInvitation | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -274,19 +276,20 @@ export function WorkspaceAccountMenu({
             )}
             {presentation === 'grok' && (
               <>
-                {!guest && <MenuActionItem className="menu-item account-menu-item" disabled={!canAddMembers}
+                <MenuActionItem className="menu-item account-menu-item" disabled={guest || !canAddMembers}
                   disabledReason={ADD_MEMBERS_DISABLED_REASON} onSelect={onAddMembers} tooltipSide="right">
                   <IconUserPlus aria-hidden="true" />
                   <span>Add new member</span>
-                </MenuActionItem>}
-                {!guest && <DropdownMenu.Item className="menu-item account-menu-item" onSelect={() => void desktopBridge().openSettings('members')}>
+                </MenuActionItem>
+                <DropdownMenu.Item className="menu-item account-menu-item" onSelect={() => void desktopBridge().openSettings('members')}>
                   <IconUsers aria-hidden="true" />
                   <span>Members</span>
-                </DropdownMenu.Item>}
-                {!guest && <DropdownMenu.Item className="menu-item account-menu-item" onSelect={() => void desktopBridge().openSidekicks()}>
+                </DropdownMenu.Item>
+                <MenuActionItem className="menu-item account-menu-item" disabled={guest}
+                  disabledReason={SIDEKICKS_DISABLED_REASON} onSelect={() => void desktopBridge().openSidekicks()} tooltipSide="right">
                   <IconHexagons aria-hidden="true" />
                   <span>Sidekicks</span>
-                </DropdownMenu.Item>}
+                </MenuActionItem>
                 <DropdownMenu.Item className="menu-item account-menu-item" onSelect={onOpenSettings}>
                   <IconSettings aria-hidden="true" />
                   <span>Settings</span>
@@ -418,16 +421,17 @@ export function WorkspaceAccountMenu({
                   <small>Organization</small>
                 </DropdownMenu.Label>
                 <DropdownMenu.Separator className="menu-separator" />
-                {!guest && <MenuActionItem disabled={!canAddMembers}
+                <MenuActionItem disabled={guest || !canAddMembers}
                   disabledReason={ADD_MEMBERS_DISABLED_REASON} onSelect={onAddMembers} tooltipSide="right">
                   Add new member
-                </MenuActionItem>}
-                {!guest && <DropdownMenu.Item asChild className="menu-item">
+                </MenuActionItem>
+                <DropdownMenu.Item asChild className="menu-item">
                   <button onClick={() => void desktopBridge().openSettings('members')} type="button">Members</button>
-                </DropdownMenu.Item>}
-                {!guest && <DropdownMenu.Item asChild className="menu-item">
-                  <button onClick={() => void desktopBridge().openSidekicks()} type="button">Sidekicks</button>
-                </DropdownMenu.Item>}
+                </DropdownMenu.Item>
+                <MenuActionItem disabled={guest} disabledReason={SIDEKICKS_DISABLED_REASON}
+                  onSelect={() => void desktopBridge().openSidekicks()} tooltipSide="right">
+                  Sidekicks
+                </MenuActionItem>
                 <DropdownMenu.Item asChild className="menu-item">
                   <button onClick={onOpenSettings} type="button"><IconSettings size={14} /> Settings…</button>
                 </DropdownMenu.Item>

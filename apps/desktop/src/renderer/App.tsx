@@ -14,6 +14,7 @@ import { RallyPong } from './components/easter-eggs/rally-pong';
 import { Button, EmptyState, LoadingState } from './components/primitives';
 import { SpeechPlaybackProvider } from './components/speech-playback';
 import { ApiError, isSessionRejection } from './lib/api';
+import { useWorkspaceMembers } from './lib/workspace-members';
 import { AppSessionProvider, useAppSession, type AppSessionValue, FINISH_SIGN_IN_IN_BROWSER } from './lib/app-session';
 import { useShellCapabilities } from './lib/collaboration-session';
 import { localCacheScope } from './lib/local-cache';
@@ -227,12 +228,7 @@ export function WorkspaceApp(): React.JSX.Element {
   useEffect(() => {
     if (servedGuest !== guest) void refreshSession().catch(() => undefined);
   }, [guest, refreshSession, servedGuest]);
-  useQuery({
-    queryKey: ['workspace-members'],
-    queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
-    enabled: Boolean(api && session?.workspace && !guest),
-    staleTime: Number.POSITIVE_INFINITY,
-  });
+  useWorkspaceMembers(api, { enabled: Boolean(session?.workspace), staleTime: Number.POSITIVE_INFINITY });
 
   useEffect(() => {
     if (workspace.error) abandonPendingWorkstreamFeedOpen();

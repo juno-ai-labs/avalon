@@ -57,6 +57,7 @@ import { openWorkstreamId, useOpenFirstWorkstream } from '../lib/workstream-land
 import { archiveThread, reconcileThreadPage, resolutionFailure, resolveConversation } from '../lib/thread-lifecycle';
 import { ArchiveConversationModal } from './archive-conversation-modal';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
+import { useWorkspaceMembers } from '../lib/workspace-members';
 import { resourceKindLabel } from './markdown-citations';
 import { Avatar, Button, IconButton, ErrorNotice, Modal, RallyAvatar, TitleSkeleton, Tip } from './primitives';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
@@ -325,7 +326,6 @@ export function NavigationSidebar({
             accessDecisionFailed={accessDecisionFailed}
             accessRequests={accessRequests}
             attentionComplete={attentionComplete}
-            guest={guest}
             onDecideAccessRequest={onDecideAccessRequest}
             onOpenAccessRequest={onOpenAccessRequest}
             scroll={scroll}
@@ -1712,9 +1712,8 @@ function dayLabel(value: string, now = new Date()): string {
  * the person reads what it names (`lib/activity-events.ts`) or chooses Mark
  * all read, so Unread is a list to work through rather than one glance.
  */
-function ActivitySection({ accessDecisionFailed, accessRequests, attentionComplete, guest, onDecideAccessRequest, onOpenAccessRequest, scroll }: {
+function ActivitySection({ accessDecisionFailed, accessRequests, attentionComplete, onDecideAccessRequest, onOpenAccessRequest, scroll }: {
   accessDecisionFailed: boolean;
-  guest: boolean;
   accessRequests: readonly ConversationAccessRequestItem[];
   attentionComplete: boolean;
   onDecideAccessRequest: (request: ConversationAccessRequestItem, decision: AccessDecision) => void;
@@ -1727,22 +1726,16 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
   const [chip, setChip] = useState<ActivityChip>('all');
   const only: ActivityFilter | null = chip === 'mentions' ? 'mentions' : null;
   // A start names its starter by id; the name is the member directory's, the
-  // same read the Channel feed names its authors from. A guest has no
-  // directory and sees the label the server sent.
-  const members = useQuery({
-    queryKey: ['workspace-members'],
-    queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
-    enabled: Boolean(api) && !guest,
-    staleTime: 60_000,
-  });
+  // same read the Channel feed names its authors from.
+  const members = useWorkspaceMembers(api);
   const actorMember = (item: ActivityItem): WorkspaceMember | undefined =>
     members.data?.find((member) => member.id === item.actorUserId);
   const actorName = (item: ActivityItem, member: WorkspaceMember | undefined): string => item.actorLabel
     || member?.name
     || 'Someone';
   // Who acted, drawn as they are everywhere else: Rally's mark, or the
-  // person's own avatar. A guest has no directory, so a person it cannot find
-  // is drawn from the name the row carries.
+  // person's own avatar. A person the directory cannot find is drawn from the
+  // name the row carries.
   const actorBadge = (item: ActivityItem, member: WorkspaceMember | undefined, name: string): TileBadge => ({
     key: 'actor',
     shape: 'circle',
