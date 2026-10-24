@@ -482,7 +482,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             }}
             onAbandonSignIn={abandonAccountSignIn}
             onInvitationPromptDismiss={clearPendingInvitation}
-            onAddMembers={canInvite ? () => setAddMembersOpen(true) : undefined}
+            onAddMembers={() => setAddMembersOpen(true)}
+            canAddMembers={canInvite}
             onOpenSettings={() => { void desktopBridge().openSettings(); }}
             onSignOut={() => {
               if (impersonator) void endSupportSession().catch(() => undefined);
