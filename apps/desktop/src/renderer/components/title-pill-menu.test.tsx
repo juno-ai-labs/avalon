@@ -171,6 +171,33 @@ describe('a title pill menu with levels', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Thread menu: Launch' })).toHaveFocus(), { timeout: 5000 });
   });
 
+  it('exports the thread to PDF from More, and holds the row while one is being prepared', async () => {
+    const onSelect = vi.fn();
+    const { unmount } = renderChannelPill({ exportPdf: { pending: false, onSelect } });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'More' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Export conversation to PDF' }));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    unmount();
+
+    renderChannelPill({ exportPdf: { pending: true, onSelect } });
+    openMenu();
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'More' }));
+    expect(await screen.findByRole('menuitem', { name: 'Exporting conversation…' })).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  it('offers More on a breakout that can only export', async () => {
+    const onSelect = vi.fn();
+    render(<Tooltip.Provider><TitlePill level={{ key: 'breakout:b1', icon: null, title: 'Pricing', label: 'Breakout menu: Pricing',
+      menu: <BreakoutMenu breakout={{ substreamId: 'b1', title: 'Pricing' }} channel={{ id: 'c1', title: 'Launch' }}
+        exportPdf={{ pending: false, onSelect }} participants={[]} presentUserIds={[]} />,
+    }} /></Tooltip.Provider>);
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Breakout menu: Pricing' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'More' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Export conversation to PDF' }));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
   it('has no Merge row where nothing can merge', async () => {
     renderChannelPill();
     openMenu();

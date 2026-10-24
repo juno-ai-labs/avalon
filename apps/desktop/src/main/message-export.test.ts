@@ -111,8 +111,21 @@ describe('message export requests', () => {
     ['a logo that is not a PNG data URL', { logoDataUrl: 'https://example.com/mark.png' }],
     ['a logo carrying something other than base64', { logoDataUrl: 'data:image/png;base64,<script>' }],
     ['an unknown format', { format: 'svg' as MessageExportRequest['format'] }],
+    ['one message past its bound', { contentHtml: 'x'.repeat(600_001) }],
+    ['a conversation as a picture', { scope: 'conversation' as const, format: 'image' as const }],
   ])('rejects %s', (_label, overrides) => {
     expect(() => parseMessageExportRequest(request(overrides))).toThrow('Invalid message export request');
+  });
+
+  it('names the field it rejected', () => {
+    expect(() => parseMessageExportRequest(request({ scope: 'conversation', format: 'image' })))
+      .toThrow('Invalid message export request: format:custom');
+  });
+
+  it('accepts a whole conversation past one message\'s bound', () => {
+    const contentHtml = '<p>Turn</p>'.repeat(60_001);
+    expect(parseMessageExportRequest(request({ scope: 'conversation', format: 'pdf', contentHtml })))
+      .toMatchObject({ scope: 'conversation', format: 'pdf' });
   });
 });
 

@@ -1,7 +1,7 @@
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import markUrl from '@rally/ui/assets/rally-mark.png';
-import type { MessageExportFormat, MessageExportResult } from '../../common/message-export';
+import type { MessageExportFormat, MessageExportResult, MessageExportScope } from '../../common/message-export';
 import { desktopBridge } from './platform';
 
 /**
@@ -74,12 +74,14 @@ export async function saveMessageExport(input: {
   content: React.ReactElement;
   fileName: string;
   format: MessageExportFormat;
+  scope?: MessageExportScope;
 }): Promise<MessageExportResult> {
   const [contentHtml, logoDataUrl] = [renderToHtml(input.content), await rallyMarkDataUrl()];
   return await desktopBridge().exportMessage({
     contentHtml,
     fileName: input.fileName,
     format: input.format,
+    ...(input.scope ? { scope: input.scope } : {}),
     logoDataUrl,
   });
 }

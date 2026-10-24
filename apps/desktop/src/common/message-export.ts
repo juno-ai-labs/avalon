@@ -9,8 +9,18 @@
 
 export type MessageExportFormat = 'image' | 'pdf';
 
+/**
+ * What the HTML holds: one message, or a whole Thread or Breakout. A
+ * conversation is always a PDF, since a picture of one would be a strip no
+ * one could read, and it carries no size bound of its own: the person asked
+ * for all of it, and a ceiling would refuse exactly the long ones.
+ */
+export type MessageExportScope = 'message' | 'conversation';
+
 export interface MessageExportRequest {
   format: MessageExportFormat;
+  /** Absent means `message`, which is what every request was before conversations. */
+  scope?: MessageExportScope | undefined;
   /**
    * The message's markdown, already rendered to HTML by `MarkdownBody`. It is
    * sent as HTML rather than as markdown because there is exactly one markdown

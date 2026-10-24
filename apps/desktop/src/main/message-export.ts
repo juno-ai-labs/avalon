@@ -1,3 +1,4 @@
+import { describeZodIssues } from '@rally/contracts/zod-diagnostics';
 import { z } from 'zod';
 import {
   MESSAGE_EXPORT_FILE_NAME_PATTERN,
@@ -60,11 +61,19 @@ const DOCUMENT_TTL_MS = 30_000;
 const MAX_CONTENT_HTML_LENGTH = 600_000;
 const MAX_LOGO_LENGTH = 400_000;
 
+// One message is bounded; a whole conversation is not. See `MessageExportScope`.
 const MessageExportRequestSchema = z.object({
   format: z.enum(['image', 'pdf']),
-  contentHtml: z.string().min(1).max(MAX_CONTENT_HTML_LENGTH),
+  scope: z.enum(['message', 'conversation']).optional(),
+  contentHtml: z.string().min(1),
   fileName: z.string().regex(MESSAGE_EXPORT_FILE_NAME_PATTERN),
   logoDataUrl: z.string().max(MAX_LOGO_LENGTH).regex(/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/u),
+}).superRefine((request, context) => {
+  if (request.scope === 'conversation') {
+    if (request.format !== 'pdf') context.addIssue({ code: 'custom', path: ['format'], message: 'A conversation exports as a PDF' });
+  } else if (request.contentHtml.length > MAX_CONTENT_HTML_LENGTH) {
+    context.addIssue({ code: 'custom', path: ['contentHtml'], message: 'Too long for one message' });
+  }
 });
 
 /**
@@ -87,7 +96,7 @@ export function isMessageExportUrl(rawUrl: string): boolean {
 /** Parses an IPC payload into a request, or throws. */
 export function parseMessageExportRequest(value: unknown): MessageExportRequest {
   const parsed = MessageExportRequestSchema.safeParse(value);
-  if (!parsed.success) throw new Error('Invalid message export request');
+  if (!parsed.success) throw new Error(`Invalid message export request: ${describeZodIssues(parsed.error)}`);
   return parsed.data;
 }
 
@@ -506,10 +515,21 @@ ${syntax}
     padding: 3px 9px;
   }
   .mention-text-fallback { color: #3d3f33; font-weight: 560; }
+  /* A whole conversation: its title, then one section per turn, each under who
+     said it and when. The feed's bubbles and alignment are a screen's way of
+     telling speakers apart; on paper the byline does that alone. */
+  .markdown-body .export-conversation-title { margin: 0 0 18px; }
+  .export-turn { border-top: 1px solid #e7e5da; padding: 14px 0 4px; }
+  .export-turn:first-of-type { border-top: 0; padding-top: 0; }
+  .export-turn-byline { align-items: baseline; display: flex; gap: 8px; margin-bottom: 6px; }
+  .export-turn-author { color: #24251c; font-size: 13px; font-weight: 640; }
+  .export-turn-time { color: #8a8b80; font-size: 12px; }
+  .export-turn-body > :first-child { margin-top: 0; }
+  .export-turn-body > :last-child { margin-bottom: 0; }
   /* Paged output only: a heading stranded at the foot of a page reads as a
      heading for nothing, and a table split across pages loses its header. */
   blockquote, table, .markdown-code-block { break-inside: avoid-page; }
-  h1, h2, h3, h4 { break-after: avoid-page; break-inside: avoid-page; }
+  h1, h2, h3, h4, .export-turn-byline { break-after: avoid-page; break-inside: avoid-page; }
   `;
 }
 

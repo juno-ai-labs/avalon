@@ -409,8 +409,9 @@ keyboard focus on its frame, so ArrowLeft and Escape still return to the root.
   color** (the same choice as the pill's icon), **Pinned in
   my sidebar** (the sidebar's own pin action, lent through `useUiStore.pinChannel`),
   **Public to organization** (a switch both ways; a refusal to make it private
-  names what holds it public), Import updates, host extras, other resources, and
-  **Archive thread** last.
+  names what holds it public), Import updates, **Export conversation to PDF**
+  (Mac app only; see [`message-export.md`](message-export.md#a-whole-conversation)),
+  host extras, other resources, and **Archive thread** last.
 - **Channel menu** (`ChannelContainerMenu`, on the Channel screen): tiles for
   Add people, Rename, Copy link (the Channel's `/s/` address) and More; People
   (the Channel's members, with **Remove from channel** or **Leave the
@@ -429,7 +430,8 @@ keyboard focus on its frame, so ArrowLeft and Escape still return to the root.
 - **Breakout menu:** root header is the thread it belongs to (with **Show in
   thread**) and the message it started from. People (inviting to the
   Breakout alone) and Sidekicks as above;
-  More is Icon and color, **Public to organization**, and **Archive breakout** last.
+  More is Icon and color, **Public to organization**, **Export conversation to
+  PDF** (Mac app only), and **Archive breakout** last.
 - **Memory** (thread, Breakout and Channel menus, `TitleMenuMemory`): what
   Rally remembers about this conversation alone, newest first, drawn by
   `MemoryFactRows` (`packages/ui`), the same renderer the Settings sections

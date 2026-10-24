@@ -70,7 +70,9 @@ import { WorkstreamGlyph, workstreamMark } from '@rally/ui/components/workstream
 import { RelativeTime } from '../components/relative-time';
 import { BreakoutOrigin, breakoutOriginMessages, originExcerpt } from '../components/breakout-origin';
 import { formatDateTime } from '../lib/format';
-import { desktopBridge } from '../lib/platform';
+import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
+import { saveConversationExport } from '../components/conversation-export';
+import { logError } from '../../common/logger';
 import { layoutKey, readArtifactPanel, writeLayout } from '../lib/desktop-layout';
 import {
   currentSurfaceEntrypoint,
@@ -94,7 +96,9 @@ import {
   orderedTranscriptMessages,
   removeTranscriptOverlay,
   setTranscriptElicitationState,
+  TRANSCRIPT_RANGE_BLOCK_SIZE,
   transcriptCoverageAdvanced,
+  transcriptGaps,
   transcriptOverlaysQueryKey,
   type TranscriptOverlay,
   upsertTranscriptOverlay,
@@ -1126,6 +1130,11 @@ export interface ConversationHeaderContext {
   origin?: { byline: string; text: string } | undefined;
   /** Adding people to this conversation from inside its title menu. */
   people?: TitleMenuPeople | undefined;
+  /**
+   * Saves the whole conversation as a PDF; absent where nothing can save a
+   * file (the browser). `run` rejects when the export failed, for the host to say so.
+   */
+  exportPdf?: { pending: boolean; run: () => Promise<void> } | undefined;
 }
 
 export interface ConversationSubstreamLaunch {
@@ -2287,6 +2296,50 @@ function ConversationSurfaceContent({
       if (activeConversationAddressRef.current === conversationAddress) setLoadingOlder(false);
     }
   }, [conversationAddress, feedLive, loadTranscriptRange, queryClient, transcriptQueryKey]);
+  // The whole conversation as a PDF. The feed holds only the pages someone has
+  // scrolled through, so every missing range is read first, a page at a time,
+  // as scrolling back would read it; the feed keeps them afterwards.
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const exportPdf = async (): Promise<void> => {
+    const stillCurrent = (): boolean => activeConversationAddressRef.current === conversationAddress;
+    setExportingPdf(true);
+    try {
+      for (;;) {
+        if (!stillCurrent()) return;
+        const snapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(transcriptQueryKey);
+        if (!snapshot) throw new Error('The conversation has not loaded yet');
+        const gap = transcriptGaps(snapshot)[0];
+        if (!gap) break;
+        try {
+          await loadTranscriptRange({
+            snapshotId: snapshot.snapshotId,
+            range: {
+              startInclusive: gap.startInclusive,
+              endExclusive: Math.min(gap.endExclusive, gap.startInclusive + TRANSCRIPT_RANGE_BLOCK_SIZE),
+            },
+            resumeAfterEventSequence: snapshot.eventSequence,
+          });
+        } catch (error) {
+          if (error instanceof ApiError && error.code === 'transcript_snapshot_changed') continue;
+          throw error;
+        }
+        const next = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(transcriptQueryKey);
+        if (!next || (next.snapshotId === snapshot.snapshotId && !transcriptCoverageAdvanced(snapshot, next))) {
+          throw new Error(`Transcript range ${gap.startInclusive}-${gap.endExclusive} did not load`);
+        }
+      }
+      await saveConversationExport({
+        title: displayedDetail.title,
+        messages: orderedTranscriptMessages(queryClient.getQueryData(transcriptQueryKey), id, visibleMembers),
+        citations,
+      });
+    } catch (error) {
+      logError('rally', 'could not export this conversation as a PDF', error);
+      throw error;
+    } finally {
+      if (stillCurrent()) setExportingPdf(false);
+    }
+  };
   useEffect(() => {
     if (scrollToTurn === null || handledScrollNonce.current === scrollToTurn.nonce) return;
     // The newest row, as a turn just written usually is, is the end: not
@@ -3646,6 +3699,7 @@ function ConversationSurfaceContent({
         openArtifact: sidebarScope === 'workstream' ? sidebarCitations.openPreview : citations.openPreview,
         rename: (title) => renameWorkstream.mutateAsync(title).then(() => undefined),
         setAppearance: socketConnection.setAppearance,
+        exportPdf: desktopServicesAvailable() ? { pending: exportingPdf, run: exportPdf } : undefined,
         people: parentKind === 'workstream' ? {
           ...peopleRanking,
           candidates: visibleMembers,

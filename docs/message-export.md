@@ -7,6 +7,10 @@ offers to save it wherever the person points the dialog. A picture is one tall
 JPEG; a PDF is paginated, with that signature repeated in the footer of every
 page.
 
+A thread's or a breakout's title menu offers the same PDF for the whole
+conversation, under **More → Export conversation to PDF**; see
+[A whole conversation](#a-whole-conversation).
+
 The point is a message that leaves Rally intact: pasted into a deck, mailed to
 someone without a seat, or kept. Everything here is about making the saved file
 look like the turn the person was reading, which is why the markdown is rendered
@@ -18,6 +22,7 @@ by the feed's own component and only the surroundings are new.
 | --- | --- |
 | `apps/desktop/src/common/message-export.ts` | The request and result contract both processes share, the file-type table, and `messageExportFileName` — the one place a message's text becomes a file name. |
 | `apps/desktop/src/renderer/lib/message-export.ts` | The renderer's half: serializes a `MarkdownBody` element to HTML in a detached root, reads the Rally mark out of the bundle once, calls the bridge. |
+| `apps/desktop/src/renderer/components/conversation-export.tsx` | A whole conversation: which turns it prints, their bylines, and the one `MarkdownBody` per turn that goes into the same request. |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MessageActions` — the hover row under every message (Thread, Breakout and Channel), its in-flight and failed states. |
 | `apps/desktop/src/main/message-export.ts` | Everything about the card: the document, its stylesheet, the splash, the page footer, request validation, and `MessageExporter`, which drives one render at a time and writes the file. |
 | `apps/desktop/src/main/index.ts` | The Electron adapter — the hidden `BrowserWindow`, the `rallywithai-export` protocol handler, the save dialog, and the `message-export:save` IPC handler. |
@@ -131,6 +136,32 @@ Headings carry `break-after: avoid-page`, and tables, block quotes, and code
 blocks `break-inside: avoid-page`, so a heading is never stranded at the foot of
 a page and a table is not split away from its header.
 
+### A whole conversation
+
+**Export conversation to PDF** in a thread's or a breakout's **More** menu
+sends the same request with `scope: 'conversation'`. Three things differ from
+one message:
+
+1. **The history is read first.** The feed holds only the pages someone has
+   scrolled through. `ConversationSurface` reads every gap in the transcript
+   snapshot, oldest first and one `TRANSCRIPT_RANGE_BLOCK_SIZE` page at a
+   time, through the socket's own `loadTranscriptRange`, retrying on
+   `transcript_snapshot_changed` the way paging back does. The pages stay in
+   the feed afterwards.
+2. **Only what was said is printed.** `conversationExportTurns` keeps text
+   turns and a Sidekick's delivered results, each under the byline the feed
+   gives it and an absolute date and time. Thinking, tools, system notes,
+   open questions and undelivered messages are left out. A person's words are
+   drawn as typed (`verbatim`); Rally's carry their citations.
+3. **There is no size bound.** A conversation has no `contentHtml` ceiling,
+   because the person asked for all of it and a ceiling would refuse exactly
+   the long ones. It is always a PDF: the schema rejects a conversation asked
+   for as a picture.
+
+A breakout prints its own turns, not the thread turns it started from. The row
+is held as **Exporting conversation…** while one is being prepared, and a
+failure opens the menu's usual failure dialog.
+
 ### One at a time
 
 `MessageExporter` serializes every export through a promise chain. Each one owns
@@ -224,8 +255,12 @@ main-process capabilities and a browser has neither.
   HTTPS, matching what the feed itself will already have fetched.
 - **A message with no text** has no actions at all: the row only renders for a
   finished turn that has some.
-- **A payload past its bounds** — HTML over 600,000 characters, a mark over
-  400,000 — is rejected as an invalid request rather than rendered.
+- **A payload past its bounds** — one message's HTML over 600,000 characters, a
+  mark over 400,000 — is rejected as an invalid request rather than rendered.
+  The error names the rejected field. A conversation's HTML has no bound.
+- **A very long conversation** reads its history a page at a time before
+  anything renders, and still has the 60-second render cap above. Neither has
+  been measured against a long thread.
 - **The Rally mark failing to load** fails that export and is retried on the
   next, rather than being cached as a rejection.
 
@@ -281,6 +316,28 @@ Two traps:
   its `../lib/platform` mock. Export buttons and the message-text context menu
   both read it on mount, and a mock that only exports `desktopBridge` throws
   there.
+
+### 2026-10-24 — A whole Thread or Breakout can be saved as a PDF
+
+**What changed:** The thread and breakout menus gained **Export conversation
+to PDF**. The request gained `scope`, and a `conversation` scope drops the
+`contentHtml` bound and must be a PDF. The card's stylesheet gained the
+`.export-turn` rules for a title and per-turn bylines. A rejected request now
+names the field it rejected.
+
+**Why:** People asked to take a whole conversation out of Rally, not one turn
+at a time. Reusing this module kept the one-renderer rule: each turn is still
+drawn by `MarkdownBody`, and Chromium, the protocol and the save dialog are
+unchanged. A separate print path (the browser's own print dialog, or a PDF
+library in the renderer) was rejected because it would need a second
+stylesheet and a second markdown rendering. The feed's paging is reused for
+the same reason: the snapshot is the one place the transcript lives.
+
+**What a future change has to respect:** the export reads every page of a
+conversation into the live feed's cache. A change that windows or evicts
+loaded ranges has to give the export another way to read the full history.
+The conversation scope has no size bound by design; if one is wanted, its
+number is the team's to set.
 
 ### 2026-08-30 — Mermaid diagrams save as source
 

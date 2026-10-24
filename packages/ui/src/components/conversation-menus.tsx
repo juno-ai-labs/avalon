@@ -10,6 +10,7 @@ import {
   IconCornerUpLeft,
   IconDots,
   IconFiles,
+  IconFileTypePdf,
   IconHexagons,
   IconLink,
   IconPencil,
@@ -106,6 +107,20 @@ function ResolveRow({ actions, target, noun }: {
     <IconCheck aria-hidden="true" size={17} stroke={1.7} />
     <span className="title-menu-item-copy">Resolve {noun}</span>
   </MenuActionItem>;
+}
+
+/**
+ * Saving the whole conversation as a PDF. `pending` holds the row while one
+ * is being prepared, since loading a long history takes a moment and a second
+ * press would only queue a second save dialog behind the first.
+ */
+export interface ConversationPdfExport { pending: boolean; onSelect: () => void }
+
+function ExportPdfRow({ exportPdf }: { exportPdf?: ConversationPdfExport | undefined }): React.JSX.Element | null {
+  if (!exportPdf) return null;
+  return <TitleMenuItem disabled={exportPdf.pending} icon={<IconFileTypePdf aria-hidden="true" size={16} stroke={1.8} />} onSelect={exportPdf.onSelect}>
+    {exportPdf.pending ? 'Exporting conversation…' : 'Export conversation to PDF'}
+  </TitleMenuItem>;
 }
 
 /** How many Breakouts the Breakouts view lists before "Show N more". */
@@ -571,6 +586,7 @@ export function ChannelMenu({
   addSidekick,
   appearance,
   breakouts,
+  exportPdf,
   extraActions,
   memory,
   onImportUpdates,
@@ -596,6 +612,7 @@ export function ChannelMenu({
   /** The Channel's icon-and-colour choice, as a submenu, when the viewer may change it. */
   appearance?: ReactNode;
   breakouts: readonly BreakoutMark[] | undefined;
+  exportPdf?: ConversationPdfExport | undefined;
   /** Host-only items placed in **More** after the shared ones, e.g. a debug copy. */
   extraActions?: ReactNode;
   memory?: TitleMenuMemory | undefined;
@@ -646,6 +663,7 @@ export function ChannelMenu({
       {pinned && <SwitchRow checked={pinned.on} icon={<IconPin aria-hidden="true" size={16} stroke={1.8} />} label="Pinned in my sidebar" onChange={pinned.onChange} />}
       <PublicSwitch actions={actions} />
       {onImportUpdates && <TitleMenuItem icon={<IconCloudDownload aria-hidden="true" size={16} stroke={1.8} />} onSelect={onImportUpdates}>Import updates</TitleMenuItem>}
+      <ExportPdfRow exportPdf={exportPdf} />
       {extraActions}
       {onOpenResource && <ResourceList label="Resources" onOpen={onOpenResource} resources={otherResources} />}
       {actions?.onArchive && <>
@@ -760,6 +778,7 @@ export function BreakoutMenu({
   appearance,
   breakout,
   channel,
+  exportPdf,
   memory,
   onOpenSidekick,
   onRefreshSidekicks,
@@ -778,6 +797,7 @@ export function BreakoutMenu({
   addSidekick?: ReactNode;
   /** The Breakout's icon-and-colour choice, as a submenu, when the viewer may change it. */
   appearance?: ReactNode;
+  exportPdf?: ConversationPdfExport | undefined;
   memory?: TitleMenuMemory | undefined;
   onOpenSidekick?: (id: string) => void;
   onRefreshSidekicks?: (() => void) | undefined;
@@ -806,8 +826,9 @@ export function BreakoutMenu({
     return <>
       {appearance}
       <PublicSwitch actions={actions} />
+      <ExportPdfRow exportPdf={exportPdf} />
       {actions?.onArchive && <>
-        {(appearance || actions.onSetPublic) && <TitleMenuSeparator />}
+        {(appearance || actions.onSetPublic || exportPdf) && <TitleMenuSeparator />}
         <TitleMenuItem danger icon={<IconArchive aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => actions.onArchive?.(breakout)}>Archive breakout</TitleMenuItem>
       </>}
     </>;
@@ -827,7 +848,7 @@ export function BreakoutMenu({
       <ActionTile disabled={!people} icon={<IconUserPlus aria-hidden="true" size={20} stroke={1.6} />} label="Add people" onSelect={openLevel(nav, PEOPLE_VIEW)} />
       {actions?.onRename && <ActionTile icon={<IconPencil aria-hidden="true" size={20} stroke={1.6} />} label="Rename" onSelect={() => actions.onRename?.(breakout)} />}
       {actions?.onCopyLink && <ActionTile icon={<IconLink aria-hidden="true" size={20} stroke={1.6} />} label="Copy link" onSelect={() => actions.onCopyLink?.(breakout)} />}
-      {(appearance || actions?.onSetPublic || actions?.onArchive) && <ActionTile icon={<IconDots aria-hidden="true" size={20} stroke={1.6} />} label="More" onSelect={openLevel(nav, MORE_VIEW)} />}
+      {(appearance || actions?.onSetPublic || actions?.onArchive || exportPdf) && <ActionTile icon={<IconDots aria-hidden="true" size={20} stroke={1.6} />} label="More" onSelect={openLevel(nav, MORE_VIEW)} />}
     </ActionTiles>
     <MergeRow actions={actions} />
     <ResolveRow actions={actions} noun="Breakout" target={breakout} />

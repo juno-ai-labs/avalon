@@ -1,5 +1,5 @@
 import { AcknowledgedErrorDialog } from '../components/acknowledged-error-dialog';
-import { BreakoutMenu, ChannelMenu, MergeDestinationLabel, type ConversationRowTarget } from '@rally/ui/components/conversation-menus';
+import { BreakoutMenu, ChannelMenu, MergeDestinationLabel, type ConversationPdfExport, type ConversationRowTarget } from '@rally/ui/components/conversation-menus';
 import type { BreakoutMark } from '@rally/ui/components/breakout-marks';
 import { SplitConversationLayout, type SplitConversationMode } from '@rally/ui/components/split-conversation';
 import { TitlePillClose, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
@@ -412,6 +412,21 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     });
   };
   const menuOperation = useRef(0);
+  // A failed export says so in the same dialog the menu's other failures use.
+  const exportPdf = (context: ConversationHeaderContext | null): ConversationPdfExport | undefined => {
+    const run = context?.exportPdf?.run;
+    if (!run) return undefined;
+    return {
+      pending: context.exportPdf!.pending,
+      onSelect: () => {
+        setSubstreamMenuFailure(null);
+        void run().catch(() => setSubstreamMenuFailure({
+          title: 'The conversation couldn’t be exported',
+          copy: 'The conversation couldn’t be saved as a PDF. Try again.',
+        }));
+      },
+    };
+  };
   const copyRowLink = (target: ConversationRowTarget): void => {
     if (!session?.workspace) return;
     const workspace = session.workspace;
@@ -926,6 +941,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         /> : undefined}
         addSidekick={(context || channelRail) && <SidekickPicker substreamId="0" workstreamId={id} />}
         breakouts={breakoutMarks}
+        exportPdf={exportPdf(context)}
         memory={api && !conversationScoped ? memoryLevel(threadMemory) : undefined}
         // The update re-runs the import in the embedded browser, which only the Mac app has.
         onImportUpdates={api && desktopServicesAvailable() && importedSourceUpdatable(importedSource.data) ? () => setImportUpdateOpen(true) : undefined}
@@ -995,6 +1011,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         />}
         breakout={{ substreamId: breakoutId, title }}
         channel={{ id, title: railTitle ?? '', appearance: channelAppearance }}
+        exportPdf={exportPdf(context)}
         memory={api ? memoryLevel(breakoutMemory) : undefined}
         onShowInChannel={mainVisible ? () => showInChannel(openBreakoutMark?.originTurnId) : undefined}
         origin={context.origin}
