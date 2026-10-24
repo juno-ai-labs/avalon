@@ -86,6 +86,14 @@ export const AutomationActorRequestSchema = z.strictObject({
 });
 export type AutomationActorRequest = z.infer<typeof AutomationActorRequestSchema>;
 
+export const AutomationRunListRequestSchema = AutomationActorRequestSchema.extend({
+  before: z.strictObject({ createdAt: z.number().int().nonnegative(), runId: IdSchema }).optional(),
+  limit: z.number().int().positive().optional(),
+});
+export type AutomationRunListRequest = z.infer<typeof AutomationRunListRequestSchema>;
+export const AutomationRunReadRequestSchema = AutomationActorRequestSchema.extend({ runId: IdSchema });
+export type AutomationRunReadRequest = z.infer<typeof AutomationRunReadRequestSchema>;
+
 /** Host-private preparation state, never part of a model-advertised input. */
 export const SidekickPrepareDelegationRequestSchema = z.strictObject({
   ...Addressed, userId: UserIdSchema, allowed: z.boolean(), operationId: IdSchema,

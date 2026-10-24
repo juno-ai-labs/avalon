@@ -33,6 +33,7 @@ const DISPATCHED_OPERATIONS = [
   "fail",
   "settleResidualReceipts",
   "receiptForCall",
+  "receiptsForCalls",
   "receiptsForRun",
   "canvaCleanupForRun",
   "canvaTransactionOwned",

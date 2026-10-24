@@ -3599,7 +3599,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         const snapshot = { snapshotId: "product-range", snapshotThrough: through, snapshotAtUtc: new Date().toISOString() };
         const range = this.transcript.range(snapshot, { startInclusive: start, endExclusive: end }, "requested", false);
         return jsonResponse(ReadTranscriptResultSchema.parse({ title: root.title, text: conversationAsText(range.turns),
-          throughSequence: through, nextAfterSequence: end <= through ? end - 1 : null }));
+          throughSequence: through, nextAfterSequence: end <= through ? end - 1 : null,
+          ...(request.input.includeTurns ? { turns: range.turns } : {}) }));
       }
       if (request.operation === "read_resource_authorization_recovery") {
         await this.product.authorize(current);
