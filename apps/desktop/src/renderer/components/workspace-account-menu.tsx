@@ -1,7 +1,8 @@
 import { ErrorNotice } from './primitives';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { IconDeviceDesktopDown, IconHexagons, IconLogout, IconSettings } from '@tabler/icons-react';
+import { MenuActionItem } from '@rally/ui/components/menu-action-item';
+import { IconDeviceDesktopDown, IconHexagons, IconLogout, IconSettings, IconUserPlus, IconUsers } from '@tabler/icons-react';
 import { desktopBridge } from '../lib/platform';
 import { useDownloadedUpdate } from '../lib/use-downloaded-update';
 import type { SupportPerson, SupportWorkspace, WorkspaceAttention } from '@rally/contracts';
@@ -50,6 +51,10 @@ export interface WorkspaceAccountMenuProps {
    * the creation stands down, and a sign-in that still lands is kept. */
   onAbandonSignIn: () => void;
   onInvitationPromptDismiss: () => void;
+  /** Opens the add-members dialog. */
+  onAddMembers: () => void;
+  /** Whether the viewer may invite. When not, Add new member stays, disabled, and says why. */
+  canAddMembers?: boolean;
   onOpenSettings: () => void;
   onSignOut: () => void;
   /** Resolves true once the switch has taken; the menu closes on that and stays
@@ -69,6 +74,8 @@ export interface WorkspaceAccountMenuProps {
   loadSupportPeople?: (workspaceId: string) => Promise<SupportPerson[]>;
   onStartSupportSession?: (workspace: SupportWorkspace, person: SupportPerson) => Promise<void>;
 }
+
+const ADD_MEMBERS_DISABLED_REASON = 'Only administrators can add members.';
 
 /** Deployment tags disambiguate workspaces when multiple deployments are configured. */
 function regionLabel(region: RallyRegion): string {
@@ -131,6 +138,8 @@ export function WorkspaceAccountMenu({
   onMenuOpen,
   onAbandonSignIn,
   onInvitationPromptDismiss,
+  onAddMembers,
+  canAddMembers = false,
   onOpenSettings,
   onSignOut,
   onSwitchWorkspace,
@@ -265,6 +274,15 @@ export function WorkspaceAccountMenu({
             )}
             {presentation === 'grok' && (
               <>
+                {!guest && <MenuActionItem className="menu-item account-menu-item" disabled={!canAddMembers}
+                  disabledReason={ADD_MEMBERS_DISABLED_REASON} onSelect={onAddMembers} tooltipSide="right">
+                  <IconUserPlus aria-hidden="true" />
+                  <span>Add new member</span>
+                </MenuActionItem>}
+                {!guest && <DropdownMenu.Item className="menu-item account-menu-item" onSelect={() => void desktopBridge().openSettings('members')}>
+                  <IconUsers aria-hidden="true" />
+                  <span>Members</span>
+                </DropdownMenu.Item>}
                 {!guest && <DropdownMenu.Item className="menu-item account-menu-item" onSelect={() => void desktopBridge().openSidekicks()}>
                   <IconHexagons aria-hidden="true" />
                   <span>Sidekicks</span>
@@ -400,6 +418,13 @@ export function WorkspaceAccountMenu({
                   <small>Organization</small>
                 </DropdownMenu.Label>
                 <DropdownMenu.Separator className="menu-separator" />
+                {!guest && <MenuActionItem disabled={!canAddMembers}
+                  disabledReason={ADD_MEMBERS_DISABLED_REASON} onSelect={onAddMembers} tooltipSide="right">
+                  Add new member
+                </MenuActionItem>}
+                {!guest && <DropdownMenu.Item asChild className="menu-item">
+                  <button onClick={() => void desktopBridge().openSettings('members')} type="button">Members</button>
+                </DropdownMenu.Item>}
                 {!guest && <DropdownMenu.Item asChild className="menu-item">
                   <button onClick={() => void desktopBridge().openSidekicks()} type="button">Sidekicks</button>
                 </DropdownMenu.Item>}
