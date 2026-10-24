@@ -38,7 +38,9 @@ Sharing gives access to one conversation and nothing around it:
   Thread's main conversation, its other Breakouts, or its list of participants.
 
 Inside what you shared, a guest can read and write messages and open the
-artifacts and files that belong to that conversation. They get access to the
+artifacts and files that belong to that conversation. A guest you shared a
+Thread with can also start Breakouts from it, which begin private to them like
+anyone else's. They get access to the
 conversation itself, not loose copies of the files.
 
 > [!IMPORTANT]
