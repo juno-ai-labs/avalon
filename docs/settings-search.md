@@ -208,7 +208,10 @@ child page has its own deep link and its own search section, which a scroll
 position does not.
 
 **Consequences:** The `members`, `invitations` and invite-form definitions
-declare `members` as their section, so search lands there. A guest does not
+declare `members` as their section, so search lands there. The invitation
+accepted/declined email links to `settings/members`, which the deep-link
+grammar in `@rally/contracts` now accepts; a link to `settings/workspace` still
+opens Organization. A guest does not
 see the page, as with every other Organization section.
 
 ### 2026-10-07 — Every connection gets its own page

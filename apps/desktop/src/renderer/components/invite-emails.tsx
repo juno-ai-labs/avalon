@@ -77,21 +77,23 @@ export function InviteEmailField({ invite, disabled }: { invite: InviteEmails; d
   );
 }
 
-export type InviteMembersApi = Pick<RallyApi, 'createWorkspaceInvitation' | 'getWorkspaceInvitations' | 'getWorkspaceMembers'>;
+export type InviteMembersApi = Pick<RallyApi, 'createWorkspaceInvitation' | 'getWorkspaceInvitees' | 'getWorkspaceMembers'>;
 
 /**
  * Invites each address as a member, one at a time, and reports which failed.
  * An address already pending or already an active member counts as invited
- * without a second email.
+ * without a second email: a second invitation would revoke the first link.
+ * Pending addresses come from `/workspace/invitees`, which lists every one;
+ * `/workspace/invitations` stops at the newest 100 of any status.
  */
 export async function inviteMembers(
   api: InviteMembersApi,
   addresses: readonly string[],
   onInvited: (email: string) => void,
 ): Promise<{ failures: string[] }> {
-  const [pendingInvitations, currentMembers] = await Promise.all([api.getWorkspaceInvitations(), api.getWorkspaceMembers()]);
+  const [pendingInvitees, currentMembers] = await Promise.all([api.getWorkspaceInvitees(), api.getWorkspaceMembers()]);
   const alreadyInvited = new Set([
-    ...pendingInvitations.filter((invite) => invite.status === 'pending').map((invite) => invite.email.toLowerCase()),
+    ...pendingInvitees.map((invitee) => invitee.email.toLowerCase()),
     ...currentMembers.filter((member) => member.status === 'active').map((member) => member.email.toLowerCase()),
   ]);
   const failures: string[] = [];

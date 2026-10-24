@@ -5,7 +5,7 @@ import { AddMembersDialog } from './add-members-dialog';
 
 function setup() {
   const api = {
-    getWorkspaceInvitations: vi.fn(async () => [{ email: 'pending@example.com', status: 'pending' }]),
+    getWorkspaceInvitees: vi.fn(async () => [{ email: 'Pending@example.com', invitedAt: '2026-10-24T00:00:00.000Z' }]),
     getWorkspaceMembers: vi.fn(async () => [{ email: 'member@example.com', status: 'active' }]),
     createWorkspaceInvitation: vi.fn<(email: string, role: string) => Promise<object>>(async () => ({})),
   };
