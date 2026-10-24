@@ -446,6 +446,56 @@ describe("a Channel lends its Organization-wide threads to its guests", () => {
   });
 });
 
+describe("a guest who loses a Channel's public thread", () => {
+  /** Every revocation the next writes publish, as `target.scope:target.workstreamId:userId`. */
+  function captureRevocations(): { sent: string[]; restore: () => void } {
+    const queue = Object.getPrototypeOf(env.ACCESS_REVOCATION_QUEUE) as {
+      sendBatch: (messages: Array<{ body: unknown }>) => Promise<void>;
+    };
+    const sent: string[] = [];
+    const spy = vi.spyOn(queue, "sendBatch").mockImplementation(async (messages) => {
+      for (const { body } of messages) {
+        const message = body as { userId: string | null; target: { scope: string; workstreamId?: string } };
+        sent.push(`${message.target.scope}:${message.target.workstreamId ?? ""}:${message.userId ?? ""}`);
+      }
+    });
+    return { sent, restore: () => spy.mockRestore() };
+  }
+  const audience = (spaceId: SpaceId, participantUserIds: UserId[]) => workspace().noteSpaceAudience({
+    workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, audience: { scope: "workspace", participantUserIds },
+  });
+
+  it("given a guest taken out of the Channel, then a revocation naming them reaches every socket they hold on the thread", async () => {
+    const channelId = await channelWithThreads();
+    await audience(channelId, [OWNER, GUEST]);
+    const revocations = captureRevocations();
+
+    await audience(channelId, [OWNER]);
+    revocations.restore();
+
+    // Named, so it reaches the thread's conversations' own sockets and the
+    // Sidekicks it owns, not only the thread's control sockets.
+    expect(revocations.sent.sort()).toEqual([
+      `workstream:${OPEN_THREAD}:${GUEST}`,
+      `workstream_automations:${OPEN_THREAD}:${GUEST}`,
+    ]);
+  });
+
+  it("given another Channel still lends the thread, when the guest leaves one, then nothing is revoked", async () => {
+    const channelId = await channelWithThreads();
+    const elsewhere = await reserveChannel("Elsewhere");
+    await place(elsewhere, OPEN_THREAD);
+    await audience(channelId, [OWNER, GUEST]);
+    await audience(elsewhere, [OWNER, GUEST]);
+    const revocations = captureRevocations();
+
+    await audience(channelId, [OWNER]);
+    revocations.restore();
+
+    expect(revocations.sent).toEqual([]);
+  });
+});
+
 describe("private Channels", () => {
   it("given a Channel made private, when a member who is not in it reads it, then it does not exist for them even through a thread in it", async () => {
     const channelId = await channelWithThreads();
