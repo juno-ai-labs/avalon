@@ -150,7 +150,7 @@ export function WorkspaceAccountMenu({
   onStartSupportSession,
 }: WorkspaceAccountMenuProps): React.JSX.Element {
   // A guest attaches the Sidekicks a conversation offers; the library is for
-  // members, who author them.
+  // members, who author them. A guest sees Members but cannot add one.
   const { guest } = useShellCapabilities();
   const [invitation, setInvitation] = useState<DesktopPendingWorkspaceInvitation | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -279,10 +279,10 @@ export function WorkspaceAccountMenu({
                   <IconUserPlus aria-hidden="true" />
                   <span>Add new member</span>
                 </MenuActionItem>}
-                {!guest && <DropdownMenu.Item className="menu-item account-menu-item" onSelect={() => void desktopBridge().openSettings('members')}>
+                <DropdownMenu.Item className="menu-item account-menu-item" onSelect={() => void desktopBridge().openSettings('members')}>
                   <IconUsers aria-hidden="true" />
                   <span>Members</span>
-                </DropdownMenu.Item>}
+                </DropdownMenu.Item>
                 {!guest && <DropdownMenu.Item className="menu-item account-menu-item" onSelect={() => void desktopBridge().openSidekicks()}>
                   <IconHexagons aria-hidden="true" />
                   <span>Sidekicks</span>
@@ -422,9 +422,9 @@ export function WorkspaceAccountMenu({
                   disabledReason={ADD_MEMBERS_DISABLED_REASON} onSelect={onAddMembers} tooltipSide="right">
                   Add new member
                 </MenuActionItem>}
-                {!guest && <DropdownMenu.Item asChild className="menu-item">
+                <DropdownMenu.Item asChild className="menu-item">
                   <button onClick={() => void desktopBridge().openSettings('members')} type="button">Members</button>
-                </DropdownMenu.Item>}
+                </DropdownMenu.Item>
                 {!guest && <DropdownMenu.Item asChild className="menu-item">
                   <button onClick={() => void desktopBridge().openSidekicks()} type="button">Sidekicks</button>
                 </DropdownMenu.Item>}

@@ -68,6 +68,7 @@ import {
   WorkspaceInvitationPreviewSchema as WireWorkspaceInvitationPreviewSchema,
   WorkspaceInvitationSchema as WireWorkspaceInvitationSchema,
   WorkspaceInviteeSchema,
+  WorkspaceRosterEntrySchema,
   SpaceInviteesSchema,
   type WorkspaceInvitee,
   WorkspaceSchema as WireWorkspaceSchema,
@@ -172,6 +173,7 @@ import type {
   ResourcePage,
   SpaceConversationSummary,
   WorkspaceMember,
+  RosterPerson,
   WorkstreamConnection,
   WorkstreamBoot,
   WorkstreamDetail,
@@ -273,6 +275,7 @@ const wireResourcePageSchema = CursorPageSchema(WireResourceSchema).extend({ com
 const wireMemberPageSchema = z.object({ items: z.array(WireWorkspaceMemberSchema) });
 const wireInvitationPageSchema = z.object({ items: z.array(WireWorkspaceInvitationSchema) });
 const wireInviteePageSchema = z.object({ items: z.array(WorkspaceInviteeSchema) });
+const wireRosterPageSchema = z.object({ items: z.array(WorkspaceRosterEntrySchema) });
 /**
  * A Channel feed page as an API from before 2026-10-13 may still send it, with
  * a `locked` row for a private thread the reader is not in. The client drops
@@ -1099,6 +1102,19 @@ export class RallyApi {
       // member whose role simply has not loaded.
       ...(member.accessClass ? { accessClass: member.accessClass } : {}),
       status: member.status,
+    }));
+  }
+
+  /** The roster a guest may read: names, faces and roles, no addresses. */
+  async getWorkspaceRoster(signal?: AbortSignal): Promise<RosterPerson[]> {
+    const page = await this.request('/workspace/roster', { schema: wireRosterPageSchema, signal });
+    return page.items.map((person) => ({
+      id: person.id,
+      name: person.name,
+      ...(person.avatarUrl ? { avatarUrl: person.avatarUrl } : {}),
+      presentation: person.presentation,
+      role: person.role,
+      accessClass: person.accessClass,
     }));
   }
 
