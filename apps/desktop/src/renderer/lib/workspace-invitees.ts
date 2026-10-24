@@ -15,8 +15,8 @@ export const NO_INVITEES: readonly WorkspaceInvitee[] = [];
 
 /**
  * People invited to the Organization who have not joined, for the pickers that
- * offer them beside members. A guest is never shown the roster, so a guest
- * never asks.
+ * offer them beside members. A guest cannot invite anyone, so a guest never
+ * asks.
  */
 export function useWorkspaceInvitees(api: Pick<RallyApi, 'getWorkspaceInvitees'> | null | undefined, enabled: boolean) {
   return useQuery({

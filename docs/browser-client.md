@@ -576,8 +576,8 @@ late renewal after logout and deadlines beyond the browser timer range.
 `browser-collaboration.test.tsx` mounts the entry and the shell for a guest
 and fails on any request to a route family that refuses guests, so a surface
 that starts reading member-only data for everyone shows up there.
-`apps/api/test/auth-router.test.ts` proves `GET /workspace` answers a guest
-while the member directory stays refused.
+`apps/api/test/auth-router.test.ts` proves `GET /workspace` and the member
+directory answer a guest while the rest of `/workspace` stays refused.
 
 The conversation header exposes rename through the shared conversation
 mutation. A failed rename keeps its draft and shows the API error; success closes

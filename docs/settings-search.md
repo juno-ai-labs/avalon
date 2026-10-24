@@ -66,6 +66,12 @@ own deep link. `sectionLabels` in
 section that nobody named fails the build rather than shipping a search result
 whose page name is blank.
 
+A guest sees every section. The ones a guest cannot open (everything but
+Account, Members and Application, per `GUEST_SETTINGS_SECTIONS`) are drawn
+disabled with the reason in a tooltip, never hidden. A disabled section is left
+out of `SettingsSearchContext.sections`, so search never lands on one, and a
+link that names one opens Account instead.
+
 `connection` is one section shared by every installed connection; the selected
 connection ID names the instance, the same pair a search result carries. Its
 sidebar items, table rows and search entries all set both. Definitions with a
@@ -189,6 +195,24 @@ to land. `components/organization-usage.tsx` draws the section;
 [`local-cache.md`](local-cache.md) owns the row it paints from.
 
 ## Changelog
+
+### 2026-10-24 — A guest sees every section, disabled where they cannot go
+
+**What changed:** A guest's Settings sidebar draws every section. Notifications,
+Organization, Security and Connections are disabled with a tooltip giving the
+reason; Account, Members and Application open as before, and Members sits under
+Organization again. Disabled sections stay out of search.
+
+**Why:** Hiding what a guest could not use left them no hint that it existed or
+why they could not reach it. The rule is now the same as the account menu's:
+never hide, just disable.
+
+**Considered and rejected:** The native `disabled` attribute, which takes the
+button out of the tab order, so a keyboard user would never reach the reason.
+The button uses `aria-disabled` and ignores the click instead.
+
+**Consequences:** A new section a guest cannot open needs nothing extra: it is
+disabled unless added to `GUEST_SETTINGS_SECTIONS`.
 
 ### 2026-10-24 — Members becomes its own page under Organization
 

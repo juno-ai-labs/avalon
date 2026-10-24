@@ -7,6 +7,7 @@ import { WorkspaceAccountMenu } from './workspace-account-menu';
 import { AccountSignInSupersededError, FINISH_SIGN_IN_IN_BROWSER } from '../lib/app-session';
 import { desktopWorkspaceIdentityKey, type DesktopUpdateStatus } from '../../common/desktop';
 import type * as PlatformModule from '../lib/platform';
+import type * as CollaborationSessionModule from '../lib/collaboration-session';
 
 /** Update methods layered over the real bridge while a test sets them. */
 const updateBridge = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }));
@@ -18,6 +19,12 @@ vi.mock('../lib/platform', async (importOriginal) => {
   };
 });
 
+/** Whether the menu is drawn for a guest, as the shell would report it. */
+const shell = vi.hoisted(() => ({ guest: false }));
+vi.mock('../lib/collaboration-session', async (importOriginal) => {
+  const original = await importOriginal<typeof CollaborationSessionModule>();
+  return { ...original, useShellCapabilities: () => ({ host: 'desktop' as const, guest: shell.guest }) };
+});
 
 const currentUser = { id: 'user-1', name: 'Ada', email: 'ada@example.com', timezone: 'America/New_York' };
 const active = {
@@ -134,6 +141,24 @@ describe('organization account menu', () => {
       expect(openSettings).toHaveBeenCalledWith('members');
     } finally {
       updateBridge.current = null;
+    }
+  });
+  it.each(['grok', 'workspace'] as const)('shows a guest Add new member and Sidekicks disabled with a reason, and Members usable (%s)', async (presentation) => {
+    shell.guest = true;
+    try {
+      const props = renderMenu({ presentation, canAddMembers: true });
+      openMenu();
+      const menu = within(screen.getByRole('menu'));
+      const item = (name: string) => menu.getAllByRole('menuitem').find((row) => row.textContent?.trim() === name)!;
+      expect(item('Members')).not.toHaveAttribute('aria-disabled');
+      expect(item('Add new member')).toHaveAttribute('aria-disabled', 'true');
+      expect(item('Sidekicks')).toHaveAttribute('aria-disabled', 'true');
+      fireEvent.click(item('Add new member'));
+      expect(props.onAddMembers).not.toHaveBeenCalled();
+      fireEvent.focus(item('Sidekicks'));
+      expect(await screen.findByRole('tooltip')).toHaveTextContent('Guests use the Sidekicks a conversation offers.');
+    } finally {
+      shell.guest = false;
     }
   });
   it.each([true, false])('keeps compact account actions ordered and usable with organizations enabled=%s', (enabled) => {

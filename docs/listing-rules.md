@@ -88,9 +88,10 @@ it is withheld. Before either has arrived it dials, as it always has for a
 member: a refusal costs one request and drops only Main's own cached entry.
 
 What a guest may *do* is a separate question (`useShellCapabilities().guest`):
-Channel and Space writes, the member directory, imports, connectors and the
-Sidekick library stay a member's. Search, Speak and push registration are
-everyone's, because each answers only for what the person may already reach.
+Channel and Space writes, imports, connectors and the Sidekick library stay a
+member's. The member directory is everyone's: a guest sees who they work with.
+Search, Speak and push registration are everyone's, because each answers only
+for what the person may already reach.
 
 ## Invariants
 
