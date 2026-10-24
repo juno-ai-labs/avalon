@@ -636,8 +636,6 @@ Name every result destination and the action that delivers it: a run must be tol
 to send to an inbox, channel, DM or document.
 For the Sidekick's own reports and updates in Rally, save conversation_post as the
 delivery action so the message appears under the Sidekick's name.
-Pass this delivery choice to delegated agents; if they have
-no conversation_post tool, have them return the result to their coordinator for posting.
 Scheduled result delivery to a workstream is limited to the owning workstream.
 
 The wizard, runs and background agents share one Terminal sandbox; other Sidekicks

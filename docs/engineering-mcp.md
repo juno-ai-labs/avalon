@@ -222,11 +222,6 @@ addressing decides whether Rally responds. Reuse the message operation ID and
 original arguments after an uncertain result; the ordinary receipt reports
 `pending` or `canonical`, not completion of the agent run.
 
-The tool description makes attribution explicit: the message appears authored
-by `userId`, as though that user sent it. This explains the tool's effect without
-prescribing callers' workflows or adding execution restrictions. Sidekick
-delivery guidance lives in [Conversation tools](conversation-tools.md#changelog).
-
 `read_channel`, `read_thread`, and `read_breakout` return plain MCP text, without
 a JSON envelope. Channel reads use SpaceService's normal summary and feed, so
 Thread cards and visible Channel messages have the same access filtering and

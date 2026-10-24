@@ -150,11 +150,9 @@ it.
   run), so the client renders it under the Sidekick's name. When the run was
   woken by an external message (a bound thread's reply), the host copies that
   sender into `externalSource`. A run's system message says its final message
-  stays in the run, so a conversation hears a result only by a post. The post
-  description and plugin instructions direct Sidekicks to use this path for
-  their own reports and updates, preserving Sidekick authorship. Delegated
-  agents without `conversation_post` return results to their coordinator for
-  posting. This is tool-choice guidance; sending permissions remain unchanged.
+  stays in the run, so a conversation hears a result only by a post. Its
+  description and the plugin's instructions steer a Sidekick's own reports
+  through this path.
 - **attach** takes `conversation` and returns
   `{ conversationId, kind, title, alreadyAttached }`. It writes one
   `sidekick_conversation_attachments` row per Sidekick and conversation.
@@ -338,12 +336,14 @@ conversation chose that audience.
 ### 2026-10-23 — Guide Sidekick delivery toward its own identity
 
 **What changed:** Posting and authoring instructions name `conversation_post`
-as the delivery action for a Sidekick's reports and direct delegated agents
-without the native posting tool back to their coordinator. Engineering MCP's
-send description explains its own attribution behavior.
+as the delivery action for a Sidekick's reports. Both the wizard and runs receive
+this guidance because either can deliver results to another conversation; the
+wizard is explicitly told to answer the person inline during configuration.
+Delegates without the posting tool return results to the delegating agent.
+Engineering MCP's send description explains its own attribution behavior.
 
 **Why:** A delegated reporting agent used Engineering MCP's send-as-user tool,
-so its report was correctly stored and displayed as a message from Adam.
+so its report was stored and displayed as a message from the delegating user.
 
 **Considered and rejected:** Blocking engineering sends or narrowing connector
 capabilities. The requested fix is model guidance while retaining sending.

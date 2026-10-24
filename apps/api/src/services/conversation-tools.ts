@@ -1109,8 +1109,8 @@ export function conversationsSystemMessage(options: {
       : []),
     ...(options.posts
       ? [`Use conversation_post to post to one of them.${homeSentence(options.home, " Leave conversation out")}`,
-        options.run ? RUN_POST_INSTRUCTION : "Post once per result.",
-        "Publish this Sidekick's own reports and updates with conversation_post so they appear under its name. Include this delivery choice when delegating work. If a delegated agent lacks conversation_post, have it return the result to its coordinator for posting.",
+        options.run ? RUN_POST_INSTRUCTION : "Post once per result. Answer the person in this configuration conversation with a normal reply; use conversation_post when asked to deliver a result to another conversation.",
+        "Use conversation_post for this Sidekick's own reports to other conversations so they appear under its name. When delegating delivery, tell the agent to use that tool or return the result to you for posting if it lacks the tool.",
       ]
       : []),
     ...(options.attaches
