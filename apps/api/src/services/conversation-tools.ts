@@ -876,7 +876,7 @@ export function createConversationsPlugin(
   const post: HarnessTool = {
     definition: {
       name: "post",
-      description: `Post a message to a conversation you can reach.${homeSentence(options.home, " Leave conversation out")}`,
+      description: `Post a message as this Sidekick to a conversation you can reach, with the Sidekick's name as the author.${homeSentence(options.home, " Leave conversation out")}`,
       capability: "rally.conversation.post",
       mode: "write",
       idempotency: "provider_key",
@@ -1109,7 +1109,9 @@ export function conversationsSystemMessage(options: {
       : []),
     ...(options.posts
       ? [`Use conversation_post to post to one of them.${homeSentence(options.home, " Leave conversation out")}`,
-        options.run ? RUN_POST_INSTRUCTION : "Post once per result."]
+        options.run ? RUN_POST_INSTRUCTION : "Post once per result. Answer the person in this configuration conversation with a normal reply; use conversation_post when asked to deliver a result to another conversation.",
+        "Use conversation_post for this Sidekick's own reports to other conversations so they appear under its name. When delegating delivery, tell the agent to use that tool or return the result to you for posting if it lacks the tool.",
+      ]
       : []),
     ...(options.attaches
       ? ["Use conversation_attach when the person asks this Sidekick to read or post somewhere new; pass the link or id they give you."]
