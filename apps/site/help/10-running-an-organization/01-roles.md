@@ -34,19 +34,19 @@ and nothing else in the Organization.
 
 ## Who can do what
 
-| What | Owner | Administrator | Member |
-| --- | --- | --- | --- |
-| See the members list | Yes | Yes | Yes |
-| Invite people and revoke invitations | Yes | Yes | No |
-| Make someone an administrator, or remove that | Yes | Yes | No |
-| Turn a guest into a member | Yes | Yes | No |
-| Change the Organization's default time zone | Yes | Yes | No |
-| Change the Terminal's internet access | Yes | Yes | No |
-| Add, refresh and delete Organization connections | Yes | Yes | No |
-| Set GitHub repository access and MCP tool rules for shared connections | Yes | Yes | No |
-| Connect, refresh and delete your own personal connections | Yes | Yes | Yes |
-| Use the Organization's shared connections in Threads | Yes | Yes | Yes |
-| Leave the Organization | Yes, with one exception | Yes | Yes |
+| What | Owner | Administrator | Member | Guest |
+| --- | --- | --- | --- | --- |
+| See the members list | Yes | Yes | Yes | No |
+| Invite people and revoke invitations | Yes | Yes | No | No |
+| Make someone an administrator, or remove that | Yes | Yes | No | No |
+| Turn a guest into a member | Yes | Yes | No | No |
+| Change the Organization's default time zone | Yes | Yes | No | No |
+| Change the Terminal's internet access | Yes | Yes | No | No |
+| Add, refresh and delete Organization connections | Yes | Yes | No | No |
+| Set GitHub repository access and MCP tool rules for shared connections | Yes | Yes | No | No |
+| Connect, refresh and delete your own personal connections | Yes | Yes | Yes | No |
+| Use the Organization's shared connections in Threads | Yes | Yes | Yes | Only in conversations shared with them |
+| Leave the Organization | Yes, with one exception | Yes | Yes | No |
 
 The exception: an owner who is the only owner cannot leave while other people
 are still in the Organization.
@@ -56,6 +56,13 @@ Members find most administrative controls missing or greyed out. The
 appear for them at all, and the time zone and internet access settings are
 shown read-only. If a teammate asks why they cannot find something, this is
 usually why.
+
+Guests see even less. Their Settings has only **Account** and **Application**,
+so they never see the members list or any Organization setting. When Rally
+works in a conversation shared with a guest, it can still use the
+Organization's shared connections there, including when the guest asks.
+A guest cannot leave the Organization themselves; to end their access, see
+[Taking access back](../03-spaces-and-breakouts/05-sharing-with-guests.md#taking-access-back).
 
 > [!NOTE]
 > Each connected tool keeps its own rules too. Being a Rally administrator does
