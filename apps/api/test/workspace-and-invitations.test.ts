@@ -298,6 +298,8 @@ describe("workspace invitation lifecycle", () => {
     });
     expect(String(body.html)).toContain("Invitee &lt;Team&gt;");
     expect(String(body.html)).not.toContain("Invitee <Team>");
+    // The roster the email is about lives on the Members page.
+    expect(String(body.text)).toContain(encodeURIComponent(`rallywithai://workspace/global/${invitationRow.workspace_id}/settings/members`));
   });
 
   it.each([false, true])("does not resend an acceptance notification on replay, including a failed dispatch read (%s)", async (dispatchReadFails) => {

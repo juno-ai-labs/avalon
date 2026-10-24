@@ -89,7 +89,7 @@ export async function sendWorkspaceInvitationResolutionEmail(
   const workspaceName = singleLine(invitation.workspaceName);
   const verb = invitation.outcome === "accepted" ? "accepted" : "declined";
   const roleLabel = invitation.role === "admin" ? "an administrator" : "a member";
-  const desktopTarget = addWorkspaceTarget(new URL("rallywithai://settings/workspace"), {
+  const desktopTarget = addWorkspaceTarget(new URL("rallywithai://settings/members"), {
     region: invitation.region,
     workspaceId: invitation.workspaceId,
   });
