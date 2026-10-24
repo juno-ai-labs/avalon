@@ -980,7 +980,12 @@ row. Only the Sidekick's configuration conversation attaches (the
 `conversation_attach` tool), and only a conversation the attaching person can
 post in, since attaching is the consent to publish there. A run posts with
 `conversation_post`, which defaults to the home; nothing posts a run's result
-for it. That table is not `parent_sidekicks` or a conversation's
+for it. Authoring instructions save this tool as the delivery action for the
+Sidekick's own reports and updates and carry that choice into delegated work.
+Workers without the posting tool return results to their coordinator. This is
+delivery guidance; connector sending permissions are unchanged.
+
+That table is not `parent_sidekicks` or a conversation's
 `sidekick_attachments`: those record that a conversation may load the Sidekick
 as a skill, and loading writes them automatically.
 
