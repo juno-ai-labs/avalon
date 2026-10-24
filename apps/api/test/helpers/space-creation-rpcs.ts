@@ -58,27 +58,42 @@ function summary(spaceId: string) {
 
 /** WorkspaceDO's side: the Space, its staged membership, and its settlement. */
 export function spaceCreationWorkspaceRpcs() {
+  /** Where each Channel was placed, as the reservation and `addSpaceChannel` left it. */
+  const placements = new Map<string, Set<string>>();
+  const place = (workstreamId: string, spaceIds: readonly string[]) => {
+    const placed = placements.get(workstreamId) ?? new Set<string>();
+    for (const spaceId of spaceIds) placed.add(spaceId);
+    placements.set(workstreamId, placed);
+  };
   return {
     // A replayed create re-adds the Channel through the full `addChannel`,
-    // which is one WorkspaceDO call. Idempotent in production; here it is one
-    // more RPC a replay case has to get past.
-    addSpaceChannel: vi.fn(async (input: { spaceId: string }) => ({
-      ok: true as const,
-      space: summary(input.spaceId),
+    // which is one WorkspaceDO call, for a placement it does not find.
+    addSpaceChannel: vi.fn(async (input: { spaceId: string; workstreamId: string }) => {
+      place(input.workstreamId, [input.spaceId]);
+      return { ok: true as const, space: summary(input.spaceId) };
+    }),
+    // What a replay asks first: the Spaces the Channel already sits in.
+    channelSpaces: vi.fn(async (input: { workstreamId: string }) => ({
+      spaceIds: [...placements.get(input.workstreamId) ?? []],
     })),
     // The create's one Organization-side call. The input is declared so a
     // caller can read what the creation asked for, which is the direct half of
     // the audience an Organization-wide Space widens past on its way to
     // `initialize`.
     reserveChannelInSpaces: vi.fn(async (input: {
+      workstreamId: string;
       spaceIds: string[];
       requestedScope: string;
       authorityGeneration: number;
-    }) => ({
-      status: "reserved" as const,
-      authorityGeneration: input.authorityGeneration,
-      spaces: (input.spaceIds.length > 0 ? input.spaceIds : [GENERAL_SPACE_ID]).map(summary),
-    })),
+    }) => {
+      const spaceIds = input.spaceIds.length > 0 ? input.spaceIds : [GENERAL_SPACE_ID];
+      place(input.workstreamId, spaceIds);
+      return {
+        status: "reserved" as const,
+        authorityGeneration: input.authorityGeneration,
+        spaces: spaceIds.map(summary),
+      };
+    }),
     openGeneralSpace: vi.fn(async () => ({
       ok: true as const,
       created: false as const,
