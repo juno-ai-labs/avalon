@@ -7,6 +7,7 @@ import { loadAnnotationPreview, readAnnotationVersion } from '../lib/annotation-
 import { AnnotationDraftProvider, useAnnotationDraft } from '../components/artifact-annotations';
 import { ScopeSharingPanel, useScopeInvitations } from "../components/scope-sharing-panel";
 import { EmailMentionContext, emailMentionDirectory, inviteeAsMember, NO_INVITEES, useWorkspaceInvitees } from "../lib/workspace-invitees";
+import { useWorkspaceMembers } from "../lib/workspace-members";
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
 import { artifactActivitySubject, conversationActivitySubject, reportActivityEvent } from '../lib/activity-events';
 import { ConversationVisibilityContext } from '../lib/conversation-visibility';
@@ -1994,12 +1995,9 @@ function ConversationSurfaceContent({
       },
     },
   ];
-  const members = useQuery({
-    queryKey: ['workspace-members'],
-    queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
-    enabled: Boolean(api && !guest),
-    staleTime: 60_000,
-  });
+  // A guest reads it too, but names and mentions from the conversation's own
+  // participants; see `visibleMembers`.
+  const members = useWorkspaceMembers(api);
   const connections = useQuery({
     queryKey: ['connections'],
     queryFn: ({ signal }) => api!.getConnections(signal),

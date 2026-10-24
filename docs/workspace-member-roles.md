@@ -81,21 +81,12 @@ because `auth.role` is read per request.
 `GET /workspace/members` answers members and guests alike. It is mounted
 beside `GET /workspace` on the identity layer, ahead of `requireAuth`, so a
 guest reads the same roster a member does: every active person, other guests
-included, with email and timezone. A guest sees who they work with.
-
-The desktop reads it through one hook, `useWorkspaceMembers` in
-`apps/desktop/src/renderer/lib/workspace-members.ts`. Every surface that
-names or draws a person uses it (the Members page, the Channel feed and its
-header, the activity list, a thread's rail), so a guest sees the same names a
-member does. Only the writes stay administrator-only, and the roster draws no
-row controls for a guest.
+included, with email and timezone. The desktop reads it through one hook,
+`useWorkspaceMembers` in `apps/desktop/src/renderer/lib/workspace-members.ts`.
 
 It is not where a guest's mention picker looks. Mentioning somebody outside a
 conversation brings them in, so a guest's picker and `messageMentionPayload`
 stay on the conversation's own participants.
-
-The account menu draws **Add new member** and **Sidekicks** for a guest too,
-disabled with the reason, rather than hiding them.
 
 ## Invariants
 
@@ -197,16 +188,10 @@ proved only that the owner was there.
 
 **What changed:** `GET /workspace/members` moved to the identity layer and now
 answers guests: every active person, guests included, with email and timezone.
-The Members page and the account menu's **Members** item show for guests.
-**Add new member** and **Sidekicks** are drawn for a guest, disabled with a
-reason. The desktop's `useWorkspaceMembers` hook is the one read, and the
-Channel feed, its header, the activity list and a thread's rail now name
-people for a guest instead of "Someone".
 
 **Why:** A guest had no way to see who else was in the Organization, so no way
 to know whom to ask for access or to recognise who they were working with. In
-a shared Channel every member's message and thread read "Someone". The menu
-hid what a guest could not use, which left a guest no hint that it existed.
+a shared Channel every member's message and thread read "Someone".
 
 **Considered and rejected:** A separate guest roster without emails, timezones
 or other guests. It was built first and dropped on review: the product wants
@@ -217,8 +202,7 @@ conversation brings them in. That is an access decision, not a display one.
 
 **Consequences:** Anything added to the roster reaches people outside the
 company. A new surface that names people should read `useWorkspaceMembers`
-rather than gate its own read on `guest`. A menu item a guest cannot use is
-disabled with a reason, not hidden.
+rather than gate its own read on `guest`.
 
 ### 2026-09-18 — A workspace can have more than one administrator
 

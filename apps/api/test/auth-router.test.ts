@@ -162,14 +162,21 @@ describe("authentication in the complete application router", () => {
       headers: { authorization: `Bearer ${guestSession.accessToken}` },
     }, bindings);
 
+    // Another guest, perhaps from another company, is on the roster too.
+    const visitorId = "00000000-0000-7000-8000-000000000005";
+    database.prepare("INSERT INTO users (id,email,name,timezone,created_at,updated_at) VALUES (?, 'visitor@other.example','Visitor','Asia/Tokyo',?,?)").run(visitorId, at, at);
+    database.prepare("INSERT INTO workspace_members (workspace_id,user_id,access_class,role,status,joined_at) VALUES (?,?,'guest',NULL,'active',?)")
+      .run(workspaceId, visitorId, at);
+
     const profile = await request("/workspace");
     expect(profile.status).toBe(200);
     expect(await profile.json()).toMatchObject({ id: workspaceId, accessClass: "guest", role: null });
-    // The roster, every guest and address included, is a guest's to read.
+    // The roster, every guest, address and zone included, is a guest's to read.
     const roster = await request("/workspace/members");
     expect(roster.status).toBe(200);
-    expect(((await roster.json()) as { items: Array<{ user: { email: string } }> }).items.map((item) => item.user.email).sort())
-      .toEqual(["guest@example.com", "member@example.com"]);
+    expect(((await roster.json()) as { items: Array<{ user: { email: string; timezone: string } }> }).items
+      .map((item) => [item.user.email, item.user.timezone]))
+      .toContainEqual(["visitor@other.example", "Asia/Tokyo"]);
     // The rest of `/workspace` stays member-only.
     expect((await request("/workspace/attention")).status).toBe(403);
   });

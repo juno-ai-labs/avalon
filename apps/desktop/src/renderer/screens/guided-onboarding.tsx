@@ -13,6 +13,7 @@ import { PersonalAvatar, personalColor, personalColorInk } from '../components/p
 import { useAppSession } from '../lib/app-session';
 import { accountOnboardingQueryKey } from '../lib/account-onboarding-query';
 import { useShellCapabilities } from '../lib/collaboration-session';
+import { useWorkspaceMembers } from '../lib/workspace-members';
 import type { Workspace } from '../lib/types';
 import { InviteEmailField, inviteEmailsProblem, inviteMembers, useInviteEmails } from '../components/invite-emails';
 
@@ -29,9 +30,7 @@ export function AccountOnboardingGate({ children }: { children: ReactNode }): Re
   // person on screen, so none of it is read, shown or written there
   // (`docs/impersonation.md`).
   const supportSession = Boolean(session?.impersonator);
-  // A guest has no member directory to read; their people come from each
-  // conversation's own detail.
-  const members = useQuery({ queryKey: ['workspace-members'], queryFn: () => api!.getWorkspaceMembers(), enabled: Boolean(api && session?.workspace && !guest) });
+  const members = useWorkspaceMembers(api, { enabled: Boolean(session?.workspace) });
   const account = useQuery({ queryKey: accountOnboardingQueryKey(session?.user.email),
     queryFn: () => getAccountOnboarding(), enabled: Boolean(session) && !supportSession, refetchOnWindowFocus: 'always' });
   const queryClient = useQueryClient();
