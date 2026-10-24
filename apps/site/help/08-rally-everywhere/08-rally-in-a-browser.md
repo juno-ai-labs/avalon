@@ -97,6 +97,8 @@ through it. The difference is that you only see what has been shared with you.
   [Breakouts](../03-spaces-and-breakouts/03-breakouts.md#a-breakout-beside-its-thread).
 - The account menu has **Switch organization** and **Sign out**.
 - On a computer, a **Download the Mac app** button sits above the account menu. The Mac app is for Macs with Apple silicon. Phones and tablets do not show it.
+- You can start a Breakout from a Thread shared with you, but not from inside
+  a Breakout that was shared on its own.
 - You can rename a Thread or Breakout, and archive a Breakout, from its title
   pill menu. An archived Breakout shows **Restore breakout**. An archived Thread has to be
   restored before its conversations can reopen.
