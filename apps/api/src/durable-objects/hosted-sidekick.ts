@@ -1453,23 +1453,18 @@ export class HostedSidekick {
     await this.assertReader(row, request.actor);
     // Reuse the existing run-history page size; callers can choose another size.
     const limit = request.limit ?? 50;
-    const before = request.before;
-    const rows = this.sql.exec<RunRow>(
-      `SELECT * FROM sidekick_runs WHERE sidekick_id = ?
-         ${before ? "AND (created_at < ? OR (created_at = ? AND run_id > ?))" : ""}
-         ORDER BY created_at DESC, run_id LIMIT ?`,
-      this.sidekickId, ...(before ? [before.createdAt, before.createdAt, before.runId] : []), limit + 1,
-    ).toArray();
+    const rows = this.runSummaryRows(limit + 1, request.before);
     const page = rows.slice(0, limit);
     const last = page.at(-1);
     return { items: page.map((run) => ({ ...this.runSummary(run), definitionRevision: run.definition_revision })),
       nextCursor: rows.length > limit && last ? { createdAt: last.created_at, runId: last.run_id } : null };
   }
 
-  async readRunForReview(input: AutomationRunReadRequest): Promise<AutomationRunDefinitionV1> {
+  async readRunForReview(input: AutomationRunReadRequest): Promise<AutomationRunDefinitionV1 & { resultSummary: string | null }> {
     const request = parseRpcInput(AutomationRunReadRequestSchema, input, "read_run_for_review");
     await this.assertReader(this.assertSidekick(request.workspaceId, request.automationId), request.actor);
-    return this.runDefinition(this.assertRunView(this.runView(request.runId), request.workspaceId, request.automationId));
+    const view = this.assertRunView(this.runView(request.runId), request.workspaceId, request.automationId);
+    return { ...this.runDefinition(view), resultSummary: view.run?.summary ?? null };
   }
 
   /** Installed clients' claim enrolls the caller without changing human access. */
@@ -2641,12 +2636,18 @@ export class HostedSidekick {
   }
 
   private runSummaries(limit: number): AutomationRun[] {
+    return this.runSummaryRows(limit).map((run) => this.runSummary(run));
+  }
+
+  private runSummaryRows(limit: number, before?: AutomationRunListRequest["before"]) {
     return this.sql.exec<RunRow>(
-      `SELECT run_id, occurrence_key, trigger_json, definition_revision, harness_run_id, state, summary,
-              opening_json, seed_json, run_as_user_id, coordinator_user_id, created_at, started_at, completed_at, updated_at
-         FROM sidekick_runs WHERE sidekick_id = ? ORDER BY created_at DESC, run_id LIMIT ?`,
-      this.sidekickId, limit,
-    ).toArray().map((run) => this.runSummary(run));
+      `SELECT run_id, trigger_json, definition_revision, state, summary, coordinator_user_id,
+              created_at, started_at, completed_at
+         FROM sidekick_runs WHERE sidekick_id = ?
+         ${before ? "AND (created_at < ? OR (created_at = ? AND run_id > ?))" : ""}
+         ORDER BY created_at DESC, run_id LIMIT ?`,
+      this.sidekickId, ...(before ? [before.createdAt, before.createdAt, before.runId] : []), limit,
+    ).toArray();
   }
 
   private runSummary(run: RunRow): AutomationRun {

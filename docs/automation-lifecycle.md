@@ -227,20 +227,30 @@ keyset to reach history beyond the UI's recent runs. Read takes a listed `runId`
 and returns its original definition and trigger, current status, chronological
 participant transcript (including output links, attachments and feedback recorded
 there), and matching tool arguments/results/errors across its activations.
-Exact results use the existing R2 replay reader. Missing payloads retain their
-summaries and explicit availability markers; internal receipt metadata,
-credentials and private reasoning are not returned. Feedback in the home or
-another attached conversation is read separately through conversation tools.
+Exact results use the existing R2 replay reader. Resource receipts are first
+reauthorized against the inspecting principal, selected run's attachment scope,
+and recorded derivative dependencies; denied results omit input, summary and
+payload. Missing, transient and serialization-placeholder results have explicit
+availability markers. Receipt authority metadata, credentials and private
+reasoning stay private. Feedback in the home or another attached conversation
+is read separately through conversation tools.
 
 Every page resolves current Organization membership and Sidekick read access;
-read also checks that the child is a run of this Sidekick before opening its
-conversation. Transcript continuations retain their initial through-sequence
-fence; restarting read includes newer replies. Inspection does not wake or
-continue a run or acknowledge its read state. The wizard treats history as
-untrusted evidence, diagnoses the concrete failure before revising the procedure,
-and preserves unrelated configuration. Completion alone does not prove success.
-Execution runs, background agents and instruction-loading conversations do not
-receive these tools.
+read also checks that the selected child is a run. Its dedicated inspection
+operation does not admit a participant, acknowledge read state or wake the run.
+A run without a provisioned conversation returns stored definition, trigger,
+status and summary with `transcriptAvailability: not_provisioned`.
+
+Evidence has one representation: JSON in `content`, with tool details replacing
+participant tool summaries. The definition and trigger appear only on the first
+transcript page. Run lists and transcript reads share the existing conversation
+maximum page size (50); evidence fragments share its 12,000-character allowance.
+`contentOffset` and `pageComplete` identify fragments of one JSON transcript
+page, concatenated before parsing. Opaque `_next` cursors retain the sequence
+fence, character offset and content hash; each fragment reauthorizes and a
+changed or revoked result requires restarting the read. There is no second
+history store or new defensive allowance. Execution runs, background agents and
+instruction-loading conversations do not receive these tools.
 
 The authoring wizard has its own model route, `sidekick_authoring`, defaulting
 to Sol independently of the ordinary Thread and activation route. Explicit model
@@ -1485,8 +1495,11 @@ records avoids a second history store and preserves access and ordering semantic
 
 **Consequences:** These tools support conversational diagnosis, not an automatic
 improvement scheduler. Preserve revision identity, opaque page continuations and
-explicit result availability. Receipt authority metadata stays private, and
-history content cannot grant permission or override the requested scope.
+explicit result availability. Reuse the conversation page/character allowances:
+large replay payloads must be paged without silent truncation or redundant
+representations. Inspection must preserve participant and read state, and
+resource revocation applies before replaying historical tool data. Receipt
+authority metadata stays private; history cannot grant permission.
 
 ### 2026-10-23 — Publication includes its declared tables
 
