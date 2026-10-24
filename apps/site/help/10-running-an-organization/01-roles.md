@@ -41,7 +41,7 @@ and nothing else in the Organization.
 | Start Channels and Threads | Yes | Yes | Yes | No |
 | Start a Breakout | Yes | Yes | Yes | Only from a Thread shared with them |
 | Build Sidekicks | Yes | Yes | Yes | No |
-| Add a Sidekick to a conversation | Yes | Yes | Yes | Only one already in that conversation |
+| Add a Sidekick to a conversation | Yes | Yes | Yes | Only one the Thread already offers |
 | See the members list | Yes | Yes | Yes | No |
 | Invite people and revoke invitations | Yes | Yes | No | No |
 | Make someone an administrator, or remove that | Yes | Yes | No | No |
@@ -64,10 +64,8 @@ shown read-only. If a teammate asks why they cannot find something, this is
 usually why.
 
 Guests see even less. Their Settings has only **Account** and **Application**,
-so they never see the members list or any Organization setting. When Rally
-works in a conversation shared with a guest, it can still use the
-Organization's shared connections there, including when the guest asks.
-A guest cannot leave the Organization themselves; to end their access, see
+so they never see the members list or any Organization setting. A guest cannot
+leave the Organization themselves; to end their access, see
 [Taking access back](../03-spaces-and-breakouts/05-sharing-with-guests.md#taking-access-back).
 
 > [!NOTE]
