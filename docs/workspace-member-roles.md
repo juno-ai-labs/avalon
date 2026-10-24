@@ -22,7 +22,7 @@ the read-side authorization primitive that composes resource access belongs to
 | `apps/api/src/middleware/auth.ts` | Resolves `auth.role` from `workspace_members` on **every** request, and `requireWorkspaceAdmin` — the route-level gate. |
 | `apps/api/src/services/workspace-service.ts` | `setMemberRole` (the one write that changes a role), `createInvitation` (the role a future membership arrives with), `removeMember` and `leaveWorkspace` (the owner counts that keep a workspace owned), and the private `requireAdmin` every workspace-administration method starts with. |
 | `apps/api/src/routes/workspace.ts` | `PATCH /workspace/members/:userId/role`. |
-| `apps/desktop/src/renderer/screens/workspace-settings.tsx` | The member list (members A-Z by name, then guests A-Z by name), the menu beside each row (promote/demote or make member, and suspend), and the invitation role selector. A guest sees the same page drawn from `GET /workspace/roster`, without addresses or controls. |
+| `apps/desktop/src/renderer/screens/workspace-settings.tsx` | The member list (members A-Z by name, then guests A-Z by name), the menu beside each row (promote/demote or make member, and suspend), and the invitation role selector. A guest sees the same list, without the row controls. |
 | `apps/desktop/src/renderer/lib/session-workspace.ts` | Why the role the desktop holds is a *presentation* input and never an authorization one. |
 
 ## How it works
@@ -78,31 +78,24 @@ because `auth.role` is read per request.
 
 ### What a guest sees of the roster
 
-`GET /workspace/members` is the member's roster and stays behind `requireAuth`,
-which refuses a guest. `GET /workspace/roster` (`WorkspaceService.listRoster`)
-is mounted beside `GET /workspace` on the identity layer, so a guest reaches
-it. Each row is `WorkspaceRosterEntrySchema`: id, name, avatar, presentation,
-access class and role. It leaves out the email, timezone, dates, status and the
-incarnation and revision an administrator's write needs. A guest is often from
-outside the company, and those fields are either contact details or
-bookkeeping they have no use for.
+`GET /workspace/members` answers members and guests alike. It is mounted
+beside `GET /workspace` on the identity layer, ahead of `requireAuth`, so a
+guest reads the same roster a member does: every active person, other guests
+included, with email and timezone. A guest sees who they work with.
 
-A guest is shown the active members and themselves, never other guests. Two
-guests are often from different companies, shared different Channels, and
-neither was told the other exists. Showing a guest the roles is deliberate:
-knowing who administers the Organization is how a guest knows whom to ask.
-
-The desktop reads either list through one hook, `useWorkspaceMembers` in
-`apps/desktop/src/renderer/lib/workspace-members.ts`: the full roster for a
-member, this one for a guest. Every surface that names or draws a person uses
-it (the Channel feed, its header, the activity list, a thread's rail), so a
-guest sees the same names a member does. A roster person has no email or
-timezone, which is why both are optional on `WorkspaceMember`. Another guest
-is still drawn as "Someone".
+The desktop reads it through one hook, `useWorkspaceMembers` in
+`apps/desktop/src/renderer/lib/workspace-members.ts`. Every surface that
+names or draws a person uses it (the Members page, the Channel feed and its
+header, the activity list, a thread's rail), so a guest sees the same names a
+member does. Only the writes stay administrator-only, and the roster draws no
+row controls for a guest.
 
 It is not where a guest's mention picker looks. Mentioning somebody outside a
 conversation brings them in, so a guest's picker and `messageMentionPayload`
 stay on the conversation's own participants.
+
+The account menu draws **Add new member** and **Sidekicks** for a guest too,
+disabled with the reason, rather than hiding them.
 
 ## Invariants
 
@@ -202,34 +195,30 @@ proved only that the owner was there.
 
 ### 2026-10-24 — Guests can see who is in the Organization
 
-**What changed:** `GET /workspace/roster` returns the roster without addresses
-or membership bookkeeping, and is open to guests. The Members page and the
-account menu's **Members** item now show for guests, drawn from it; **Add new
-member** and the row controls stay hidden. The desktop's `useWorkspaceMembers`
-hook picks the right list for the reader, and the Channel feed, its header,
-the activity list and a thread's rail now name people for a guest instead of
-"Someone".
+**What changed:** `GET /workspace/members` moved to the identity layer and now
+answers guests: every active person, guests included, with email and timezone.
+The Members page and the account menu's **Members** item show for guests.
+**Add new member** and **Sidekicks** are drawn for a guest, disabled with a
+reason. The desktop's `useWorkspaceMembers` hook is the one read, and the
+Channel feed, its header, the activity list and a thread's rail now name
+people for a guest instead of "Someone".
 
 **Why:** A guest had no way to see who else was in the Organization, so no way
 to know whom to ask for access or to recognise who they were working with. In
-a shared Channel every member's message and thread read "Someone". The
-roster itself was withheld because `/workspace/members` carries every person's
-email and the fields an administrator's write needs.
+a shared Channel every member's message and thread read "Someone". The menu
+hid what a guest could not use, which left a guest no hint that it existed.
 
-**Considered and rejected:** Serving guests a trimmed `/workspace/members`. Its
-schema requires the email, and every member surface reads it; a second shape
-behind the same route would make each caller check which one it got. Also
-rejected: showing guests the other guests, for the reason under "What a guest
-sees of the roster". Also rejected: feeding the roster to a guest's mention
-picker, since naming a person outside a conversation brings them in. That is
-an access decision, not a display one.
+**Considered and rejected:** A separate guest roster without emails, timezones
+or other guests. It was built first and dropped on review: the product wants
+guests to see all three, and a second endpoint that differed only by
+bookkeeping fields was a second list to keep in step. Also rejected: feeding
+the roster to a guest's mention picker, since naming a person outside a
+conversation brings them in. That is an access decision, not a display one.
 
-**Consequences:** Anything added to `WorkspaceRosterEntrySchema` reaches people
-outside the company. An email, a timezone or a status belongs on
-`/workspace/members` instead. `WorkspaceMember.email` and `.timezone` are now
-optional, so code that needs either must handle a person read from the guest
-roster. A new surface that names people should read `useWorkspaceMembers`
-rather than call `getWorkspaceMembers` itself, which refuses a guest.
+**Consequences:** Anything added to the roster reaches people outside the
+company. A new surface that names people should read `useWorkspaceMembers`
+rather than gate its own read on `guest`. A menu item a guest cannot use is
+disabled with a reason, not hidden.
 
 ### 2026-09-18 — A workspace can have more than one administrator
 

@@ -7,14 +7,14 @@ import { Hono } from "hono";
 import type { Env, HonoAppEnv } from "../src/env";
 import { errorHandler } from "../src/middleware/errors";
 import { requireIdentityAuth, requireWorkspaceAuth } from "../src/middleware/auth";
-import { workspaceRoster } from "../src/routes/workspace";
+import { workspaceMembers } from "../src/routes/workspace";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 /**
- * The roster a guest may read, through the real middleware and checked-in
- * migrations: who is in the Organization, without addresses, and without the
- * other guests.
+ * The roster as a guest reads it, through the real middleware and checked-in
+ * migrations: everyone active in the Organization, other guests included, with
+ * their email and timezone.
  */
 const WORKSPACE_ID = "00000000-0000-7000-8000-000000000001";
 const OWNER_ID = "00000000-0000-7000-8000-000000000011";
@@ -41,9 +41,9 @@ function seed(id: string, name: string, role: string | null, accessClass: "membe
 async function roster(actor: string): Promise<Response> {
   const app = new Hono<HonoAppEnv>();
   app.use("*", requireIdentityAuth);
-  app.get("/workspace/roster", requireWorkspaceAuth, workspaceRoster);
+  app.get("/workspace/members", requireWorkspaceAuth, workspaceMembers);
   app.onError(errorHandler);
-  return app.request("/workspace/roster", {
+  return app.request("/workspace/members", {
     headers: { "x-rally-dev-user-id": actor, "x-rally-dev-workspace-id": WORKSPACE_ID },
   }, env);
 }
@@ -76,23 +76,20 @@ beforeEach(() => {
 
 afterEach(() => { database.close(); });
 
-describe("the guest-readable roster", () => {
-  it("shows a guest the members and themselves, by name and role, with no address", async () => {
+type Row = { user: { name: string; email: string; timezone: string }; accessClass?: string; role: string | null };
+
+describe("the roster as a guest reads it", () => {
+  it("shows a guest every active person, other guests included, with email and timezone", async () => {
     const response = await roster(GUEST_ID);
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ items: [
-      { id: GUEST_ID, name: "Guest", avatarUrl: null, presentation: null, accessClass: "guest", role: null },
-      { id: MEMBER_ID, name: "Member", avatarUrl: null, presentation: null, accessClass: "member", role: "member" },
-      { id: OWNER_ID, name: "Owner", avatarUrl: null, presentation: null, accessClass: "member", role: "owner" },
-    ] });
-  });
-
-  it("shows a member every active person, guests included", async () => {
-    const response = await roster(MEMBER_ID);
-
-    expect(response.status).toBe(200);
-    expect(((await response.json()) as { items: Array<{ name: string }> }).items.map((person) => person.name))
-      .toEqual(["Guest", "Member", "Owner", "Visitor"]);
+    const items = ((await response.json()) as { items: Row[] }).items;
+    expect(items.map((row) => [row.user.name, row.user.email, row.accessClass ?? "member", row.role])).toEqual([
+      ["Guest", "guest@example.test", "guest", null],
+      ["Member", "member@example.test", "member", "member"],
+      ["Owner", "owner@example.test", "member", "owner"],
+      ["Visitor", "visitor@example.test", "guest", null],
+    ]);
+    expect(items.every((row) => row.user.timezone.length > 0)).toBe(true);
   });
 });

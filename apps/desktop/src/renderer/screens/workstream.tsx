@@ -185,7 +185,7 @@ function PendingWorkstreamScreen({ row }: { row: WorkstreamSummary }): React.JSX
     (resourceId: string, signal?: AbortSignal) => api!.getResourcePreviewContent(resourceId, signal),
     [api],
   );
-  const members = useWorkspaceMembers(api, { guest });
+  const members = useWorkspaceMembers(api);
   const invitees = useWorkspaceInvitees(api, !guest);
   const emailMentions = useMemo(
     () => emailMentionDirectory(members.data ?? [], invitees.data ?? NO_INVITEES),
@@ -667,7 +667,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   // already holds them, for the menus drawn before a snapshot answers.
   const channelRail = useChannelRail(id);
   // The roster App holds for the session, read on its own terms.
-  const members = useWorkspaceMembers(api, { guest, staleTime: Number.POSITIVE_INFINITY });
+  const members = useWorkspaceMembers(api, { staleTime: Number.POSITIVE_INFINITY });
   // Pending until every participant can be named: a partial facepile would
   // grow when the snapshot lands, and an empty one would say nobody is here.
   const railParticipantList = channelRail && members.data
