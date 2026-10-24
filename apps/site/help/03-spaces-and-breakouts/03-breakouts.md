@@ -34,6 +34,9 @@ Nothing exists until you send that first message, so changing your mind costs
 nothing. Click the **X** (**Cancel new breakout**) to back out, and Rally keeps
 what you had typed.
 
+Guests can start Breakouts too, from the main conversation of a Thread shared
+with them.
+
 Rally gives the new Breakout a title based on what you asked for. You can rename
 it whenever you like, as described below.
 
