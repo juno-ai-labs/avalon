@@ -247,6 +247,27 @@ describe("engineering product creation", () => {
       .toEqual([{ access_class: "guest", role: null }]);
   });
 
+  it("reads a public thread as a guest who takes part in its Channel, and stops once they leave it", async () => {
+    const context = executionContext();
+    const bridge = new EngineeringInspectionBridge(context, creationEnv());
+    await createOrg(bridge);
+    await createChannel(bridge);
+    const created = await bridge.createThread({ operationId: THREAD_OPERATION, creatorUserId: CREATOR,
+      orgId: ORG, channelId: CHANNEL, prompt: PROMPT }, OPERATOR);
+    await settledThread(created.threadId);
+    await waitOnExecutionContext(context);
+    // A Channel participant who is not in the thread, now a guest.
+    await changeRelationships(creationEnv(), ORG, [MEMBER], env.DB.prepare(
+      "UPDATE workspace_members SET role = NULL, access_class = 'guest', revision = revision + 1 WHERE workspace_id = ? AND user_id = ?").bind(ORG, MEMBER));
+    const guest = new WorkstreamObjectClient(creationEnv(), auth(MEMBER, null), created.threadId);
+
+    await expect(guest.get()).resolves.toMatchObject({ id: created.threadId });
+    expect((await bridge.readConversation({ orgId: ORG, userId: MEMBER, threadId: created.threadId })).text).toContain(PROMPT);
+
+    await new SpaceService(creationEnv(), auth()).updateAudience(CHANNEL, { scope: "workspace", participantUserIds: [CREATOR] });
+    await expect(guest.get()).rejects.toThrow(/Thread not found|workstream_not_found/);
+  });
+
   it.each(["member", "guest"] as const)("admits an ordinary send as a %s, executes it, and deduplicates retries", async (accessClass) => {
     const context = executionContext();
     const bridge = new EngineeringInspectionBridge(context, creationEnv());
