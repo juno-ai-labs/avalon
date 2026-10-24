@@ -58,7 +58,8 @@ inactive pages. Results replace navigation while the query is non-empty;
 typing does not change the active page.
 
 Sections are pages, and a page may be indented under the one it belongs to.
-Installed connections sit under `connections`. A child page is not a scroll
+Installed connections sit under `connections`, and `members` (the roster,
+guests and invitations) sits under `workspace`. A child page is not a scroll
 position inside its parent: it has its own definitions, its own read and its
 own deep link. `sectionLabels` in
 `search-results.tsx` is typed as a total record of the section list, so adding a
@@ -188,6 +189,30 @@ to land. `components/organization-usage.tsx` draws the section;
 [`local-cache.md`](local-cache.md) owns the row it paints from.
 
 ## Changelog
+
+### 2026-10-24 — Members becomes its own page under Organization
+
+**What changed:** The member and guest roster, the suspend and make-member
+dialogs, and Invitations moved off the Organization page onto a new `members`
+section, drawn as a child of Organization. The account menu gained a
+**Members** item above **Sidekicks** that opens Settings on that page. Leaving
+the organization stays on Organization: it is about the viewer's own access,
+not about managing other people.
+
+**Why:** The roster was at the bottom of a long Organization page, below
+preferences, memory and usage, and there was no direct way to reach it. A page
+of its own gives the account menu a destination to deep link to.
+
+**Considered and rejected:** Scrolling to an anchor inside Organization. A
+child page has its own deep link and its own search section, which a scroll
+position does not.
+
+**Consequences:** The `members`, `invitations` and invite-form definitions
+declare `members` as their section, so search lands there. The invitation
+accepted/declined email links to `settings/members`, which the deep-link
+grammar in `@rally/contracts` now accepts; a link to `settings/workspace` still
+opens Organization. A guest does not
+see the page, as with every other Organization section.
 
 ### 2026-10-07 — Every connection gets its own page
 

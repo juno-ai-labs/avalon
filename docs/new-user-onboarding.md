@@ -23,6 +23,7 @@ ships directly for newly created accounts, with no feature flag.
 | `apps/api/src/lib/html-metadata.ts` | Reading `<title>` and `<meta>` out of page source; shared with site social previews. |
 | `apps/desktop/src/renderer/screens/create-organization.tsx` | The create-organization card, shared by the Mac app and the browser. |
 | `apps/desktop/src/renderer/screens/guided-onboarding.tsx` | Recording the introduction, personal setup and invitations. |
+| `apps/desktop/src/renderer/components/invite-emails.tsx` | The email-chip invite field, its validation, and sending a list as member invitations; shared with the account menu's **Add new member** dialog (`add-members-dialog.tsx`). |
 | `apps/desktop/src/renderer/components/personal-avatar.tsx`, `styles/onboarding.css` | Appearance and reference-derived motion. |
 
 ## How it works
@@ -72,9 +73,16 @@ a remembered name.
 The invite page uses manual email chips separated by spaces, commas or semicolons.
 Invite stays enabled: invalid chips are highlighted, and clicking Invite checks
 every address for `something@something` before sending any invitations.
-Before sending, it reconciles pending invitations and active members so retrying a
-lost response does not replace an invitation already sent. Failed addresses stay
+Before sending, it reconciles pending invitees (`/workspace/invitees`, which
+lists every pending address, unlike `/workspace/invitations`, which stops at the
+newest 100 of any status) and active members, so retrying a lost response does
+not replace an invitation already sent. Failed addresses stay
 editable. Onboarding has no teammate discovery API.
+
+The same field, check and send back **Add new member** in the account menu.
+Every member sees it; for anyone but an administrator it is disabled with a
+tooltip saying only administrators can add members, rather than hidden. It closes once every address is
+invited and otherwise stays open holding the addresses that failed.
 
 ## Invariants
 
@@ -152,6 +160,29 @@ inventory is [the PRD motion audit](PRDs/2026-09-05_new-user-onboarding/motion-r
 Onboarding no longer starts an agent run or a connector authorization.
 
 ## Changelog
+
+### 2026-10-24 — Share the invite field with the account menu
+
+**What changed:** The email-chip field, its `something@something` check and
+the reconcile-then-send loop moved out of `guided-onboarding.tsx` into
+`components/invite-emails.tsx`. The account menu's new **Add new member**
+dialog uses them. The item is shown to every member and enabled only for
+administrators, since the server refuses anyone else; hiding it would leave
+members with no hint that inviting exists. The already-invited check now reads `/workspace/invitees` rather than
+`/workspace/invitations`: the second stops at the newest 100 rows, and in a
+long-lived workspace an older pending address missing from it would be invited
+again, revoking the link that person already had. Both reads run together.
+
+**Why:** Inviting people should not need onboarding or a trip into Settings,
+and a second copy of the field would drift from the first on parsing,
+validation or retry behaviour.
+
+**Considered and rejected:** Reusing the Settings invite form, which takes one
+address and offers a role. The ask was the onboarding list, and invitations
+from the menu are always members.
+
+**Consequences:** A change to how addresses are parsed, checked or retried now
+changes both surfaces together.
 
 ### 2026-10-23 — Let creators finish typing invitation addresses
 

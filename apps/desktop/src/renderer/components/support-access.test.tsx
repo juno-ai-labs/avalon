@@ -1,7 +1,7 @@
 import "../../../../../tests/isolated-region";
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { SupportAccess } from '@rally/contracts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -30,7 +30,7 @@ function menu(overrides: Partial<React.ComponentProps<typeof WorkspaceAccountMen
     activeWorkspace: own, attention: {}, currentUser: adam, enabled: false, invitations: [],
     onAcceptInvitation: vi.fn(async () => undefined), onCreateWorkspace: vi.fn(async () => undefined),
     onDeclineInvitation: vi.fn(async () => undefined), onInvitationPromptDismiss: vi.fn(), onMenuOpen: vi.fn(),
-    onAbandonSignIn: vi.fn(), onOpenSettings: vi.fn(), onSignOut: vi.fn(), onSwitchWorkspace: vi.fn(async () => true),
+    onAbandonSignIn: vi.fn(), onAddMembers: vi.fn(), onOpenSettings: vi.fn(), onSignOut: vi.fn(), onSwitchWorkspace: vi.fn(async () => true),
     staleAt: null, workspaces: [own],
     supportWorkspaces: [acme],
     loadSupportPeople: vi.fn(async () => people),
@@ -111,7 +111,9 @@ describe('Rally access in the account menu', () => {
     fireEvent.keyDown(row, { key: 'ArrowRight' });
     const choice = await screen.findByRole('menuitem', { name: 'Bob Smith' });
     expect(screen.getByRole('menuitem', { name: 'Dana Park, Guest' })).toBeInTheDocument();
-    expect(screen.getAllByText(/^(Members|Guests)$/u).map((label) => label.textContent)).toEqual(['Members', 'Guests']);
+    // Within the submenu: the account menu has a Members item of its own.
+    const submenu = choice.closest<HTMLElement>('[role="menu"]')!;
+    expect(within(submenu).getAllByText(/^(Members|Guests)$/u).map((label) => label.textContent)).toEqual(['Members', 'Guests']);
     fireEvent.click(choice);
     await waitFor(() => expect(props.onStartSupportSession).toHaveBeenCalledWith(acme, people[1]));
     expect(props.loadSupportPeople).toHaveBeenCalledWith(acme.id);

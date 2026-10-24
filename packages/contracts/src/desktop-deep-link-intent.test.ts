@@ -46,6 +46,14 @@ describe('desktop deep-link intent grammar', () => {
     expect(parseDesktopDeepLinkIntent(raw)).toBeNull();
   });
 
+  it('opens each settings page an email or the app links to, and no other', () => {
+    for (const section of ['workspace', 'members', 'connections', 'digest']) {
+      expect(parseDesktopDeepLinkIntent(`rallywithai://workspace/enterprise/${WORKSPACE_ID}/settings/${section}`))
+        .toMatchObject({ kind: 'settings', section, target: { region: 'enterprise', workspaceId: WORKSPACE_ID } });
+    }
+    expect(parseDesktopDeepLinkIntent(`rallywithai://workspace/enterprise/${WORKSPACE_ID}/settings/application`)).toBeNull();
+  });
+
   it('opens an access request from the menu bar, and nothing else under that host', () => {
     expect(parseDesktopDeepLinkIntent(`rallywithai://access-requests/${RESOURCE_ID}`))
       .toEqual({ kind: 'access-request', requestId: RESOURCE_ID, target: null });
