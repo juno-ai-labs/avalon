@@ -63,6 +63,9 @@ escaped and treated as data; admitted instructions remain subordinate to platfor
 policy and the current request. Neither loading nor attachment grants access to
 the source credentials, memory, authoring conversation, or run history.
 
+Wizard-only run inspection follows the authority, resource reauthorization and
+bounded-evidence contract in [Sidekick lifecycle](automation-lifecycle.md#sidekick-publication-and-loading).
+
 ## Where the code lives
 
 | Path | Responsibility |

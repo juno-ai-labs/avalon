@@ -2005,6 +2005,24 @@ describe("a hosted Sidekick", () => {
       .toEqual({ items: [{ substreamId: runId, nextTerminalActionAt: "2026-10-06T09:00:00.000Z" }] });
   });
 
+  it("withholds wizard history tools from execution runs even after loading the Sidekick plugin", async () => {
+    await activeAutomation();
+    sidekickToolScript = [{ name: "load_plugin", arguments: { pluginId: "rally_sidekicks" } }];
+    const before = provider.calls.length;
+    const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "run-without-wizard-history" });
+    expect(await settledChildRun(started.runId)).toMatchObject({ status: "completed", error_json: null });
+    const calls = provider.calls.slice(before).filter((call) => call.stream);
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    // Establish that loading succeeded, rather than proving absence on an
+    // unloaded or unavailable plugin. Runs retain their delegation tools.
+    expect(calls.at(-1)!.toolNames).toContain("sidekick_my_delegations_list");
+    for (const call of calls) {
+      for (const name of ["sidekick_runs_list", "sidekick_runs_list_next", "sidekick_runs_read", "sidekick_runs_read_next"]) {
+        expect(call.toolNames).not.toContain(name);
+      }
+    }
+  });
+
   it("provisions the run as a child substream whose loop reads its definition by revision, then follows its state", async () => {
     await activeAutomation();
     const revised = await submit({ ...DEFINITION, instructions: "Count the open pull requests and report the number." });

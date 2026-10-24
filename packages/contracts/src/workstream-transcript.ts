@@ -251,6 +251,14 @@ export const ReadTranscriptResultSchema = z.strictObject({
   nextAfterSequence: z.number().int().nonnegative().nullable(),
 });
 
+/** Internal inspection does not seat a viewer or acknowledge the conversation. */
+export const SidekickRunTranscriptResultSchema = z.strictObject({
+  transcriptAvailability: z.enum(["available", "not_provisioned"]),
+  turns: z.array(TranscriptTurnSchema),
+  throughSequence: z.number().int().nonnegative(),
+  nextAfterSequence: z.number().int().nonnegative().nullable(),
+});
+
 /**
  * A participant input accepted by the substream-owned loop but not yet
  * delivered at a safe execution boundary. It deliberately has no transcript

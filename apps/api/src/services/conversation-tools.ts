@@ -1,3 +1,4 @@
+import { agentToolAuth } from "./agent-tool-auth";
 import type { HarnessPlugin, HarnessTool, HarnessToolContext } from "@rally/agent-harness";
 import {
   AutomationActivationV1Schema,
@@ -281,23 +282,9 @@ export function conversationToolPorts(env: Env, input: WorkstreamWorkflowInput):
  */
 async function actingAuth(env: Env, input: WorkstreamWorkflowInput): Promise<AuthContext> {
   if (input.executionPrincipal.type !== "user") throw new Error("conversation_merge_requires_user");
-  const userId = input.executionPrincipal.userId;
-  const member = await env.DB.prepare(
-    "SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'",
-  ).bind(input.workspaceId, userId).first<{ role: AuthContext["role"] }>();
-  if (!member) {
-    throw new ConversationToolError("conversation_access_denied", MERGE_REFUSAL_SENTENCES.conversation_access_denied,
-      { resourceId: input.parentId });
-  }
-  return {
-    sessionId: `conversation-merge:${input.harnessRunId}`,
-    userId: asUserId(userId),
-    workspaceId: asWorkspaceId(input.workspaceId),
-    region: env.AVALON_REGION,
-    role: member.role,
-    analyticsWorkspaceId: null,
-    principal: "connector",
-  };
+  return agentToolAuth(env, input, "conversation-merge", () =>
+    new ConversationToolError("conversation_access_denied", MERGE_REFUSAL_SENTENCES.conversation_access_denied,
+      { resourceId: input.parentId }));
 }
 
 /**
