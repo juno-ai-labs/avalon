@@ -11405,7 +11405,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /**
    * Record a Space's scope and participants. A Space grants no reader to its
    * Channels, so this is the whole change: no intent, no walk. The actor may
-   * leave a private Space this way, and is answered `left`.
+   * leave a private Space this way, and is answered `left`. A guest may be a
+   * participant; only a member may make the change.
    */
   async noteSpaceAudience(input: WorkspaceSpaceAudienceNoteRequest): Promise<WorkspaceSpaceAudienceResult> {
     await this.initialized;
@@ -11421,10 +11422,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       || storage.isPersonalSpace(request.spaceId)) {
       return { ok: false, code: "space_protected", unreachableUserIds: [], blockedWorkstreamIds: [] };
     }
-    const activeMembers = await Promise.all(request.audience.participantUserIds.map((userId) => (
-      this.activeSpaceMember(request.workspaceId, userId)
+    // A participant is anybody active in the Organization, a guest included:
+    // the listing rules already list a private Space to its participants
+    // whatever their access class, and a Space grants no reader to its
+    // threads. Only the actor has to be a member, which the gate above asks.
+    const participants = await Promise.all(request.audience.participantUserIds.map((userId) => (
+      this.spaceReader(request.workspaceId, userId)
     )));
-    if (activeMembers.some((active) => !active)) {
+    if (participants.some((participant) => participant === null)) {
       return { ok: false, code: "space_access_denied", unreachableUserIds: [], blockedWorkstreamIds: [] };
     }
     const space = this.spaceStorage().applyAudience(request);

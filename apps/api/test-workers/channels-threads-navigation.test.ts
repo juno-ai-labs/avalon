@@ -427,6 +427,32 @@ describe("private Channels", () => {
       .resolves.toMatchObject({ ok: true });
   });
 
+  it("given a guest added to a private Channel, when they read it, then it is theirs with only the threads they are in, and they still cannot change it", async () => {
+    const channelId = await channelWithThreads();
+    await publish(OPEN_THREAD, [viewerEffect(GUEST)]);
+
+    const made = await workspace().noteSpaceAudience({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      spaceId: channelId,
+      audience: { scope: "personal", participantUserIds: [OWNER, GUEST] },
+    });
+    expect(made).toMatchObject({ ok: true, space: { scope: "personal" } });
+    if (!made.ok || !("space" in made)) throw new Error("noteSpaceAudience refused");
+    expect(made.space.participants.map((participant) => participant.userId).sort()).toEqual([OWNER, GUEST].sort());
+
+    await expect(workspace().spaceSummary({ workspaceId: WORKSPACE_ID, userId: GUEST, spaceId: channelId }))
+      .resolves.toMatchObject({ ok: true, space: { id: channelId, reach: "participant" } });
+    // The Channel grants no reader: the private thread in it stays the owner's.
+    expect((await feed(channelId, GUEST)).items.map((item) => item.thread.id)).toEqual([OPEN_THREAD]);
+    await expect(workspace().noteSpaceAudience({
+      workspaceId: WORKSPACE_ID,
+      userId: GUEST,
+      spaceId: channelId,
+      audience: { scope: "personal", participantUserIds: [OWNER, GUEST, MEMBER] },
+    })).resolves.toMatchObject({ ok: false, code: "space_access_denied" });
+  });
+
   it("given General, when somebody makes it private, then it is refused as protected", async () => {
     const general = await workspace().openGeneralSpace({
       workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: asSpaceId("00000000-0000-7000-8000-00000000e1aa"),
