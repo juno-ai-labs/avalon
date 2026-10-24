@@ -63,10 +63,11 @@ its roster over those decisions. Frozen snapshots, incarnation bindings, receipt
 and alarms retain the existing recovery protocol.
 
 Sharing choices, transport, resource authorization and Breakout listings read
-grants. No serving path falls back to a directory or historical roster. An
-admission that finds a handoff pending tries to finish it first
-(`importHistoricalParticipants`), and refuses until it completes if the source
-cannot hand over yet; the alarm still owns the retry. Current relationships and grants are
+grants. No serving path falls back to a directory or historical roster. Pending
+handoffs refuse admission until completion. The one exception is a guest's
+run check (`readRunAuthority` in `integrations.ts`): refused, it asks the
+parent to finish the handoff (`ensureParticipantAuthority`) and checks once
+more. Current relationships and grants are
 rechecked after external awaits; implicit Organization-wide reading does not
 confer sharing authority. An unpublished Breakout's local seats are bootstrap data
 only; it is not publicly readable until its parent publishes its grants. Hidden
@@ -527,35 +528,31 @@ nonparticipant and reconciliation of a stale child roster.
 
 ## Changelog
 
-### 2026-10-24 — An admission finishes a pending handoff before refusing
+### 2026-10-24 — A guest's run finishes its thread's handoff before refusing
 
-**What changed:** `HostedParent.importHistoricalParticipants` runs a pending
-participant handoff (`runParticipantMigration`) when an admission finds one,
-where it returned and left the admission refused for the alarm to settle. A
-failure is logged `participant_migration_admission_attempt_failed` and the
-admission is refused as before. A guest's run check (`readRunAuthority` in
-`integrations.ts`) that is refused asks the parent to finish the Main or
-Breakout handoff (`ensureParticipantAuthority`) and checks once more; an
-unfinished handoff is logged `run_participant_handoff_unfinished`.
+**What changed:** A guest's run check (`readRunAuthority` in `integrations.ts`)
+that is refused asks the parent to finish the conversation's participant
+handoff (`ensureParticipantAuthority`) and checks once more. An unfinished
+handoff is logged `run_participant_handoff_unfinished` and the run stays
+refused.
 
 **Why:** A guest may now start a thread in a Channel they take part in. The
-thread's first run checks a guest's access (`integrations.ts`), and it runs
-while the new Main's handoff is still pending, so a guest's first message was
-refused with "Shared conversation access has ended" and Rally never answered.
-Members never hit it, because their runs skip that check.
+thread's first run checks a guest's access, and it can run while the new Main's
+handoff is pending or before the parent has heard of it, so a guest's first
+message was refused with "Shared conversation access has ended" and Rally never
+answered. Members never hit it, because their runs skip that check.
 
 **Considered and rejected:** Admitting Organization-wide access while a handoff
-is pending. It fixed a guest's thread in a public Channel and not one in a
-private Channel, whose only answer is the roster being imported.
+is pending; it fixed a thread in a public Channel and not one in a private
+Channel, whose only answer is the roster being imported. Finishing a pending
+handoff inside every admission (`importHistoricalParticipants`); it worked, but
+made every read of a new thread wait on the handoff's round trips, members'
+included, with no bound on concurrent attempts, to fix a case only the guest
+run check has.
 
-The run check's retry covers the window before the parent has heard of the
-handoff at all: under parallel test load a guest's first run sometimes reached
-the parent before the new Main's handoff had started, with nothing pending to
-finish.
-
-**Consequences:** The first admission of a conversation mid-handoff costs the
-handoff's round trips to its source. A source that is not ready keeps the old
-answer, so the alarm remains the recovery path.
+**Consequences:** Admission elsewhere still refuses a pending handoff and
+leaves it to the alarm. The handoff imports the conversation's own roster, so
+the retry admits nobody that roster does not.
 
 ### 2026-10-22 — Batch recipient setup on the guest-add response path
 

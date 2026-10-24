@@ -14,6 +14,7 @@ import { ApiError, mapResource, type ChannelFeedPageView } from '../lib/api';
 import { RESOURCE_HEADS_QUERY_KEY } from '../lib/resource-heads';
 import type { ResourceVersion, Workspace, WorkstreamSummary } from '../lib/types';
 import { ChannelScreen } from './channel';
+import { RemoveParticipantDialog } from './conversation-surface';
 
 const api = vi.hoisted(() => ({
   recordActivityEvents: vi.fn(async () => undefined),
@@ -1378,5 +1379,24 @@ describe('a Channel', () => {
       await new Promise((resolve) => setTimeout(resolve, 400));
       expect(api.acknowledgeChannelRead).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe('removing someone from a Channel', () => {
+  const person = (accessClass: 'member' | 'guest') => ({
+    id: 'gale', name: 'Gale', email: 'gale@rally.test', timezone: 'UTC', accessClass,
+  });
+  const dialog = (accessClass: 'member' | 'guest') => render(<RemoveParticipantDialog
+    member={person(accessClass)} noun="channel" onCancel={() => undefined} onContinue={() => undefined} pending={false} self={false}
+  />);
+
+  it('tells the member removing a guest that the guest loses the Channel’s threads', () => {
+    dialog('guest');
+    expect(screen.getByText('Gale will be taken off this channel and lose its threads, except those they take part in.')).toBeTruthy();
+  });
+
+  it('tells them a member keeps a public Channel', () => {
+    dialog('member');
+    expect(screen.getByText('Gale will be taken off this channel. They keep access only if it’s public.')).toBeTruthy();
   });
 });

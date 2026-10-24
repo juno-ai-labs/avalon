@@ -121,7 +121,7 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { parseRpcInput } from "../lib/rpc-input";
 import { stableUuid } from "../lib/stable-uuid";
 import { uuidV7 } from "../lib/uuid-v7";
-import { diagnosticErrorCode, logWarn } from "../observability/logger";
+import { logWarn } from "../observability/logger";
 import {
   revocationClosesSession,
   SocketAccessRevocationSchema,
@@ -1692,20 +1692,7 @@ export class HostedParent {
       await this.ensureParticipantAuthority(address);
       return;
     }
-    if (phase === "pending") {
-      // Tried here rather than only left to its alarm: until the import
-      // completes nobody the roster admits is admitted, and a thread's first
-      // run checks its guest creator inside that window. A source that cannot
-      // hand over yet leaves the import pending and this admission refused,
-      // as before; the alarm retries it.
-      await this.runParticipantMigration(address.substreamId).catch((error: unknown) => {
-        logWarn(this.env, "participant_migration_admission_attempt_failed", {
-          parent_id: this.parentId, substream_id: address.substreamId,
-          code: diagnosticErrorCode(error, "participant_migration_admission_attempt_failed"),
-        });
-      });
-      return;
-    }
+    if (phase !== null) return;
     const target: ScopeGrantTarget = address.substreamId === "0"
       ? { kind: "workstream", workspaceId: address.workspaceId, parentId: address.parentId }
       : { kind: "conversation", ...address };
