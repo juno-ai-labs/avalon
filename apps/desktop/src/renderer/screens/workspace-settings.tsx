@@ -77,9 +77,11 @@ import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { useEscapeClosesWindow } from '../lib/window-escape';
 import type {
   GitHubRepositoryAccessSettings,
+  RosterPerson,
   TerminalWorkspaceSettings,
   Workspace,
   WorkspaceInvitation,
+  WorkspaceMember,
   WorkstreamConnection,
 } from '../lib/types';
 import { deviceTimezone, MY_TIMEZONE_QUERY_KEY } from '../lib/device-timezone';
@@ -381,11 +383,11 @@ function fallbackConnectionIcon(connection: WorkstreamConnection): LucideIcon {
 }
 
 /**
- * What a guest's Settings holds: their own profile and this app. Every other
- * section configures the Organization or a member's place in it, and its
- * routes refuse a guest.
+ * What a guest's Settings holds: their own profile, who is in the Organization,
+ * and this app. Every other section configures the Organization or a member's
+ * place in it, and its routes refuse a guest.
  */
-const GUEST_SETTINGS_SECTIONS: ReadonlySet<SettingsSection> = new Set(['account', 'application']);
+const GUEST_SETTINGS_SECTIONS: ReadonlySet<SettingsSection> = new Set(['account', 'members', 'application']);
 
 const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
   {
@@ -723,6 +725,17 @@ export function WorkspaceSettingsScreen({
     enabled: Boolean(api && !guest),
     staleTime: 30_000,
   });
+  // A guest reads the roster without addresses; `/workspace/members` refuses
+  // them. Under the members key so a roster change refreshes both.
+  const roster = useQuery({
+    queryKey: ['workspace-members', 'roster'],
+    queryFn: ({ signal }) => api!.getWorkspaceRoster(signal),
+    enabled: Boolean(api && guest),
+    staleTime: 30_000,
+  });
+  const people: ReadonlyArray<RosterPerson & Partial<Pick<WorkspaceMember, 'email' | 'status' | 'incarnation' | 'revision'>>> | undefined =
+    guest ? roster.data : members.data;
+  const peopleError = guest ? roster.error : members.error;
   const [promotion, setPromotion] = useState<{ id: string; name: string; incarnation: string; revision: number } | null>(null);
   const promoteGuest = useMutation({
     mutationFn: (guest: { id: string; incarnation: string; revision: number }) =>
@@ -733,12 +746,11 @@ export function WorkspaceSettingsScreen({
   // Members first, then guests, each by the name the row shows.
   const sortedMembers = useMemo(() => {
     const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
-    const people = members.data ?? [];
     return [
-      ...people.filter((member) => member.accessClass !== 'guest').sort(byName),
-      ...people.filter((member) => member.accessClass === 'guest').sort(byName),
+      ...(people ?? []).filter((member) => member.accessClass !== 'guest').sort(byName),
+      ...(people ?? []).filter((member) => member.accessClass === 'guest').sort(byName),
     ];
-  }, [members.data]);
+  }, [people]);
   const [suspension, setSuspension] = useState<{ id: string; name: string; guest: boolean } | null>(null);
   // "Suspend" is the server's member removal: the row goes, access ends at
   // once, and an invitation brings them back. Their contributions stay.
@@ -1137,9 +1149,10 @@ export function WorkspaceSettingsScreen({
     const withConnections = group.label !== 'Settings'
       ? group
       : { ...group, items: group.items.flatMap((item) => item.id === 'connections' ? [item, ...connectionNavigationItems] : [item]) };
-    return { ...withConnections, items: withConnections.items.filter((item) =>
-      (!guest || GUEST_SETTINGS_SECTIONS.has(item.id))
-      ) };
+    // A guest has no Organization page, so Members stands on its own.
+    return { ...withConnections, items: guest
+      ? withConnections.items.filter((item) => GUEST_SETTINGS_SECTIONS.has(item.id)).map((item) => ({ ...item, child: false }))
+      : withConnections.items };
   // Every Application setting but appearance is about the Mac app itself, so a
   // browser drops the whole Desktop app group and shows appearance in Account.
   }).filter((group) => !browserHost || group.label !== 'Desktop app'), [browserHost, guest, connectionNavigationItems]);
@@ -1715,9 +1728,9 @@ export function WorkspaceSettingsScreen({
               <section aria-labelledby="settings-title" className="settings-pane">
                 <div className="settings-pane-heading settings-pane-heading-count">
                   <div><h2><SettingLabel setting={settings.members} /></h2><p>People with access to {workspace.name}.</p></div>
-                  <span>{members.data?.length ?? 0}</span>
+                  <span>{people?.length ?? 0}</span>
                 </div>
-                {members.error && <ErrorNotice occurrence={members.error}>{members.error.message}</ErrorNotice>}
+                {peopleError && <ErrorNotice occurrence={peopleError}>{peopleError.message}</ErrorNotice>}
                 <div className="settings-member-list settings-list-card">
                   {sortedMembers.map((member) => {
                     const isGuest = member.accessClass === 'guest';
@@ -1731,7 +1744,7 @@ export function WorkspaceSettingsScreen({
                     return (
                       <div className="settings-member-row" key={member.id}>
                         <Avatar member={member} size="medium" />
-                        <span><strong>{member.name}</strong><small>{member.email}</small></span>
+                        <span><strong>{member.name}</strong>{member.email && <small>{member.email}</small>}</span>
                         <div className="settings-member-actions">
                           <Badge className="role-badge">{isGuest ? 'Guest' : member.role ?? 'member'}</Badge>
                           {isAdmin && (

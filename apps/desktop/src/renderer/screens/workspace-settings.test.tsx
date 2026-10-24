@@ -19,6 +19,7 @@ const api = vi.hoisted(() => ({
   createWorkspaceInvitation: vi.fn(),
   getWorkspaceInvitations: vi.fn(),
   getWorkspaceMembers: vi.fn(),
+  getWorkspaceRoster: vi.fn(),
   getSupportAccess: vi.fn(),
   promoteWorkspaceGuest: vi.fn(),
   getConnections: vi.fn(),
@@ -537,8 +538,42 @@ describe('Organization settings', () => {
       fireEvent.click(await screen.findByRole('button', { name: 'OK' }));
       expect(await screen.findByRole('heading', { level: 1, name: 'Account' })).toBeVisible();
       const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
-      expect(within(navigation).getAllByRole('button').map((button) => button.textContent)).toEqual(['Account', 'Application']);
+      expect(within(navigation).getAllByRole('button').map((button) => button.textContent)).toEqual(['Account', 'Members', 'Application']);
       expect(api.getTerminalWorkspaceSettings).not.toHaveBeenCalled();
+    } finally {
+      window.location.hash = '';
+    }
+  });
+
+  it('shows a guest who is in the Organization by name and role, without addresses or controls', async () => {
+    const guestSession = { apiBaseUrl: 'https://enterprise.api.rallywith.ai', expiresAt: '2099-01-01T00:00:00.000Z',
+      user: { id: 'user-9', name: 'Gale', email: 'gale@example.com' },
+      workspace: { id: 'workspace-1', name: 'Rally Studio', region: 'enterprise', role: null, timezone: 'Europe/London', accessClass: 'guest' as const } };
+    api.getWorkspaceRoster.mockResolvedValue([
+      { id: 'user-9', name: 'Gale', presentation: null, role: null, accessClass: 'guest' },
+      { id: 'user-2', name: 'Sam', presentation: null, role: 'member', accessClass: 'member' },
+      { id: 'user-1', name: 'Adam', presentation: null, role: 'owner', accessClass: 'member' },
+    ]);
+    window.location.hash = '#/settings?section=members';
+    const client = createTestQueryClient();
+    try {
+      render(
+        <Tooltip.Provider>
+          <QueryClientProvider client={client}>
+            <CollaborationSessionProvider api={api as never} session={guestSession}>
+              <WorkspaceSettingsScreen workspace={{ ...workspace, currentUser: { id: 'user-9', name: 'Gale', email: 'gale@example.com', timezone: 'Europe/London', role: null, accessClass: 'guest' } }} />
+            </CollaborationSessionProvider>
+          </QueryClientProvider>
+        </Tooltip.Provider>,
+      );
+      expect(await screen.findByRole('heading', { level: 1, name: 'Members' })).toBeVisible();
+      const rows = await screen.findAllByText(/^(Adam|Sam|Gale)$/u);
+      expect(rows.map((row) => row.textContent)).toEqual(['Adam', 'Sam', 'Gale']);
+      expect(screen.getAllByText(/^(owner|member|Guest)$/u).map((badge) => badge.textContent)).toEqual(['owner', 'member', 'Guest']);
+      expect(screen.queryByText(/@example\.com/u)).toBeNull();
+      expect(screen.queryByRole('button', { name: /member actions/u })).toBeNull();
+      expect(screen.queryByRole('heading', { name: 'Invitations' })).toBeNull();
+      expect(api.getWorkspaceMembers).not.toHaveBeenCalled();
     } finally {
       window.location.hash = '';
     }

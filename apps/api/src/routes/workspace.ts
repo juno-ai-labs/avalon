@@ -24,6 +24,7 @@ import {
   WorkspaceInviteeSchema,
   WorkspaceAttentionSchema,
   WorkspaceMemberSchema,
+  WorkspaceRosterEntrySchema,
   UserSchema,
   WorkspaceSchema,
   TerminalWorkspaceSettingsSchema,
@@ -56,6 +57,7 @@ const memoryFactParam = z.object({ factId: z.string().min(1) });
 const MemberPageSchema = z.object({ items: z.array(WorkspaceMemberSchema) });
 const InvitationPageSchema = z.object({ items: z.array(WorkspaceInvitationSchema) });
 const InviteePageSchema = z.object({ items: z.array(WorkspaceInviteeSchema) });
+const RosterPageSchema = z.object({ items: z.array(WorkspaceRosterEntrySchema) });
 
 /**
  * The workspace socket's ticket, for members and guests alike.
@@ -107,6 +109,15 @@ async function withTerminalSettingsService<T>(
  */
 export async function workspaceProfile(c: Context<HonoAppEnv>) {
   return c.json(WorkspaceSchema.parse(await new WorkspaceService(c.env, getWorkspaceAuth(c)).getWorkspace()));
+}
+
+/**
+ * The roster without addresses or membership bookkeeping, for members and
+ * guests alike. Mounted beside the profile so a guest can see who is in the
+ * Organization; `/members` stays the member's full roster. See `listRoster`.
+ */
+export async function workspaceRoster(c: Context<HonoAppEnv>) {
+  return c.json(RosterPageSchema.parse({ items: await new WorkspaceService(c.env, getWorkspaceAuth(c)).listRoster() }));
 }
 
 /**

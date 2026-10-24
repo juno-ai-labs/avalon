@@ -7,6 +7,7 @@ import { WorkspaceAccountMenu } from './workspace-account-menu';
 import { AccountSignInSupersededError, FINISH_SIGN_IN_IN_BROWSER } from '../lib/app-session';
 import { desktopWorkspaceIdentityKey, type DesktopUpdateStatus } from '../../common/desktop';
 import type * as PlatformModule from '../lib/platform';
+import type * as CollaborationSessionModule from '../lib/collaboration-session';
 
 /** Update methods layered over the real bridge while a test sets them. */
 const updateBridge = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }));
@@ -18,6 +19,12 @@ vi.mock('../lib/platform', async (importOriginal) => {
   };
 });
 
+/** Whether the menu is drawn for a guest, as the shell would report it. */
+const shell = vi.hoisted(() => ({ guest: false }));
+vi.mock('../lib/collaboration-session', async (importOriginal) => {
+  const original = await importOriginal<typeof CollaborationSessionModule>();
+  return { ...original, useShellCapabilities: () => ({ host: 'desktop' as const, guest: shell.guest }) };
+});
 
 const currentUser = { id: 'user-1', name: 'Ada', email: 'ada@example.com', timezone: 'America/New_York' };
 const active = {
@@ -134,6 +141,19 @@ describe('organization account menu', () => {
       expect(openSettings).toHaveBeenCalledWith('members');
     } finally {
       updateBridge.current = null;
+    }
+  });
+  it.each(['grok', 'workspace'] as const)('offers a guest Members but neither Add new member nor Sidekicks (%s)', (presentation) => {
+    shell.guest = true;
+    try {
+      renderMenu({ presentation });
+      openMenu();
+      const names = within(screen.getByRole('menu')).getAllByRole('menuitem').map((item) => item.textContent?.trim());
+      expect(names).toContain('Members');
+      expect(names).not.toContain('Add new member');
+      expect(names).not.toContain('Sidekicks');
+    } finally {
+      shell.guest = false;
     }
   });
   it.each([true, false])('keeps compact account actions ordered and usable with organizations enabled=%s', (enabled) => {

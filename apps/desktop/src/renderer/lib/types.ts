@@ -45,6 +45,9 @@ export type AutomationDefinition = ContractAutomationDraft;
 export type { HarnessStatus, WorkspaceMember } from '@rally/ui/lib/types';
 import type { HarnessStatus, WorkspaceMember } from '@rally/ui/lib/types';
 
+/** A person as the guest-readable roster names them: no address or zone. */
+export type RosterPerson = Pick<WorkspaceMember, 'id' | 'name' | 'avatarUrl' | 'presentation' | 'role' | 'accessClass'>;
+
 export interface MessageAuthor {
   id: string;
   name: string;

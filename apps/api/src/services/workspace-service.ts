@@ -997,9 +997,37 @@ export class WorkspaceService {
   }
 
   /**
+   * The roster a guest may read, mounted for members and guests alike. Each
+   * row is a name, a face and how the person belongs; see
+   * `WorkspaceRosterEntrySchema` for what stays out. A guest is shown the
+   * members and themselves but not other guests: two guests are often from
+   * different companies, shared different Channels, and neither was told the
+   * other exists.
+   */
+  async listRoster() {
+    const result = await this.env.DB.prepare(
+      `SELECT u.id, u.name, u.avatar_url, u.presentation_json, m.role, m.access_class
+       FROM workspace_members m JOIN users u ON u.id = m.user_id
+       WHERE m.workspace_id = ? AND m.status = 'active'
+         AND (? = 0 OR m.access_class != 'guest' OR m.user_id = ?)
+       ORDER BY u.name COLLATE NOCASE`,
+    )
+      .bind(this.auth.workspaceId, this.auth.accessClass === "guest" ? 1 : 0, this.auth.userId)
+      .all<Record<string, unknown>>();
+    return (result.results ?? []).map((row) => ({
+      id: String(row.id),
+      name: String(row.name),
+      avatarUrl: row.avatar_url == null ? null : String(row.avatar_url),
+      presentation: row.presentation_json ? PersonalPresentationSchema.parse(JSON.parse(String(row.presentation_json))) : null,
+      accessClass: row.access_class === "guest" ? "guest" as const : "member" as const,
+      role: row.role == null ? null : String(row.role),
+    }));
+  }
+
+  /**
    * Addresses with a pending invitation, for every member to pick from. A
    * guest never reaches this: `requireAuth` refuses a session with no role, as
-   * it does for the roster. An address that already has
+   * it does for `/members`. An address that already has
    * a membership here, a guest who was shared a Channel before accepting, is
    * left out so it appears once, as that membership.
    */
