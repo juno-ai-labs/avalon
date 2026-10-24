@@ -39,6 +39,7 @@ and nothing else in the Organization.
 | Read and write in conversations they are part of | Yes | Yes | Yes | Yes |
 | Browse the Organization's Channels | Yes | Yes | Yes | No |
 | Start Channels and Threads | Yes | Yes | Yes | No |
+| Start a Breakout | Yes | Yes | Yes | Only from a Thread shared with them |
 | Build Sidekicks | Yes | Yes | Yes | No |
 | Add a Sidekick to a conversation | Yes | Yes | Yes | Only one already in that conversation |
 | See the members list | Yes | Yes | Yes | No |
