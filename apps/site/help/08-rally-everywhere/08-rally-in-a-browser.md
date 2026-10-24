@@ -89,9 +89,10 @@ through it. The difference is that you only see what has been shared with you.
 
 - **Threads** lists the conversations shared with you. A guest with one shared
   conversation sees little more than that conversation, which is the point.
-- **Channels** lists the Channels those conversations sit in. Opening one shows
-  its feed with only the Threads you can open, and no box for starting a new
-  one.
+- **Channels** lists the Channels those conversations sit in, and any Channel
+  you have been added to. Opening one shows its feed with only the Threads you
+  can open, and no box for starting a new one. In a Channel you were added to,
+  that is every Thread in it that is public to the Organization.
 - Threads open beside their Channel, and Breakouts beside their Thread, as on
   the Mac. See
   [Breakouts](../03-spaces-and-breakouts/03-breakouts.md#a-breakout-beside-its-thread).
