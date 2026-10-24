@@ -29,7 +29,7 @@ import type { HonoAppEnv } from "../src/env";
 import { InitializeWorkstreamObjectInputSchema } from "../src/durable-objects/workstream-object-product";
 import { errorHandler } from "../src/middleware/errors";
 import { conversationRoutes } from "../src/routes/conversations";
-import { workstreamRoutes } from "../src/routes/workstreams";
+import { workstreamCreateRoutes, workstreamRoutes } from "../src/routes/workstreams";
 import { provisionalWorkstreamDescription } from "../src/services/workstream-description-service";
 import { provisionalWorkstreamTitle } from "../src/services/workstream-naming-service";
 import { createTestEnv } from "./helpers/cloudflare-test";
@@ -46,6 +46,7 @@ import { createTestEnv } from "./helpers/cloudflare-test";
  */
 function routedApp() {
   const app = new Hono<HonoAppEnv>();
+  app.route("/workstreams", workstreamCreateRoutes);
   app.route("/workstreams", workstreamRoutes);
   app.route("/conversations", conversationRoutes);
   app.onError(errorHandler);
