@@ -796,6 +796,16 @@ export class WorkstreamToolReceiptStorage {
     return row ? receiptRecord(row) : null;
   }
 
+  /** Canonical transcript call IDs, across every activation of this conversation. */
+  receiptsForCalls(input: { toolCallIds: readonly string[] }): ToolReceiptRecord[] {
+    if (input.toolCallIds.length === 0) return [];
+    return this.sql.exec<ReceiptRow>(
+      `SELECT ${RECEIPT_COLUMNS} FROM tool_effects
+        WHERE tool_call_id IN (SELECT value FROM json_each(?)) ORDER BY tool_position, effect_intent_id`,
+      JSON.stringify(input.toolCallIds),
+    ).toArray().map(receiptRecord);
+  }
+
   /** Ordered relevant tool history used to rebuild run-local safety state after eviction. */
   /**
    * The latest receipts of some capabilities across every run on this object.

@@ -6884,6 +6884,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.listRuns(input));
   }
 
+  async sidekickListRunsPage(input: Parameters<HostedSidekick["listRunsPage"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.listRunsPage(input));
+  }
+
+  async sidekickReadRunForReview(input: Parameters<HostedSidekick["readRunForReview"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readRunForReview(input));
+  }
+
   async sidekickClaimExecutionPrincipal(input: Parameters<HostedSidekick["claimExecutionPrincipal"]>[0]) {
     return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.claimExecutionPrincipal(input));
   }

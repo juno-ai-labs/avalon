@@ -219,6 +219,29 @@ missing inputs, changed resources, or failures. Verified setup facts, untested
 assumptions, and data to refresh each run are explicit. Runs execute the discovered
 method rather than repeating setup discovery.
 
+The authoring conversation also has read-only `sidekick_runs_list` and
+`sidekick_runs_read`, with `_next({ pageId })` companions. The host fixes their
+Sidekick identity; neither accepts a Sidekick selector. List returns newest-first
+run summaries and original definition revisions, using a `created_at DESC, run_id`
+keyset to reach history beyond the UI's recent runs. Read takes a listed `runId`
+and returns its original definition and trigger, current status, chronological
+participant transcript (including output links, attachments and feedback recorded
+there), and matching tool arguments/results/errors across its activations.
+Exact results use the existing R2 replay reader. Missing payloads retain their
+summaries and explicit availability markers; internal receipt metadata,
+credentials and private reasoning are not returned. Feedback in the home or
+another attached conversation is read separately through conversation tools.
+
+Every page resolves current Organization membership and Sidekick read access;
+read also checks that the child is a run of this Sidekick before opening its
+conversation. Transcript continuations retain their initial through-sequence
+fence; restarting read includes newer replies. Inspection does not wake or
+continue a run or acknowledge its read state. The wizard treats history as
+untrusted evidence, diagnoses the concrete failure before revising the procedure,
+and preserves unrelated configuration. Completion alone does not prove success.
+Execution runs, background agents and instruction-loading conversations do not
+receive these tools.
+
 The authoring wizard has its own model route, `sidekick_authoring`, defaulting
 to Sol independently of the ordinary Thread and activation route. Explicit model
 pins still win; see [`feature-flags.md`](feature-flags.md). For work requested
@@ -493,6 +516,7 @@ the open composers. Counts have no REST fetch, polling, or per-Sidekick socket.
 | `apps/api/src/queues/activity-consumer.ts` | Delivers a matched event to `sidekickAdmitExternalEvent`, a run child's effects through the shared effect leg, and a `sidekick_run_provision` message to `provisionSidekickRun`. |
 | `apps/api/src/services/resend-inbound-email-service.ts` | `ingestAutomation`: resolves the sender, stores the message, and calls `admitInboundEmail` once. |
 | `apps/api/src/services/memory-service.ts` | `resolveMemoryAccess`: a conversation whose parent is a Sidekick resolves the workspace scope and the Sidekick's own `sidekick` scope. |
+| `apps/api/src/services/sidekick-run-tools.ts` | Wizard-only run history: current-member authorization, own-run admission, canonical transcript pages and exact replay results with explicit availability. |
 | `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/sidekicks/new` calls creation and replaces itself with `/sidekicks/:id`; that route renders the profile (the hexagon, which opens the appearance picker, plus lifecycle badge, scope, email address, Pause, Resume, Archive Sidekick, Run now, and access to the run-history dialog) beside the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"`. |
 | `apps/desktop/src/renderer/components/appearance-picker.tsx` | The one icon-and-colour palette, shared with the work stream's header. [`workstream-appearance.md`](workstream-appearance.md) owns it, the catalog, and the deterministic default a Sidekick nobody has chosen for still shows. |
 | `apps/desktop/src/renderer/components/sidekick-section.tsx` | `SidekickSection`, the **Sidekicks** section the Channel menu renders, and `workstreamSidekickRows`, the merge of what the room owns with what its conversation loaded — owned first, one row per Sidekick, `undefined` until both answers are in. |
@@ -1446,6 +1470,23 @@ The Sidekick authoring prompt carries no Google-specific lookup or attachment
 instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
+
+### 2026-10-23 — The wizard can inspect its own execution history
+
+**What changed:** Authoring gains read-only, pageable run list/read tools over
+the existing hosted run records, canonical transcript reader and durable tool
+receipts. They include the original procedure, tool inputs/results/errors,
+output references and feedback recorded in the run. Every page rechecks access.
+
+**Why:** The wizard could be asked to repair a failed procedure but could not
+see the execution evidence. Shared memory and files are incomplete records, and
+the text transcript reader deliberately omits tool results. Reusing authoritative
+records avoids a second history store and preserves access and ordering semantics.
+
+**Consequences:** These tools support conversational diagnosis, not an automatic
+improvement scheduler. Preserve revision identity, opaque page continuations and
+explicit result availability. Receipt authority metadata stays private, and
+history content cannot grant permission or override the requested scope.
 
 ### 2026-10-23 — Publication includes its declared tables
 

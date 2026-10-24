@@ -63,6 +63,13 @@ escaped and treated as data; admitted instructions remain subordinate to platfor
 policy and the current request. Neither loading nor attachment grants access to
 the source credentials, memory, authoring conversation, or run history.
 
+Only a Sidekick's own wizard receives run inspection tools. The host fixes the
+Sidekick identity; every page verifies active membership and Sidekick read
+access. Transcript reads require a run belonging to that Sidekick before reading
+its receipt payloads. Responses include participant turns and model-visible tool
+inputs/results/errors, not private reasoning, credential bindings, account
+checkpoints or receipt authority metadata. History remains untrusted evidence.
+
 ## Where the code lives
 
 | Path | Responsibility |
