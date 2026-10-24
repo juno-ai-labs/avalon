@@ -77,8 +77,9 @@ Before sending, it reconciles pending invitations and active members so retrying
 lost response does not replace an invitation already sent. Failed addresses stay
 editable. Onboarding has no teammate discovery API.
 
-The same field, check and send back **Add new member** in the account menu,
-which an administrator can open at any time. It closes once every address is
+The same field, check and send back **Add new member** in the account menu.
+Every member sees it; for anyone but an administrator it is disabled with a
+tooltip saying only administrators can add members, rather than hidden. It closes once every address is
 invited and otherwise stays open holding the addresses that failed.
 
 ## Invariants
@@ -163,8 +164,9 @@ Onboarding no longer starts an agent run or a connector authorization.
 **What changed:** The email-chip field, its `something@something` check and
 the reconcile-then-send loop moved out of `guided-onboarding.tsx` into
 `components/invite-emails.tsx`. The account menu's new **Add new member**
-dialog uses them, shown only to administrators since the server refuses
-anyone else. The pending-invitation and member reads now run together rather
+dialog uses them. The item is shown to every member and enabled only for
+administrators, since the server refuses anyone else; hiding it would leave
+members with no hint that inviting exists. The pending-invitation and member reads now run together rather
 than one after the other.
 
 **Why:** Inviting people should not need onboarding or a trip into Settings,
