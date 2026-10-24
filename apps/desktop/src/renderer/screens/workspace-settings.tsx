@@ -32,6 +32,7 @@ import {
   Trash2,
   UserRound,
   Users,
+  UsersRound,
   Webhook,
   X,
   type LucideIcon,
@@ -393,6 +394,9 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
       { id: 'account', label: 'Account', icon: UserRound },
       { id: 'notifications', label: 'Notifications', icon: Bell },
       { id: 'workspace', label: 'Organization', icon: Users },
+      // Its own page beneath Organization: the roster, guests and invitations
+      // are a place people are sent to directly, from the account menu.
+      { id: 'members', label: 'Members', icon: UsersRound, child: true },
       // Its own top-level page rather than part of Organization: the Terminal
       // egress policy is a review-then-confirm flow that stops running
       // sandboxes, which does not belong in the middle of a list of names,
@@ -1682,7 +1686,34 @@ export function WorkspaceSettingsScreen({
                   read={(signal) => api.getOrganizationMemory(signal)}
                 />}
                 <UsageSettingsSection api={api ?? null} canChangePlan={isAdmin} organizationName={workspace.name} openRequest={usageRequest} />
-                <div className="settings-pane-heading settings-pane-heading-count settings-pane-heading-spaced">
+                <div className="settings-pane-heading settings-pane-heading-spaced">
+                  <h2><SettingLabel setting={settings.workspaceAccess} /></h2>
+                  <p>Leaving removes this organization from your Rally account on every device.</p>
+                </div>
+                <div className="settings-list-card">
+                  <div className="settings-preference-row">
+                    <span className="settings-row-copy">
+                      <strong>{leavingClosesWorkspace ? 'Leave and close this organization' : 'Leave this organization'}</strong>
+                      <small>{leavingClosesWorkspace
+                        ? 'You are the last member. The organization will become unavailable without deleting its retained data.'
+                        : 'The organization stays available to its other members.'}</small>
+                    </span>
+                    <Button
+                      className="button-danger"
+                      disabled={members.isLoading || members.isError}
+                      onClick={() => setLeaveConfirmationOpen(true)}
+                    >
+                      {leavingClosesWorkspace ? 'Leave and close organization' : 'Leave this organization'}
+                    </Button>
+                  </div>
+                </div>
+                {members.isError && <ErrorNotice occurrence={members.error}>Rally could not verify whether anyone else belongs to this workspace.</ErrorNotice>}
+              </section>
+            )}
+
+            {activeSection === 'members' && (
+              <section aria-labelledby="settings-title" className="settings-pane">
+                <div className="settings-pane-heading settings-pane-heading-count">
                   <div><h2><SettingLabel setting={settings.members} /></h2><p>People with access to {workspace.name}.</p></div>
                   <span>{members.data?.length ?? 0}</span>
                 </div>
@@ -1836,28 +1867,6 @@ export function WorkspaceSettingsScreen({
                     )}
                   </div>
                 )}
-                <div className="settings-pane-heading settings-pane-heading-spaced">
-                  <h2><SettingLabel setting={settings.workspaceAccess} /></h2>
-                  <p>Leaving removes this organization from your Rally account on every device.</p>
-                </div>
-                <div className="settings-list-card">
-                  <div className="settings-preference-row">
-                    <span className="settings-row-copy">
-                      <strong>{leavingClosesWorkspace ? 'Leave and close this organization' : 'Leave this organization'}</strong>
-                      <small>{leavingClosesWorkspace
-                        ? 'You are the last member. The organization will become unavailable without deleting its retained data.'
-                        : 'The organization stays available to its other members.'}</small>
-                    </span>
-                    <Button
-                      className="button-danger"
-                      disabled={members.isLoading || members.isError}
-                      onClick={() => setLeaveConfirmationOpen(true)}
-                    >
-                      {leavingClosesWorkspace ? 'Leave and close organization' : 'Leave this organization'}
-                    </Button>
-                  </div>
-                </div>
-                {members.isError && <ErrorNotice occurrence={members.error}>Rally could not verify whether anyone else belongs to this workspace.</ErrorNotice>}
               </section>
             )}
 

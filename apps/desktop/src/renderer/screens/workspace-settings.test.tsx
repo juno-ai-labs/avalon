@@ -455,7 +455,7 @@ describe('Organization settings', () => {
       return {};
     });
     renderSettings();
-    openSettingsSection('Organization');
+    openSettingsSection('Members');
     await openMemberActions(`Guest Sam (${guest.email}) member actions`);
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Make member' }));
     expect(api.promoteWorkspaceGuest).not.toHaveBeenCalled();
@@ -791,7 +791,7 @@ describe('Organization settings', () => {
     ) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
 
     openSettingsSection('Organization');
-    expect(await screen.findByText('Sam', undefined, { timeout: 10_000 })).toBeVisible();
+    expect(await screen.findByText('Organization preferences', undefined, { timeout: 10_000 })).toBeVisible();
     // The destructive review-and-confirm flow is not sitting in the middle of
     // the preferences list, and Workspace does not pay for its read.
     expect(screen.queryByText('Terminal network access')).not.toBeInTheDocument();
@@ -910,13 +910,29 @@ describe('Organization settings', () => {
   }, 30_000);
 
   it('opens the exact section requested by a native settings-window URL', async () => {
-    window.history.replaceState({}, '', '/?surface=settings&settingsSection=workspace#/settings');
+    window.history.replaceState({}, '', '/?surface=settings&settingsSection=members#/settings');
     renderSettings();
 
     const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
-    expect(within(navigation).getByRole('button', { name: 'Organization' })).toHaveAttribute('aria-current', 'page');
-    expect(screen.getByRole('heading', { level: 1, name: 'Organization' })).toBeVisible();
+    const membersNavigation = within(navigation).getByRole('button', { name: 'Members' });
+    expect(membersNavigation).toHaveAttribute('aria-current', 'page');
+    expect(membersNavigation).toHaveClass('settings-navigation-child');
+    expect(screen.getByRole('heading', { level: 1, name: 'Members' })).toBeVisible();
     expect(await screen.findByText('Sam')).toBeVisible();
+  });
+
+  it('keeps the roster off Organization, on its own Members page', async () => {
+    renderSettings();
+    openSettingsSection('Organization');
+    expect(await screen.findByText('Organization preferences')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Leave this organization' })).toBeVisible();
+    expect(screen.queryByText('Sam')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Invitations' })).not.toBeInTheDocument();
+
+    openSettingsSection('Members');
+    expect(await screen.findByText('Sam')).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Invitations' })).toBeVisible();
+    expect(screen.queryByText('Organization preferences')).not.toBeInTheDocument();
   });
 
   it('marks an installed connection and its provider card with the same company', async () => {
@@ -1373,7 +1389,7 @@ describe('Organization settings', () => {
     ageCacheEntry(client, ['workspace-members'], 60_000);
 
     renderSettings(workspace, client);
-    openSettingsSection('Organization');
+    openSettingsSection('Members');
 
     expect(screen.getByText('Adam')).toBeVisible();
     await waitFor(() => expect(api.getWorkspaceMembers).toHaveBeenCalledTimes(1));
@@ -2409,7 +2425,7 @@ describe('Organization settings', () => {
 
   it('lets an owner create, copy, and revoke an invite', async () => {
     renderSettings();
-    openSettingsSection('Organization');
+    openSettingsSection('Members');
 
     expect(await screen.findByText('Sam', undefined, { timeout: 10_000 })).toBeVisible();
     expect(await screen.findByText('Sam', undefined, { timeout: 10_000 })).toBeVisible();
@@ -2445,7 +2461,7 @@ describe('Organization settings', () => {
     api.setWorkspaceMemberRole.mockResolvedValue(undefined);
     api.getWorkspaceMembers.mockResolvedValue([owner, secondAdmin, member, namesake]);
     renderSettings({ ...workspace, currentUser: secondAdmin });
-    openSettingsSection('Organization');
+    openSettingsSection('Members');
     expect(await screen.findAllByText('Sam')).toHaveLength(2);
 
     // One menu per eligible row, each with an accessible name only that row
@@ -2486,7 +2502,7 @@ describe('Organization settings', () => {
   it('offers an ordinary member no member-role controls at all', async () => {
     api.getWorkspaceMembers.mockResolvedValue([owner, secondAdmin, member, namesake]);
     renderSettings({ ...workspace, currentUser: member });
-    openSettingsSection('Organization');
+    openSettingsSection('Members');
     expect(await screen.findByText('Adam')).toBeVisible();
     expect(screen.queryByRole('button', { name: /member actions$/ })).not.toBeInTheDocument();
   });
@@ -2497,7 +2513,7 @@ describe('Organization settings', () => {
     const lowerName = { ...member, id: 'user-7', name: 'bea', email: 'bea@example.com' };
     api.getWorkspaceMembers.mockResolvedValue([guestZed, member, owner, guestBo, lowerName, secondAdmin]);
     renderSettings();
-    openSettingsSection('Organization');
+    openSettingsSection('Members');
     expect(await screen.findByText('Riley')).toBeVisible();
     const rows = Array.from(document.querySelectorAll('.settings-member-list .settings-member-row strong'))
       .map((name) => name.textContent);
@@ -2510,7 +2526,7 @@ describe('Organization settings', () => {
     });
     api.getWorkspaceMembers.mockResolvedValue([owner, member]);
     renderSettings();
-    openSettingsSection('Organization');
+    openSettingsSection('Members');
     await openMemberActions('Sam (sam@example.com) member actions');
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Suspend' }));
     const dialog = await screen.findByRole('dialog', { name: 'Suspend Sam?' });
@@ -2527,7 +2543,7 @@ describe('Organization settings', () => {
       .mockRejectedValueOnce(new ApiError('The workspace membership changed. Check it and try again.', 409, 'membership_changed'))
       .mockImplementationOnce(async () => { api.getWorkspaceMembers.mockResolvedValue([owner]); });
     renderSettings();
-    openSettingsSection('Organization');
+    openSettingsSection('Members');
 
     await openMemberActions('Sam (sam@example.com) member actions');
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Suspend' }));
@@ -2551,7 +2567,7 @@ describe('Organization settings', () => {
 
   it('does not expose invitation management to regular members', async () => {
     renderSettings({ ...workspace, currentUser: member });
-    openSettingsSection('Organization');
+    openSettingsSection('Members');
     expect(await screen.findByText('Adam')).toBeVisible();
     expect(screen.queryByRole('heading', { name: 'Invitations' })).not.toBeInTheDocument();
     expect(api.getWorkspaceInvitations).not.toHaveBeenCalled();
@@ -3340,7 +3356,7 @@ describe('Closing the settings window with Escape', () => {
 
   it('keeps an invitation draft the caret has already left', async () => {
     renderSettings(workspace, createTestQueryClient(), true);
-    openSettingsSection('Organization');
+    openSettingsSection('Members');
 
     const email = await screen.findByPlaceholderText('teammate@company.com');
     fireEvent.change(email, { target: { value: 'teammate@company.com' } });
