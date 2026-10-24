@@ -5,9 +5,14 @@ export interface WorkspaceMember {
   presentation?: PersonalPresentation | null;
   id: string;
   name: string;
-  email: string;
+  /**
+   * Absent on a person read from the guest's roster (`GET /workspace/roster`),
+   * which carries no address or zone. Every member surface reads the full
+   * roster and has both.
+   */
+  email?: string;
   avatarUrl?: string;
-  timezone: string;
+  timezone?: string;
   role?: string | null;
   accessClass?: "member" | "guest";
   /**

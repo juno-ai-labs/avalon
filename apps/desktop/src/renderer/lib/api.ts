@@ -173,7 +173,6 @@ import type {
   ResourcePage,
   SpaceConversationSummary,
   WorkspaceMember,
-  RosterPerson,
   WorkstreamConnection,
   WorkstreamBoot,
   WorkstreamDetail,
@@ -1106,7 +1105,7 @@ export class RallyApi {
   }
 
   /** The roster a guest may read: names, faces and roles, no addresses. */
-  async getWorkspaceRoster(signal?: AbortSignal): Promise<RosterPerson[]> {
+  async getWorkspaceRoster(signal?: AbortSignal): Promise<WorkspaceMember[]> {
     const page = await this.request('/workspace/roster', { schema: wireRosterPageSchema, signal });
     return page.items.map((person) => ({
       id: person.id,

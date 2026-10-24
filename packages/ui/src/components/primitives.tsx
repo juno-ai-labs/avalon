@@ -423,8 +423,7 @@ export function Avatar({
   size = 'medium',
   title = member.name,
 }: {
-  /** Only a name and a face are drawn, so a roster entry without an address will do. */
-  member: Pick<WorkspaceMember, 'id' | 'name'> & Partial<WorkspaceMember>;
+  member: WorkspaceMember;
   size?: 'small' | 'medium' | 'large';
   title?: string | null;
 }): React.JSX.Element {

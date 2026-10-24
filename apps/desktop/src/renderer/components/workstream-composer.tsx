@@ -249,7 +249,7 @@ export function WorkstreamComposer({
     .map((member) => ({
       id: member.id,
       label: member.name,
-      description: member.email,
+      description: member.email ?? '',
       kind: 'person' as const,
       member,
     })),
@@ -265,7 +265,7 @@ export function WorkstreamComposer({
     if (mentionQuery === null) return [];
     const query = mentionQuery.toLowerCase();
     const matches = candidates.filter((candidate) => candidate.label.toLowerCase().includes(query)
-      || candidate.member?.email.toLowerCase().includes(query));
+      || candidate.member?.email?.toLowerCase().includes(query));
     const sharedInvitees = new Set(sharedInviteeEmails);
     const groups = [
       { label: null, candidates: matches.filter((candidate) => candidate.kind === 'rally') },

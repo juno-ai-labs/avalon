@@ -75,13 +75,12 @@ import { MAC_APP_CONNECT_NOTE, MAC_APP_DOWNLOADABLE, MAC_APP_DOWNLOAD_URL, conne
 import { disableWebPush, enableWebPush, webPushState } from '../lib/web-push';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { useEscapeClosesWindow } from '../lib/window-escape';
+import { useWorkspaceMembers } from '../lib/workspace-members';
 import type {
   GitHubRepositoryAccessSettings,
-  RosterPerson,
   TerminalWorkspaceSettings,
   Workspace,
   WorkspaceInvitation,
-  WorkspaceMember,
   WorkstreamConnection,
 } from '../lib/types';
 import { deviceTimezone, MY_TIMEZONE_QUERY_KEY } from '../lib/device-timezone';
@@ -706,7 +705,8 @@ export function WorkspaceSettingsScreen({
     // whenever it is brought forward.
     refetchOnWindowFocus: 'always',
   });
-  const userTimezone = myTimezone.data?.timezone ?? workspace.currentUser.timezone;
+  // A person read from the guest roster has no zone; a member's always does.
+  const userTimezone = myTimezone.data?.timezone ?? workspace.currentUser.timezone ?? workspace.timezone;
   const timezoneOptions = useMemo(
     () => [...new Set([...supportedTimezones, userTimezone, workspaceTimezone, deviceTimezone() ?? userTimezone])].sort(),
     [userTimezone, workspaceTimezone],
@@ -719,23 +719,8 @@ export function WorkspaceSettingsScreen({
   // list the shell has been sitting on — what `'always'` added was a second
   // `/workspace/members` for a list fetched milliseconds earlier by the boot
   // this screen is mounting inside of.
-  const members = useQuery({
-    queryKey: ['workspace-members'],
-    queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
-    enabled: Boolean(api && !guest),
-    staleTime: 30_000,
-  });
-  // A guest reads the roster without addresses; `/workspace/members` refuses
-  // them. Under the members key so a roster change refreshes both.
-  const roster = useQuery({
-    queryKey: ['workspace-members', 'roster'],
-    queryFn: ({ signal }) => api!.getWorkspaceRoster(signal),
-    enabled: Boolean(api && guest),
-    staleTime: 30_000,
-  });
-  const people: ReadonlyArray<RosterPerson & Partial<Pick<WorkspaceMember, 'email' | 'status' | 'incarnation' | 'revision'>>> | undefined =
-    guest ? roster.data : members.data;
-  const peopleError = guest ? roster.error : members.error;
+  // A guest's is the roster without addresses; see `useWorkspaceMembers`.
+  const members = useWorkspaceMembers(api, { guest, staleTime: 30_000 });
   const [promotion, setPromotion] = useState<{ id: string; name: string; incarnation: string; revision: number } | null>(null);
   const promoteGuest = useMutation({
     mutationFn: (guest: { id: string; incarnation: string; revision: number }) =>
@@ -746,11 +731,12 @@ export function WorkspaceSettingsScreen({
   // Members first, then guests, each by the name the row shows.
   const sortedMembers = useMemo(() => {
     const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    const people = members.data ?? [];
     return [
-      ...(people ?? []).filter((member) => member.accessClass !== 'guest').sort(byName),
-      ...(people ?? []).filter((member) => member.accessClass === 'guest').sort(byName),
+      ...people.filter((member) => member.accessClass !== 'guest').sort(byName),
+      ...people.filter((member) => member.accessClass === 'guest').sort(byName),
     ];
-  }, [people]);
+  }, [members.data]);
   const [suspension, setSuspension] = useState<{ id: string; name: string; guest: boolean } | null>(null);
   // "Suspend" is the server's member removal: the row goes, access ends at
   // once, and an invitation brings them back. Their contributions stay.
@@ -1728,9 +1714,9 @@ export function WorkspaceSettingsScreen({
               <section aria-labelledby="settings-title" className="settings-pane">
                 <div className="settings-pane-heading settings-pane-heading-count">
                   <div><h2><SettingLabel setting={settings.members} /></h2><p>People with access to {workspace.name}.</p></div>
-                  <span>{people?.length ?? 0}</span>
+                  <span>{members.data?.length ?? 0}</span>
                 </div>
-                {peopleError && <ErrorNotice occurrence={peopleError}>{peopleError.message}</ErrorNotice>}
+                {members.error && <ErrorNotice occurrence={members.error}>{members.error.message}</ErrorNotice>}
                 <div className="settings-member-list settings-list-card">
                   {sortedMembers.map((member) => {
                     const isGuest = member.accessClass === 'guest';
