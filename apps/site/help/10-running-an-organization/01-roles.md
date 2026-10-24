@@ -63,8 +63,9 @@ appear for them at all, and the time zone and internet access settings are
 shown read-only. If a teammate asks why they cannot find something, this is
 usually why.
 
-Guests see even less. Their Settings has only **Account** and **Application**,
-so they never see the members list or any Organization setting. A guest cannot
+Guests see even less. Their Settings has only **Account** in a browser, plus
+**Application** in the Mac app. They never see the members list or any
+Organization setting. A guest cannot
 leave the Organization themselves; to end their access, see
 [Taking access back](../03-spaces-and-breakouts/05-sharing-with-guests.md#taking-access-back).
 
