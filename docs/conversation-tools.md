@@ -150,7 +150,9 @@ it.
   run), so the client renders it under the Sidekick's name. When the run was
   woken by an external message (a bound thread's reply), the host copies that
   sender into `externalSource`. A run's system message says its final message
-  stays in the run, so a conversation hears a result only by a post.
+  stays in the run, so a conversation hears a result only by a post. Its
+  description and the plugin's instructions steer a Sidekick's own reports
+  through this path.
 - **attach** takes `conversation` and returns
   `{ conversationId, kind, title, alreadyAttached }`. It writes one
   `sidekick_conversation_attachments` row per Sidekick and conversation.
@@ -330,6 +332,27 @@ is published to the target's audience; the person who attached that
 conversation chose that audience.
 
 ## Changelog
+
+### 2026-10-23 — Guide Sidekick delivery toward its own identity
+
+**What changed:** Posting and authoring instructions name `conversation_post`
+as the delivery action for a Sidekick's reports. Both the wizard and runs receive
+this guidance because either can deliver results to another conversation; the
+wizard is explicitly told to answer the person inline during configuration.
+Delegates without the posting tool return results to the delegating agent.
+Engineering MCP's send description explains its own attribution behavior.
+
+**Why:** A delegated reporting agent used Engineering MCP's send-as-user tool,
+so its report was stored and displayed as a message from the delegating user.
+
+**Considered and rejected:** Blocking engineering sends or narrowing connector
+capabilities. The requested fix is model guidance while retaining sending.
+
+**Consequences:** These instructions steer attribution but do not enforce a
+permission boundary or change existing messages. Keep delivery instructions in
+the Sidekick prompts and tool descriptions focused on their own effects.
+
+PR: [#1438](https://github.com/juno-ai-labs/avalon/pull/1438).
 
 ### 2026-10-22 — Keep refused Sidekick posts visible
 
