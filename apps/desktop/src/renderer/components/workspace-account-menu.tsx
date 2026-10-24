@@ -1,7 +1,7 @@
 import { ErrorNotice } from './primitives';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { IconDeviceDesktopDown, IconHexagons, IconLogout, IconSettings, IconUsers } from '@tabler/icons-react';
+import { IconDeviceDesktopDown, IconHexagons, IconLogout, IconSettings, IconUserPlus, IconUsers } from '@tabler/icons-react';
 import { desktopBridge } from '../lib/platform';
 import { useDownloadedUpdate } from '../lib/use-downloaded-update';
 import type { SupportPerson, SupportWorkspace, WorkspaceAttention } from '@rally/contracts';
@@ -50,6 +50,8 @@ export interface WorkspaceAccountMenuProps {
    * the creation stands down, and a sign-in that still lands is kept. */
   onAbandonSignIn: () => void;
   onInvitationPromptDismiss: () => void;
+  /** Opens the add-members dialog; absent for anyone who may not invite. */
+  onAddMembers?: () => void;
   onOpenSettings: () => void;
   onSignOut: () => void;
   /** Resolves true once the switch has taken; the menu closes on that and stays
@@ -131,6 +133,7 @@ export function WorkspaceAccountMenu({
   onMenuOpen,
   onAbandonSignIn,
   onInvitationPromptDismiss,
+  onAddMembers,
   onOpenSettings,
   onSignOut,
   onSwitchWorkspace,
@@ -265,6 +268,10 @@ export function WorkspaceAccountMenu({
             )}
             {presentation === 'grok' && (
               <>
+                {!guest && onAddMembers && <DropdownMenu.Item className="menu-item account-menu-item" onSelect={onAddMembers}>
+                  <IconUserPlus aria-hidden="true" />
+                  <span>Add new member</span>
+                </DropdownMenu.Item>}
                 {!guest && <DropdownMenu.Item className="menu-item account-menu-item" onSelect={() => void desktopBridge().openSettings('members')}>
                   <IconUsers aria-hidden="true" />
                   <span>Members</span>
@@ -404,6 +411,9 @@ export function WorkspaceAccountMenu({
                   <small>Organization</small>
                 </DropdownMenu.Label>
                 <DropdownMenu.Separator className="menu-separator" />
+                {!guest && onAddMembers && <DropdownMenu.Item asChild className="menu-item">
+                  <button onClick={onAddMembers} type="button">Add new member</button>
+                </DropdownMenu.Item>}
                 {!guest && <DropdownMenu.Item asChild className="menu-item">
                   <button onClick={() => void desktopBridge().openSettings('members')} type="button">Members</button>
                 </DropdownMenu.Item>}

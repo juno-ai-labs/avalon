@@ -102,6 +102,19 @@ describe('organization account menu', () => {
       updateBridge.current = null;
     }
   });
+  it.each(['grok', 'workspace'] as const)('offers Add new member above Members only to someone who may invite (%s)', (presentation) => {
+    renderMenu({ presentation });
+    openMenu();
+    expect(screen.queryByRole('menuitem', { name: 'Add new member' })).not.toBeInTheDocument();
+    cleanup();
+
+    const props = renderMenu({ presentation, onAddMembers: vi.fn() });
+    openMenu();
+    const names = within(screen.getByRole('menu')).getAllByRole('menuitem').map((item) => item.textContent);
+    expect(names.indexOf('Add new member')).toBe(names.indexOf('Members') - 1);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Add new member' }));
+    expect(props.onAddMembers).toHaveBeenCalledOnce();
+  });
   it('opens Settings on the Members page from Members', () => {
     const openSettings = vi.fn(async () => undefined);
     updateBridge.current = { openSettings };
