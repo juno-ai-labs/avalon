@@ -673,7 +673,12 @@ upgrade, the WorkspaceDO admission and Azure's session acknowledgement overlap
 the microphone opening rather than follow it. `listening` means local capture is
 running; it does not wait for the ticket or the provider's session
 acknowledgement, and the microphone is the only thing it waits for. OS
-permission and device startup remain prerequisites for capture.
+permission and device startup remain prerequisites for capture. On desktop,
+Chromium still asks Electron per WebContents: `allowsTrustedAudioCapture` in
+`apps/desktop/src/main/media-permission.ts` admits the main window and the
+Sidekicks window only, and only for audio. The Sidekicks composer is a different
+window from the main Rally window, so a main-only allowlist denies it with a
+permission error even when Rally is already enabled in System Settings.
 
 The press itself is answered before any of that. The microphone control takes
 `is-arming` while the hook is `requesting` (an arc in the button's own ink
