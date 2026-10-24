@@ -724,6 +724,7 @@ describe("tool-receipt authority on real workerd", () => {
     const everyField = {
       runId: RUN,
       toolCallId: "dispatch-probe",
+      toolCallIds: [],
       effectIntentId: "dispatch-probe",
       toolPosition: 0,
       effectIntentIds: [],
