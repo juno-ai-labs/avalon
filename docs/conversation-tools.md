@@ -352,6 +352,8 @@ capabilities. The requested fix is model guidance while retaining sending.
 permission boundary or change existing messages. Keep delivery instructions in
 the Sidekick prompts and tool descriptions focused on their own effects.
 
+PR: [#1438](https://github.com/juno-ai-labs/avalon/pull/1438).
+
 ### 2026-10-22 — Keep refused Sidekick posts visible
 
 **What changed:** An activation's refused post sets the existing Sidekick
