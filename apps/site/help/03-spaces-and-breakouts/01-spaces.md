@@ -134,6 +134,10 @@ In a Channel open to the whole Organization, the member list is mostly a record
 of who belongs to it, since everyone can see it anyway. In a private Channel,
 the members are the only people who can see it at all.
 
+You can add a guest to a Channel too. They can then read its public Threads,
+but not its private ones. See
+[Add a guest to a Channel](05-sharing-with-guests.md#add-a-guest-to-a-channel).
+
 ### Private channels
 
 Every Channel starts open to the whole Organization. To make one private, open

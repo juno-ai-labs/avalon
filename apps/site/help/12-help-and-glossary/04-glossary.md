@@ -90,7 +90,8 @@ end of your day. See
 
 **Guest.** Someone outside your Organization who has been invited into one
 conversation by email. A guest has no role in the Organization and sees only
-what was shared with them. See
+what was shared with them, plus the Channels they are added to, the public
+Threads in those, and who is in the Organization. See
 [Sharing with people outside your Organization](../03-spaces-and-breakouts/05-sharing-with-guests.md).
 
 ## H
