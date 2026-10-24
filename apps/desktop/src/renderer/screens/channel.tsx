@@ -512,9 +512,12 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
   // What a merge shared with the Channel opens here, beside the feed, for
   // every reader of the Channel: it is the Channel's, not only the thread's.
   const openArtifact = (resourceId: string): void => void navigate(channelArtifactRoute(channelId, resourceId));
-  // Only a member may start a thread in a private Channel; a thread placed
-  // there is the Channel's to accept (`canEdit` on the server).
-  const canStart = workspace.currentUser.accessClass !== 'guest' && space.reach !== 'through_channel';
+  // A guest starts threads in a Channel they take part in; a member in any
+  // Channel they reach beyond a thread in it. A thread placed there is the
+  // Channel's to accept, and the server asks the same (`reserveChannelInSpaces`).
+  const canStart = workspace.currentUser.accessClass === 'guest'
+    ? space.reach === 'participant'
+    : space.reach !== 'through_channel';
   return <MessageIssueProvider api={api} target={{ kind: 'channel', channelId }}><div className="conversation-layout">
     <div className="channel-screen has-message-capsule">
       {/* Keyed so a confirmation still open when the route changes (a leave,

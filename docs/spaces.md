@@ -185,8 +185,11 @@ active relationship to the Organization, guest or member, into
 is listed the Space, private or not, by the ordinary participant rule, reads
 its feed and summary like any participant, and reads every Organization-wide
 thread placed in it, as a member does
-([the Channel reader](#a-channel-lends-its-public-threads-to-its-guests)).
-Every Space write stays refused to them.
+([the Channel reader](#a-channel-lends-its-public-threads-to-its-guests)),
+posting there as a member may. They may also start a thread in it:
+`reserveChannelInSpaces` admits a guest whose reach into every named Space is
+`participant`, and never through the General fallback of a request naming no
+Space they take part in. Every other Space write stays refused to them.
 
 A participant leaves a private Space by sending its audience without
 themselves; any participant but the last may take themselves out, and only an
@@ -2095,7 +2098,7 @@ member is still unseated.
 
 ## Changelog
 
-### 2026-10-24 — A guest may be a Channel's participant, and reads its public threads
+### 2026-10-24 — A guest may be a Channel's participant, and works in it as a member does
 
 **What changed:** `noteSpaceAudience` accepts a guest in `participantUserIds`;
 it used to ask every listed participant to be an active member, and now asks
@@ -2104,11 +2107,16 @@ reading every Organization-wide thread placed in it (`channelReaderSql`),
 beside membership and grants: the read check (`resolveScopedAccess`'s
 `channelReader`), the listing leaf (`threadOrganizationWideSql`) and the
 socket rows all ask it, and the Space writes that move it publish rows,
-`workspace_reach_changed` and a narrowing for what a guest lost.
+`workspace_reach_changed` and a narrowing for what a guest lost. A guest
+Channel participant may post in those threads and start threads in the
+Channel: `POST /workstreams` moved to the identity layer, and
+`reserveChannelInSpaces` admits a guest into Spaces where their reach is
+`participant`.
 
 **Why:** Members could share a thread with a guest but not bring a guest into
-the Channel around it, and product wants a guest in a Channel to see its
-public threads as a member does. The desktop people menu already offered
+the Channel around it, and product wants a guest in a Channel to work there
+with permissions like a member's: see its public threads, post in them and
+start new ones. The desktop people menu already offered
 guests from the roster, and the write refused them with a generic error.
 
 **Considered and rejected:** Seating guests as thread participants through

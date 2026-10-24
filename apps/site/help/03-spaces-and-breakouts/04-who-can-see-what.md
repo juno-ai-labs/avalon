@@ -31,9 +31,9 @@ box. It does not decide who can read the Threads in it. Every Thread has its own
 setting, and that setting is the answer. A person can read a Thread if the
 Thread is public to the Organization, or if they are one of its participants.
 
-The one exception is for guests. A guest added to a Channel can read the public
-Threads in it, as a member of your Organization can. It never opens a private
-Thread to them. See
+The one exception is for guests. A guest added to a Channel can read and post
+in the public Threads in it, as a member of your Organization can. It never
+opens a private Thread to them. See
 [Add a guest to a Channel](05-sharing-with-guests.md#add-a-guest-to-a-channel).
 
 Two things follow from that:
@@ -100,7 +100,7 @@ Who may change things depends on each person's role in the Organization.
 | **Owner** | The person who created the Organization. Can do everything an administrator can. |
 | **Administrator** | Runs the Organization. Can change roles. |
 | **Member** | Can create Channels, start Threads, and add people to Channels and Threads. |
-| **Guest** | Someone from outside the Organization who was shared into particular conversations by email, or added to a Channel. Sees only those conversations, the Channels they are in with their public Threads, and who is in the Organization. Cannot create Channels or start Threads, and cannot change who can read a Thread. |
+| **Guest** | Someone from outside the Organization who was shared into particular conversations by email, or added to a Channel. Sees only those conversations, the Channels they are in with their public Threads, and who is in the Organization. Can post in those Threads and start Threads in the Channels they are in. Cannot create Channels, and cannot change who can read a Thread. |
 
 Rally shows buttons according to your role and checks every change again when
 you make it, so a button that has stopped applying to you will refuse. Roles, and how to change them, are covered in

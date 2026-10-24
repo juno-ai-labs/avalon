@@ -1067,6 +1067,14 @@ describe('a Channel', () => {
     expect(screen.queryByText('composer')).not.toBeInTheDocument();
   });
 
+  it('gives a guest who takes part in the Channel the composer for starting a thread', async () => {
+    spaces.data = outbound('participant');
+    api.getChannelFeed.mockResolvedValue({ nextCursor: null, items: [] });
+    renderChannel('/channels/outbound', undefined, null,
+      { ...workspace, currentUser: { ...workspace.currentUser, accessClass: 'guest' } });
+    expect(await screen.findByText('composer')).toBeInTheDocument();
+  });
+
   describe('importing', () => {
     const openBrowserImport = vi.fn(async () => undefined);
     beforeEach(() => vi.stubGlobal('rally', { openBrowserImport }));
