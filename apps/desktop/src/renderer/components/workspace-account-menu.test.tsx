@@ -72,7 +72,7 @@ describe('organization account menu', () => {
     expect(screen.queryByText('Weekly usage')).not.toBeInTheDocument();
     expect(screen.queryByText('Get Rally for iOS')).not.toBeInTheDocument();
   });
-  it('puts Restart to Update above Sidekicks only while an update is downloaded', async () => {
+  it('puts Restart to Update above Members only while an update is downloaded', async () => {
     const installDownloadedUpdate = vi.fn(async () => undefined);
     let status: DesktopUpdateStatus = { kind: 'idle' };
     updateBridge.current = {
@@ -94,9 +94,22 @@ describe('organization account menu', () => {
       openMenu();
       const items = within(screen.getByRole('menu')).getAllByRole('menuitem');
       expect(items[0]).toHaveAccessibleName('Restart to Update');
-      expect(items[1]).toHaveAccessibleName('Sidekicks');
+      expect(items[1]).toHaveAccessibleName('Members');
+      expect(items[2]).toHaveAccessibleName('Sidekicks');
       fireEvent.click(items[0]!);
       expect(installDownloadedUpdate).toHaveBeenCalledOnce();
+    } finally {
+      updateBridge.current = null;
+    }
+  });
+  it('opens Settings on the Members page from Members', () => {
+    const openSettings = vi.fn(async () => undefined);
+    updateBridge.current = { openSettings };
+    try {
+      renderMenu({ presentation: 'grok' });
+      openMenu();
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Members' }));
+      expect(openSettings).toHaveBeenCalledWith('members');
     } finally {
       updateBridge.current = null;
     }
@@ -111,17 +124,20 @@ describe('organization account menu', () => {
     openMenu();
     const menu = screen.getByRole('menu');
     const items = within(menu).getAllByRole('menuitem');
-    expect(items).toHaveLength(enabled ? 6 : 3);
-    expect(items[0]).toHaveAccessibleName('Sidekicks');
+    expect(items).toHaveLength(enabled ? 7 : 4);
+    expect(items[0]).toHaveAccessibleName('Members');
+    expect(within(menu).getByRole('menuitem', { name: 'Members' }).querySelector('.tabler-icon-users'))
+      .toBeInTheDocument();
+    expect(items[1]).toHaveAccessibleName('Sidekicks');
     expect(within(menu).getByRole('menuitem', { name: 'Sidekicks' }).querySelector('.tabler-icon-hexagons'))
       .toBeInTheDocument();
-    expect(items[1]).toHaveAccessibleName('Settings');
+    expect(items[2]).toHaveAccessibleName('Settings');
     expect(within(menu).getByRole('menuitem', { name: 'Settings' }).querySelector('.tabler-icon-settings'))
       .toBeInTheDocument();
     if (enabled) {
-      expect(items[2]).toHaveAccessibleName(/Global Studio.*Current/u);
-      expect(items[3]).toHaveAccessibleName(/Europe Studio/u);
-      expect(items[4]).toHaveAccessibleName(/Join Invited Studio.*Grace/u);
+      expect(items[3]).toHaveAccessibleName(/Global Studio.*Current/u);
+      expect(items[4]).toHaveAccessibleName(/Europe Studio/u);
+      expect(items[5]).toHaveAccessibleName(/Join Invited Studio.*Grace/u);
     }
     const logout = within(menu).getByRole('menuitem', { name: 'Log out' });
     expect(logout.querySelector('.tabler-icon-logout')).toBeInTheDocument();

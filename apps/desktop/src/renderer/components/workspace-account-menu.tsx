@@ -1,7 +1,7 @@
 import { ErrorNotice } from './primitives';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { IconDeviceDesktopDown, IconHexagons, IconLogout, IconSettings } from '@tabler/icons-react';
+import { IconDeviceDesktopDown, IconHexagons, IconLogout, IconSettings, IconUsers } from '@tabler/icons-react';
 import { desktopBridge } from '../lib/platform';
 import { useDownloadedUpdate } from '../lib/use-downloaded-update';
 import type { SupportPerson, SupportWorkspace, WorkspaceAttention } from '@rally/contracts';
@@ -265,6 +265,10 @@ export function WorkspaceAccountMenu({
             )}
             {presentation === 'grok' && (
               <>
+                {!guest && <DropdownMenu.Item className="menu-item account-menu-item" onSelect={() => void desktopBridge().openSettings('members')}>
+                  <IconUsers aria-hidden="true" />
+                  <span>Members</span>
+                </DropdownMenu.Item>}
                 {!guest && <DropdownMenu.Item className="menu-item account-menu-item" onSelect={() => void desktopBridge().openSidekicks()}>
                   <IconHexagons aria-hidden="true" />
                   <span>Sidekicks</span>
@@ -400,6 +404,9 @@ export function WorkspaceAccountMenu({
                   <small>Organization</small>
                 </DropdownMenu.Label>
                 <DropdownMenu.Separator className="menu-separator" />
+                {!guest && <DropdownMenu.Item asChild className="menu-item">
+                  <button onClick={() => void desktopBridge().openSettings('members')} type="button">Members</button>
+                </DropdownMenu.Item>}
                 {!guest && <DropdownMenu.Item asChild className="menu-item">
                   <button onClick={() => void desktopBridge().openSidekicks()} type="button">Sidekicks</button>
                 </DropdownMenu.Item>}
