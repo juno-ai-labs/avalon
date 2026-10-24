@@ -517,7 +517,7 @@ describe('Organization settings', () => {
     }
   });
 
-  it('keeps a guest on their own sections even when a link names a member\'s', async () => {
+  it('keeps a guest on their own sections, showing the rest disabled, even when a link names a member\'s', async () => {
     const guestSession = { apiBaseUrl: 'https://enterprise.api.rallywith.ai', expiresAt: '2099-01-01T00:00:00.000Z',
       user: { id: 'user-1', name: 'Adam', email: 'adam@example.com' },
       workspace: { id: 'workspace-1', name: 'Rally Studio', region: 'enterprise', role: null, timezone: 'Europe/London', accessClass: 'guest' as const } };
@@ -537,8 +537,50 @@ describe('Organization settings', () => {
       fireEvent.click(await screen.findByRole('button', { name: 'OK' }));
       expect(await screen.findByRole('heading', { level: 1, name: 'Account' })).toBeVisible();
       const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
-      expect(within(navigation).getAllByRole('button').map((button) => button.textContent)).toEqual(['Account', 'Application']);
+      // Every section is drawn; the ones a guest cannot open are disabled.
+      const sections = within(navigation).getAllByRole('button');
+      expect(sections.map((button) => [button.textContent, button.getAttribute('aria-disabled') === 'true'])).toEqual([
+        ['Account', false], ['Notifications', true], ['Organization', true], ['Members', false],
+        ['Security', true], ['Connections', true], ['Application', false],
+      ]);
+      fireEvent.click(within(navigation).getByRole('button', { name: 'Organization' }));
+      expect(screen.getByRole('heading', { level: 1, name: 'Account' })).toBeVisible();
+      fireEvent.focus(within(navigation).getByRole('button', { name: 'Security' }));
+      expect(await screen.findByRole('tooltip')).toHaveTextContent('Only members of this organization can open this.');
       expect(api.getTerminalWorkspaceSettings).not.toHaveBeenCalled();
+    } finally {
+      window.location.hash = '';
+    }
+  });
+
+  it('shows a guest everyone in the Organization, other guests and addresses included, without controls', async () => {
+    const guestSession = { apiBaseUrl: 'https://enterprise.api.rallywith.ai', expiresAt: '2099-01-01T00:00:00.000Z',
+      user: { id: 'user-9', name: 'Gale', email: 'gale@example.com' },
+      workspace: { id: 'workspace-1', name: 'Rally Studio', region: 'enterprise', role: null, timezone: 'Europe/London', accessClass: 'guest' as const } };
+    api.getWorkspaceMembers.mockResolvedValue([
+      { id: 'user-9', name: 'Gale', email: 'gale@example.com', timezone: 'Europe/London', role: null, accessClass: 'guest' },
+      { id: 'user-8', name: 'Vera', email: 'vera@other.example', timezone: 'Asia/Tokyo', role: null, accessClass: 'guest' },
+      { id: 'user-2', name: 'Sam', email: 'sam@example.com', timezone: 'America/Los_Angeles', role: 'member' },
+      { id: 'user-1', name: 'Adam', email: 'adam@example.com', timezone: 'America/Los_Angeles', role: 'owner' },
+    ]);
+    window.location.hash = '#/settings?section=members';
+    const client = createTestQueryClient();
+    try {
+      render(
+        <Tooltip.Provider>
+          <QueryClientProvider client={client}>
+            <CollaborationSessionProvider api={api as never} session={guestSession}>
+              <WorkspaceSettingsScreen workspace={{ ...workspace, currentUser: { id: 'user-9', name: 'Gale', email: 'gale@example.com', timezone: 'Europe/London', role: null, accessClass: 'guest' } }} />
+            </CollaborationSessionProvider>
+          </QueryClientProvider>
+        </Tooltip.Provider>,
+      );
+      expect(await screen.findByRole('heading', { level: 1, name: 'Members' })).toBeVisible();
+      const rows = await screen.findAllByText(/^(Adam|Sam|Gale|Vera)$/u);
+      expect(rows.map((row) => row.textContent)).toEqual(['Adam', 'Sam', 'Gale', 'Vera']);
+      expect(screen.getByText('vera@other.example')).toBeVisible();
+      expect(screen.queryByRole('button', { name: /member actions/u })).toBeNull();
+      expect(screen.queryByRole('heading', { name: 'Invitations' })).toBeNull();
     } finally {
       window.location.hash = '';
     }

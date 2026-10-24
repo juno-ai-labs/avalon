@@ -998,10 +998,10 @@ export class WorkspaceService {
 
   /**
    * Addresses with a pending invitation, for every member to pick from. A
-   * guest never reaches this: `requireAuth` refuses a session with no role, as
-   * it does for the roster. An address that already has
-   * a membership here, a guest who was shared a Channel before accepting, is
-   * left out so it appears once, as that membership.
+   * guest never reaches this: `requireAuth` refuses a session with no role.
+   * An address that already has a membership here, a guest who was shared a
+   * Channel before accepting, is left out so it appears once, as that
+   * membership.
    */
   async listInvitees(): Promise<Array<{ email: string; invitedAt: string }>> {
     return pendingInvitees(this.env.DB, this.auth.workspaceId);

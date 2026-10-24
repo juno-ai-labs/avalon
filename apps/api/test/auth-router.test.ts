@@ -146,12 +146,12 @@ describe("authentication in the complete application router", () => {
     expect((await request("/speech", { method: "POST", body: "{}" })).status).toBe(400);
     // A Space's Channel list is read by the listing rules for everyone.
     expect((await request("/spaces/not-an-id/channels")).status).toBe(400);
-    // Changing a Space, and the member directory, stay a member's.
+    // Changing a Space, and the pending invitees, stay a member's.
     expect((await request("/spaces", { method: "POST", body: "{}" })).status).toBe(403);
-    expect((await request("/workspace/members")).status).toBe(403);
+    expect((await request("/workspace/invitees")).status).toBe(403);
   });
 
-  it("gives a guest the Organization profile and nothing else under /workspace", async () => {
+  it("gives a guest the Organization profile and roster and nothing else under /workspace", async () => {
     const guestId = "00000000-0000-7000-8000-000000000004";
     database.prepare("INSERT INTO users (id,email,name,created_at,updated_at) VALUES (?, 'guest@example.com','Guest',?,?)").run(guestId, at, at);
     database.prepare("INSERT INTO workspace_members (workspace_id,user_id,access_class,role,status,joined_at) VALUES (?,?,'guest',NULL,'active',?)")
@@ -162,11 +162,22 @@ describe("authentication in the complete application router", () => {
       headers: { authorization: `Bearer ${guestSession.accessToken}` },
     }, bindings);
 
+    // Another guest, perhaps from another company, is on the roster too.
+    const visitorId = "00000000-0000-7000-8000-000000000005";
+    database.prepare("INSERT INTO users (id,email,name,timezone,created_at,updated_at) VALUES (?, 'visitor@other.example','Visitor','Asia/Tokyo',?,?)").run(visitorId, at, at);
+    database.prepare("INSERT INTO workspace_members (workspace_id,user_id,access_class,role,status,joined_at) VALUES (?,?,'guest',NULL,'active',?)")
+      .run(workspaceId, visitorId, at);
+
     const profile = await request("/workspace");
     expect(profile.status).toBe(200);
     expect(await profile.json()).toMatchObject({ id: workspaceId, accessClass: "guest", role: null });
-    // The member directory and the rest of `/workspace` stay member-only.
-    expect((await request("/workspace/members")).status).toBe(403);
+    // The roster, every guest, address and zone included, is a guest's to read.
+    const roster = await request("/workspace/members");
+    expect(roster.status).toBe(200);
+    expect(((await roster.json()) as { items: Array<{ user: { email: string; timezone: string } }> }).items
+      .map((item) => [item.user.email, item.user.timezone]))
+      .toContainEqual(["visitor@other.example", "Asia/Tokyo"]);
+    // The rest of `/workspace` stays member-only.
     expect((await request("/workspace/attention")).status).toBe(403);
   });
 
@@ -248,7 +259,7 @@ describe("authentication in the complete application router", () => {
     expect(session.workspace).toMatchObject({ id:workspaceId,accessClass:"guest",role:null });
     const guestHeaders = { ...headers,authorization:`Bearer ${session.accessToken}` };
     expect((await app.request("/auth/workspaces",{ headers:guestHeaders },bindings)).status).toBe(200);
-    expect((await app.request("/workspace/members",{ headers:guestHeaders },bindings)).status).toBe(403);
+    expect((await app.request("/workspace/invitees",{ headers:guestHeaders },bindings)).status).toBe(403);
     const refreshed = await new AuthService(bindings).refresh(session.refreshToken);
     expect(refreshed.workspace).toMatchObject({ accessClass:"guest",role:null });
     database.prepare("UPDATE workspace_members SET access_class='member',role='member' WHERE workspace_id=? AND user_id=?")
@@ -256,7 +267,7 @@ describe("authentication in the complete application router", () => {
     const promoted = await new AuthService(bindings).refresh(refreshed.refreshToken);
     expect(promoted.user.id).toBe(session.user.id);
     expect(promoted.workspace?.role).toBe("member");
-    expect((await app.request("/workspace/members",{ headers:guestHeaders },bindings)).status).toBe(200);
+    expect((await app.request("/workspace/invitees",{ headers:guestHeaders },bindings)).status).toBe(200);
     database.prepare("UPDATE workspace_members SET status='suspended' WHERE workspace_id=? AND user_id=?").run(workspaceId,userId);
     expect((await app.request("/auth/workspaces",{ headers:guestHeaders },bindings)).status).toBe(401);
     expect(await (await app.request("/auth/workspaces",{ headers },bindings)).json()).toEqual({ workspaces:[] });

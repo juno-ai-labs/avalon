@@ -48,6 +48,7 @@ import { spaceFailureSentence } from '../lib/space-failure-copy';
 import { WORKSTREAM_LANDING_ROUTE } from '../lib/workstream-landing';
 import { typedMentionRendering } from '../lib/transcript';
 import { EmailMentionContext, emailMentionDirectory, NO_INVITEES, useWorkspaceInvitees } from '../lib/workspace-invitees';
+import { useWorkspaceMembers } from '../lib/workspace-members';
 import type { AutomationSummary, ResourceVersion, Workspace, WorkspaceMember, WorkstreamResource, WorkstreamSummary } from '../lib/types';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useUiStore } from '../lib/ui-store';
@@ -339,13 +340,7 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
     // does not change the newest attention sequence.
   }, [api, channelId, feedCovered, newestLoadedSequence, queryClient, rows, stats, statsReady]);
   const scheduleRead = useVisibleReadAcknowledgement(acknowledgeRead);
-  const members = useQuery({
-    queryKey: ['workspace-members'],
-    queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
-    // The member directory is a member's; a guest's feed names authors as Rally.
-    enabled: Boolean(api) && workspace.currentUser.accessClass !== 'guest',
-    staleTime: 60_000,
-  });
+  const members = useWorkspaceMembers(api);
   const memberById = useMemo(() => new Map((members.data ?? []).map((member) => [member.id, member])), [members.data]);
   // A summary's typed `@address` resolves against the directory the composer
   // below already reads, so it chips as it does in the thread.
@@ -777,8 +772,7 @@ function ThreadCard({ attentionSequenceNumber, author, members, onOpen, open, pl
     appearance: thread.appearance,
   };
   // Rally starts a thread only when nobody did; a person this reader cannot
-  // look up (a guest has no member list, and a member's loads after the feed)
-  // is somebody, not Rally.
+  // look up yet (the list loads after the feed) is somebody, not Rally.
   const byline = author?.name ?? (thread.createdByUserId ? 'Someone' : 'Rally');
   // The summary is the opening message's text without its mentions, so the
   // names in it are found again the way the send path found them, and drawn

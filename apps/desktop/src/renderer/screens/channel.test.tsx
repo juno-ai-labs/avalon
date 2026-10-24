@@ -715,6 +715,20 @@ describe('a Channel', () => {
     expect(within(rows[2]!).getByText('Q4', { selector: 'strong' })).toBeInTheDocument();
   });
 
+  it('names a member’s message to a guest, as it does to a member', async () => {
+    const alex = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b';
+    api.getWorkspaceMembers.mockResolvedValueOnce([
+      { id: alex, name: 'Alex Todorovic', email: 'alex@rally.test', role: 'member' },
+    ] as never);
+    api.getChannelFeed.mockResolvedValue({ nextCursor: null, items: [
+      { kind: 'message', placedAt: '2026-10-02T02:00:00.000Z', message: { id: '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a60', author: { kind: 'member', userId: alex }, body: 'Kicking off **Q4**' } },
+    ] });
+    renderChannel('/channels/outbound', undefined, null, { ...workspace, currentUser: { ...workspace.currentUser, accessClass: 'guest' } });
+    const feed = within(await screen.findByRole('list', { name: 'Outbound feed' }));
+    const [message] = await feed.findAllByRole('listitem');
+    await waitFor(() => expect(message).toHaveTextContent('Alex Todorovic'));
+  });
+
   it('gives a Channel message and a merge the hover row a thread’s turn has, copying the words as stored', async () => {
     const writeText = vi.fn(async () => undefined);
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });

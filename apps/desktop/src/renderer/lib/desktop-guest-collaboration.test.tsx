@@ -1,5 +1,5 @@
 import "../../../../../tests/isolated-region";
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { DesktopSession, DesktopWorkspaceOnboardingState, RallyDesktopBridge } from '../../common/desktop';
 
@@ -27,10 +27,10 @@ const directory: DesktopWorkspaceOnboardingState = {
 
 /**
  * The route families that refuse a guest: everything under `requireAuth` in
- * the API, less the Organization profile and socket ticket under `/workspace`,
+ * the API, less the Organization profile, roster and socket ticket under `/workspace`,
  * and the Sidekick library and creation, which refuse a guest per route.
  */
-const MEMBER_ONLY = /^\/(workspace\/(?!socket$|me\/device-timezone$)|workspaces|workstreams|sideline|work-opportunities|projects|spaces(?!\/[^/]+\/channels)|digest|connections|favicons|realtime|(sidekicks|automations)\/?$)/u;
+const MEMBER_ONLY = /^\/(workspace\/(?!socket$|members$|me\/device-timezone$)|workspaces|workstreams|sideline|work-opportunities|projects|spaces(?!\/[^/]+\/channels)|digest|connections|favicons|realtime|(sidekicks|automations)\/?$)/u;
 
 const spaceId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
 
@@ -137,7 +137,10 @@ it('lands a stale new-Channel link on the guest\'s own conversations', async () 
 it('opens Settings in its own window on a section a guest does not have, and shows Account', async () => {
   await open('?surface=settings&settingsSection=internet-access', '#/settings');
   await screen.findByRole('heading', { name: 'Account' });
-  expect(screen.queryByRole('button', { name: /Members/u })).not.toBeInTheDocument();
+  // Members opens for a guest; the member-only sections are drawn disabled.
+  const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
+  expect(within(navigation).getByRole('button', { name: 'Members' })).not.toHaveAttribute('aria-disabled');
+  expect(within(navigation).getByRole('button', { name: 'Security' })).toHaveAttribute('aria-disabled', 'true');
   expect(refused()).toEqual([]);
 });
 
