@@ -41,7 +41,7 @@ import { authenticatedTelemetryRoutes, publicTelemetryRoutes } from "./routes/te
 import { linkRoutes } from "./routes/links";
 import { telemetryOperatorRoutes } from './routes/telemetry-operations';
 import { workOpportunityRoutes } from "./routes/work-opportunities";
-import { deviceTimezoneRoutes, workspaceProfile, workspaceRoster, workspaceRoutes, workspaceSocketTicket } from "./routes/workspace";
+import { deviceTimezoneRoutes, workspaceMembers, workspaceProfile, workspaceRoutes, workspaceSocketTicket } from "./routes/workspace";
 import { workspaceMembershipRoutes } from "./routes/workspace-membership";
 import { workspaceOperatorRoutes } from './routes/workspace-operations';
 import { workstreamRoutes } from "./routes/workstreams";
@@ -168,7 +168,7 @@ export function createApp(): Hono<HonoAppEnv> {
   // Before the member-only `/workspace` routes, so a guest reaches these too.
   identityApi.get("/workspace/socket", requireWorkspaceAuth, workspaceSocketTicket);
   identityApi.get("/workspace", requireWorkspaceAuth, workspaceProfile);
-  identityApi.get("/workspace/roster", requireWorkspaceAuth, workspaceRoster);
+  identityApi.get("/workspace/members", requireWorkspaceAuth, workspaceMembers);
   // A support session's device is the impersonator's, not the person's.
   identityApi.use("/workspace/me/device-timezone", requireWorkspaceAuth, refuseSupportSession);
   identityApi.route("/workspace/me/device-timezone", deviceTimezoneRoutes);

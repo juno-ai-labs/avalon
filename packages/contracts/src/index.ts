@@ -362,21 +362,6 @@ export const WorkspaceMemberSchema = z.object({
 }).refine((member) => member.accessClass === "guest" ? member.role === null : member.role !== null,
 { message: "Guests have no workspace role; members require a role" });
 
-/**
- * One person on the roster as a guest reads it: who they are and how they
- * belong, nothing more. A guest is often outside the company, so the address,
- * zone, dates and membership bookkeeping a member's roster carries stay behind.
- */
-export const WorkspaceRosterEntrySchema = z.object({
-  id: IdSchema,
-  name: z.string().min(1),
-  avatarUrl: HttpUrlSchema.nullable(),
-  presentation: PersonalPresentationSchema.nullable(),
-  accessClass: z.enum(["member", "guest"]),
-  role: MemberRoleSchema.nullable()
-}).refine((entry) => entry.accessClass === "guest" ? entry.role === null : entry.role !== null,
-{ message: "Guests have no workspace role; members require a role" });
-
 export const WorkspaceInvitationRoleSchema = AssignableMemberRoleSchema;
 /** Set the role of a membership that already exists. */
 export const UpdateWorkspaceMemberRoleRequestSchema = z.object({
@@ -4398,7 +4383,6 @@ export type Workspace = z.infer<typeof WorkspaceSchema>;
 export type WorkspaceMember = z.infer<typeof WorkspaceMemberSchema>;
 export type WorkspaceInvitation = z.infer<typeof WorkspaceInvitationSchema>;
 export type WorkspaceInvitee = z.infer<typeof WorkspaceInviteeSchema>;
-export type WorkspaceRosterEntry = z.infer<typeof WorkspaceRosterEntrySchema>;
 export type WorkspaceInvitationPreview = z.infer<typeof WorkspaceInvitationPreviewSchema>;
 export type PendingWorkspaceInvitation = z.infer<typeof PendingWorkspaceInvitationSchema>;
 export type WorkspaceOnboardingState = z.infer<typeof WorkspaceOnboardingStateSchema>;

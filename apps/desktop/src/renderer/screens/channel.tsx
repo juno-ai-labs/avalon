@@ -340,8 +340,7 @@ function ChannelPane({ channelId, openArtifactId, openThreadId, workspace }: {
     // does not change the newest attention sequence.
   }, [api, channelId, feedCovered, newestLoadedSequence, queryClient, rows, stats, statsReady]);
   const scheduleRead = useVisibleReadAcknowledgement(acknowledgeRead);
-  // A guest's is the roster: names and faces, no addresses, no other guests.
-  const members = useWorkspaceMembers(api, { guest: workspace.currentUser.accessClass === 'guest' });
+  const members = useWorkspaceMembers(api);
   const memberById = useMemo(() => new Map((members.data ?? []).map((member) => [member.id, member])), [members.data]);
   // A summary's typed `@address` resolves against the directory the composer
   // below already reads, so it chips as it does in the thread.
@@ -773,8 +772,7 @@ function ThreadCard({ attentionSequenceNumber, author, members, onOpen, open, pl
     appearance: thread.appearance,
   };
   // Rally starts a thread only when nobody did; a person this reader cannot
-  // look up (another guest, whom a guest's roster leaves out, or anyone while
-  // the list loads after the feed) is somebody, not Rally.
+  // look up yet (the list loads after the feed) is somebody, not Rally.
   const byline = author?.name ?? (thread.createdByUserId ? 'Someone' : 'Rally');
   // The summary is the opening message's text without its mentions, so the
   // names in it are found again the way the send path found them, and drawn

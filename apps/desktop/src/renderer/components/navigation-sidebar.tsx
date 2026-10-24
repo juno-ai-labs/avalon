@@ -326,7 +326,6 @@ export function NavigationSidebar({
             accessDecisionFailed={accessDecisionFailed}
             accessRequests={accessRequests}
             attentionComplete={attentionComplete}
-            guest={guest}
             onDecideAccessRequest={onDecideAccessRequest}
             onOpenAccessRequest={onOpenAccessRequest}
             scroll={scroll}
@@ -1713,9 +1712,8 @@ function dayLabel(value: string, now = new Date()): string {
  * the person reads what it names (`lib/activity-events.ts`) or chooses Mark
  * all read, so Unread is a list to work through rather than one glance.
  */
-function ActivitySection({ accessDecisionFailed, accessRequests, attentionComplete, guest, onDecideAccessRequest, onOpenAccessRequest, scroll }: {
+function ActivitySection({ accessDecisionFailed, accessRequests, attentionComplete, onDecideAccessRequest, onOpenAccessRequest, scroll }: {
   accessDecisionFailed: boolean;
-  guest: boolean;
   accessRequests: readonly ConversationAccessRequestItem[];
   attentionComplete: boolean;
   onDecideAccessRequest: (request: ConversationAccessRequestItem, decision: AccessDecision) => void;
@@ -1728,9 +1726,8 @@ function ActivitySection({ accessDecisionFailed, accessRequests, attentionComple
   const [chip, setChip] = useState<ActivityChip>('all');
   const only: ActivityFilter | null = chip === 'mentions' ? 'mentions' : null;
   // A start names its starter by id; the name is the member directory's, the
-  // same read the Channel feed names its authors from. A guest's leaves out
-  // the other guests, who are named by the label the server sent.
-  const members = useWorkspaceMembers(api, { guest });
+  // same read the Channel feed names its authors from.
+  const members = useWorkspaceMembers(api);
   const actorMember = (item: ActivityItem): WorkspaceMember | undefined =>
     members.data?.find((member) => member.id === item.actorUserId);
   const actorName = (item: ActivityItem, member: WorkspaceMember | undefined): string => item.actorLabel

@@ -705,8 +705,7 @@ export function WorkspaceSettingsScreen({
     // whenever it is brought forward.
     refetchOnWindowFocus: 'always',
   });
-  // A person read from the guest roster has no zone; a member's always does.
-  const userTimezone = myTimezone.data?.timezone ?? workspace.currentUser.timezone ?? workspace.timezone;
+  const userTimezone = myTimezone.data?.timezone ?? workspace.currentUser.timezone;
   const timezoneOptions = useMemo(
     () => [...new Set([...supportedTimezones, userTimezone, workspaceTimezone, deviceTimezone() ?? userTimezone])].sort(),
     [userTimezone, workspaceTimezone],
@@ -719,8 +718,7 @@ export function WorkspaceSettingsScreen({
   // list the shell has been sitting on — what `'always'` added was a second
   // `/workspace/members` for a list fetched milliseconds earlier by the boot
   // this screen is mounting inside of.
-  // A guest's is the roster without addresses; see `useWorkspaceMembers`.
-  const members = useWorkspaceMembers(api, { guest, staleTime: 30_000 });
+  const members = useWorkspaceMembers(api, { staleTime: 30_000 });
   const [promotion, setPromotion] = useState<{ id: string; name: string; incarnation: string; revision: number } | null>(null);
   const promoteGuest = useMutation({
     mutationFn: (guest: { id: string; incarnation: string; revision: number }) =>
@@ -1730,7 +1728,7 @@ export function WorkspaceSettingsScreen({
                     return (
                       <div className="settings-member-row" key={member.id}>
                         <Avatar member={member} size="medium" />
-                        <span><strong>{member.name}</strong>{member.email && <small>{member.email}</small>}</span>
+                        <span><strong>{member.name}</strong><small>{member.email}</small></span>
                         <div className="settings-member-actions">
                           <Badge className="role-badge">{isGuest ? 'Guest' : member.role ?? 'member'}</Badge>
                           {isAdmin && (

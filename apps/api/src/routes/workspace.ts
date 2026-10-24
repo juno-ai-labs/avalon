@@ -24,7 +24,6 @@ import {
   WorkspaceInviteeSchema,
   WorkspaceAttentionSchema,
   WorkspaceMemberSchema,
-  WorkspaceRosterEntrySchema,
   UserSchema,
   WorkspaceSchema,
   TerminalWorkspaceSettingsSchema,
@@ -57,7 +56,6 @@ const memoryFactParam = z.object({ factId: z.string().min(1) });
 const MemberPageSchema = z.object({ items: z.array(WorkspaceMemberSchema) });
 const InvitationPageSchema = z.object({ items: z.array(WorkspaceInvitationSchema) });
 const InviteePageSchema = z.object({ items: z.array(WorkspaceInviteeSchema) });
-const RosterPageSchema = z.object({ items: z.array(WorkspaceRosterEntrySchema) });
 
 /**
  * The workspace socket's ticket, for members and guests alike.
@@ -112,12 +110,12 @@ export async function workspaceProfile(c: Context<HonoAppEnv>) {
 }
 
 /**
- * The roster without addresses or membership bookkeeping, for members and
- * guests alike. Mounted beside the profile so a guest can see who is in the
- * Organization; `/members` stays the member's full roster. See `listRoster`.
+ * The Organization's roster, for members and guests alike. Mounted on the
+ * identity layer beside the profile so a guest sees who they work with: every
+ * active person, guests included, with their email and timezone.
  */
-export async function workspaceRoster(c: Context<HonoAppEnv>) {
-  return c.json(RosterPageSchema.parse({ items: await new WorkspaceService(c.env, getWorkspaceAuth(c)).listRoster() }));
+export async function workspaceMembers(c: Context<HonoAppEnv>) {
+  return c.json(MemberPageSchema.parse({ items: await new WorkspaceService(c.env, getWorkspaceAuth(c)).listMembers() }));
 }
 
 /**
@@ -243,9 +241,6 @@ workspaceRoutes.post(
   async (c) => c.json(TerminalWorkspaceSettingsSchema.parse(
     await withTerminalSettingsService(c, (service) => service.apply(c.req.valid("json"))),
   )),
-);
-workspaceRoutes.get("/members", async (c) =>
-  c.json(MemberPageSchema.parse({ items: await new WorkspaceService(c.env, getAuth(c)).listMembers() })),
 );
 /**
  * Make somebody an administrator, or take it back.
