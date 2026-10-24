@@ -46,6 +46,7 @@ function renderMenu(overrides: Partial<React.ComponentProps<typeof WorkspaceAcco
     onInvitationPromptDismiss: vi.fn(),
     onMenuOpen: vi.fn(),
     onAbandonSignIn: vi.fn(),
+    onAddMembers: vi.fn(),
     onOpenSettings: vi.fn(),
     onSignOut: vi.fn(),
     onSwitchWorkspace: vi.fn(async () => true),
@@ -94,26 +95,34 @@ describe('organization account menu', () => {
       openMenu();
       const items = within(screen.getByRole('menu')).getAllByRole('menuitem');
       expect(items[0]).toHaveAccessibleName('Restart to Update');
-      expect(items[1]).toHaveAccessibleName('Members');
-      expect(items[2]).toHaveAccessibleName('Sidekicks');
+      expect(items[1]).toHaveAccessibleName('Add new member');
+      expect(items[2]).toHaveAccessibleName('Members');
+      expect(items[3]).toHaveAccessibleName('Sidekicks');
       fireEvent.click(items[0]!);
       expect(installDownloadedUpdate).toHaveBeenCalledOnce();
     } finally {
       updateBridge.current = null;
     }
   });
-  it.each(['grok', 'workspace'] as const)('offers Add new member above Members only to someone who may invite (%s)', (presentation) => {
-    renderMenu({ presentation });
-    openMenu();
-    expect(screen.queryByRole('menuitem', { name: 'Add new member' })).not.toBeInTheDocument();
-    cleanup();
-
-    const props = renderMenu({ presentation, onAddMembers: vi.fn() });
+  it.each(['grok', 'workspace'] as const)('keeps Add new member above Members, disabled with a reason for a non-administrator (%s)', async (presentation) => {
+    const member = renderMenu({ presentation });
     openMenu();
     const names = within(screen.getByRole('menu')).getAllByRole('menuitem').map((item) => item.textContent);
     expect(names.indexOf('Add new member')).toBe(names.indexOf('Members') - 1);
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Add new member' }));
-    expect(props.onAddMembers).toHaveBeenCalledOnce();
+    const disabled = screen.getByRole('menuitem', { name: 'Add new member' });
+    expect(disabled).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(disabled);
+    expect(member.onAddMembers).not.toHaveBeenCalled();
+    fireEvent.focus(disabled);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Only administrators can add members.');
+    cleanup();
+
+    const admin = renderMenu({ presentation, canAddMembers: true });
+    openMenu();
+    const enabled = screen.getByRole('menuitem', { name: 'Add new member' });
+    expect(enabled).not.toHaveAttribute('aria-disabled');
+    fireEvent.click(enabled);
+    expect(admin.onAddMembers).toHaveBeenCalledOnce();
   });
   it('opens Settings on the Members page from Members', () => {
     const openSettings = vi.fn(async () => undefined);
@@ -137,20 +146,19 @@ describe('organization account menu', () => {
     openMenu();
     const menu = screen.getByRole('menu');
     const items = within(menu).getAllByRole('menuitem');
-    expect(items).toHaveLength(enabled ? 7 : 4);
-    expect(items[0]).toHaveAccessibleName('Members');
-    expect(within(menu).getByRole('menuitem', { name: 'Members' }).querySelector('.tabler-icon-users'))
-      .toBeInTheDocument();
-    expect(items[1]).toHaveAccessibleName('Sidekicks');
-    expect(within(menu).getByRole('menuitem', { name: 'Sidekicks' }).querySelector('.tabler-icon-hexagons'))
-      .toBeInTheDocument();
-    expect(items[2]).toHaveAccessibleName('Settings');
-    expect(within(menu).getByRole('menuitem', { name: 'Settings' }).querySelector('.tabler-icon-settings'))
-      .toBeInTheDocument();
+    expect(items).toHaveLength(enabled ? 8 : 5);
+    expect(items[0]).toHaveAccessibleName('Add new member');
+    expect(items[0]!.querySelector('.tabler-icon-user-plus')).toBeInTheDocument();
+    expect(items[1]).toHaveAccessibleName('Members');
+    expect(items[1]!.querySelector('.tabler-icon-users')).toBeInTheDocument();
+    expect(items[2]).toHaveAccessibleName('Sidekicks');
+    expect(items[2]!.querySelector('.tabler-icon-hexagons')).toBeInTheDocument();
+    expect(items[3]).toHaveAccessibleName('Settings');
+    expect(items[3]!.querySelector('.tabler-icon-settings')).toBeInTheDocument();
     if (enabled) {
-      expect(items[3]).toHaveAccessibleName(/Global Studio.*Current/u);
-      expect(items[4]).toHaveAccessibleName(/Europe Studio/u);
-      expect(items[5]).toHaveAccessibleName(/Join Invited Studio.*Grace/u);
+      expect(items[4]).toHaveAccessibleName(/Global Studio.*Current/u);
+      expect(items[5]).toHaveAccessibleName(/Europe Studio/u);
+      expect(items[6]).toHaveAccessibleName(/Join Invited Studio.*Grace/u);
     }
     const logout = within(menu).getByRole('menuitem', { name: 'Log out' });
     expect(logout.querySelector('.tabler-icon-logout')).toBeInTheDocument();
