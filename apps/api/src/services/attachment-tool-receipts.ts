@@ -48,10 +48,11 @@ export type AttachmentReceiptReplayValidation = "not_attachment" | "valid" | "in
 interface ReceiptTarget {
   workspaceId: string;
   workstreamId: string;
+  substreamId?: string;
 }
 
 function port(env: Env, target: ReceiptTarget, override?: ToolReceiptObjectPort): ToolReceiptObjectPort {
-  return override ?? createToolReceiptObjectPort(env, target.workspaceId, target.workstreamId);
+  return override ?? createToolReceiptObjectPort(env, target.workspaceId, target.workstreamId, undefined, target.substreamId);
 }
 
 export async function registerAttachmentToolReceipt(
@@ -129,7 +130,7 @@ export async function validateAttachmentToolReceiptReplay(
 
   const visible = await loadVisibleWorkstreamResourcesByIds(
     env.DB,
-    createConversationResourceLinks(env, input.workspaceId, input.workstreamId, undefined, undefined, input.principal),
+    createConversationResourceLinks(env, input.workspaceId, input.workstreamId, undefined, input.substreamId, input.principal),
     {
       workspaceId: input.workspaceId,
       workstreamId: input.workstreamId,

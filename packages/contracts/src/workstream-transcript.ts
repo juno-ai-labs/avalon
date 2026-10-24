@@ -242,7 +242,6 @@ export const ReadTranscriptRequestSchema = z.strictObject({
   afterSequence: z.number().int().nonnegative().default(0),
   throughSequence: z.number().int().nonnegative().optional(),
   limit: z.number().int().positive().optional(),
-  includeTurns: z.boolean().optional(),
 });
 export type ReadTranscriptRequest = z.infer<typeof ReadTranscriptRequestSchema>;
 export const ReadTranscriptResultSchema = z.strictObject({
@@ -250,7 +249,14 @@ export const ReadTranscriptResultSchema = z.strictObject({
   text: z.string(),
   throughSequence: z.number().int().nonnegative(),
   nextAfterSequence: z.number().int().nonnegative().nullable(),
-  turns: z.array(TranscriptTurnSchema).optional(),
+});
+
+/** Internal inspection does not seat a viewer or acknowledge the conversation. */
+export const SidekickRunTranscriptResultSchema = z.strictObject({
+  transcriptAvailability: z.enum(["available", "not_provisioned"]),
+  turns: z.array(TranscriptTurnSchema),
+  throughSequence: z.number().int().nonnegative(),
+  nextAfterSequence: z.number().int().nonnegative().nullable(),
 });
 
 /**

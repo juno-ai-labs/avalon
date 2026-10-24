@@ -258,7 +258,7 @@ describe("attachment tool receipts", () => {
     const { receipts, sql } = receiptAuthority();
     const env = createTestEnv({ DB: d1, SUBSTREAM_AGENTS: agents, AVALON_REGION: "global" });
     const validate = (capability: string) => validateAttachmentToolReceiptReplay(env, target({
-      principal: { type: "user", userId: USER_ID },
+      principal: { type: "user" as const, userId: USER_ID },
       invocationId: INVOCATION_ID,
       capability,
     }), receipts);
