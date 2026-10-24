@@ -61,9 +61,9 @@ export function rankPeople(storage: DurableObjectStorage, viewer: Viewer, spaceI
        AND json_extract(event.metadata_json, '$.mergedFrom') IS NULL
        AND directory.archived_at IS NULL
        AND ((COALESCE(json_extract(event.metadata_json, '$.substreamId'), '0') = '0'
-             AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)})
+             AND ${mainOpenableSql("directory", "viewer", viewer.accessClass, "?1")})
          OR (breakout.archived_at IS NULL AND breakout.substream_id IS NOT NULL
-             AND ${breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass)}
+             AND ${breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass, "?1")}
              AND ${channelListedSql("directory", "viewer", viewer.accessClass, { breakouts: true, userId: "?1" })}))
   ), interactions AS (
     SELECT message.event_id, target.user_id, message.occurred_at, message.in_channel

@@ -10,9 +10,11 @@
  *
  * The one difference between a member and a guest is the leaf term
  * {@link organizationWideSql}: Organization-wide scope admits members only.
- * Everything else is participation or an explicit grant, which a guest has
- * exactly as a member does, so a call site never branches on the access class;
- * it passes it in.
+ * For a thread the leaf is {@link threadOrganizationWideSql}, which admits a
+ * guest too when they take part in a Channel the thread is placed in
+ * ({@link channelReaderSql}). Everything else is participation or an explicit
+ * grant, which a guest has exactly as a member does, so a call site never
+ * branches on the access class; it passes it in.
  *
  * Listing is not reading. Each conversation's own authority still decides
  * whether its content may be opened; these rules decide only what a directory,
@@ -21,7 +23,9 @@
  * Every SQL fragment here is code-owned text over caller-chosen aliases; none
  * interpolates a value. The ones that look across tables **bind one `?` for the
  * user id** at the position the fragment sits, unless the caller passes the
- * user id expression it already has (a numbered `?1`).
+ * user id expression it already has (a numbered `?1`). Every bare `?` a
+ * fragment renders is the user id, so a caller binding positionally binds the
+ * user id {@link userIdBindCount} times; how many depends on the access class.
  */
 
 export type AccessClass = "member" | "guest";
@@ -53,14 +57,78 @@ export function organizationWideSql(scope: string, accessClass: AccessClass): st
 }
 
 /**
+ * Whether this person takes part in a Channel (a stored Space) this thread is
+ * placed in: an active placement in an unarchived Space where they are a
+ * participant. That is one path to reading every Organization-wide thread in
+ * the Channel, and the only one a guest has to a thread they were not added
+ * to. A Personal Channel is its owner's alone and lends nobody a thread.
+ *
+ * `workstreamId` is the thread's id column. Binds one `?` for the user id
+ * unless `userId` names an expression the statement already has.
+ */
+export function channelReaderSql(workstreamId: string, userId = "?"): string {
+  return `EXISTS (SELECT 1 ${CHANNEL_READER_FROM}
+           WHERE reader_membership.workstream_id = ${workstreamId}
+             AND reader_viewer.user_id = ${userId}
+             AND ${CHANNEL_READER_WHERE})`;
+}
+
+/**
+ * {@link channelReaderSql} as rows: every `(workstream_id, user_id)` pair it
+ * admits for the threads `workstreamIds` names (a SQL list expression, such
+ * as `SELECT value FROM json_each(?)`). Binds nothing of its own.
+ */
+export function channelReadersSql(workstreamIds: string): string {
+  return `SELECT DISTINCT reader_membership.workstream_id, reader_viewer.user_id ${CHANNEL_READER_FROM}
+           WHERE reader_membership.workstream_id IN (${workstreamIds})
+             AND ${CHANNEL_READER_WHERE}`;
+}
+
+const CHANNEL_READER_FROM = `FROM space_channel_memberships reader_membership
+            JOIN spaces reader_space
+              ON reader_space.space_id = reader_membership.space_id
+            JOIN space_viewers reader_viewer
+              ON reader_viewer.space_id = reader_membership.space_id`;
+
+const CHANNEL_READER_WHERE = `reader_membership.state = 'active'
+             AND reader_space.archived_at IS NULL
+             AND reader_space.scope <> 'individual'
+             AND reader_viewer.is_participant = 1`;
+
+/**
+ * The leaf term for a thread or a Breakout: Organization-wide scope admits a
+ * member, and a guest who is a Channel reader of the thread
+ * ({@link channelReaderSql}). For a member the Channel adds nothing, so their
+ * text carries no subquery and binds nothing.
+ *
+ * `row` is the thread or Breakout row's alias; both carry `scope` and
+ * `workstream_id`. A guest's text binds one `?` unless `userId` is given.
+ */
+export function threadOrganizationWideSql(row: string, accessClass: AccessClass, userId = "?"): string {
+  return admitsOrganizationWide(accessClass)
+    ? `(${row}.scope = 'workspace')`
+    : `(${row}.scope = 'workspace' AND ${channelReaderSql(`${row}.workstream_id`, userId)})`;
+}
+
+/**
+ * How many times a positionally bound statement binds the user id for `sql`,
+ * a fragment from this module rendered with the default `?`. Every bare `?`
+ * this module writes is the user id, and a numbered one (`?1`) is the caller's.
+ */
+export function userIdBindCount(sql: string): number {
+  return sql.match(/\?(?!\d)/g)?.length ?? 0;
+}
+
+/**
  * Whether this person may open a Channel's Main, from the projection.
  *
  * `viewer` is the Channel's `channel_viewers` row, left-joined under the
  * directory row's authority generation, so a missing or stale row reads as
  * "not a participant". A Channel grant makes a guest a Main participant.
+ * A guest's text binds one `?` for the user id unless `userId` is given.
  */
-export function mainOpenableSql(directory: string, viewer: string, accessClass: AccessClass): string {
-  return `(${organizationWideSql(`${directory}.scope`, accessClass)} OR ${viewer}.is_participant = 1)`;
+export function mainOpenableSql(directory: string, viewer: string, accessClass: AccessClass, userId = "?"): string {
+  return `(${threadOrganizationWideSql(directory, accessClass, userId)} OR ${viewer}.is_participant = 1)`;
 }
 
 /**
@@ -69,10 +137,11 @@ export function mainOpenableSql(directory: string, viewer: string, accessClass: 
  * `listable` is the Breakout's own authority's answer for this person: their
  * membership of a private child, or a grant. An Organization-wide Breakout
  * inherits its Channel's audience, which is why the scope term is asked only
- * after the Channel's own rule has passed.
+ * after the Channel's own rule has passed. A guest's text binds one `?` for
+ * the user id unless `userId` is given.
  */
-export function breakoutListedSql(breakout: string, viewer: string, accessClass: AccessClass): string {
-  return `(${organizationWideSql(`${breakout}.scope`, accessClass)} OR ${viewer}.listable = 1)`;
+export function breakoutListedSql(breakout: string, viewer: string, accessClass: AccessClass, userId = "?"): string {
+  return `(${threadOrganizationWideSql(breakout, accessClass, userId)} OR ${viewer}.listable = 1)`;
 }
 
 /**
@@ -99,8 +168,9 @@ export function channelReachedThroughBreakoutSql(directory: string, userId = "?"
  * in it is theirs to open.
  *
  * `breakouts` is whether this object has the Breakout projection; an object
- * that has not reached it lists by Main alone. Binds one `?` for the user id
- * when it does, unless `userId` names an expression the statement already has.
+ * that has not reached it lists by Main alone. Binds the user id as
+ * {@link userIdBindCount} counts, unless `userId` names an expression the
+ * statement already has.
  */
 export function channelListedSql(
   directory: string,
@@ -108,7 +178,7 @@ export function channelListedSql(
   accessClass: AccessClass,
   options: { breakouts: boolean; userId?: string },
 ): string {
-  const main = mainOpenableSql(directory, viewer, accessClass);
+  const main = mainOpenableSql(directory, viewer, accessClass, options.userId);
   if (!options.breakouts) return main;
   return `(${main} OR ${channelReachedThroughBreakoutSql(directory, options.userId)})`;
 }
@@ -178,12 +248,23 @@ export function organizationWide(scope: string, accessClass: AccessClass): boole
   return admitsOrganizationWide(accessClass) && scope === "workspace";
 }
 
+/**
+ * The TypeScript form of {@link threadOrganizationWideSql}. `channelReader` is
+ * {@link channelReaderSql}'s answer for this person and thread; a member's
+ * answer does not depend on it.
+ */
+export function threadOrganizationWide(scope: string, accessClass: AccessClass, channelReader: boolean): boolean {
+  return scope === "workspace" && (admitsOrganizationWide(accessClass) || channelReader);
+}
+
 /** The TypeScript form of {@link channelListedSql}, for rows already read. */
 export function channelListed(input: {
   scope: string;
   accessClass: AccessClass;
+  channelReader: boolean;
   mainParticipant: boolean;
   reachedThroughBreakout: boolean;
 }): boolean {
-  return organizationWide(input.scope, input.accessClass) || input.mainParticipant || input.reachedThroughBreakout;
+  return threadOrganizationWide(input.scope, input.accessClass, input.channelReader)
+    || input.mainParticipant || input.reachedThroughBreakout;
 }

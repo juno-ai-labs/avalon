@@ -22,7 +22,7 @@ function facts(overrides: Partial<ScopedAccessFacts> = {}): ScopedAccessFacts {
     userId, target: child, parentExists: true, parentArchived: false,
     parentVisibility: "workspace",
     conversation: { status: "ready", archived: false, audience: "restricted" },
-    grants: [], ...overrides,
+    grants: [], channelReader: false, ...overrides,
   };
 }
 
@@ -75,6 +75,14 @@ describe("scoped collaborator policy", () => {
       expect(resolveScopedAccess(facts({ relationship: { ...member, accessClass }, grants: [grant(child)] })))
         .toMatchObject({ allowed: true, writable: true });
     }
+  });
+
+  it("admits a guest who takes part in a Channel holding an Organization-wide parent, as a member is", () => {
+    const reader = facts({ target: main, channelReader: true });
+    expect(resolveScopedAccess(reader)).toMatchObject({ allowed: true, workspaceMemberAccess: true, grantIds: [] });
+    // A Channel lends an Organization-wide parent only, and a restricted child stays its own.
+    expect(resolveScopedAccess({ ...reader, parentVisibility: "personal" })).toEqual({ allowed: false, reason: "grant_required" });
+    expect(resolveScopedAccess(facts({ channelReader: true }))).toEqual({ allowed: false, reason: "grant_required" });
   });
 
   it("suspension and missing relationships override all scope grants", () => {
