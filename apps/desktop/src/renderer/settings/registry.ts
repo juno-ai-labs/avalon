@@ -26,9 +26,9 @@ export function defineSetting<const T extends SettingDefinition>(definition: T):
 }
 export const settings = {
   mcpServer: defineSetting({ id: 'mcpServer', section: 'connection', connectionKind: 'custom_mcp_tools', label: 'Server authorization', kind: 'information', description: 'Inspect the connected server URL and authentication method.', options: ['Authorize again', 'OAuth', 'Request headers'] }),
-  inviteEmail: defineSetting({ id: 'inviteEmail', section: 'workspace', label: "Email address", kind: 'custom', description: "Invite a teammate by email.", availability: 'admin' }),
-  inviteRole: defineSetting({ id: 'inviteRole', section: 'workspace', label: "Role", kind: 'select', description: "Choose the invited teammate’s organization role.", availability: 'admin' }),
-  inviteSend: defineSetting({ id: 'inviteSend', section: 'workspace', label: "Send invitation", kind: 'action', description: "Send the invitation after entering an email address.", availability: 'admin' }),
+  inviteEmail: defineSetting({ id: 'inviteEmail', section: 'members', label: "Email address", kind: 'custom', description: "Invite a teammate by email.", availability: 'admin' }),
+  inviteRole: defineSetting({ id: 'inviteRole', section: 'members', label: "Role", kind: 'select', description: "Choose the invited teammate’s organization role.", availability: 'admin' }),
+  inviteSend: defineSetting({ id: 'inviteSend', section: 'members', label: "Send invitation", kind: 'action', description: "Send the invitation after entering an email address.", availability: 'admin' }),
   mcpSetupPolicy: defineSetting({ id: 'mcpSetupPolicy', section: 'connections', label: 'Tools Rally may use', kind: 'select', description: 'Choose which tools the organization server may expose.', availability: 'admin', entryPoint: 'provider:custom-mcp', options: ['All tools', 'Read-only tools'] }),
   mcpName: defineSetting({ id: 'mcpName', section: 'connections', label: "Name", kind: 'custom', description: "How this connection is listed in Rally. The server is never asked what it is called.", entryPoint: 'provider:custom-mcp' }),
   mcpUrl: defineSetting({ id: 'mcpUrl', section: 'connections', label: "Server URL", kind: 'custom', description: "The Streamable HTTP endpoint, over HTTPS. Rally checks it responds before saving anything.", entryPoint: 'provider:custom-mcp' }),
@@ -60,8 +60,8 @@ export const settings = {
   plan: defineSetting({ id: 'plan', section: 'workspace', label: "Plan", kind: 'select', description: "Sets the weekly quota everyone in the organization shares. Only administrators can change it.", aliases: ['billing', 'upgrade', 'starter', 'growth'], entryPoint: 'usage' }),
   quota: defineSetting({ id: 'quota', section: 'workspace', label: "Weekly quota", kind: 'information', description: "How much of this week's shared quota is left.", aliases: ['limit', 'remaining'], entryPoint: 'usage' }),
   usage: defineSetting({ id: 'usage', section: 'workspace', label: "Usage", kind: 'information', description: "Your organization's plan and its shared weekly quota.", aliases: ['limit'] }),
-  members: defineSetting({ id: 'members', section: 'workspace', label: "Members", kind: 'collection', description: "People with access to this organization.", aliases: ["roles"] }),
-  invitations: defineSetting({ id: 'invitations', section: 'workspace', label: "Invitations", kind: 'custom', description: "Invite teammates by email. Links expire after seven days.", availability: 'admin', options: ['Revoke invitation', 'Copy invitation link'] }),
+  members: defineSetting({ id: 'members', section: 'members', label: "Members", kind: 'collection', description: "People with access to this organization.", aliases: ["roles"] }),
+  invitations: defineSetting({ id: 'invitations', section: 'members', label: "Invitations", kind: 'custom', description: "Invite teammates by email. Links expire after seven days.", availability: 'admin', options: ['Revoke invitation', 'Copy invitation link'] }),
   workspaceAccess: defineSetting({ id: 'workspaceAccess', section: 'workspace', label: "Organization access", kind: 'action', description: "Leaving removes this organization from your Rally account on every device.", aliases: ["workspace"] }),
   connections: defineSetting({ id: 'connections', section: 'connections', label: "Your connections", kind: 'collection', description: "Credentials currently available to you or this organization.", aliases: ["integrations","connectors"] }),
   githubAccess: defineSetting({ id: 'githubAccess', section: 'connection', connectionKind: 'github_repository_access', label: "Repository access", kind: 'custom', description: "Configure GitHub repository permissions." }),

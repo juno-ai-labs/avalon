@@ -27,7 +27,7 @@ vi.mock('../lib/platform', () => ({
 }));
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({
   session: state.signedIn ? { user: { id: 'user-1', email: 'person@example.com', name: 'Person' }, workspace: state.hasWorkspace ? { id: 'workspace-1' } : null } : null,
-  api: { getWorkspaceInvitations: state.invitations, createWorkspaceInvitation: state.invite, getWorkspaceMembers: state.members, getOnboardingJourney: state.journey,
+  api: { getWorkspaceInvitees: state.invitations, createWorkspaceInvitation: state.invite, getWorkspaceMembers: state.members, getOnboardingJourney: state.journey,
     updateOnboardingJourney: state.updateJourney, getConnections: state.connections, getAvailableConnectorTypes: state.connectors,
     startProviderConnection: state.startProviderConnection },
   signOut: vi.fn(), setPendingConnectorOAuth: vi.fn(),
@@ -348,7 +348,7 @@ describe('new-account learning paths', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Invite 1 teammate' }));
     await screen.findByText(/Could not invite:/u);
     fireEvent.click(screen.getByRole('button', { name: 'OK' }));
-    state.invitations.mockResolvedValue([{ email: 'aspen@example.com', status: 'pending' }]);
+    state.invitations.mockResolvedValue([{ email: 'aspen@example.com', invitedAt: '2026-10-24T00:00:00.000Z' }]);
     fireEvent.click(screen.getByRole('button', { name: 'Invite 1 teammate' }));
     await screen.findByText('Ordinary organization');
     expect(state.invite).toHaveBeenCalledTimes(1);

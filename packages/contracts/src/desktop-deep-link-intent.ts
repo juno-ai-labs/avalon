@@ -23,7 +23,7 @@ export type DesktopDeepLinkIntent =
   | { kind: "new-workstream" }
   /** The menu bar's request row: open the main window on this request's approve-or-decline dialog. */
   | ({ kind: "access-request"; requestId: string } & Targeted)
-  | ({ kind: "settings"; section: "workspace" | "connections" | "digest" } & Targeted)
+  | ({ kind: "settings"; section: "workspace" | "members" | "connections" | "digest" } & Targeted)
   /** The main window with the sidebar showing Activity: where the digest's button lands. */
   | ({ kind: "activity" } & Targeted)
   | ({ kind: "new-automation" } & Targeted)
@@ -202,7 +202,7 @@ export function parseDesktopDeepLinkIntent(raw: string | URL): DesktopDeepLinkIn
   }
   if (url.hostname === "settings") {
     const section = url.pathname.slice(1);
-    return (section === "workspace" || section === "connections" || section === "digest") && !url.search
+    return (section === "workspace" || section === "members" || section === "connections" || section === "digest") && !url.search
       ? { kind: "settings", section, target }
       : null;
   }

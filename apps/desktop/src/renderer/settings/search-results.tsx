@@ -5,7 +5,7 @@ import type { SettingSearchResult } from './registry';
 /* Typed against the section list rather than inferred, so adding a section
    fails the build here instead of shipping a result whose page name is
    `undefined`. */
-const sectionLabels: Record<DesktopSettingsSection, string> = { notifications: 'Notifications', account: 'Account', workspace: 'Organization', 'internet-access': 'Security', connections: 'Connections', connection: 'Connections', application: 'Application' };
+const sectionLabels: Record<DesktopSettingsSection, string> = { notifications: 'Notifications', account: 'Account', workspace: 'Organization', members: 'Members', 'internet-access': 'Security', connections: 'Connections', connection: 'Connections', application: 'Application' };
 
 export function SettingsSearchResults({ results, onSelect }: {
   results: readonly SettingSearchResult[];

@@ -6,7 +6,7 @@ import { MemberPresentationContext } from '../lib/member-presentation';
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, useMemo, useSyncExternalStore, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, X } from 'lucide-react';
+import { Check } from 'lucide-react';
 import { PERSONAL_COLOR_KEYS, personalColorKey, type AccountOnboarding, type OnboardingJourney, type PersonalPresentation } from '@rally/contracts';
 import { Button, ErrorNotice, RallyMark } from '../components/primitives';
 import { PersonalAvatar, personalColor, personalColorInk } from '../components/personal-avatar';
@@ -14,8 +14,7 @@ import { useAppSession } from '../lib/app-session';
 import { accountOnboardingQueryKey } from '../lib/account-onboarding-query';
 import { useShellCapabilities } from '../lib/collaboration-session';
 import type { Workspace } from '../lib/types';
-
-const inviteEmailPattern = /^[^\s@]+@[^\s@]+$/u;
+import { InviteEmailField, inviteEmailsProblem, inviteMembers, useInviteEmails } from '../components/invite-emails';
 
 const AccountLoadingContext = createContext(false);
 const ProfileEditorContext = createContext<AccountProfileEditor | null>(null);
@@ -200,8 +199,7 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
   const journey = useQuery({ queryKey: key, queryFn: () => api!.getOnboardingJourney(), enabled: Boolean(api && workspace && eligible) });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-  const [emails, setEmails] = useState<string[]>([]);
-  const [emailDraft, setEmailDraft] = useState('');
+  const invite = useInviteEmails();
   const [sent, setSent] = useState<string[]>([]);
   const advance = async (stage: OnboardingJourney['stage']) => {
     if (!journey.data) return;
@@ -233,53 +231,26 @@ export function WorkspaceOnboardingJourney({ workspace, children }: { workspace:
     openFirstWorkstream();
   };
   if (state.stage === 'profile') return <OnboardingPage title="This is you in Rally"><PersonalSetup onSaved={() => state.path === 'creator' ? advance('people') : finishOnboarding()} /></OnboardingPage>;
-  const inviteAddresses = [...new Set([...emails, ...emailDraft.split(/[\s,;]+/u)].map((email) => email.trim().toLowerCase()).filter(Boolean))];
-  const invalidEmails = inviteAddresses.some((email) => !inviteEmailPattern.test(email));
-  const addEmails = (value: string, commitLast: boolean): void => {
-    const parts = value.split(/[\s,;]+/u);
-    const remaining = commitLast ? '' : parts.pop() ?? '';
-    setEmails((previous) => [...new Set([...previous, ...parts.map((email) => email.trim().toLowerCase()).filter(Boolean)])]);
-    setEmailDraft(remaining);
-  };
+  const inviteAddresses = invite.addresses;
   if (state.stage === 'people') return <OnboardingPage title="Invite your teammates" subtitle={["Rally is designed to be multi-human. Rally lets teammates work with AI in shared (cooperative) chat, so without your teammates it won't be as fun.", "Don't worry, you can start using it even before they accept the invite."]} footer={<>
     <Button className="button-primary" disabled={busy} onClick={() => {
-      if (!inviteAddresses.length || invalidEmails) {
-        setError(new Error(inviteAddresses.length ? 'One or more of the addresses are not a valid email address.' : 'Enter at least one email address.'));
+      const problem = inviteEmailsProblem(invite);
+      if (problem) {
+        setError(new Error(problem));
         return;
       }
       void perform(async () => {
         const addresses = inviteAddresses.filter((email) => !sent.includes(email));
-        setEmailDraft('');
-        setEmails(addresses);
-        const pendingInvitations = await api!.getWorkspaceInvitations();
-        const currentMembers = await api!.getWorkspaceMembers();
-        const alreadyInvited = new Set([...pendingInvitations.filter((invite) => invite.status === 'pending').map((invite) => invite.email.toLowerCase()), ...currentMembers.filter((member) => member.status === 'active').map((member) => member.email.toLowerCase())]);
-        const failures: string[] = [];
-        for (const email of addresses) {
-          try { if (!alreadyInvited.has(email)) await api!.createWorkspaceInvitation(email, 'member'); setSent((values) => [...values, email]); }
-          catch { failures.push(email); }
-        }
-        setEmails(failures);
+        invite.replace(addresses);
+        const { failures } = await inviteMembers(api!, addresses, (email) => setSent((values) => [...values, email]));
+        invite.replace(failures);
         if (failures.length) throw new Error(`Could not invite: ${failures.join(', ')}. Check the addresses and retry.`);
         await finishOnboarding();
       });
     }}>{busy ? 'Inviting…' : inviteAddresses.length ? `Invite ${inviteAddresses.length} ${inviteAddresses.length === 1 ? 'teammate' : 'teammates'}` : 'Invite teammates'}</Button>
     <Button disabled={busy} onClick={() => void perform(finishOnboarding)}>{sent.length ? 'Continue' : 'Invite later'}</Button>
   </>}>
-    <div className="invite-email-field">
-      <label htmlFor="invite-email-input">Email addresses</label>
-      <div className="invite-email-chips">
-        {emails.map((email) => <span className="invite-email-chip" key={email} aria-invalid={!inviteEmailPattern.test(email) || undefined}>
-          <span>{email}</span><button type="button" disabled={busy} aria-label={`Remove ${email}`} onClick={() => setEmails((values) => values.filter((value) => value !== email))}><X size={14} /></button>
-        </span>)}
-        <input id="invite-email-input" aria-describedby="invite-email-hint" disabled={busy} autoComplete="off" autoCapitalize="none" spellCheck={false} value={emailDraft} placeholder="teammate@company.com"
-          onChange={(event) => { if ('isComposing' in event.nativeEvent && event.nativeEvent.isComposing) setEmailDraft(event.target.value); else addEmails(event.target.value, false); }}
-          onBlur={() => addEmails(emailDraft, true)}
-          onPaste={(event) => { event.preventDefault(); const input = event.currentTarget; const value = emailDraft.slice(0, input.selectionStart ?? emailDraft.length) + event.clipboardData.getData('text') + emailDraft.slice(input.selectionEnd ?? emailDraft.length); addEmails(value, true); }}
-          onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === 'Enter') { event.preventDefault(); addEmails(emailDraft, true); } }} />
-      </div>
-      <p id="invite-email-hint">Separate emails with a space, comma, or semicolon.</p>
-    </div>
+    <InviteEmailField invite={invite} disabled={busy} />
     {sent.length > 0 && <p role="status">Invited: {sent.join(', ')}</p>}{error && <ErrorNotice occurrence={error}>{error.message}</ErrorNotice>}
   </OnboardingPage>;
   return <>{children}</>;
