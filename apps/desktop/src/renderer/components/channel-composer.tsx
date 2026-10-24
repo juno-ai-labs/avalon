@@ -5,7 +5,7 @@ import { useAnnotationDraft, type AnnotationPin } from './artifact-annotations';
 import type { Annotation } from '@rally/contracts';
 import { asSubstreamId, asWorkspaceId, asWorkstreamId, MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE, type SpaceColorKey } from '@rally/contracts';
 import { IconCloudDownload } from '@tabler/icons-react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import { useNavigate } from 'react-router-dom';
@@ -23,6 +23,7 @@ import type { AgentModelOverride, CreatedWorkstream, MessageAttachment, Workspac
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { EmailMentionContext, emailMentionDirectory, NO_INVITEES, useWorkspaceInvitees } from '../lib/workspace-invitees';
+import { useWorkspaceMembers } from '../lib/workspace-members';
 import { addPendingWorkstream, confirmPendingWorkstream, discardPendingWorkstream } from '../lib/workstreams-cache';
 import { AttachmentLightbox } from './attachment-lightbox';
 import type { AttachmentPreview } from './attachments';
@@ -132,12 +133,7 @@ export function ChannelComposer({ channelColor, channelId, channelName, channelS
   const [tooLong, setTooLong] = useState(false);
   const attachmentDraft = useFileAttachments(api, draftKey);
   useWindowFilePaste(attachmentDraft.addFiles, !visible || threadOpen);
-  const members = useQuery({
-    queryKey: ['workspace-members'],
-    queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
-    enabled: Boolean(api),
-    staleTime: 60_000,
-  });
+  const members = useWorkspaceMembers(api, { guest: workspace.currentUser.accessClass === 'guest' });
   const invitees = useWorkspaceInvitees(api, workspace.currentUser.accessClass !== 'guest');
   const visibleInvitees = invitees.data ?? NO_INVITEES;
   const emailMentions = useMemo(
