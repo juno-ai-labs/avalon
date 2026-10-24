@@ -95,7 +95,7 @@ Who may change things depends on each person's role in the Organization.
 | **Owner** | The person who created the Organization. Can do everything an administrator can. |
 | **Administrator** | Runs the Organization. Can change roles. |
 | **Member** | Can create Channels, start Threads, and add people to Channels and Threads. |
-| **Guest** | Someone from outside the Organization who was shared into particular conversations by email. Sees only those, cannot create Channels or start Threads, and cannot change who can read a Thread. Can start a Breakout from a Thread shared with them. |
+| **Guest** | Someone from outside the Organization who was shared into particular conversations by email. Sees only those, cannot create Channels or start Threads, and cannot change who can read a Thread. |
 
 Rally shows buttons according to your role and checks every change again when
 you make it, so a button that has stopped applying to you will refuse. Roles, and how to change them, are covered in
