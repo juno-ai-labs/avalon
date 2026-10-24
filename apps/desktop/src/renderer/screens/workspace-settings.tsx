@@ -373,6 +373,8 @@ interface SettingsNavItem {
   /** Set on a `connection` page's item, which is one of many sharing its section. */
   connectionId?: string;
   child?: boolean;
+  /** Drawn but not openable, with `GUEST_SECTION_DISABLED_REASON`. */
+  disabled?: boolean;
 }
 
 /** The icon a connection's page wears when its company has no mark to draw. */
@@ -382,11 +384,12 @@ function fallbackConnectionIcon(connection: WorkstreamConnection): LucideIcon {
 }
 
 /**
- * What a guest's Settings holds: their own profile, who is in the Organization,
+ * The sections a guest can open: their own profile, who is in the Organization,
  * and this app. Every other section configures the Organization or a member's
- * place in it, and its routes refuse a guest.
+ * place in it, and its routes refuse a guest, so a guest sees it disabled.
  */
 const GUEST_SETTINGS_SECTIONS: ReadonlySet<SettingsSection> = new Set(['account', 'members', 'application']);
+const GUEST_SECTION_DISABLED_REASON = 'Only members of this organization can open this.';
 
 const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
   {
@@ -1133,15 +1136,15 @@ export function WorkspaceSettingsScreen({
     const withConnections = group.label !== 'Settings'
       ? group
       : { ...group, items: group.items.flatMap((item) => item.id === 'connections' ? [item, ...connectionNavigationItems] : [item]) };
-    // A guest has no Organization page, so Members stands on its own.
+    // A guest sees every section, and the ones they cannot open disabled.
     return { ...withConnections, items: guest
-      ? withConnections.items.filter((item) => GUEST_SETTINGS_SECTIONS.has(item.id)).map((item) => ({ ...item, child: false }))
+      ? withConnections.items.map((item) => GUEST_SETTINGS_SECTIONS.has(item.id) ? item : { ...item, disabled: true })
       : withConnections.items };
   // Every Application setting but appearance is about the Mac app itself, so a
   // browser drops the whole Desktop app group and shows appearance in Account.
   }).filter((group) => !browserHost || group.label !== 'Desktop app'), [browserHost, guest, connectionNavigationItems]);
   const availableSections = useMemo(
-    () => new Set(settingsNavigationWithConnectors.flatMap((group) => group.items.map((item) => item.id))),
+    () => new Set(settingsNavigationWithConnectors.flatMap((group) => group.items.flatMap((item) => item.disabled ? [] : [item.id]))),
     [settingsNavigationWithConnectors],
   );
   const settingsContext = useMemo<SettingsSearchContext>(() => ({
@@ -1469,9 +1472,13 @@ export function WorkspaceSettingsScreen({
                   const button = (
                     <button
                       aria-current={current ? 'page' : undefined}
+                      // Not `disabled`, which would take it out of the tab
+                      // order and its reason with it.
+                      aria-disabled={item.disabled || undefined}
                       className={item.child ? 'settings-navigation-child' : undefined}
                       key={item.connectionId ?? item.id}
                       onClick={() => {
+                        if (item.disabled) return;
                         setSearchTarget(null);
                         if (item.connectionId) openConnectionPage(item.connectionId);
                         setActiveSection(item.id);
@@ -1485,6 +1492,7 @@ export function WorkspaceSettingsScreen({
                   );
                   // A connection's name is cut to the sidebar's width, and two
                   // accounts of one company differ only in the part cut off.
+                  if (item.disabled) return <Tip key={item.id} label={GUEST_SECTION_DISABLED_REASON} side="right">{button}</Tip>;
                   return item.connectionId
                     ? <Tip describesTrigger={false} key={item.connectionId} label={item.label} side="right">{button}</Tip>
                     : button;
