@@ -235,7 +235,7 @@ export class WorkspaceActivityFeed {
     // key filtered afterwards would still leak through the cursor, and could
     // leave a page empty that has more behind it.
     const threadListed = channelListedSql("directory", "viewer", viewer.accessClass, { breakouts, userId: "?1" });
-    const breakoutListed = breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass);
+    const breakoutListed = breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass, "?1");
     const mentionsOnly = only === "mentions";
     const threadStartTold = this.spaces.ready()
       ? threadStartAudienceSql("directory", "viewer", "directory.source_created_at")
@@ -376,7 +376,7 @@ export class WorkspaceActivityFeed {
                  AND ${artifactUpdateSql("version", "pin")}
                  AND ${listedResourceVisibilitySql("r")}
                  AND directory.archived_at IS NULL
-                 AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}`)),
+                 AND ${mainOpenableSql("directory", "viewer", viewer.accessClass, "?1")}`)),
     ].sort(newestFirst);
     // Each arm took one page past its own cursor, so the merged head is the
     // global first page, and anything left over means there is another.
@@ -401,7 +401,7 @@ export class WorkspaceActivityFeed {
     if (subjects?.length === 0) return [];
     const breakouts = this.spaces.breakoutsReady();
     const threadListed = channelListedSql("directory", "viewer", person.accessClass, { breakouts, userId: "?1" });
-    const breakoutListed = breakoutListedSql("breakout", "breakout_viewer", person.accessClass);
+    const breakoutListed = breakoutListedSql("breakout", "breakout_viewer", person.accessClass, "?1");
     const restrict = subjects === undefined ? "" : `AND EXISTS (SELECT 1 FROM json_each(?5) requested
       WHERE json_extract(requested.value, '$.threadId') = conversation.thread_id
         AND COALESCE(json_extract(requested.value, '$.substreamId'), '0') = conversation.substream_id)`;
@@ -512,7 +512,7 @@ export class WorkspaceActivityFeed {
               AND breakout_viewer.authority_generation = breakout.authority_generation
             WHERE breakout.archived_at IS NULL AND directory.archived_at IS NULL
               AND ${channelListedSql("directory", "viewer", viewer.accessClass, { breakouts: true, userId: "?1" })}
-              AND ${breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass)}
+              AND ${breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass, "?1")}
               AND breakout.substream_id IN (${chunk.map((_, index) => `?${index + 2}`).join(", ")})`,
           viewer.userId,
           ...chunk,

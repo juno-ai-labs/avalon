@@ -408,7 +408,7 @@ function openableByPerson(sql: SqlStorage, person: ResolvedPerson, sources: Read
           AND viewer.user_id = ?1
           AND viewer.authority_generation = directory.authority_generation
         WHERE ${inJsonList("directory.workstream_id", "?2")} AND directory.archived_at IS NULL
-          AND ${mainOpenableSql("directory", "viewer", person.accessClass)}`,
+          AND ${mainOpenableSql("directory", "viewer", person.accessClass, "?1")}`,
       person.userId, JSON.stringify(threads),
     ).toArray()) open.add(row.workstream_id);
   }
@@ -428,7 +428,7 @@ function openableByPerson(sql: SqlStorage, person: ResolvedPerson, sources: Read
         WHERE ${inJsonList("breakout.workstream_id || '/' || breakout.substream_id", "?2")}
           AND breakout.archived_at IS NULL AND directory.archived_at IS NULL
           AND ${channelListedSql("directory", "viewer", person.accessClass, { breakouts: true, userId: "?1" })}
-          AND ${breakoutListedSql("breakout", "breakout_viewer", person.accessClass)}`,
+          AND ${breakoutListedSql("breakout", "breakout_viewer", person.accessClass, "?1")}`,
       person.userId, JSON.stringify(breakouts),
     ).toArray()) open.add(row.source);
   }
