@@ -278,7 +278,10 @@ active membership keeps its generation and the reservation finds its child
 registered). A replayed receipt reconciles through
 `reconcileReplayedSpaceMembership`, which uses the staged `addChannel` path
 rather than this call because the Channel already exists and its audience has
-to be widened through its canonical operations.
+to be widened through its canonical operations. It writes only a placement
+that is missing (`SpaceService.channelSpaceIds` says where the thread sits),
+and a create that named no Space is settled by any home: a guest may start a
+thread in their Channel but not place one, so their retry must not ask.
 
 Two creation paths do not go through here, and both call
 `placeConnectorChannelInGeneral` for the same step. The Slack agent opens a
