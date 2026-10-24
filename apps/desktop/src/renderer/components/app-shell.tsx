@@ -1,5 +1,7 @@
 import { NavigationHistoryProvider } from './navigation-history';
 import { AccessRequestDialog } from './access-request-dialog';
+import { AddMembersDialog } from './add-members-dialog';
+import { useViewerIsWorkspaceAdmin } from '../lib/use-workspace';
 import { useAccessRequests, useDecideAccessRequest } from '../lib/access-requests';
 import type { WorkspaceAttention } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
@@ -162,6 +164,10 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // `pendingAccessRequestId` instead. Either opens the one dialog.
   const [openAccessRequestId, setOpenAccessRequestId] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [addMembersOpen, setAddMembersOpen] = useState(false);
+  // Inviting is an administrator's; the server refuses anyone else. The
+  // shell's own workspace comes from the session and carries no role.
+  const canInvite = useViewerIsWorkspaceAdmin({ api: api ?? null, session: session ?? null }) && !guestSession;
   useEffect(() => {
     const openSearch = (event: KeyboardEvent) => {
       if (api && (event.metaKey || event.ctrlKey) && event.shiftKey && event.code === 'KeyF' && !event.isComposing) {
@@ -429,6 +435,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
 
   return (
     <>
+      <AddMembersDialog api={api ?? null} open={addMembersOpen} onClose={() => setAddMembersOpen(false)} />
       <AccessRequestDialog
         api={api ?? null}
         onClose={() => { setOpenAccessRequestId(null); clearPendingAccessRequest(); }}
@@ -475,6 +482,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             }}
             onAbandonSignIn={abandonAccountSignIn}
             onInvitationPromptDismiss={clearPendingInvitation}
+            onAddMembers={canInvite ? () => setAddMembersOpen(true) : undefined}
             onOpenSettings={() => { void desktopBridge().openSettings(); }}
             onSignOut={() => {
               if (impersonator) void endSupportSession().catch(() => undefined);
