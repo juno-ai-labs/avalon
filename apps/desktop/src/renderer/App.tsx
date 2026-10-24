@@ -228,7 +228,7 @@ export function WorkspaceApp(): React.JSX.Element {
   useEffect(() => {
     if (servedGuest !== guest) void refreshSession().catch(() => undefined);
   }, [guest, refreshSession, servedGuest]);
-  useWorkspaceMembers(api, { guest, enabled: Boolean(session?.workspace), staleTime: Number.POSITIVE_INFINITY });
+  useWorkspaceMembers(api, { enabled: Boolean(session?.workspace), staleTime: Number.POSITIVE_INFINITY });
 
   useEffect(() => {
     if (workspace.error) abandonPendingWorkstreamFeedOpen();

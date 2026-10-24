@@ -19,7 +19,6 @@ const api = vi.hoisted(() => ({
   createWorkspaceInvitation: vi.fn(),
   getWorkspaceInvitations: vi.fn(),
   getWorkspaceMembers: vi.fn(),
-  getWorkspaceRoster: vi.fn(),
   getSupportAccess: vi.fn(),
   promoteWorkspaceGuest: vi.fn(),
   getConnections: vi.fn(),
@@ -545,14 +544,15 @@ describe('Organization settings', () => {
     }
   });
 
-  it('shows a guest who is in the Organization by name and role, without addresses or controls', async () => {
+  it('shows a guest everyone in the Organization, other guests and addresses included, without controls', async () => {
     const guestSession = { apiBaseUrl: 'https://enterprise.api.rallywith.ai', expiresAt: '2099-01-01T00:00:00.000Z',
       user: { id: 'user-9', name: 'Gale', email: 'gale@example.com' },
       workspace: { id: 'workspace-1', name: 'Rally Studio', region: 'enterprise', role: null, timezone: 'Europe/London', accessClass: 'guest' as const } };
-    api.getWorkspaceRoster.mockResolvedValue([
-      { id: 'user-9', name: 'Gale', presentation: null, role: null, accessClass: 'guest' },
-      { id: 'user-2', name: 'Sam', presentation: null, role: 'member', accessClass: 'member' },
-      { id: 'user-1', name: 'Adam', presentation: null, role: 'owner', accessClass: 'member' },
+    api.getWorkspaceMembers.mockResolvedValue([
+      { id: 'user-9', name: 'Gale', email: 'gale@example.com', timezone: 'Europe/London', role: null, accessClass: 'guest' },
+      { id: 'user-8', name: 'Vera', email: 'vera@other.example', timezone: 'Asia/Tokyo', role: null, accessClass: 'guest' },
+      { id: 'user-2', name: 'Sam', email: 'sam@example.com', timezone: 'America/Los_Angeles', role: 'member' },
+      { id: 'user-1', name: 'Adam', email: 'adam@example.com', timezone: 'America/Los_Angeles', role: 'owner' },
     ]);
     window.location.hash = '#/settings?section=members';
     const client = createTestQueryClient();
@@ -567,13 +567,11 @@ describe('Organization settings', () => {
         </Tooltip.Provider>,
       );
       expect(await screen.findByRole('heading', { level: 1, name: 'Members' })).toBeVisible();
-      const rows = await screen.findAllByText(/^(Adam|Sam|Gale)$/u);
-      expect(rows.map((row) => row.textContent)).toEqual(['Adam', 'Sam', 'Gale']);
-      expect(screen.getAllByText(/^(owner|member|Guest)$/u).map((badge) => badge.textContent)).toEqual(['owner', 'member', 'Guest']);
-      expect(screen.queryByText(/@example\.com/u)).toBeNull();
+      const rows = await screen.findAllByText(/^(Adam|Sam|Gale|Vera)$/u);
+      expect(rows.map((row) => row.textContent)).toEqual(['Adam', 'Sam', 'Gale', 'Vera']);
+      expect(screen.getByText('vera@other.example')).toBeVisible();
       expect(screen.queryByRole('button', { name: /member actions/u })).toBeNull();
       expect(screen.queryByRole('heading', { name: 'Invitations' })).toBeNull();
-      expect(api.getWorkspaceMembers).not.toHaveBeenCalled();
     } finally {
       window.location.hash = '';
     }

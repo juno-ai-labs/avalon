@@ -133,7 +133,7 @@ export function ChannelComposer({ channelColor, channelId, channelName, channelS
   const [tooLong, setTooLong] = useState(false);
   const attachmentDraft = useFileAttachments(api, draftKey);
   useWindowFilePaste(attachmentDraft.addFiles, !visible || threadOpen);
-  const members = useWorkspaceMembers(api, { guest: workspace.currentUser.accessClass === 'guest' });
+  const members = useWorkspaceMembers(api);
   const invitees = useWorkspaceInvitees(api, workspace.currentUser.accessClass !== 'guest');
   const visibleInvitees = invitees.data ?? NO_INVITEES;
   const emailMentions = useMemo(

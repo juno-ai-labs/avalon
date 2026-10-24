@@ -143,15 +143,20 @@ describe('organization account menu', () => {
       updateBridge.current = null;
     }
   });
-  it.each(['grok', 'workspace'] as const)('offers a guest Members but neither Add new member nor Sidekicks (%s)', (presentation) => {
+  it.each(['grok', 'workspace'] as const)('shows a guest Add new member and Sidekicks disabled with a reason, and Members usable (%s)', async (presentation) => {
     shell.guest = true;
     try {
-      renderMenu({ presentation });
+      const props = renderMenu({ presentation, canAddMembers: true });
       openMenu();
-      const names = within(screen.getByRole('menu')).getAllByRole('menuitem').map((item) => item.textContent?.trim());
-      expect(names).toContain('Members');
-      expect(names).not.toContain('Add new member');
-      expect(names).not.toContain('Sidekicks');
+      const menu = within(screen.getByRole('menu'));
+      const item = (name: string) => menu.getAllByRole('menuitem').find((row) => row.textContent?.trim() === name)!;
+      expect(item('Members')).not.toHaveAttribute('aria-disabled');
+      expect(item('Add new member')).toHaveAttribute('aria-disabled', 'true');
+      expect(item('Sidekicks')).toHaveAttribute('aria-disabled', 'true');
+      fireEvent.click(item('Add new member'));
+      expect(props.onAddMembers).not.toHaveBeenCalled();
+      fireEvent.focus(item('Sidekicks'));
+      expect(await screen.findByRole('tooltip')).toHaveTextContent('Guests use the Sidekicks a conversation offers.');
     } finally {
       shell.guest = false;
     }
