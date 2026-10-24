@@ -50,12 +50,12 @@ through WorkstreamObjectClient. It authorizes the current reader, then uses the
 same WorkstreamTranscriptStorage.range primitive as socket hydration, with an
 optional append fence and caller-chosen page size (20 turns by default, set by
 the team on 2026-10-21). It formats participant-visible text inside the authority,
-so hidden tool payloads do not cross the RPC boundary. With `includeTurns`, it
-also returns canonical participant turns, including participant-safe tool blocks
-and attachment descriptors. The Sidekick wizard uses those call identities to
-read exact replay results separately, after its own run admission
-([Sidekick lifecycle](automation-lifecycle.md#sidekick-publication-and-loading)).
-It does not boot the feed or acknowledge read state.
+so hidden tool payloads do not cross the RPC boundary. It does not boot the feed
+or acknowledge read state. The internal `inspect_sidekick_run_transcript`
+operation reads canonical participant turns through the same range primitive,
+with current membership and parent-owned run admission, without seating a viewer.
+It reports an unprovisioned transcript explicitly. Exact receipt results are
+reauthorized and read separately by the [Sidekick wizard](automation-lifecycle.md#sidekick-publication-and-loading).
 
 ## Context-residency ledger
 
