@@ -63,8 +63,10 @@ its roster over those decisions. Frozen snapshots, incarnation bindings, receipt
 and alarms retain the existing recovery protocol.
 
 Sharing choices, transport, resource authorization and Breakout listings read
-grants. No serving path falls back to a directory or historical roster. Pending
-handoffs refuse admission until completion. Current relationships and grants are
+grants. No serving path falls back to a directory or historical roster. An
+admission that finds a handoff pending tries to finish it first
+(`importHistoricalParticipants`), and refuses until it completes if the source
+cannot hand over yet; the alarm still owns the retry. Current relationships and grants are
 rechecked after external awaits; implicit Organization-wide reading does not
 confer sharing authority. An unpublished Breakout's local seats are bootstrap data
 only; it is not publicly readable until its parent publishes its grants. Hidden
@@ -524,6 +526,28 @@ handoff against real Main and child agents, including refusal to transfer for a
 nonparticipant and reconciliation of a stale child roster.
 
 ## Changelog
+
+### 2026-10-24 — An admission finishes a pending handoff before refusing
+
+**What changed:** `HostedParent.importHistoricalParticipants` runs a pending
+participant handoff (`runParticipantMigration`) when an admission finds one,
+where it returned and left the admission refused for the alarm to settle. A
+failure is logged `participant_migration_admission_attempt_failed` and the
+admission is refused as before.
+
+**Why:** A guest may now start a thread in a Channel they take part in. The
+thread's first run checks a guest's access (`integrations.ts`), and it runs
+while the new Main's handoff is still pending, so a guest's first message was
+refused with "Shared conversation access has ended" and Rally never answered.
+Members never hit it, because their runs skip that check.
+
+**Considered and rejected:** Admitting Organization-wide access while a handoff
+is pending. It fixed a guest's thread in a public Channel and not one in a
+private Channel, whose only answer is the roster being imported.
+
+**Consequences:** The first admission of a conversation mid-handoff costs the
+handoff's round trips to its source. A source that is not ready keeps the old
+answer, so the alarm remains the recovery path.
 
 ### 2026-10-22 — Batch recipient setup on the guest-add response path
 

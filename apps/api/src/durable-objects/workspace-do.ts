@@ -11583,16 +11583,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const refused = (code: SpaceErrorCode, spaceId: string | null): WorkspaceChannelReservationResult =>
       WorkspaceChannelReservationResultSchema.parse({ status: "refused", code, spaceId });
-    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
+    // A guest starts a thread only in a Channel they take part in; a member
+    // anywhere the Space write gate admits them.
+    const viewer = await this.spaceReader(request.workspaceId, request.userId);
+    const guest = viewer?.accessClass === "guest";
+    const refusal = guest
+      ? (this.spaceStorage().ready() ? null : "space_bootstrap_pending")
+      : await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
     if (refusal) return refused(refusal, null);
     const storage = this.spaceStorage();
     const generalSpaceId = request.spaceIds.length > 0 ? null : storage.generalSpaceId();
     if (request.spaceIds.length === 0 && generalSpaceId === null) return { status: "general_missing" };
     const spaceIds = request.spaceIds.length > 0 ? [...new Set<string>(request.spaceIds)] : [generalSpaceId ?? ""];
     // The same per-Space gate every Space write takes: reaching a Space only
-    // through a Channel in it is not enough to put another Channel there.
-    const throughChannel = spaceIds.find((spaceId) => storage.reach(member(request.userId), spaceId) === "through_channel");
-    if (throughChannel) return refused("space_access_denied", throughChannel);
+    // through a Channel in it is not enough to put another Channel there. A
+    // guest's only reach that counts is taking part.
+    const outside = guest
+      ? spaceIds.find((spaceId) => storage.reach(viewer, spaceId) !== "participant")
+      : spaceIds.find((spaceId) => storage.reach(member(request.userId), spaceId) === "through_channel");
+    if (outside) return refused("space_access_denied", outside);
     const parent = await this.hostedParent(request.workstreamId, request.workspaceId);
     const workstreamId = request.workstreamId;
     const followUpMark = this.pendingParentFollowUps.length;

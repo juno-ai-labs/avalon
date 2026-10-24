@@ -42,7 +42,7 @@ import type { HonoAppEnv } from "../env";
 import { requestDeferral } from "../lib/defer";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { workspaceDOName } from "../durable-objects/names";
-import { getAuth } from "../middleware/auth";
+import { getAuth, getWorkspaceAuth } from "../middleware/auth";
 import { ApiError } from "../lib/api-error";
 import { requireCurrentClientContract, requireSessionImportClientContract } from "../lib/client-contract";
 import { requestFlowSpan, type FlowSpan, type PerfFlow } from "../observability/tracing";
@@ -269,11 +269,19 @@ workstreamRoutes.post("/:id/import/update", zValidator("param", idParam),
       new Map(checkpoint.map((message) => [message.sourceMessageId, message.sourceRevision])));
     return c.json(SessionImportUpdateResponseSchema.parse(await client.updateImportedSession(body.clientMessageId, conversation)));
   });
-workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),
+/**
+ * Starting a thread, for members and guests alike. Mounted on the identity
+ * layer rather than under `requireAuth`: a guest may start a thread in a
+ * Channel they take part in, and `WorkspaceDO.reserveChannelInSpaces` decides
+ * which Channels a person may start one in. Every other `/workstreams` route
+ * stays a member's.
+ */
+export const workstreamCreateRoutes = new Hono<HonoAppEnv>();
+workstreamCreateRoutes.post("/", requireSendableMessageLength("openingMessage"),
   zValidator("json", CreateWorkstreamRequestSchema), async (c) => {
   const requestReceivedAt = c.get("requestReceivedAt");
   const body = c.req.valid("json");
-  const auth = getAuth(c);
+  const auth = getWorkspaceAuth(c);
   const operationId = telemetryOperationId(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.OPERATION_ID));
   return requestFlowSpan(c, "workstream.create", { flow: "workstream_create" }, async (span) => {
     // This is the one create path where a person is at a keyboard, so it is the
