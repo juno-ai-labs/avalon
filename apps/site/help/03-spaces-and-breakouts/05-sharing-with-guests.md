@@ -67,15 +67,20 @@ their project.
 Only people who are already guests in your Organization are offered. To bring
 in someone new, share a conversation with them first, as above.
 
-A guest in a Channel can:
+Inside the Channel, a guest works much as a member does:
 
-- See the Channel, its feed and its messages, even if the Channel is private.
-- Open and read every Thread in it that is public to the Organization, the same
-  ones a member of your Organization could open.
+- They see the Channel, its feed and its messages, even if the Channel is
+  private.
+- They open, read and post in every Thread in it that is public to the
+  Organization, the same ones a member could. Posting in a Thread makes them
+  one of its participants, as it does for a member.
+- They start new Threads from the Channel's **Start a thread in** box. A Thread
+  they start follows the usual rule: public in a Channel open to the whole
+  Organization, private in a private Channel.
 
-They still cannot open a private Thread in it unless they are one of that
-Thread's participants, or a Breakout they have not been added to. They cannot
-start Threads in the Channel, rename it or change its people.
+They still cannot open a private Thread unless they are one of its
+participants, or a Breakout they have not been added to. They cannot rename the
+Channel, change its people, or create Channels of their own.
 
 > [!WARNING]
 > Adding a guest to **General** lets them read every public Thread in General,
@@ -84,8 +89,8 @@ start Threads in the Channel, rename it or change its people.
 
 To take a guest out, open **People** in the Channel's menu and choose **Remove
 from channel** beside their name. The Channel's public Threads close for them
-within moments, unless they are a participant of a Thread or another Channel
-they are in holds it.
+within moments, except Threads they are a participant of (including any they
+started or posted in) and Threads another of their Channels holds.
 
 ## What the guest sees
 
