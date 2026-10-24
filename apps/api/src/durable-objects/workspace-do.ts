@@ -233,6 +233,7 @@ import { resolveSpaceWorkstreamStart } from "../lib/channel-audience";
 import { diagnosticErrorCode, logError, logInfo, logWarn } from "../observability/logger";
 import {
   AccessRevocationMessageSchema,
+  type AccessRevocationMessage,
   descendantRevocation,
   publishDescendantRevocations,
   revocationClosesSession,
@@ -18840,13 +18841,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * Members are left out: Organization-wide scope already admits them, so a
    * Channel changes nothing for them. A guest who gained is sent each
    * thread's row; one who lost is sent the row or its tombstone, whichever
-   * the rules now give (another Channel may still lend it), and the threads
-   * are announced narrowed so the revocation walk closes any socket the rules
-   * no longer admit. The walk asks each thread who still reads it, so a
-   * thread somebody can still read keeps its sockets.
+   * the rules now give (another Channel may still lend it). For each thread a
+   * guest can no longer read, a revocation naming them is published, the one
+   * a participant removal sends: it reaches every socket they hold on the
+   * thread, its conversations' own sockets included, and the Sidekicks it
+   * owns. An anonymous narrowing would not: it finds people only through the
+   * thread's control sockets, which a client opening conversations directly
+   * does not hold.
    *
    * Never throws: the write is committed, rows are best effort, and a
-   * narrowing that could not be queued is logged.
+   * revocation that could not be queued is logged.
    */
   private async guestChannelReachMoved(
     threadIds: readonly string[],
@@ -18868,15 +18872,27 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (lostGuests.length === 0) return;
     try {
       const occurredAt = new Date().toISOString();
-      await publishDescendantRevocations(this.env, threadIds.map((workstreamId) => AccessRevocationMessageSchema.parse({
-        kind: "access_revoked", occurredAt, reason: "workstream_participant_removed",
-        workspaceId, userId: null, sessionId: null,
-        target: { scope: "workstream_audience_narrowed", workstreamId },
-      })));
+      const messages: AccessRevocationMessage[] = [];
+      for (const threadId of threadIds) {
+        const parent = await this.hostedParent(threadId, workspaceId);
+        for (const userId of lostGuests) {
+          if (parent.readableSubstreams(asUserId(userId), this.knownRelationship(userId) ?? null).includes(asSubstreamId("0"))) continue;
+          for (const target of [
+            { scope: "workstream" as const, workstreamId: threadId },
+            { scope: "workstream_automations" as const, workstreamId: threadId },
+          ]) {
+            messages.push(AccessRevocationMessageSchema.parse({
+              kind: "access_revoked", occurredAt, reason: "workstream_participant_removed",
+              workspaceId, userId, sessionId: null, target,
+            }));
+          }
+        }
+      }
+      await publishDescendantRevocations(this.env, messages);
     } catch (error) {
-      logWarn(this.env, "channel_reach_narrowing_publish_failed", {
+      logWarn(this.env, "channel_reach_revocation_publish_failed", {
         workspace_id: workspaceId,
-        code: diagnosticErrorCode(error, "channel_reach_narrowing_publish_failed"),
+        code: diagnosticErrorCode(error, "channel_reach_revocation_publish_failed"),
       });
     }
   }

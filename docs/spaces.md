@@ -241,9 +241,10 @@ participant. It is asked at read time and stored nowhere:
 - **Moving.** Adding a guest, removing one, taking a thread out, moving it
   between Channels, and archiving or restoring a Channel each call
   `guestChannelReachMoved` after commit. It sends the affected guests the
-  thread rows, or their tombstones, sends `workspace_reach_changed`, and on a
-  loss announces each thread `workstream_audience_narrowed`, so the revocation
-  walk closes any socket the rule no longer admits
+  thread rows, or their tombstones, sends `workspace_reach_changed`, and for
+  each thread a guest can no longer read publishes the revocations a
+  participant removal sends, naming them (`workstream` and
+  `workstream_automations`), so every socket they hold on it closes
   ([`access-revocation.md`](access-revocation.md)). A placement that adds a
   thread needs nothing more: its row already goes to everybody who can see it.
 
