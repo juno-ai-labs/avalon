@@ -36,6 +36,11 @@ and nothing else in the Organization.
 
 | What | Owner | Administrator | Member | Guest |
 | --- | --- | --- | --- | --- |
+| Read and write in conversations they are part of | Yes | Yes | Yes | Yes |
+| Browse the Organization's Channels | Yes | Yes | Yes | No |
+| Start Channels and Threads | Yes | Yes | Yes | No |
+| Build Sidekicks | Yes | Yes | Yes | No |
+| Add a Sidekick to a conversation | Yes | Yes | Yes | Only one already in that conversation |
 | See the members list | Yes | Yes | Yes | No |
 | Invite people and revoke invitations | Yes | Yes | No | No |
 | Make someone an administrator, or remove that | Yes | Yes | No | No |
