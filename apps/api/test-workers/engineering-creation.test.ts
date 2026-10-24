@@ -242,10 +242,13 @@ describe("engineering product creation", () => {
     await expect(bridge.createChannel({ operationId: crypto.randomUUID(), creatorUserId: MEMBER, orgId: ORG,
       name: "Guest launch", participantUserIds: [] }, OPERATOR)).rejects.toThrow("space_access_denied");
     // A guest starts a thread in a Channel they take part in, as a member does.
-    const started = await bridge.createThread({ operationId: "00000000-0000-7000-8000-00000000ee0b", creatorUserId: MEMBER,
-      orgId: ORG, channelId: CHANNEL, prompt: PROMPT }, OPERATOR);
+    const guestCreate = { operationId: "00000000-0000-7000-8000-00000000ee0b", creatorUserId: MEMBER,
+      orgId: ORG, channelId: CHANNEL, prompt: PROMPT };
+    const started = await bridge.createThread(guestCreate, OPERATOR);
     const guestThread = await settledThread(started.threadId, MEMBER, null);
     expect((await guestThread.boot()).workstream).toMatchObject({ createdByUserId: MEMBER, scope: "workspace" });
+    // A retry of the same create, as after a lost response, answers the thread it made.
+    await expect(bridge.createThread(guestCreate, OPERATOR)).resolves.toMatchObject({ threadId: started.threadId, turnId: started.turnId });
     // And nowhere else: not in a Channel they are not in.
     const elsewhere = "00000000-0000-7000-8000-00000000ee0c";
     await bridge.createChannel({ operationId: elsewhere, creatorUserId: CREATOR, orgId: ORG,
