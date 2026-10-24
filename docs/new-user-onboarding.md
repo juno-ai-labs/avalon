@@ -73,8 +73,10 @@ a remembered name.
 The invite page uses manual email chips separated by spaces, commas or semicolons.
 Invite stays enabled: invalid chips are highlighted, and clicking Invite checks
 every address for `something@something` before sending any invitations.
-Before sending, it reconciles pending invitations and active members so retrying a
-lost response does not replace an invitation already sent. Failed addresses stay
+Before sending, it reconciles pending invitees (`/workspace/invitees`, which
+lists every pending address, unlike `/workspace/invitations`, which stops at the
+newest 100 of any status) and active members, so retrying a lost response does
+not replace an invitation already sent. Failed addresses stay
 editable. Onboarding has no teammate discovery API.
 
 The same field, check and send back **Add new member** in the account menu.
@@ -166,8 +168,10 @@ the reconcile-then-send loop moved out of `guided-onboarding.tsx` into
 `components/invite-emails.tsx`. The account menu's new **Add new member**
 dialog uses them. The item is shown to every member and enabled only for
 administrators, since the server refuses anyone else; hiding it would leave
-members with no hint that inviting exists. The pending-invitation and member reads now run together rather
-than one after the other.
+members with no hint that inviting exists. The already-invited check now reads `/workspace/invitees` rather than
+`/workspace/invitations`: the second stops at the newest 100 rows, and in a
+long-lived workspace an older pending address missing from it would be invited
+again, revoking the link that person already had. Both reads run together.
 
 **Why:** Inviting people should not need onboarding or a trip into Settings,
 and a second copy of the field would drift from the first on parsing,
