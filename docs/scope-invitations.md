@@ -533,7 +533,10 @@ nonparticipant and reconciliation of a stale child roster.
 participant handoff (`runParticipantMigration`) when an admission finds one,
 where it returned and left the admission refused for the alarm to settle. A
 failure is logged `participant_migration_admission_attempt_failed` and the
-admission is refused as before.
+admission is refused as before. A guest's run check (`readRunAuthority` in
+`integrations.ts`) that is refused asks the parent to finish the Main or
+Breakout handoff (`ensureParticipantAuthority`) and checks once more; an
+unfinished handoff is logged `run_participant_handoff_unfinished`.
 
 **Why:** A guest may now start a thread in a Channel they take part in. The
 thread's first run checks a guest's access (`integrations.ts`), and it runs
@@ -544,6 +547,11 @@ Members never hit it, because their runs skip that check.
 **Considered and rejected:** Admitting Organization-wide access while a handoff
 is pending. It fixed a guest's thread in a public Channel and not one in a
 private Channel, whose only answer is the roster being imported.
+
+The run check's retry covers the window before the parent has heard of the
+handoff at all: under parallel test load a guest's first run sometimes reached
+the parent before the new Main's handoff had started, with nothing pending to
+finish.
 
 **Consequences:** The first admission of a conversation mid-handoff costs the
 handoff's round trips to its source. A source that is not ready keeps the old
