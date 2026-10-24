@@ -73,7 +73,9 @@ for pre-cutover receipts. Table queries retain their data-revision validation.
 
 This covers Google, native Slack, Linear, workspace Notion, workspace Granola,
 X, resource list/read/search/summary, table query, and the conversation tools'
-list and read (prefix `conversation`, [`conversation-tools.md`](conversation-tools.md)). Dynamic hosted MCP routes
+list and read (prefix `conversation`, [`conversation-tools.md`](conversation-tools.md)),
+and the Sidekick wizard's run list/read (prefix `sidekick`,
+[`automation-lifecycle.md`](automation-lifecycle.md)). Dynamic hosted MCP routes
 are excluded even when they share a connector name with a native adapter.
 Google Drive download/export and Docs reads use private text-snapshot continuations through the same first/next wrapper; [connector text pages](connector-text-pages.md) owns their source storage and access checks. Numeric offsets and other bounded non-pageable reads are unchanged. Linear's bounded
 embedded comments/teams retain `hasNextPage` without advertising an unusable token.

@@ -96,6 +96,10 @@ import { createWorkspaceMemoryTable, ensureWorkspaceMemoryScope } from "./worksp
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 import {
   AutomationActorRequestSchema,
+  AutomationRunListRequestSchema,
+  type AutomationRunListRequest,
+  AutomationRunReadRequestSchema,
+  type AutomationRunReadRequest,
   AutomationCreateRequestSchema,
   AutomationExternalEventAdmissionSchema,
   AutomationInboundEmailAdmissionSchema,
@@ -1442,6 +1446,27 @@ export class HostedSidekick {
     return { items: this.runSummaries(50) };
   }
 
+  /** Wizard history uses a stable keyset, including runs older than the UI's recent list. */
+  async listRunsPage(input: AutomationRunListRequest) {
+    const request = parseRpcInput(AutomationRunListRequestSchema, input, "list_runs_page");
+    const row = this.assertSidekick(request.workspaceId, request.automationId);
+    await this.assertReader(row, request.actor);
+    // Reuse the existing run-history page size; callers can choose another size.
+    const limit = request.limit ?? 50;
+    const rows = this.runSummaryRows(limit + 1, request.before);
+    const page = rows.slice(0, limit);
+    const last = page.at(-1);
+    return { items: page.map((run) => ({ ...this.runSummary(run), definitionRevision: run.definition_revision })),
+      nextCursor: rows.length > limit && last ? { createdAt: last.created_at, runId: last.run_id } : null };
+  }
+
+  async readRunForReview(input: AutomationRunReadRequest): Promise<AutomationRunDefinitionV1 & { resultSummary: string | null }> {
+    const request = parseRpcInput(AutomationRunReadRequestSchema, input, "read_run_for_review");
+    await this.assertReader(this.assertSidekick(request.workspaceId, request.automationId), request.actor);
+    const view = this.assertRunView(this.runView(request.runId), request.workspaceId, request.automationId);
+    return { ...this.runDefinition(view), resultSummary: view.run?.summary ?? null };
+  }
+
   /** Installed clients' claim enrolls the caller without changing human access. */
   async claimExecutionPrincipal(input: AutomationActorRequest): Promise<AutomationExecutionPrincipalClaim> {
     const request = parseRpcInput(AutomationActorRequestSchema, input, "claim_execution_principal");
@@ -2611,25 +2636,33 @@ export class HostedSidekick {
   }
 
   private runSummaries(limit: number): AutomationRun[] {
+    return this.runSummaryRows(limit).map((run) => this.runSummary(run));
+  }
+
+  private runSummaryRows(limit: number, before?: AutomationRunListRequest["before"]) {
     return this.sql.exec<RunRow>(
-      `SELECT run_id, occurrence_key, trigger_json, definition_revision, harness_run_id, state, summary,
-              opening_json, seed_json, run_as_user_id, coordinator_user_id, created_at, started_at, completed_at, updated_at
-         FROM sidekick_runs WHERE sidekick_id = ? ORDER BY created_at DESC, run_id LIMIT ?`,
-      this.sidekickId, limit,
-    ).toArray().map((run) => {
-      const trigger = JSON.parse(run.trigger_json) as AutomationRunTriggerV1;
-      return AutomationRunSchema.parse({
-        id: run.run_id,
-        automationId: this.sidekickId,
-        coordinatorUserId: run.coordinator_user_id,
-        triggerType: trigger.kind,
-        plannedFor: trigger.kind === "schedule" ? iso(trigger.plannedFor) : null,
-        startedAt: iso(run.started_at),
-        completedAt: iso(run.completed_at),
-        status: run.state,
-        resultSummary: run.summary,
-        createdAt: iso(run.created_at),
-      });
+      `SELECT run_id, trigger_json, definition_revision, state, summary, coordinator_user_id,
+              created_at, started_at, completed_at
+         FROM sidekick_runs WHERE sidekick_id = ?
+         ${before ? "AND (created_at < ? OR (created_at = ? AND run_id > ?))" : ""}
+         ORDER BY created_at DESC, run_id LIMIT ?`,
+      this.sidekickId, ...(before ? [before.createdAt, before.createdAt, before.runId] : []), limit,
+    ).toArray();
+  }
+
+  private runSummary(run: RunRow): AutomationRun {
+    const trigger = JSON.parse(run.trigger_json) as AutomationRunTriggerV1;
+    return AutomationRunSchema.parse({
+      id: run.run_id,
+      automationId: this.sidekickId,
+      coordinatorUserId: run.coordinator_user_id,
+      triggerType: trigger.kind,
+      plannedFor: trigger.kind === "schedule" ? iso(trigger.plannedFor) : null,
+      startedAt: iso(run.started_at),
+      completedAt: iso(run.completed_at),
+      status: run.state,
+      resultSummary: run.summary,
+      createdAt: iso(run.created_at),
     });
   }
 

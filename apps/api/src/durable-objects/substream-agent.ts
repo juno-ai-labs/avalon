@@ -16,7 +16,7 @@ import { AGENT_HANDOFF_TOOL_NAMES, AgentCommunicationService } from "../services
 import { RegionSchema } from "@rally/contracts/regions";
 import { agentIdForAddress, AgentExchangeSchema } from "@rally/contracts";
 import { conversationParentStub } from "../services/conversation-parent-client";
-import { ReadTranscriptRequestSchema, ReadTranscriptResultSchema, DEFAULT_TRANSCRIPT_READ_TURNS } from "@rally/contracts";
+import { ReadTranscriptRequestSchema, ReadTranscriptResultSchema, SidekickRunTranscriptResultSchema, DEFAULT_TRANSCRIPT_READ_TURNS } from "@rally/contracts";
 import { conversationAsText } from "../services/conversation-text";
 import { safeParseSocketEvent, isUnknownSocketEvent, ClientSocketEventTypeSchema } from "@rally/contracts";
 import { SidekickSkillSnapshotSchema } from "@rally/contracts";
@@ -502,6 +502,8 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
   productOperation({ operation: z.literal("search_link"), turnId: TranscriptTurnIdSchema, linkId: z.string() }),
   productOperation({ operation: z.literal("search_turns"), turnIds: z.array(TranscriptTurnIdSchema) }),
   productOperation({ operation: z.literal("read_transcript"), input: ReadTranscriptRequestSchema }),
+  productOperation({ operation: z.literal("inspect_sidekick_run_transcript"), automationId: IdSchema,
+    runId: IdSchema, input: ReadTranscriptRequestSchema }),
   productOperation({ operation: z.literal("read_resource_authorization_recovery"), toolCallId: z.string().min(1) }),
   productOperation({ operation: z.literal("update"), input: UpdateWorkstreamRequestSchema }),
   productOperation({ operation: z.literal("acknowledge_read"), input: AcknowledgeWorkstreamReadRequestSchema }),
@@ -3589,6 +3591,25 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           return turn?.entryKind === "conversation" ? [turn] : [];
         });
         return jsonResponse({ title: root.title, turns });
+      }
+      if (request.operation === "inspect_sidekick_run_transcript") {
+        if (request.parentKind !== "automation" || (identity && (identity.parentId !== request.automationId
+          || identity.workspaceId !== current.workspaceId || this.externalSubstreamId() !== request.runId))) {
+          return jsonResponse({ error: "sidekick_run_not_found", message: "This run does not exist" }, 404);
+        }
+        const workspace = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
+          current.workspaceId, workspaceDOName(this.env.AVALON_REGION, current.workspaceId));
+        await workspace.sidekickReadRunForReview({ workspaceId: current.workspaceId, automationId: request.automationId,
+          runId: request.runId, actor: { userId: current.userId, actorRole: current.role, participantOfOwningWorkstream: false } });
+        if (!identity) return jsonResponse(SidekickRunTranscriptResultSchema.parse({ transcriptAvailability: "not_provisioned",
+          turns: [], throughSequence: 0, nextAfterSequence: null }));
+        const through = Math.min(request.input.throughSequence ?? this.transcript.transcriptThrough(), this.transcript.transcriptThrough());
+        const start = Math.min(request.input.afterSequence, through) + 1;
+        const end = Math.min(through + 1, start + (request.input.limit ?? DEFAULT_TRANSCRIPT_READ_TURNS));
+        const range = this.transcript.range({ snapshotId: "run-review", snapshotThrough: through, snapshotAtUtc: new Date().toISOString() },
+          { startInclusive: start, endExclusive: end }, "requested", false);
+        return jsonResponse(SidekickRunTranscriptResultSchema.parse({ transcriptAvailability: "available", turns: range.turns,
+          throughSequence: through, nextAfterSequence: end <= through ? end - 1 : null }));
       }
       if (request.operation === "read_transcript") {
         const root = await this.product.authorize(current);

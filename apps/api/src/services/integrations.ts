@@ -268,6 +268,7 @@ import {
 } from "./workstream-wakeup-service";
 import type { ToolReceiptRecord, ToolReceiptStatus } from "../durable-objects/workstream-tool-receipt-storage";
 import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
+import { createSidekickRunTools } from "./sidekick-run-tools";
 import { withToolPagination } from "./tool-pagination";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
@@ -2183,7 +2184,9 @@ function createAvalonAutomationsPlugin(
         await prepare();
         return tool.execute(raw, context);
       },
-    })), ...(delegationUser ? sidekickDelegationTools(env, input, delegationUser, false) : [])],
+    })), ...createSidekickRunTools(env, input, (ref) => loadToolReplayOutput(env, ref))
+      .flatMap((tool) => expandPages(tool, "sidekick", null)),
+      ...(delegationUser ? sidekickDelegationTools(env, input, delegationUser, false) : [])],
     onActivate: async () => prepare(),
   };
 }
