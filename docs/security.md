@@ -1197,6 +1197,8 @@ window shares that origin.
 `allowsTrustedAudioCapture`; a trusted renderer URL is not enough. Computer-audio
 tap IPC is a separate main-window-only channel and is not this grant.
 
+PR #1444.
+
 ### 2026-10-19 — Confine detached artifact menu operations to their window
 
 **What changed:** Detached windows can read and act on their own resource through
