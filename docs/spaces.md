@@ -227,7 +227,11 @@ participant. It is asked at read time and stored nowhere:
   share one database), and admits it exactly as it admits a member:
   `workspaceMemberAccess`, Main and any inheriting Breakout, never parent
   management, never a private thread or a restricted Breakout. Search follows,
-  because its conversation groups come from the same check.
+  because its conversation groups come from the same check. The thread's own
+  product calls (`WorkstreamObjectProduct.authorize`: its summary, read
+  position, transcript reads) refuse a guest who is not a participant unless
+  the Organization object's `authorizeViewer` admits them, which asks the
+  same rule; members never pay that hop.
 - **Listing.** `threadOrganizationWideSql` is the thread and Breakout leaf of
   the listing ladder, so the sidebar, the feed, attention counts, activity and
   the rest agree ([`listing-rules.md`](listing-rules.md)).
