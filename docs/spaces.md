@@ -178,6 +178,15 @@ Space private still grants and removes no reader of any Channel in it, and only
 a participant may place a Channel into it (`canEdit`). Guests are shown only
 Organization-wide Spaces through `sharedNavigationSpaces`.
 
+**A guest may be a participant.** `noteSpaceAudience` admits any person with an
+active relationship to the Organization, guest or member, into
+`participantUserIds`; a suspended or departed person is still refused
+`space_access_denied`. Only the actor has to be a member. A guest participant
+is listed the Space, private or not, by the ordinary participant rule, reads
+its feed and summary like any participant, and still opens only the threads
+they take part in: the Space grants them no reader, as it grants nobody one.
+Every Space write stays refused to them.
+
 A participant leaves a private Space by sending its audience without
 themselves; any participant but the last may take themselves out, and only an
 owner or admin may take out somebody else. The last participant stays: the
@@ -1237,8 +1246,9 @@ Channels list and a Channel screen with a feed of its threads and a composer.
 take from the Space authority.
 
 Every shell, member or guest, on either host, is handed the socket's Space
-directory. A guest's holds only the Organization-wide Spaces the listing rules
-give them, each a `through_channel` or `participant` summary, and nothing a
+directory. A guest's holds only the Spaces the listing rules give them: an
+Organization-wide Space reached through a Channel (`through_channel`), and any
+Space, private or not, they are a participant of (`participant`). Nothing a
 guest is shown carries a Space write.
 
 **A placement is not a copy.** A thread in two Channels is one record listed in
@@ -2042,6 +2052,30 @@ while Spaces are not open, and closing the cutover queues it again when a
 member is still unseated.
 
 ## Changelog
+
+### 2026-10-24 — A guest may be a Channel's participant
+
+**What changed:** `noteSpaceAudience` accepts a guest in `participantUserIds`.
+It asked every listed participant to be an active member, the same gate the
+actor passes; it now asks each one only for an active relationship. The actor
+still has to be a member.
+
+**Why:** Members could share a thread with a guest but could not add that
+guest to the Channel around it, so a private Channel could not include an
+outside collaborator. The desktop people menu already offered guests from the
+roster, and the write refused them with a generic error. The listing rules
+already list a Space to any participant whatever their access class, so the
+gate was the only thing in the way.
+
+**Considered and rejected:** Letting a Channel grant a guest reading of its
+threads. A Space grants no reader to anybody, and a guest participant opens
+only the threads they are added to, as a member of a private Channel does.
+
+**Consequences:** A guest participant sees a private Channel's name, summary,
+participants and Channel messages, less any message about a thread they cannot
+open. Anything that reads a Space's participants
+must not assume they are all members; seating, Personal Channels and every
+Space write still are member-only.
 
 ### 2026-10-29 — A Sidekick's review announces a change as a Channel message
 
