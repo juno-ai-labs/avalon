@@ -202,7 +202,14 @@ operations remain member-gated.
 
 [A Space grants no reader](spaces.md#a-space-starts-organization-wide-and-grants-no-reader), and the
 code that once applied a Space's audience to its Channels is gone
-([`space-access-sources.md`](space-access-sources.md)). What is left of
+([`space-access-sources.md`](space-access-sources.md)). The one exception is
+decided at read time and written nowhere: a guest who takes part in a Channel
+reads the Organization-wide threads placed in it as a member does
+(`ScopedAccessFacts.channelReader`, read by the thread's hosted parent from the
+Organization's Space tables;
+[`spaces.md`](spaces.md#a-channel-lends-its-public-threads-to-its-guests)).
+It admits no private thread, no restricted Breakout and no parent management.
+What is left of
 Space-derived access is the readers a Space seated before WorkspaceDO migration
 94. Their grants still carry `parent_grants.source_kind = 'space'` and stay out
 of the shared scope-grant directory, and ordinary removal revokes one like any
@@ -377,7 +384,9 @@ not a switch controlling which authorization implementation serves the request.
   Space's mark and name, which confers no read on the Space's other Channels and
   no write on the Space.
 - [A Space grants no reader](spaces.md#a-space-starts-organization-wide-and-grants-no-reader). A
-  Channel's audience is its own scope and participants. The one thing a Space
+  Channel's audience is its own scope and participants, and an
+  Organization-wide one also admits a guest who takes part in a Space it is
+  placed in (`channelReader`). The one thing a Space
   admits its readers to is a resource linked to it, and only through the
   Space's own audience as it is when the read happens. Guard:
   `channels-threads-navigation.test.ts` "given a merge into a private Channel,

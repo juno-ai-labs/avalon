@@ -1069,6 +1069,28 @@ describe("WorkspaceDO space authority", () => {
     guest.socket.close();
   });
 
+  it("given a guest added to a Channel and then taken out, when they hold a socket, then its public thread arrives and then leaves their sidebar", async () => {
+    const shared = await reserve("Side work", "workspace");
+    await publishChannel(CHANNEL_A, null);
+    await place(shared, CHANNEL_A);
+    const guest = await connectViewer(GUEST, "f4");
+    const audience = (participantUserIds: UserId[]) => workspace().noteSpaceAudience({
+      workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: shared,
+      audience: { scope: "workspace", participantUserIds },
+    });
+
+    const gained = nextWorkstreamStateFor(guest.socket, CHANNEL_A);
+    await audience([OWNER, GUEST]);
+    const row = (await gained).workstream;
+    expect(row?.id).toBe(CHANNEL_A);
+    expect(row?.mainWithheld ?? false).toBe(false);
+
+    const lost = nextWorkstreamStateFor(guest.socket, CHANNEL_A);
+    await audience([OWNER]);
+    expect((await lost).workstream).toBeNull();
+    guest.socket.close();
+  });
+
   it("given a Space this viewer has no reach into, when its summary is read, then the row is not rendered at all", async () => {
     const personal = await reserve("Side work", "personal");
     const organization = await reserve("Company", "workspace");
