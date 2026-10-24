@@ -94,7 +94,7 @@ export async function inviteMembers(
   const [pendingInvitees, currentMembers] = await Promise.all([api.getWorkspaceInvitees(), api.getWorkspaceMembers()]);
   const alreadyInvited = new Set([
     ...pendingInvitees.map((invitee) => invitee.email.toLowerCase()),
-    ...currentMembers.filter((member) => member.status === 'active').map((member) => member.email.toLowerCase()),
+    ...currentMembers.flatMap((member) => member.status === 'active' && member.email ? [member.email.toLowerCase()] : []),
   ]);
   const failures: string[] = [];
   for (const email of addresses) {

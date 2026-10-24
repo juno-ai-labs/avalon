@@ -92,6 +92,18 @@ guests are often from different companies, shared different Channels, and
 neither was told the other exists. Showing a guest the roles is deliberate:
 knowing who administers the Organization is how a guest knows whom to ask.
 
+The desktop reads either list through one hook, `useWorkspaceMembers` in
+`apps/desktop/src/renderer/lib/workspace-members.ts`: the full roster for a
+member, this one for a guest. Every surface that names or draws a person uses
+it (the Channel feed, its header, the activity list, a thread's rail), so a
+guest sees the same names a member does. A roster person has no email or
+timezone, which is why both are optional on `WorkspaceMember`. Another guest
+is still drawn as "Someone".
+
+It is not where a guest's mention picker looks. Mentioning somebody outside a
+conversation brings them in, so a guest's picker and `messageMentionPayload`
+stay on the conversation's own participants.
+
 ## Invariants
 
 - **"Administrator" is `owner` or `admin`, everywhere.** Every gate in the tree
@@ -193,10 +205,14 @@ proved only that the owner was there.
 **What changed:** `GET /workspace/roster` returns the roster without addresses
 or membership bookkeeping, and is open to guests. The Members page and the
 account menu's **Members** item now show for guests, drawn from it; **Add new
-member** and the row controls stay hidden.
+member** and the row controls stay hidden. The desktop's `useWorkspaceMembers`
+hook picks the right list for the reader, and the Channel feed, its header,
+the activity list and a thread's rail now name people for a guest instead of
+"Someone".
 
 **Why:** A guest had no way to see who else was in the Organization, so no way
-to know whom to ask for access or to recognise who they were working with. The
+to know whom to ask for access or to recognise who they were working with. In
+a shared Channel every member's message and thread read "Someone". The
 roster itself was withheld because `/workspace/members` carries every person's
 email and the fields an administrator's write needs.
 
@@ -204,13 +220,16 @@ email and the fields an administrator's write needs.
 schema requires the email, and every member surface reads it; a second shape
 behind the same route would make each caller check which one it got. Also
 rejected: showing guests the other guests, for the reason under "What a guest
-sees of the roster".
+sees of the roster". Also rejected: feeding the roster to a guest's mention
+picker, since naming a person outside a conversation brings them in. That is
+an access decision, not a display one.
 
 **Consequences:** Anything added to `WorkspaceRosterEntrySchema` reaches people
 outside the company. An email, a timezone or a status belongs on
-`/workspace/members` instead. The Channel feed and the people pickers still
-read `/workspace/members` and still show a guest no directory; pointing them at
-the roster is a separate change.
+`/workspace/members` instead. `WorkspaceMember.email` and `.timezone` are now
+optional, so code that needs either must handle a person read from the guest
+roster. A new surface that names people should read `useWorkspaceMembers`
+rather than call `getWorkspaceMembers` itself, which refuses a guest.
 
 ### 2026-09-18 — A workspace can have more than one administrator
 

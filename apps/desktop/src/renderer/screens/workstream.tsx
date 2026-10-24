@@ -29,6 +29,7 @@ import { RelativeTime } from '../components/relative-time';
 import type { WorkstreamChildDirectory } from '../lib/channel-viewer-state';
 import type { MessageMergedInto, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { EmailMentionContext, emailMentionDirectory, NO_INVITEES, useWorkspaceInvitees } from '../lib/workspace-invitees';
+import { useWorkspaceMembers } from '../lib/workspace-members';
 import { useRetainedWorkstreamSocket } from '../lib/workstream-socket-pool';
 import { Button, ErrorNotice, Modal, TitleSkeleton } from '../components/primitives';
 import { SessionImportUpdateDialog, importedSourceUpdatable } from '../components/session-import-update-dialog';
@@ -184,12 +185,7 @@ function PendingWorkstreamScreen({ row }: { row: WorkstreamSummary }): React.JSX
     (resourceId: string, signal?: AbortSignal) => api!.getResourcePreviewContent(resourceId, signal),
     [api],
   );
-  const members = useQuery({
-    queryKey: ['workspace-members'],
-    queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
-    enabled: Boolean(api),
-    staleTime: 60_000,
-  });
+  const members = useWorkspaceMembers(api, { guest });
   const invitees = useWorkspaceInvitees(api, !guest);
   const emailMentions = useMemo(
     () => emailMentionDirectory(members.data ?? [], invitees.data ?? NO_INVITEES),
@@ -671,12 +667,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
   // already holds them, for the menus drawn before a snapshot answers.
   const channelRail = useChannelRail(id);
   // The roster App holds for the session, read on its own terms.
-  const members = useQuery({
-    queryKey: ['workspace-members'],
-    queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
-    enabled: Boolean(api && !guest),
-    staleTime: Number.POSITIVE_INFINITY,
-  });
+  const members = useWorkspaceMembers(api, { guest, staleTime: Number.POSITIVE_INFINITY });
   // Pending until every participant can be named: a partial facepile would
   // grow when the snapshot lands, and an empty one would say nobody is here.
   const railParticipantList = channelRail && members.data

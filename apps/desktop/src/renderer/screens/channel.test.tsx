@@ -24,6 +24,7 @@ const api = vi.hoisted(() => ({
   getResourceVersions: vi.fn(async (): Promise<ResourceVersion[]> => []),
   getResourceVersionContent: vi.fn(async () => new Blob(['The first model.'], { type: 'text/markdown' })),
   getWorkspaceMembers: vi.fn(async () => []),
+  getWorkspaceRoster: vi.fn(async () => []),
   getPeopleRanking: vi.fn(async () => ({ channel: [], organization: [] })),
   getWorkspaceInvitees: vi.fn(async () => []),
   archiveSpace: vi.fn(),
@@ -713,6 +714,21 @@ describe('a Channel', () => {
     expect(rows[0]).toHaveTextContent('Rally');
     await waitFor(() => expect(rows[2]).toHaveTextContent('Casey Lane'));
     expect(within(rows[2]!).getByText('Q4', { selector: 'strong' })).toBeInTheDocument();
+  });
+
+  it('names a member’s message to a guest from the roster, never the member list', async () => {
+    const alex = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b';
+    api.getWorkspaceRoster.mockResolvedValueOnce([
+      { id: alex, name: 'Casey Lane', presentation: null, role: 'member', accessClass: 'member' },
+    ] as never);
+    api.getChannelFeed.mockResolvedValue({ nextCursor: null, items: [
+      { kind: 'message', placedAt: '2026-10-02T02:00:00.000Z', message: { id: '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a60', author: { kind: 'member', userId: alex }, body: 'Kicking off **Q4**' } },
+    ] });
+    renderChannel('/channels/outbound', undefined, null, { ...workspace, currentUser: { ...workspace.currentUser, accessClass: 'guest' } });
+    const feed = within(await screen.findByRole('list', { name: 'Outbound feed' }));
+    const [message] = await feed.findAllByRole('listitem');
+    await waitFor(() => expect(message).toHaveTextContent('Casey Lane'));
+    expect(api.getWorkspaceMembers).not.toHaveBeenCalled();
   });
 
   it('gives a Channel message and a merge the hover row a thread’s turn has, copying the words as stored', async () => {
