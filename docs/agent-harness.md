@@ -1849,53 +1849,35 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 ## Changelog
 
-### 2026-10-25 — A Sidekick's post reaches the model, and a skipped question says so
+### 2026-10-25 — The model reads Sidekick posts, skipped questions and its opening author
 
-**What changed:** The gap-fill now also appends a Sidekick's
-`conversation_post` (a `system` turn of type `automation_activation`) to the
-projection at the next text admission. It renders as a user-role message under
-the said-to-the-room header, with a `<rally_author>` trailer holding the
-Sidekick's `sidekick_id` and frozen `display_name`, and `forwarded_from` when
-the post carries an `externalSource`. A post whose structured content does not
-parse keeps its text under the name "Sidekick" with no `sidekick_id`, rather
-than an invented one. The same `projectSidekickPostMessage` renders a post on
-every path that builds context: the gap-fill, the bootstrap from history
-(`projectModelProtocolTranscript`, which used to render
-`"<name>", delivered <time>.` with no id), and admission. Only a post that is
-the run's own trigger drops the said-to-the-room header.
+**What changed:** The gap-fill also appends a Sidekick's `conversation_post` (a
+`system` turn of type `automation_activation`). `projectSidekickPostMessage`
+renders it for both the gap-fill and the history bootstrap: a user-role aside
+whose `<rally_author>` trailer holds `sidekick_id`, `display_name`,
+`delivered_at` and, when the post forwards someone outside Rally,
+`forwarded_from`. Only a post that is the run's own trigger drops the
+said-to-the-room header. The history reader now selects each turn's
+`author_name_snapshot`, and a skipped question's tool result carries
+`skipped: true`.
 
-**Why:** A help-desk Sidekick posted an email and a suggested reply into a
-Thread. The member said "send that reply", and the model had never seen the
-post: `appendConversationPost` writes only the canonical turn, and the
-gap-fill took human, external and imported turns of type `text`. The model
-searched Gmail, picked an unrelated thread from its own search results, and
-sent the reply there twice.
+**Why:** A help-desk Sidekick posted an email and a suggested reply; the member
+said "send that reply", and the model had never seen the post, because the
+gap-fill took only human, external and imported `text` turns. It replied to an
+unrelated Gmail thread instead. The same Thread showed the opening message
+naming its author by user id, and a skip reaching the model as a bare
+`answer: null`, which it answered by asking again.
 
-**Considered and rejected:** Admitting the post as a `starts_run = 0` loop
-input. It would reach the model by the same transition, but posting would then
-join the pending-input queue and its ordering fences for no gain, since the
-gap-fill already carries every turn nobody admitted. Rendering the post as a
-human turn was rejected because a `person_id` would let the model resolve "me"
-or "them" to a member who did not speak.
+**Considered and rejected:** Admitting a post as a `starts_run = 0` loop input,
+which reaches the model by the same transition but routes posting through the
+pending-input queue for no gain. Giving a Sidekick a `person_id`, which would
+let the model resolve "me" to a member who did not speak. A sentinel string for
+a skip, which a text answer could equal.
 
-**Consequences:** A post still never wakes the agent; it is read on the next
-run. Posts written before this change sit below `transcript_projected_through`
-and are not backfilled. A scheduled activation admitted through
-`admitSystemActivation` is the same kind of turn but is skipped by its
-`participant_turn` provenance, so the model reads it once.
-
-**Also:** the history bootstrap's message reader now selects each turn's
-`author_name_snapshot`. It had filled a person's name with their user id, so
-every Thread's opening message told the model the person was called
-`019fd8c0-…`, while later turns, rendered by the gap-fill from the snapshot,
-named them.
-
-The tool result for an answered question now carries `skipped: true`
-when the person skipped it. Before, a skip read as `answer: null`, the same as
-nothing, and the model asked the same question again as plain text. A flag
-rather than a sentinel string, because a text answer could be any string. The
-flag is derived from the stored row (answered with a null answer), which the
-answer path produces only for a skip.
+**Consequences:** A post still never wakes the agent. Posts written before this
+change sit below `transcript_projected_through` and are not backfilled. A post
+whose structured content does not parse keeps its text under "Sidekick" with
+no id.
 
 ### 2026-10-23 — Table creation supports metadata edits with stable schema
 

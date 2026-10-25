@@ -160,10 +160,8 @@ function fabricatedUser(
     // Recorded rather than papered over: the identity slice is where this stops
     // being fabricated, and this is the field that proves it has to.
     email: "",
-    // The turn's own snapshot, the name the author had when they wrote it.
-    // Falling back to the id is what a model was handed as a person's
-    // display name for every Thread's opening message; the fallback is left
-    // only for a row with no snapshot, which the schema no longer writes.
+    // The name the author had when they wrote the turn. The schema requires a
+    // snapshot on every human turn; the id is only for older rows without one.
     name: nameSnapshot ?? userId,
     avatarUrl: null,
     timezone: "UTC",

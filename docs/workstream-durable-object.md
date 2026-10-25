@@ -1462,15 +1462,9 @@ settles the Channel state, and requests cancellation of subordinate runs.
 Callers cannot select a subset of those responsibilities.
 
 The run's `input_tokens`, `output_tokens` and `cost_micros` columns are derived
-from `usage_json` in the same statement that writes it, both in the terminal
-commit and in the fenced progress flush, so the columns cannot disagree with
-the JSON. The JSON comes in two spellings and both are read: the mid-run flush
-writes Bind's progress (`inputTokens`, `outputTokens`, `costCents`) and the
-run's end writes its usage (`prompt_tokens`, `completion_tokens`,
-`cost_cents`). The other
-counters on `runs` (`step_count`, `tool_count`, `model_iteration`,
-`subrequest_count`, `output_bytes`, the elapsed times) are still written as 0
-and read by nothing; `retry_count` is maintained.
+from `usage_json` in the same statement that writes it, in both the terminal
+commit and the fenced progress flush, so the columns cannot disagree with the
+JSON.
 
 Persistent-loop release remains part of the caller's authority check, before
 the common commit, because a loop with unsettled provider protocol must stay
@@ -1966,7 +1960,9 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 
 **What changed:** The terminal commit and the progress flush now set
 `runs.input_tokens`, `output_tokens` and `cost_micros` from the `usage_json`
-they write, in SQL in the same statement.
+they write, in SQL in the same statement. The two writers spell the totals
+differently (Bind's progress shape mid-run, the usage shape at the end), and
+both spellings are read.
 
 **Why:** Every insert wrote those columns as 0 and nothing updated them, so a
 query against `runs` reported zero tokens and zero cost for every run while the
@@ -1980,8 +1976,10 @@ which is a bulk rewrite the constructor migration rules forbid; their totals
 are still in `usage_json`.
 
 **Consequences:** Rows written before this change keep their zeros. The other
-zeroed counters listed above are unchanged; derive or drop them rather than
-start writing a second copy from the host.
+counters on `runs` that are always 0 (`step_count`, `tool_count`,
+`model_iteration`, `subrequest_count`, `output_bytes`, the elapsed times) are
+unchanged and read by nothing; derive or drop them rather than start writing a
+second copy from the host.
 
 ### 2026-10-23 — Preserve loop time and historical state identities
 

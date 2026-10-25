@@ -420,18 +420,13 @@ export function expireLocalAttemptLeasesFromPreviousInstance(
 
 /**
  * The run's token and cost columns, derived from `usage_json` in the same
- * statement that writes it.
+ * statement that writes it, so they cannot disagree with it.
  *
- * Every insert wrote them as 0 and nothing updated them, so a query against
- * `runs` read zeros while the real totals sat in `usage_json`. Derived rather
- * than passed in, so the columns cannot disagree with the JSON they mirror.
- * The JSON holds running totals for the run in one of two spellings: the
- * mid-run flush writes Bind's progress (`inputTokens`, `outputTokens`,
- * `costCents`) and the run's end writes its usage (`prompt_tokens`,
- * `completion_tokens`, `cost_cents`). Both are read, or a running run would
- * show zeros until it ended. A cent is 10,000 micro-dollars. A key the JSON
- * lacks, or a null `usageExpression`, keeps the column's current value.
- * `usageExpression` is a code-owned SQL expression, never a caller's value.
+ * The mid-run flush spells the totals `inputTokens`, `outputTokens`,
+ * `costCents`; the run's end spells them `prompt_tokens`, `completion_tokens`,
+ * `cost_cents`. Both are read. A cent is 10,000 micro-dollars. A missing key
+ * keeps the column's value. `usageExpression` is code-owned SQL, never a
+ * caller's value.
  */
 function usageCounterAssignments(usageExpression: string): string {
   const counter = (column: string, paths: readonly [string, string], scale: number) => {
