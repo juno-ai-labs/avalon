@@ -499,6 +499,36 @@ describe("durable UI-to-model transcript projection", () => {
     expect(activation.messages.some((entry) => entry.role === "system")).toBe(false);
   });
 
+  it("renders a Sidekick's post from history the way the gap-fill does, as an aside from the Sidekick", async () => {
+    const postId = "00000000-0000-4000-8000-000000000051";
+    const triggerId = "00000000-0000-4000-8000-000000000052";
+    const sidekickId = "00000000-0000-7000-8000-0000000000ac";
+    const projection = await __integrationTesting.projectModelProtocolTranscript(
+      projectionEnv([], {}),
+      { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, triggerMessageId: triggerId },
+      [
+        message(postId, 1, {
+          author: "system",
+          messageType: "automation_activation",
+          textContent: "Help email ID: 1a16ff84e56cd0f1",
+          structuredContent: {
+            type: "automation_activation", schemaVersion: 1, automationId: sidekickId,
+            automationName: "Help desk", runId: "00000000-0000-7000-8000-0000000000bc",
+            deliveryId: "conversation-post:run:receipt", trigger: { kind: "inbound_email" }, occurredAt: 0,
+            externalSource: { provider: "gmail", displayName: "Katherine" },
+          },
+        }),
+        message(triggerId, 2, { author: "human", textContent: "send that reply" }),
+      ],
+    );
+    expect(projection.messages[0]).toMatchObject({
+      role: "user",
+      content: "SAID TO THE ROOM, NOT TO RALLY\nHelp email ID: 1a16ff84e56cd0f1\n\n"
+        + `<rally_author>{"sidekick_id":"${sidekickId}","display_name":"Help desk",`
+        + `"forwarded_from":{"provider":"gmail","display_name":"Katherine"}}</rally_author>`,
+    });
+  });
+
   it("frames a bound-thread reply in a Sidekick run as labelled evidence, never as a member request", async () => {
     // The fourth ingress: a reply that reaches a Sidekick run through a
     // provider thread bound to it. Whoever is in that thread may be outside

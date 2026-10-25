@@ -1,6 +1,6 @@
 import { annotationModelSources } from "./annotation-model-sources";
 import { renderAnnotations } from "@rally/contracts";
-import { ElicitationSchema } from "@rally/contracts";
+import { AutomationActivationV1Schema, ElicitationSchema, automationActivationName } from "@rally/contracts";
 import { z } from "zod";
 import type { ModelMessage } from "@rally/agent-harness";
 import type { Env } from "../env";
@@ -48,11 +48,13 @@ export type ParticipantModelAuthor =
  * Every field is host-derived off the post's structured content: the name was
  * frozen at delivery, and `externalSource` is set only when the post forwards
  * somebody outside Rally, so the model can tell their words from the
- * Sidekick's own.
+ * Sidekick's own. `sidekickId` is null only for a row whose structured content
+ * does not parse, which keeps its text under the name "Sidekick" rather than
+ * an invented id.
  */
 export interface SidekickModelAuthor {
   type: "sidekick";
-  sidekickId: string;
+  sidekickId: string | null;
   displayName: string;
   externalSource: { provider: string; displayName: string } | null;
 }
@@ -181,7 +183,7 @@ function withAuthorAttribution(
   // would resolve "me" or "send it to them" to a member who did not speak.
   const fields = "type" in author && author.type === "sidekick"
     ? {
-        sidekick_id: author.sidekickId,
+        ...(author.sidekickId ? { sidekick_id: author.sidekickId } : {}),
         display_name: author.displayName,
         ...(author.externalSource ? {
           forwarded_from: { provider: author.externalSource.provider, display_name: author.externalSource.displayName },
@@ -244,6 +246,34 @@ export function projectParticipantTextMessage(input: Pick<
     return { role: "user", content: [OVERHEARD_HEADER, attributed].join("\n") };
   }
   return { role: "user", content: attributed };
+}
+
+/**
+ * A Sidekick's post or activation row, as the model reads it.
+ *
+ * The one rendering for every path that puts such a row in front of a model:
+ * the gap-fill, the bootstrap from history, and admission. They used to differ,
+ * so whether the model could attribute a post depended on which path loaded
+ * it. `overheard` is false only when the row is the input the run answers.
+ */
+export function projectSidekickPostMessage(input: {
+  structuredContent: unknown;
+  text: string;
+  mentions: ParticipantModelProjectionInput["mentions"];
+  overheard: boolean;
+}): ModelMessage | null {
+  const post = AutomationActivationV1Schema.safeParse(input.structuredContent);
+  return projectParticipantTextMessage({
+    author: {
+      type: "sidekick",
+      sidekickId: post.success ? post.data.automationId : null,
+      displayName: post.success ? post.data.automationName : automationActivationName(input.structuredContent),
+      externalSource: post.success ? post.data.externalSource ?? null : null,
+    },
+    text: input.text,
+    mentions: input.mentions,
+    overheard: input.overheard,
+  });
 }
 
 /** Deterministic, and decidable by a small model: this is not a request. */
