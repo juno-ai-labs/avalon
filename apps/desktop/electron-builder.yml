@@ -43,6 +43,9 @@ mac:
     # Both renditions ship: `nativeImage` resolves the `@2x` sibling by name at
     # runtime, so a bundle carrying only the 1x file gives a blurry status item
     # on every Retina Mac.
+    # Static TrueType faces the saved PDF embeds; see docs/message-export.md.
+    - from: resources/export-fonts
+      to: export-fonts
     - from: resources/menu-bar
       to: menu-bar
       filter:
@@ -84,6 +87,8 @@ win:
   extraResources:
     - from: resources/icon.png
       to: icon.png
+    - from: resources/export-fonts
+      to: export-fonts
   target:
     - nsis
 linux:
@@ -91,6 +96,8 @@ linux:
   extraResources:
     - from: resources/icon.png
       to: icon.png
+    - from: resources/export-fonts
+      to: export-fonts
   category: Office
   target:
     - AppImage

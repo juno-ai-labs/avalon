@@ -30,7 +30,7 @@ function request(overrides: Partial<MessageExportRequest> = {}): MessageExportRe
 function harness(options: {
   measuredHeight?: number;
   savePath?: string | null;
-  failOn?: 'load' | 'capture';
+  failOn?: 'load' | 'capture' | 'font';
 } = {}) {
   const state = {
     loaded: [] as string[],
@@ -38,6 +38,8 @@ function harness(options: {
     prints: [] as MessageExportPrintOptions[],
     resizes: [] as Array<{ width: number; height: number; zoom: number }>,
     destroyed: 0,
+    fontReads: [] as string[],
+    evaluated: [] as string[],
     written: [] as Array<{ path: string; bytes: Uint8Array }>,
     documentAtLoad: null as string | null,
     documentAtMeasure: null as string | null,
@@ -64,7 +66,8 @@ function harness(options: {
           }
           if (options.failOn === 'load') throw new Error('did-fail-load');
         },
-        evaluate: async () => {
+        evaluate: async (script) => {
+          state.evaluated.push(script);
           state.documentAtMeasure = exporter.document(loadedUrl);
           return options.measuredHeight ?? 1_400;
         },
@@ -89,6 +92,11 @@ function harness(options: {
       options.savePath === undefined ? `/home/ada/Downloads/${defaultFileName}` : options.savePath,
     writeFile: async (path, bytes) => {
       state.written.push({ path, bytes });
+    },
+    readFont: async (file) => {
+      state.fontReads.push(file);
+      if (options.failOn === 'font') throw new Error('ENOENT');
+      return new TextEncoder().encode(file);
     },
     logWarning: () => undefined,
     randomToken: () => `token-${++token}`,
@@ -341,6 +349,39 @@ describe('saving a message', () => {
     expect(test.state.prints[0]?.footerHtml).toContain('Saved from Rally');
     expect(test.state.prints[0]?.margins.bottom).toBeGreaterThan(test.state.prints[0]!.margins.top);
     expect(test.state.written[0]?.path).toBe('/home/ada/Downloads/pipeline-2026-08-13.pdf');
+  });
+
+  it('sets the card in the embedded faces and waits for them before printing', async () => {
+    const test = harness();
+
+    await test.exporter.save(request({ format: 'pdf' }));
+
+    expect(test.state.documentAtLoad).toContain('font-family: "Rally Export Sans"; font-style: normal; font-weight: 600; src: url(data:font/ttf;base64,SW50ZXItU2VtaUJvbGQudHRm) format("truetype");');
+    expect(test.state.documentAtLoad).toContain('font-family: "Rally Export Mono"; font-style: normal; font-weight: 400; src: url(data:font/ttf;base64,R2Vpc3RNb25vLVJlZ3VsYXIudHRm)');
+    expect(test.state.documentAtLoad).toContain('font-family: "Rally Export Sans", Inter,');
+    expect(test.state.evaluated).toEqual(['document.fonts.ready.then(() => true)']);
+    // Chromium gives a footer no web fonts; Arial is the static TrueType face every Mac has.
+    expect(test.state.prints[0]?.footerHtml).toContain('font-family:Arial,Helvetica,sans-serif');
+  });
+
+  it('reads the faces once for the session', async () => {
+    const test = harness();
+
+    await test.exporter.save(request({ format: 'pdf' }));
+    await test.exporter.save(request({ format: 'image' }));
+
+    expect(test.state.fontReads).toEqual(['Inter-Regular.ttf', 'Inter-SemiBold.ttf', 'Inter-Bold.ttf', 'Inter-Italic.ttf', 'GeistMono-Regular.ttf']);
+  });
+
+  it('fails an export whose faces cannot be read, closes its window, and reads them again next time', async () => {
+    const test = harness({ failOn: 'font' });
+
+    await expect(test.exporter.save(request({ format: 'pdf' }))).rejects.toThrow('ENOENT');
+    await expect(test.exporter.save(request({ format: 'pdf' }))).rejects.toThrow('ENOENT');
+
+    expect(test.state.destroyed).toBe(2);
+    expect(test.state.written).toEqual([]);
+    expect(test.state.fontReads).toHaveLength(10);
   });
 
   it('writes nothing when the save dialog is dismissed', async () => {

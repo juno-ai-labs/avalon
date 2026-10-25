@@ -25,6 +25,7 @@ by the feed's own component and only the surroundings are new.
 | `apps/desktop/src/renderer/components/conversation-export.tsx` | A whole conversation: which turns it prints, their bylines, and the one `MarkdownBody` per turn that goes into the same request. |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MessageActions` — the hover row under every message (Thread, Breakout and Channel), its in-flight and failed states. |
 | `apps/desktop/src/main/message-export.ts` | Everything about the card: the document, its stylesheet, the splash, the page footer, request validation, and `MessageExporter`, which drives one render at a time and writes the file. |
+| `apps/desktop/resources/export-fonts/` | The static TrueType faces every saved file is set in, and their licences. See [A PDF](#a-pdf). |
 | `apps/desktop/src/main/index.ts` | The Electron adapter — the hidden `BrowserWindow`, the `rallywithai-export` protocol handler, the save dialog, and the `message-export:save` IPC handler. |
 | `packages/ui/src/styles/app.css` | Only the hover row's own styling. The card's stylesheet is not here; see the boundary below. |
 
@@ -131,6 +132,23 @@ template. Two details carry the page design:
   render in a frame of their own, which is what puts them on every page; it is
   also why the mark travels inline in the template and why the template restates
   `print-color-adjust`.
+
+- **The text is set in embedded static TrueType faces.** Chromium's PDF writer
+  embeds a static TrueType face as an ordinary CID font, but writes a CFF face
+  (Inter as most systems install it, SF Mono) or a variable one (the Mac's
+  system font, the app's Geist Mono) as Type 3 glyphs whose font bounding box
+  is upside down. Viewers that clip glyphs to that box show every page blank
+  white. So the card embeds `MESSAGE_EXPORT_FONTS`: Inter Regular, SemiBold,
+  Bold and Italic, and Geist Mono Regular, as static TrueType files from
+  `apps/desktop/resources/export-fonts` (shipped as `export-fonts` resources,
+  with their OFL licences). The main process reads all five at once on the
+  first export, alongside the window starting up, and keeps them for the
+  session. The PDF path waits for `document.fonts.ready` before printing.
+  Weights between the files (560, 640, 660) take the nearest face. Text in a
+  script the faces lack (CJK, emoji) still falls back to a system font.
+- **The footer is set in Arial.** Chromium loads no web fonts into a template's
+  frame, inline `@font-face` included, so the footer can only use an installed
+  font, and Arial is the static TrueType face every Mac has.
 
 Headings carry `break-after: avoid-page`, and tables, block quotes, and code
 blocks `break-inside: avoid-page`, so a heading is never stranded at the foot of
@@ -329,13 +347,16 @@ Two traps:
   both read it on mount, and a mock that only exports `desktopBridge` throws
   there.
 
-### 2026-10-24 — A whole Thread or Breakout can be saved as a PDF
+### 2026-10-24 — A whole Thread or Breakout can be saved as a PDF, in embedded faces
 
 **What changed:** The thread and breakout menus gained **Export conversation
 to PDF**. The request gained `scope`, and a `conversation` scope drops the
 `contentHtml` bound and must be a PDF. The card's stylesheet gained the
 `.export-turn` rules for a title and per-turn bylines. A rejected request now
-names the field it rejected.
+names the field it rejected. Every export, a single message's included, now
+embeds Inter (Regular, SemiBold, Bold, Italic) and Geist Mono Regular as static
+TrueType, read once per session from `resources/export-fonts`; the PDF waits
+for them before printing, and the page footer moved to Arial.
 
 **Why:** People asked to take a whole conversation out of Rally, not one turn
 at a time. Reusing this module kept the one-renderer rule: each turn is still
@@ -349,12 +370,24 @@ is independent and the socket correlates replies by request ID; turns render
 while pages are in flight and are cached per conversation, so a repeat export
 costs only the turns that changed.
 
+The faces fix PDFs that opened as blank white pages. The card named Inter and
+the system fonts, and Chromium writes those (CFF on most installs, variable on
+a Mac) as Type 3 glyphs with an inverted font bounding box, which some viewers
+clip to nothing. Only a static TrueType face is embedded as an ordinary font,
+which every viewer draws. The footer can't use the embedded faces because
+Chromium loads no web fonts into a template, inline ones included; Arial is
+installed as static TrueType on every Mac. A variable Inter was rejected for
+the same Type 3 reason, and a Latin-only subset was rejected to keep Greek and
+Cyrillic in the embedded face.
+
 **What a future change has to respect:** the export reads every page of a
 conversation into the live feed's cache. A change that windows or evicts
 loaded ranges has to give the export another way to read the full history.
 The conversation scope has no size bound, and the parallel page requests have
 no cap on how many are in flight, both by design; if either is wanted, its
-number is the team's to set.
+number is the team's to set. A face added to the card must be static TrueType
+(`glyf` outlines, no `fvar`), or it brings the blank pages back: check a saved
+file with `pdffonts`, where nothing should be `Type 3`.
 
 ### 2026-08-30 — Mermaid diagrams save as source
 

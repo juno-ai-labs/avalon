@@ -135,10 +135,39 @@ export interface MessageExportDependencies {
     filterLabel: string;
   }) => Promise<string | null>;
   readonly writeFile: (path: string, data: Uint8Array) => Promise<void>;
+  /** Reads one of `MESSAGE_EXPORT_FONTS` out of the app's `export-fonts` resources. */
+  readonly readFont: (file: string) => Promise<Uint8Array>;
   readonly logWarning: (message: string, error: unknown) => void;
   readonly randomToken: () => string;
   readonly now: () => number;
   readonly delay: (milliseconds: number) => Promise<void>;
+}
+
+/**
+ * The faces the card is set in, embedded in every export.
+ *
+ * Static TrueType only, and that is the whole point. Chromium's PDF writer
+ * embeds a static TrueType face as a normal CID font, but writes a CFF face
+ * (Inter as most systems install it, SF Mono) or a variable one (the Mac's
+ * system font, the app's own Geist Mono) as Type 3 glyphs with an upside-down
+ * font bounding box. Viewers that trust that box clip every glyph, and the
+ * person opens a PDF of empty white pages. Embedding these means the card
+ * never reaches for a system font for Latin, Greek or Cyrillic text.
+ *
+ * The weights between files (560, 640, 660) take the nearest face, which is
+ * why there is no Medium. Italic bold is synthesized.
+ */
+export const MESSAGE_EXPORT_FONTS = [
+  { file: 'Inter-Regular.ttf', family: 'Rally Export Sans', weight: 400, style: 'normal' },
+  { file: 'Inter-SemiBold.ttf', family: 'Rally Export Sans', weight: 600, style: 'normal' },
+  { file: 'Inter-Bold.ttf', family: 'Rally Export Sans', weight: 700, style: 'normal' },
+  { file: 'Inter-Italic.ttf', family: 'Rally Export Sans', weight: 400, style: 'italic' },
+  { file: 'GeistMono-Regular.ttf', family: 'Rally Export Mono', weight: 400, style: 'normal' },
+] as const;
+
+/** The `@font-face` rules for `MESSAGE_EXPORT_FONTS`, from the bytes read for each. */
+export function messageExportFontFaces(fonts: readonly Uint8Array[]): string {
+  return MESSAGE_EXPORT_FONTS.map((font, index) => `@font-face { font-family: "${font.family}"; font-style: ${font.style}; font-weight: ${font.weight}; src: url(data:font/ttf;base64,${Buffer.from(fonts[index]!).toString('base64')}) format("truetype"); }`).join('\n');
 }
 
 /**
@@ -223,12 +252,13 @@ function escapeHtml(value: string): string {
  * falls back to the inherited near-black, and the code block is near-black text
  * on a near-black ground.
  */
-function stylesheet(format: MessageExportFormat, logoDataUrl: string, seed: number): string {
+function stylesheet(format: MessageExportFormat, logoDataUrl: string, seed: number, fontFaces: string): string {
   const splash = splashBackground(seed);
   const syntax = Object.entries(exportSyntaxPalette)
     .map(([property, value]) => `    ${property}: ${value};`)
     .join('\n');
   return `
+  ${fontFaces}
   :root {
 ${syntax}
   }
@@ -237,7 +267,7 @@ ${syntax}
   body {
     -webkit-font-smoothing: antialiased;
     color: #24251c;
-    font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-family: "Rally Export Sans", Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     font-size: 15px;
     line-height: 1.55;
   }
@@ -325,7 +355,7 @@ ${syntax}
   .markdown-inline-code {
     background: #eceade;
     border-radius: 4px;
-    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    font-family: "Rally Export Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
     font-size: 0.88em;
     padding: 1px 5px;
   }
@@ -336,7 +366,7 @@ ${syntax}
   /* display: block so margin-bottom below actually opens a gap — an inline span ignores vertical margin. */
   .markdown-code-language { color: #85867c; display: block; font-size: 10px; letter-spacing: 0.08em; margin-bottom: 6px; text-transform: uppercase; }
   .markdown-code-block pre {
-    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    font-family: "Rally Export Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
     font-size: 12.5px;
     line-height: 1.55;
     margin: 0;
@@ -538,6 +568,8 @@ export function messageExportDocument(input: {
   format: MessageExportFormat;
   contentHtml: string;
   logoDataUrl: string;
+  /** `messageExportFontFaces`; absent sets the card in whatever the system has. */
+  fontFaces?: string;
 }): string {
   // `contentHtml` is interpolated as markup, not escaped, because it *is* the
   // rendered message. What makes that safe is upstream: `MarkdownBody` mounts
@@ -553,7 +585,7 @@ export function messageExportDocument(input: {
   }</div>`;
   return [
     '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Saved from Rally</title>',
-    `<style>${stylesheet(input.format, input.logoDataUrl, seed)}</style></head>`,
+    `<style>${stylesheet(input.format, input.logoDataUrl, seed, input.fontFaces ?? '')}</style></head>`,
     `<body>${input.format === 'pdf' ? `<div class="export-sheet">${card}</div>` : card}</body></html>`,
   ].join('');
 }
@@ -565,9 +597,14 @@ export function messageExportDocument(input: {
  * stylesheet above. Backgrounds and images only print here when the template
  * says so itself, which is what `print-color-adjust` and the inlined mark are
  * for.
+ *
+ * It is set in Arial, not the card's face. Chromium loads no web fonts into a
+ * template's frame, inline `@font-face` included, so the footer can only use a
+ * font installed on the machine, and Arial is the one every Mac has as static
+ * TrueType. See `MESSAGE_EXPORT_FONTS` for why that matters.
  */
 export function messageExportFooter(logoDataUrl: string): string {
-  return `<div style="-webkit-print-color-adjust:exact;print-color-adjust:exact;color:#84857a;display:flex;font-family:Inter,-apple-system,sans-serif;font-size:8px;justify-content:flex-end;padding:0 0.4in;width:100%;">
+  return `<div style="-webkit-print-color-adjust:exact;print-color-adjust:exact;color:#84857a;display:flex;font-family:Arial,Helvetica,sans-serif;font-size:8px;justify-content:flex-end;padding:0 0.4in;width:100%;">
     <span style="align-items:center;display:flex;gap:5px;">
       <img alt="" src="${escapeHtml(logoDataUrl)}" style="height:9px;width:9px;">
       <span>Saved from Rally</span>
@@ -600,6 +637,7 @@ async function withTimeout<T>(work: Promise<T>, milliseconds: number, label: str
 export class MessageExporter {
   private readonly documents = new Map<string, { html: string; expiresAt: number }>();
   private queue: Promise<unknown> = Promise.resolve();
+  private fontFaces: Promise<string> | undefined;
 
   constructor(private readonly dependencies: MessageExportDependencies) {}
 
@@ -644,17 +682,36 @@ export class MessageExporter {
     return { saved: true };
   }
 
+  /**
+   * The embedded faces, read on the first export, every file at once, and kept
+   * for the rest of the session. A failed read is not kept, so the next export
+   * tries again.
+   */
+  private loadFontFaces(): Promise<string> {
+    this.fontFaces ??= Promise.all(MESSAGE_EXPORT_FONTS.map((font) => this.dependencies.readFont(font.file)))
+      .then(messageExportFontFaces)
+      .catch((error: unknown) => {
+        this.fontFaces = undefined;
+        throw error;
+      });
+    return this.fontFaces;
+  }
+
   private async render(request: MessageExportRequest): Promise<Uint8Array> {
     const width = request.format === 'image' ? IMAGE_WIDTH : PDF_WIDTH;
-    const html = messageExportDocument(request);
+    // The faces are read while the window starts its renderer process, not
+    // before it. Rejecting here is handled by the `try` below, which owns the window.
+    const fontFaces = this.loadFontFaces();
+    fontFaces.catch(() => undefined);
     // The window comes first, and the token is published only once there is
     // something to load it: a `createWindow` that throws — during shutdown, or
     // out of resources — must not leave the document behind with no `finally`
     // to clear it.
     const window = this.dependencies.createWindow({ width, height: 900 });
     const token = this.dependencies.randomToken();
-    this.documents.set(token, { html, expiresAt: this.dependencies.now() + DOCUMENT_TTL_MS });
     try {
+      const html = messageExportDocument({ ...request, fontFaces: await fontFaces });
+      this.documents.set(token, { html, expiresAt: this.dependencies.now() + DOCUMENT_TTL_MS });
       return await withTimeout(this.draw(window, request, token, width), RENDER_TIMEOUT_MS, 'rendering the card');
     } finally {
       this.documents.delete(token);
@@ -678,6 +735,9 @@ export class MessageExporter {
       'loading the card',
     );
     if (request.format === 'pdf') {
+      // Printing does not wait for web fonts on its own; a page printed before
+      // they decode falls back to the system faces this module exists to avoid.
+      await withTimeout(window.evaluate('document.fonts.ready.then(() => true)'), MEASURE_TIMEOUT_MS, 'loading the fonts');
       return await window.printPdf({
         footerHtml: messageExportFooter(request.logoDataUrl),
         margins: { top: 0.5, bottom: 0.62, left: 0.55, right: 0.55 },

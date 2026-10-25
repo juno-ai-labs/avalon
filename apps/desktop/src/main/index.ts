@@ -73,7 +73,7 @@ import {
 } from 'electron';
 import { execFile } from 'node:child_process';
 import { existsSync, renameSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -4716,6 +4716,9 @@ const messageExporter = new MessageExporter({
     return result.canceled || !result.filePath ? null : result.filePath;
   },
   writeFile: (path, data) => writeFile(path, data),
+  readFont: (file) => readFile(app.isPackaged
+    ? join(process.resourcesPath, 'export-fonts', file)
+    : resolve(currentDirectory, '../../resources/export-fonts', file)),
   logWarning: (message, error) => logWarn('rally', message, error),
   randomToken: () => crypto.randomUUID(),
   now: () => Date.now(),
