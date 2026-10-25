@@ -1,6 +1,6 @@
 import { annotationModelSources } from "./annotation-model-sources";
 import { renderAnnotations } from "@rally/contracts";
-import { ElicitationSchema } from "@rally/contracts";
+import { AutomationActivationV1Schema, ElicitationSchema, automationActivationName } from "@rally/contracts";
 import { z } from "zod";
 import type { ModelMessage } from "@rally/agent-harness";
 import type { Env } from "../env";
@@ -39,7 +39,27 @@ export type ParticipantModelAuthor =
   | {
       type: "external";
       actor: { provider: string; displayName: string; providerUserId: string };
-    };
+    }
+  | SidekickModelAuthor;
+
+/**
+ * A Sidekick's `conversation_post`, as the model is told who wrote it.
+ *
+ * Every field is host-derived off the post's structured content: the name was
+ * frozen at delivery, and `externalSource` is set only when the post forwards
+ * somebody outside Rally, so the model can tell their words from the
+ * Sidekick's own. `sidekickId` is null only for a row whose structured content
+ * does not parse, which keeps its text under the name "Sidekick" rather than
+ * an invented id.
+ */
+export interface SidekickModelAuthor {
+  type: "sidekick";
+  sidekickId: string | null;
+  displayName: string;
+  /** When the post was delivered, so a daily digest says which day it is from. */
+  deliveredAt: string | null;
+  externalSource: { provider: string; displayName: string } | null;
+}
 
 /**
  * How a turn written outside Rally reads to the model.
@@ -159,13 +179,24 @@ export function participantModelMessageContent(
  */
 function withAuthorAttribution(
   content: string,
-  author: { userId: string | null; displayName: string | null },
+  author: { userId: string | null; displayName: string | null } | SidekickModelAuthor,
 ): string {
-  if (!author.userId) return content;
-  const attribution = `<rally_author>${JSON.stringify({
-    person_id: author.userId,
-    ...(author.displayName ? { display_name: author.displayName } : {}),
-  })}</rally_author>`;
+  // A Sidekick is not a person and is never given a `person_id`: the model
+  // would resolve "me" or "send it to them" to a member who did not speak.
+  const fields = "type" in author && author.type === "sidekick"
+    ? {
+        ...(author.sidekickId ? { sidekick_id: author.sidekickId } : {}),
+        display_name: author.displayName,
+        ...(author.deliveredAt ? { delivered_at: author.deliveredAt } : {}),
+        ...(author.externalSource ? {
+          forwarded_from: { provider: author.externalSource.provider, display_name: author.externalSource.displayName },
+        } : {}),
+      }
+    : "userId" in author && author.userId
+      ? { person_id: author.userId, ...(author.displayName ? { display_name: author.displayName } : {}) }
+      : null;
+  if (!fields) return content;
+  const attribution = `<rally_author>${JSON.stringify(fields)}</rally_author>`;
   return content.trim().length === 0 ? attribution : `${content}\n\n${attribution}`;
 }
 
@@ -218,6 +249,35 @@ export function projectParticipantTextMessage(input: Pick<
     return { role: "user", content: [OVERHEARD_HEADER, attributed].join("\n") };
   }
   return { role: "user", content: attributed };
+}
+
+/**
+ * A Sidekick's post or activation row, as the model reads it.
+ *
+ * The one rendering for the gap-fill and the bootstrap from history, so a post
+ * reads the same whichever path loaded it. `overheard` is false only when the
+ * row is the input the run answers.
+ */
+export function projectSidekickPostMessage(input: {
+  structuredContent: unknown;
+  deliveredAt: string | null;
+  text: string;
+  mentions: ParticipantModelProjectionInput["mentions"];
+  overheard: boolean;
+}): ModelMessage | null {
+  const post = AutomationActivationV1Schema.safeParse(input.structuredContent);
+  return projectParticipantTextMessage({
+    author: {
+      type: "sidekick",
+      sidekickId: post.success ? post.data.automationId : null,
+      displayName: post.success ? post.data.automationName : automationActivationName(input.structuredContent),
+      deliveredAt: input.deliveredAt,
+      externalSource: post.success ? post.data.externalSource ?? null : null,
+    },
+    text: input.text,
+    mentions: input.mentions,
+    overheard: input.overheard,
+  });
 }
 
 /** Deterministic, and decidable by a small model: this is not a request. */

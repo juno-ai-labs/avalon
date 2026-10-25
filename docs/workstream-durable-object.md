@@ -724,7 +724,9 @@ says whether the turn was meant for Rally, and the trailer says who said it.
 Both a request and an aside carry the trailer; only an aside carries the header.
 An external turn keeps its own header instead, because a provider display name
 is a claim the model must weigh rather than a member id the workspace vouches
-for. A turn whose `author_user_id` is somehow absent renders unattributed: the
+for. A Sidekick's `conversation_post` is projected as an aside whose trailer
+holds `sidekick_id` and the name frozen at delivery, never a `person_id`, plus
+`forwarded_from` when the post forwards somebody outside Rally. A turn whose `author_user_id` is somehow absent renders unattributed: the
 alternatives are inventing a person id a run could write into a durable
 evaluator rule, or dropping somebody's words to punish a corrupt column.
 
@@ -1459,6 +1461,11 @@ tree, removes the run's output, compaction, and inference-delay checkpoints,
 settles the Channel state, and requests cancellation of subordinate runs.
 Callers cannot select a subset of those responsibilities.
 
+The run's `input_tokens`, `output_tokens` and `cost_micros` columns are derived
+from `usage_json` in the same statement that writes it, in both the terminal
+commit and the fenced progress flush, so the columns cannot disagree with the
+JSON.
+
 Persistent-loop release remains part of the caller's authority check, before
 the common commit, because a loop with unsettled provider protocol must stay
 owned for recovery. Regional projection intent remains outside the storage
@@ -1948,6 +1955,31 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-10-25 — A run's token and cost columns carry its usage
+
+**What changed:** The terminal commit and the progress flush now set
+`runs.input_tokens`, `output_tokens` and `cost_micros` from the `usage_json`
+they write, in SQL in the same statement. The two writers spell the totals
+differently (Bind's progress shape mid-run, the usage shape at the end), and
+both spellings are read.
+
+**Why:** Every insert wrote those columns as 0 and nothing updated them, so a
+query against `runs` reported zero tokens and zero cost for every run while the
+real totals sat in `usage_json` and `inference_attempts`. No product code reads
+the columns; an operator diagnosing a conversation did, and was misled.
+
+**Considered and rejected:** Passing the numbers in from the host, which would
+be a second source that can drift from the JSON. Dropping the columns, which
+is a table rebuild for columns that are now correct. Backfilling old rows,
+which is a bulk rewrite the constructor migration rules forbid; their totals
+are still in `usage_json`.
+
+**Consequences:** Rows written before this change keep their zeros. The other
+counters on `runs` that are always 0 (`step_count`, `tool_count`,
+`model_iteration`, `subrequest_count`, `output_bytes`, the elapsed times) are
+unchanged and read by nothing; derive or drop them rather than start writing a
+second copy from the host.
 
 ### 2026-10-23 — Preserve loop time and historical state identities
 

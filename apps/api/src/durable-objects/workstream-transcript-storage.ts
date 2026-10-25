@@ -51,6 +51,7 @@ import {
   externalInputFraming,
   projectImportedSourceMessage,
   projectParticipantTextMessage,
+  projectSidekickPostMessage,
   type ExternalInputFraming,
 } from "../services/workstream-participant-model-message";
 import { boundParameterChunks } from "./bound-parameters";
@@ -3065,9 +3066,9 @@ export class WorkstreamTranscriptStorage {
   }
 
   /**
-   * Human, external, and imported assistant text turns in `[startInclusive, endExclusive)` —
-   * what the gap-fill considers. Filtered here so a wide range hydrates only
-   * what it will use.
+   * Human, external, and imported assistant text turns, and Sidekick posts, in
+   * `[startInclusive, endExclusive)` — what the gap-fill considers. Filtered
+   * here so a wide range hydrates only what it will use.
    */
   private conversationTurnsInRange(startInclusive: number, endExclusive: number): TranscriptTurn[] {
     if (endExclusive <= startInclusive) return [];
@@ -3079,11 +3080,12 @@ export class WorkstreamTranscriptStorage {
          FROM participant_transcript_turns AS turn INDEXED BY participant_transcript_sequence_idx
         WHERE turn.transcript_sequence >= ? AND turn.transcript_sequence < ?
           AND turn.entry_kind = 'conversation'
-          AND (turn.actor IN ('human', 'external') OR
+          AND (((turn.actor IN ('human', 'external') OR
             (turn.actor = 'assistant' AND EXISTS (
               SELECT 1 FROM transcript_facts source_fact
                WHERE source_fact.fact_id = turn.root_fact_id AND source_fact.run_id IS NULL)))
-          AND turn.message_type = 'text'
+            AND turn.message_type = 'text')
+            OR (turn.actor = 'system' AND turn.message_type = 'automation_activation'))
         ORDER BY turn.transcript_sequence`,
       startInclusive,
       endExclusive,
@@ -4504,7 +4506,10 @@ export class WorkstreamTranscriptStorage {
    * The conversation turns in `(fromExclusive, toInclusive]` the projection has
    * never seen, each as the transition that appends it.
    *
-   * Human, external, and imported assistant text turns qualify, and the query says so rather
+   * Human, external, and imported assistant text turns qualify, and so does a
+   * Sidekick's `conversation_post`: the post does not wake this agent, but it is
+   * still something said in the room, attributed to the Sidekick and never to
+   * a person. The query says so rather
    * than hydrating every turn in the range and discarding most of them: the
    * range spans everything since the last admission, a long run's tool rows
    * included. Rally assistant turns are produced by the projection itself; status
@@ -4555,12 +4560,23 @@ export class WorkstreamTranscriptStorage {
     for (const { turn, text, provenance, key } of candidates) {
       if (appendedInThisPass.has(key) || alreadyProjected.has(key)) continue;
       const imported = ImportedMessageProvenanceSchema.safeParse(text.structuredContent);
+      const mentions = (text.mentions ?? []).map((mention) => ({
+        type: mention.type,
+        userId: mention.userId,
+        displayName: null,
+      }));
       const message = imported.success ? projectImportedSourceMessage({
         provider: imported.data.source.provider,
         role: turn.actor === 'assistant' ? 'assistant' : 'user',
         text: text.text,
         revised: Boolean(imported.data.supersedesTurnId),
-      }) : turn.actor === "assistant" ? null : projectParticipantTextMessage({
+      }) : turn.actor === "assistant" ? null : turn.actor === "system" ? projectSidekickPostMessage({
+        structuredContent: text.structuredContent,
+        deliveredAt: turn.createdAtUtc,
+        text: text.text,
+        mentions,
+        overheard: true,
+      }) : projectParticipantTextMessage({
         author: turn.actor === "external" && turn.externalActor
           ? {
               type: "external",
@@ -4578,11 +4594,7 @@ export class WorkstreamTranscriptStorage {
         structuredContent: text.structuredContent,
         externalFraming,
         text: text.text,
-        mentions: (text.mentions ?? []).map((mention) => ({
-          type: mention.type,
-          userId: mention.userId,
-          displayName: null,
-        })),
+        mentions,
         overheard: true,
       });
       if (!message) continue;
@@ -4662,6 +4674,10 @@ export class WorkstreamTranscriptStorage {
             elicitationId,
             answer: row.answer_json === null ? null : JSON.parse(row.answer_json),
             ...(row.status === "cancelled" ? { cancelled: true } : {}),
+            // An answered question has a null answer only when it was skipped:
+            // the answer path validates every other answer as non-empty. A
+            // flag rather than a sentinel string, which a text answer could be.
+            ...(row.status === "answered" && row.answer_json === null ? { skipped: true } : {}),
           },
         }),
       },

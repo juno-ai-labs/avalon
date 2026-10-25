@@ -52,6 +52,8 @@ export interface MessageRow extends Record<string, SqlStorageValue> {
   client_message_id: string | null;
   author_type: string;
   author_user_id: string | null;
+  /** The author's name when they wrote it; the schema requires one on every human turn. */
+  author_name_snapshot: string | null;
   external_actor_json: string | null;
   message_type: string;
   text_content: string;
@@ -115,7 +117,10 @@ export type MessageAppendInput = Omit<
 const MESSAGE_COLUMNS = `part.id, part.client_message_id,
         CASE part.author_type WHEN 'member' THEN 'human' WHEN 'agent' THEN 'agent'
           WHEN 'external' THEN 'external' ELSE 'system' END AS author_type,
-        part.author_user_id, part.external_actor_json, part.message_type,
+        part.author_user_id,
+        (SELECT snapshot.author_name_snapshot FROM participant_transcript_turns snapshot
+          WHERE snapshot.turn_id = part.id) AS author_name_snapshot,
+        part.external_actor_json, part.message_type,
         COALESCE(part.content, '') AS text_content, part.structured_content_json,
         part.sequence_number, part.attention_ordinal, part.created_at, part.edited_at,
         part.produced_by_run_id AS harness_run_id,

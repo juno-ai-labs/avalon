@@ -141,6 +141,10 @@ const INTERLEAVED_TOOLS_MODEL = "pipeline-b12/primary";
 const QUEUED_FOLLOW_UP_MODEL = "pipeline-queued/primary";
 const RETRY_AFTER_ASSISTANT_TURN_MODEL = "pipeline-retry-fence/primary";
 const ASIDE_MODEL = "pipeline-aside/primary";
+const SIDEKICK_POST_MODEL = "pipeline-sidekick-post/primary";
+const SKIPPED_ELICITATION_MODEL = "pipeline-skipped-elicitation/primary";
+const OPENING_AUTHOR_MODEL = "pipeline-opening-author/primary";
+const RUN_USAGE_MODEL = "pipeline-run-usage/primary";
 const PERSONAL_PROMPT_MODEL = "pipeline-personal-prompt/primary";
 const ASIDE_WINDOW_MODEL = "pipeline-aside-window/primary";
 const ASIDE_ELICITATION_MODEL = "pipeline-aside-elicitation/primary";
@@ -2632,6 +2636,134 @@ describe("a member's message travels the whole pipeline", () => {
     }
   });
 
+  it("records a run's tokens and cost on its row, not only in its usage JSON", async () => {
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(
+        stub,
+        [[{
+          choices: [{ delta: { content: "looked into it" }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 1_200, completion_tokens: 34, cost: 0.0123 },
+        }]],
+        { primaryModel: RUN_USAGE_MODEL, fallbackModels: [] },
+      );
+      const opened = await initializeWorkstream(stub, "please look into this", RUN_USAGE_MODEL);
+      expect(opened.status).toBe(200);
+      await settledRun(stub, opened.body.harnessRunId as string);
+
+      expect(await runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ input_tokens: number; output_tokens: number; cost_micros: number }>(
+          `SELECT input_tokens, output_tokens, cost_micros FROM runs WHERE run_id = ?`,
+          opened.body.harnessRunId as string,
+        ).one())).toEqual({ input_tokens: 1_200, output_tokens: 34, cost_micros: 12_300 });
+    } finally {
+      await restoreProviderFetch(stub);
+    }
+  });
+
+  it("names the opening message's author by their name, not their id", async () => {
+    // The first run builds its context from history, whose reader used to fill
+    // a person's name with their id.
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(
+        stub,
+        [[{ choices: [{ delta: { content: "looked into it" }, finish_reason: "stop" }] }]],
+        { primaryModel: OPENING_AUTHOR_MODEL, fallbackModels: [] },
+      );
+      const opened = await initializeWorkstream(stub, "please look into this", OPENING_AUTHOR_MODEL);
+      expect(opened.status).toBe(200);
+      await settledRun(stub, opened.body.harnessRunId as string);
+
+      const first = (await capturedProviderRequests(stub))[0];
+      expect(first).toBeDefined();
+      const opening = (first!.body.messages as Array<{ role?: unknown; content?: unknown }>)
+        .find((message) => message.role === "user" && JSON.stringify(message.content).includes("please look into this"));
+      expect(opening, "the opening message never reached the model").toBeDefined();
+      expect(JSON.stringify(opening!.content))
+        .toContain(JSON.stringify(`<rally_author>{"person_id":"${USER_ID}","display_name":"Member"}</rally_author>`).slice(1, -1));
+    } finally {
+      await restoreProviderFetch(stub);
+    }
+  });
+
+  it("carries a Sidekick's post to the model on the next run, attributed to the Sidekick", async () => {
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(
+        stub,
+        [
+          [{ choices: [{ delta: { content: "looked into it" }, finish_reason: "stop" }] }],
+          [{ choices: [{ delta: { content: "sending it" }, finish_reason: "stop" }] }],
+        ],
+        { primaryModel: SIDEKICK_POST_MODEL, fallbackModels: [] },
+      );
+      const opened = await initializeWorkstream(stub, "help with email replies", SIDEKICK_POST_MODEL);
+      expect(opened.status).toBe(200);
+      await settledRun(stub, opened.body.harnessRunId as string);
+      await waitForLoopRelease(stub);
+      const runsBefore = await runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM runs`).one().count);
+
+      // A help-desk Sidekick posts an email and a suggested reply. The post
+      // wakes nobody; it is a canonical turn the room reads.
+      const automationId = asAutomationId(crypto.randomUUID());
+      const clientMessageId = "conversation-post:sidekick-run:receipt-1";
+      const posted = await stub.appendConversationPost({
+        schemaVersion: 1, workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, substreamId: "0",
+        clientMessageId,
+        text: "New help-list email. Help email ID: 1a16ff84e56cd0f1. Suggested reply: Thanks, we received it.",
+        post: {
+          type: "automation_activation", schemaVersion: 1, automationId, automationName: "Help desk",
+          runId: crypto.randomUUID(), deliveryId: clientMessageId, trigger: { kind: "inbound_email" },
+          occurredAt: Date.now(),
+        },
+      });
+      expect(posted.outcome).toBe("appended");
+      expect(await runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM runs`).one().count))
+        .toBe(runsBefore);
+
+      // "send that reply" only means something if the model can read the post.
+      const question = await product(stub, {
+        operation: "create_message",
+        auth: AUTH,
+        input: {
+          text: "send that reply",
+          clientMessageId: "pipeline-sidekick-post-2",
+          mentions: [],
+          confirmedParticipantUserIds: [],
+          attachmentIds: [],
+        },
+      });
+      expect(question.status).toBe(200);
+      await settledRunForTrigger(stub, (question.body.turn as { turnId: string }).turnId);
+
+      const deliveredAt = await runInDurableObject(stub, (_instance, state) => new Date(
+        state.storage.sql.exec<{ created_at: number }>(
+          `SELECT created_at FROM participant_transcript_turns WHERE turn_id = ?`, posted.messageId,
+        ).one().created_at,
+      ).toISOString());
+      const last = (await capturedProviderRequests(stub)).at(-1);
+      expect(last).toBeDefined();
+      const messages = last!.body.messages as Array<{ role?: unknown; content?: unknown }>;
+      const postIndex = messages.findIndex((message) =>
+        JSON.stringify(message.content).includes("1a16ff84e56cd0f1"));
+      const questionIndex = messages.findIndex((message) =>
+        JSON.stringify(message.content).includes("send that reply"));
+      expect(postIndex, "the Sidekick's post never reached the model").toBeGreaterThanOrEqual(0);
+      expect(questionIndex).toBeGreaterThan(postIndex);
+      expect(messages[postIndex]).toEqual({
+        role: "user",
+        content: "SAID TO THE ROOM, NOT TO RALLY\n"
+          + "New help-list email. Help email ID: 1a16ff84e56cd0f1. Suggested reply: Thanks, we received it.\n\n"
+          + `<rally_author>{"sidekick_id":"${automationId}","display_name":"Help desk","delivered_at":"${deliveredAt}"}</rally_author>`,
+      });
+    } finally {
+      await restoreProviderFetch(stub);
+    }
+  });
+
   it("keeps an aside written between a question's admission and its activation behind the question", async () => {
     // A question is admitted and somebody talks before the alarm activates it.
     // The aside used to be written at once, above the question's admission
@@ -2871,6 +3003,77 @@ describe("a member's message travels the whole pipeline", () => {
       expect(asideIndex, "the aside said during the question never reached the model").toBeGreaterThan(toolResult);
       expect(questionIndex).toBeGreaterThan(asideIndex);
       expect(messages.filter((message) => message.role === "user" && JSON.stringify(message.content).includes("sounds good"))).toHaveLength(1);
+    } finally {
+      await restoreProviderFetch(stub);
+    }
+  });
+
+  it("tells the model a question was skipped, not answered blank", async () => {
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(
+        stub,
+        [
+          [{
+            choices: [{
+              delta: {
+                tool_calls: [{
+                  index: 0,
+                  id: "skipped-elicitation-1",
+                  type: "function",
+                  function: {
+                    name: "request_elicitation",
+                    arguments: JSON.stringify({
+                      prompt: "Which option?",
+                      responseType: "radio",
+                      options: [
+                        { value: "a", label: "Option A", description: null },
+                        { value: "b", label: "Option B", description: null },
+                      ],
+                      minimumSelections: 1,
+                      maximumSelections: 1,
+                    }),
+                  },
+                }],
+              },
+              finish_reason: "tool_calls",
+            }],
+          }],
+          [{ choices: [{ delta: { content: "going ahead without it" }, finish_reason: "stop" }] }],
+        ],
+        { primaryModel: SKIPPED_ELICITATION_MODEL, fallbackModels: [] },
+      );
+      const opened = await initializeWorkstream(stub, "please decide between the options", SKIPPED_ELICITATION_MODEL);
+      expect(opened.status).toBe(200);
+      const asked = await settledRun(stub, opened.body.harnessRunId as string);
+      expect(asked.status).toBe("needs_input");
+      await waitForLoopRelease(stub);
+      const elicitationId = await runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ elicitation_id: string }>(
+          `SELECT elicitation_id FROM elicitation_requests WHERE status = 'pending'`,
+        ).one().elicitation_id);
+
+      const skipped = await product(stub, {
+        operation: "answer_elicitation",
+        auth: AUTH,
+        elicitationId,
+        input: { skipped: true },
+      });
+      expect(skipped.status).toBe(200);
+      await runDurableObjectAlarm(stub);
+      const resumed = await runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ run_id: string }>(
+          `SELECT run_id FROM runs WHERE origin = 'elicitation_answer'`,
+        ).one().run_id);
+      await settledRun(stub, resumed);
+
+      const messages = (await capturedProviderRequests(stub)).at(-1)!.body.messages as Array<{ role?: unknown; content?: unknown }>;
+      const toolResult = messages.find((message) => message.role === "tool");
+      expect(toolResult, "the skip never reached the model as a tool result").toBeDefined();
+      expect(JSON.parse(String(toolResult!.content))).toEqual({
+        success: true,
+        data: { elicitationId, answer: null, skipped: true },
+      });
     } finally {
       await restoreProviderFetch(stub);
     }

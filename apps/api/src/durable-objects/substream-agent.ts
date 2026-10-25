@@ -2231,7 +2231,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    *
    * It accepts any conversation, a Breakout as well as Main, and it does not
    * wake this conversation's agent: a post is something people here read, not
-   * a request to the agent here.
+   * a request to the agent here. The agent's next run still reads it: the
+   * gap-fill appends it to the model's context, attributed to the Sidekick.
    * The row is keyed by the caller's host-derived client message id, so a
    * retried receipt lands once and answers with the message it already wrote.
    * Who may post here was decided by the caller against WorkspaceDO's

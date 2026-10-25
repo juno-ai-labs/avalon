@@ -93,10 +93,11 @@ it.
   archived. A Channel's id is its Space id, a UUID no Thread shares.
 - **read** takes `conversation` and `limit` and returns
   `{ conversationId, title, messages, nextPageId }`, newest first. Each message
-  has an author (`person`, `agent`, `external`, `system`) with a name, `sentAt`,
-  `text`, `textTruncated` and `externalSource`. A Sidekick's post reads as the
-  Sidekick, and its `externalSource` names the person outside Rally whose words
-  it forwarded. A page stops at `limit` messages or the character budget; one
+  has an author (`person`, `agent`, `sidekick`, `external`, `system`) with a
+  name, `sentAt`, `text`, `textTruncated` and `externalSource`. A Sidekick's
+  post reads as the Sidekick, `kind: "sidekick"` with its `sidekickId`, never as
+  `agent`, which is Rally's own; its `externalSource` names the person outside
+  Rally whose words it forwarded. A page stops at `limit` messages or the character budget; one
   message longer than the whole budget returns its first part, marked. The
   continuation is private: the conversation id, the sequence to read before,
   and the page size, stored by the pagination wrapper beside the loop's
@@ -207,7 +208,10 @@ attaching is the consent to publish there.
   no attach, so it cannot reach anything its configuration did not grant.
 - **A post never wakes the target's agent.** It is something people read, not a
   request to the agent there. Admitting it as loop input, as `post_result` did,
-  would start that agent on every forwarded reply.
+  would start that agent on every forwarded reply. The agent still reads it:
+  the next run's gap-fill appends it as an aside attributed to the Sidekick
+  ([`agent-harness.md`](agent-harness.md)), so "send that reply" can refer to
+  it.
 - **A post is keyed on the receipt, not the run.** A retried receipt posts once;
   a new call in a later wake of the same run is a new post. Keying on the run
   alone, as `post_result` did, would swallow every reply after the first.
