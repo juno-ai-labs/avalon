@@ -143,6 +143,7 @@ const RETRY_AFTER_ASSISTANT_TURN_MODEL = "pipeline-retry-fence/primary";
 const ASIDE_MODEL = "pipeline-aside/primary";
 const SIDEKICK_POST_MODEL = "pipeline-sidekick-post/primary";
 const SKIPPED_ELICITATION_MODEL = "pipeline-skipped-elicitation/primary";
+const OPENING_AUTHOR_MODEL = "pipeline-opening-author/primary";
 const PERSONAL_PROMPT_MODEL = "pipeline-personal-prompt/primary";
 const ASIDE_WINDOW_MODEL = "pipeline-aside-window/primary";
 const ASIDE_ELICITATION_MODEL = "pipeline-aside-elicitation/primary";
@@ -2629,6 +2630,32 @@ describe("a member's message travels the whole pipeline", () => {
       }));
       expect(mark.projectedThrough).toBe(mark.asideSequence);
       expect(mark.questionSequence).toBeGreaterThan(mark.projectedThrough);
+    } finally {
+      await restoreProviderFetch(stub);
+    }
+  });
+
+  it("names the opening message's author by their name, not their id", async () => {
+    // The first run builds its context from history, whose reader used to fill
+    // a person's name with their id.
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(
+        stub,
+        [[{ choices: [{ delta: { content: "looked into it" }, finish_reason: "stop" }] }]],
+        { primaryModel: OPENING_AUTHOR_MODEL, fallbackModels: [] },
+      );
+      const opened = await initializeWorkstream(stub, "please look into this", OPENING_AUTHOR_MODEL);
+      expect(opened.status).toBe(200);
+      await settledRun(stub, opened.body.harnessRunId as string);
+
+      const first = (await capturedProviderRequests(stub))[0];
+      expect(first).toBeDefined();
+      const opening = (first!.body.messages as Array<{ role?: unknown; content?: unknown }>)
+        .find((message) => message.role === "user" && JSON.stringify(message.content).includes("please look into this"));
+      expect(opening, "the opening message never reached the model").toBeDefined();
+      expect(JSON.stringify(opening!.content))
+        .toContain(JSON.stringify(`<rally_author>{"person_id":"${USER_ID}","display_name":"Member"}</rally_author>`).slice(1, -1));
     } finally {
       await restoreProviderFetch(stub);
     }
