@@ -144,6 +144,7 @@ const ASIDE_MODEL = "pipeline-aside/primary";
 const SIDEKICK_POST_MODEL = "pipeline-sidekick-post/primary";
 const SKIPPED_ELICITATION_MODEL = "pipeline-skipped-elicitation/primary";
 const OPENING_AUTHOR_MODEL = "pipeline-opening-author/primary";
+const RUN_USAGE_MODEL = "pipeline-run-usage/primary";
 const PERSONAL_PROMPT_MODEL = "pipeline-personal-prompt/primary";
 const ASIDE_WINDOW_MODEL = "pipeline-aside-window/primary";
 const ASIDE_ELICITATION_MODEL = "pipeline-aside-elicitation/primary";
@@ -2630,6 +2631,31 @@ describe("a member's message travels the whole pipeline", () => {
       }));
       expect(mark.projectedThrough).toBe(mark.asideSequence);
       expect(mark.questionSequence).toBeGreaterThan(mark.projectedThrough);
+    } finally {
+      await restoreProviderFetch(stub);
+    }
+  });
+
+  it("records a run's tokens and cost on its row, not only in its usage JSON", async () => {
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(
+        stub,
+        [[{
+          choices: [{ delta: { content: "looked into it" }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 1_200, completion_tokens: 34, cost: 0.0123 },
+        }]],
+        { primaryModel: RUN_USAGE_MODEL, fallbackModels: [] },
+      );
+      const opened = await initializeWorkstream(stub, "please look into this", RUN_USAGE_MODEL);
+      expect(opened.status).toBe(200);
+      await settledRun(stub, opened.body.harnessRunId as string);
+
+      expect(await runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ input_tokens: number; output_tokens: number; cost_micros: number }>(
+          `SELECT input_tokens, output_tokens, cost_micros FROM runs WHERE run_id = ?`,
+          opened.body.harnessRunId as string,
+        ).one())).toEqual({ input_tokens: 1_200, output_tokens: 34, cost_micros: 12_300 });
     } finally {
       await restoreProviderFetch(stub);
     }

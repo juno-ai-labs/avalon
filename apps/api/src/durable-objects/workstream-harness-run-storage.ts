@@ -418,6 +418,28 @@ export function expireLocalAttemptLeasesFromPreviousInstance(
   });
 }
 
+/**
+ * The run's token and cost columns, derived from `usage_json` in the same
+ * statement that writes it.
+ *
+ * Every insert wrote them as 0 and nothing updated them, so a query against
+ * `runs` read zeros while the real totals sat in `usage_json`. Derived rather
+ * than passed in, so the columns cannot disagree with the JSON they mirror.
+ * The JSON holds running totals for the run (`prompt_tokens`,
+ * `completion_tokens`, `cost_cents`); a cent is 10,000 micro-dollars. A key the
+ * JSON lacks, or a null `usageExpression`, keeps the column's current value.
+ * `usageExpression` is a code-owned SQL expression, never a caller's value.
+ */
+function usageCounterAssignments(usageExpression: string): string {
+  const counter = (column: string, path: string, scale: number) =>
+    `${column} = MAX(0, COALESCE(CAST(ROUND(json_extract(${usageExpression}, '${path}') * ${scale}) AS INTEGER), ${column}))`;
+  return [
+    counter("input_tokens", "$.prompt_tokens", 1),
+    counter("output_tokens", "$.completion_tokens", 1),
+    counter("cost_micros", "$.cost_cents", 10_000),
+  ].join(",\n                ");
+}
+
 export class WorkstreamHarnessRunStorage {
   /**
    * The ordered transcript authority, over this same object storage.
@@ -891,7 +913,8 @@ export class WorkstreamHarnessRunStorage {
         return { outcome: "ownership_lost" as const };
       }
       this.sql.exec(
-        `UPDATE runs SET usage_json = ?2, model = COALESCE(?3, model), updated_at = ?4
+        `UPDATE runs SET usage_json = ?2, model = COALESCE(?3, model), updated_at = ?4,
+                ${usageCounterAssignments("?2")}
           WHERE run_id = ?1`,
         input.runId,
         input.usageJson,
@@ -1417,6 +1440,7 @@ export class WorkstreamHarnessRunStorage {
               status = ?2, terminal_reason = ?2,
               completed_at = ?3, terminalized_at = ?3, final_turn_id = ?4,
               model = COALESCE(?5, model), usage_json = COALESCE(?6, usage_json),
+              ${usageCounterAssignments("COALESCE(?6, usage_json)")},
               error_json = ?7, lease_owner = NULL, lease_expires_at = NULL,
               updated_at = ?3
         WHERE run_id = ?1`,
