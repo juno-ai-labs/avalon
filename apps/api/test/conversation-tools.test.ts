@@ -617,7 +617,7 @@ describe("conversation_read", () => {
     const result = await tools(runLoop(), ports).get("conversation_read")!
       .execute({ conversation: home.conversationId }, context("a"));
     expect((result.output as { messages: unknown[] }).messages[0]).toMatchObject({
-      author: { kind: "agent", name: "Weekly call prep" },
+      author: { kind: "sidekick", name: "Weekly call prep", sidekickId: SIDEKICK_ID },
       externalSource: { provider: "slack", name: "Adam" },
     });
   });
