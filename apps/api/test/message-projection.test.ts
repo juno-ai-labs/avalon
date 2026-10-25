@@ -187,13 +187,12 @@ describe("the transcript the harness reads", () => {
       workstreamId: WORKSTREAM,
       textContent: "line 1",
       sequenceNumber: 1,
-      // Exactly what `_runtime_users` answered with, which is not a profile:
-      // the member's own id as their name, an empty email, no avatar. Every
-      // reader converted here has been getting this, and starting to answer
-      // with the real profile is the identity slice's change to make.
+      // Still not a full profile (an empty email, no avatar), but the name is
+      // the turn's own snapshot: the member's id stood in for it until a model
+      // was handed that id as a person's display name.
       author: {
         type: "human",
-        user: { id: "user-1", name: "user-1", email: "", avatarUrl: null, timezone: "UTC" },
+        user: { id: "user-1", name: "User at posting time", email: "", avatarUrl: null, timezone: "UTC" },
       },
       mentions: [{ type: "person", userId: "user-2", displayName: "user-2", avatarUrl: null }],
       attachments: [{

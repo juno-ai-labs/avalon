@@ -15,7 +15,10 @@ export function conversationAsText(turns: readonly TranscriptTurn[]): string {
         ? ElicitationSchema.safeParse(structured && "elicitation" in structured ? structured.elicitation : structured) : null;
       const prose = elicitation?.success ? [elicitation.data.prompt,
         ...elicitation.data.options.map((option) => `- ${option.label}${option.description ? `: ${option.description}` : ""}`),
-        ...(elicitation.data.answer === null ? [] : [`Answer: ${elicitationAnswerLabel(elicitation.data)}`]),
+        // An answered question with no answer was skipped; without the line, a
+        // skip read as the person posting the question back.
+        ...(elicitation.data.status === "answered" || elicitation.data.answer !== null
+          ? [`Answer: ${elicitationAnswerLabel(elicitation.data)}`] : []),
       ].join("\n") : visibleParticipantText(block.text, turn.actor);
       const body = rewriteMessageAsPlainText(annotationCommentText(prose, messageAnnotations(structured)));
       const attachments = (block.attachments ?? []).map((attachment) => `Attachment: ${attachment.fileName}`);
