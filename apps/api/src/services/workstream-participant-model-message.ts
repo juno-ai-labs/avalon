@@ -39,7 +39,23 @@ export type ParticipantModelAuthor =
   | {
       type: "external";
       actor: { provider: string; displayName: string; providerUserId: string };
-    };
+    }
+  | SidekickModelAuthor;
+
+/**
+ * A Sidekick's `conversation_post`, as the model is told who wrote it.
+ *
+ * Every field is host-derived off the post's structured content: the name was
+ * frozen at delivery, and `externalSource` is set only when the post forwards
+ * somebody outside Rally, so the model can tell their words from the
+ * Sidekick's own.
+ */
+export interface SidekickModelAuthor {
+  type: "sidekick";
+  sidekickId: string;
+  displayName: string;
+  externalSource: { provider: string; displayName: string } | null;
+}
 
 /**
  * How a turn written outside Rally reads to the model.
@@ -159,13 +175,23 @@ export function participantModelMessageContent(
  */
 function withAuthorAttribution(
   content: string,
-  author: { userId: string | null; displayName: string | null },
+  author: { userId: string | null; displayName: string | null } | SidekickModelAuthor,
 ): string {
-  if (!author.userId) return content;
-  const attribution = `<rally_author>${JSON.stringify({
-    person_id: author.userId,
-    ...(author.displayName ? { display_name: author.displayName } : {}),
-  })}</rally_author>`;
+  // A Sidekick is not a person and is never given a `person_id`: the model
+  // would resolve "me" or "send it to them" to a member who did not speak.
+  const fields = "type" in author && author.type === "sidekick"
+    ? {
+        sidekick_id: author.sidekickId,
+        display_name: author.displayName,
+        ...(author.externalSource ? {
+          forwarded_from: { provider: author.externalSource.provider, display_name: author.externalSource.displayName },
+        } : {}),
+      }
+    : "userId" in author && author.userId
+      ? { person_id: author.userId, ...(author.displayName ? { display_name: author.displayName } : {}) }
+      : null;
+  if (!fields) return content;
+  const attribution = `<rally_author>${JSON.stringify(fields)}</rally_author>`;
   return content.trim().length === 0 ? attribution : `${content}\n\n${attribution}`;
 }
 

@@ -2,6 +2,7 @@ import { AnnotatedMessageContentSchema } from "@rally/contracts";
 import { stableUuid } from "../lib/stable-uuid";
 import {
   WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
+  AutomationActivationV1Schema,
   automationActivationName,
   PreparedConversationSchema,
   ImportedMessageProvenanceSchema,
@@ -3065,9 +3066,9 @@ export class WorkstreamTranscriptStorage {
   }
 
   /**
-   * Human, external, and imported assistant text turns in `[startInclusive, endExclusive)` —
-   * what the gap-fill considers. Filtered here so a wide range hydrates only
-   * what it will use.
+   * Human, external, and imported assistant text turns, and Sidekick posts, in
+   * `[startInclusive, endExclusive)` — what the gap-fill considers. Filtered
+   * here so a wide range hydrates only what it will use.
    */
   private conversationTurnsInRange(startInclusive: number, endExclusive: number): TranscriptTurn[] {
     if (endExclusive <= startInclusive) return [];
@@ -3079,11 +3080,12 @@ export class WorkstreamTranscriptStorage {
          FROM participant_transcript_turns AS turn INDEXED BY participant_transcript_sequence_idx
         WHERE turn.transcript_sequence >= ? AND turn.transcript_sequence < ?
           AND turn.entry_kind = 'conversation'
-          AND (turn.actor IN ('human', 'external') OR
+          AND (((turn.actor IN ('human', 'external') OR
             (turn.actor = 'assistant' AND EXISTS (
               SELECT 1 FROM transcript_facts source_fact
                WHERE source_fact.fact_id = turn.root_fact_id AND source_fact.run_id IS NULL)))
-          AND turn.message_type = 'text'
+            AND turn.message_type = 'text')
+            OR (turn.actor = 'system' AND turn.message_type = 'automation_activation'))
         ORDER BY turn.transcript_sequence`,
       startInclusive,
       endExclusive,
@@ -4504,7 +4506,10 @@ export class WorkstreamTranscriptStorage {
    * The conversation turns in `(fromExclusive, toInclusive]` the projection has
    * never seen, each as the transition that appends it.
    *
-   * Human, external, and imported assistant text turns qualify, and the query says so rather
+   * Human, external, and imported assistant text turns qualify, and so does a
+   * Sidekick's `conversation_post`: the post does not wake this agent, but it is
+   * still something said in the room, attributed to the Sidekick and never to
+   * a person. The query says so rather
    * than hydrating every turn in the range and discarding most of them: the
    * range spans everything since the last admission, a long run's tool rows
    * included. Rally assistant turns are produced by the projection itself; status
@@ -4535,13 +4540,17 @@ export class WorkstreamTranscriptStorage {
         const text = turn.blocks.find((block) => block.type === "text");
         if (!text || text.type !== "text") return [];
         if (turn.actor === "assistant" && text.structuredContent?.kind !== "imported_session") return [];
+        // A post's author is its structured content; one that does not parse
+        // names nobody, and inventing a Sidekick for it would be worse.
+        const post = turn.actor === "system" ? AutomationActivationV1Schema.safeParse(text.structuredContent) : null;
+        if (post && !post.success) return [];
         const provenance: BindLoopMessageOrigin = {
           originKind: "derived",
           sourceKind: "participant_turn",
           sourceId: turn.turnId,
           sourceRevision: 1,
         };
-        return [{ turn, text, provenance, key: bindProvenanceKey(provenance) }];
+        return [{ turn, text, post: post?.data ?? null, provenance, key: bindProvenanceKey(provenance) }];
       });
     const alreadyProjected = new Set(this.currentBindProvenanceKeys(
       previous.loopId,
@@ -4552,7 +4561,7 @@ export class WorkstreamTranscriptStorage {
     const externalFraming = candidates.some(({ turn }) => turn.actor === "external")
       ? this.externalInputFraming()
       : "request";
-    for (const { turn, text, provenance, key } of candidates) {
+    for (const { turn, text, post, provenance, key } of candidates) {
       if (appendedInThisPass.has(key) || alreadyProjected.has(key)) continue;
       const imported = ImportedMessageProvenanceSchema.safeParse(text.structuredContent);
       const message = imported.success ? projectImportedSourceMessage({
@@ -4561,7 +4570,14 @@ export class WorkstreamTranscriptStorage {
         text: text.text,
         revised: Boolean(imported.data.supersedesTurnId),
       }) : turn.actor === "assistant" ? null : projectParticipantTextMessage({
-        author: turn.actor === "external" && turn.externalActor
+        author: post
+          ? {
+              type: "sidekick",
+              sidekickId: post.automationId,
+              displayName: post.automationName,
+              externalSource: post.externalSource ?? null,
+            }
+          : turn.actor === "external" && turn.externalActor
           ? {
               type: "external",
               actor: {
@@ -4575,7 +4591,8 @@ export class WorkstreamTranscriptStorage {
               userId: turn.authorUserId,
               displayName: turn.authorSnapshot?.displayName ?? null,
             },
-        structuredContent: text.structuredContent,
+        // A post's structured content is its delivery record, not annotations.
+        structuredContent: post ? null : text.structuredContent,
         externalFraming,
         text: text.text,
         mentions: (text.mentions ?? []).map((mention) => ({
