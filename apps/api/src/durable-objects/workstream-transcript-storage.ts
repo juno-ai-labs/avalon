@@ -2,7 +2,6 @@ import { AnnotatedMessageContentSchema } from "@rally/contracts";
 import { stableUuid } from "../lib/stable-uuid";
 import {
   WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
-  AutomationActivationV1Schema,
   automationActivationName,
   PreparedConversationSchema,
   ImportedMessageProvenanceSchema,
@@ -52,6 +51,7 @@ import {
   externalInputFraming,
   projectImportedSourceMessage,
   projectParticipantTextMessage,
+  projectSidekickPostMessage,
   type ExternalInputFraming,
 } from "../services/workstream-participant-model-message";
 import { boundParameterChunks } from "./bound-parameters";
@@ -4540,17 +4540,13 @@ export class WorkstreamTranscriptStorage {
         const text = turn.blocks.find((block) => block.type === "text");
         if (!text || text.type !== "text") return [];
         if (turn.actor === "assistant" && text.structuredContent?.kind !== "imported_session") return [];
-        // A post's author is its structured content; one that does not parse
-        // names nobody, and inventing a Sidekick for it would be worse.
-        const post = turn.actor === "system" ? AutomationActivationV1Schema.safeParse(text.structuredContent) : null;
-        if (post && !post.success) return [];
         const provenance: BindLoopMessageOrigin = {
           originKind: "derived",
           sourceKind: "participant_turn",
           sourceId: turn.turnId,
           sourceRevision: 1,
         };
-        return [{ turn, text, post: post?.data ?? null, provenance, key: bindProvenanceKey(provenance) }];
+        return [{ turn, text, provenance, key: bindProvenanceKey(provenance) }];
       });
     const alreadyProjected = new Set(this.currentBindProvenanceKeys(
       previous.loopId,
@@ -4561,23 +4557,26 @@ export class WorkstreamTranscriptStorage {
     const externalFraming = candidates.some(({ turn }) => turn.actor === "external")
       ? this.externalInputFraming()
       : "request";
-    for (const { turn, text, post, provenance, key } of candidates) {
+    for (const { turn, text, provenance, key } of candidates) {
       if (appendedInThisPass.has(key) || alreadyProjected.has(key)) continue;
       const imported = ImportedMessageProvenanceSchema.safeParse(text.structuredContent);
+      const mentions = (text.mentions ?? []).map((mention) => ({
+        type: mention.type,
+        userId: mention.userId,
+        displayName: null,
+      }));
       const message = imported.success ? projectImportedSourceMessage({
         provider: imported.data.source.provider,
         role: turn.actor === 'assistant' ? 'assistant' : 'user',
         text: text.text,
         revised: Boolean(imported.data.supersedesTurnId),
-      }) : turn.actor === "assistant" ? null : projectParticipantTextMessage({
-        author: post
-          ? {
-              type: "sidekick",
-              sidekickId: post.automationId,
-              displayName: post.automationName,
-              externalSource: post.externalSource ?? null,
-            }
-          : turn.actor === "external" && turn.externalActor
+      }) : turn.actor === "assistant" ? null : turn.actor === "system" ? projectSidekickPostMessage({
+        structuredContent: text.structuredContent,
+        text: text.text,
+        mentions,
+        overheard: true,
+      }) : projectParticipantTextMessage({
+        author: turn.actor === "external" && turn.externalActor
           ? {
               type: "external",
               actor: {
@@ -4591,15 +4590,10 @@ export class WorkstreamTranscriptStorage {
               userId: turn.authorUserId,
               displayName: turn.authorSnapshot?.displayName ?? null,
             },
-        // A post's structured content is its delivery record, not annotations.
-        structuredContent: post ? null : text.structuredContent,
+        structuredContent: text.structuredContent,
         externalFraming,
         text: text.text,
-        mentions: (text.mentions ?? []).map((mention) => ({
-          type: mention.type,
-          userId: mention.userId,
-          displayName: null,
-        })),
+        mentions,
         overheard: true,
       });
       if (!message) continue;

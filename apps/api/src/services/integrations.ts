@@ -84,7 +84,6 @@ import {
 } from "@rally/agent-harness";
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import {
-  automationActivationName,
   AutomationDetailSchema,
   IdSchema,
   ConnectorResourceAuthorizationHintSchema,
@@ -236,6 +235,7 @@ import {
   projectElicitationResponseMessage,
   projectImportedSourceMessage,
   projectParticipantModelMessage,
+  projectSidekickPostMessage,
   renderElicitationResponseMessage,
   renderRunContinuationNote,
 } from "./workstream-participant-model-message";
@@ -1436,18 +1436,17 @@ async function projectModelProtocolTranscript(
     // should be able to consult last Monday's agenda when somebody asks a
     // question today.
     if (message.messageType === "automation_activation") {
-      projected.push(modelDerivative(
-        {
-          role: "user",
-          content: [
-            `"${automationActivationName(message.structuredContent)}", delivered ${message.createdAt}.`,
-            modelMessageContent(message),
-          ].join("\n"),
-        },
-        "participant_turn",
-        message.id,
-        message.sequenceNumber,
-      ));
+      // The gap-fill's rendering, attributed to the Sidekick, so a post reads
+      // the same whichever path loaded it. Only the run's own trigger is
+      // addressed to Rally; every other post was said to the room.
+      const post = projectSidekickPostMessage({
+        structuredContent: message.structuredContent,
+        text: message.textContent,
+        mentions: message.mentions,
+        overheard: message.id !== input.triggerMessageId,
+      });
+      if (post) projected.push(modelDerivative(post, "participant_turn", message.id, message.sequenceNumber));
+      else issues.push({ kind: "empty_ui_message_omitted", healed: true });
       continue;
     }
 
