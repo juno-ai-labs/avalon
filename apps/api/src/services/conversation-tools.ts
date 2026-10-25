@@ -535,7 +535,13 @@ function parseCursor<T>(schema: z.ZodType<T>, raw: string): T {
 
 export interface ConversationReadMessage {
   messageId: string;
-  author: { kind: "person" | "agent" | "external" | "system"; name: string };
+  /**
+   * A Sidekick's post carries the Sidekick's id, the same identity the loop's
+   * own context gives it, so a reader never takes it for Rally or a person.
+   */
+  author:
+    | { kind: "person" | "agent" | "external" | "system"; name: string }
+    | { kind: "sidekick"; name: string; sidekickId: string };
   sentAt: string;
   text: string;
   textTruncated: boolean;
@@ -565,7 +571,7 @@ function readMessage(row: MessageRow, names: ReadonlyMap<string, string>, text: 
     })();
     author = { kind: "external", name: actor?.success ? actor.data.displayName : "Someone outside Rally" };
   } else if (row.message_type === "automation_activation" && post.success) {
-    author = { kind: "agent", name: post.data.automationName };
+    author = { kind: "sidekick", name: post.data.automationName, sidekickId: post.data.automationId };
   } else if (row.author_type === "agent") {
     author = { kind: "agent", name: "Rally" };
   } else {

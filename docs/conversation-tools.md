@@ -93,10 +93,11 @@ it.
   archived. A Channel's id is its Space id, a UUID no Thread shares.
 - **read** takes `conversation` and `limit` and returns
   `{ conversationId, title, messages, nextPageId }`, newest first. Each message
-  has an author (`person`, `agent`, `external`, `system`) with a name, `sentAt`,
-  `text`, `textTruncated` and `externalSource`. A Sidekick's post reads as the
-  Sidekick, and its `externalSource` names the person outside Rally whose words
-  it forwarded. A page stops at `limit` messages or the character budget; one
+  has an author (`person`, `agent`, `sidekick`, `external`, `system`) with a
+  name, `sentAt`, `text`, `textTruncated` and `externalSource`. A Sidekick's
+  post reads as the Sidekick, `kind: "sidekick"` with its `sidekickId`, never as
+  `agent`, which is Rally's own; its `externalSource` names the person outside
+  Rally whose words it forwarded. A page stops at `limit` messages or the character budget; one
   message longer than the whole budget returns its first part, marked. The
   continuation is private: the conversation id, the sequence to read before,
   and the page size, stored by the pagination wrapper beside the loop's
