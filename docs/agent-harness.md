@@ -847,7 +847,7 @@ Web discovery and page reading are bounded Firecrawl tools. Search returns ranke
 
 ### Elicitation
 
-The canonical `request_elicitation` tool belongs to `rally:core`, which carries no wire prefix, so the model reads it as `request_elicitation`. It creates a typed text/radio/single/multi-select block and pauses the shared harness loop. The request row retains the stable original tool slot. When a person answers, the loop atomically accepts one tool result containing that answer and promotes the visible participant response before any later provider call. The participant turn is canonical UI history, not a second Bind user message; the model therefore receives the answer exactly once through the suspended tool protocol. Original tool-call position and dense result-acceptance order are separate identities, so another result accepted while the elicitation waits does not renumber either fact. In a work stream, the work stream becomes `needs_input`; a valid answer clears attention when no blockers remain and activates the same `SubstreamAgent` loop. When drafting an automation, the agent first saves its best partial state with `automation_submit_draft` (a revision that is not `ready`), then calls the same core elicitation tool; the next turn resumes from the saved draft and the answered conversation.
+The canonical `request_elicitation` tool belongs to `rally:core`, which carries no wire prefix, so the model reads it as `request_elicitation`. It creates a typed text/radio/single/multi-select block and pauses the shared harness loop. The request row retains the stable original tool slot. When a person answers, the loop atomically accepts one tool result containing that answer (`answer: null` with `skipped: true` when they skipped, `cancelled: true` when a newer message cancelled the question) and promotes the visible participant response before any later provider call. The participant turn is canonical UI history, not a second Bind user message; the model therefore receives the answer exactly once through the suspended tool protocol. Original tool-call position and dense result-acceptance order are separate identities, so another result accepted while the elicitation waits does not renumber either fact. In a work stream, the work stream becomes `needs_input`; a valid answer clears attention when no blockers remain and activates the same `SubstreamAgent` loop. When drafting an automation, the agent first saves its best partial state with `automation_submit_draft` (a revision that is not `ready`), then calls the same core elicitation tool; the next turn resumes from the saved draft and the answered conversation.
 
 ### Seeded runs
 
@@ -1849,7 +1849,7 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 ## Changelog
 
-### 2026-10-25 — A Sidekick's post reaches the model, attributed to the Sidekick
+### 2026-10-25 — A Sidekick's post reaches the model, and a skipped question says so
 
 **What changed:** The gap-fill now also appends a Sidekick's
 `conversation_post` (a `system` turn of type `automation_activation`) to the
@@ -1878,6 +1878,13 @@ run. Posts written before this change sit below `transcript_projected_through`
 and are not backfilled. A scheduled activation admitted through
 `admitSystemActivation` is the same kind of turn but is skipped by its
 `participant_turn` provenance, so the model reads it once.
+
+**Also:** the tool result for an answered question now carries `skipped: true`
+when the person skipped it. Before, a skip read as `answer: null`, the same as
+nothing, and the model asked the same question again as plain text. A flag
+rather than a sentinel string, because a text answer could be any string. The
+flag is derived from the stored row (answered with a null answer), which the
+answer path produces only for a skip.
 
 ### 2026-10-23 — Table creation supports metadata edits with stable schema
 
