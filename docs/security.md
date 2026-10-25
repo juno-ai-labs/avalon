@@ -71,6 +71,7 @@ bounded-evidence contract in [Sidekick lifecycle](automation-lifecycle.md#sideki
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/main/index.ts` | Window creation, sandbox and `contextIsolation` flags, navigation denial, IPC handler registration. |
+| `apps/desktop/src/main/media-permission.ts` | Chromium media permission for the shared composer: audio-only capture from the main and Sidekicks windows. |
 | `apps/desktop/src/main/embedded-browser.ts` | Isolated web contents for the local browser in the right rail and the import window; its lifecycle and command boundary are documented in [`embedded-browser.md`](embedded-browser.md). |
 | `apps/sideline/src/main/index.ts`, `apps/sideline/src/preload/index.ts` | The internal represented-messaging host, encrypted operator session, dedicated OAuth target, sender-confined IPC, and narrow renderer bridge. Main also holds one ticketed workspace socket (fixed `app://sideline` Origin) and sends the renderer only a payload-free `sideline:catalog-stale` signal. The relationship and audit boundary is documented in [`impersonation.md`](impersonation.md). |
 | `apps/desktop/src/preload/index.ts` | The whole renderer-facing API. Nothing else crosses. |
@@ -121,6 +122,14 @@ same as desktop.
   sandbox. Its bridge exposes a small named API and never exposes `ipcRenderer`,
   environment variables, filesystem paths, or arbitrary channel names.
 - Every IPC argument is parsed before use.
+- Chromium media permission is a second grant on top of macOS System Settings,
+  and it is per WebContents. `allowsTrustedAudioCapture` admits the main window
+  and the Sidekicks window only, and only for audio: both host the shared
+  composer, and Sidekicks can outlive the main window. Settings, the import
+  window, the deep-link failure window, detached artifacts, and the embedded
+  browser are refused. Camera, display capture, and mixed audio+video stay
+  denied. Computer-audio tap IPC remains main-window-only because the composer
+  never requests it.
 - Four window kinds are trusted IPC senders: main, Sidekicks, settings, and the
   deep-link failure window. Handlers that must not be reachable from every one of
   them narrow further — `assertDeepLinkErrorIpcSender` admits only the failure
@@ -1163,6 +1172,32 @@ actions against the current native view. Edit/remove actions require trusted
 clicks; artifact scripts receive no application bridge.
 
 ## Changelog
+
+### 2026-10-24 — Admit the Sidekicks window to composer microphone capture
+
+**What changed:** Chromium media permission now grants audio capture to the
+Sidekicks window as well as the main window. Camera, display capture, mixed
+audio+video, and every other Rally window stay denied.
+
+**Why:** Dictation lives on the shared composer, and the Sidekicks window hosts
+that composer on its own WebContents. Electron asked only whether the requester
+was the main window, so `getUserMedia` there returned `NotAllowedError` even
+when macOS System Settings already allowed Rally and the main-window microphone
+worked. The composer surfaces that as blocked microphone access, which sent
+people to toggle an app-wide grant that was already on.
+
+**Considered and rejected:** Granting media to every trusted Rally renderer.
+Settings, import, the deep-link failure window, and detached artifacts do not
+host the composer, and widening them would give a compromised renderer a
+microphone it has no product reason to open. Identifying capture windows by
+renderer URL instead of WebContents identity was also rejected: every Rally
+window shares that origin.
+
+**Consequences:** A new window that hosts the composer has to be named in
+`allowsTrustedAudioCapture`; a trusted renderer URL is not enough. Computer-audio
+tap IPC is a separate main-window-only channel and is not this grant.
+
+PR #1444.
 
 ### 2026-10-19 — Confine detached artifact menu operations to their window
 
