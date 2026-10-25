@@ -53,5 +53,11 @@ describe("engineering conversation prose", () => {
     expect(conversationAsText([turn([text("", { messageType: "elicitation", structuredContent: {
       elicitation: { ...elicitation, responseType: "multi_select", maximumSelections: null, answer: ["release_slot_2", "After the demo"] },
     } })])])).toContain("Answer: Today, After the demo");
+    expect(conversationAsText([turn([text("", { messageType: "elicitation", structuredContent: {
+      elicitation: { ...elicitation, answer: null },
+    } })])])).toBe("Maya · 2026-10-21T00:00:00.000Z\nWhen should we ship?\n- Today\nAnswer: Skipped");
+    expect(conversationAsText([turn([text("", { messageType: "elicitation", structuredContent: {
+      elicitation: { ...elicitation, status: "open", answer: null },
+    } })])])).toBe("Maya · 2026-10-21T00:00:00.000Z\nWhen should we ship?\n- Today");
   });
 });
