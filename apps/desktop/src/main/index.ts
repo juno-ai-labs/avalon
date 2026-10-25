@@ -5505,18 +5505,22 @@ function installContentSecurityPolicy(): void {
   electronSession.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
     const trustedRenderer = rendererNavigationAllowed(details.requestingUrl);
     callback(allowsTrustedAudioCapture({
-      isAudioCaptureWindow: webContents === mainWindow?.webContents,
+      mainWindowContents: mainWindow?.webContents,
       mediaTypes: 'mediaTypes' in details ? details.mediaTypes ?? [] : [],
       permission,
+      requestingContents: webContents,
+      sidekicksWindowContents: sidekicksWindow?.webContents,
       trustedRenderer,
     }));
   });
   electronSession.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
     const trustedRenderer = rendererNavigationAllowed(requestingOrigin);
     return allowsTrustedAudioCapture({
-      isAudioCaptureWindow: webContents === mainWindow?.webContents,
+      mainWindowContents: mainWindow?.webContents,
       mediaTypes: details.mediaType ? [details.mediaType] : [],
       permission,
+      requestingContents: webContents,
+      sidekicksWindowContents: sidekicksWindow?.webContents,
       trustedRenderer,
     });
   });
