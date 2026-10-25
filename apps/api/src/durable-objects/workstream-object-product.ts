@@ -55,7 +55,7 @@ import {
   type WorkspaceId,
   type WorkstreamId,
 } from "@rally/contracts";
-import type { AddressingContextMessage, ModelMessage } from "@rally/agent-harness";
+import type { AddressingContextMessage, PromptMessage } from "@rally/agent-harness";
 import { stripPersonalSystemPrompt, truncateUtf16Safe } from "@rally/contracts/text";
 import { z } from "zod";
 
@@ -92,7 +92,6 @@ import {
 import {
   canonicalModelMessageJson,
   projectParticipantModelMessage,
-  projectSidekickPostMessage,
 } from "../services/workstream-participant-model-message";
 import type { ModelAttachmentSource } from "../services/attachment-model-content";
 import { memberSafeHarnessError } from "../services/workstream-service";
@@ -4527,18 +4526,16 @@ export class WorkstreamObjectProductService {
       attentionOrdinal: null,
     });
     // Agent messages are ordinary instructions with explicit sender/reply
-    // identity. They never impersonate a workspace participant. An activation
-    // is the input this run answers, attributed to its Sidekick the way every
-    // other path renders one.
-    const bindMessage: ModelMessage | null = agentContent
-      ? { role: "user", content: renderAgentMessage(agentContent, input.text) }
-      : projectSidekickPostMessage({
-          structuredContent: "activation" in input ? input.activation : null,
-          text: input.text,
-          mentions: [],
-          overheard: false,
-        });
-    if (!bindMessage) throw new Error("pending_input_bind_payload_invalid");
+    // identity. They never impersonate a workspace participant.
+    const bindMessage: PromptMessage = {
+      role: "user",
+      content: agentContent
+        ? renderAgentMessage(agentContent, input.text)
+        : [
+            `"${"activation" in input ? input.activation.automationName : ""}", delivered ${new Date(input.now).toISOString()}.`,
+            input.text,
+          ].join("\n"),
+    };
     return { participant, attachments, bindPayloadJson: canonicalModelMessageJson(bindMessage) };
   }
 

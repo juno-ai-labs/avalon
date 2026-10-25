@@ -4572,6 +4572,7 @@ export class WorkstreamTranscriptStorage {
         revised: Boolean(imported.data.supersedesTurnId),
       }) : turn.actor === "assistant" ? null : turn.actor === "system" ? projectSidekickPostMessage({
         structuredContent: text.structuredContent,
+        deliveredAt: turn.createdAtUtc,
         text: text.text,
         mentions,
         overheard: true,

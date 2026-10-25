@@ -2739,6 +2739,11 @@ describe("a member's message travels the whole pipeline", () => {
       expect(question.status).toBe(200);
       await settledRunForTrigger(stub, (question.body.turn as { turnId: string }).turnId);
 
+      const deliveredAt = await runInDurableObject(stub, (_instance, state) => new Date(
+        state.storage.sql.exec<{ created_at: number }>(
+          `SELECT created_at FROM participant_transcript_turns WHERE turn_id = ?`, posted.messageId,
+        ).one().created_at,
+      ).toISOString());
       const last = (await capturedProviderRequests(stub)).at(-1);
       expect(last).toBeDefined();
       const messages = last!.body.messages as Array<{ role?: unknown; content?: unknown }>;
@@ -2752,7 +2757,7 @@ describe("a member's message travels the whole pipeline", () => {
         role: "user",
         content: "SAID TO THE ROOM, NOT TO RALLY\n"
           + "New help-list email. Help email ID: 1a16ff84e56cd0f1. Suggested reply: Thanks, we received it.\n\n"
-          + `<rally_author>{"sidekick_id":"${automationId}","display_name":"Help desk"}</rally_author>`,
+          + `<rally_author>{"sidekick_id":"${automationId}","display_name":"Help desk","delivered_at":"${deliveredAt}"}</rally_author>`,
       });
     } finally {
       await restoreProviderFetch(stub);
