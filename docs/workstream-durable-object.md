@@ -1461,6 +1461,14 @@ tree, removes the run's output, compaction, and inference-delay checkpoints,
 settles the Channel state, and requests cancellation of subordinate runs.
 Callers cannot select a subset of those responsibilities.
 
+The run's `input_tokens`, `output_tokens` and `cost_micros` columns are derived
+from `usage_json` (`prompt_tokens`, `completion_tokens`, `cost_cents`) in the
+same statement that writes it, both in the terminal commit and in the fenced
+progress flush, so the columns cannot disagree with the JSON. The other
+counters on `runs` (`step_count`, `tool_count`, `model_iteration`,
+`subrequest_count`, `output_bytes`, the elapsed times) are still written as 0
+and read by nothing; `retry_count` is maintained.
+
 Persistent-loop release remains part of the caller's authority check, before
 the common commit, because a loop with unsettled provider protocol must stay
 owned for recovery. Regional projection intent remains outside the storage
@@ -1950,6 +1958,27 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-10-25 — A run's token and cost columns carry its usage
+
+**What changed:** The terminal commit and the progress flush now set
+`runs.input_tokens`, `output_tokens` and `cost_micros` from the `usage_json`
+they write, in SQL in the same statement.
+
+**Why:** Every insert wrote those columns as 0 and nothing updated them, so a
+query against `runs` reported zero tokens and zero cost for every run while the
+real totals sat in `usage_json` and `inference_attempts`. No product code reads
+the columns; an operator diagnosing a conversation did, and was misled.
+
+**Considered and rejected:** Passing the numbers in from the host, which would
+be a second source that can drift from the JSON. Dropping the columns, which
+is a table rebuild for columns that are now correct. Backfilling old rows,
+which is a bulk rewrite the constructor migration rules forbid; their totals
+are still in `usage_json`.
+
+**Consequences:** Rows written before this change keep their zeros. The other
+zeroed counters listed above are unchanged; derive or drop them rather than
+start writing a second copy from the host.
 
 ### 2026-10-23 — Preserve loop time and historical state identities
 
