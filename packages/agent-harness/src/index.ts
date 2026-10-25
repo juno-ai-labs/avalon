@@ -3654,7 +3654,7 @@ export function withoutUnusableDraftResourceIds(
 export const AVALON_REQUEST_ELICITATION_TOOL_DEFINITION = {
   name: "request_elicitation",
   description:
-    "Ask a structured blocking question and pause this harness run for human input. Call this only for what no authorized tool can determine: a value a connector, memory, or a durable table could look up is not missing input, so search for it first and ask only if that search comes back empty. Check the plugin catalog as part of that search — a connector listed there can answer even though its tools are absent from the current turn, and the tools in front of you are only the ones already loaded. State in the prompt what you already searched and what it returned.",
+    "Ask a structured blocking question and pause this harness run for human input. Call this only for what no authorized tool can determine: a value a connector, memory, or a durable table could look up is not missing input, so search for it first and ask only if that search comes back empty. Check the plugin catalog as part of that search — a connector listed there can answer even though its tools are absent from the current turn, and the tools in front of you are only the ones already loaded. State in the prompt what you already searched and what it returned. A result with `skipped: true` means the person chose not to answer: do not ask the same question again; continue with what you have, or ask something different.",
   capability: "elicitation.write",
   mode: "write",
   // The question ID is derived from this receipt key, so a replay converges on
