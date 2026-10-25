@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
+import type * as MessageExport from '../lib/message-export';
 import type { Message } from '../lib/types';
 import { ConversationExportRenderer, conversationExportTurns } from './conversation-export';
 
 const renders = vi.hoisted(() => ({ count: 0 }));
 vi.mock('../lib/message-export', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../lib/message-export')>();
+  const actual = await importOriginal<typeof MessageExport>();
   return {
     ...actual,
     renderToHtml: (content: React.ReactElement) => { renders.count += 1; return actual.renderToHtml(content); },
