@@ -56,6 +56,8 @@ export interface SidekickModelAuthor {
   type: "sidekick";
   sidekickId: string | null;
   displayName: string;
+  /** When the post was delivered, so a daily digest says which day it is from. */
+  deliveredAt: string | null;
   externalSource: { provider: string; displayName: string } | null;
 }
 
@@ -185,6 +187,7 @@ function withAuthorAttribution(
     ? {
         ...(author.sidekickId ? { sidekick_id: author.sidekickId } : {}),
         display_name: author.displayName,
+        ...(author.deliveredAt ? { delivered_at: author.deliveredAt } : {}),
         ...(author.externalSource ? {
           forwarded_from: { provider: author.externalSource.provider, display_name: author.externalSource.displayName },
         } : {}),
@@ -251,13 +254,13 @@ export function projectParticipantTextMessage(input: Pick<
 /**
  * A Sidekick's post or activation row, as the model reads it.
  *
- * The one rendering for every path that puts such a row in front of a model:
- * the gap-fill, the bootstrap from history, and admission. They used to differ,
- * so whether the model could attribute a post depended on which path loaded
- * it. `overheard` is false only when the row is the input the run answers.
+ * The one rendering for the gap-fill and the bootstrap from history, so a post
+ * reads the same whichever path loaded it. `overheard` is false only when the
+ * row is the input the run answers.
  */
 export function projectSidekickPostMessage(input: {
   structuredContent: unknown;
+  deliveredAt: string | null;
   text: string;
   mentions: ParticipantModelProjectionInput["mentions"];
   overheard: boolean;
@@ -268,6 +271,7 @@ export function projectSidekickPostMessage(input: {
       type: "sidekick",
       sidekickId: post.success ? post.data.automationId : null,
       displayName: post.success ? post.data.automationName : automationActivationName(input.structuredContent),
+      deliveredAt: input.deliveredAt,
       externalSource: post.success ? post.data.externalSource ?? null : null,
     },
     text: input.text,

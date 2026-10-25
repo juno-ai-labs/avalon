@@ -525,6 +525,7 @@ describe("durable UI-to-model transcript projection", () => {
       role: "user",
       content: "SAID TO THE ROOM, NOT TO RALLY\nHelp email ID: 1a16ff84e56cd0f1\n\n"
         + `<rally_author>{"sidekick_id":"${sidekickId}","display_name":"Help desk",`
+        + `"delivered_at":"2026-08-01T00:00:01.000Z",`
         + `"forwarded_from":{"provider":"gmail","display_name":"Katherine"}}</rally_author>`,
     });
   });

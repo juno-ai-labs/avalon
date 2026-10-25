@@ -1441,6 +1441,7 @@ async function projectModelProtocolTranscript(
       // addressed to Rally; every other post was said to the room.
       const post = projectSidekickPostMessage({
         structuredContent: message.structuredContent,
+        deliveredAt: message.createdAt,
         text: message.textContent,
         mentions: message.mentions,
         overheard: message.id !== input.triggerMessageId,
