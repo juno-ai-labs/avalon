@@ -26,12 +26,13 @@ export interface ConversationExportTurn {
  * The turns a conversation's PDF prints: what people and Rally said, and a
  * Sidekick's delivered results. The machinery around them (thinking, tools,
  * system notes, questions) is how an answer was made, not part of what was
- * said, and is left out. Names follow the feed's byline.
+ * said, and is left out, and so is anything not finished being said: a turn
+ * still streaming, or a message not yet delivered. Names follow the feed's byline.
  */
 export function conversationExportTurns(messages: readonly Message[]): ConversationExportTurn[] {
   return messages.flatMap((message) => {
     const text = message.text?.trim();
-    if (!text || message.deliveryState) return [];
+    if (!text || message.deliveryState || message.streaming) return [];
     if (message.messageType !== 'text' && message.messageType !== 'automation_activation') return [];
     if (message.authorType === 'system') return [];
     const human = message.authorType === 'human' || message.authorType === 'external';
@@ -43,6 +44,14 @@ export function conversationExportTurns(messages: readonly Message[]): Conversat
       : 'Rally';
     return [{ id: message.id, author, createdAt: message.createdAt, text: message.text!, human, mentions: message.mentions ?? [] }];
   });
+}
+
+/** The conversation has nothing `conversationExportTurns` would print. */
+export class EmptyConversationExportError extends Error {
+  constructor() {
+    super('This conversation has no messages to export.');
+    this.name = 'EmptyConversationExportError';
+  }
 }
 
 const TIME_FORMAT: Intl.DateTimeFormatOptions = { dateStyle: 'medium', timeStyle: 'short' };
@@ -101,7 +110,7 @@ export async function saveConversationExport(input: {
   renderer: ConversationExportRenderer;
 }): Promise<MessageExportResult> {
   const sections = input.renderer.sections(input.messages);
-  if (sections.length === 0) throw new Error('This conversation has no messages to export.');
+  if (sections.length === 0) throw new EmptyConversationExportError();
   const title = input.title ? renderToHtml(<h1 className="export-conversation-title">{input.title}</h1>) : '';
   return await saveRenderedExport({
     contentHtml: title + sections.join(''),

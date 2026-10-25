@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type * as MessageExport from '../lib/message-export';
+import { orderedTranscriptMessages } from '../lib/transcript';
 import type { Message } from '../lib/types';
+import type { WorkstreamTranscriptSnapshot } from '@rally/contracts';
 import { ConversationExportRenderer, conversationExportTurns } from './conversation-export';
 
 const renders = vi.hoisted(() => ({ count: 0 }));
@@ -36,6 +38,7 @@ describe('the turns a conversation export prints', () => {
       message({ id: 'g', authorType: 'external', externalActor: { displayName: 'Priya' } as Message['externalActor'], text: 'From Slack' }),
       message({ id: 'h', text: '   ' }),
       message({ id: 'i', authorType: 'human', author: { id: 'u1', name: 'Maya' }, text: 'Not sent yet', deliveryState: 'sending' }),
+      message({ id: 'j', text: 'Half an answ', streaming: true }),
     ]);
     expect(turns.map(({ id, author, human, text }) => ({ id, author, human, text }))).toEqual([
       { id: 'a', author: 'Maya', human: true, text: 'Where are we on pricing?' },
@@ -65,5 +68,41 @@ describe('rendering a conversation export', () => {
     expect(renders.count).toBe(3);
     expect(edited[0]).toBe(first[0]);
     expect(edited[1]).toContain('Three tiers are settled.');
+  });
+});
+
+describe('rendering a conversation export page by page', () => {
+  const turn = (sequence: number, human: boolean) => ({
+    transcriptSequence: sequence, turnId: `turn-${sequence}`, entryKind: 'conversation' as const,
+    actor: human ? 'human' as const : 'assistant' as const,
+    authorUserId: human ? 'user-adam' : null,
+    authorSnapshot: human ? { userId: 'user-adam', displayName: 'Adam', avatarUrl: null } : null,
+    attentionOrdinal: human ? sequence : null, createdAtUtc: `2026-10-24T12:00:0${sequence}.000Z`, revision: 1,
+    blocks: [{ type: 'text' as const, blockId: `turn-${sequence}:text:0`, blockIndex: 0, text: `Turn ${sequence}`, streaming: false }],
+    activityId: null,
+  });
+  const page = (start: number) => ({
+    purpose: 'requested' as const,
+    requested: { startInclusive: start, endExclusive: start + 2 },
+    covered: { startInclusive: start, endExclusive: start + 2 },
+    turns: [turn(start, true), turn(start + 1, false)], activities: [], pluginRuns: [],
+  });
+  const snapshot: WorkstreamTranscriptSnapshot = {
+    snapshotId: 's', snapshotThrough: 4, eventSequence: 1, snapshotAtUtc: '2026-10-24T12:00:00.000Z',
+    unreadAnchorSequence: null, unreadReason: 'no_unread', ranges: [page(1), page(3)],
+    activities: [], activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
+  };
+
+  it('renders a page from its own turns into the entries the whole transcript reads', () => {
+    const renderer = new ConversationExportRenderer(undefined);
+    renders.count = 0;
+    for (const range of snapshot.ranges) renderer.sections(orderedTranscriptMessages({ ...snapshot, ranges: [range] }, 'w1'));
+    expect(renders.count).toBe(4);
+
+    const whole = renderer.sections(orderedTranscriptMessages(snapshot, 'w1'));
+    expect(renders.count).toBe(4);
+    expect(whole).toHaveLength(4);
+    expect(whole[0]).toContain('<span class="export-turn-author">Adam</span>');
+    expect(whole[3]).toContain('Turn 4');
   });
 });

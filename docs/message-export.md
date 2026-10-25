@@ -137,15 +137,18 @@ template. Two details carry the page design:
   embeds a static TrueType face as an ordinary CID font, but writes a CFF face
   (Inter as most systems install it, SF Mono) or a variable one (the Mac's
   system font, the app's Geist Mono) as Type 3 glyphs whose font bounding box
-  is upside down. Viewers that clip glyphs to that box show every page blank
-  white. So the card embeds `MESSAGE_EXPORT_FONTS`: Inter Regular, SemiBold,
+  is upside down (`pdftoppm` warns "Bad bounding box in Type 3 glyph"). A
+  viewer that clips glyphs to that box would draw no text, so the card embeds `MESSAGE_EXPORT_FONTS`: Inter Regular, SemiBold,
   Bold and Italic, and Geist Mono Regular, as static TrueType files from
   `apps/desktop/resources/export-fonts` (shipped as `export-fonts` resources,
   with their OFL licences). The main process reads all five at once on the
   first export, alongside the window starting up, and keeps them for the
   session. The PDF path waits for `document.fonts.ready` before printing.
-  Weights between the files (560, 640, 660) take the nearest face. Text in a
-  script the faces lack (CJK, emoji) still falls back to a system font.
+  CSS matching sends 560 to SemiBold and 640, 660 and 680 to Bold, which is
+  why there is no Medium. Text the faces lack (emoji, CJK, symbols such as ✓)
+  still falls back to a system font and still comes out as Type 3.
+  Whether Type 3 is what blanks a page has not been confirmed: a reported
+  all-white PDF stayed white for its reporter with no Type 3 font in it.
 - **The footer is set in Arial.** Chromium loads no web fonts into a template's
   frame, inline `@font-face` included, so the footer can only use an installed
   font, and Arial is the static TrueType face every Mac has.
@@ -157,7 +160,7 @@ a page and a table is not split away from its header.
 ### A whole conversation
 
 **Export conversation to PDF** in a thread's or a breakout's **More** menu
-sends the same request with `scope: 'conversation'`. Three things differ from
+sends the same request with `scope: 'conversation'`. Four things differ from
 one message:
 
 1. **The history is read in parallel, and rendered as it lands.** The feed
@@ -167,9 +170,14 @@ one message:
    each on the socket at once. Each reply is merged into the feed's cache as
    its frame arrives, so they can land in any order. While they are in
    flight, the turns already here render, and each page's turns render as
-   that page lands. A round that saw `transcript_snapshot_changed`, or that
-   covered less than it asked for, is followed by another round over what is
-   still missing. The pages stay in the feed afterwards. The Rally mark's
+   that page lands, rendered from that page's turns alone: a text message's
+   identity is its block's, so it is the same cache entry the whole
+   transcript reads, and the work stays proportional to the page. A round
+   that saw `transcript_snapshot_changed`, a page that waited out the socket's
+   15-second range timeout behind the others, or a page that covered less
+   than it asked for, is followed by another round over what is still
+   missing; a round that loads nothing new fails the export rather than
+   asking forever. The pages stay in the feed afterwards. The Rally mark's
    read starts at the same moment (`prepareMessageExport`), so nothing waits
    for it at the end.
 2. **Each turn renders once.** `ConversationExportRenderer` keeps every turn's
@@ -180,7 +188,8 @@ one message:
 3. **Only what was said is printed.** `conversationExportTurns` keeps text
    turns and a Sidekick's delivered results, each under the byline the feed
    gives it and an absolute date and time. Thinking, tools, system notes,
-   open questions and undelivered messages are left out. A person's words are
+   open questions, a turn still streaming and an undelivered message are left
+   out. A person's words are
    drawn as typed (`verbatim`); Rally's carry their citations.
 4. **There is no size bound.** A conversation has no `contentHtml` ceiling,
    because the person asked for all of it and a ceiling would refuse exactly
@@ -188,8 +197,14 @@ one message:
    for as a picture.
 
 A breakout prints its own turns, not the thread turns it started from. The row
-is held as **Exporting conversation…** while one is being prepared, and a
-failure opens the menu's usual failure dialog.
+is held as **Exporting conversation…** while one is being prepared. The hold
+belongs to the conversation that started it, because the surface is reused
+across conversations. Moving to another conversation while pages are still
+loading abandons the export without a dialog, since the range requests go to
+the socket of whatever the surface shows; once every page has loaded, the save
+goes ahead from the snapshot that holds them. A failure opens the menu's usual failure dialog, which says
+when there was nothing to print. The option is shown wherever the desktop
+bridge exists (`desktopServicesAvailable`), which is the Mac app today.
 
 ### One at a time
 
@@ -370,11 +385,14 @@ is independent and the socket correlates replies by request ID; turns render
 while pages are in flight and are cached per conversation, so a repeat export
 costs only the turns that changed.
 
-The faces fix PDFs that opened as blank white pages. The card named Inter and
-the system fonts, and Chromium writes those (CFF on most installs, variable on
-a Mac) as Type 3 glyphs with an inverted font bounding box, which some viewers
-clip to nothing. Only a static TrueType face is embedded as an ordinary font,
-which every viewer draws. The footer can't use the embedded faces because
+The faces answer a report of a PDF that opened as blank white pages. The card
+named Inter and the system fonts, and Chromium writes those (CFF on most
+installs, variable on a Mac) as Type 3 glyphs with an inverted font bounding
+box, which a viewer that clips to that box would draw as nothing. Only a
+static TrueType face is embedded as an ordinary font. This was not confirmed
+as the cause: the reporter's viewer still showed white for a file with no
+Type 3 font in it, while Poppler, MuPDF, Ghostscript and pdf.js all drew it,
+so the blank page is still open. The footer can't use the embedded faces because
 Chromium loads no web fonts into a template, inline ones included; Arial is
 installed as static TrueType on every Mac. A variable Inter was rejected for
 the same Type 3 reason, and a Latin-only subset was rejected to keep Greek and
@@ -386,8 +404,8 @@ loaded ranges has to give the export another way to read the full history.
 The conversation scope has no size bound, and the parallel page requests have
 no cap on how many are in flight, both by design; if either is wanted, its
 number is the team's to set. A face added to the card must be static TrueType
-(`glyf` outlines, no `fvar`), or it brings the blank pages back: check a saved
-file with `pdffonts`, where nothing should be `Type 3`.
+(`glyf` outlines, no `fvar`), or it brings the Type 3 output back: check a
+saved file with `pdffonts`.
 
 ### 2026-08-30 — Mermaid diagrams save as source
 

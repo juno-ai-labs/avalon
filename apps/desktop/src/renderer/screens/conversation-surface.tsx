@@ -2301,49 +2301,70 @@ function ConversationSurfaceContent({
   // rendered as it lands while the rest are still on their way. The feed keeps
   // the pages, and the renderer keeps each turn's HTML for as long as this
   // conversation is open, so a second export re-renders only what changed.
-  const [exportingPdf, setExportingPdf] = useState(false);
+  //
+  // The pending row belongs to the conversation that started the export: this
+  // surface is reused across conversations, and a flag of its own would leave
+  // the next one's row stuck on "Exporting".
+  const [exportingAddress, setExportingAddress] = useState<string | null>(null);
   const exportRendererRef = useRef<{ address: string; renderer: ConversationExportRenderer } | null>(null);
   const exportPdf = async (): Promise<void> => {
-    const stillCurrent = (): boolean => activeConversationAddressRef.current === conversationAddress;
+    const generation = conversationGenerationRef.current;
+    const stillCurrent = (): boolean => activeConversationAddressRef.current === conversationAddress
+      && conversationGenerationRef.current === generation;
     prepareMessageExport();
     const held = exportRendererRef.current;
     const renderer = held?.address === conversationAddress && held.renderer.citations === citations
       ? held.renderer : new ConversationExportRenderer(citations);
     exportRendererRef.current = { address: conversationAddress, renderer };
-    const messages = (): Message[] => orderedTranscriptMessages(
-      queryClient.getQueryData<WorkstreamTranscriptSnapshot>(transcriptQueryKey), id, visibleMembers);
-    setExportingPdf(true);
+    const messagesOf = (snapshot: WorkstreamTranscriptSnapshot | undefined): Message[] =>
+      orderedTranscriptMessages(snapshot, id, visibleMembers);
+    setExportingAddress(conversationAddress);
     try {
+      let complete: WorkstreamTranscriptSnapshot;
       for (;;) {
+        // The range requests go to this surface's socket, which belongs to
+        // whichever conversation it shows now; moving away while pages are
+        // still loading abandons the export. Once they have all loaded, the
+        // save goes ahead from the snapshot that holds them.
         if (!stillCurrent()) return;
         const snapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(transcriptQueryKey);
         if (!snapshot) throw new Error('The conversation has not loaded yet');
         const blocks = transcriptGapBlocks(snapshot);
-        // Every request is on the socket before anything renders.
+        // Every request is on the socket before anything renders. A page
+        // renders from its own turns alone: a text message's identity is its
+        // block's, so it keys the same cache entry the whole transcript would,
+        // and the work stays proportional to the page rather than the history.
         const pages = blocks.map((range) => loadTranscriptRange({
           snapshotId: snapshot.snapshotId,
           range,
           resumeAfterEventSequence: snapshot.eventSequence,
-        }).then(() => { if (stillCurrent()) renderer.sections(messages()); }));
-        renderer.sections(messages());
-        if (blocks.length === 0) break;
+        }).then((page) => {
+          if (stillCurrent()) renderer.sections(messagesOf({ ...snapshot, ranges: [page], activeTurns: [] }));
+        }));
+        renderer.sections(messagesOf(snapshot));
+        if (blocks.length === 0) {
+          complete = snapshot;
+          break;
+        }
         const settled = await Promise.allSettled(pages);
-        // A changed snapshot is answered by the next round, under the new one.
+        // A changed snapshot, or a page that waited out its timeout behind the
+        // others, is asked for again by the next round. A round that moved
+        // nothing ends the export below rather than asking forever.
         const failure = settled.find((result): result is PromiseRejectedResult => result.status === 'rejected'
-          && !(result.reason instanceof ApiError && result.reason.code === 'transcript_snapshot_changed'));
+          && !(result.reason instanceof ApiError
+            && (result.reason.code === 'transcript_snapshot_changed' || result.reason.code === 'transcript_range_timeout')));
         if (failure) throw failure.reason;
         const next = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(transcriptQueryKey);
         if (!next || (next.snapshotId === snapshot.snapshotId && !transcriptCoverageAdvanced(snapshot, next))) {
           throw new Error(`Transcript ranges ${blocks.map((block) => `${block.startInclusive}-${block.endExclusive}`).join(',')} did not load`);
         }
       }
-      if (!stillCurrent()) return;
-      await saveConversationExport({ title: displayedDetail.title, messages: messages(), renderer });
+      await saveConversationExport({ title: displayedDetail.title, messages: messagesOf(complete), renderer });
     } catch (error) {
       logError('rally', 'could not export this conversation as a PDF', error);
       throw error;
     } finally {
-      if (stillCurrent()) setExportingPdf(false);
+      setExportingAddress((current) => current === conversationAddress ? null : current);
     }
   };
   useEffect(() => {
@@ -3705,7 +3726,7 @@ function ConversationSurfaceContent({
         openArtifact: sidebarScope === 'workstream' ? sidebarCitations.openPreview : citations.openPreview,
         rename: (title) => renameWorkstream.mutateAsync(title).then(() => undefined),
         setAppearance: socketConnection.setAppearance,
-        exportPdf: desktopServicesAvailable() ? { pending: exportingPdf, run: exportPdf } : undefined,
+        exportPdf: desktopServicesAvailable() ? { pending: exportingAddress === conversationAddress, run: exportPdf } : undefined,
         people: parentKind === 'workstream' ? {
           ...peopleRanking,
           candidates: visibleMembers,

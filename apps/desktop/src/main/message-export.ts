@@ -150,11 +150,11 @@ export interface MessageExportDependencies {
  * embeds a static TrueType face as a normal CID font, but writes a CFF face
  * (Inter as most systems install it, SF Mono) or a variable one (the Mac's
  * system font, the app's own Geist Mono) as Type 3 glyphs with an upside-down
- * font bounding box. Viewers that trust that box clip every glyph, and the
- * person opens a PDF of empty white pages. Embedding these means the card
- * never reaches for a system font for Latin, Greek or Cyrillic text.
+ * font bounding box, which a viewer that clips to that box draws as nothing.
+ * Embedding these means the card never reaches for a system font for Latin,
+ * Greek or Cyrillic text.
  *
- * The weights between files (560, 640, 660) take the nearest face, which is
+ * CSS matching sends 560 to SemiBold and 640, 660 and 680 to Bold, which is
  * why there is no Medium. Italic bold is synthesized.
  */
 export const MESSAGE_EXPORT_FONTS = [

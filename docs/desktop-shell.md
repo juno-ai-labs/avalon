@@ -410,7 +410,7 @@ keyboard focus on its frame, so ArrowLeft and Escape still return to the root.
   my sidebar** (the sidebar's own pin action, lent through `useUiStore.pinChannel`),
   **Public to organization** (a switch both ways; a refusal to make it private
   names what holds it public), Import updates, **Export conversation to PDF**
-  (Mac app only; see [`message-export.md`](message-export.md#a-whole-conversation)),
+  (desktop app only; see [`message-export.md`](message-export.md#a-whole-conversation)),
   host extras, other resources, and **Archive thread** last.
 - **Channel menu** (`ChannelContainerMenu`, on the Channel screen): tiles for
   Add people, Rename, Copy link (the Channel's `/s/` address) and More; People
@@ -431,7 +431,7 @@ keyboard focus on its frame, so ArrowLeft and Escape still return to the root.
   thread**) and the message it started from. People (inviting to the
   Breakout alone) and Sidekicks as above;
   More is Icon and color, **Public to organization**, **Export conversation to
-  PDF** (Mac app only), and **Archive breakout** last.
+  PDF** (desktop app only), and **Archive breakout** last.
 - **Memory** (thread, Breakout and Channel menus, `TitleMenuMemory`): what
   Rally remembers about this conversation alone, newest first, drawn by
   `MemoryFactRows` (`packages/ui`), the same renderer the Settings sections

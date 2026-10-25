@@ -39,7 +39,7 @@ function harness(options: {
     resizes: [] as Array<{ width: number; height: number; zoom: number }>,
     destroyed: 0,
     fontReads: [] as string[],
-    evaluated: [] as string[],
+    order: [] as string[],
     written: [] as Array<{ path: string; bytes: Uint8Array }>,
     documentAtLoad: null as string | null,
     documentAtMeasure: null as string | null,
@@ -66,8 +66,8 @@ function harness(options: {
           }
           if (options.failOn === 'load') throw new Error('did-fail-load');
         },
-        evaluate: async (script) => {
-          state.evaluated.push(script);
+        evaluate: async () => {
+          state.order.push('evaluate');
           state.documentAtMeasure = exporter.document(loadedUrl);
           return options.measuredHeight ?? 1_400;
         },
@@ -78,6 +78,7 @@ function harness(options: {
           return new Uint8Array([0xff, 0xd8, quality]);
         },
         printPdf: async (printOptions) => {
+          state.order.push('print');
           state.prints.push(printOptions);
           return new Uint8Array([0x25, 0x50, 0x44, 0x46]);
         },
@@ -359,7 +360,8 @@ describe('saving a message', () => {
     expect(test.state.documentAtLoad).toContain('font-family: "Rally Export Sans"; font-style: normal; font-weight: 600; src: url(data:font/ttf;base64,SW50ZXItU2VtaUJvbGQudHRm) format("truetype");');
     expect(test.state.documentAtLoad).toContain('font-family: "Rally Export Mono"; font-style: normal; font-weight: 400; src: url(data:font/ttf;base64,R2Vpc3RNb25vLVJlZ3VsYXIudHRm)');
     expect(test.state.documentAtLoad).toContain('font-family: "Rally Export Sans", Inter,');
-    expect(test.state.evaluated).toEqual(['document.fonts.ready.then(() => true)']);
+    // The page is asked to settle its fonts, and only then printed.
+    expect(test.state.order).toEqual(['evaluate', 'print']);
     // Chromium gives a footer no web fonts; Arial is the static TrueType face every Mac has.
     expect(test.state.prints[0]?.footerHtml).toContain('font-family:Arial,Helvetica,sans-serif');
   });

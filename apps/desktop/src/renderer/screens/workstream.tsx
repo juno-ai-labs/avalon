@@ -13,6 +13,7 @@ import { useLocation, useNavigate, useParams, useSearchParams } from 'react-rout
 import { copyWorkstreamLink } from '../lib/copy-workstream-link';
 import { asSubstreamId, asWorkspaceId, asWorkstreamId, conversationNeedsViewer, type ConversationMergeResult, type HarnessStatus } from '@rally/contracts';
 import { logError } from '../../common/logger';
+import { EmptyConversationExportError } from '../components/conversation-export';
 import { useCollaborationSession, useOptionalCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { mainOmitted, mainReachable, useConversationDirectory } from '../lib/conversation-directory';
 
@@ -420,10 +421,9 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       pending: context.exportPdf!.pending,
       onSelect: () => {
         setSubstreamMenuFailure(null);
-        void run().catch(() => setSubstreamMenuFailure({
-          title: 'The conversation couldn’t be exported',
-          copy: 'The conversation couldn’t be saved as a PDF. Try again.',
-        }));
+        void run().catch((error: unknown) => setSubstreamMenuFailure(error instanceof EmptyConversationExportError
+          ? { title: 'Nothing to export yet', copy: 'This conversation has no messages to save as a PDF yet.' }
+          : { title: 'The conversation couldn’t be exported', copy: 'The conversation couldn’t be saved as a PDF. Try again.' }));
       },
     };
   };
