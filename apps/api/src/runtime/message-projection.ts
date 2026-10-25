@@ -71,7 +71,7 @@ function projectMessage(
   const author: Message["author"] = externalActor.success
     ? { type: "external", actor: externalActor.data }
     : row.author_type === "human" && row.author_user_id
-      ? { type: "human", user: fabricatedUser(row.author_user_id, authors) }
+      ? { type: "human", user: fabricatedUser(row.author_user_id, row.author_name_snapshot, authors) }
       : row.author_type === "agent"
         ? { type: "agent" }
         : { type: "system" };
@@ -146,6 +146,7 @@ function messageTypeOf(stored: string): Message["messageType"] {
  */
 function fabricatedUser(
   userId: string,
+  nameSnapshot: string | null,
   authors: ReadonlyMap<string, MessageAuthorRow>,
 ): User {
   const participant = authors.get(userId);
@@ -159,7 +160,11 @@ function fabricatedUser(
     // Recorded rather than papered over: the identity slice is where this stops
     // being fabricated, and this is the field that proves it has to.
     email: "",
-    name: userId,
+    // The turn's own snapshot, the name the author had when they wrote it.
+    // Falling back to the id is what a model was handed as a person's
+    // display name for every Thread's opening message; the fallback is left
+    // only for a row with no snapshot, which the schema no longer writes.
+    name: nameSnapshot ?? userId,
     avatarUrl: null,
     timezone: "UTC",
     createdAt: new Date(participant?.added_at ?? 0).toISOString(),

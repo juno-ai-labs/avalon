@@ -121,7 +121,7 @@ function channelMessage(id: string, body: string, placedAt: string, from?: { tit
 
 function row(sequence: number, overrides: Partial<MessageRow> = {}): MessageRow {
   return {
-    id: `message-${sequence}`, client_message_id: null, author_type: "human", author_user_id: USER_ID,
+    id: `message-${sequence}`, client_message_id: null, author_type: "human", author_user_id: USER_ID, author_name_snapshot: null,
     external_actor_json: null, message_type: "text", text_content: `said ${sequence}`, structured_content_json: null,
     sequence_number: sequence, attention_ordinal: sequence, created_at: sequence * 1_000, edited_at: null,
     harness_run_id: null, harness_attempt_id: null, ...overrides,
