@@ -31,7 +31,7 @@ import { desktopBridge } from './platform';
  * effects that mount with it (a code block's copy button keeps state) run and
  * are torn down immediately; none of them changes what was serialized.
  */
-function renderToHtml(content: React.ReactElement): string {
+export function renderToHtml(content: React.ReactElement): string {
   const container = document.createElement('div');
   const root = createRoot(container);
   try {
@@ -70,18 +70,37 @@ async function rallyMarkDataUrl(): Promise<string> {
   return markDataUrl;
 }
 
-export async function saveMessageExport(input: {
-  content: React.ReactElement;
+/**
+ * Starts reading the mark now, for a save that still has its content to
+ * gather, so the read runs beside that work instead of after it.
+ */
+export function prepareMessageExport(): void {
+  void rallyMarkDataUrl().catch(() => undefined);
+}
+
+/** Saves content that is already HTML, rendered by `renderToHtml`. */
+export async function saveRenderedExport(input: {
+  contentHtml: string;
   fileName: string;
   format: MessageExportFormat;
   scope?: MessageExportScope;
 }): Promise<MessageExportResult> {
-  const [contentHtml, logoDataUrl] = [renderToHtml(input.content), await rallyMarkDataUrl()];
   return await desktopBridge().exportMessage({
-    contentHtml,
+    contentHtml: input.contentHtml,
     fileName: input.fileName,
     format: input.format,
     ...(input.scope ? { scope: input.scope } : {}),
-    logoDataUrl,
+    logoDataUrl: await rallyMarkDataUrl(),
   });
+}
+
+export async function saveMessageExport(input: {
+  content: React.ReactElement;
+  fileName: string;
+  format: MessageExportFormat;
+}): Promise<MessageExportResult> {
+  // The mark's read starts before the synchronous render, so the two overlap.
+  prepareMessageExport();
+  const { content, ...rest } = input;
+  return await saveRenderedExport({ ...rest, contentHtml: renderToHtml(content) });
 }

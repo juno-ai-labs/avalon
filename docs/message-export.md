@@ -142,18 +142,29 @@ a page and a table is not split away from its header.
 sends the same request with `scope: 'conversation'`. Three things differ from
 one message:
 
-1. **The history is read first.** The feed holds only the pages someone has
-   scrolled through. `ConversationSurface` reads every gap in the transcript
-   snapshot, oldest first and one `TRANSCRIPT_RANGE_BLOCK_SIZE` page at a
-   time, through the socket's own `loadTranscriptRange`, retrying on
-   `transcript_snapshot_changed` the way paging back does. The pages stay in
-   the feed afterwards.
-2. **Only what was said is printed.** `conversationExportTurns` keeps text
+1. **The history is read in parallel, and rendered as it lands.** The feed
+   holds only the pages someone has scrolled through. `ConversationSurface`
+   cuts every gap in the transcript snapshot into `TRANSCRIPT_RANGE_BLOCK_SIZE`
+   pages (`transcriptGapBlocks`) and puts a `loadTranscriptRange` request for
+   each on the socket at once. Each reply is merged into the feed's cache as
+   its frame arrives, so they can land in any order. While they are in
+   flight, the turns already here render, and each page's turns render as
+   that page lands. A round that saw `transcript_snapshot_changed`, or that
+   covered less than it asked for, is followed by another round over what is
+   still missing. The pages stay in the feed afterwards. The Rally mark's
+   read starts at the same moment (`prepareMessageExport`), so nothing waits
+   for it at the end.
+2. **Each turn renders once.** `ConversationExportRenderer` keeps every turn's
+   section HTML, keyed by everything the section draws. The surface holds one
+   per open conversation and replaces it when the conversation or its
+   citation context changes, which is what bounds it. A second export of the
+   same conversation renders only the turns that changed.
+3. **Only what was said is printed.** `conversationExportTurns` keeps text
    turns and a Sidekick's delivered results, each under the byline the feed
    gives it and an absolute date and time. Thinking, tools, system notes,
    open questions and undelivered messages are left out. A person's words are
    drawn as typed (`verbatim`); Rally's carry their citations.
-3. **There is no size bound.** A conversation has no `contentHtml` ceiling,
+4. **There is no size bound.** A conversation has no `contentHtml` ceiling,
    because the person asked for all of it and a ceiling would refuse exactly
    the long ones. It is always a PDF: the schema rejects a conversation asked
    for as a picture.
@@ -258,9 +269,10 @@ main-process capabilities and a browser has neither.
 - **A payload past its bounds** — one message's HTML over 600,000 characters, a
   mark over 400,000 — is rejected as an invalid request rather than rendered.
   The error names the rejected field. A conversation's HTML has no bound.
-- **A very long conversation** reads its history a page at a time before
-  anything renders, and still has the 60-second render cap above. Neither has
-  been measured against a long thread.
+- **A very long conversation** sends one range request per missing page, all at
+  once, with no cap on how many are in flight. Each has the socket's 15-second
+  range timeout, and the print still has the 60-second render cap above. None
+  of this has been measured against a long thread.
 - **The Rally mark failing to load** fails that export and is retried on the
   next, rather than being cached as a rejection.
 
@@ -331,12 +343,17 @@ drawn by `MarkdownBody`, and Chromium, the protocol and the save dialog are
 unchanged. A separate print path (the browser's own print dialog, or a PDF
 library in the renderer) was rejected because it would need a second
 stylesheet and a second markdown rendering. The feed's paging is reused for
-the same reason: the snapshot is the one place the transcript lives.
+the same reason: the snapshot is the one place the transcript lives. The
+pages are requested all at once rather than one after another, because each
+is independent and the socket correlates replies by request ID; turns render
+while pages are in flight and are cached per conversation, so a repeat export
+costs only the turns that changed.
 
 **What a future change has to respect:** the export reads every page of a
 conversation into the live feed's cache. A change that windows or evicts
 loaded ranges has to give the export another way to read the full history.
-The conversation scope has no size bound by design; if one is wanted, its
+The conversation scope has no size bound, and the parallel page requests have
+no cap on how many are in flight, both by design; if either is wanted, its
 number is the team's to set.
 
 ### 2026-08-30 — Mermaid diagrams save as source

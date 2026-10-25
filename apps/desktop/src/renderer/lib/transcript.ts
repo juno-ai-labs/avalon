@@ -1795,6 +1795,21 @@ export function transcriptGaps(snapshot: WorkstreamTranscriptSnapshot): Transcri
   return gaps;
 }
 
+/**
+ * Every gap, cut into the page size one range request asks for, oldest first.
+ * The pages are independent, so a reader that needs the whole history can ask
+ * for all of them at once instead of one after another.
+ */
+export function transcriptGapBlocks(snapshot: WorkstreamTranscriptSnapshot): TranscriptRange[] {
+  return transcriptGaps(snapshot).flatMap((gap) => {
+    const blocks: TranscriptRange[] = [];
+    for (let start = gap.startInclusive; start < gap.endExclusive; start += TRANSCRIPT_RANGE_BLOCK_SIZE) {
+      blocks.push({ startInclusive: start, endExclusive: Math.min(gap.endExclusive, start + TRANSCRIPT_RANGE_BLOCK_SIZE) });
+    }
+    return blocks;
+  });
+}
+
 export function adjacentTranscriptRange(
   snapshot: WorkstreamTranscriptSnapshot,
   direction: 'older' | 'newer',

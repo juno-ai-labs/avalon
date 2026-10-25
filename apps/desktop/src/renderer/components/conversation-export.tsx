@@ -1,5 +1,5 @@
 import { messageExportDate, messageExportFileName, type MessageExportResult } from '../../common/message-export';
-import { saveMessageExport } from '../lib/message-export';
+import { renderToHtml, saveRenderedExport } from '../lib/message-export';
 import type { Message } from '../lib/types';
 import type { CitationContext } from './markdown-citations';
 import { MarkdownBody } from './workstream-blocks';
@@ -47,36 +47,65 @@ export function conversationExportTurns(messages: readonly Message[]): Conversat
 
 const TIME_FORMAT: Intl.DateTimeFormatOptions = { dateStyle: 'medium', timeStyle: 'short' };
 
+function TurnSection({ citations, turn }: { citations: CitationContext | undefined; turn: ConversationExportTurn }): React.JSX.Element {
+  return <section className="export-turn">
+    <div className="export-turn-byline">
+      <span className="export-turn-author">{turn.author}</span>
+      <time className="export-turn-time" dateTime={turn.createdAt}>{new Date(turn.createdAt).toLocaleString(undefined, TIME_FORMAT)}</time>
+    </div>
+    <div className="export-turn-body">
+      {/* As the feed draws each: a person's words as typed, Rally's with
+          their citations. `still` keeps the sources a hover would show. */}
+      <MarkdownBody
+        {...(turn.human ? {} : citations ? { citations } : {})}
+        mentions={turn.mentions}
+        preserveLineBreaks={turn.human}
+        rallyMentions={turn.human}
+        still
+        verbatim={turn.human}
+      >{turn.text}</MarkdownBody>
+    </div>
+  </section>;
+}
+
+/**
+ * Each turn's section, rendered once and kept, so turns can be rendered as
+ * their pages arrive and a second export of the same conversation renders
+ * only what changed. A section is keyed by everything it draws, and the whole
+ * cache by the citation context it was drawn with: a new context (the
+ * conversation's resources changed) means a new renderer. The host holds one
+ * per open conversation, which is what bounds it.
+ */
+export class ConversationExportRenderer {
+  private readonly rendered = new Map<string, string>();
+
+  constructor(readonly citations: CitationContext | undefined) {}
+
+  /** Renders whatever is not rendered yet and answers every section, in order. */
+  sections(messages: readonly Message[]): string[] {
+    return conversationExportTurns(messages).map((turn) => {
+      const key = JSON.stringify([turn.id, turn.author, turn.createdAt, turn.human, turn.text, turn.mentions]);
+      let html = this.rendered.get(key);
+      if (html === undefined) {
+        html = renderToHtml(<TurnSection citations={this.citations} turn={turn} />);
+        this.rendered.set(key, html);
+      }
+      return html;
+    });
+  }
+}
+
 export async function saveConversationExport(input: {
   title: string;
   messages: readonly Message[];
-  citations?: CitationContext | undefined;
+  renderer: ConversationExportRenderer;
 }): Promise<MessageExportResult> {
-  const turns = conversationExportTurns(input.messages);
-  if (turns.length === 0) throw new Error('This conversation has no messages to export.');
-  return await saveMessageExport({
-    content: <>
-      {input.title && <h1 className="export-conversation-title">{input.title}</h1>}
-      {turns.map((turn) => <section className="export-turn" key={turn.id}>
-        <div className="export-turn-byline">
-          <span className="export-turn-author">{turn.author}</span>
-          <time className="export-turn-time" dateTime={turn.createdAt}>{new Date(turn.createdAt).toLocaleString(undefined, TIME_FORMAT)}</time>
-        </div>
-        <div className="export-turn-body">
-          {/* As the feed draws each: a person's words as typed, Rally's with
-              their citations. `still` keeps the sources a hover would show. */}
-          <MarkdownBody
-            {...(turn.human ? {} : input.citations ? { citations: input.citations } : {})}
-            mentions={turn.mentions}
-            preserveLineBreaks={turn.human}
-            rallyMentions={turn.human}
-            still
-            verbatim={turn.human}
-          >{turn.text}</MarkdownBody>
-        </div>
-      </section>)}
-    </>,
-    fileName: messageExportFileName(input.title || turns[0]!.text, messageExportDate(new Date())),
+  const sections = input.renderer.sections(input.messages);
+  if (sections.length === 0) throw new Error('This conversation has no messages to export.');
+  const title = input.title ? renderToHtml(<h1 className="export-conversation-title">{input.title}</h1>) : '';
+  return await saveRenderedExport({
+    contentHtml: title + sections.join(''),
+    fileName: messageExportFileName(input.title || conversationExportTurns(input.messages)[0]!.text, messageExportDate(new Date())),
     format: 'pdf',
     scope: 'conversation',
   });

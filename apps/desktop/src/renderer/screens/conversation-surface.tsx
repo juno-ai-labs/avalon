@@ -71,7 +71,8 @@ import { RelativeTime } from '../components/relative-time';
 import { BreakoutOrigin, breakoutOriginMessages, originExcerpt } from '../components/breakout-origin';
 import { formatDateTime } from '../lib/format';
 import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
-import { saveConversationExport } from '../components/conversation-export';
+import { ConversationExportRenderer, saveConversationExport } from '../components/conversation-export';
+import { prepareMessageExport } from '../lib/message-export';
 import { logError } from '../../common/logger';
 import { layoutKey, readArtifactPanel, writeLayout } from '../lib/desktop-layout';
 import {
@@ -96,9 +97,8 @@ import {
   orderedTranscriptMessages,
   removeTranscriptOverlay,
   setTranscriptElicitationState,
-  TRANSCRIPT_RANGE_BLOCK_SIZE,
   transcriptCoverageAdvanced,
-  transcriptGaps,
+  transcriptGapBlocks,
   transcriptOverlaysQueryKey,
   type TranscriptOverlay,
   upsertTranscriptOverlay,
@@ -2297,42 +2297,48 @@ function ConversationSurfaceContent({
     }
   }, [conversationAddress, feedLive, loadTranscriptRange, queryClient, transcriptQueryKey]);
   // The whole conversation as a PDF. The feed holds only the pages someone has
-  // scrolled through, so every missing range is read first, a page at a time,
-  // as scrolling back would read it; the feed keeps them afterwards.
+  // scrolled through, so every missing page is asked for at once, and each is
+  // rendered as it lands while the rest are still on their way. The feed keeps
+  // the pages, and the renderer keeps each turn's HTML for as long as this
+  // conversation is open, so a second export re-renders only what changed.
   const [exportingPdf, setExportingPdf] = useState(false);
+  const exportRendererRef = useRef<{ address: string; renderer: ConversationExportRenderer } | null>(null);
   const exportPdf = async (): Promise<void> => {
     const stillCurrent = (): boolean => activeConversationAddressRef.current === conversationAddress;
+    prepareMessageExport();
+    const held = exportRendererRef.current;
+    const renderer = held?.address === conversationAddress && held.renderer.citations === citations
+      ? held.renderer : new ConversationExportRenderer(citations);
+    exportRendererRef.current = { address: conversationAddress, renderer };
+    const messages = (): Message[] => orderedTranscriptMessages(
+      queryClient.getQueryData<WorkstreamTranscriptSnapshot>(transcriptQueryKey), id, visibleMembers);
     setExportingPdf(true);
     try {
       for (;;) {
         if (!stillCurrent()) return;
         const snapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(transcriptQueryKey);
         if (!snapshot) throw new Error('The conversation has not loaded yet');
-        const gap = transcriptGaps(snapshot)[0];
-        if (!gap) break;
-        try {
-          await loadTranscriptRange({
-            snapshotId: snapshot.snapshotId,
-            range: {
-              startInclusive: gap.startInclusive,
-              endExclusive: Math.min(gap.endExclusive, gap.startInclusive + TRANSCRIPT_RANGE_BLOCK_SIZE),
-            },
-            resumeAfterEventSequence: snapshot.eventSequence,
-          });
-        } catch (error) {
-          if (error instanceof ApiError && error.code === 'transcript_snapshot_changed') continue;
-          throw error;
-        }
+        const blocks = transcriptGapBlocks(snapshot);
+        // Every request is on the socket before anything renders.
+        const pages = blocks.map((range) => loadTranscriptRange({
+          snapshotId: snapshot.snapshotId,
+          range,
+          resumeAfterEventSequence: snapshot.eventSequence,
+        }).then(() => { if (stillCurrent()) renderer.sections(messages()); }));
+        renderer.sections(messages());
+        if (blocks.length === 0) break;
+        const settled = await Promise.allSettled(pages);
+        // A changed snapshot is answered by the next round, under the new one.
+        const failure = settled.find((result): result is PromiseRejectedResult => result.status === 'rejected'
+          && !(result.reason instanceof ApiError && result.reason.code === 'transcript_snapshot_changed'));
+        if (failure) throw failure.reason;
         const next = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(transcriptQueryKey);
         if (!next || (next.snapshotId === snapshot.snapshotId && !transcriptCoverageAdvanced(snapshot, next))) {
-          throw new Error(`Transcript range ${gap.startInclusive}-${gap.endExclusive} did not load`);
+          throw new Error(`Transcript ranges ${blocks.map((block) => `${block.startInclusive}-${block.endExclusive}`).join(',')} did not load`);
         }
       }
-      await saveConversationExport({
-        title: displayedDetail.title,
-        messages: orderedTranscriptMessages(queryClient.getQueryData(transcriptQueryKey), id, visibleMembers),
-        citations,
-      });
+      if (!stillCurrent()) return;
+      await saveConversationExport({ title: displayedDetail.title, messages: messages(), renderer });
     } catch (error) {
       logError('rally', 'could not export this conversation as a PDF', error);
       throw error;

@@ -24,6 +24,7 @@ import {
   mergeTranscriptRange,
   transcriptCoverage,
   transcriptCoverageAdvanced,
+  transcriptGapBlocks,
   transcriptGaps,
   transcriptOverlaysWithoutCanonicalMatch,
   reconcileAuthoritativeTranscriptOverlays,
@@ -1426,6 +1427,14 @@ describe('explicit transcript range coverage', () => {
     expect(transcriptGaps(snapshot)).toEqual([
       { startInclusive: 1, endExclusive: 10 },
       { startInclusive: 25, endExclusive: 46 },
+    ]);
+  });
+
+  it('cuts every gap into request-sized pages, oldest first', () => {
+    expect(transcriptGapBlocks(snapshot)).toEqual([
+      { startInclusive: 1, endExclusive: 10 },
+      { startInclusive: 25, endExclusive: 45 },
+      { startInclusive: 45, endExclusive: 46 },
     ]);
   });
 

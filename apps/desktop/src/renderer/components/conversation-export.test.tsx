@@ -1,6 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Message } from '../lib/types';
-import { conversationExportTurns } from './conversation-export';
+import { ConversationExportRenderer, conversationExportTurns } from './conversation-export';
+
+const renders = vi.hoisted(() => ({ count: 0 }));
+vi.mock('../lib/message-export', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/message-export')>();
+  return {
+    ...actual,
+    renderToHtml: (content: React.ReactElement) => { renders.count += 1; return actual.renderToHtml(content); },
+  };
+});
 
 function message(overrides: Partial<Message>): Message {
   return {
@@ -33,5 +42,27 @@ describe('the turns a conversation export prints', () => {
       { id: 'f', author: 'Weekly digest', human: false, text: 'Digest' },
       { id: 'g', author: 'Priya · Slack', human: true, text: 'From Slack' },
     ]);
+  });
+});
+
+describe('rendering a conversation export', () => {
+  it('draws each turn under its byline, and renders again only a turn that changed', () => {
+    const renderer = new ConversationExportRenderer(undefined);
+    const maya = message({ id: 'a', authorType: 'human', author: { id: 'u1', name: 'Maya' }, text: 'Where are we?' });
+    const rally = message({ id: 'b', text: 'Two tiers are **settled**.' });
+    renders.count = 0;
+
+    const first = renderer.sections([maya, rally]);
+    expect(renders.count).toBe(2);
+    expect(first[0]).toContain('<span class="export-turn-author">Maya</span>');
+    expect(first[1]).toContain('<strong>settled</strong>');
+
+    expect(renderer.sections([maya, rally])).toEqual(first);
+    expect(renders.count).toBe(2);
+
+    const edited = renderer.sections([maya, { ...rally, text: 'Three tiers are settled.' }]);
+    expect(renders.count).toBe(3);
+    expect(edited[0]).toBe(first[0]);
+    expect(edited[1]).toContain('Three tiers are settled.');
   });
 });
