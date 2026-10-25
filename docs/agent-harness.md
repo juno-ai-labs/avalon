@@ -1857,14 +1857,19 @@ projection at the next text admission. It renders as a user-role message under
 the said-to-the-room header, with a `<rally_author>` trailer holding the
 Sidekick's `sidekick_id` and frozen `display_name`, and `forwarded_from` when
 the post carries an `externalSource`. A post whose structured content does not
-parse is skipped rather than given an invented author.
+parse keeps its text under the name "Sidekick" with no `sidekick_id`, rather
+than an invented one. The same `projectSidekickPostMessage` renders a post on
+every path that builds context: the gap-fill, the bootstrap from history
+(`projectModelProtocolTranscript`, which used to render
+`"<name>", delivered <time>.` with no id), and admission. Only a post that is
+the run's own trigger drops the said-to-the-room header.
 
 **Why:** A help-desk Sidekick posted an email and a suggested reply into a
 Thread. The member said "send that reply", and the model had never seen the
 post: `appendConversationPost` writes only the canonical turn, and the
 gap-fill took human, external and imported turns of type `text`. The model
-searched Gmail, picked an unrelated thread whose subject matched the Thread's
-title, and sent the reply there twice.
+searched Gmail, picked an unrelated thread from its own search results, and
+sent the reply there twice.
 
 **Considered and rejected:** Admitting the post as a `starts_run = 0` loop
 input. It would reach the model by the same transition, but posting would then
@@ -1879,7 +1884,13 @@ and are not backfilled. A scheduled activation admitted through
 `admitSystemActivation` is the same kind of turn but is skipped by its
 `participant_turn` provenance, so the model reads it once.
 
-**Also:** the tool result for an answered question now carries `skipped: true`
+**Also:** the history bootstrap's message reader now selects each turn's
+`author_name_snapshot`. It had filled a person's name with their user id, so
+every Thread's opening message told the model the person was called
+`019fd8c0-…`, while later turns, rendered by the gap-fill from the snapshot,
+named them.
+
+The tool result for an answered question now carries `skipped: true`
 when the person skipped it. Before, a skip read as `answer: null`, the same as
 nothing, and the model asked the same question again as plain text. A flag
 rather than a sentinel string, because a text answer could be any string. The
