@@ -724,7 +724,9 @@ says whether the turn was meant for Rally, and the trailer says who said it.
 Both a request and an aside carry the trailer; only an aside carries the header.
 An external turn keeps its own header instead, because a provider display name
 is a claim the model must weigh rather than a member id the workspace vouches
-for. A turn whose `author_user_id` is somehow absent renders unattributed: the
+for. A Sidekick's `conversation_post` is projected as an aside whose trailer
+holds `sidekick_id` and the name frozen at delivery, never a `person_id`, plus
+`forwarded_from` when the post forwards somebody outside Rally. A turn whose `author_user_id` is somehow absent renders unattributed: the
 alternatives are inventing a person id a run could write into a durable
 evaluator rule, or dropping somebody's words to punish a corrupt column.
 

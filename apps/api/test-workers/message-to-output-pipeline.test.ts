@@ -141,6 +141,7 @@ const INTERLEAVED_TOOLS_MODEL = "pipeline-b12/primary";
 const QUEUED_FOLLOW_UP_MODEL = "pipeline-queued/primary";
 const RETRY_AFTER_ASSISTANT_TURN_MODEL = "pipeline-retry-fence/primary";
 const ASIDE_MODEL = "pipeline-aside/primary";
+const SIDEKICK_POST_MODEL = "pipeline-sidekick-post/primary";
 const PERSONAL_PROMPT_MODEL = "pipeline-personal-prompt/primary";
 const ASIDE_WINDOW_MODEL = "pipeline-aside-window/primary";
 const ASIDE_ELICITATION_MODEL = "pipeline-aside-elicitation/primary";
@@ -2627,6 +2628,78 @@ describe("a member's message travels the whole pipeline", () => {
       }));
       expect(mark.projectedThrough).toBe(mark.asideSequence);
       expect(mark.questionSequence).toBeGreaterThan(mark.projectedThrough);
+    } finally {
+      await restoreProviderFetch(stub);
+    }
+  });
+
+  it("carries a Sidekick's post to the model on the next run, attributed to the Sidekick", async () => {
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(
+        stub,
+        [
+          [{ choices: [{ delta: { content: "looked into it" }, finish_reason: "stop" }] }],
+          [{ choices: [{ delta: { content: "sending it" }, finish_reason: "stop" }] }],
+        ],
+        { primaryModel: SIDEKICK_POST_MODEL, fallbackModels: [] },
+      );
+      const opened = await initializeWorkstream(stub, "help with email replies", SIDEKICK_POST_MODEL);
+      expect(opened.status).toBe(200);
+      await settledRun(stub, opened.body.harnessRunId as string);
+      await waitForLoopRelease(stub);
+      const runsBefore = await runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM runs`).one().count);
+
+      // A help-desk Sidekick posts an email and a suggested reply. The post
+      // wakes nobody; it is a canonical turn the room reads.
+      const automationId = asAutomationId(crypto.randomUUID());
+      const clientMessageId = "conversation-post:sidekick-run:receipt-1";
+      const posted = await stub.appendConversationPost({
+        schemaVersion: 1, workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, substreamId: "0",
+        clientMessageId,
+        text: "New help-list email. Help email ID: 1a16ff84e56cd0f1. Suggested reply: Thanks, we received it.",
+        post: {
+          type: "automation_activation", schemaVersion: 1, automationId, automationName: "Help desk",
+          runId: crypto.randomUUID(), deliveryId: clientMessageId, trigger: { kind: "inbound_email" },
+          occurredAt: Date.now(),
+        },
+      });
+      expect(posted.outcome).toBe("appended");
+      expect(await runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM runs`).one().count))
+        .toBe(runsBefore);
+
+      // "send that reply" only means something if the model can read the post.
+      const question = await product(stub, {
+        operation: "create_message",
+        auth: AUTH,
+        input: {
+          text: "send that reply",
+          clientMessageId: "pipeline-sidekick-post-2",
+          mentions: [],
+          confirmedParticipantUserIds: [],
+          attachmentIds: [],
+        },
+      });
+      expect(question.status).toBe(200);
+      await settledRunForTrigger(stub, (question.body.turn as { turnId: string }).turnId);
+
+      const last = (await capturedProviderRequests(stub)).at(-1);
+      expect(last).toBeDefined();
+      const messages = last!.body.messages as Array<{ role?: unknown; content?: unknown }>;
+      const postIndex = messages.findIndex((message) =>
+        JSON.stringify(message.content).includes("1a16ff84e56cd0f1"));
+      const questionIndex = messages.findIndex((message) =>
+        JSON.stringify(message.content).includes("send that reply"));
+      expect(postIndex, "the Sidekick's post never reached the model").toBeGreaterThanOrEqual(0);
+      expect(questionIndex).toBeGreaterThan(postIndex);
+      expect(messages[postIndex]).toEqual({
+        role: "user",
+        content: "SAID TO THE ROOM, NOT TO RALLY\n"
+          + "New help-list email. Help email ID: 1a16ff84e56cd0f1. Suggested reply: Thanks, we received it.\n\n"
+          + `<rally_author>{"sidekick_id":"${automationId}","display_name":"Help desk"}</rally_author>`,
+      });
     } finally {
       await restoreProviderFetch(stub);
     }

@@ -367,7 +367,7 @@ recovery path.
 
 For subsequent messages that need addressing classification, a lightweight classifier returns `agent_action`, `human_only`, `both`, or `uncertain` with confidence and a terse rationale code. Explicit Rally/connector mentions and clear work requests invoke the harness. Social acknowledgement and human-only coordination can remain unanswered — including a message aimed at a teammate: the caller passes the display names of the people the message mentions (`humanMentions`, resolved from validated mention rows), and the prompt rules that a message telling or asking a mentioned person something is that person's to act on, even mid-task, unless it also asks Rally for work. The same signal gates the deterministic fast paths: an opening imperative short-circuits to `agent_action` only while the message mentions nobody, since "Please review the deck @Alex" hands the work to Alex, not to Rally. Uncertain messages invoke only when an active task or explicit tool context exists. The current message is preserved in full. Only the newest ten context messages with nonblank text are retained; empty and whitespace-only tool turns are excluded before selecting those ten. Older messages are omitted, and each retained message is bounded to 1,000 Unicode code points by keeping its opening and conclusion around a middle ellipsis. JEV receives that history in its state payload, and the model-independent OpenRouter prompt receives the same bytes: Terra uses that renderer when evaluated directly, while the hosted cascade uses it for the pinned DeepSeek fallback. The label is not exposed in the UI.
 
-A message that invokes nothing is still a turn the model reads. The conversation object appends every such human or external text turn to the loop's projection at the next text admission, in transcript order, ahead of the input that follows it — rendered with a header saying it was said to the room, not to Rally, and naming its author, so the model reads it as context rather than as a request ([`workstream-durable-object.md`](workstream-durable-object.md)). An elicitation answer carries no such fill; the turns said while the question was open wait for the next text input.
+A message that invokes nothing is still a turn the model reads. The conversation object appends every such human or external text turn, and every Sidekick `conversation_post`, to the loop's projection at the next text admission, in transcript order, ahead of the input that follows it — rendered with a header saying it was said to the room, not to Rally, and naming its author (a member's `person_id`, or a Sidekick's `sidekick_id`), so the model reads it as context rather than as a request ([`workstream-durable-object.md`](workstream-durable-object.md)). An elicitation answer carries no such fill; the turns said while the question was open wait for the next text input.
 
 A demo seed action is the one message the classifier never sees. It carries a `seed` ([`demo-workspaces.md`](demo-workspaces.md#seeding-a-demo-from-a-pack)) whose `assistant` turn says whether the line starts a run — present means yes, `null` means no — and the object takes that answer over the room's size and the message's attachments alike. The pack is the authority on which of its lines address Rally, and seeding a scripted conversation cannot wait on a live model's guess about each one. The field reaches the object only over its internal RPC; the message route has none.
 
@@ -1848,6 +1848,36 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-10-25 — A Sidekick's post reaches the model, attributed to the Sidekick
+
+**What changed:** The gap-fill now also appends a Sidekick's
+`conversation_post` (a `system` turn of type `automation_activation`) to the
+projection at the next text admission. It renders as a user-role message under
+the said-to-the-room header, with a `<rally_author>` trailer holding the
+Sidekick's `sidekick_id` and frozen `display_name`, and `forwarded_from` when
+the post carries an `externalSource`. A post whose structured content does not
+parse is skipped rather than given an invented author.
+
+**Why:** A help-desk Sidekick posted an email and a suggested reply into a
+Thread. The member said "send that reply", and the model had never seen the
+post: `appendConversationPost` writes only the canonical turn, and the
+gap-fill took human, external and imported turns of type `text`. The model
+searched Gmail, picked an unrelated thread whose subject matched the Thread's
+title, and sent the reply there twice.
+
+**Considered and rejected:** Admitting the post as a `starts_run = 0` loop
+input. It would reach the model by the same transition, but posting would then
+join the pending-input queue and its ordering fences for no gain, since the
+gap-fill already carries every turn nobody admitted. Rendering the post as a
+human turn was rejected because a `person_id` would let the model resolve "me"
+or "them" to a member who did not speak.
+
+**Consequences:** A post still never wakes the agent; it is read on the next
+run. Posts written before this change sit below `transcript_projected_through`
+and are not backfilled. A scheduled activation admitted through
+`admitSystemActivation` is the same kind of turn but is skipped by its
+`participant_turn` provenance, so the model reads it once.
 
 ### 2026-10-23 — Table creation supports metadata edits with stable schema
 
