@@ -565,6 +565,29 @@ describe("claiming a run's attempt", () => {
   });
 });
 
+describe("recording a running run's usage", () => {
+  // The mid-run flush writes Bind's progress shape and the run's end writes its
+  // usage shape; the row's columns must carry either.
+  it("puts the tokens and cost on the row from either spelling of the usage", () => {
+    const { storage, sql } = open();
+    seedRun(sql, RUN);
+    storage.claimAttempt({ ...fence, runId: RUN, leaseSeconds: 60, lifecycleEventId: "event-1" });
+    const counters = () => sql.exec(
+      `SELECT input_tokens, output_tokens, cost_micros FROM runs WHERE run_id = ?`, RUN,
+    ).one();
+
+    expect(storage.recordRunProgress({ ...fence, runId: RUN, model: null, usageJson: JSON.stringify({
+      inputTokens: 900, outputTokens: 12, contextTokens: 912, costCents: 0.5, toolCalls: 1,
+    }) })).toEqual({ outcome: "recorded" });
+    expect(counters()).toEqual({ input_tokens: 900, output_tokens: 12, cost_micros: 5_000 });
+
+    storage.recordRunProgress({ ...fence, runId: RUN, model: "test/model", usageJson: JSON.stringify({
+      prompt_tokens: 1_200, completion_tokens: 34, context_tokens: 1_234, cached_tokens: 0, cost_cents: 1.23,
+    }) });
+    expect(counters()).toEqual({ input_tokens: 1_200, output_tokens: 34, cost_micros: 12_300 });
+  });
+});
+
 describe("reaping a stale root", () => {
   it("leaves a loop-linked receipt to persistent-loop recovery", () => {
     const { binding, storage, sql } = open();

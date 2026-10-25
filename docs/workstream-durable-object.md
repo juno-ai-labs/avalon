@@ -1462,9 +1462,12 @@ settles the Channel state, and requests cancellation of subordinate runs.
 Callers cannot select a subset of those responsibilities.
 
 The run's `input_tokens`, `output_tokens` and `cost_micros` columns are derived
-from `usage_json` (`prompt_tokens`, `completion_tokens`, `cost_cents`) in the
-same statement that writes it, both in the terminal commit and in the fenced
-progress flush, so the columns cannot disagree with the JSON. The other
+from `usage_json` in the same statement that writes it, both in the terminal
+commit and in the fenced progress flush, so the columns cannot disagree with
+the JSON. The JSON comes in two spellings and both are read: the mid-run flush
+writes Bind's progress (`inputTokens`, `outputTokens`, `costCents`) and the
+run's end writes its usage (`prompt_tokens`, `completion_tokens`,
+`cost_cents`). The other
 counters on `runs` (`step_count`, `tool_count`, `model_iteration`,
 `subrequest_count`, `output_bytes`, the elapsed times) are still written as 0
 and read by nothing; `retry_count` is maintained.

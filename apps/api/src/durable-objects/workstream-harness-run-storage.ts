@@ -425,18 +425,23 @@ export function expireLocalAttemptLeasesFromPreviousInstance(
  * Every insert wrote them as 0 and nothing updated them, so a query against
  * `runs` read zeros while the real totals sat in `usage_json`. Derived rather
  * than passed in, so the columns cannot disagree with the JSON they mirror.
- * The JSON holds running totals for the run (`prompt_tokens`,
- * `completion_tokens`, `cost_cents`); a cent is 10,000 micro-dollars. A key the
- * JSON lacks, or a null `usageExpression`, keeps the column's current value.
+ * The JSON holds running totals for the run in one of two spellings: the
+ * mid-run flush writes Bind's progress (`inputTokens`, `outputTokens`,
+ * `costCents`) and the run's end writes its usage (`prompt_tokens`,
+ * `completion_tokens`, `cost_cents`). Both are read, or a running run would
+ * show zeros until it ended. A cent is 10,000 micro-dollars. A key the JSON
+ * lacks, or a null `usageExpression`, keeps the column's current value.
  * `usageExpression` is a code-owned SQL expression, never a caller's value.
  */
 function usageCounterAssignments(usageExpression: string): string {
-  const counter = (column: string, path: string, scale: number) =>
-    `${column} = MAX(0, COALESCE(CAST(ROUND(json_extract(${usageExpression}, '${path}') * ${scale}) AS INTEGER), ${column}))`;
+  const counter = (column: string, paths: readonly [string, string], scale: number) => {
+    const value = paths.map((path) => `json_extract(${usageExpression}, '${path}')`).join(", ");
+    return `${column} = MAX(0, COALESCE(CAST(ROUND(COALESCE(${value}) * ${scale}) AS INTEGER), ${column}))`;
+  };
   return [
-    counter("input_tokens", "$.prompt_tokens", 1),
-    counter("output_tokens", "$.completion_tokens", 1),
-    counter("cost_micros", "$.cost_cents", 10_000),
+    counter("input_tokens", ["$.prompt_tokens", "$.inputTokens"], 1),
+    counter("output_tokens", ["$.completion_tokens", "$.outputTokens"], 1),
+    counter("cost_micros", ["$.cost_cents", "$.costCents"], 10_000),
   ].join(",\n                ");
 }
 
