@@ -142,6 +142,7 @@ const QUEUED_FOLLOW_UP_MODEL = "pipeline-queued/primary";
 const RETRY_AFTER_ASSISTANT_TURN_MODEL = "pipeline-retry-fence/primary";
 const ASIDE_MODEL = "pipeline-aside/primary";
 const SIDEKICK_POST_MODEL = "pipeline-sidekick-post/primary";
+const SKIPPED_ELICITATION_MODEL = "pipeline-skipped-elicitation/primary";
 const PERSONAL_PROMPT_MODEL = "pipeline-personal-prompt/primary";
 const ASIDE_WINDOW_MODEL = "pipeline-aside-window/primary";
 const ASIDE_ELICITATION_MODEL = "pipeline-aside-elicitation/primary";
@@ -2944,6 +2945,77 @@ describe("a member's message travels the whole pipeline", () => {
       expect(asideIndex, "the aside said during the question never reached the model").toBeGreaterThan(toolResult);
       expect(questionIndex).toBeGreaterThan(asideIndex);
       expect(messages.filter((message) => message.role === "user" && JSON.stringify(message.content).includes("sounds good"))).toHaveLength(1);
+    } finally {
+      await restoreProviderFetch(stub);
+    }
+  });
+
+  it("tells the model a question was skipped, not answered blank", async () => {
+    const stub = agentStub();
+    try {
+      await installScriptedProvider(
+        stub,
+        [
+          [{
+            choices: [{
+              delta: {
+                tool_calls: [{
+                  index: 0,
+                  id: "skipped-elicitation-1",
+                  type: "function",
+                  function: {
+                    name: "request_elicitation",
+                    arguments: JSON.stringify({
+                      prompt: "Which option?",
+                      responseType: "radio",
+                      options: [
+                        { value: "a", label: "Option A", description: null },
+                        { value: "b", label: "Option B", description: null },
+                      ],
+                      minimumSelections: 1,
+                      maximumSelections: 1,
+                    }),
+                  },
+                }],
+              },
+              finish_reason: "tool_calls",
+            }],
+          }],
+          [{ choices: [{ delta: { content: "going ahead without it" }, finish_reason: "stop" }] }],
+        ],
+        { primaryModel: SKIPPED_ELICITATION_MODEL, fallbackModels: [] },
+      );
+      const opened = await initializeWorkstream(stub, "please decide between the options", SKIPPED_ELICITATION_MODEL);
+      expect(opened.status).toBe(200);
+      const asked = await settledRun(stub, opened.body.harnessRunId as string);
+      expect(asked.status).toBe("needs_input");
+      await waitForLoopRelease(stub);
+      const elicitationId = await runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ elicitation_id: string }>(
+          `SELECT elicitation_id FROM elicitation_requests WHERE status = 'pending'`,
+        ).one().elicitation_id);
+
+      const skipped = await product(stub, {
+        operation: "answer_elicitation",
+        auth: AUTH,
+        elicitationId,
+        input: { skipped: true },
+      });
+      expect(skipped.status).toBe(200);
+      await runDurableObjectAlarm(stub);
+      const resumed = await runInDurableObject(stub, (_instance, state) =>
+        state.storage.sql.exec<{ run_id: string }>(
+          `SELECT run_id FROM runs WHERE origin = 'elicitation_answer'`,
+        ).one().run_id);
+      await settledRun(stub, resumed);
+
+      const messages = (await capturedProviderRequests(stub)).at(-1)!.body.messages as Array<{ role?: unknown; content?: unknown }>;
+      const toolResult = messages.find((message) => message.role === "tool");
+      expect(toolResult, "the skip never reached the model as a tool result").toBeDefined();
+      expect(JSON.parse(String(toolResult!.content))).toEqual({
+        success: true,
+        data: { elicitationId, answer: null, skipped: true },
+      });
     } finally {
       await restoreProviderFetch(stub);
     }
