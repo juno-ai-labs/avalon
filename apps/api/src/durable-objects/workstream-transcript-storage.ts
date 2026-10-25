@@ -4679,6 +4679,10 @@ export class WorkstreamTranscriptStorage {
             elicitationId,
             answer: row.answer_json === null ? null : JSON.parse(row.answer_json),
             ...(row.status === "cancelled" ? { cancelled: true } : {}),
+            // An answered question has a null answer only when it was skipped:
+            // the answer path validates every other answer as non-empty. A
+            // flag rather than a sentinel string, which a text answer could be.
+            ...(row.status === "answered" && row.answer_json === null ? { skipped: true } : {}),
           },
         }),
       },
