@@ -984,81 +984,57 @@ settlement, no instruction step that exists only to feed the review. What the
 host already knows (a run finished, in which state, under which revision) is
 what the review is built from, and the wizard reads the rest itself.
 
-**Counting.** `onChildCommonProjection` writes `sidekick_runs.completed_at`
-only when the row moves into a finished state (`completed`, `failed`,
-`stopped`), so the projection that returns `completed_at` equal to its own
-instant is the one that finished the run. That projection adds one to
-`automation_directory.runs_since_review` (`noteRunFinished`). A continued run
-that finishes again counts again: its second finish is a second activation's
-evidence. `needs_input` is not a finish.
+**Counting and arming.** The projection that moves `sidekick_runs` is the one
+place a finish is known, so it counts there: `onChildCommonProjection` returns
+`completed_at`, which that statement writes only when a row moves into a
+finished state, and an instant equal to its own is the witness. A continued
+run that finishes again counts again. At `SIDEKICK_REVIEW_RUN_FLOOR` finishes
+the same transaction arms one `sidekick_review` entry keyed
+`<sidekickId>:review`, due no earlier than `SIDEKICK_REVIEW_INTERVAL_MS` after
+the last request, and only while none is armed, because the store resets a
+moved entry's retry gate. Both are product numbers the request named, defined
+once in `hosted-sidekick.ts`; the notice carries them, so no prompt or
+document repeats them. `apply` resets the count, cancels the entry and retires
+a request not yet delivered: runs under the previous revision are stale
+evidence, and a person who just revised has already done the review. Pause and
+archive cancel the entry with the Sidekick's other entries; `resume` resends
+a request still owed, else re-arms from the count, and so does
+`reviewDelivered` for finishes that accumulated while a delivery waited.
 
-**Arming.** Once the count reaches `SIDEKICK_REVIEW_RUN_FLOOR` (ten), the
-same transaction arms one `sidekick_review` entry keyed `<sidekickId>:review`,
-due at the later of now and `reviewed_at + SIDEKICK_REVIEW_INTERVAL_MS`
-(three days), and only while no entry is armed, because the store resets a
-moved entry's retry gate. Both numbers are product limits named by the request
-that asked for the review, defined once in `hosted-sidekick.ts`. `apply`
-resets the count to zero and cancels the entry: runs under the previous
-revision are stale evidence, and a person who just revised has already done
-the review. Pause and archive cancel the entry with the Sidekick's other
-entries; `resume` re-arms it when the count already stands at the floor.
+**Asking.** `startReview` copies run provisioning rather than awaiting the
+wizard from the Organization object's alarm, where one cold conversation
+would hold every other alarm job: one transaction inserts a `sidekick_reviews`
+row, resets the count and stamps `reviewed_at`; then a `sidekick_review` Queue
+message, whose consumer (`deliverSidekickReview`) reads the notice back
+(`reviewDelivery`, `null` once delivered, superseded by a newer revision, or
+without an eligible delegate), admits it into the authoring conversation, and
+reports `reviewDelivered`. The entry resends on the run-provisioning backoff
+until then, and a request undelivered for one interval is abandoned. The
+review executes as a delegate who may also manage the Sidekick
+(`reviewCoordinator`, the author first), because its one write is
+`saveDefinition` and that checks the manager rule; with none it is skipped
+and asked again one interval later.
 
-**Asking.** The entry's handler, `startReview`, re-reads the row (active,
-count at the floor, interval passed, an accepted revision), picks an eligible
-delegate the way a run does (`coordinator`, preferring the author), builds the
-notice, and in one transaction inserts a `sidekick_reviews` row, resets the
-count and stamps `reviewed_at`. Then one `sidekick_review` Queue message,
-whose consumer (`deliverSidekickReview`) reads the notice back
-(`reviewDelivery`, refused once delivered, abandoned, or on a Sidekick that
-is no longer active or whose delegate lost eligibility), admits it into the
-authoring conversation, and reports `reviewDelivered`, which stamps
-`delivered_at` and settles the entry. Until the report lands the entry sends
-again on the same age-based backoff a run's provisioning uses; a request
-still undelivered one interval later is deleted and logged
-`sidekick_review_abandoned`. No eligible delegate logs
-`sidekick_review_skipped` and moves the entry one interval out rather than
-asking after every finish.
-
-**The notice.** `SidekickReviewNoticeV1` (`sidekick_review_due`): the review
-id, the accepted revision, the window (`since` is the previous request, null
-for the first), counts of the runs that finished in it by state plus those
-waiting for input, how many ran under the accepted revision, the two floors,
-and a **sample**: the run ids to read, picked by the host so the wizard reads
-a bounded set however many runs there were. Every failed or stopped run up to
-`SIDEKICK_REVIEW_SAMPLE_LIMITS.failed` (ten), newest first; runs waiting for
-input up to `needsInput` (five); and completed runs spaced evenly across the
-window up to `completed` (ten), newest first, by taking every `step`th row of
-the completed runs ordered newest first with `step = ceil(total / limit)`, so
-the newest is always read and the oldest is within one step of it. A list
-shorter than its limit is every such run. The sentence people see says how
-many were sampled and tells the wizard to read those, not every run; the
-guidance says the same. The three limits are product numbers set in
-`hosted-sidekick.ts` with no measurement behind them, for the team to change
-there. Beyond the sample the notice carries no run content: the wizard reads
-a run with its own `sidekick_runs_read`, and the notice is never a second
-copy of one. `SubstreamAgent.admitSidekickReview` accepts it only on
-a Sidekick's substream `0` and admits it through `admitSystemActivation` as a
-`system` row with the notice as structured content, queued behind in-flight
-authoring work rather than steered into it, executing as the chosen delegate.
-The model reads it through `renderSidekickReviewNotice`, whose first line
-attributes it to Rally and not to a person or an agent, the same defence
-`renderAgentMessage` gives host notices. The canonical-history projection in
-`integrations.ts` admits the row by its structured content's kind, as a user
-message, on every run of the authoring conversation: without that branch the
-rule that drops system rows as UI state dropped it, and the wizard's first
-activation (which initializes Bind from canonical history rather than from
-the input's own Bind payload) answered a review it never saw. Memory treats what the review
-learns as derived from an agent (`derivedFromOf`), since nobody said anything.
+**The notice** is `SidekickReviewNoticeV1Schema`, built by `reviewNotice`:
+counts by finished state since the last request, and a sample of run ids the
+host picked so the wizard reads a bounded set however many runs there were
+(every failure up to a limit, waiting runs, and completed runs spaced evenly
+across the window, `SIDEKICK_REVIEW_SAMPLE_LIMITS`). It carries no run
+content: the wizard reads a run with `sidekick_runs_read`. It is admitted
+through `admitSystemActivation` (`SubstreamAgent.admitSidekickReview`, only
+on a Sidekick's substream `0`) as a queued `system` row, and the history
+projection in `integrations.ts` admits that row by its kind as a user message
+framed by `renderSidekickReviewNotice`, whose first line attributes it to
+Rally; the rule that drops system rows as UI state otherwise dropped it, and
+the wizard's first activation, which initializes Bind from canonical history,
+answered a review it never saw. Memory treats the review as agent-derived.
 
 **What the wizard does with it** is guidance in
-`AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, not a gate: read the runs, sort platform
-failures (a provider that returned nothing, a run that failed before its
-first step) from procedure failures and deviations, revise and submit with
-`ready=true` when the fix is in the procedure, narrow a trigger whose runs
-mostly finish silently, never widen capabilities in a review, and report in
-the authoring conversation. A revision it submits is an ordinary revision:
-`submitted_by_run_id` names the wizard's run, and the person reverts by
-asking for the earlier one.
+`AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, not a gate: read the sample, sort
+platform failures from procedure problems, revise and submit `ready=true`
+when the fix is in the procedure, narrow a trigger whose runs mostly finish
+silently, never widen capabilities, and report. A revision it submits is an
+ordinary revision, and the person reverts by asking for the earlier one.
 
 ### Home conversation and attachments
 
@@ -1614,16 +1590,11 @@ per-Sidekick clock. Backfilling the count for existing Sidekicks: a deploy
 would have asked every busy Sidekick to review at once.
 
 **Consequences:** The count and `reviewed_at` are the floor's only state;
-anything that changes what a finished run means (a new revision) resets the
-count rather than the clock. The notice is counts and a host-picked sample of
-run ids, so adding evidence means adding host-known columns to
-`sidekick_runs` or widening the sample, never work in the run; a Sidekick
-that ran a thousand times is reviewed at the same cost as one that ran
-twenty.
-The review executes as a delegate and can submit a revision, so the
-capability rule is in the guidance; a review that needs a new connector or
-destination proposes it. Two product numbers live in `hosted-sidekick.ts`
-and nowhere else.
+a new revision resets the count rather than the clock. Evidence is host-known
+columns and a host-picked sample, never work in the run. The review executes
+as a managing delegate and can submit a revision, so the capability rule is
+in the guidance. The product numbers live in `hosted-sidekick.ts` and reach
+the model through the notice, nowhere else.
 
 ### 2026-10-23 — The wizard can inspect its own execution history
 

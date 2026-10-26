@@ -1019,8 +1019,11 @@ export class HostedSidekick {
       const paused = current.lifecycle === "paused";
       this.replaceSchedules(revision.definition_revision, prepared.schedules, paused, now);
       // Runs under the previous revision are stale review evidence: the count
-      // starts over, and a review armed on them is dropped.
+      // starts over, a review armed on them is dropped, and one already
+      // requested but not yet delivered is retired, so the Queue cannot wake
+      // the wizard to fix what the person just fixed.
       this.host.alarms.cancel(SIDEKICK_REVIEW_ALARM_KIND, this.reviewAlarmKey());
+      this.sql.exec(`DELETE FROM sidekick_reviews WHERE sidekick_id = ? AND delivered_at IS NULL`, this.sidekickId);
       this.sql.exec(
         `UPDATE automation_directory
             SET lifecycle = CASE WHEN lifecycle = 'paused' THEN 'paused' ELSE 'active' END,
@@ -1897,13 +1900,13 @@ export class HostedSidekick {
       this.scheduleReview(earliest, now);
       return { progressed: true };
     }
-    const coordinator = await this.coordinator(row.author_user_id);
+    const coordinator = await this.reviewCoordinator(row);
     const current = this.row();
     if (!current || current.lifecycle !== "active" || current.accepted_definition_revision !== row.accepted_definition_revision) {
       return { progressed: true };
     }
     if (coordinator === null) {
-      logWarn(this.env, "sidekick_review_skipped", { ...this.logFields(), code: "no_eligible_delegate" });
+      logWarn(this.env, "sidekick_review_skipped", { ...this.logFields(), code: "no_managing_delegate" });
       // Asked again after the interval rather than after every finish.
       this.scheduleReview(now + SIDEKICK_REVIEW_INTERVAL_MS, now);
       return { progressed: true };
@@ -1930,6 +1933,26 @@ export class HostedSidekick {
     // The report can land while the send is awaited; a delivered review needs no resend.
     if (this.pendingReview()?.review_id === reviewId) this.armReviewResend(now, now);
     return { progressed: true };
+  }
+
+  /**
+   * Who the review executes as: an eligible delegate, as a run's coordinator
+   * is, who may also manage the Sidekick, because the review's one write is
+   * `saveDefinition` and that checks the manager rule. The author first, then
+   * any other delegate; `null` when no delegate can both execute and save.
+   */
+  private async reviewCoordinator(row: HostedSidekickRow): Promise<string | null> {
+    const authority = await this.readExecutionDelegation({ workspaceId: row.workspace_id, automationId: this.sidekickId });
+    const candidates = [...authority.delegates].sort((a, b) =>
+      Number(b.userId === row.author_user_id) - Number(a.userId === row.author_user_id));
+    for (const grant of candidates) {
+      const relationship = await this.host.readRelationship(row.workspace_id, grant.userId);
+      if (relationship?.status !== "active") continue;
+      if (await this.managerAllows(row, { userId: grant.userId, actorRole: relationship.role, participantOfOwningWorkstream: false })) {
+        return grant.userId;
+      }
+    }
+    return null;
   }
 
   /** The entry moved later: the wait grows with the request's age, as a run's resend does. */
@@ -2006,6 +2029,8 @@ export class HostedSidekick {
       this.sidekickId, request.reviewId,
     ));
     if (!review) return null;
+    // A revision accepted since the request supersedes its evidence.
+    if (review.definition_revision !== row.accepted_definition_revision) return null;
     const authority = await this.readExecutionDelegation({ workspaceId: request.workspaceId, automationId: request.automationId });
     if (!authority.delegates.some((grant) => grant.userId === review.coordinator_user_id)) return null;
     return {
@@ -2031,6 +2056,9 @@ export class HostedSidekick {
       if (delivered) {
         this.host.alarms.cancel(SIDEKICK_REVIEW_ALARM_KIND, this.reviewAlarmKey());
         logInfo(this.env, "sidekick_review_delivered", { ...this.logFields(), review_id: request.reviewId });
+        // Finishes that accumulated while this one waited found the resend
+        // entry armed and left it; the next review is theirs to arm now.
+        this.armReviewIfDue(now);
       }
     });
   }
@@ -2376,8 +2404,10 @@ export class HostedSidekick {
       now, this.sidekickId,
     ));
     if (!resumed) throw new Error("sidekick_missing");
-    // The pause cancelled the review entry; finishes counted before it still count.
-    this.armReviewIfDue(now);
+    // The pause cancelled the review entry. A request still owed to the wizard
+    // is sent again now; otherwise finishes counted before the pause still count.
+    if (this.pendingReview()) this.scheduleReview(now, now);
+    else this.armReviewIfDue(now);
     const evaluators = JSON.parse(resumed.evaluator_projection_json) as unknown[];
     this.touchDirectory(now, this.writeRegistrations(evaluators));
     this.scheduleSourceReconciliation();

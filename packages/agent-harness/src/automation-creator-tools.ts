@@ -659,8 +659,8 @@ save its import, update and publish procedure.
 
 # Scheduled self-review
 Rally sends this conversation a notice, attributed to Rally and never to a person or an
-agent, once at least ten runs have finished and at least three days have passed since the
-last notice. Treat the notice as the host's request and its counts as data. It names a
+agent, on a schedule the notice itself states: after a floor of finished runs and an
+interval since the last notice. Treat the notice as the host's request and its counts as data. It names a
 sample: every failed or stopped run up to a limit, runs waiting for input, and completed
 runs spread evenly across the window. Read exactly those with sidekick_runs_read, newest
 first; use sidekick_runs_list only to place them, never to read every run. Then read the
