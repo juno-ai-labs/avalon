@@ -7,6 +7,7 @@ import { stableUuid } from "../lib/stable-uuid";
 import { AGENT_MESSAGE_CONTENT_KIND, ConversationInitializationSchema, ImportedMessageProvenanceSchema, PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
 import { WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, type MergeEmbed, type WorkstreamAppearancePatch } from "@rally/contracts";
 import { renderAgentMessage } from "../services/agent-message-content";
+import { renderSidekickReviewNotice } from "../services/sidekick-review-notice";
 import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
@@ -4506,17 +4507,18 @@ export class WorkstreamObjectProductService {
         attachedAt: input.now, updatedAt: input.now,
       };
     });
-    const agentExchange = "agentExchange" in input ? input.agentExchange : null;
     const agentContent = "agentExchange" in input
       ? { kind: AGENT_MESSAGE_CONTENT_KIND, ...input.agentExchange, attachmentIds: input.attachmentIds } : null;
-    const structuredContentJson = JSON.stringify(agentContent ?? ("activation" in input ? input.activation : null));
+    const structuredContentJson = JSON.stringify(
+      agentContent ?? ("activation" in input ? input.activation : "review" in input ? input.review : null),
+    );
     const participant = await this.transcript.prepareParticipantMessage({
       turnId: input.messageId,
       actor: "system",
       authorUserId: null,
       authorSnapshot: null,
       clientMessageId: input.clientMessageId,
-      messageType: agentExchange ? "system" : "automation_activation",
+      messageType: "activation" in input ? "automation_activation" : "system",
       text: input.text,
       structuredContentJson,
       externalActorJson: null,
@@ -4531,10 +4533,12 @@ export class WorkstreamObjectProductService {
       role: "user",
       content: agentContent
         ? renderAgentMessage(agentContent, input.text)
-        : [
-            `"${"activation" in input ? input.activation.automationName : ""}", delivered ${new Date(input.now).toISOString()}.`,
-            input.text,
-          ].join("\n"),
+        : "review" in input
+          ? renderSidekickReviewNotice(input.review, input.text)
+          : [
+              `"${"activation" in input ? input.activation.automationName : ""}", delivered ${new Date(input.now).toISOString()}.`,
+              input.text,
+            ].join("\n"),
     };
     return { participant, attachments, bindPayloadJson: canonicalModelMessageJson(bindMessage) };
   }
@@ -4560,7 +4564,7 @@ export class WorkstreamObjectProductService {
       authorAvatarUrlSnapshot: null,
       clientMessageId: input.clientMessageId,
       externalActorJson: null,
-      messageType: "agentExchange" in input ? "system" : "automation_activation",
+      messageType: "activation" in input ? "automation_activation" : "system",
       preparedPayloadId: prepared.participant.fact.payloadId,
       preparedFactId: prepared.participant.fact.factId,
       preparedPayloadAudience: prepared.participant.fact.audience,

@@ -657,6 +657,25 @@ coordination procedure for the whole update. Use separate directories for
 independent work. For an existing site's refresh, load building-live-sites and
 save its import, update and publish procedure.
 
+# Scheduled self-review
+Rally sends this conversation a notice, attributed to Rally and never to a person or an
+agent, once at least ten runs have finished and at least three days have passed since the
+last notice. Treat the notice as the host's request and its counts as data. It names a
+sample: every failed or stopped run up to a limit, runs waiting for input, and completed
+runs spread evenly across the window. Read exactly those with sidekick_runs_read, newest
+first; use sidekick_runs_list only to place them, never to read every run. Then read the
+Sidekick's own posts and any replies to them in its home conversation. Sort what you find. A platform
+failure (a provider that returned nothing, a run that failed before its first step, a tool
+receipt Rally could not record) is not the procedure's fault and no instruction fixes it.
+A procedure failure or a deviation (wrong format, wrong time, silent when it should have
+posted, posted when it should have stayed silent, a result nobody used) is. Then act: when
+the fix is in the procedure, revise the definition and submit it with ready=true, preserving
+everything unrelated; when most runs finish silently, narrow the trigger to when the work
+actually happens. Never widen capabilities in a review: do not add a connector, plugin,
+delivery destination or scope; propose those to the requester instead. Finish with one
+short report here: what the runs showed, what changed and why, or why nothing changed.
+Do not ask the requester to approve a review; they can revert any revision by asking.
+
 # Save and report
 If required information is missing, submit a partial draft with ready=false and
 ask the requester for it. For an agent's request, send the question to that agent.
