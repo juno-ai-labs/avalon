@@ -1804,7 +1804,7 @@ export class HostedSidekick {
     // other than `idle`, while the Sidekick is active. `completed_at` is
     // written only when the row moves into a finished state, so the returned
     // instant equal to `now` is the witness that this projection finished it.
-    const moved = first(this.sql.exec<{ completed_at: number | null }>(
+    const moved = first(this.sql.exec<{ completed_at: number | null; definition_revision: number }>(
       `UPDATE sidekick_runs
           SET summary = ?1, updated_at = ?2,
               state = CASE WHEN state <> ?3 THEN ?3 ELSE state END,
@@ -1814,11 +1814,11 @@ export class HostedSidekick {
             OR (?4 = 1 AND ?7 = 1 AND (
               SELECT lifecycle FROM automation_directory WHERE automation_id = ?5
             ) = 'active'))
-        RETURNING completed_at`,
+        RETURNING completed_at, definition_revision`,
       effect.preview || null, now, next, live ? 1 : 0, this.sidekickId, substreamId, effect.state !== "idle" ? 1 : 0,
       JSON.stringify([...TERMINAL_RUN_STATES]),
     ));
-    if (!live && moved?.completed_at === now) this.noteRunFinished(now);
+    if (!live && moved?.completed_at === now) this.noteRunFinished(moved.definition_revision, now);
   }
 
   // ---------------------------------------------------------------------------
@@ -1831,14 +1831,18 @@ export class HostedSidekick {
   }
 
   /**
-   * One more finish toward the next review. A run that finishes twice (a
-   * continued run) counts twice: its second finish is a second activation's
-   * evidence. Inside the projection's transaction.
+   * One more finish toward the next review, counted only for a run admitted
+   * under the accepted revision: a run still in flight when a revision was
+   * applied is the previous procedure's evidence, and `apply` reset the count
+   * for exactly that reason. A run that finishes twice (a continued run)
+   * counts twice: its second finish is a second activation's evidence. Inside
+   * the projection's transaction.
    */
-  private noteRunFinished(now: number): void {
+  private noteRunFinished(definitionRevision: number, now: number): void {
     this.sql.exec(
-      `UPDATE automation_directory SET runs_since_review = runs_since_review + 1 WHERE automation_id = ?`,
-      this.sidekickId,
+      `UPDATE automation_directory SET runs_since_review = runs_since_review + 1
+        WHERE automation_id = ? AND accepted_definition_revision = ?`,
+      this.sidekickId, definitionRevision,
     );
     this.armReviewIfDue(now);
   }
@@ -1919,9 +1923,12 @@ export class HostedSidekick {
          VALUES (?, ?, ?, ?, ?, ?, NULL)`,
         this.sidekickId, reviewId, notice.definitionRevision, coordinator, JSON.stringify(notice), now,
       );
+      // Subtract what this review covers rather than zeroing: a finish that
+      // landed during the delegate lookup above is after `now`, outside this
+      // notice's window, and stays counted toward the next.
       this.sql.exec(
-        `UPDATE automation_directory SET runs_since_review = 0, reviewed_at = ? WHERE automation_id = ?`,
-        now, this.sidekickId,
+        `UPDATE automation_directory SET runs_since_review = MAX(0, runs_since_review - ?), reviewed_at = ? WHERE automation_id = ?`,
+        row.runs_since_review, now, this.sidekickId,
       );
     });
     logInfo(this.env, "sidekick_review_requested", {
@@ -1961,32 +1968,35 @@ export class HostedSidekick {
     this.scheduleReview(now + scheduledAlarmRetryDelay(step), now);
   }
 
-  /** What the wizard is told: counts of the finishes since the last request, by state, and how many ran under the accepted revision. */
+  /** What the wizard is told: counts of the finishes in the window since the last request, by state, and how many ran under the accepted revision. */
   private reviewNotice(row: HostedSidekickRow, reviewId: string, now: number): SidekickReviewNoticeV1 {
     const since = row.reviewed_at ?? 0;
     const revision = row.accepted_definition_revision!;
+    // Bounded above as well, so a finish landing while this notice is built
+    // belongs to the next window, as the counter treats it.
     const counts = first(this.sql.exec<{ completed: number; failed: number; stopped: number; needs_input: number; under_revision: number }>(
       `SELECT COALESCE(SUM(state = 'completed'), 0) AS completed, COALESCE(SUM(state = 'failed'), 0) AS failed,
               COALESCE(SUM(state = 'stopped'), 0) AS stopped, COALESCE(SUM(state = 'needs_input'), 0) AS needs_input,
               COALESCE(SUM(state IN ('completed', 'failed', 'stopped') AND definition_revision = ?3), 0) AS under_revision
          FROM sidekick_runs
         WHERE sidekick_id = ?1
-          AND ((completed_at IS NOT NULL AND completed_at > ?2) OR (state = 'needs_input' AND updated_at > ?2))`,
-      this.sidekickId, since, revision,
+          AND ((completed_at IS NOT NULL AND completed_at > ?2 AND completed_at <= ?4)
+            OR (state = 'needs_input' AND updated_at > ?2 AND updated_at <= ?4))`,
+      this.sidekickId, since, revision, now,
     ));
     const limits = SIDEKICK_REVIEW_SAMPLE_LIMITS;
     const ids = (cursor: SqlStorageCursor<{ run_id: string }>) => cursor.toArray().map((entry) => entry.run_id);
     const failed = ids(this.sql.exec<{ run_id: string }>(
       `SELECT run_id FROM sidekick_runs
-        WHERE sidekick_id = ?1 AND state IN ('failed', 'stopped') AND completed_at > ?2
+        WHERE sidekick_id = ?1 AND state IN ('failed', 'stopped') AND completed_at > ?2 AND completed_at <= ?4
         ORDER BY completed_at DESC, run_id LIMIT ?3`,
-      this.sidekickId, since, limits.failed,
+      this.sidekickId, since, limits.failed, now,
     ));
     const needsInput = ids(this.sql.exec<{ run_id: string }>(
       `SELECT run_id FROM sidekick_runs
-        WHERE sidekick_id = ?1 AND state = 'needs_input' AND updated_at > ?2
+        WHERE sidekick_id = ?1 AND state = 'needs_input' AND updated_at > ?2 AND updated_at <= ?4
         ORDER BY updated_at DESC, run_id LIMIT ?3`,
-      this.sidekickId, since, limits.needsInput,
+      this.sidekickId, since, limits.needsInput, now,
     ));
     // Every `step`th completed run, newest first, where `step` is what spreads
     // the limit across the window: the newest is always read, the oldest
@@ -1994,10 +2004,10 @@ export class HostedSidekick {
     const completed = ids(this.sql.exec<{ run_id: string }>(
       `WITH finished AS (
          SELECT run_id, ROW_NUMBER() OVER (ORDER BY completed_at DESC, run_id) - 1 AS position, COUNT(*) OVER () AS total
-           FROM sidekick_runs WHERE sidekick_id = ?1 AND state = 'completed' AND completed_at > ?2
+           FROM sidekick_runs WHERE sidekick_id = ?1 AND state = 'completed' AND completed_at > ?2 AND completed_at <= ?4
        )
        SELECT run_id FROM finished WHERE position % MAX(1, (total + ?3 - 1) / ?3) = 0 ORDER BY position LIMIT ?3`,
-      this.sidekickId, since, limits.completed,
+      this.sidekickId, since, limits.completed, now,
     ));
     return {
       kind: "sidekick_review_due",

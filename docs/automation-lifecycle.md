@@ -987,8 +987,10 @@ what the review is built from, and the wizard reads the rest itself.
 **Counting and arming.** The projection that moves `sidekick_runs` is the one
 place a finish is known, so it counts there: `onChildCommonProjection` returns
 `completed_at`, which that statement writes only when a row moves into a
-finished state, and an instant equal to its own is the witness. A continued
-run that finishes again counts again. At `SIDEKICK_REVIEW_RUN_FLOOR` finishes
+finished state, and an instant equal to its own is the witness. Only a run
+admitted under the accepted revision counts: one still in flight when a
+revision was applied is the previous procedure's evidence. A continued run
+that finishes again counts again. At `SIDEKICK_REVIEW_RUN_FLOOR` finishes
 the same transaction arms one `sidekick_review` entry keyed
 `<sidekickId>:review`, due no earlier than `SIDEKICK_REVIEW_INTERVAL_MS` after
 the last request, and only while none is armed, because the store resets a
