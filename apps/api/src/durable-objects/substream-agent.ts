@@ -285,6 +285,8 @@ import {
   AdmitExternalMessageInputSchema,
   AdmitAgentMessageInputSchema,
   type AdmitAgentMessageInput,
+  AdmitSidekickReviewInputSchema,
+  type AdmitSidekickReviewInput,
   AnswerExternalElicitationInputSchema,
   ExternalMessageAdmissionResultSchema,
   type ExternalMessageAdmissionResult,
@@ -2391,6 +2393,44 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           ? ExecutionPrincipalSchema.parse(JSON.parse(background.execution_principal_json))
           : request.executionPrincipal,
       });
+      if (result.activationRequest) await this.requestPersistentLoopActivation(result.activationRequest);
+      if (result.inserted) await this.flushSemanticRealtimeOutboxBestEffort();
+      return { accepted: true, messageId: result.turn.turnId };
+    } catch (error) {
+      if (error instanceof Error && error.message === "workstream_archived") {
+        return { accepted: false, code: "workstream_archived" };
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * The host's review notice for a Sidekick's wizard: this object must be the
+   * Sidekick's authoring conversation (parent kind `automation`, substream
+   * `0`). Admitted as queued system input under the delegate's authority, so
+   * it waits for in-flight authoring work rather than steering into it.
+   */
+  async admitSidekickReview(input: AdmitSidekickReviewInput): Promise<
+    { accepted: true; messageId: string } | { accepted: false; code: string }
+  > {
+    await this.initialized;
+    const request = AdmitSidekickReviewInputSchema.parse(input);
+    const identity = this.objectStore.identity();
+    if (!identity) return { accepted: false, code: "sidekick_review_destination_unavailable" };
+    if (identity.workspaceId !== request.workspaceId || identity.parentKind !== "automation"
+      || identity.parentId !== request.workstreamId || this.externalSubstreamId() !== "0") {
+      return { accepted: false, code: "sidekick_review_destination_mismatch" };
+    }
+    const parent = await conversationParentStub(this.env, {
+      workspaceId: identity.workspaceId, parentKind: identity.parentKind, parentId: identity.parentId,
+    });
+    const authority = await parent.authority({ workspaceId: asWorkspaceId(identity.workspaceId), parentId: identity.parentId });
+    if (!authority.exists || authority.archived) return { accepted: false, code: "workstream_archived" };
+    if (authority.authorityGeneration !== this.objectStore.realtimeAuthorityGeneration()) {
+      return { accepted: false, code: "workstream_authority_generation_stale" };
+    }
+    try {
+      const result = await this.product.admitSystemActivation(request);
       if (result.activationRequest) await this.requestPersistentLoopActivation(result.activationRequest);
       if (result.inserted) await this.flushSemanticRealtimeOutboxBestEffort();
       return { accepted: true, messageId: result.turn.turnId };

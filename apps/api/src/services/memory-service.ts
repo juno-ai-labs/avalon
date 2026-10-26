@@ -348,6 +348,8 @@ function readerOf(
  */
 export function derivedFromOf(input: WorkstreamWorkflowInput): Exclude<MemoryDerivedFrom, "mixed"> {
   if (input.agentExchange) return "agent";
+  // The host's scheduled self-review notice: nobody said anything.
+  if (input.reason === "sidekick_review") return "agent";
   if (input.activityId || input.slackOrigin || input.reason === "inbound_email" || input.reason.startsWith("slack_")) {
     return "external";
   }

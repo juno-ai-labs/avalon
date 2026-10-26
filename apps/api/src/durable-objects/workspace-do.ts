@@ -1209,7 +1209,7 @@ import {
   scopeConversations,
   type ScopedConversation,
 } from "./workspace-sidekick-conversation-storage";
-import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
+import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
 import {
   HostedSidekick,
   hostedSidekickAlarmTarget,
@@ -1225,6 +1225,7 @@ import {
   type SidekickBatchDetailRequest,
   type SidekickBatchSkillReadRequest,
   SidekickRunProvisionQueueMessageSchema,
+  SidekickReviewQueueMessageSchema,
 } from "./automation-do-protocol";
 import {
   ConversationToolAttachRequestSchema,
@@ -4822,6 +4823,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
      SELECT 'sidekick_delegation_migration',automation_id || ':0',0,0,0 FROM automation_directory
       WHERE region IS NOT NULL AND lifecycle<>'deleted' AND delegation_migrated=0`,
   ],
+}, {
+  version: 132,
+  description: "count Sidekick run finishes toward a scheduled wizard review and record each review request",
+  statements: SIDEKICK_REVIEW_SCHEMA_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {
@@ -6630,6 +6635,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           kind: "sidekick_run_provision", region: this.env.AVALON_REGION, ...message,
         }));
       },
+      sendReview: async (message) => {
+        await this.env.ACTIVITY_QUEUE.send(SidekickReviewQueueMessageSchema.parse({
+          kind: "sidekick_review", region: this.env.AVALON_REGION, ...message,
+        }));
+      },
     };
   }
 
@@ -6983,6 +6993,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** For the provisioning consumer: the run's loop started. */
   async sidekickRunProvisioned(input: Parameters<HostedSidekick["runProvisioned"]>[0]) {
     return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.runProvisioned(input));
+  }
+
+  /** For the review consumer: the notice to admit into the wizard's conversation, or `null`. */
+  async sidekickReviewDelivery(input: Parameters<HostedSidekick["reviewDelivery"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.reviewDelivery(input));
+  }
+
+  /** For the review consumer: the notice reached the wizard. */
+  async sidekickReviewDelivered(input: Parameters<HostedSidekick["reviewDelivered"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.reviewDelivered(input));
   }
 
   // Batch reads. Every Sidekick in an Organization is here, so a caller that
