@@ -2414,7 +2414,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     { accepted: true; messageId: string } | { accepted: false; code: string }
   > {
     await this.initialized;
-    const request = AdmitSidekickReviewInputSchema.parse(input);
+    const request = parseRpcInput(AdmitSidekickReviewInputSchema, input, "admit_sidekick_review");
     const identity = this.objectStore.identity();
     if (!identity) return { accepted: false, code: "sidekick_review_destination_unavailable" };
     if (identity.workspaceId !== request.workspaceId || identity.parentKind !== "automation"
