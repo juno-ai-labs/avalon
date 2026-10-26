@@ -1271,7 +1271,7 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "sidekick_conversation_attachments",
   // A hosted Sidekick's own rows: `HostedSidekick` is their only writer.
   "sidekick_revisions", "sidekick_schedules", "sidekick_runs", "sidekick_email_receipts",
-  "sidekick_children", "sidekick_child_projections", "sidekick_child_receipts",
+  "sidekick_children", "sidekick_child_projections", "sidekick_child_receipts", "sidekick_reviews",
   "realtime_transcription_sessions",
   "realtime_transcription_ticket_receipts",
   "workspace_impersonation_relationships",

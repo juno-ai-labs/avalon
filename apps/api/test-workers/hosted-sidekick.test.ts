@@ -1912,11 +1912,98 @@ describe("a hosted Sidekick", () => {
     await runDurableObjectAlarm(workspaceStub());
     expect((await reviewState()).reviews).toEqual([]);
 
-    // A new accepted revision makes those finishes stale evidence.
+    // A new accepted revision makes those finishes stale evidence, and retires
+    // a review requested on them that the Queue has not delivered yet.
+    const pendingReview = "00000000-0000-7000-8000-00000000ad90";
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO sidekick_reviews(sidekick_id, review_id, definition_revision, coordinator_user_id, notice_json, requested_at, delivered_at)
+         VALUES (?, ?, 1, ?, '{}', ?, NULL)`,
+        AUTOMATION_ID, pendingReview, AUTHOR_ID, Date.now(),
+      );
+    });
     await submit({ ...DEFINITION, instructions: "Do the requested work and say so in two sentences." });
     await apply();
     expect((await reviewState()).directory).toEqual({ runs_since_review: 0, reviewed_at: reviewedAt });
+    expect((await reviewState()).reviews).toEqual([]);
     expect((await alarms()).filter((alarm) => alarm.kind === SIDEKICK_REVIEW_ALARM_KIND)).toEqual([]);
+    expect(await workspaceStub().sidekickReviewDelivery({ ...addressed(), reviewId: pendingReview })).toBeNull();
+
+    // Finishes that accumulate while a delivery waits find the resend entry
+    // armed and leave it; the delivery's report re-arms from the count.
+    const delivered = "00000000-0000-7000-8000-00000000ad91";
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE automation_directory SET runs_since_review = ? WHERE automation_id = ?`, SIDEKICK_REVIEW_RUN_FLOOR, AUTOMATION_ID);
+      state.storage.sql.exec(
+        `INSERT INTO sidekick_reviews(sidekick_id, review_id, definition_revision, coordinator_user_id, notice_json, requested_at, delivered_at)
+         VALUES (?, ?, 2, ?, '{}', ?, NULL)`,
+        AUTOMATION_ID, delivered, AUTHOR_ID, Date.now(),
+      );
+    });
+    await workspaceStub().sidekickReviewDelivered({ ...addressed(), reviewId: delivered });
+    expect((await reviewState()).reviews.map((review) => review.delivered_at !== null)).toEqual([true]);
+    expect((await alarms()).find((alarm) => alarm.kind === SIDEKICK_REVIEW_ALARM_KIND)?.due_at).toBe(reviewedAt + SIDEKICK_REVIEW_INTERVAL_MS);
+
+    // A pause drops the entry; a resume sends a request still owed at once.
+    const owed = "00000000-0000-7000-8000-00000000ad92";
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO sidekick_reviews(sidekick_id, review_id, definition_revision, coordinator_user_id, notice_json, requested_at, delivered_at)
+         VALUES (?, ?, 2, ?, '{}', ?, NULL)`,
+        AUTOMATION_ID, owed, AUTHOR_ID, Date.now(),
+      );
+    });
+    await workspaceStub().sidekickPause({ ...addressed(), actor: actor() });
+    expect((await alarms()).filter((alarm) => alarm.kind === SIDEKICK_REVIEW_ALARM_KIND)).toEqual([]);
+    const resumedAt = Date.now();
+    await workspaceStub().sidekickResume({ ...addressed(), actor: actor() });
+    const resent = (await alarms()).find((alarm) => alarm.kind === SIDEKICK_REVIEW_ALARM_KIND);
+    expect(resent!.due_at).toBeGreaterThanOrEqual(resumedAt);
+    expect(resent!.due_at).toBeLessThanOrEqual(Date.now());
+  });
+
+  it("samples completed runs evenly across the window when more finished than the review reads", async () => {
+    await activeAutomation();
+    const completed = 23;
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      for (let index = 0; index < completed; index += 1) {
+        const runId = `00000000-0000-7000-8000-0000000000${String(index).padStart(2, "0")}`;
+        state.storage.sql.exec(
+          `INSERT INTO sidekick_runs(sidekick_id, run_id, occurrence_key, trigger_json, definition_revision, harness_run_id,
+             state, summary, opening_json, seed_json, run_as_user_id, coordinator_user_id, created_at, started_at, completed_at, updated_at)
+           VALUES (?1, ?2, ?3, '{"kind":"manual"}', 1, ?4, 'completed', NULL, NULL, NULL, ?5, ?5, ?6, ?6, ?6, ?6)`,
+          AUTOMATION_ID, runId, `manual:sample-${index}`, `${runId}-harness`, AUTHOR_ID, 1_000_000 + index,
+        );
+      }
+      state.storage.sql.exec(`UPDATE automation_directory SET runs_since_review = ? WHERE automation_id = ?`, SIDEKICK_REVIEW_RUN_FLOOR, AUTOMATION_ID);
+      state.storage.sql.exec(
+        `INSERT INTO _internal_durable_alarms (kind, alarm_key, due_at, repeat_every_ms, retry_at, attempt, payload_json, created_at, updated_at)
+         VALUES (?, ?, ?, NULL, 0, 0, NULL, ?, ?)`,
+        SIDEKICK_REVIEW_ALARM_KIND, `${AUTOMATION_ID}:review`, Date.now() - 1, Date.now(), Date.now(),
+      );
+    });
+    // The request is what is under test; its delivery is the previous test's.
+    type QueueSend = { send: (body: unknown, options?: QueueSendOptions) => Promise<void> };
+    const prototype = Object.getPrototypeOf(TEST_ENV.ACTIVITY_QUEUE) as QueueSend;
+    const original = prototype.send;
+    const send = vi.spyOn(prototype, "send").mockImplementation(async function (this: QueueSend, body, options) {
+      if (SidekickReviewQueueMessageSchema.safeParse(body).success) return;
+      return original.call(this, body, options);
+    });
+    try {
+      await runDurableObjectAlarm(workspaceStub());
+      await expect.poll(async () => (await reviewState()).reviews.length, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(1);
+      const notice = JSON.parse((await reviewState()).reviews[0]!.notice_json) as {
+        finished: { completed: number }; sample: { completed: string[]; failed: string[] };
+      };
+      expect(notice.finished.completed).toBe(completed);
+      // Every third run, newest first: the newest always, the oldest within one step.
+      expect(notice.sample.completed).toEqual([22, 19, 16, 13, 10, 7, 4, 1].map((index) =>
+        `00000000-0000-7000-8000-0000000000${String(index).padStart(2, "0")}`));
+      expect(notice.sample.failed).toEqual([]);
+    } finally {
+      send.mockRestore();
+    }
   });
 
   it("admits a manual run once per idempotency key", async () => {
