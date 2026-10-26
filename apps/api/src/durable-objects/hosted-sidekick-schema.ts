@@ -139,3 +139,32 @@ export const HOSTED_SIDEKICK_SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE INDEX sidekick_imports_pending_idx ON sidekick_imports(state, not_before, sidekick_id)`,
   `INSERT INTO sidekick_imports (sidekick_id, state) SELECT automation_id, 'pending' FROM automation_directory`,
 ];
+
+/**
+ * WorkspaceDO migration 132: the scheduled self-review.
+ *
+ * `runs_since_review` counts run finishes since the last review request or
+ * accepted revision, and `reviewed_at` is when the wizard was last asked. Both
+ * start empty for every existing Sidekick: a deploy asks nobody to review
+ * anything until ten more runs have finished. `sidekick_reviews` is one row
+ * per request, so a wake the Queue lost is sent again and history says when
+ * the wizard was asked and what it was told. `docs/automation-lifecycle.md`
+ * owns the mechanism.
+ */
+export const SIDEKICK_REVIEW_SCHEMA_STATEMENTS: readonly string[] = [
+  `ALTER TABLE automation_directory ADD COLUMN runs_since_review INTEGER NOT NULL DEFAULT 0
+     CHECK (runs_since_review >= 0)`,
+  `ALTER TABLE automation_directory ADD COLUMN reviewed_at INTEGER
+     CHECK (reviewed_at IS NULL OR reviewed_at >= 0)`,
+  `CREATE TABLE sidekick_reviews (
+    sidekick_id TEXT NOT NULL,
+    review_id TEXT NOT NULL,
+    definition_revision INTEGER NOT NULL CHECK (definition_revision > 0),
+    coordinator_user_id TEXT NOT NULL,
+    notice_json TEXT NOT NULL CHECK (json_valid(notice_json)),
+    requested_at INTEGER NOT NULL,
+    delivered_at INTEGER CHECK (delivered_at IS NULL OR delivered_at >= 0),
+    PRIMARY KEY (sidekick_id, review_id)
+  ) STRICT`,
+  `CREATE INDEX sidekick_reviews_pending_idx ON sidekick_reviews(sidekick_id, delivered_at, requested_at)`,
+];

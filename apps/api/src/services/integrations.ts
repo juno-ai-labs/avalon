@@ -9,7 +9,7 @@ import { Preparation, ToolSurfacePreparations } from "./harness-preparation";
 import { validateCompletedToolReplay } from "./completed-tool-replay";
 import { completionVerificationNudge } from "./completion-verification";
 import type { CompletionVerificationSnapshot } from "../durable-objects/completion-verification-storage";
-import { AGENT_MESSAGE_CONTENT_KIND, ImportedMessageProvenanceSchema } from "@rally/contracts";
+import { AGENT_MESSAGE_CONTENT_KIND, ImportedMessageProvenanceSchema, SidekickReviewNoticeV1Schema } from "@rally/contracts";
 import { agentCoordinationRoleGuidance } from './agent-communication-prompts';
 import { conversationParentStub, hostedParentStub } from "./conversation-parent-client";
 import { AgentCommunicationService } from "./agent-communication-service";
@@ -19,6 +19,7 @@ import {
 } from "./sidekick-operation-accounts";
 import type { SidekickExecutionDelegation } from "@rally/contracts";
 import { AgentMessageContentSchema, renderAgentMessage } from "./agent-message-content";
+import { renderSidekickReviewNotice } from "./sidekick-review-notice";
 import { ObjectPortError } from "../runtime/object-port";
 import { dynamicConnectorCapability, stableConnectionWireName, stableWireToolName, validateDynamicConnectorTools, discoverDynamicConnectorTools, connectorServerPresentation, storedConnectorServerMetadata } from "./connector-tool-inventory";
 import { ApiError } from "../lib/api-error";
@@ -1448,6 +1449,20 @@ async function projectModelProtocolTranscript(
       });
       if (post) projected.push(modelDerivative(post, "participant_turn", message.id, message.sequenceNumber));
       else issues.push({ kind: "empty_ui_message_omitted", healed: true });
+      continue;
+    }
+
+    // The host's scheduled self-review notice to a Sidekick's wizard: a system
+    // row by actor, but the one the run was woken to answer, and standing
+    // context for every turn after it, admitted the way an agent's message is.
+    // Left to the rule below it was dropped with the UI rows, and the wizard
+    // answered a review it never saw.
+    if (message.structuredContent?.kind === "sidekick_review_due") {
+      const notice = SidekickReviewNoticeV1Schema.parse(message.structuredContent);
+      projected.push(modelDerivative(
+        { role: "user", content: renderSidekickReviewNotice(notice, modelMessageContent(message)) },
+        "participant_turn", message.id, message.sequenceNumber,
+      ));
       continue;
     }
 
