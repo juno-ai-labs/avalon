@@ -146,10 +146,12 @@ export const HOSTED_SIDEKICK_SCHEMA_STATEMENTS: readonly string[] = [
  * `runs_since_review` counts run finishes since the last review request or
  * accepted revision, and `reviewed_at` is when the wizard was last asked. Both
  * start empty for every existing Sidekick: a deploy asks nobody to review
- * anything until ten more runs have finished. `sidekick_reviews` is one row
- * per request, so a wake the Queue lost is sent again and history says when
- * the wizard was asked and what it was told. `docs/automation-lifecycle.md`
- * owns the mechanism.
+ * anything until the floor of finishes is reached again. `sidekick_reviews`
+ * is one row per request, so a wake the Queue lost is sent again, and every
+ * review that reached the wizard stays as the record of what it was told; a
+ * request superseded or abandoned before delivery is deleted. A Sidekick
+ * holds a handful of rows, so the primary key is index enough.
+ * `docs/automation-lifecycle.md` owns the mechanism.
  */
 export const SIDEKICK_REVIEW_SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE automation_directory ADD COLUMN runs_since_review INTEGER NOT NULL DEFAULT 0
@@ -166,5 +168,4 @@ export const SIDEKICK_REVIEW_SCHEMA_STATEMENTS: readonly string[] = [
     delivered_at INTEGER CHECK (delivered_at IS NULL OR delivered_at >= 0),
     PRIMARY KEY (sidekick_id, review_id)
   ) STRICT`,
-  `CREATE INDEX sidekick_reviews_pending_idx ON sidekick_reviews(sidekick_id, delivered_at, requested_at)`,
 ];
