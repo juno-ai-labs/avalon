@@ -221,6 +221,24 @@ is allowed.
 
 ## Changelog
 
+### 2026-10-27 — X conversion pixel on marketing pages
+
+**What changed:** Added X's conversion pixel (`rg7j5`) to every production page
+PostHog's SDK runs on, through the shared site entry, with X's domains in the
+global CSP. The PostHog page rule became `allowsThirdPartyScripts` so both
+loaders share one list of pages that carry credentials. Updated the cookie
+notice and Privacy Policy.
+
+**Why:** Measuring which X ads bring visitors and downloads. The pixel reports
+the full page URL to X, so it needs the same exclusions as session recording.
+
+**Considered and rejected:** Inlining X's snippet, which the site's CSP blocks.
+Loading it only on the Apollo landing pages, which would miss ad clicks that land
+on blog or comparison pages. Delaying the `twclid` strip until X's script had run,
+which would hold PostHog back on every ad landing; the click ID is written into
+X's cookie instead. A browser sending Global Privacy Control skips the pixel,
+because the cookie notice promises to honor that signal.
+
 ### 2026-10-19 — Apollo tracks landing-page visits
 
 **What changed:** Added the supplied Apollo tracker to production landing pages
