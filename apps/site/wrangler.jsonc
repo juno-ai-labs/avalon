@@ -9,9 +9,10 @@
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
-    // The help center answers `Accept: text/markdown` with each page's Markdown
-    // copy. Every other path is plain static assets and never starts the Worker.
-    "run_worker_first": ["/help", "/help/*"],
+    // The homepage gets its CSP from the Worker, and the help center answers
+    // `Accept: text/markdown` with each page's Markdown copy. Every other path
+    // is plain static assets and never starts the Worker.
+    "run_worker_first": ["/", "/help", "/help/*"],
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "404-page"
   },

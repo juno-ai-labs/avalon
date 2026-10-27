@@ -12,19 +12,8 @@
 
 # Apollo and its LiveIntent dependency run only on the landing pages.
 # Replace the global CSP here so these permissions do not reach handoff pages.
-/
-  ! Content-Security-Policy
-  Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data: https://t.co https://analytics.twitter.com https://rp.liadm.com https://rpr.liadm.com; script-src 'self' https://static.ads-twitter.com https://assets.apollo.io https://d-code.liadm.com; frame-src https://i.liadm.com; connect-src https://t.co https://analytics.twitter.com https://aplo-evnt.com https://idx.liadm.com https://rp.liadm.com https://rpr.liadm.com https://api.rallywith.ai https://api.with-avalon.com https://p.rallywith.ai; worker-src blob:; object-src 'none'; base-uri 'self'; form-action https://api.rallywith.ai/access/downloads/redeem; frame-ancestors 'none'; upgrade-insecure-requests
-
-# Production served / with both the global and the landing policy (2026-10-27),
-# and the stricter one blocked Apollo; local `wrangler dev` served only one.
-# The likeliest reading is that production also matches / as its served file,
-# /index.html, which matched only the global rule. /index.html itself
-# redirects to /, so this block changes nothing else.
-/index.html
-  ! Content-Security-Policy
-  Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data: https://t.co https://analytics.twitter.com https://rp.liadm.com https://rpr.liadm.com; script-src 'self' https://static.ads-twitter.com https://assets.apollo.io https://d-code.liadm.com; frame-src https://i.liadm.com; connect-src https://t.co https://analytics.twitter.com https://aplo-evnt.com https://idx.liadm.com https://rp.liadm.com https://rpr.liadm.com https://api.rallywith.ai https://api.with-avalon.com https://p.rallywith.ai; worker-src blob:; object-src 'none'; base-uri 'self'; form-action https://api.rallywith.ai/access/downloads/redeem; frame-ancestors 'none'; upgrade-insecure-requests
-
+# The homepage's copy of this policy is set by worker/index.ts, not here: an
+# exact `/` rule here was served alongside the global one in production.
 /start-fast/*
   ! Content-Security-Policy
   Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data: https://t.co https://analytics.twitter.com https://rp.liadm.com https://rpr.liadm.com; script-src 'self' https://static.ads-twitter.com https://assets.apollo.io https://d-code.liadm.com; frame-src https://i.liadm.com; connect-src https://t.co https://analytics.twitter.com https://aplo-evnt.com https://idx.liadm.com https://rp.liadm.com https://rpr.liadm.com https://api.rallywith.ai https://api.with-avalon.com https://p.rallywith.ai; worker-src blob:; object-src 'none'; base-uri 'self'; form-action https://api.rallywith.ai/access/downloads/redeem; frame-ancestors 'none'; upgrade-insecure-requests
