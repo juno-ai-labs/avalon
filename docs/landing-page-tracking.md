@@ -11,7 +11,9 @@ also load Apollo’s website tracker with app ID `6ad67a1c7cdf770018b4f9bc`.
 `apps/site/src/apollo-loader.ts` loads it asynchronously through the shared site
 entry. Local development, previews, other marketing pages and handoff pages do
 not load it. New landing variants must be included in `runsApollo` and in the
-landing-only CSP overrides in `apps/site/public/_headers`.
+landing-only CSP overrides in `apps/site/public/_headers`. The homepage needs
+its override under both `/` and `/index.html`: with only `/`, production served
+the homepage both policies, and the stricter one blocked Apollo.
 
 Apollo sends visits to `aplo-evnt.com` and can load LiveIntent’s identity
 resolution script. Those providers have a separate data path from the bounded
