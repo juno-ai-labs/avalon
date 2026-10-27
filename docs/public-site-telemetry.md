@@ -14,7 +14,8 @@ Trust Center pages load the landing's `landing.css` and add `apps/site/src/trust
 | --- | --- |
 | `apps/site/src/telemetry.ts` | Global route lookup, first-party anonymous identity, capability bootstrap, closed envelopes, page/action/handoff reporting, and failure isolation. |
 | `apps/site/src/site-entry.ts` | Initializes page-view and page-leave reporting on every built HTML entry, and starts the PostHog SDK loader on pages that run it. |
-| `apps/site/src/posthog-loader.ts` | The paths denied PostHog's browser SDK, and adding its separate script from the `rally-posthog-src` meta tag. |
+| `apps/site/src/credential-paths.ts` | The paths whose URL carries a credential, where no third-party script runs. |
+| `apps/site/src/posthog-loader.ts` | Adding PostHog's separate script from the `rally-posthog-src` meta tag. |
 | `apps/site/src/posthog.ts` | The PostHog SDK entry, a separate build input: initializes the full SDK with replay, heatmaps and autocapture, and hands its session to the reporter. |
 | `apps/site/src/*-handoff.ts`, `desktop-open.ts`, `invite.ts`, `slack-link.ts`, `workstream-link.ts` | Report presented, automatic, and manual browser-to-desktop handoff attempts after each page has validated its own target. |
 | `apps/site/vite.config.ts` | Injects the shared telemetry entry and immutable release/build context into every site page. |
@@ -108,7 +109,7 @@ PostHog organization's proxy settings, with the project's public token.
   rather than one per page. If the SDK script fails to load, events keep the
   page's own session.
 - **On by default, denied by path.** `runsPostHog` runs the SDK on every
-  production page except `RECORDING_DENIED_PATHS`: `/download`, `/invite`,
+  production page except `CREDENTIAL_PATHS`: `/download`, `/invite`,
   `/auth/`, `/slack/link`, `/open` and `/app`, whose URLs hold tickets,
   tokens, grants and resource ids a recording would keep, plus the 404 page,
   where a mistyped handoff link lands with its token. A new page records
@@ -220,6 +221,25 @@ avoids writing a disposable D1 journey merely to decide whether browser storage
 is allowed.
 
 ## Changelog
+
+### 2026-10-27 — X conversion pixel on marketing pages
+
+**What changed:** Added X's conversion pixel (`rg7j5`) to every production page
+PostHog's SDK runs on, through the shared site entry, with X's domains in the
+global CSP. PostHog's page list moved to `credential-paths.ts` as `CREDENTIAL_PATHS`, so
+both loaders share one list of pages that carry credentials without the X loader
+importing PostHog's. Updated the cookie
+notice and Privacy Policy.
+
+**Why:** Measuring which X ads bring visitors and downloads. The pixel reports
+the full page URL to X, so it needs the same exclusions as session recording.
+
+**Considered and rejected:** Inlining X's snippet, which the site's CSP blocks.
+Loading it only on the Apollo landing pages, which would miss ad clicks that land
+on blog or comparison pages. Delaying the `twclid` strip until X's script had run,
+which would hold PostHog back on every ad landing; the click ID is written into
+X's cookie instead. A browser sending Global Privacy Control skips the pixel,
+because the cookie notice promises to honor that signal.
 
 ### 2026-10-19 — Apollo tracks landing-page visits
 
