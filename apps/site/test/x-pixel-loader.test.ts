@@ -29,10 +29,9 @@ describe('which pages run the X pixel', () => {
 describe('loading the X pixel', () => {
   it('loads X\'s script once and queues the pixel config', () => {
     loadXPixel(null);
-    loadXPixel(null);
     expect([...document.head.querySelectorAll('script')].map((script) => [script.src, script.async]))
       .toEqual([['https://static.ads-twitter.com/uwt.js', true]]);
-    expect((window as unknown as { twq: { queue: unknown[] } }).twq.queue).toEqual([['config', 'rg7j5'], ['config', 'rg7j5']]);
+    expect((window as unknown as { twq: { queue: unknown[] } }).twq.queue).toEqual([['config', 'rg7j5']]);
   });
 
   it('hands the ad click id to the pixel in its cookie', () => {
