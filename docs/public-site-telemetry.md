@@ -222,23 +222,27 @@ is allowed.
 
 ## Changelog
 
-### 2026-10-27 — The homepage CSP override also covers /index.html
+### 2026-10-27 — The Worker sets the homepage's CSP
 
-**What changed:** Added an `/index.html` block to `apps/site/public/_headers`,
-identical to the `/` block, which detaches the global CSP and sets the landing one.
+**What changed:** `/` now runs the site Worker (`run_worker_first`), which
+replaces the homepage's CSP with the landing policy from
+`apps/site/worker/landing-csp.ts`. The exact `/` rule in `apps/site/public/_headers`
+is gone; `/start-fast/*` and `/concepts/*` keep theirs.
 
-**Why:** In production, `/` was served two CSP headers, the global one and the
-landing one, and browsers enforce both. That blocked Apollo's tracker on the homepage,
-most likely from the day it shipped on 2026-10-19. `/start-fast/` and `/concepts/`
-were unaffected, and local `wrangler dev` served `/` a single header, so this
-only showed in production. The likeliest reading is that production also matches the
-homepage as its served file, `/index.html`, which only the global rule matched;
-splat overrides cover their own `index.html`, so they never hit this.
+**Why:** Production served `/` two CSP headers, the landing one then the global
+one, and browsers enforce both, so Apollo's tracker was blocked on the homepage,
+most likely since it shipped on 2026-10-19. Local `wrangler dev` served one. The
+asset layer applies matching rules in turn, and a header set by an earlier rule
+is appended to rather than replaced, so `! Content-Security-Policy` works only
+when the overriding rule runs after `/*`. The splat overrides behave in
+production and `/` does not. Production's rule order is not visible to us; one
+reading that fits is sorted keys, where `/` sorts before `/*`.
 
-**Considered and rejected:** Serving `/` through the Worker to set the header
-in code, which would start a Worker on every homepage view to fix one header
-rule. Any future exact-path override for a directory page needs the same
-`index.html` twin.
+**Considered and rejected:** Adding an `/index.html` twin of the `/` rule,
+which the asset layer never matches for a request to `/`. Another exact-path
+rule shaped to sort after `/*`, which bets on an order nobody can see. The Worker
+does not depend on rule order, at the cost of one Worker invocation per homepage
+view.
 
 ### 2026-10-27 — X conversion pixel on marketing pages
 

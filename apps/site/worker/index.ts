@@ -1,8 +1,11 @@
-// The public site is static assets. This Worker runs only for /help/ (see
-// `run_worker_first` in wrangler.jsonc) so an agent that asks for Markdown gets
-// the page's Markdown copy at the same URL, and every help response tells an
-// agent where the manual's index is. Everything else is served by the asset
-// layer without this script running.
+// The public site is static assets. This Worker runs only for the homepage and
+// /help/ (see `run_worker_first` in wrangler.jsonc). On the homepage it sets the
+// landing CSP; under /help/ an agent that asks for Markdown gets the page's
+// Markdown copy at the same URL, and every help response tells an agent where
+// the manual's index is. Everything else is served by the asset layer without
+// this script running.
+
+import { LANDING_CSP } from './landing-csp';
 
 interface Env {
   ASSETS: { fetch: (request: Request) => Promise<Response> };
@@ -58,6 +61,7 @@ function withHeaders(response: Response, headers: Record<string, string>): Respo
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === '/') return withHeaders(await env.ASSETS.fetch(request), { 'Content-Security-Policy': LANDING_CSP });
     const markdownPath = markdownPathFor(url.pathname);
     const negotiable = markdownPath !== null && (request.method === 'GET' || request.method === 'HEAD');
 
