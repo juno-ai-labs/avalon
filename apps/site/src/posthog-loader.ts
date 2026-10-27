@@ -19,10 +19,14 @@ const RECORDING_DENIED_PATHS: readonly RegExp[] = [
   /^\/404(?:\.html)?$/u,
 ];
 
-export function runsPostHog(environment: 'development' | 'staging' | 'production', pathname: string, notFound: boolean): boolean {
-  if (environment !== 'production' || notFound) return false;
+/** Whether a third-party script may run on this path: not one in `RECORDING_DENIED_PATHS`. */
+export function allowsThirdPartyScripts(pathname: string): boolean {
   const path = pathname.toLowerCase();
   return !RECORDING_DENIED_PATHS.some((denied) => denied.test(path));
+}
+
+export function runsPostHog(environment: 'development' | 'staging' | 'production', pathname: string, notFound: boolean): boolean {
+  return environment === 'production' && !notFound && allowsThirdPartyScripts(pathname);
 }
 
 /**
