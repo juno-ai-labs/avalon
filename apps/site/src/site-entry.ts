@@ -6,8 +6,9 @@ import { awaitAnalyticsSession, currentSitePage, environment, initializeSiteTele
 // Capability pages have no acquisition telemetry, including their fragments.
 if (!/^\/download(?:\/|$)/u.test(location.pathname)) {
   const notFound = currentSitePage() === 'not_found';
+  const globalPrivacyControl = (navigator as Navigator & { globalPrivacyControl?: boolean }).globalPrivacyControl === true;
   // Read before `takeAdClickId` strips it; the pixel receives it in a cookie.
-  if (runsXPixel(environment(), location.pathname, notFound, (navigator as Navigator & { globalPrivacyControl?: boolean }).globalPrivacyControl === true)) loadXPixel(new URL(location.href).searchParams.get('twclid'));
+  if (runsXPixel(environment(), location.pathname, notFound, globalPrivacyControl)) loadXPixel(new URL(location.href).searchParams.get('twclid'));
   // Before the PostHog SDK can read the address bar.
   takeAdClickId();
   if (!notFound && runsApollo(environment(), location.pathname)) loadApollo();
