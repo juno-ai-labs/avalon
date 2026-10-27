@@ -22,7 +22,7 @@ first-party events below. The Cookie & Tracking Notice discloses this use.
 Every production page except the handoff pages and the not-found page loads
 X's conversion pixel (pixel ID `rg7j5`) through `apps/site/src/x-pixel-loader.ts`.
 It uses the same page rule as PostHog's SDK (`allowsThirdPartyScripts` in
-`posthog-loader.ts`), because the pixel sends the full page URL to X. A browser
+`credential-paths.ts`), because the pixel sends the full page URL to X. A browser
 sending Global Privacy Control never loads it, which the Cookie & Tracking
 Notice promises. X's domains are in the global CSP in `apps/site/public/_headers`.
 
@@ -124,8 +124,8 @@ Check these on every edit to the landing page:
    browser reload persistence. Signup reports join separate subjects by flow.
 
 8. **Keep the SDK off pages with credentials in their URL.** Every page
-   records unless its path is in `RECORDING_DENIED_PATHS` in
-   `apps/site/src/posthog-loader.ts`. A new page that receives a token, ticket,
+   records unless its path is in `CREDENTIAL_PATHS` in
+   `apps/site/src/credential-paths.ts`, which also gates the X pixel. A new page that receives a token, ticket,
    grant or resource id in its URL must be added there before it ships.
 
 ## Where to look

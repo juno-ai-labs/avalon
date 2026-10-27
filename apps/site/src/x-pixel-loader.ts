@@ -1,4 +1,4 @@
-import { allowsThirdPartyScripts } from './posthog-loader';
+import { allowsThirdPartyScripts } from './credential-paths';
 
 const X_PIXEL_ID = 'rg7j5';
 /** "Rally | Mac download intent" in X Events Manager. */
@@ -45,8 +45,8 @@ export function loadXPixel(twclid: string | null): void {
     script.async = true;
     script.src = 'https://static.ads-twitter.com/uwt.js';
     document.head.append(script);
+    twq('config', X_PIXEL_ID);
   }
-  w.twq('config', X_PIXEL_ID);
 }
 
 /** Reports a download-button click to X. Does nothing where the pixel did not load. */
