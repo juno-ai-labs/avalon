@@ -222,6 +222,24 @@ is allowed.
 
 ## Changelog
 
+### 2026-10-27 — The homepage CSP override also covers /index.html
+
+**What changed:** Added an `/index.html` block to `apps/site/public/_headers`,
+identical to the `/` block, which detaches the global CSP and sets the landing one.
+
+**Why:** In production, `/` was served two CSP headers, the global one and the
+landing one, and browsers enforce both. That blocked Apollo's tracker on the homepage,
+most likely from the day it shipped on 2026-10-19. `/start-fast/` and `/concepts/`
+were unaffected, and local `wrangler dev` served `/` a single header, so this
+only showed in production. The likeliest reading is that production also matches the
+homepage as its served file, `/index.html`, which only the global rule matched;
+splat overrides cover their own `index.html`, so they never hit this.
+
+**Considered and rejected:** Serving `/` through the Worker to set the header
+in code, which would start a Worker on every homepage view to fix one header
+rule. Any future exact-path override for a directory page needs the same
+`index.html` twin.
+
 ### 2026-10-27 — X conversion pixel on marketing pages
 
 **What changed:** Added X's conversion pixel (`rg7j5`) to every production page
