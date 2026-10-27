@@ -1,7 +1,9 @@
+# X's conversion pixel loads from static.ads-twitter.com and reports to t.co and
+# analytics.twitter.com on every page except handoffs (src/x-pixel-loader.ts).
 # PostHog's browser SDK sends through its reverse proxy at p.rallywith.ai, and
 # its session recorder starts a worker from a blob URL. See docs/landing-page-tracking.md.
 /*
-  Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data:; script-src 'self'; frame-src 'none'; connect-src https://api.rallywith.ai https://api.with-avalon.com https://p.rallywith.ai; worker-src blob:; object-src 'none'; base-uri 'self'; form-action https://api.rallywith.ai/access/downloads/redeem; frame-ancestors 'none'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data: https://t.co https://analytics.twitter.com; script-src 'self' https://static.ads-twitter.com; frame-src 'none'; connect-src https://t.co https://analytics.twitter.com https://api.rallywith.ai https://api.with-avalon.com https://p.rallywith.ai; worker-src blob:; object-src 'none'; base-uri 'self'; form-action https://api.rallywith.ai/access/downloads/redeem; frame-ancestors 'none'; upgrade-insecure-requests
   Permissions-Policy: accelerometer=(), camera=(), geolocation=(), gyroscope=(), microphone=(), payment=(), usb=()
   Referrer-Policy: strict-origin-when-cross-origin
   X-Content-Type-Options: nosniff
@@ -12,15 +14,15 @@
 # Replace the global CSP here so these permissions do not reach handoff pages.
 /
   ! Content-Security-Policy
-  Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data: https://rp.liadm.com https://rpr.liadm.com; script-src 'self' https://assets.apollo.io https://d-code.liadm.com; frame-src https://i.liadm.com; connect-src https://aplo-evnt.com https://idx.liadm.com https://rp.liadm.com https://rpr.liadm.com https://api.rallywith.ai https://api.with-avalon.com https://p.rallywith.ai; worker-src blob:; object-src 'none'; base-uri 'self'; form-action https://api.rallywith.ai/access/downloads/redeem; frame-ancestors 'none'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data: https://t.co https://analytics.twitter.com https://rp.liadm.com https://rpr.liadm.com; script-src 'self' https://static.ads-twitter.com https://assets.apollo.io https://d-code.liadm.com; frame-src https://i.liadm.com; connect-src https://t.co https://analytics.twitter.com https://aplo-evnt.com https://idx.liadm.com https://rp.liadm.com https://rpr.liadm.com https://api.rallywith.ai https://api.with-avalon.com https://p.rallywith.ai; worker-src blob:; object-src 'none'; base-uri 'self'; form-action https://api.rallywith.ai/access/downloads/redeem; frame-ancestors 'none'; upgrade-insecure-requests
 
 /start-fast/*
   ! Content-Security-Policy
-  Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data: https://rp.liadm.com https://rpr.liadm.com; script-src 'self' https://assets.apollo.io https://d-code.liadm.com; frame-src https://i.liadm.com; connect-src https://aplo-evnt.com https://idx.liadm.com https://rp.liadm.com https://rpr.liadm.com https://api.rallywith.ai https://api.with-avalon.com https://p.rallywith.ai; worker-src blob:; object-src 'none'; base-uri 'self'; form-action https://api.rallywith.ai/access/downloads/redeem; frame-ancestors 'none'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data: https://t.co https://analytics.twitter.com https://rp.liadm.com https://rpr.liadm.com; script-src 'self' https://static.ads-twitter.com https://assets.apollo.io https://d-code.liadm.com; frame-src https://i.liadm.com; connect-src https://t.co https://analytics.twitter.com https://aplo-evnt.com https://idx.liadm.com https://rp.liadm.com https://rpr.liadm.com https://api.rallywith.ai https://api.with-avalon.com https://p.rallywith.ai; worker-src blob:; object-src 'none'; base-uri 'self'; form-action https://api.rallywith.ai/access/downloads/redeem; frame-ancestors 'none'; upgrade-insecure-requests
 
 /concepts/*
   ! Content-Security-Policy
-  Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data: https://rp.liadm.com https://rpr.liadm.com; script-src 'self' https://assets.apollo.io https://d-code.liadm.com; frame-src https://i.liadm.com; connect-src https://aplo-evnt.com https://idx.liadm.com https://rp.liadm.com https://rpr.liadm.com https://api.rallywith.ai https://api.with-avalon.com https://p.rallywith.ai; worker-src blob:; object-src 'none'; base-uri 'self'; form-action https://api.rallywith.ai/access/downloads/redeem; frame-ancestors 'none'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data: https://t.co https://analytics.twitter.com https://rp.liadm.com https://rpr.liadm.com; script-src 'self' https://static.ads-twitter.com https://assets.apollo.io https://d-code.liadm.com; frame-src https://i.liadm.com; connect-src https://t.co https://analytics.twitter.com https://aplo-evnt.com https://idx.liadm.com https://rp.liadm.com https://rpr.liadm.com https://api.rallywith.ai https://api.with-avalon.com https://p.rallywith.ai; worker-src blob:; object-src 'none'; base-uri 'self'; form-action https://api.rallywith.ai/access/downloads/redeem; frame-ancestors 'none'; upgrade-insecure-requests
 
 # The help center fetches its own search index and page Markdown, so only
 # /help/ adds 'self' to connect-src. A second CSP header would be enforced
@@ -28,7 +30,23 @@
 # removed here and replaced, identical except for connect-src.
 /help/*
   ! Content-Security-Policy
-  Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data:; script-src 'self'; frame-src 'none'; connect-src 'self' https://api.rallywith.ai https://api.with-avalon.com https://p.rallywith.ai; worker-src blob:; object-src 'none'; base-uri 'self'; form-action https://api.rallywith.ai/access/downloads/redeem; frame-ancestors 'none'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data: https://t.co https://analytics.twitter.com; script-src 'self' https://static.ads-twitter.com; frame-src 'none'; connect-src 'self' https://t.co https://analytics.twitter.com https://api.rallywith.ai https://api.with-avalon.com https://p.rallywith.ai; worker-src blob:; object-src 'none'; base-uri 'self'; form-action https://api.rallywith.ai/access/downloads/redeem; frame-ancestors 'none'; upgrade-insecure-requests
+
+# The pages whose URL carries a credential (CREDENTIAL_PATHS in
+# src/credential-paths.ts) keep the policy without X's hosts: the pixel never
+# runs there, and an injected script must not be able to reach X either.
+# /auth/desktop/*, /app/* and /download/* carry the same override below.
+/invite/*
+  ! Content-Security-Policy
+  Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data:; script-src 'self'; frame-src 'none'; connect-src https://api.rallywith.ai https://api.with-avalon.com https://p.rallywith.ai; worker-src blob:; object-src 'none'; base-uri 'self'; form-action https://api.rallywith.ai/access/downloads/redeem; frame-ancestors 'none'; upgrade-insecure-requests
+
+/slack/link/*
+  ! Content-Security-Policy
+  Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data:; script-src 'self'; frame-src 'none'; connect-src https://api.rallywith.ai https://api.with-avalon.com https://p.rallywith.ai; worker-src blob:; object-src 'none'; base-uri 'self'; form-action https://api.rallywith.ai/access/downloads/redeem; frame-ancestors 'none'; upgrade-insecure-requests
+
+/open/*
+  ! Content-Security-Policy
+  Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data:; script-src 'self'; frame-src 'none'; connect-src https://api.rallywith.ai https://api.with-avalon.com https://p.rallywith.ai; worker-src blob:; object-src 'none'; base-uri 'self'; form-action https://api.rallywith.ai/access/downloads/redeem; frame-ancestors 'none'; upgrade-insecure-requests
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
@@ -74,14 +92,20 @@
   Cache-Control: public, max-age=31536000, immutable
 
 /auth/desktop/*
+  ! Content-Security-Policy
+  Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data:; script-src 'self'; frame-src 'none'; connect-src https://api.rallywith.ai https://api.with-avalon.com https://p.rallywith.ai; worker-src blob:; object-src 'none'; base-uri 'self'; form-action https://api.rallywith.ai/access/downloads/redeem; frame-ancestors 'none'; upgrade-insecure-requests
   Cache-Control: no-store
 
 # One page serves every work-stream id through a rewrite. Caching it against the
 # per-id URL would pin one visitor's link into a shared cache entry.
 /app/*
+  ! Content-Security-Policy
+  Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data:; script-src 'self'; frame-src 'none'; connect-src https://api.rallywith.ai https://api.with-avalon.com https://p.rallywith.ai; worker-src blob:; object-src 'none'; base-uri 'self'; form-action https://api.rallywith.ai/access/downloads/redeem; frame-ancestors 'none'; upgrade-insecure-requests
   Cache-Control: no-store
 
 /download/*
+  ! Content-Security-Policy
+  Content-Security-Policy: default-src 'self'; style-src 'self'; img-src 'self' data:; script-src 'self'; frame-src 'none'; connect-src https://api.rallywith.ai https://api.with-avalon.com https://p.rallywith.ai; worker-src blob:; object-src 'none'; base-uri 'self'; form-action https://api.rallywith.ai/access/downloads/redeem; frame-ancestors 'none'; upgrade-insecure-requests
   Cache-Control: no-store
   Referrer-Policy: no-referrer
 
