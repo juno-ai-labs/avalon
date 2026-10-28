@@ -35,8 +35,12 @@ has loaded, so the site entry reads it first and writes it into X's own
 cookie format is X's, not ours: if X changes it, X-ad visits stop being
 attributed while the pixel keeps firing.
 
-Every link whose site action is `download` also sends X the "Rally | Mac
-download intent" event (`tw-rg7j5-rg7j6`), from the browser. The X Conversion
+Two kinds of tracked click also send X a custom event, from the browser
+(`reportXIntent`): every link whose site action is `download` sends "Rally | Mac
+download intent" (`tw-rg7j5-rg7j6`), and every web-app entry link
+(`web-app-hero`, `web-app-offer`, `sign-in-header`) sends "Rally | Sign up
+intent" (`tw-rg7j5-ri4zl`). The header button's label alternates between Sign in
+and Sign up, so that event also counts returning users signing in. The X Conversion
 API (server-side conversions) is not wired: nothing on the server confirms a
 download, so there is no server-side event to send yet.
 
