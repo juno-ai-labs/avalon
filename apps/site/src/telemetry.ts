@@ -1,5 +1,5 @@
 import { TELEMETRY_ENVELOPE_SCHEMA } from '@rally/contracts/telemetry';
-import { reportXDownloadIntent } from './x-pixel-loader';
+import { reportXIntent } from './x-pixel-loader';
 import type {
   TelemetryBootstrapResponse,
   TelemetryEnvelope,
@@ -374,9 +374,10 @@ function initializeSiteActions(): void {
       // clean link afterwards so copied links never share an attempt.
       destination.searchParams.delete('signupFlowId');
       setTimeout(() => { link.href = destination.href; }, 0);
+      reportXIntent('signUp');
     }
     reportSiteAction({ ...action, ...(flowId ? { flowId } : {}) });
-    if (action.action === 'download') reportXDownloadIntent();
+    if (action.action === 'download') reportXIntent('download');
   };
   document.addEventListener('click', selected, { capture: true });
   // A middle-click opens a link without firing `click`.
