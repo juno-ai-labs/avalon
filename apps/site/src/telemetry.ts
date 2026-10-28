@@ -374,10 +374,10 @@ function initializeSiteActions(): void {
       // clean link afterwards so copied links never share an attempt.
       destination.searchParams.delete('signupFlowId');
       setTimeout(() => { link.href = destination.href; }, 0);
+      reportXIntent('signUp');
     }
     reportSiteAction({ ...action, ...(flowId ? { flowId } : {}) });
     if (action.action === 'download') reportXIntent('download');
-    if (id && WEB_ENTRY_LINKS.has(id)) reportXIntent('signUp');
   };
   document.addEventListener('click', selected, { capture: true });
   // A middle-click opens a link without firing `click`.
