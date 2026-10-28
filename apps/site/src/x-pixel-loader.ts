@@ -1,8 +1,13 @@
 import { allowsThirdPartyScripts } from './credential-paths';
 
 const X_PIXEL_ID = 'rg7j5';
-/** "Rally | Mac download intent" in X Events Manager. */
-const X_DOWNLOAD_INTENT_EVENT = 'tw-rg7j5-rg7j6';
+/** Custom events in X Events Manager, by the click that sends them. */
+const X_INTENT_EVENTS = {
+  /** "Rally | Mac download intent": a download button. */
+  download: 'tw-rg7j5-rg7j6',
+  /** "Rally | Sign up intent": a link into the web app, where sign-up happens. */
+  signUp: 'tw-rg7j5-ri4zl',
+} as const;
 
 type Twq = ((...args: unknown[]) => void) & { exe?: (...args: unknown[]) => void; queue: unknown[]; version: string };
 
@@ -49,7 +54,7 @@ export function loadXPixel(twclid: string | null): void {
   }
 }
 
-/** Reports a download-button click to X. Does nothing where the pixel did not load. */
-export function reportXDownloadIntent(): void {
-  (window as Window & { twq?: Twq }).twq?.('event', X_DOWNLOAD_INTENT_EVENT, {});
+/** Reports a tracked click to X. Does nothing where the pixel did not load. */
+export function reportXIntent(intent: keyof typeof X_INTENT_EVENTS): void {
+  (window as Window & { twq?: Twq }).twq?.('event', X_INTENT_EVENTS[intent], {});
 }

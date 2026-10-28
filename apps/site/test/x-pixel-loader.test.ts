@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest';
-import { loadXPixel, reportXDownloadIntent, runsXPixel } from '../src/x-pixel-loader';
+import { loadXPixel, reportXIntent, runsXPixel } from '../src/x-pixel-loader';
 
 afterEach(() => {
   document.head.innerHTML = '';
@@ -44,12 +44,12 @@ describe('loading the X pixel', () => {
 describe('reporting a download intent to X', () => {
   it('queues the download event once the pixel has loaded', () => {
     loadXPixel(null);
-    reportXDownloadIntent();
+    reportXIntent('download');
     expect((window as unknown as { twq: { queue: unknown[] } }).twq.queue).toEqual([['config', 'rg7j5'], ['event', 'tw-rg7j5-rg7j6', {}]]);
   });
 
   it('does nothing on a page where the pixel did not load', () => {
-    expect(() => reportXDownloadIntent()).not.toThrow();
+    expect(() => reportXIntent('download')).not.toThrow();
     expect((window as { twq?: unknown }).twq).toBeUndefined();
   });
 });
