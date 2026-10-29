@@ -4313,11 +4313,12 @@ function registerIpc(): void {
     const window = BrowserWindow.fromWebContents(event.sender);
     return window ? await artifactPreviews.get(window)?.pick() ?? null : null;
   });
-  ipcMain.handle('artifact:preview-comments', async (event, raw: unknown) => {
+  ipcMain.handle('artifact:preview-comments', async (event, raw: unknown, rawSelected: unknown) => {
     assertArtifactSurfaceSender(event);
     const pins=AnnotationCommentPinsSchema.parse(raw);
+    const selected=z.string().nullable().optional().parse(rawSelected) ?? null;
     const window=BrowserWindow.fromWebContents(event.sender);
-    return window ? await artifactPreviews.get(window)?.comments(pins) ?? null : null;
+    return window ? await artifactPreviews.get(window)?.comments(pins, selected) ?? null : null;
   });
   ipcMain.handle('artifact:stop-picking-preview', async (event) => {
     assertArtifactSurfaceSender(event);

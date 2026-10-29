@@ -7,7 +7,8 @@ import { IconPointerCollaboration } from '@tabler/icons-react';
 import { useDetailHeaderActions } from './detail-header-actions';
 import { AnnotationSheet } from './annotation-sheet';
 import { useEffect, useRef, useState, useMemo } from 'react';
-import { ARTIFACT_COMMENT_CURSOR, isHtmlResource, ANNOTATION_CONTEXT_CHARACTERS, AnnotationFrameMessageSchema, AnnotationLocatorSchema, buildAnnotation, classifyAttachmentKind, type Annotation, type AnnotationHostMessage, type AnnotationLocator } from '@rally/contracts';
+import { ARTIFACT_COMMENT_CURSOR, isHtmlResource, ANNOTATION_CONTEXT_CHARACTERS, AnnotationFrameMessageSchema, AnnotationLocatorSchema, buildAnnotation, classifyAttachmentKind, type Annotation, type AnnotationHostMessage, type AnnotationLocator, type ArtifactElementRect } from '@rally/contracts';
+import { placeAnnotationEditor } from '../lib/annotation-anchor';
 import { AnchoredAnnotationComment, AnnotationComment, annotationQuote, useAnnotationDraft } from './artifact-annotations';
 import { annotationDomRange, sourceSelectionPoint } from '../lib/annotation-source';
 import { MarkdownBody } from './workstream-blocks';
@@ -80,7 +81,15 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
   // The frame is opaque, so its target origin is `*`; only the frame this
   // surface wrote can be reached through its own `contentWindow`.
   const tellFrame = (message: AnnotationHostMessage): void => frame.current?.contentWindow?.postMessage(message,'*');
-  const syncHtmlComments = (): void => tellFrame({type:'rally-annotation-comments',pins:htmlPins.filter((pin)=>pin.id!==editing).map(({id,annotation})=>({id,annotation}))});
+  const editingLocator = draft?.selections.find((pin) => pin.id === editing)?.annotation.target.locator;
+  const syncHtmlComments = (): void => tellFrame({type:'rally-annotation-comments',pins:htmlPins.filter((pin)=>pin.id!==editing).map(({id,annotation})=>({id,annotation})),selected:editingLocator?.type==='element'?editingLocator.css:null});
+  /** The editor beside its element; the style below adds 12px, so take it off here. */
+  const anchorEditor = (rect: ArtifactElementRect): void => {
+    const box = frame.current?.getBoundingClientRect();
+    if (!box) return;
+    const place = placeAnnotationEditor(rect, { x: box.x, y: box.y, width: box.width, height: box.height }, { width: window.innerWidth, height: window.innerHeight });
+    setAnchor({ x: place.x, y: place.y - 12 });
+  };
   useEffect(()=>{if(html)syncHtmlComments();},[draft?.pins,editing,html]);
   useEffect(()=>{if(html)tellFrame({type:'rally-annotation-picking',on:picking});},[html,picking]);
   const current = draft?.selections.find((p) => p.id === editing);
@@ -185,6 +194,7 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
         return;
       }
       if (message.type === 'rally-annotation-restored') { if (saved) setMissing(message.resolved !== true); return; }
+      if (message.type === 'rally-annotation-anchor') { if (editing) anchorEditor(message.rect); return; }
       if (message.type === 'rally-annotation-comment-action') {
         const action = message.action;
         if (!htmlPins.some((pin)=>pin.id===action.id)) return;
@@ -198,7 +208,8 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
       const locator = AnnotationLocatorSchema.safeParse({ type: 'element', css: pin.css, box: pin.box, visibleText: pin.visibleText });
       if (!locator.success) return;
       const frameBox = frame.current?.getBoundingClientRect();
-      if (pin.point && frameBox) setAnchor({x:frameBox.x+pin.point.x,y:frameBox.y+pin.point.y});
+      if (pin.rect) anchorEditor(pin.rect);
+      else if (pin.point && frameBox) setAnchor({x:frameBox.x+pin.point.x,y:frameBox.y+pin.point.y});
       commit(locator.data, pin.html, 0, 0, pin.replace, undefined, pin);
     };
     window.addEventListener('message', receive); return () => window.removeEventListener('message', receive);

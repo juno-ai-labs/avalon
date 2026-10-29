@@ -117,16 +117,41 @@ surface is how the script gets into the document and how the host reaches it:
 | HTML file, rail or lightbox, and a saved site spot | `/annotation-frame.js` from the app origin, under a fresh nonce, in an opaque `srcdoc` frame | `postMessage` to the frame; replies accepted only from that frame's window |
 
 The bridge is the same three host messages (`rally-annotation-picking`,
-`rally-annotation-comments`, `rally-annotation-restore`) and four replies
+`rally-annotation-comments`, `rally-annotation-restore`) and five replies
 (`rally-annotation-ready`, `rally-artifact-pin`,
-`rally-annotation-comment-action`, `rally-annotation-restored`), all parsed with
-the shared schemas. A framed document announces itself with the ready message
+`rally-annotation-comment-action`, `rally-annotation-restored`,
+`rally-annotation-anchor`), all parsed with the shared schemas. A framed document announces itself with the ready message
 while it parses, so the host learns a new page after an in-site link and tells
 it what it is doing; the Comment control is enabled only once a page has said
 so, and a page without the script (the neutral page, a protected site's
 refusal, an error page) keeps it disabled with "This page cannot take comments
 here." The script accepts messages only from `window.parent`, and on an
 artifact origin only when that parent is the configured app origin.
+
+### What the script draws, and how it keeps up
+
+The inspector outlines the nearest block under the pointer and never the
+document or its body: a pointer over empty page shows nothing, and a click
+there pins nothing. Once a block is pinned it stays highlighted as the
+selection until its comment is confirmed or discarded; the host says which
+selection is open through `comments(pins, selected)`, so the highlight survives
+a frame reload and clears when the editor closes. Confirmed cards use the app's
+own card look, sit to the right of their element with a connector when there is
+room and below it when there is not, and hide while the element is out of the
+viewport or scrolled out of an ancestor that clips it.
+
+Everything drawn is kept in place by one frame-synced tracker inside the
+script: it runs only while something is on screen, reads each tracked
+element's rectangle once per frame, and moves what changed. That is what makes
+an outline, a selection or a card follow a scroll in any container, a resize,
+a transition or a layout shift without a listener for each, and it is why the
+hover outline re-resolves what is under a still pointer after the page scrolls
+beneath it. A framed host gets the selection's rectangle as
+`rally-annotation-anchor` whenever it moves, and `placeAnnotationEditor` in
+`lib/annotation-anchor.ts` puts the comment editor beside the element, below it
+when the window has no room to the right, and parked at the frame's edge when
+the element has scrolled out of the frame. The desktop's editor opens over a
+still of the page, so nothing scrolls under it there.
 
 ### HTML trust boundaries
 
@@ -278,7 +303,14 @@ calls it through `executeJavaScript` instead of evaluating sources in an
 isolated world; the browser client's framed preview and the opaque HTML-file
 frame drive it over the same `postMessage` bridge; and the browser host serves
 `/annotation-frame.js`, so HTML files and saved site spots work there too.
-Website comments in the browser client went from disabled to working.
+Website comments in the browser client went from disabled to working. The
+inspector stopped offering the document body as a target, the pinned element
+stays highlighted while its comment is written, cards took the app's own look
+and placement, and one frame-synced tracker keeps the outline, the selection,
+the cards and the framed hosts' editor beside their elements through scrolls
+in any container, resizes and layout shifts. The editor goes beside, below or
+above its element rather than over it, and the surface root no longer draws a
+focus ring when the editor hands focus back to it.
 
 **Why:** The browser client had no way to put a script into a cross-origin
 artifact frame, and the opaque frame's script was built only for the desktop.
