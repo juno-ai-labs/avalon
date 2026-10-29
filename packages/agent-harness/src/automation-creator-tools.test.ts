@@ -230,22 +230,21 @@ describe("the automations plugin", () => {
     expect(systemMessage).toContain("Scheduled result delivery to a workstream is limited to the owning workstream");
   });
 
-  it("bounds a scheduled self-review and tells it to report to the absent owner", () => {
+  it("stages a scheduled self-review and tells it to report to the absent owner", () => {
     const { systemMessage } = createAutomationsPlugin(host());
 
     // The notice's first line is the one `renderSidekickReviewNotice` writes;
     // the policy recognizes the review by it.
     expect(systemMessage).toContain("Notice from Rally, not from a person or an agent: a scheduled\nself-review of this Sidekick is due");
-    expect(systemMessage).toContain("Plan first, as your first message and before any tool call");
-    expect(systemMessage).toContain("Then read only the runs the notice lists");
-    expect(systemMessage).toContain("Then decide against your plan");
-    expect(systemMessage).toContain("A review never adds a connector, plugin, delivery\ndestination, trigger or capability, never enrols a delegate");
-    expect(systemMessage).toContain("Never submit ready=false in a review");
+    expect(systemMessage).toContain("1. Plan, in your first message, before any tool call");
+    expect(systemMessage).toContain("2. Read only the runs the notice lists");
+    expect(systemMessage).toContain("3. Decide against the plan");
+    expect(systemMessage).toContain("Never add a connector, plugin,\ndelivery destination, trigger or capability; never enrol a delegate");
+    expect(systemMessage).toContain("never submit ready=false");
     // The publication to the people the Sidekick works for, and only on a change.
-    expect(systemMessage).toContain("post one message there\nwith conversation_post, passing that conversation");
-    expect(systemMessage).toContain("Post nothing there when nothing changed");
-    expect(systemMessage).toContain("for the owner, who was not present");
-    expect(systemMessage).toContain("asking here restores the earlier revision");
+    expect(systemMessage).toContain("4. If you saved a change and the notice names where to announce it, post one message there\nwith conversation_post, passing that conversation");
+    expect(systemMessage).toContain("Post\nnothing when nothing changed");
+    expect(systemMessage).toContain("5. End with one short report here for the owner, who was not present");
   });
 
   it("publishes ready submissions without a separate activation tool", () => {

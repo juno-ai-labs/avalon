@@ -885,7 +885,22 @@ export class HostedSidekick {
     await this.assertManager(this.assertSidekick(request.workspaceId, request.automationId), actor);
     const submitted = await this.submitDefinition(request);
     if (submitted.ready) await this.apply({ workspaceId: request.workspaceId, automationId: request.automationId, actor });
+    if (request.origin === "sidekick_review") {
+      logInfo(this.env, "sidekick_review_revised", {
+        ...this.logFields(), definition_revision: submitted.definitionRevision, ready: submitted.ready,
+        review_id: this.latestDeliveredReviewId(),
+      });
+    }
     return submitted;
+  }
+
+  /** The review the wizard is answering: the one most recently delivered to it. */
+  private latestDeliveredReviewId(): string | null {
+    return first(this.sql.exec<{ review_id: string }>(
+      `SELECT review_id FROM sidekick_reviews WHERE sidekick_id = ? AND delivered_at IS NOT NULL
+        ORDER BY delivered_at DESC, review_id DESC LIMIT 1`,
+      this.sidekickId,
+    ))?.review_id ?? null;
   }
 
   /**
@@ -924,8 +939,8 @@ export class HostedSidekick {
       this.sql.exec(
         `INSERT INTO sidekick_revisions
            (sidekick_id, definition_revision, definition_json, definition_hash, evaluator_rules_json, ready,
-            submitted_by_run_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            submitted_by_run_id, review_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         this.sidekickId,
         definitionRevision,
         definitionJson,
@@ -933,6 +948,8 @@ export class HostedSidekick {
         request.evaluatorRules ? JSON.stringify(request.evaluatorRules) : null,
         request.draft.ready ? 1 : 0,
         request.submittedByRunId,
+        // Which review this revision answers, so what reviews changed is one query.
+        request.origin === "sidekick_review" ? this.latestDeliveredReviewId() : null,
         now,
       );
       const scope = latest.lifecycle === "draft" && latest.scope !== "workstream" && request.draft.suggestedScope !== "workstream"
