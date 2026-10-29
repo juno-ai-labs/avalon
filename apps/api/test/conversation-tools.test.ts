@@ -240,7 +240,7 @@ describe("which loops get the conversation tools", () => {
 
   it("gives a Sidekick's configuration every tool but merge and its runs no attach", () => {
     expect(conversationToolAccess(configLoop())).toEqual({ actingUserId: USER_ID,
-      tools: ["list", "read", "search", "post", "attach"], scope: { kind: "sidekick", automationId: SIDEKICK_ID } });
+      tools: ["list", "read", "search", "post", "attach"], scope: { kind: "sidekick", automationId: SIDEKICK_ID, authoring: true } });
     expect(conversationToolAccess(runLoop())).toEqual({ actingUserId: USER_ID,
       tools: ["list", "read", "search", "post"], scope: { kind: "sidekick", automationId: SIDEKICK_ID } });
   });
