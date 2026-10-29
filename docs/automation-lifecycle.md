@@ -1035,9 +1035,12 @@ window, `SIDEKICK_REVIEW_SAMPLE_LIMITS`). Every count and every sampled run is
 under the accepted revision, since the window can reach back past a revision
 and an earlier revision's runs followed a procedure the person already
 changed. It carries no run content: the wizard reads a run with
-`sidekick_runs_read`. It names the Sidekick's home conversation as the
-conversation tools name it (`home`, null for a Sidekick no room owns), which
-is where the wizard tells people about a change. It is admitted through
+`sidekick_runs_read`. It names where a change is announced (`announceTo`,
+as the conversation tools name it): a room's Sidekick's home, an
+Organization Sidekick's General Channel, or its author's Personal Channel
+when General is archived or absent, and a personal Sidekick's author's
+Personal Channel; null when no such conversation exists yet
+(`sidekickAnnouncementSpaceId`). It is admitted through
 `admitSystemActivation`
 (`SubstreamAgent.admitSidekickReview`, only on a Sidekick's substream `0`) as
 a queued `system` row whose text (`sidekickReviewText`) is the one sentence a
@@ -1060,10 +1063,15 @@ in its home. It decides against the plan: nothing justified, say so and stop;
 otherwise revise and submit `ready=true`, never adding a connector, plugin,
 destination, trigger or capability, never enrolling a delegate, and
 submitting nothing over a person's unfinished draft. When a change was saved
-and the notice names a home, it publishes one message there with
-`conversation_post`, for the people the Sidekick works for: what it now does
-differently, why, and how to restore the earlier version; nothing is posted
-when nothing changed. It ends with a report in the authoring conversation for
+and the notice names where to announce it, it publishes one message there
+with `conversation_post`, naming that conversation, for the people the
+Sidekick works for: what it now does differently, why, and how to restore
+the earlier version; nothing is posted when nothing changed. A Channel
+target (General or a Personal Channel) lands in the Channel's own feed as a
+message from Rally opening with the Sidekick's name
+(`postSidekickChannelMessage`), which a Sidekick's conversation scope lists
+and only that Channel; a Thread or Breakout target is an ordinary post
+([`conversation-tools.md`](conversation-tools.md)). It ends with a report in the authoring conversation for
 the owner, who was not present. A revision it submits is an ordinary
 revision, and the person reverts by asking for the earlier one.
 
@@ -1677,9 +1685,13 @@ a new revision resets the count rather than the clock, and only the accepted
 revision's runs are evidence. Evidence is host-known columns and a
 host-picked sample, never work in the run. The review executes as a
 managing delegate and can submit a revision, so the capability rule is in
-the guidance. A change is announced where the Sidekick works: the notice
-carries the home conversation id, and the wizard posts there after a saved
-change and never otherwise. The row's visible text is facts; the instruction is in the
+the guidance. A change is announced where the Sidekick's people are: the
+notice carries the conversation to post to (a room's Sidekick's home, General
+for an Organization's or the author's Personal Channel when General is
+gone, the author's Personal Channel for a personal one), and the wizard
+posts there after a saved change and never otherwise. A Channel target made
+the conversation tools reach a Channel's own messages for a Sidekick scope,
+the first writer of those after merges. The row's visible text is facts; the instruction is in the
 model-facing renderer and the standing guidance, so a change to either does
 not leave old notices carrying old orders. The product numbers live in
 `hosted-sidekick.ts`, and nothing the model reads repeats them.

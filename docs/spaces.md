@@ -590,7 +590,11 @@ mechanism knows what a message is for.
   the renderer a thread's messages use.
 
 A thread's merged result is the first caller from outside WorkspaceDO
-(`mergeThreadIntoChannel`, `removeChannelMessage`), and a desktop before client
+(`mergeThreadIntoChannel`, `removeChannelMessage`), and a Sidekick's
+scheduled self-review announcing a change is the second
+(`postSidekickChannelMessage`: a message from Rally opening with the
+Sidekick's name, keyed on the post's client message id, in General or the
+author's Personal Channel; [`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)), and a desktop before client
 contract 7 (`CHANNEL_MERGES_CLIENT_CONTRACT`) is served each merge as a plain
 message without `merge` or `attentionSequenceNumber`. A merge from a thread the
 reader cannot open is shown without the thread (`merge.private`), and a desktop
@@ -2033,6 +2037,24 @@ while Spaces are not open, and closing the cutover queues it again when a
 member is still unseated.
 
 ## Changelog
+
+### 2026-10-29 — A Sidekick's review announces a change as a Channel message
+
+**What changed:** `postSidekickChannelMessage` writes one Channel message,
+from Rally and opening with the Sidekick's name, in the Channel a Sidekick
+announces in: General for an Organization's (`liveGeneralSpaceId`, General
+while it is not archived), else its author's Personal Channel; the author's
+Personal Channel for a personal one. Keyed on the post's client message id,
+so a retried tool call writes nothing.
+
+**Why:** A Sidekick no room owns has no Thread where its people would see a
+change its wizard made unattended, and a Channel already holds messages of
+its own. The merge was the only writer from outside the object; this is the
+second, with the same shape.
+
+**Consequences:** Rally stays the author, so the message seats nobody and
+lights the dot as news. A Sidekick may post in exactly one Channel, decided
+by the object from its scope and author, never by the model.
 
 ### 2026-10-22 — Dispatch invitation seating promptly and treat refused Channel reads as unavailable
 

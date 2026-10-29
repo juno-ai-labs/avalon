@@ -407,6 +407,8 @@ export interface HostedSidekickHost {
   sendRunProvision(message: { workspaceId: string; automationId: string; runId: string }): Promise<void>;
   /** Hand a review to the activity Queue, whose consumer wakes the wizard with it. */
   sendReview(message: { workspaceId: string; automationId: string; reviewId: string }): Promise<void>;
+  /** The Channel a review announces a change in, for a Sidekick no room owns; null when there is none. */
+  announcementSpaceId(row: { scope: string; author_user_id: string }): string | null;
 }
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -2026,8 +2028,9 @@ export class HostedSidekick {
       definitionRevision: revision,
       since: iso(row.reviewed_at),
       until: new Date(now).toISOString(),
-      home: row.owning_workstream_id === null ? null
-        : conversationIdOf({ parentId: row.owning_workstream_id, substreamId: row.owning_substream_id }),
+      announceTo: row.owning_workstream_id !== null
+        ? conversationIdOf({ parentId: row.owning_workstream_id, substreamId: row.owning_substream_id })
+        : this.host.announcementSpaceId(row),
       finished: {
         completed: counts?.completed ?? 0, failed: counts?.failed ?? 0,
         needsInput: counts?.needs_input ?? 0, stopped: counts?.stopped ?? 0,
