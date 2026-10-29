@@ -138,7 +138,12 @@ selection is open through `comments(pins, selected)`, so the highlight survives
 a frame reload and clears when the editor closes. Confirmed cards use the app's
 own card look, sit to the right of their element with a connector when there is
 room and below it when there is not, and hide while the element is out of the
-viewport or scrolled out of an ancestor that clips it.
+viewport or scrolled out of an ancestor that clips it. Each card keeps an
+outline around the element it is about, so the comment's scope stays visible
+without hovering; hovering the card strengthens that outline. Cards are laid
+out together each frame, in document order, and a card slides down past any
+card or commented element already in its way, so no card covers another
+comment's card or element.
 
 Everything drawn is kept in place by one frame-synced tracker inside the
 script: it runs only while something is on screen, reads each tracked
@@ -309,8 +314,9 @@ stays highlighted while its comment is written, cards took the app's own look
 and placement, and one frame-synced tracker keeps the outline, the selection,
 the cards and the framed hosts' editor beside their elements through scrolls
 in any container, resizes and layout shifts. The editor goes beside, below or
-above its element rather than over it, and the surface root no longer draws a
-focus ring when the editor hands focus back to it.
+above its element rather than over it, a confirmed card keeps its element
+outlined so the comment's scope is visible, and the surface root no longer
+draws a focus ring when the editor hands focus back to it.
 
 **Why:** The browser client had no way to put a script into a cross-origin
 artifact frame, and the opaque frame's script was built only for the desktop.
