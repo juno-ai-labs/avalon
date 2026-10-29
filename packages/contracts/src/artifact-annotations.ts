@@ -16,9 +16,11 @@ const box = z.strictObject({ x: fraction, y: fraction, w: fraction, h: fraction 
 /**
  * One absolute path on the site, as the picker reads `location.pathname +
  * location.search`: never protocol-relative, so the skill's recipe, which
- * resolves it against the local server, cannot be sent to another host.
+ * resolves it against the local server, cannot be sent to another host. The
+ * URL parser reads a backslash as a slash and drops tabs and newlines, so
+ * those are refused too rather than relied on to stay where they are.
  */
-export const PagePathSchema = z.string().regex(/^\/(?!\/)/u);
+export const PagePathSchema = z.string().regex(/^\/(?![/\\])[^\\\t\n\r]*$/u);
 export const AnnotationViewportSchema = z.strictObject({
   width: z.number().finite().positive(),
   height: z.number().finite().positive(),
