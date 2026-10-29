@@ -1222,10 +1222,12 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         const summaryTurn = async (instruction: string, attempt: number): Promise<RoutedTurn> =>
           routeProviderTurn({
             input,
-            messages: [
+            // The summary replaces the tool messages these parts belong to,
+            // so this is the last request that can carry them.
+            messages: withCurrentTurnContent([
               ...summaryInput,
               { role: "user", content: instruction },
-            ],
+            ], currentTurnContent),
             tools: undefined,
             systemPrompt: { content: summarySystemContent },
             signal,
