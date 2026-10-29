@@ -129,6 +129,15 @@ describe('the shared annotation script', () => {
     expect(received).toContainEqual({ type: 'rally-annotation-restored', resolved: true });
   });
 
+  it('tells its parent when its document is navigated away from', async () => {
+    const { frame, received } = framed('<p>Hello</p>');
+    await tick();
+    const inner = frame.contentWindow as unknown as { Event: typeof Event; dispatchEvent: (event: Event) => boolean };
+    inner.dispatchEvent(new inner.Event('pagehide'));
+    await tick();
+    expect(received).toContainEqual({ type: 'rally-annotation-left' });
+  });
+
   it('ignores a message that is not from its parent', async () => {
     const { frame } = framed('<p>Hello</p>');
     await tick();

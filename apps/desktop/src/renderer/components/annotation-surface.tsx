@@ -91,7 +91,7 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
   },[props.loadSavedImage]);
   // The frame is opaque, so its target origin is `*`; only the frame this
   // surface wrote can be reached through its own `contentWindow`.
-  const tellFrame = (message: AnnotationHostMessage): void => frame.current?.contentWindow?.postMessage(message,'*');
+  const tellFrame = (message: AnnotationHostMessage): void => { if (!escaped) frame.current?.contentWindow?.postMessage(message,'*'); };
   const editingLocator = draft?.selections.find((pin) => pin.id === editing)?.annotation.target.locator;
   // The selection the frame keeps highlighted: the pin being edited, else the
   // saved selection a restore found, which every later sync would otherwise
@@ -202,12 +202,16 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
     // schema admits: the file's own scripts never run in it, but a message is
     // still input.
     const receive = (event: MessageEvent): void => {
-      if (escaped || event.source !== frame.current?.contentWindow) return;
+      // A document already unloading arrives with no source; its key is what
+      // attributes it, and leaving is the only thing it may say.
+      const own = event.source === frame.current?.contentWindow;
+      if (escaped || !(own || event.source === null)) return;
       const parsed = AnnotationFrameMessageSchema.safeParse(event.data);
       // Only the script this surface wrote knows the document's key; a
       // document the file navigated to is heard by the same window.
       if (!parsed.success || parsed.data.key !== nonce) return;
       const message = parsed.data;
+      if (!own && message.type !== 'rally-annotation-left') return;
       if (message.type === 'rally-annotation-ready') {
         // A new document: tell it what this surface is doing.
         if (saved?.target.locator.type === 'element' && !picking) tellFrame({type:'rally-annotation-restore',locator:saved.target.locator,exact:saved.content.exact});
@@ -216,6 +220,9 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
         return;
       }
       if (message.type === 'rally-annotation-restored') { if (saved) setMissing(message.resolved !== true); return; }
+      // The document this surface wrote is leaving: whatever replaces it
+      // behind the same window is not heard or told anything, from now.
+      if (message.type === 'rally-annotation-left') { setEscaped(true); setPicking(false); return; }
       if (message.type === 'rally-annotation-anchor') { if (editing) anchorEditor(message.rect); return; }
       if (message.type === 'rally-annotation-comment-action') {
         const action = message.action;

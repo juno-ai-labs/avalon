@@ -193,7 +193,9 @@ scripts never run" gains the navigation caveat. Shipped in #1452.
 ### 2026-10-29 — The opaque frame's bridge carries a per-document key, and injection is for navigations only
 
 **Decided:** The surface puts the frame's nonce into the script URL as a key;
-the script echoes it on every message and the surface refuses any without it.
+the script echoes it on every message and the surface refuses any without it,
+and the script announces its leaving as it unloads, at which the surface stops
+sending to the window before the next document can run.
 The host names the open selection as the pin's CSS path, page path and quoted
 markup, which the script verifies as it does a card's element. The Worker
 injects the script only into navigations, not into a page's own fetches. A
