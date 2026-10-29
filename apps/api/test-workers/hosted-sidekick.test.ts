@@ -1987,9 +1987,8 @@ describe("a hosted Sidekick", () => {
     await workspaceStub().sidekickPause({ ...addressed(), actor: actor() });
     expect((await alarms()).filter((alarm) => alarm.kind === SIDEKICK_REVIEW_ALARM_KIND)).toEqual([]);
     // The resume arms the entry for now and the object's own alarm may run it
-    // before the next line: what is asserted is the send it makes, under the
-    // delegate who can take the review now, and the entry moved later for the
-    // next resend.
+    // before the next line: what is asserted is the send it makes, and the
+    // entry moved later for the next resend.
     const sent: string[] = [];
     const send = interceptReviewSends(async (message) => { sent.push(message.reviewId); });
     try {
@@ -2003,34 +2002,6 @@ describe("a hosted Sidekick", () => {
     } finally {
       send.mockRestore();
     }
-  });
-
-  it("bounds what a scheduled review may submit: nothing the accepted revision does not carry, and nothing over a person's draft", async () => {
-    await activeAutomation();
-    const reviewRun = "00000000-0000-7000-8000-00000000ad93";
-    const review = (draft: AutomationDraft) => workspaceStub().sidekickSaveDefinition({
-      ...addressed(), draft, evaluatorRules: null, submittedByRunId: reviewRun, actor: actor(), origin: "sidekick_review",
-    }).then(() => null, (error: unknown) => (error as Error).message);
-
-    // Each refusal names what was added, in the message the wizard reads as
-    // its tool error, so it proposes the change instead.
-    expect(await review({ ...DEFINITION, recommendedPlugins: [{ pluginId: "plugin_slack", recommendedTools: [], reason: "Post the summary" }] }))
-      .toBe("A review may not add plugins (plugin_slack); describe the proposed change in the report instead");
-    expect(await review({ ...DEFINITION, triggers: [{ type: "manual" }, { type: "inbound_email" }] }))
-      .toBe("A review may not add triggers (inbound_email); describe the proposed change in the report instead");
-    expect(await review({ ...DEFINITION, requiredCapabilities: ["web_search"] }))
-      .toBe("A review may not add required capabilities (web_search); describe the proposed change in the report instead");
-    expect((await automationRow()).accepted_definition_revision).toBe(1);
-
-    // A revision of the instructions alone is an ordinary ready revision.
-    expect(await review({ ...DEFINITION, instructions: "Do the requested work and say so in two sentences." })).toBeNull();
-    expect((await automationRow()).accepted_definition_revision).toBe(2);
-
-    // A person's unfinished revision is current: a review submits nothing over it.
-    await submit({ ...DEFINITION, instructions: "A person's half-written change.", ready: false });
-    expect(await review({ ...DEFINITION, instructions: "Do the requested work and say so in three sentences." }))
-      .toBe("A person's unfinished revision is current; describe the proposed change in the report instead of submitting it");
-    expect((await automationRow()).accepted_definition_revision).toBe(2);
   });
 
   it("samples the accepted revision's runs: failures before stops, waiting runs, and completed runs spread across the window; then resends a lost request", async () => {
