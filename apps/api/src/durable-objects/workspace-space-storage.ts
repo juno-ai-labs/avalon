@@ -4704,6 +4704,14 @@ export class WorkspaceSpaceStorage {
     ).toArray()[0]?.space_id ?? null;
   }
 
+  /** General while it is not archived; null otherwise, or before the Spaces are open. */
+  liveGeneralSpaceId(): string | null {
+    if (!this.ready()) return null;
+    return this.storage.sql.exec<{ space_id: string } & Record<string, SqlStorageValue>>(
+      "SELECT space_id FROM spaces WHERE system_role = 'general' AND archived_at IS NULL",
+    ).toArray()[0]?.space_id ?? null;
+  }
+
   /**
    * The oldest live Organization-wide Space named `name`, compared as
    * `spaceMatchName` reads both, or nothing. Compared in TypeScript because the
