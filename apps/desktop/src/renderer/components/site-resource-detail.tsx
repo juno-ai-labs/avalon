@@ -1,6 +1,6 @@
 import { ErrorNotice } from './primitives';
 import { isComposingKeyEvent } from '@rally/ui/lib/ime';
-import { buildAnnotation, type AnnotationCommentPins, type AnnotationCommentAction, type ArtifactPickerPin } from '@rally/contracts';
+import { AnnotationFrameMessageSchema, buildAnnotation, type AnnotationCommentPins, type AnnotationCommentAction, type AnnotationHostMessage, type ArtifactPickerPin } from '@rally/contracts';
 import { AnnotationComment, useAnnotationDraft } from './artifact-annotations';
 import { IconAlertCircle, IconCheck, IconCopy, IconDatabase, IconExternalLink, IconPointerCollaboration, IconWindowMaximize } from '@tabler/icons-react';
 import React from 'react';
@@ -70,6 +70,12 @@ export interface SiteResourceDetailProps {
     setBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;
     /** A still of the live view as an image data URL. */
     snapshot: () => Promise<string | null>;
+    /**
+     * Whether the shown page carries Rally's annotation API. Absent means
+     * yes: a host that cannot ask has nothing to refuse on. A framed host
+     * learns it from the frame instead.
+     */
+    ready?: (() => Promise<boolean>) | undefined;
     pick?: (() => Promise<ArtifactPickerPin | null>) | undefined;
     comments?: ((pins: AnnotationCommentPins) => Promise<AnnotationCommentAction | null>) | undefined;
     stopPicking?: (() => Promise<void>) | undefined;
@@ -149,6 +155,18 @@ export function SiteResourceDetail({
 }: SiteResourceDetailProps): React.JSX.Element {
   const annotationDraft = useAnnotationDraft();
   const [picking, setPicking] = React.useState(false);
+  /**
+   * Whether the page on screen can take comments: it carries the annotation
+   * script the serving Worker gives a Rally viewer. The public neutral page, a
+   * protected site's refusal and an error page do not, and the control stays
+   * disabled with a reason rather than picking nothing.
+   */
+  const [commentReady, setCommentReady] = React.useState(false);
+  const frameRef = React.useRef<HTMLIFrameElement | null>(null);
+  // Counts the documents the frame has announced, so a new page after an
+  // in-site link is told what this detail is doing.
+  const [frameDocument, setFrameDocument] = React.useState(0);
+  const readySinceLoad = React.useRef(false);
   const retryAnnotations=annotationDraft?.retry;
   React.useEffect(()=>{retryAnnotations?.();},[resourceId,version,retryAnnotations]);
   React.useEffect(()=>{if(annotationDraft?.repairing&&annotationDraft.pins.some((pin)=>pin.id===annotationDraft.repairing&&pin.annotation.target.resourceId===resourceId))setPicking(true);},[annotationDraft?.repairing,resourceId]);
@@ -187,6 +205,11 @@ export function SiteResourceDetail({
   // before the old effect's cleanup runs, and must not show the old page.
   const [frame, setFrame] = React.useState<{ resourceId: string; url: string } | null>(null);
   const frameUrl = frame?.resourceId === resourceId ? frame.url : null;
+  const artifactOrigin = React.useMemo(() => { try { return access ? new URL(access.canonicalUrl).origin : null; } catch { return null; } }, [access]);
+  /** Only the frame this detail wrote, at the artifact's own origin, is spoken to. */
+  const tellFrame = React.useCallback((message: AnnotationHostMessage): void => {
+    if (artifactOrigin) frameRef.current?.contentWindow?.postMessage(message, artifactOrigin);
+  }, [artifactOrigin]);
   // The page as it looked when a menu or dialog opened over it.
   const [snapshot, setSnapshot] = React.useState<{
     src: string;
@@ -454,6 +477,48 @@ export function SiteResourceDetail({
     return () => { active = false; pickingRef.current = false; void surface.stopPicking?.(); };
   }, [picking, resourceId, version, surface]);
 
+  // The desktop asks its view once the site's document is shown; a browser
+  // host hears it from the frame instead, below.
+  React.useEffect(() => {
+    if (surface.framed) return undefined;
+    if (previewShown !== true) { setCommentReady(false); return undefined; }
+    if (!surface.ready) { setCommentReady(true); return undefined; }
+    let cancelled = false;
+    void surface.ready().then((ready) => { if (!cancelled) setCommentReady(ready); }).catch(() => { if (!cancelled) setCommentReady(false); });
+    return () => { cancelled = true; };
+  }, [previewShown, surface, resourceId, version]);
+
+  // The framed host's half of the annotation script's bridge: the frame
+  // announces each document it loads, reports pins while Comment mode is on,
+  // and reports card clicks. Only the preview frame's own window, at the
+  // artifact's origin, is heard, and only shapes the shared schema admits.
+  React.useEffect(() => {
+    if (!surface.framed || !frameUrl || !artifactOrigin) return undefined;
+    const receive = (event: MessageEvent): void => {
+      if (event.source !== frameRef.current?.contentWindow || event.origin !== artifactOrigin) return;
+      const parsed = AnnotationFrameMessageSchema.safeParse(event.data);
+      if (!parsed.success) return;
+      const message = parsed.data;
+      if (message.type === 'rally-annotation-ready') {
+        readySinceLoad.current = true;
+        setCommentReady(true);
+        setFrameDocument((count) => count + 1);
+      } else if (message.type === 'rally-artifact-pin') {
+        if (!pickingRef.current) return;
+        if (message.pin === null) { setPicking(false); return; }
+        void acceptPinRef.current(message.pin);
+      } else if (message.type === 'rally-annotation-comment-action') {
+        const action = message.action;
+        if (!annotationDraft?.pins.some((pin) => pin.id === action.id)) return;
+        if (action.action === 'remove') annotationDraft.remove(action.id);
+        else { const pane = paneRef.current?.getBoundingClientRect(); if (action.point && pane) setCommentAnchor({ x: Math.max(8, Math.min(pane.x + action.point.x, window.innerWidth - 308)), y: pane.y + action.point.y }); setEditingPin(action.id); }
+      }
+    };
+    window.addEventListener('message', receive);
+    return () => window.removeEventListener('message', receive);
+  }, [surface.framed, frameUrl, artifactOrigin, annotationDraft]);
+  React.useEffect(() => { if (surface.framed) tellFrame({ type: 'rally-annotation-picking', on: picking }); }, [surface.framed, picking, frameDocument, tellFrame]);
+
   // The canonical public link carries no access code or viewer identity.
   // Copying it shares the current site with anyone.
   const { copy, state: copyState, failureOccurrence } = useCopy({ copyText: surface.copyText, value: access?.canonicalUrl ?? '' });
@@ -465,7 +530,7 @@ export function SiteResourceDetail({
    * sits against the composited page below.
    */
   const headerActions = React.useMemo((): DetailHeaderAction[] => [
-    ...(annotationDraft ? [{ key: 'comment-mode', className: 'annotation-mode-button', label: 'Comment mode', disabledReason: surface.framed ? 'Website comments require the Rally Mac app.' : undefined, icon: <IconPointerCollaboration aria-hidden="true" size={16} stroke={1.9} />, pressed: picking, disabled: Boolean(surface.framed) || previewShown !== true, onSelect: () => { if (!surface.framed) setPicking((value) => !value); } }] : []),
+    ...(annotationDraft ? [{ key: 'comment-mode', className: 'annotation-mode-button', label: 'Comment mode', disabledReason: previewShown === true && !commentReady ? 'This page cannot take comments here.' : undefined, icon: <IconPointerCollaboration aria-hidden="true" size={16} stroke={1.9} />, pressed: picking, disabled: previewShown !== true || !commentReady, onSelect: () => { if (commentReady) setPicking((value) => !value); } }] : []),
     ...(access?.stateful ? [{
       key: 'stored-data',
       label: 'Stored data',
@@ -517,21 +582,23 @@ export function SiteResourceDetail({
         async (navigation) => await surface.openExternal(navigation.openUrl),
       ),
     },
-  ], [access, copy, copyState, mintAccess, resourceId, surface, title, version, annotationDraft, picking, previewShown, describeData, loadTable, editable]);
+  ], [access, copy, copyState, mintAccess, resourceId, surface, title, version, annotationDraft, picking, previewShown, commentReady, describeData, loadTable, editable]);
   const orderedHeaderActions = React.useMemo(() => [...headerActions.filter((action) => action.key !== 'comment-mode'), ...headerActions.filter((action) => action.key === 'comment-mode')], [headerActions]);
   useDetailHeaderActions(orderedHeaderActions);
 
   React.useEffect(() => {
-    if (!annotationDraft || !surface.comments || previewShown!==true) return;
-    let active=true;
+    if (!annotationDraft || previewShown!==true) return;
     const pins=annotationDraft.pins.filter((pin)=>pin.id!==editingPin && pin.annotation.target.resourceId===resourceId && pin.annotation.target.version===version).map(({id,annotation})=>({id,annotation}));
+    if (surface.framed) { tellFrame({ type: 'rally-annotation-comments', pins }); return; }
+    if (!surface.comments) return;
+    let active=true;
     void surface.comments(pins).then((action)=>{
       if(!active || !action || !pins.some((pin)=>pin.id===action.id))return;
       if(action.action==='remove')annotationDraft.remove(action.id);
       else {const pane=paneRef.current?.getBoundingClientRect();if(action.point && pane)setCommentAnchor({x:Math.max(8,Math.min(pane.x+action.point.x,window.innerWidth-308)),y:pane.y+action.point.y});setEditingPin(action.id);}
     }).catch(()=>{});
     return ()=>{active=false;};
-  },[annotationDraft?.pins,editingPin,resourceId,version,surface,previewShown]);
+  },[annotationDraft?.pins,editingPin,resourceId,version,surface,previewShown,frameDocument,commentReady,tellFrame]);
 
   const editingSelection = annotationDraft?.selections.find((p) => p.id === editingPin);
   return (
@@ -553,7 +620,15 @@ export function SiteResourceDetail({
               <iframe
                 className="site-detail-frame"
                 data-loading={previewShown === true ? undefined : ''}
-                onLoad={() => setPreviewShown(true)}
+                onLoad={() => {
+                  setPreviewShown(true);
+                  // The script announces itself while the document parses, so
+                  // by `load` a page that carries it has already said so; one
+                  // that does not (a refusal, an error page) has not.
+                  setCommentReady(readySinceLoad.current);
+                  readySinceLoad.current = false;
+                }}
+                ref={frameRef}
                 sandbox={ARTIFACT_FRAME_SANDBOX}
                 src={frameUrl}
                 title={title}

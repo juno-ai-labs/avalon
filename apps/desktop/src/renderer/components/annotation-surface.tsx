@@ -1,6 +1,5 @@
 import { ErrorNotice } from './primitives';
 import { isComposingKeyEvent } from '@rally/ui/lib/ime';
-import { Tip } from './primitives';
 import { ImageViewport, type ImageSizing, type ImageZoomState } from './image-viewport';
 import { annotationRange } from '../lib/annotation-cells';
 import { resolveAnnotationCells } from '../lib/annotation-cells';
@@ -8,17 +7,22 @@ import { IconPointerCollaboration } from '@tabler/icons-react';
 import { useDetailHeaderActions } from './detail-header-actions';
 import { AnnotationSheet } from './annotation-sheet';
 import { useEffect, useRef, useState, useMemo } from 'react';
-import { ARTIFACT_COMMENT_CURSOR, isHtmlResource, ANNOTATION_CONTEXT_CHARACTERS, AnnotationCommentActionSchema, ArtifactPickerPinSchema, AnnotationLocatorSchema, buildAnnotation, classifyAttachmentKind, type Annotation, type AnnotationLocator } from '@rally/contracts';
+import { ARTIFACT_COMMENT_CURSOR, isHtmlResource, ANNOTATION_CONTEXT_CHARACTERS, AnnotationFrameMessageSchema, AnnotationLocatorSchema, buildAnnotation, classifyAttachmentKind, type Annotation, type AnnotationHostMessage, type AnnotationLocator } from '@rally/contracts';
 import { AnchoredAnnotationComment, AnnotationComment, annotationQuote, useAnnotationDraft } from './artifact-annotations';
 import { annotationDomRange, sourceSelectionPoint } from '../lib/annotation-source';
 import { MarkdownBody } from './workstream-blocks';
 
-export function annotationHtml(source: string, nonce?: string, saved?: Annotation, picking = true): string {
+/**
+ * The opaque frame's document: the file's markup behind a policy that runs no
+ * script of its own, plus, with a nonce, Rally's annotation script from the
+ * app origin. The script does nothing until this surface messages it, so the
+ * frame carries no per-render instructions.
+ */
+export function annotationHtml(source: string, nonce?: string): string {
   const policy = `default-src 'none'; img-src data: blob:; font-src data:; style-src 'unsafe-inline';${nonce ? ` script-src 'nonce-${nonce}';` : ''}`;
   // Policy and trusted script precede file markup, including malformed heads.
   const scriptUrl = new URL('/annotation-frame.js',window.location.href).href;
-  const data = saved?.target.locator.type === 'element' ? JSON.stringify({locator:saved.target.locator,exact:saved.content.exact}).replaceAll('&','&amp;').replaceAll('"','&quot;').replaceAll('<','&lt;') : '';
-  return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${policy}"></head><body>${nonce ? `<script nonce="${nonce}" data-annotation-picking="${picking}" src="${scriptUrl}"${data ? ` data-annotation-saved="${data}"` : ''}></script>` : ''}${source}</body></html>`;
+  return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${policy}"></head><body>${nonce ? `<script nonce="${nonce}" src="${scriptUrl}"></script>` : ''}${source}</body></html>`;
 }
 export interface AnnotationSurfaceProps {
   className?: string | undefined;
@@ -73,19 +77,12 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
     return ()=>{controller.abort();if(url)URL.revokeObjectURL(url);};
   },[props.loadSavedImage]);
   const htmlPins = draft?.pins.filter((pin)=>pin.annotation.target.resourceId===resourceId && pin.annotation.target.version===version) ?? [];
-  const syncHtmlComments = (): void => frame.current?.contentWindow?.postMessage({type:'rally-annotation-comments',pins:htmlPins.filter((pin)=>pin.id!==editing).map(({id,annotation})=>({id,annotation}))},'*');
+  // The frame is opaque, so its target origin is `*`; only the frame this
+  // surface wrote can be reached through its own `contentWindow`.
+  const tellFrame = (message: AnnotationHostMessage): void => frame.current?.contentWindow?.postMessage(message,'*');
+  const syncHtmlComments = (): void => tellFrame({type:'rally-annotation-comments',pins:htmlPins.filter((pin)=>pin.id!==editing).map(({id,annotation})=>({id,annotation}))});
   useEffect(()=>{if(html)syncHtmlComments();},[draft?.pins,editing,html]);
-  useEffect(()=>{
-    if(!html)return;
-    const receive=(event:MessageEvent):void=>{
-      if(event.source!==frame.current?.contentWindow || event.data?.type!=='rally-annotation-comment-action')return;
-      const parsed=AnnotationCommentActionSchema.safeParse(event.data.action);
-      if(!parsed.success || !htmlPins.some((pin)=>pin.id===parsed.data.id))return;
-      if(parsed.data.action==='remove')draft?.remove(parsed.data.id);
-      else {const box=frame.current?.getBoundingClientRect();if(box && parsed.data.point)setAnchor({x:box.x+parsed.data.point.x,y:box.y+parsed.data.point.y-12});setEditing(parsed.data.id);}
-    };
-    window.addEventListener('message',receive);return()=>window.removeEventListener('message',receive);
-  },[html,draft,htmlPins]);
+  useEffect(()=>{if(html)tellFrame({type:'rally-annotation-picking',on:picking});},[html,picking]);
   const current = draft?.selections.find((p) => p.id === editing);
 
   const commit = (locator: AnnotationLocator, exact: string, start = 0, end = 0, replace = false, imageAttachmentId?: string, context?: {before?:string;after?:string}): void => {
@@ -171,20 +168,38 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
     window.addEventListener('keydown',key,true);return()=>window.removeEventListener('keydown',key,true);
   });
   useEffect(() => {
-    if ((!picking && !saved) || !html) return;
+    if (!html) return;
+    // Only the frame this surface wrote is heard, and only shapes the shared
+    // schema admits: the file's own scripts never run in it, but a message is
+    // still input.
     const receive = (event: MessageEvent): void => {
       if (event.source !== frame.current?.contentWindow) return;
-      if (event.data?.type === 'rally-annotation-restored' && saved) { setMissing(event.data.resolved !== true); return; }
-      if (!picking || event.data?.type !== 'rally-artifact-pin') return;
-      if (event.data.pin === null) { if(editing)draft?.discard(editing);setEditing(null);setPicking(false); return; }
-      const parsedPin = ArtifactPickerPinSchema.safeParse(event.data.pin);
-      if (!parsedPin.success) return;
-      const pin = parsedPin.data;
+      const parsed = AnnotationFrameMessageSchema.safeParse(event.data);
+      if (!parsed.success) return;
+      const message = parsed.data;
+      if (message.type === 'rally-annotation-ready') {
+        // A new document: tell it what this surface is doing.
+        if (saved?.target.locator.type === 'element' && !picking) tellFrame({type:'rally-annotation-restore',locator:saved.target.locator,exact:saved.content.exact});
+        tellFrame({type:'rally-annotation-picking',on:picking});
+        syncHtmlComments();
+        return;
+      }
+      if (message.type === 'rally-annotation-restored') { if (saved) setMissing(message.resolved !== true); return; }
+      if (message.type === 'rally-annotation-comment-action') {
+        const action = message.action;
+        if (!htmlPins.some((pin)=>pin.id===action.id)) return;
+        if (action.action==='remove') draft?.remove(action.id);
+        else {const box=frame.current?.getBoundingClientRect();if(box && action.point)setAnchor({x:box.x+action.point.x,y:box.y+action.point.y-12});setEditing(action.id);}
+        return;
+      }
+      if (!picking) return;
+      const pin = message.pin;
+      if (pin === null) { if(editing)draft?.discard(editing);setEditing(null);setPicking(false); return; }
       const locator = AnnotationLocatorSchema.safeParse({ type: 'element', css: pin.css, box: pin.box, visibleText: pin.visibleText });
-      if (!locator.success || typeof pin.html !== 'string') return;
+      if (!locator.success) return;
       const frameBox = frame.current?.getBoundingClientRect();
       if (pin.point && frameBox) setAnchor({x:frameBox.x+pin.point.x,y:frameBox.y+pin.point.y});
-      commit(locator.data, pin.html, 0, 0, pin.replace === true, undefined, pin);
+      commit(locator.data, pin.html, 0, 0, pin.replace, undefined, pin);
     };
     window.addEventListener('message', receive); return () => window.removeEventListener('message', receive);
   });
@@ -245,20 +260,19 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
   const bodyBox = root.current?.querySelector('.annotation-body')?.getBoundingClientRect();
   const imageRegions=(saved?[saved]:(draft?.selections.filter((p)=>p.annotation.target.resourceId===resourceId&&p.annotation.target.version===version).map((p)=>p.annotation)??[])).flatMap((a)=>a.target.locator.type==='region'?[a.target.locator]:[]);
   const hoverRegion=draftRegion??(picking&&imageHover?{x:0,y:0,w:1,h:1}:null);
-  const canPick = Boolean(draft && (version > 0 || props.preparePicking) && (!html || window.rally) && kind !== 'audio' && (text !== undefined || src || kind === 'other'));
-  const disabledReason = html && !window.rally ? 'Website comments require the Rally Mac app.' : undefined;
-  const showComment = canPick || Boolean(draft && version > 0 && html && disabledReason);
+  const canPick = Boolean(draft && (version > 0 || props.preparePicking) && kind !== 'audio' && (text !== undefined || src || kind === 'other'));
+  const showComment = canPick;
   const togglePicking = async ():Promise<void> => {
     if (preparing || !canPick) return;
     if (picking) {setPicking(false);return;}
     setPreparing(true);setError(null);
     try {if(version===0) await props.preparePicking?.();setPicking(true);} catch(e){setError(e instanceof Error?e.message:'The preview could not be prepared for comments.');} finally{setPreparing(false);}
   };
-  const headerActions = useMemo(() => showComment ? [{key:'comment-mode', className:'annotation-mode-button', label:'Comment mode', disabledReason, disabled:preparing, icon:<IconPointerCollaboration aria-hidden="true" size={16} stroke={1.9} />, pressed:picking, onSelect:() => {void togglePicking();}}] : [], [showComment,disabledReason,canPick,picking,preparing,version,props.preparePicking]);
+  const headerActions = useMemo(() => showComment ? [{key:'comment-mode', className:'annotation-mode-button', label:'Comment mode', disabled:preparing, icon:<IconPointerCollaboration aria-hidden="true" size={16} stroke={1.9} />, pressed:picking, onSelect:() => {void togglePicking();}}] : [], [showComment,canPick,picking,preparing,version,props.preparePicking]);
   const headerHosted = useDetailHeaderActions(headerActions);
   return <div className={`annotation-surface ${props.className??''}${src && !html && !(saved && missing) ? ' is-image' : ''}${picking ? ' is-picking' : ''}${kind === 'other' ? ' is-whole-file' : ''}`} ref={root} tabIndex={-1} style={{'--annotation-cursor':ARTIFACT_COMMENT_CURSOR} as React.CSSProperties}
 >
-    {showComment && !headerHosted && <div className="annotation-toolbar">{disabledReason ? <Tip label={disabledReason}><button aria-label="Comment mode" aria-disabled="true" aria-pressed={false} type="button"><IconPointerCollaboration aria-hidden="true" size={16} /> Comment mode</button></Tip> : <button aria-label="Comment mode" aria-pressed={picking} onClick={() => void togglePicking()} type="button"><IconPointerCollaboration aria-hidden="true" size={16} /> Comment mode</button>}</div>}
+    {showComment && !headerHosted && <div className="annotation-toolbar"><button aria-label="Comment mode" aria-pressed={picking} onClick={() => void togglePicking()} type="button"><IconPointerCollaboration aria-hidden="true" size={16} /> Comment mode</button></div>}
     <div className="annotation-body" onMouseLeave={() => setHover(null)} onScrollCapture={() => setHover((current) => current ? {...current} : null)} onPointerUpCapture={(e) => setAnchor({x:e.clientX,y:e.clientY})} onMouseMove={(e) => { if (!picking || html || kind === 'image' || (e.target as Element).closest('.annotation-comment')) return; const element = (e.target as Element).closest<HTMLElement>(blockSelector); if (!element || !root.current?.contains(element)) return; if (leaf.current !== element || !hover) { leaf.current = element; hoverLevel.current = 0; setHover(offsets(element)); } }}
       onClick={(e) => {
         if (picking && kind === 'other') { commit({type:'file'},`${name} · ${mimeType ?? 'unknown type'}${props.sizeBytes !== undefined ? ` · ${props.sizeBytes} bytes` : ''}`); return; }
@@ -271,7 +285,7 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
         if (start === null || end === null) { if (!hover) return; start = hover.start; end = hover.end; }
         commit(locatorFor(start, end), text.slice(start, end), start, end, e.detail > 1);
       }} onDoubleClick={(e) => { if (!picking || html || !text) return; e.preventDefault(); const sel = window.getSelection(); if (!sel?.rangeCount) return; const r = sel.getRangeAt(0); const start = sourceSelectionPoint(r.startContainer, r.startOffset, text); const end = sourceSelectionPoint(r.endContainer, r.endOffset, text); if (start !== null && end !== null && end > start) commit(locatorFor(start, end), text.slice(start,end), start,end,true); }}>
-      {html && text !== undefined ? <iframe ref={frame} onLoad={syncHtmlComments} sandbox={(picking || saved || htmlPins.length > 0) && window.rally ? 'allow-scripts' : ''} srcDoc={annotationHtml(text, (picking || saved || htmlPins.length > 0) && window.rally ? nonce : undefined, picking ? undefined : saved, picking)} title={`Preview of ${name}`} />
+      {html && text !== undefined ? <iframe ref={frame} onLoad={syncHtmlComments} sandbox={picking || saved || htmlPins.length > 0 ? 'allow-scripts' : ''} srcDoc={annotationHtml(text, picking || saved || htmlPins.length > 0 ? nonce : undefined)} title={`Preview of ${name}`} />
         : src ? saved && missing ? null : <ImageViewport key={src} name={name} sizing={props.imageSizing} zoomState={props.imageZoom} zoomOnDoubleClick={!picking} src={src} onLoad={()=>setImageReady(true)} onError={()=>{setImageReady(false);setMissing(Boolean(saved));}} draggable={false} onPointerEnter={()=>setImageHover(true)} onPointerLeave={()=>setImageHover(false)} onPointerMove={(e)=>{const start=startDrag.current;if(!picking||!start)return;const r=e.currentTarget.getBoundingClientRect();const x=Math.max(0,Math.min(1,(e.clientX-r.x)/r.width));const y=Math.max(0,Math.min(1,(e.clientY-r.y)/r.height));setDraftRegion({x:Math.min(start.x,x),y:Math.min(start.y,y),w:Math.abs(start.x-x),h:Math.abs(start.y-y)});}} onPointerDown={(e) => { if (!picking) return; e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); const r = e.currentTarget.getBoundingClientRect(); startDrag.current = { x: (e.clientX-r.x)/r.width, y: (e.clientY-r.y)/r.height }; }} onPointerUp={(e) => void imagePin(e)} >{[...imageRegions,...(hoverRegion?[hoverRegion]:[])].map((region,index)=><div key={index} className="annotation-image-region" style={{left:`${region.x*100}%`,top:`${region.y*100}%`,width:`${region.w*100}%`,height:`${region.h*100}%`}} />)}</ImageViewport>
           : text !== undefined ? kind === 'spreadsheet' ? <AnnotationSheet text={text} pins={draft?.selections.filter((p)=>p.annotation.target.resourceId===resourceId&&p.annotation.target.version===version).map((p)=>p.annotation)??[]} picking={picking} onPin={commit} saved={saved} /> : kind === 'text' && !html ? <PlainAnnotationText text={text} /> : <MarkdownBody verbatim sourcePositions={picking||Boolean(saved)||Boolean(draft?.selections.some((p)=>p.annotation.target.resourceId===resourceId))}>{text}</MarkdownBody> : <p>{name}</p>}
       {picking && hover && !html && <div className="annotation-hover" style={{ left: (hoverBox?.x ?? 0) - (bodyBox?.x ?? 0), top: (hoverBox?.y ?? 0) - (bodyBox?.y ?? 0), width: hoverBox?.width, height: hoverBox?.height }} />}
