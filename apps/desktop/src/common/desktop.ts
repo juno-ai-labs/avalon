@@ -576,6 +576,8 @@ export interface RallyDesktopBridge {
    */
   setArtifactPreviewHidden: (hidden: boolean) => Promise<void>;
   /** A still of the live preview as an image data URL, or `null` when none is showing. */
+  /** Whether the shown page carries Rally's annotation API, so Comment mode can be offered. */
+  artifactPreviewReady?: () => Promise<boolean>;
   pickArtifactPreview?: () => Promise<ArtifactPickerPin | null>;
   showArtifactPreviewComments?: (pins: AnnotationCommentPins) => Promise<AnnotationCommentAction | null>;
   stopPickingArtifactPreview?: () => Promise<void>;

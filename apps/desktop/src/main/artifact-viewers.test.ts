@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   ArtifactPreviewController,
   applyGlobalNavigationPolicy,
+  artifactPageAnnotations,
   artifactPartition,
   artifactWebPreferences,
   clampBounds,
@@ -447,6 +448,47 @@ describe('a surface’s transient user activation', () => {
   });
 });
 
+describe('the page annotation API over executeJavaScript', () => {
+  /** A page as `executeJavaScript` would answer, with or without the API. */
+  function page(api: { pick?: unknown; comments?: unknown; rect?: unknown } | null) {
+    const calls: string[] = [];
+    const execute = async (code: string): Promise<unknown> => {
+      calls.push(code);
+      if (code.startsWith('typeof globalThis.rallyAnnotations')) return api !== null;
+      if (api === null) return null;
+      if (code.includes('.pick()')) return api.pick;
+      if (code.includes('.comments(')) return api.comments;
+      if (code.includes('.rect(')) return api.rect;
+      return undefined;
+    };
+    return { calls, api: artifactPageAnnotations(execute) };
+  }
+  const pin = { css: 'main > button:nth-of-type(1)', box: { x: 0, y: 0, w: 0.5, h: 0.1 }, visibleText: 'RSVP', html: '<button>RSVP</button>', pagePath: '/', replace: false };
+
+  it('reads ready, a pin, a comment action and a rectangle from the page', async () => {
+    const { api, calls } = page({ pick: pin, comments: { id: 'one', action: 'edit', point: { x: 1, y: 2 } }, rect: { x: 1, y: 2, width: 30, height: 40, viewportWidth: 800, viewportHeight: 600 } });
+    expect(await api.ready()).toBe(true);
+    expect(await api.pick()).toEqual(pin);
+    expect(await api.comments([])).toEqual({ id: 'one', action: 'edit', point: { x: 1, y: 2 } });
+    expect(await api.rect(pin.css)).toMatchObject({ width: 30, viewportWidth: 800 });
+    // The selector travels as a JSON literal, so quotes in it cannot end the call.
+    expect(calls.at(-1)).toContain(JSON.stringify(pin.css));
+  });
+
+  it('reads a page the Worker did not serve as not ready, with nothing to pick', async () => {
+    const { api } = page(null);
+    expect(await api.ready()).toBe(false);
+    expect(await api.pick()).toBeNull();
+    expect(await api.comments([])).toBeNull();
+    expect(await api.rect('p')).toBeNull();
+  });
+
+  it('refuses a pin the page shaped wrongly rather than passing it on', async () => {
+    const { api } = page({ pick: { ...pin, box: { x: 2, y: 0, w: 1, h: 1 } } });
+    await expect(api.pick()).rejects.toThrow();
+  });
+});
+
 describe('the rail preview controller', () => {
   function harness(
     servingDomain = DOMAIN,
@@ -454,6 +496,7 @@ describe('the rail preview controller', () => {
     load?: (url: string) => Promise<void>,
     zoom = 1,
     comments?: () => Promise<AnnotationCommentAction | null>,
+    ready?: () => Promise<boolean>,
   ) {
     const views: {
       url: string | null;
@@ -500,6 +543,7 @@ describe('the rail preview controller', () => {
             });
           },
           comments,
+          ready,
           capture: async () => `still of ${state.url ?? 'nothing'}`,
           close: () => { state.closed = true; },
         };
@@ -516,6 +560,16 @@ describe('the rail preview controller', () => {
     expect(views).toHaveLength(1);
     expect(views[0]?.url).toBe(`${ORIGIN}/`);
     expect(views[0]?.bounds.at(-1)).toEqual(bounds);
+  });
+
+  it('reports a page ready only once it is shown and carries the API', async () => {
+    const {controller}=harness(DOMAIN,null,undefined,1,undefined,async()=>true);
+    expect(await controller.ready()).toBe(false);
+    await controller.present({artifactId:ARTIFACT,url:`${ORIGIN}/`,bounds,cornerRadius:16});
+    expect(await controller.ready()).toBe(true);
+    const bare=harness(DOMAIN,null,undefined,1,undefined,async()=>false);
+    await bare.controller.present({artifactId:ARTIFACT,url:`${ORIGIN}/`,bounds,cornerRadius:16});
+    expect(await bare.controller.ready()).toBe(false);
   });
 
   it('discards a comment action after the native view has been replaced', async () => {

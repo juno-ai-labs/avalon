@@ -1,7 +1,7 @@
 import { annotationDraftKeyForScope } from '../common/draft-keys';
 import { createElectronFetch } from '@rally/electron-network';
 import { artifactWindowActionRequest, artifactWindowSessionMatches } from './artifact-window-actions';
-import { ARTIFACT_COMMENTS_SOURCE, AnnotationCommentPinsSchema, AnnotationCommentActionSchema, ARTIFACT_PICKER_SOURCE, ArtifactPickerPinSchema, AnnotationSchema } from "@rally/contracts";
+import { AnnotationCommentPinsSchema, AnnotationSchema } from "@rally/contracts";
 import { startCanvaConnection } from './canva-loopback';
 import { clampWindowBounds, readMainWindowState, writeMainWindowState } from './main-window-state';
 import { macosMajorVersion } from './macos-version';
@@ -170,6 +170,7 @@ import {
   loadArtifactInitialUrl,
   type ArtifactLinkHandoff,
   type ArtifactViewHandle,
+  artifactPageAnnotations,
 } from './artifact-viewers';
 import { CredentialRefreshRegistry } from './credential-refresh';
 import { DebugSettingsController } from './debug-settings';
@@ -3518,6 +3519,9 @@ function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
       const contents = view.webContents;
       artifactWebContents.add(contents);
       confineToArtifactOrigin(contents, new URL(request.url).origin, artifactLinkHandoff(contents));
+      // The page's own annotation API, which the serving Worker put there; the
+      // isolated world this view used to evaluate a picker in is gone with it.
+      const page = artifactPageAnnotations((code) => contents.executeJavaScript(code));
       window.contentView.addChildView(view);
       const handle: ArtifactViewHandle = {
         destroyed: () => contents.isDestroyed(),
@@ -3525,22 +3529,15 @@ function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
         setBorderRadius: (radius) => view.setBorderRadius(radius),
         setVisible: (visible) => view.setVisible(visible),
         load: async (url) => await loadArtifactDocument(contents, url),
+        ready: page.ready,
         pick: async () => {
-          const raw: unknown = await contents.executeJavaScriptInIsolatedWorld(1001, [{ code: `new Promise(resolve => {
-            if (!globalThis.__rallyPickerState) {
-              const state = { queue: [], waiter: null, cleanup: null };
-              globalThis.__rallyPickerState = state;
-              state.cleanup = ${ARTIFACT_PICKER_SOURCE}(pin => { if (state.waiter) { const answer=state.waiter; state.waiter=null; answer(pin); } else state.queue.push(pin); });
-              globalThis.__rallyCancelPicker = () => { state.cleanup?.(); state.waiter?.(null); globalThis.__rallyPickerState=null; };
-            }
-            const state=globalThis.__rallyPickerState;
-            if (state.queue.length) resolve(state.queue.shift()); else state.waiter=resolve;
-          })` }]);
-          if (raw === null) return null;
-          const pin = ArtifactPickerPinSchema.parse(raw);
+          const pin = await page.pick();
+          if (pin === null) return null;
+          // The crop is main's own capture of the pane, never bytes the page
+          // offered: a pin's `screenshot` is set here or not at all.
           const captured = await contents.capturePage();
           const size = captured.getSize();
-          const rect = z.object({x:z.number().finite(),y:z.number().finite(),width:z.number().nonnegative(),height:z.number().nonnegative(),viewportWidth:z.number().positive(),viewportHeight:z.number().positive()}).nullable().parse(await contents.executeJavaScriptInIsolatedWorld(1001,[{code:`(() => { const n=document.querySelector(${JSON.stringify(pin.css)}); if(!n)return null; const r=n.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,viewportWidth:innerWidth,viewportHeight:innerHeight}; })()`} ]));
+          const rect = await page.rect(pin.css);
           const scaleX=size.width/(rect?.viewportWidth || size.width || 1);
           const scaleY=size.height/(rect?.viewportHeight || size.height || 1);
           const x=Math.max(0,Math.min(size.width-1,Math.floor((rect?.x ?? 0)*scaleX)));
@@ -3548,16 +3545,8 @@ function artifactPreviewFor(window: BrowserWindow): ArtifactPreviewController {
           const screenshot = captured.isEmpty() ? undefined : 'data:image/png;base64,'+captured.crop({x,y,width:Math.max(1,Math.min(size.width-x,Math.ceil((rect?.width ?? size.width)*scaleX))),height:Math.max(1,Math.min(size.height-y,Math.ceil((rect?.height ?? size.height)*scaleY)))}).toPNG().toString('base64');
           return { ...pin, ...(screenshot ? { screenshot } : {}) };
         },
-        comments: async (pins) => {
-          const raw: unknown = await contents.executeJavaScriptInIsolatedWorld(1001,[{code:`new Promise(resolve=>{
-            globalThis.__rallyClearComments?.();
-            const cleanup=${ARTIFACT_COMMENTS_SOURCE}(${JSON.stringify(pins)},resolve);
-            globalThis.__rallyClearComments=()=>{cleanup();resolve(null);};
-            if(!${pins.length})resolve(null);
-          })`}]);
-          return raw===null ? null : AnnotationCommentActionSchema.parse(raw);
-        },
-        stopPicking: async () => { if (!contents.isDestroyed()) await contents.executeJavaScriptInIsolatedWorld(1001, [{ code: 'globalThis.__rallyCancelPicker?.()' }]); },
+        comments: page.comments,
+        stopPicking: async () => { if (!contents.isDestroyed()) await page.stopPicking(); },
         capture: async () => {
           const captured = await contents.capturePage();
           if (captured.isEmpty()) return null;
@@ -4313,6 +4302,11 @@ function registerIpc(): void {
     const window = BrowserWindow.fromWebContents(event.sender);
     if (!bounds || !window) return;
     artifactPreviews.get(window)?.setBounds(bounds);
+  });
+  ipcMain.handle('artifact:preview-ready', async (event) => {
+    assertArtifactSurfaceSender(event);
+    const window = BrowserWindow.fromWebContents(event.sender);
+    return window ? await artifactPreviews.get(window)?.ready() ?? false : false;
   });
   ipcMain.handle('artifact:pick-preview', async (event) => {
     assertArtifactSurfaceSender(event);

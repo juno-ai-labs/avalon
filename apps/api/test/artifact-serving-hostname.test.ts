@@ -1,6 +1,6 @@
 import "../../../tests/isolated-region";
 /** Public hostname routing at the isolated artifact Worker boundary. */
-import { asArtifactId, type ArtifactManifest } from "@rally/contracts";
+import { artifactAnnotationScriptPath, asArtifactId, type ArtifactManifest } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("cloudflare:workers", () => ({ WorkerEntrypoint: class {} }));
@@ -334,6 +334,60 @@ describe("artifact serving hostname routes", () => {
     const pricingBody = await pricing.text();
     expect(pricingBody).toBe(PRICING_HTML);
     expect(pricingBody).not.toContain(`content="Public artifact"`);
+  });
+
+  it("serves the annotation script without reading the route, for any host", async () => {
+    const { env, readRoute, idFromName } = fixture(null);
+    const response = await artifactWorker.fetch(new Request(
+      `https://${STUB}-g.rallyusercontent.test${artifactAnnotationScriptPath("https://app.example.test")}`,
+    ), { ...env, BROWSER_APP_ORIGIN: "https://app.example.test" }, context());
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("javascript");
+    expect(response.headers.get("cache-control")).toContain("immutable");
+    expect(readRoute).not.toHaveBeenCalled();
+    expect(idFromName).not.toHaveBeenCalled();
+  });
+
+  it("puts the annotation script first in a Rally viewer's page and nowhere in the public one", async () => {
+    const state = {
+      artifactId: ARTIFACT,
+      workspaceId: "00000000-0000-7000-8000-0000000000c1",
+      workstreamId: "00000000-0000-7000-8000-0000000000d1",
+      resourceId: "00000000-0000-7000-8000-0000000000e1",
+      version: 1,
+      mode: "static",
+      stateful: false,
+      manifest: MANIFEST,
+    };
+    const { env } = fixture({ hostname_stub: STUB, artifact_id: ARTIFACT, region: "global" }, {
+      checkSessionResult: { ok: true, viewerId: "user-1", viewerName: "Ada", version: 1, mode: "static", stateful: false, manifest: MANIFEST },
+      currentStateResult: state,
+    });
+    const framing = { ...env, BROWSER_APP_ORIGIN: "https://app.example.test" };
+    const origin = `https://${STUB}-g.rallyusercontent.test`;
+    const path = artifactAnnotationScriptPath("https://app.example.test");
+
+    // The desktop: a top-level navigation carrying the viewer cookie.
+    const viewer = await (await artifactWorker.fetch(new Request(`${origin}/`, { headers: {
+      cookie: "__rally_artifact_session=secret", "sec-fetch-dest": "document", "sec-fetch-mode": "navigate", "sec-fetch-site": "none",
+    } }), framing, context())).text();
+    expect(viewer.indexOf(`<head><script src="${path}"></script><title>`)).toBeGreaterThan(-1);
+    expect(viewer).toContain(`property="og:title" content="Public artifact"`);
+
+    // The browser client's frame, without the cookie Safari refuses.
+    const framed = await (await artifactWorker.fetch(new Request(`${origin}/pricing.html`, { headers: {
+      "sec-fetch-dest": "iframe", "sec-fetch-mode": "navigate", "sec-fetch-site": "cross-site",
+    } }), framing, context())).text();
+    expect(framed.startsWith(`<!doctype html><html><head><script src="${path}"></script>`)).toBe(true);
+
+    // A public read, and a frame nobody configured an app for, get the page as published.
+    const crawler = await (await artifactWorker.fetch(new Request(`${origin}/pricing.html`), framing, context())).text();
+    expect(crawler).toBe(PRICING_HTML);
+    const unconfigured = await (await artifactWorker.fetch(new Request(`${origin}/pricing.html`, { headers: {
+      "sec-fetch-dest": "iframe", "sec-fetch-mode": "navigate", "sec-fetch-site": "cross-site",
+    } }), env, context())).text();
+    expect(unconfigured).toBe(PRICING_HTML);
   });
 
   it("does not attach a Rally session to a cross-site public read", async () => {

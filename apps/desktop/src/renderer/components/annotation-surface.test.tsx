@@ -1,6 +1,6 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AnnotationDraftProvider, AnnotationChips, MessageAnnotations, useAnnotationDraft } from './artifact-annotations';
 import { sourceSelectionPoint,annotationDomRange } from '../lib/annotation-source';
 import { AnnotationSurface } from './annotation-surface';
@@ -19,12 +19,32 @@ describe('annotation source picker',()=>{
     expect(screen.queryByText('<img src="hero.png">')).toBeNull();
   });
 
-  it('keeps browser HTML comments discoverable without entering pick mode',()=>{
-    render(<Tooltip.Provider><AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={1} name="Pricing.html" mimeType="text/html" text="<h1>Plans</h1>" /></AnnotationDraftProvider></Tooltip.Provider>);
+  it('offers HTML file comments on every host and gives the opaque frame only the app-origin script',()=>{
+    render(<Tooltip.Provider><AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={1} name="Pricing.html" mimeType="text/html" text="<h1>Plans</h1><script>alert(1)</script>" /></AnnotationDraftProvider></Tooltip.Provider>);
+    const frame=screen.getByTitle('Preview of Pricing.html');
+    expect(frame).toHaveAttribute('sandbox','');
     const button=screen.getByRole('button',{name:'Comment mode'});
-    expect(button).toHaveAttribute('aria-disabled','true');
+    expect(button).not.toHaveAttribute('aria-disabled');
     fireEvent.click(button);
-    expect(button).toHaveAttribute('aria-pressed','false');
+    expect(button).toHaveAttribute('aria-pressed','true');
+    expect(frame).toHaveAttribute('sandbox','allow-scripts');
+    const document=frame.getAttribute('srcdoc')??'';
+    const nonce=/script-src 'nonce-([0-9a-f]+)'/u.exec(document)?.[1];
+    expect(nonce).toBeDefined();
+    expect(document).toContain(`<script nonce="${nonce}" src="http://localhost:3000/annotation-frame.js"></script>`);
+    expect(document).not.toContain('data-annotation-');
+    // The file's own script is in the document but carries no nonce.
+    expect(document).toContain('<script>alert(1)</script>');
+  });
+  it('tells a new opaque document what to do once it announces itself',()=>{
+    render(<Tooltip.Provider><AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={1} name="Pricing.html" mimeType="text/html" text="<h1>Plans</h1>" saved={{target:{resourceId,version:1,locator:{type:'element',css:'h1',box:{x:0,y:0,w:1,h:1},visibleText:'Plans'}},content:{exact:'<h1>Plans</h1>',source:'rendered',before:'',after:'',truncated:false},comment:'Shorter'}} /></AnnotationDraftProvider></Tooltip.Provider>);
+    const frame=screen.getByTitle('Preview of Pricing.html') as HTMLIFrameElement;
+    const posted=vi.spyOn(frame.contentWindow!,'postMessage');
+    fireEvent(window,new MessageEvent('message',{data:{type:'rally-annotation-ready',pagePath:'/'},source:frame.contentWindow,origin:'null'}));
+    expect(posted).toHaveBeenCalledWith({type:'rally-annotation-restore',locator:{type:'element',css:'h1',box:{x:0,y:0,w:1,h:1},visibleText:'Plans'},exact:'<h1>Plans</h1>'},'*');
+    expect(posted).toHaveBeenCalledWith({type:'rally-annotation-picking',on:false},'*');
+    fireEvent(window,new MessageEvent('message',{data:{type:'rally-annotation-restored',resolved:false},source:frame.contentWindow,origin:'null'}));
+    expect(screen.getByText('The original page cannot be shown again.')).toBeVisible();
   });
   it('pins rendered Markdown with exact list markup and keeps a removable commented chip',()=>{
     render(<AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={4} name="Pricing.md" mimeType="text/markdown" text={'# Plans\n\n- **Starter**: $12 per seat.\n- Team: $24.\n'} /><Observe /></AnnotationDraftProvider>);
