@@ -365,7 +365,8 @@ const ARTIFACT_ANNOTATION_API_SOURCE = String.raw`(function(){
  * call the API sends `rally-annotation-picking`, `rally-annotation-comments`
  * and `rally-annotation-restore`, and gets `rally-annotation-ready`,
  * `rally-artifact-pin`, `rally-annotation-comment-action` and
- * `rally-annotation-restored` back. With a `parentOrigin`, only a parent at
+ * `rally-annotation-restored` back, and `rally-annotation-left` when the
+ * document is navigated away from. With a `parentOrigin`, only a parent at
  * that origin is heard and answered; without one (the opaque file frame, whose
  * parent is the app that wrote it) any parent is, and every message carries
  * the `key` the frame's script URL was given, so the parent can tell the
@@ -406,6 +407,11 @@ function artifactAnnotationBridgeSource(parentOrigin: string | null): string {
     }
   });
   api.watchAnchor((rect) => post({ type: 'rally-annotation-anchor', rect }));
+  // The document is leaving: a navigation the page made. Its parent hears
+  // this before the next document runs, and stops talking to the frame. Both
+  // events, since a message sent from a document already unloading reaches
+  // the parent with no source to attribute it to.
+  for (const name of ['beforeunload', 'pagehide']) window.addEventListener(name, () => post({ type: 'rally-annotation-left' }));
   post({ type: 'rally-annotation-ready', pagePath: location.pathname + location.search });
 })`;
 }
