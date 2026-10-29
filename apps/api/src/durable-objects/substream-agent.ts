@@ -4819,6 +4819,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
     let outcome: WorkstreamHarnessResult;
     try {
+      // Before anything reads the projection: state written before the harness
+      // stopped persisting tool image parts would otherwise reload them all.
+      const retiredToolContent = await this.transcript.retireInlineToolMessageContent(input.loopId);
+      if (retiredToolContent > 0) {
+        logWarn(this.env, "bind_loop_inline_tool_content_retired", {
+          workspace_id: input.workspaceId,
+          workstream_id: input.parentId,
+          substream_id: this.externalSubstreamId(),
+          harness_run_id: input.harnessRunId,
+          messages: retiredToolContent,
+        });
+      }
       const interruptedReservation = await this.settleInterruptedAssistantReservation(input);
       const recoveredToolBatch = interruptedReservation
         ? null

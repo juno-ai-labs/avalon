@@ -713,6 +713,12 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     }));
   };
   const toolCallPositions = new Map<string, { turn: number; index: number }>();
+  // Image and other non-text parts a tool returned, keyed by provider tool
+  // call ID. They ride the next provider request only: Bind's messages, the
+  // durable loop state and the boundary hash all hold the JSON result alone.
+  // Persisting them reloaded every image on every later step and restart,
+  // which ran a Durable Object past its memory limit on 2026-10-25.
+  const currentTurnContent = new Map<string, ModelMessageContentPart[]>();
   const commitBindTransition = async (transition: BindLoopTransition): Promise<void> => {
     await requiredPort(
       "run_state_persistence_failed",
@@ -1568,7 +1574,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         streamedContent = "";
         const routed = await routeProviderTurn({
           input,
-          messages: prepared.messages,
+          messages: withCurrentTurnContent(prepared.messages, currentTurnContent),
           tools: authorizedTools,
           systemPrompt,
           signal,
@@ -1578,6 +1584,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           acceptEmptyCompletion: input.acceptEmptyCompletion === true,
           ...(onOutputProgress ? { onOutputProgress } : {}),
         });
+        currentTurnContent.clear();
         routedAttempts += routed.attemptCount;
         model = routed.result.model;
         const turnInputTokens = numberFromUsage(routed.result.usage, "prompt_tokens");
@@ -1770,7 +1777,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
               success: false, kind: "authz", error: completed.refusal.message, data: { code: completed.refusal.code },
             }) };
           }
-          return harnessResultOutcome(toolCall.id, completed, () => { completedByTool = true; });
+          return harnessResultOutcome(toolCall.id, completed, currentTurnContent, () => { completedByTool = true; });
         }
         const executionPlanHash = await canonicalToolInputHash({
           pluginId: dispatched.pluginId,
@@ -1977,7 +1984,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           ...(toolResult.providerOperationId ? { providerOperationId: toolResult.providerOperationId } : {}),
         }));
         await requiredPort("run_state_persistence_failed", "Run liveness renewal failed", () => input.onLiveness?.("after_tool"));
-        return harnessResultOutcome(toolCall.id, toolResult, () => { completedByTool = true; });
+        return harnessResultOutcome(toolCall.id, toolResult, currentTurnContent, () => { completedByTool = true; });
       },
       beforeToolMessageAccepted: persistAcceptedToolMessage,
       onStepSettled: ({ wouldEnd }) => settleStep(wouldEnd),
@@ -3848,6 +3855,28 @@ function isRecordValue(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * The provider request's copy of `messages`, with each relayed tool result's
+ * parts after its JSON text. Only the messages that carry parts are copied.
+ */
+function withCurrentTurnContent(
+  messages: ProviderMessages,
+  currentTurnContent: ReadonlyMap<string, ModelMessageContentPart[]>,
+): ProviderMessages {
+  if (currentTurnContent.size === 0) return messages;
+  return messages.map((message) => {
+    const parts = message.role === "tool" ? currentTurnContent.get(message.tool_call_id) : undefined;
+    if (!parts || message.role !== "tool") return message;
+    return {
+      ...message,
+      content: [
+        { type: "text", text: String(message.content) },
+        ...parts,
+      ] as ProviderToolMessage["content"],
+    };
+  });
+}
+
 function toBindLoopMessage(value: unknown): BindLoopMessage {
   const cloned = JSON.parse(JSON.stringify(value)) as unknown;
   if (!isRecordValue(cloned)) throw new Error("bind_loop_message_not_an_object");
@@ -3862,21 +3891,13 @@ function modelMessagesContainFile(messages: RunHarnessInput["messages"]): boolea
 function harnessResultOutcome(
   toolCallId: string,
   result: HarnessToolResult,
+  currentTurnContent: Map<string, ModelMessageContentPart[]>,
   markCompleted: () => void,
 ) {
   if (result.halt === "completed") markCompleted();
-  const jsonMessage = toolResultMessage(toolCallId, { success: true, data: result.output });
-  const toolMessage = result.contentParts?.length
-    ? {
-        ...jsonMessage,
-        content: [
-          { type: "text", text: String(jsonMessage.content) },
-          ...result.contentParts,
-        ] as ProviderToolMessage["content"],
-      }
-    : jsonMessage;
+  if (result.contentParts?.length) currentTurnContent.set(toolCallId, result.contentParts);
   return {
-    toolMessage,
+    toolMessage: toolResultMessage(toolCallId, { success: true, data: result.output }),
     ...(result.halt === "needs_input"
       ? { suspend: { toolCallId, reason: "needs_input", resumeKind: "answer" as const } }
       : result.halt === "completed"
