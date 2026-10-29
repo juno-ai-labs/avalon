@@ -1198,9 +1198,10 @@ script; `allow-same-origin` is never added, and the file's own scripts never
 run. `allow-scripts` does let the file navigate its frame to a page the app's
 `frame-src` admits, whose scripts would then run there behind the same
 `contentWindow`: the frame's script echoes a per-document key from its URL on
-every message, which that page never had, and the surface treats a second
-load of the frame as such a page, remounts it without scripts and ends
-Comment mode. Pop-outs keep their narrow sender-checked preview/transfer bridge, require
+every message, which that page never had, and announces its own leaving as
+it unloads, at which the surface stops sending to the window, ends Comment
+mode and remounts the frame without scripts; a second load of the frame is
+treated the same way. Pop-outs keep their narrow sender-checked preview/transfer bridge, require
 an active originating composer scope and wait for its ACK. Canonical target
 read/version checks precede message admission. The owner-window-only
 `artifact:preview-comments` and `artifact:preview-ready` IPC validate schemas

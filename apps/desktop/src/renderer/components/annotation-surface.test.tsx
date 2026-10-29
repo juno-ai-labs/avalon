@@ -75,6 +75,21 @@ describe('annotation source picker',()=>{
     fireEvent(window,new MessageEvent('message',{data:{type:'rally-annotation-comment-action',action:{id:draftId,action:'remove'},key:keyOf(frame)},source:frame.contentWindow,origin:'null'}));
     expect(screen.getByTestId('pins')).toHaveTextContent('[]');
   });
+  it('stops talking to the opaque frame the moment its document says it is leaving',()=>{
+    render(<Tooltip.Provider><AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={1} name="Pricing.html" mimeType="text/html" text='<a href="https://x-g.rallyusercontent.test/">Go</a><h1>Plans</h1>' /><Observe /></AnnotationDraftProvider></Tooltip.Provider>);
+    const button=screen.getByRole('button',{name:'Comment mode'});
+    fireEvent.click(button);
+    const frame=screen.getByTitle('Preview of Pricing.html') as HTMLIFrameElement;
+    const posted=vi.spyOn(frame.contentWindow!,'postMessage');
+    fireEvent(window,new MessageEvent('message',{data:{type:'rally-annotation-left',key:keyOf(frame)},source:frame.contentWindow,origin:'null'}));
+    expect(button).toHaveAttribute('aria-pressed','false');
+    const after=screen.getByTitle('Preview of Pricing.html') as HTMLIFrameElement;
+    expect(after).toHaveAttribute('sandbox','');
+    // Nothing more is posted to the window the file navigated away from.
+    posted.mockClear();
+    fireEvent(window,new MessageEvent('message',{data:{type:'rally-annotation-ready',pagePath:'/',key:keyOf(frame)},source:after.contentWindow,origin:'null'}));
+    expect(posted).not.toHaveBeenCalled();
+  });
   it('remounts the opaque frame without scripts once a document replaced the file, and stops listening',()=>{
     render(<Tooltip.Provider><AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={1} name="Pricing.html" mimeType="text/html" text='<meta http-equiv="refresh" content="0;url=https://x-g.rallyusercontent.test/"><h1>Plans</h1>' /><Observe /></AnnotationDraftProvider></Tooltip.Provider>);
     const button=screen.getByRole('button',{name:'Comment mode'});

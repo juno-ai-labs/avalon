@@ -208,9 +208,11 @@ link), and the document that replaces it would run its own scripts under the
 app's `frame-src`, from the same `contentWindow`. Two things keep it out: the
 script URL the surface wrote carries the document's nonce as a key, which the
 script echoes on every message and a replacement document never had, so its
-messages are refused from the first; and the surface counts the frame's loads
-per document it wrote, so a second load remounts the frame without scripts,
-turns Comment mode off, and stops sending to it.
+messages are refused from the first; and the script posts
+`rally-annotation-left` as its document unloads, before the next document
+runs, at which the surface stops sending to the window, turns Comment mode
+off and remounts the frame without scripts. A second load of the frame for the same
+document does the same, should the signal be missed.
 
 A pop-out has a real isolated app renderer, with narrow IPC for its own preview,
 picker and transfer. It does not receive the main app's general IPC authority.

@@ -34,5 +34,6 @@ export const AnnotationFrameMessageSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('rally-annotation-comment-action'), action: AnnotationCommentActionSchema, ...keyed }),
   z.strictObject({ type: z.literal('rally-annotation-restored'), resolved: z.boolean(), ...keyed }),
   z.strictObject({ type: z.literal('rally-annotation-anchor'), rect: ArtifactElementRectSchema, ...keyed }),
+  z.strictObject({ type: z.literal('rally-annotation-left'), ...keyed }),
 ]);
 export type AnnotationFrameMessage = z.infer<typeof AnnotationFrameMessageSchema>;
