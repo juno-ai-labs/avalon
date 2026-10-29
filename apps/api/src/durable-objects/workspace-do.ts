@@ -664,6 +664,9 @@ import {
   WorkspaceSpaceSeatInviteeRequestSchema,
   WorkspaceSpaceBootstrapStatusSchema,
   WorkspaceSpaceChannelPageRequestSchema,
+  type WorkspaceSidekickChannelPostRequest,
+  WorkspaceSidekickChannelPostRequestSchema,
+  type WorkspaceSidekickChannelPostResult,
   WorkspaceSpaceChannelPageResultSchema,
   WorkspaceSpaceDirectoryResultSchema,
   WorkspaceSpaceConversationPageRequestSchema,
@@ -6640,7 +6643,22 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           kind: "sidekick_review", region: this.env.AVALON_REGION, ...message,
         }));
       },
+      announcementSpaceId: (row) => this.sidekickAnnouncementSpaceId(row),
     };
+  }
+
+  /**
+   * The Channel a Sidekick's review announces a change in, for a Sidekick no
+   * room owns: General for an Organization's, or its author's Personal
+   * Channel when General is archived or absent; the author's Personal Channel
+   * for a personal one. A room's Sidekick announces in its home, which the
+   * conversation scope names, so it is null here. Null too before the
+   * Organization's Spaces are open or the Channel exists.
+   */
+  private sidekickAnnouncementSpaceId(row: { scope: string; author_user_id: string }): string | null {
+    if (row.scope === "workstream") return null;
+    const spaces = this.spaceStorage();
+    return (row.scope === "workspace" ? spaces.liveGeneralSpaceId() : null) ?? spaces.personalSpaceId(row.author_user_id);
   }
 
   /** The hosted parent for a Sidekick id; `null` for an id that names no Sidekick. */
@@ -9304,10 +9322,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     scope: ConversationToolScope,
     userId: string,
   ): Promise<ConversationToolEntry[]> {
-    if (scope.kind !== "conversation") return [];
     const viewer = await this.spaceReader(workspaceId, userId);
     if (!viewer) return [];
     const spaces = this.spaceStorage();
+    if (scope.kind === "sidekick") {
+      // The one Channel a Sidekick's review announces a change in, listed so
+      // the wizard can name it; the feed read and the post admit the person again.
+      const row = this.state.storage.sql.exec<{ scope: string; author_user_id: string } & Record<string, SqlStorageValue>>(
+        `SELECT scope, author_user_id FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
+        scope.automationId,
+      ).toArray()[0];
+      const spaceId = row ? this.sidekickAnnouncementSpaceId(row) : null;
+      const space = spaceId ? spaces.readable(viewer, spaceId) : false;
+      return space && spaceId ? [conversationToolEntry({ conversationId: spaceId, parentId: spaceId, substreamId: "0",
+        kind: "space", title: space.name, isHome: false, isOwn: false, isParent: false })] : [];
+    }
     return spaces.channelSpaceIds(viewer, scope.parentId).flatMap((spaceId) => {
       const space = spaces.readable(viewer, spaceId);
       return space ? [conversationToolEntry({ conversationId: spaceId, parentId: spaceId, substreamId: "0",
@@ -10578,6 +10607,32 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * first): the threads this viewer may open, each whole. One they may not open
    * is not on the page at all.
    */
+  /**
+   * A Sidekick's review announcing a change in the Channel it announces in,
+   * as a message from Rally that opens with the Sidekick's name. Only that
+   * Channel, and only for a person who can read it: the wizard's
+   * `conversation_post` reaches here when its target is a Channel.
+   */
+  async postSidekickChannelMessage(input: WorkspaceSidekickChannelPostRequest): Promise<WorkspaceSidekickChannelPostResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSidekickChannelPostRequestSchema, input, "post_sidekick_channel_message");
+    this.assertWorkspace(request.workspaceId);
+    const viewer = await this.spaceReader(request.workspaceId, request.userId);
+    if (!viewer) return { ok: false, code: "space_access_denied" };
+    const row = this.state.storage.sql.exec<{ scope: string; author_user_id: string; title: string } & Record<string, SqlStorageValue>>(
+      `SELECT scope, author_user_id, title FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
+      request.automationId,
+    ).toArray()[0];
+    const spaces = this.spaceStorage();
+    if (!row || this.sidekickAnnouncementSpaceId(row) !== request.spaceId) return { ok: false, code: "space_not_found" };
+    if (!spaces.readable(viewer, request.spaceId)) return { ok: false, code: "space_access_denied" };
+    const posted = spaces.postMessage(request.spaceId, {
+      author: { kind: "rally" }, body: `**${row.title}**\n\n${request.text}`, key: request.key,
+    }, Date.now());
+    if (!posted.replayed) this.publishSpaceConversationsChanged({ spaceIds: [request.spaceId] });
+    return { ok: true, messageId: posted.messageId, replayed: posted.replayed };
+  }
+
   async listChannelFeed(input: WorkspaceSpaceChannelPageRequest): Promise<WorkspaceChannelFeedResult> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceChannelPageRequestSchema, input, "list_channel_feed");

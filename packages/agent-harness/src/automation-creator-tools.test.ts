@@ -242,7 +242,7 @@ describe("the automations plugin", () => {
     expect(systemMessage).toContain("A review never adds a connector, plugin, delivery\ndestination, trigger or capability, never enrols a delegate");
     expect(systemMessage).toContain("Never submit ready=false in a review");
     // The publication to the people the Sidekick works for, and only on a change.
-    expect(systemMessage).toContain("post one message there\nwith conversation_post, leaving the conversation out");
+    expect(systemMessage).toContain("post one message there\nwith conversation_post, passing that conversation");
     expect(systemMessage).toContain("Post nothing there when nothing changed");
     expect(systemMessage).toContain("for the owner, who was not present");
     expect(systemMessage).toContain("asking here restores the earlier revision");

@@ -25,6 +25,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   asAutomationId,
+  asSpaceId,
   asSubstreamId,
   asUserId,
   asWorkspaceId,
@@ -1896,7 +1897,7 @@ describe("a hosted Sidekick", () => {
       expect(directory.reviewed_at).toBeGreaterThanOrEqual(armedBy);
       const notice = JSON.parse(reviews[0]!.notice_json) as { sample: { failed: string[]; needsInput: string[]; completed: string[] } };
       expect(notice).toMatchObject({
-        kind: "sidekick_review_due", automationId: AUTOMATION_ID, definitionRevision: 1, since: null, home: null,
+        kind: "sidekick_review_due", automationId: AUTOMATION_ID, definitionRevision: 1, since: null, announceTo: null,
         finished: { completed: 10, failed: 0, needsInput: 0, stopped: 0 },
         sample: { failed: [], needsInput: [] },
       });
@@ -1999,6 +2000,58 @@ describe("a hosted Sidekick", () => {
       const resent = (await alarms()).find((alarm) => alarm.kind === SIDEKICK_REVIEW_ALARM_KIND);
       expect(resent!.due_at).toBeGreaterThan(resumedAt);
       expect((await reviewState()).reviews.find((review) => review.review_id === owed)?.delivered_at).toBeNull();
+    } finally {
+      send.mockRestore();
+    }
+  });
+
+  it("announces a review's change in the author's Personal Channel for a personal Sidekick, and in General for an Organization's", async () => {
+    await activeAutomation();
+    const generalId = asSpaceId("00000000-0000-7000-8000-00000000ad0e");
+    const personalId = asSpaceId("00000000-0000-7000-8000-00000000ad0f");
+    // The Organization's Spaces, opened as a new Organization's are: General
+    // and the creator's Personal Channel in the one object call.
+    const opened = await workspaceStub().initializeWorkspace(WORKSPACE_ID, "wnam", {
+      creatorUserId: AUTHOR_ID, spaceId: generalId, personalSpaceId: personalId, authorityGeneration: 1,
+    });
+    if (!opened.spacesReady) throw new Error("the Organization's Spaces did not open");
+    const scope = { kind: "sidekick" as const, automationId: AUTOMATION_ID };
+    const channels = async () => (await workspaceStub().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, scope }))
+      .conversations.filter((conversation) => conversation.kind === "space").map((conversation) => conversation.parentId);
+
+    // A personal Sidekick's wizard can name its author's Personal Channel, and
+    // post there once per key, from Rally, under the Sidekick's name.
+    expect(await channels()).toEqual([personalId]);
+    const request = { workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, spaceId: personalId, automationId: AUTOMATION_ID,
+      key: "sidekick-review:ad90", text: "Now says so in two sentences, after a review." };
+    const posted = await workspaceStub().postSidekickChannelMessage(request);
+    expect(posted).toMatchObject({ ok: true, replayed: false });
+    expect(await workspaceStub().postSidekickChannelMessage(request))
+      .toEqual({ ok: true, messageId: (posted as { messageId: string }).messageId, replayed: true });
+    expect(await workspaceStub().postSidekickChannelMessage({ ...request, spaceId: generalId }))
+      .toEqual({ ok: false, code: "space_not_found" });
+    const feed = await workspaceStub().listChannelFeed({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, spaceId: personalId, cursor: null });
+    if (!feed.ok) throw new Error(feed.code);
+    expect(feed.page.items.flatMap((item) => (item.kind === "message" ? [item.message.body] : [])))
+      .toContain("**Manual helper**\n\nNow says so in two sentences, after a review.");
+
+    // An Organization's Sidekick announces in General, and its notice says so.
+    await runInDurableObject(workspaceStub(), async (_instance, state) => {
+      state.storage.sql.exec(`UPDATE automation_directory SET scope = 'workspace', runs_since_review = ? WHERE automation_id = ?`,
+        SIDEKICK_REVIEW_RUN_FLOOR, AUTOMATION_ID);
+      state.storage.sql.exec(
+        `INSERT INTO _internal_durable_alarms (kind, alarm_key, due_at, repeat_every_ms, retry_at, attempt, payload_json, created_at, updated_at)
+         VALUES (?, ?, ?, NULL, 0, 0, NULL, ?, ?)`,
+        SIDEKICK_REVIEW_ALARM_KIND, `${AUTOMATION_ID}:review`, Date.now() - 1, Date.now(), Date.now(),
+      );
+      await state.storage.setAlarm(Date.now());
+    });
+    expect(await channels()).toEqual([generalId]);
+    const send = interceptReviewSends(async () => {});
+    try {
+      await runDurableObjectAlarm(workspaceStub());
+      await expect.poll(async () => (await reviewState()).reviews.length, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(1);
+      expect((JSON.parse((await reviewState()).reviews[0]!.notice_json) as { announceTo: string | null }).announceTo).toBe(generalId);
     } finally {
       send.mockRestore();
     }
