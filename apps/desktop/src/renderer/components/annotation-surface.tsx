@@ -82,7 +82,12 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
   // surface wrote can be reached through its own `contentWindow`.
   const tellFrame = (message: AnnotationHostMessage): void => frame.current?.contentWindow?.postMessage(message,'*');
   const editingLocator = draft?.selections.find((pin) => pin.id === editing)?.annotation.target.locator;
-  const syncHtmlComments = (): void => tellFrame({type:'rally-annotation-comments',pins:htmlPins.filter((pin)=>pin.id!==editing).map(({id,annotation})=>({id,annotation})),selected:editingLocator?.type==='element'?editingLocator.css:null});
+  // The selection the frame keeps highlighted: the pin being edited, else the
+  // saved selection a restore found, which every later sync would otherwise
+  // clear.
+  const savedLocator = saved?.target.locator;
+  const selectedCss = editingLocator?.type==='element' ? editingLocator.css : savedLocator?.type==='element' && !picking && !missing ? savedLocator.css : null;
+  const syncHtmlComments = (): void => tellFrame({type:'rally-annotation-comments',pins:htmlPins.filter((pin)=>pin.id!==editing).map(({id,annotation})=>({id,annotation})),selected:selectedCss});
   /** The editor beside its element; the style below adds 12px, so take it off here. */
   const anchorEditor = (rect: ArtifactElementRect): void => {
     const box = frame.current?.getBoundingClientRect();
@@ -90,7 +95,7 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
     const place = placeAnnotationEditor(rect, { x: box.x, y: box.y, width: box.width, height: box.height }, { width: window.innerWidth, height: window.innerHeight });
     setAnchor({ x: place.x, y: place.y - 12 });
   };
-  useEffect(()=>{if(html)syncHtmlComments();},[draft?.pins,editing,html]);
+  useEffect(()=>{if(html)syncHtmlComments();},[draft?.pins,editing,html,selectedCss]);
   useEffect(()=>{if(html)tellFrame({type:'rally-annotation-picking',on:picking});},[html,picking]);
   const current = draft?.selections.find((p) => p.id === editing);
 
