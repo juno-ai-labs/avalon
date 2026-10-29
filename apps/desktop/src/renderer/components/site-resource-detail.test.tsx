@@ -122,12 +122,71 @@ describe('showing a live artifact in the rail', () => {
     geometry.mockRestore();
   });
 
-  it('shows an unavailable comment control for browser websites', async () => {
-    setup({surface:surface({framed:true})});
-    const button=await screen.findByRole('button',{name:'Comment mode'});
-    expect(button).toHaveAttribute('aria-disabled','true');
-    fireEvent.click(button);
-    expect(button).toHaveAttribute('aria-pressed','false');
+  describe('a browser host\u2019s framed site', () => {
+    const PIN = {css:'main > button:nth-of-type(1)',html:'<button>RSVP</button>',visibleText:'RSVP',pagePath:'/',replace:false,box:{x:0,y:0,w:0.5,h:0.1},point:{x:40,y:30}};
+    /** A message as the frame's document would post it, or as something else would. */
+    function fromFrame(frame: HTMLIFrameElement, data: unknown, overrides: { source?: Window | null; origin?: string } = {}): void {
+      fireEvent(window, new MessageEvent('message', { data, source: overrides.source === undefined ? frame.contentWindow : overrides.source, origin: overrides.origin ?? CANONICAL }));
+    }
+    async function framedSite() {
+      const result = setup({surface:surface({framed:true})});
+      const frame = await screen.findByTitle('Offsite RSVP') as HTMLIFrameElement;
+      const posted = vi.spyOn(frame.contentWindow!, 'postMessage');
+      return { ...result, frame, posted };
+    }
+
+    it('offers Comment mode once the page announces the annotation script, and tells it to pick', async () => {
+      const { frame, posted } = await framedSite();
+      fireEvent.load(frame);
+      const button = screen.getByRole('button', { name: 'Comment mode' });
+      expect(button).toHaveAttribute('aria-disabled', 'true');
+      fromFrame(frame, { type: 'rally-annotation-ready', pagePath: '/' });
+      await waitFor(() => expect(button).not.toHaveAttribute('aria-disabled'));
+      fireEvent.click(button);
+      expect(button).toHaveAttribute('aria-pressed', 'true');
+      expect(posted).toHaveBeenCalledWith({ type: 'rally-annotation-picking', on: true }, CANONICAL);
+    });
+
+    it('keeps the control disabled on a page without the script, such as a refusal', async () => {
+      const { frame } = await framedSite();
+      fireEvent.load(frame);
+      const button = screen.getByRole('button', { name: 'Comment mode' });
+      expect(button).toHaveAttribute('aria-disabled', 'true');
+      fireEvent.click(button);
+      expect(button).toHaveAttribute('aria-pressed', 'false');
+    });
+
+    it('adds a pin the frame reports while picking and opens its comment editor', async () => {
+      const { frame } = await framedSite();
+      fromFrame(frame, { type: 'rally-annotation-ready', pagePath: '/' });
+      fireEvent.load(frame);
+      const button = screen.getByRole('button', { name: 'Comment mode' });
+      await waitFor(() => expect(button).not.toHaveAttribute('aria-disabled'));
+      fireEvent.click(button);
+      fromFrame(frame, { type: 'rally-artifact-pin', pin: PIN });
+      const editor = await screen.findByRole('textbox', { name: 'Comment on site selection' });
+      expect(editor).toBeVisible();
+      expect(screen.getByTestId('site-pins')).toHaveTextContent('<button>RSVP</button>');
+      // Escape inside the page ends picking the same way as in the app.
+      fromFrame(frame, { type: 'rally-artifact-pin', pin: null });
+      await waitFor(() => expect(button).toHaveAttribute('aria-pressed', 'false'));
+    });
+
+    it('ignores pins from another window, another origin, with Comment mode off, or carrying image bytes', async () => {
+      const { frame } = await framedSite();
+      fromFrame(frame, { type: 'rally-annotation-ready', pagePath: '/' });
+      fireEvent.load(frame);
+      const button = screen.getByRole('button', { name: 'Comment mode' });
+      await waitFor(() => expect(button).not.toHaveAttribute('aria-disabled'));
+      fromFrame(frame, { type: 'rally-artifact-pin', pin: PIN });
+      fireEvent.click(button);
+      fromFrame(frame, { type: 'rally-artifact-pin', pin: PIN }, { source: window });
+      fromFrame(frame, { type: 'rally-artifact-pin', pin: PIN }, { origin: 'https://other-g.rallyusercontent.test' });
+      fromFrame(frame, { type: 'rally-artifact-pin', pin: { ...PIN, screenshot: 'data:image/png;base64,AAAA' } });
+      await Promise.resolve();
+      expect(screen.queryByRole('textbox', { name: 'Comment on site selection' })).toBeNull();
+      expect(screen.getByTestId('site-pins')).toHaveTextContent('[]');
+    });
   });
   it('discards an unfinished native-site comment through the capture-phase Escape handler', async () => {
     const pick=vi.fn<NonNullable<SiteResourceDetailProps['surface']['pick']>>()

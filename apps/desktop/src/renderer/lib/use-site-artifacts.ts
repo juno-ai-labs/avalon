@@ -32,6 +32,7 @@ export function useSiteArtifacts(api: RallyApi | null) {
         present: bridge.presentArtifactPreview,
         setBounds: bridge.setArtifactPreviewBounds,
         snapshot: bridge.snapshotArtifactPreview,
+        ready: bridge.artifactPreviewReady,
         pick: bridge.pickArtifactPreview,
         comments: bridge.showArtifactPreviewComments,
         stopPicking: bridge.stopPickingArtifactPreview,

@@ -280,6 +280,7 @@ const bridge: RallyDesktopBridge = {
     ipcRenderer.invoke('artifact:set-preview-bounds', bounds) as Promise<void>,
   setArtifactPreviewHidden: (hidden) =>
     ipcRenderer.invoke('artifact:set-preview-hidden', hidden) as Promise<void>,
+  artifactPreviewReady: () => ipcRenderer.invoke('artifact:preview-ready') as Promise<boolean>,
   pickArtifactPreview: () => ipcRenderer.invoke('artifact:pick-preview') as Promise<ArtifactPickerPin | null>,
   showArtifactPreviewComments: (pins) => ipcRenderer.invoke('artifact:preview-comments', pins) as Promise<AnnotationCommentAction | null>,
   stopPickingArtifactPreview: () => ipcRenderer.invoke('artifact:stop-picking-preview') as Promise<void>,

@@ -19,6 +19,7 @@ artifact serving remain release checks; see the guest-sharing completion audit.
 | `apps/browser/src/transport.ts` | Same-origin entry requests and runtime response validation. |
 | `apps/browser/src/shell.tsx` | The signed-in application's one lazy boundary: the desktop shell over the cookie session, for members and guests, and the browser's `AppSessionValue`. |
 | `apps/browser/public/sw.js` | The root service worker that shows Web Push notifications, sets the installed app's icon badge, and opens their links on this origin. |
+| `apps/desktop/artifact-picker-plugin.ts` | Emits `/annotation-frame.js`, the annotation script an HTML file's opaque preview frame loads from this origin, into the browser build as well as the desktop's. |
 | `apps/browser/public/manifest.webmanifest`, `icon-*.png`, `apple-touch-icon.png` | The install manifest and icons that let the host be added to an iOS Home Screen or installed as an app window. |
 | `apps/desktop/src/renderer/lib/home-screen.ts` | On iPhone and iPad, whether the host runs as a Home Screen app or in a Safari tab. |
 | `apps/browser/src/session.ts`, `packages/contracts/src/client-session.ts` | Credential-free collaboration session metadata and its cookie adapter. |
@@ -362,7 +363,12 @@ Chrome as well as Electron. Guests and members alike preview a live artifact
 inline in a sandboxed iframe, which the shell's
 `frame-src https://*.<ARTIFACT_SERVING_DOMAIN>` allows, and can still open the
 freshly authorized URL in a separate tab; see
-[`live-web-artifacts.md`](live-web-artifacts.md).
+[`live-web-artifacts.md`](live-web-artifacts.md). Comment mode works in that
+frame: the serving Worker gives a framed page Rally's annotation script, and
+the detail drives it over `postMessage`, accepting replies only from the frame's
+window at the artifact origin. HTML files and saved site spots take comments
+too, since the host serves `/annotation-frame.js` for their opaque frame; see
+[`artifact-annotations.md`](artifact-annotations.md).
 Artifact open, error, and data routes accept the guest workspace relationship
 and use the existing canonical resource authorization in `ArtifactOpenService`.
 Public artifact content retains its existing anonymous serving rules; the guest
@@ -655,6 +661,21 @@ who visits a site URL; the lookup returns it only to a reader.
 **Consequences:** A site in a deployment other than Global opens only after
 the browser has opened one of that deployment's organizations, because the
 regional cookie is set by opening an organization.
+
+### 2026-10-29: Website and HTML-file comments work in the browser
+
+**What changed:** The host serves `/annotation-frame.js`, built by the shared
+Vite plugin, so an HTML file's opaque preview frame can run Rally's annotation
+script here; and the framed live-artifact preview takes comments through the
+script the serving Worker injects. The "Website comments require the Rally Mac
+app." control is gone.
+
+**Why:** The opaque frame's script was emitted only by the desktop build, and
+the frame had no way to get Rally code at all. Both were host gaps, not
+product decisions; [`artifact-annotations.md`](artifact-annotations.md) owns
+the mechanism and the reasoning.
+
+PR pending.
 
 ### 2026-10-10: Every connector but Canva connects from the browser
 

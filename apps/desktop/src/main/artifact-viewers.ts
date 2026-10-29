@@ -1,4 +1,5 @@
-import type { AnnotationCommentPins, AnnotationCommentAction } from '@rally/contracts';
+import { AnnotationCommentActionSchema, ArtifactPickerPinSchema, type AnnotationCommentPins, type AnnotationCommentAction, type ArtifactPickerPin } from '@rally/contracts';
+import { z } from 'zod';
 /**
  * The two surfaces that show a live artifact, and the one isolation contract
  * both are built from.
@@ -66,10 +67,54 @@ export interface ArtifactViewHandle {
   load(url: string): Promise<boolean>;
   /** The page as painted now, as an image data URL, or `null` when nothing is painted. */
   capture(): Promise<string | null>;
+  /** Whether the page carries Rally's annotation API; see `artifactPageAnnotations`. */
+  ready?: () => Promise<boolean>;
   pick?: () => Promise<unknown>;
   stopPicking?: () => Promise<void>;
   comments?: (pins: AnnotationCommentPins) => Promise<AnnotationCommentAction | null>;
   close(): void;
+}
+
+/** What `rallyAnnotations.rect(css)` answers: an element's viewport rectangle. */
+export const ArtifactElementRectSchema = z.object({
+  x: z.number().finite(),
+  y: z.number().finite(),
+  width: z.number().nonnegative(),
+  height: z.number().nonnegative(),
+  viewportWidth: z.number().positive(),
+  viewportHeight: z.number().positive(),
+}).nullable();
+export type ArtifactElementRect = z.infer<typeof ArtifactElementRectSchema>;
+
+/**
+ * The page's annotation API, reached through `executeJavaScript`.
+ *
+ * The serving Worker puts `globalThis.rallyAnnotations` into every page a
+ * Rally viewer loads (`docs/artifact-annotations.md`), and the desktop calls
+ * it where the browser client would post a message. Each call is one script
+ * that answers `null` where the API is absent, so a page the Worker did not
+ * serve (a protected site's refusal, an error page) reads as not ready rather
+ * than as a thrown reference error. Every answer is parsed: it comes from a
+ * document the page's own scripts share.
+ */
+export function artifactPageAnnotations(execute: (code: string) => Promise<unknown>) {
+  const call = (expression: string): Promise<unknown> =>
+    execute(`globalThis.rallyAnnotations ? globalThis.rallyAnnotations.${expression} : null`);
+  return {
+    ready: async (): Promise<boolean> =>
+      await execute('typeof globalThis.rallyAnnotations === "object" && globalThis.rallyAnnotations !== null') === true,
+    pick: async (): Promise<ArtifactPickerPin | null> => {
+      const raw = await call('pick()');
+      return raw === null || raw === undefined ? null : ArtifactPickerPinSchema.parse(raw);
+    },
+    stopPicking: async (): Promise<void> => { await call('stopPicking()'); },
+    comments: async (pins: AnnotationCommentPins): Promise<AnnotationCommentAction | null> => {
+      const raw = await call(`comments(${JSON.stringify(pins)})`);
+      return raw === null || raw === undefined ? null : AnnotationCommentActionSchema.parse(raw);
+    },
+    rect: async (css: string): Promise<ArtifactElementRect> =>
+      ArtifactElementRectSchema.parse(await call(`rect(${JSON.stringify(css)})`) ?? null),
+  };
 }
 
 
@@ -639,6 +684,13 @@ export class ArtifactPreviewController {
     return await view.capture();
   }
 
+  /** Whether the shown page can take comments. False while nothing is shown or it is still loading. */
+  async ready(): Promise<boolean> {
+    const view = this.view;
+    if (!view || view.destroyed() || this.pendingLoad?.view === view) return false;
+    const result = await view.ready?.() ?? false;
+    return this.view === view && !view.destroyed() ? result : false;
+  }
   async pick(): Promise<unknown> {
     const view = this.view;
     if (!view || view.destroyed() || this.pendingLoad?.view === view) return null;
