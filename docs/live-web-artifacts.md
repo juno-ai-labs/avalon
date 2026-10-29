@@ -727,8 +727,10 @@ the same places the social preview is injected. The rule in `annotation-script.t
 a valid viewer session (the desktop's view and pop-out, or a person who opened
 the site from Rally in their own browser, where it is inert) or a framed
 request when `BROWSER_APP_ORIGIN` is configured (the browser client, whose
-frame Safari views without the partitioned cookie). A public read, a crawler
-and an unfurler get the page as published. The file itself is served at
+frame Safari views without the partitioned cookie), and only for a navigation:
+a page's own `fetch()` of a partial carries the same cookie and gets its bytes
+as published. A public read, a crawler and an unfurler get the page as
+published. The file itself is served at
 `/__rally/picker-<hash>.js` before the hostname lookup, like the bootstrap,
 and cached for a year only when the hash is the serving isolate's own; another
 build's path is answered but not cached, so a deploy cannot leave a browser

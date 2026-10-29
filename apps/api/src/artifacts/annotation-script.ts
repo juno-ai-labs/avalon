@@ -19,7 +19,8 @@ import { artifactAnnotationScript, artifactAnnotationScriptPath } from "@rally/c
  *
  * A valid viewer session is the desktop's `WebContentsView` and pop-out, or a
  * person who opened the site in their own browser from Rally: the script is
- * inert for them, there being no host to call it. A framed request is the
+ * inert for them, there being no host to call it. Only a navigation gets it;
+ * a page's own fetches, which carry the same cookie, do not. A framed request is the
  * browser client's preview, which `frame-ancestors` restricts to that one
  * origin; it is admitted without a session because Safari refuses the
  * partitioned cookie and views the public page, and `parentOrigin` is the
@@ -30,8 +31,12 @@ export function annotationScriptPathFor(input: {
   request: Request;
   parentOrigin: string | null;
 }): string | null {
-  const framed = input.request.headers.get("sec-fetch-dest") === "iframe" && input.parentOrigin !== null;
-  if (!input.viewerId && !framed) return null;
+  // Only a document gets the script: a page's own `fetch()` of a partial
+  // carries the viewer's cookie too, and must get the bytes as published.
+  const dest = input.request.headers.get("sec-fetch-dest");
+  const navigation = dest === null || dest === "document" || dest === "iframe";
+  const framed = dest === "iframe" && input.parentOrigin !== null;
+  if (!(input.viewerId && navigation) && !framed) return null;
   return scriptPath(input.parentOrigin);
 }
 

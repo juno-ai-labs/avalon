@@ -132,7 +132,7 @@ it:
 | --- | --- | --- |
 | Live site, desktop rail and pop-out | The serving Worker prepends it to every HTML response for a request carrying a valid viewer session | `executeJavaScript` from the main process, parsed on return |
 | Live site, browser client | The same injection, also for any framed request when `BROWSER_APP_ORIGIN` is configured, since Safari views the frame without the partitioned cookie | `postMessage` to the frame at the artifact origin; replies accepted only from that frame's window at that origin |
-| HTML file, rail or lightbox, and a saved site spot | `/annotation-frame.js` from the app origin, under a fresh nonce, in an opaque `srcdoc` frame | `postMessage` to the frame; replies accepted only from that frame's window |
+| HTML file, rail or lightbox, and a saved site spot | `/annotation-frame.js?key=<nonce>` from the app origin, under a fresh nonce, in an opaque `srcdoc` frame | `postMessage` to the frame; replies accepted only from that frame's window and carrying the document's key |
 
 The bridge is the same three host messages (`rally-annotation-picking`,
 `rally-annotation-comments`, `rally-annotation-restore`) and five replies
@@ -152,8 +152,11 @@ The inspector outlines the nearest block under the pointer and never the
 document or its body: a pointer over empty page shows nothing, and a click
 there pins nothing. Once a block is pinned it stays highlighted as the
 selection until its comment is confirmed or discarded; the host says which
-selection is open through `comments(pins, selected)`, so the highlight survives
-a frame reload and clears when the editor closes. Confirmed cards use the app's
+selection is open through `comments(pins, selected)`, as the pin's CSS path,
+page path and quoted markup, and the script highlights it only on that page
+and while the markup still matches, as it does a card's element; so the
+highlight survives a frame reload, never lights up a look-alike on another
+page, and clears when the editor closes. Confirmed cards use the app's
 own card look, sit to the right of their element with a connector when there is
 room and below it when there is not, and hide while the element is out of the
 viewport or scrolled out of an ancestor that clips it. Each card keeps an
@@ -202,9 +205,12 @@ client as on the desktop; only the browser pop-out, a plain tab with no Rally
 parent, has no Comment mode.
 `allow-scripts` also lets the file navigate its frame (a `<meta refresh>`, a
 link), and the document that replaces it would run its own scripts under the
-app's `frame-src`. The surface counts the frame's loads per document it wrote:
-a second load is such a replacement, and the frame is remounted without
-scripts, Comment mode turned off, and its messages ignored from then on.
+app's `frame-src`, from the same `contentWindow`. Two things keep it out: the
+script URL the surface wrote carries the document's nonce as a key, which the
+script echoes on every message and a replacement document never had, so its
+messages are refused from the first; and the surface counts the frame's loads
+per document it wrote, so a second load remounts the frame without scripts,
+turns Comment mode off, and stops sending to it.
 
 A pop-out has a real isolated app renderer, with narrow IPC for its own preview,
 picker and transfer. It does not receive the main app's general IPC authority.
