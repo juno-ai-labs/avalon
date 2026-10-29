@@ -1054,15 +1054,20 @@ initializes Bind from canonical history, answered a review it never saw.
 Memory treats the review as agent-derived.
 
 **What the wizard does with it** is guidance in
-`AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, not a gate, in four stages. It plans
-first, as its first message and before any tool call: what the notice
-reports, which runs it will read, what it expects, and what would justify a
-change (a procedure problem seen in the runs) and what never does (a platform
-failure). It reads only the listed runs, and the Sidekick's posts and replies
-in its home. It decides against the plan: nothing justified, say so and stop;
-otherwise revise and submit `ready=true`, never adding a connector, plugin,
-destination, trigger or capability, never enrolling a delegate, and
-submitting nothing over a person's unfinished draft. When a change was saved
+`AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, not a gate, in four stages. It reads
+first, saying nothing: only the listed runs, and the Sidekick's posts and
+replies in its home. It then plans, in one message before any write: what
+the runs showed, run by run; whether anything justifies a change (a
+procedure problem seen in the runs, never a platform failure); and if so
+exactly what it will change and nothing else. The plan comes after the reads
+because before them there is nothing to plan from: a plan written from the
+notice's counts restated the notice and the rules, which the two first live
+reviews showed, whereas a plan written from the runs is the proposal a
+reader wants to see before the revision lands. It acts on the plan: nothing
+to change, stop after the report; otherwise revise as planned and submit
+`ready=true`, never adding a connector, plugin, destination, trigger or
+capability, never enrolling a delegate, and submitting nothing over a
+person's unfinished draft. When a change was saved
 and the notice names where to announce it, it publishes one message there
 with `conversation_post`, naming that conversation, for the people the
 Sidekick works for: what it now does differently, why, and how to restore
@@ -1681,7 +1686,7 @@ new plugin, trigger or capability; nothing over a person's unfinished
 revision): proposed in review and rejected as securing against a case nobody
 has seen; the review executes as a managing delegate and the rule lives in
 the guidance, where the person's report and revert path cover it. The
-review's turn is staged by the prompt, plan then read then decide then
+review's turn is staged by the prompt, read then plan then act then
 publish, rather than by a host state machine: the stages exist to make a
 change deliberate and announced, and a prompt is the cheapest place to hold
 them.
