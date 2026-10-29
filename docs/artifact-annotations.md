@@ -368,10 +368,15 @@ and `css`, so the model projection quotes them only inside `<location>` and
 never copies either into its guidance. The served file is cached for a year
 only under the serving isolate's own content hash, so an older isolate asked
 for a newer path during a deploy cannot pin its script under that name. The
-element locator's `viewport` is a new key on a strict schema: a desktop build
-older than this change fails to parse a message that carries a browser
-website pin and shows no chip for it, which was accepted over keeping the
-window out of the locator.
+element locator's `viewport` is a new key, and every reader shipped before
+this change parsed stored annotations with the strict admission schema, so a
+desktop build older than this change shows no chips for a message carrying
+a browser website pin until it updates; accepted over holding the window
+back. Reads now strip a key they do not know (`AnnotatedMessageContentSchema`
+is built from the same shapes as the strict `AnnotationSchema`, without the
+strictness), so this is the last field to cost an older reader a message's
+chips: admission still refuses an unknown key, since Rally's own client
+sending one is a bug.
 
 ### 2026-10-21 — Image previews own a scroll viewport
 
