@@ -115,11 +115,17 @@ text. An unresolved spot shows the saved quote and available screenshot.
 Every HTML surface runs the same script, which installs
 `globalThis.rallyAnnotations`: `pick()` starts the inspector and resolves with
 the next pin (or `null` on Escape, with early pins queued), `stopPicking()`
-removes it, `comments(pins)` draws the confirmed cards and resolves with an
-edit or remove click, `restore(locator, exact)` highlights a saved selection
-once the document has parsed, and `rect(css)` answers an element's viewport
-rectangle. The script does nothing until a host calls it. What differs per
-surface is how the script gets into the document and how the host reaches it:
+removes it, `comments(pins, selected)` draws the confirmed cards, keeps
+`selected` highlighted, and resolves with an edit or remove click,
+`restore(locator, exact)` highlights a saved selection, and `rect(css)` answers
+an element's viewport rectangle. `comments` and `restore` look their elements up
+once the document has parsed: the script runs from the head and announces
+itself at once, so a host may answer while the page is still streaming in, and
+a card asked for then must still appear. A host that keeps a restored
+selection names it as `selected` on every comment sync, since a sync with
+`null` clears it. The script does nothing until a host calls it. What differs
+per surface is how the script gets into the document and how the host reaches
+it:
 
 | Surface | How the script gets in | How the host calls it |
 | --- | --- | --- |

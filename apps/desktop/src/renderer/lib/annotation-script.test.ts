@@ -83,6 +83,32 @@ describe('the shared annotation script', () => {
     expect(frame.contentDocument!.querySelectorAll('[data-rally-picker]')).toHaveLength(0);
   });
 
+  it('draws cards asked for before the document has parsed once it has', async () => {
+    // The script runs from the head while the body still streams in, as the
+    // artifact Worker injects it, and the host hears `ready` and answers at
+    // once. jsdom parses a written document in one go, so the loading state
+    // is staged by hand.
+    const { frame, api } = framed('');
+    const inner = frame.contentWindow as unknown as Window & { Event: typeof Event };
+    // Past jsdom's own DOMContentLoaded for the written document first.
+    await tick();
+    Object.defineProperty(inner.document, 'readyState', { value: 'loading', configurable: true });
+    const pins = [{ id: 'one', annotation: { target: { resourceId: 'r', version: 1, locator: { type: 'element', css: 'p', box: { x: 0, y: 0, w: 1, h: 1 }, visibleText: 'Hello' } }, content: { exact: '<p>Hello</p>', source: 'rendered', before: '', after: '', truncated: false }, comment: 'Shorter' } }];
+    const clicked = api.comments(pins, 'p');
+    await tick();
+    expect(inner.document.querySelector('[data-rally-picker]')).toBeNull();
+    inner.document.body.insertAdjacentHTML('beforeend', '<p>Hello</p>');
+    Object.defineProperty(inner.document, 'readyState', { value: 'complete', configurable: true });
+    inner.document.dispatchEvent(new inner.Event('DOMContentLoaded'));
+    await tick();
+    const drawn = [...inner.document.querySelectorAll<HTMLElement>('[data-rally-picker]')];
+    // The selection, the card and its outline.
+    expect(drawn.length).toBeGreaterThanOrEqual(3);
+    expect(drawn.some((node) => node.style.pointerEvents !== 'none')).toBe(true);
+    await api.comments([]);
+    await expect(clicked).resolves.toBeNull();
+  });
+
   it('restores only the element whose markup still matches the saved quote', async () => {
     const { api } = framed('<p>Hello</p><p>World</p>');
     const locator = { type: 'element', css: 'p:nth-of-type(2)', box: { x: 0, y: 0, w: 1, h: 1 }, visibleText: 'World' };

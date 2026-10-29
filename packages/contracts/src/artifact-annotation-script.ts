@@ -213,7 +213,7 @@ const ARTIFACT_PICKER_SOURCE = String.raw`(function(report) {
 })`;
 
 /** Highlight only a verified element; resolves whether one was found. */
-const ARTIFACT_RESTORE_SOURCE = String.raw`(function(locator,exact){return new Promise(resolve=>{function restore(){let match=null;try{const node=document.querySelector(locator.css);if(node){if(${ARTIFACT_ELEMENT_HTML_SOURCE}(node)===exact && (node.textContent||'').includes(locator.visibleText)){match=node;selectElement(node);node.scrollIntoView({block:'center'});}}}catch{}resolve(!!match);}if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',restore,{once:true});else restore();});})`;
+const ARTIFACT_RESTORE_SOURCE = String.raw`(function(locator,exact){return new Promise(resolve=>{parsed(()=>{let match=null;try{const node=document.querySelector(locator.css);if(node){if(${ARTIFACT_ELEMENT_HTML_SOURCE}(node)===exact && (node.textContent||'').includes(locator.visibleText)){match=node;selectElement(node);node.scrollIntoView({block:'center'});}}}catch{}resolve(!!match);});});})`;
 
 /**
  * Installs `globalThis.rallyAnnotations`, the API every host calls:
@@ -228,8 +228,12 @@ const ARTIFACT_RESTORE_SOURCE = String.raw`(function(locator,exact){return new P
  *   path, or `null`) highlighted as the selection being commented on, and
  *   resolves with the first edit or remove click, or `null` when the cards are
  *   replaced or there are none.
- * - `restore(locator, exact)` highlights a saved selection, after the document
- *   has parsed, and resolves whether it was found.
+ * - `restore(locator, exact)` highlights a saved selection and resolves
+ *   whether it was found.
+ *
+ * Both look their elements up once the document has parsed: the script runs
+ * from the head, and a host that hears `ready` while the page still streams
+ * in may ask before the elements exist.
  * - `rect(css)` is an element's viewport rectangle, for the desktop's crop.
  * - `watchAnchor(callback)` reports the selection's rectangle whenever it
  *   moves, for a host that draws its editor beside it.
@@ -285,6 +289,11 @@ const ARTIFACT_ANNOTATION_API_SOURCE = String.raw`(function(){
     selected.element = element;
     track(selected);
   }
+  // The script runs at the top of the document, before the markup it is
+  // asked about has parsed; anything that looks an element up waits for it.
+  function parsed(run) {
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run, { once: true }); else run();
+  }
   const picking = { queue: [], waiter: null, cleanup: null };
   let clearComments = null;
   const api = {
@@ -306,12 +315,16 @@ const ARTIFACT_ANNOTATION_API_SOURCE = String.raw`(function(){
     comments(pins, selectedCss) {
       return new Promise(resolve => {
         clearComments?.();
-        let element = null;
-        if (typeof selectedCss === 'string') { try { element = document.querySelector(selectedCss); } catch {} }
-        selectElement(element);
-        const cleanup = ${ARTIFACT_COMMENTS_SOURCE}(pins, resolve);
-        clearComments = () => { cleanup(); resolve(null); };
-        if (!pins.length) resolve(null);
+        let cleanup = null, live = true;
+        clearComments = () => { live = false; cleanup?.(); resolve(null); };
+        parsed(() => {
+          if (!live) return;
+          let element = null;
+          if (typeof selectedCss === 'string') { try { element = document.querySelector(selectedCss); } catch {} }
+          selectElement(element);
+          cleanup = ${ARTIFACT_COMMENTS_SOURCE}(pins, resolve);
+          if (!pins.length) resolve(null);
+        });
       });
     },
     restore(locator, exact) { return ${ARTIFACT_RESTORE_SOURCE}(locator, exact); },
