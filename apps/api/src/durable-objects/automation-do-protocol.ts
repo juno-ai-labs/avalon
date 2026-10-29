@@ -77,6 +77,12 @@ export const AutomationSubmitDefinitionRequestSchema = z.strictObject({
    * definition leaves the appearance as it is.
    */
   appearance: PickedAppearanceSchema.optional(),
+  /**
+   * Set when the wizard submits during a scheduled self-review: the revision
+   * is then recorded against that review, so what reviews changed is one
+   * query. A marker for reading, not a gate on writing.
+   */
+  origin: z.literal("sidekick_review").optional(),
 });
 export type AutomationSubmitDefinitionRequest = z.infer<typeof AutomationSubmitDefinitionRequestSchema>;
 

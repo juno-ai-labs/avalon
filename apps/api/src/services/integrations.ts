@@ -2168,6 +2168,8 @@ function createAvalonAutomationsPlugin(
           submittedByRunId: input.harnessRunId,
           appearance: target.appearance,
           actor: actorRequest.actor,
+          // A review's revision is recorded against the review, for reading later.
+          ...(input.reason === "sidekick_review" ? { origin: "sidekick_review" as const } : {}),
         });
         return { ...submitted, saved: draft.ready, description: draft.description };
       },

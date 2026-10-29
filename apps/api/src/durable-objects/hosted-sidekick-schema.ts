@@ -158,6 +158,7 @@ export const SIDEKICK_REVIEW_SCHEMA_STATEMENTS: readonly string[] = [
      CHECK (runs_since_review >= 0)`,
   `ALTER TABLE automation_directory ADD COLUMN reviewed_at INTEGER
      CHECK (reviewed_at IS NULL OR reviewed_at >= 0)`,
+  `ALTER TABLE sidekick_revisions ADD COLUMN review_id TEXT`,
   `CREATE TABLE sidekick_reviews (
     sidekick_id TEXT NOT NULL,
     review_id TEXT NOT NULL,

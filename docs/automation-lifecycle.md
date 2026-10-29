@@ -1495,7 +1495,9 @@ definition columns migration 91 added, and migration 132's
 `runs_since_review` and `reviewed_at`), `sidekick_revisions`,
 `sidekick_schedules`, `sidekick_runs`, `sidekick_email_receipts`,
 `sidekick_reviews` (migration 132: one row per review request, with the
-notice it carried and when it was delivered), the child
+notice it carried and when it was delivered; the same migration adds
+`sidekick_revisions.review_id`, the review a revision answered, null for a
+person's), the child
 tables, and alarm entries keyed `<sidekickId>:<key>`;
 [`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-sidekick-is-hosted-beside-them)
 maps them to the tables of the deleted `SidekickDO`.
@@ -1602,7 +1604,11 @@ abandoned is deleted, so the table holds what reached the wizard), the
 `sidekick_review_delivered`, `sidekick_review_skipped` (with its code) and
 `sidekick_review_abandoned` log lines in the Organization object, and
 `sidekick_review_delivery_retry` in the consumer, the one line that carries a
-refusal's reason.
+refusal's reason. What reviews changed is `sidekick_revisions` where
+`review_id` is not null, joined to `sidekick_reviews` on it, and the
+`sidekick_review_revised` log line (review id, revision, ready) the save
+writes when the wizard submits during a review; both are written by the
+host from the turn's reason, with nothing for the model to do.
 [`runbook.md`](runbook.md) has the production inspection paths.
 
 ## Scoped Sidekick discovery reuse
@@ -1685,7 +1691,9 @@ a new revision resets the count rather than the clock, and only the accepted
 revision's runs are evidence. Evidence is host-known columns and a
 host-picked sample, never work in the run. The review executes as a
 managing delegate and can submit a revision, so the capability rule is in
-the guidance. A change is announced where the Sidekick's people are: the
+the guidance. A revision a review submits carries the review's id
+(`sidekick_revisions.review_id`, from the turn's reason, not from the
+model), so what reviews changed is one query. A change is announced where the Sidekick's people are: the
 notice carries the conversation to post to (a room's Sidekick's home, General
 for an Organization's or the author's Personal Channel when General is
 gone, the author's Personal Channel for a personal one), and the wizard
