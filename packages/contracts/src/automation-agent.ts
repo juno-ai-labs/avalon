@@ -109,6 +109,55 @@ export const AutomationActivationV1Schema = z.strictObject({
 export type AutomationActivationV1 = z.infer<typeof AutomationActivationV1Schema>;
 
 /**
+ * The notice the host writes into a Sidekick's authoring conversation when a
+ * scheduled self-review is due: the structured content of that `system` row,
+ * and what the review Queue message carries. Counts, and a sample of run ids
+ * the host picked so the wizard reads a bounded set however many runs there
+ * were; nothing here is a second copy of a run. `since` is the previous
+ * review, or null for the first. Every count and every sampled run is a run
+ * under `definitionRevision`: an earlier revision's runs followed an earlier
+ * procedure and are not this review's evidence.
+ */
+export const SidekickReviewNoticeV1Schema = z.strictObject({
+  kind: z.literal("sidekick_review_due"),
+  schemaVersion: z.literal(1),
+  reviewId: IdSchema,
+  automationId: AutomationIdSchema,
+  /** The accepted definition revision when the review was requested. */
+  definitionRevision: z.number().int().positive(),
+  since: z.string().datetime({ offset: true }).nullable(),
+  until: z.string().datetime({ offset: true }),
+  /**
+   * Where the wizard announces a change, as the conversation tools name it:
+   * a room's Sidekick's home (its Thread's Main conversation or a Breakout),
+   * an Organization Sidekick's General Channel (or its author's Personal
+   * Channel when General is archived or absent), or a personal Sidekick's
+   * author's Personal Channel. Null when no such conversation exists yet.
+   */
+  announceTo: z.string().min(1).nullable(),
+  /** Runs that finished in the window, by the state they finished in; `needsInput` is runs waiting, not finishes. */
+  finished: z.strictObject({
+    completed: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+    needsInput: z.number().int().nonnegative(),
+    stopped: z.number().int().nonnegative(),
+  }),
+  /**
+   * The runs to read, chosen by the host: failed runs, then stopped ones,
+   * newest first, up to a limit; runs waiting for input the same way; and
+   * completed runs spaced evenly across the window, newest first, so a
+   * Sidekick that ran a thousand times is read at the same cost as one that
+   * ran twenty. A list shorter than its limit is every such run.
+   */
+  sample: z.strictObject({
+    failed: z.array(IdSchema),
+    needsInput: z.array(IdSchema),
+    completed: z.array(IdSchema),
+  }),
+});
+export type SidekickReviewNoticeV1 = z.infer<typeof SidekickReviewNoticeV1Schema>;
+
+/**
  * The Sidekick's name, off an activation row's structured content.
  *
  * Frozen at delivery rather than looked up, so a rename does not rewrite what

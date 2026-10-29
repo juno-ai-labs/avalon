@@ -1569,7 +1569,9 @@ participants remain deferred product work.
 - **Whatever starts a run hands the host something to render.** A run whose
   instructions exist only as a transcript `system` row reaches the model with
   nothing but its work stream's objective, because the protocol projector drops
-  those rows as UI state.
+  those rows as UI state; the exceptions are the rows it admits by their
+  structured content's kind (an inbound email, an external event, a Sidekick's
+  self-review notice), each through its own renderer.
 - **A cancellation is a durable request, observed by the lease owner**, which alone
   commits the fenced `stopped` transition. Stopping never kills an in-flight
   provider or tool operation out of band.

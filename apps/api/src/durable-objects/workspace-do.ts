@@ -664,6 +664,9 @@ import {
   WorkspaceSpaceSeatInviteeRequestSchema,
   WorkspaceSpaceBootstrapStatusSchema,
   WorkspaceSpaceChannelPageRequestSchema,
+  type WorkspaceSidekickChannelPostRequest,
+  WorkspaceSidekickChannelPostRequestSchema,
+  type WorkspaceSidekickChannelPostResult,
   WorkspaceSpaceChannelPageResultSchema,
   WorkspaceSpaceDirectoryResultSchema,
   WorkspaceSpaceConversationPageRequestSchema,
@@ -1209,7 +1212,7 @@ import {
   scopeConversations,
   type ScopedConversation,
 } from "./workspace-sidekick-conversation-storage";
-import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
+import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
 import {
   HostedSidekick,
   hostedSidekickAlarmTarget,
@@ -1225,6 +1228,7 @@ import {
   type SidekickBatchDetailRequest,
   type SidekickBatchSkillReadRequest,
   SidekickRunProvisionQueueMessageSchema,
+  SidekickReviewQueueMessageSchema,
 } from "./automation-do-protocol";
 import {
   ConversationToolAttachRequestSchema,
@@ -1270,7 +1274,7 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "sidekick_conversation_attachments",
   // A hosted Sidekick's own rows: `HostedSidekick` is their only writer.
   "sidekick_revisions", "sidekick_schedules", "sidekick_runs", "sidekick_email_receipts",
-  "sidekick_children", "sidekick_child_projections", "sidekick_child_receipts",
+  "sidekick_children", "sidekick_child_projections", "sidekick_child_receipts", "sidekick_reviews",
   "realtime_transcription_sessions",
   "realtime_transcription_ticket_receipts",
   "workspace_impersonation_relationships",
@@ -4822,6 +4826,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
      SELECT 'sidekick_delegation_migration',automation_id || ':0',0,0,0 FROM automation_directory
       WHERE region IS NOT NULL AND lifecycle<>'deleted' AND delegation_migrated=0`,
   ],
+}, {
+  version: 132,
+  description: "count Sidekick run finishes toward a scheduled wizard review and record each review request",
+  statements: SIDEKICK_REVIEW_SCHEMA_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {
@@ -6630,7 +6638,27 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           kind: "sidekick_run_provision", region: this.env.AVALON_REGION, ...message,
         }));
       },
+      sendReview: async (message) => {
+        await this.env.ACTIVITY_QUEUE.send(SidekickReviewQueueMessageSchema.parse({
+          kind: "sidekick_review", region: this.env.AVALON_REGION, ...message,
+        }));
+      },
+      announcementSpaceId: (row) => this.sidekickAnnouncementSpaceId(row),
     };
+  }
+
+  /**
+   * The Channel a Sidekick's review announces a change in, for a Sidekick no
+   * room owns: General for an Organization's, or its author's Personal
+   * Channel when General is archived or absent; the author's Personal Channel
+   * for a personal one. A room's Sidekick announces in its home, which the
+   * conversation scope names, so it is null here. Null too before the
+   * Organization's Spaces are open or the Channel exists.
+   */
+  private sidekickAnnouncementSpaceId(row: { scope: string; author_user_id: string }): string | null {
+    if (row.scope === "workstream") return null;
+    const spaces = this.spaceStorage();
+    return (row.scope === "workspace" ? spaces.liveGeneralSpaceId() : null) ?? spaces.personalSpaceId(row.author_user_id);
   }
 
   /** The hosted parent for a Sidekick id; `null` for an id that names no Sidekick. */
@@ -6983,6 +7011,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** For the provisioning consumer: the run's loop started. */
   async sidekickRunProvisioned(input: Parameters<HostedSidekick["runProvisioned"]>[0]) {
     return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.runProvisioned(input));
+  }
+
+  /** For the review consumer: the notice to admit into the wizard's conversation, or `null`. */
+  async sidekickReviewDelivery(input: Parameters<HostedSidekick["reviewDelivery"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.reviewDelivery(input));
+  }
+
+  /** For the review consumer: the notice reached the wizard. */
+  async sidekickReviewDelivered(input: Parameters<HostedSidekick["reviewDelivered"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.reviewDelivered(input));
   }
 
   // Batch reads. Every Sidekick in an Organization is here, so a caller that
@@ -9284,10 +9322,24 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     scope: ConversationToolScope,
     userId: string,
   ): Promise<ConversationToolEntry[]> {
-    if (scope.kind !== "conversation") return [];
     const viewer = await this.spaceReader(workspaceId, userId);
     if (!viewer) return [];
     const spaces = this.spaceStorage();
+    if (scope.kind === "sidekick") {
+      // The one Channel a Sidekick's review announces a change in, listed for
+      // the authoring conversation so the wizard can name it, and for no run:
+      // a run acts on its trigger's content, and a Channel's feed is not its
+      // audience. The feed read and the post admit the person again.
+      if (!scope.authoring) return [];
+      const row = this.state.storage.sql.exec<{ scope: string; author_user_id: string } & Record<string, SqlStorageValue>>(
+        `SELECT scope, author_user_id FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
+        scope.automationId,
+      ).toArray()[0];
+      const spaceId = row ? this.sidekickAnnouncementSpaceId(row) : null;
+      const space = spaceId ? spaces.readable(viewer, spaceId) : false;
+      return space && spaceId ? [conversationToolEntry({ conversationId: spaceId, parentId: spaceId, substreamId: "0",
+        kind: "space", title: space.name, isHome: false, isOwn: false, isParent: false })] : [];
+    }
     return spaces.channelSpaceIds(viewer, scope.parentId).flatMap((spaceId) => {
       const space = spaces.readable(viewer, spaceId);
       return space ? [conversationToolEntry({ conversationId: spaceId, parentId: spaceId, substreamId: "0",
@@ -10558,6 +10610,32 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * first): the threads this viewer may open, each whole. One they may not open
    * is not on the page at all.
    */
+  /**
+   * A Sidekick's review announcing a change in the Channel it announces in,
+   * as a message from Rally that opens with the Sidekick's name. Only that
+   * Channel, and only for a person who can read it: the wizard's
+   * `conversation_post` reaches here when its target is a Channel.
+   */
+  async postSidekickChannelMessage(input: WorkspaceSidekickChannelPostRequest): Promise<WorkspaceSidekickChannelPostResult> {
+    await this.initialized;
+    const request = parseRpcInput(WorkspaceSidekickChannelPostRequestSchema, input, "post_sidekick_channel_message");
+    this.assertWorkspace(request.workspaceId);
+    const viewer = await this.spaceReader(request.workspaceId, request.userId);
+    if (!viewer) return { ok: false, code: "space_access_denied" };
+    const row = this.state.storage.sql.exec<{ scope: string; author_user_id: string; title: string } & Record<string, SqlStorageValue>>(
+      `SELECT scope, author_user_id, title FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
+      request.automationId,
+    ).toArray()[0];
+    const spaces = this.spaceStorage();
+    if (!row || this.sidekickAnnouncementSpaceId(row) !== request.spaceId) return { ok: false, code: "space_not_found" };
+    if (!spaces.readable(viewer, request.spaceId)) return { ok: false, code: "space_access_denied" };
+    const posted = spaces.postMessage(request.spaceId, {
+      author: { kind: "rally" }, body: `**${row.title}**\n\n${request.text}`, key: request.key,
+    }, Date.now());
+    if (!posted.replayed) this.publishSpaceConversationsChanged({ spaceIds: [request.spaceId] });
+    return { ok: true, messageId: posted.messageId, replayed: posted.replayed };
+  }
+
   async listChannelFeed(input: WorkspaceSpaceChannelPageRequest): Promise<WorkspaceChannelFeedResult> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceChannelPageRequestSchema, input, "list_channel_feed");

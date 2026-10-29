@@ -230,6 +230,25 @@ describe("the automations plugin", () => {
     expect(systemMessage).toContain("Scheduled result delivery to a workstream is limited to the owning workstream");
   });
 
+  it("stages a scheduled self-review and tells it to report to the absent owner", () => {
+    const { systemMessage } = createAutomationsPlugin(host());
+
+    // The notice's first line is the one `renderSidekickReviewNotice` writes;
+    // the policy recognizes the review by it.
+    expect(systemMessage).toContain("Notice from Rally, not from a person or an agent: a scheduled\nself-review of this Sidekick is due");
+    // The reads come first, so the plan is a plan of the change, not a restatement of the notice.
+    expect(systemMessage).toContain("1. Read only the runs the notice lists");
+    expect(systemMessage).toContain("2. Plan, in one message, before any write: what the runs showed");
+    expect(systemMessage).toContain("exactly what you will\nchange in the definition and nothing else");
+    expect(systemMessage).toContain("3. Act on the plan");
+    expect(systemMessage).toContain("Never add a connector,\nplugin, delivery destination, trigger or capability; never enrol a delegate");
+    expect(systemMessage).toContain("never submit\nready=false");
+    // The publication to the people the Sidekick works for, and only on a change.
+    expect(systemMessage).toContain("4. If you saved a change and the notice names where to announce it, post one message there\nwith conversation_post, passing that conversation");
+    expect(systemMessage).toContain("Post\nnothing when nothing changed");
+    expect(systemMessage).toContain("5. End with one short report here for the owner, who was not present");
+  });
+
   it("publishes ready submissions without a separate activation tool", () => {
     // Publication belongs to the authorized host submission boundary.
     const modes = createAutomationsPlugin(host()).tools
