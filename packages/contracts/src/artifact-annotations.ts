@@ -108,18 +108,23 @@ export function renderAnnotations(content: unknown): string {
 /**
  * How the agent sees what the person saw when no screenshot travels with a
  * rendered pin: the browser client cannot capture its frame, so the agent
- * rebuilds the view in its sandbox from the window the pin records. The
- * recipe itself lives in the building-live-sites skill; this names what to
- * reproduce and when it is worth doing.
+ * rebuilds the view from the window the pin records. A live-site pin names
+ * its page in the locator, and the building-live-sites skill holds the recipe
+ * for serving the imported site; an HTML file's pin has no page, and the file
+ * itself is what to open. The page path and the CSS path are quoted only in
+ * `<location>`: the page sets both, and nothing it sets reaches this text.
  */
 function renderedViewGuidance(a: Annotation): string {
   const locator = a.target.locator;
   const viewport = locator.type === 'element' ? locator.viewport : undefined;
-  const page = locator.type === 'element' ? locator.pagePath ?? '/' : '/';
+  const live = locator.type === 'element' && locator.pagePath !== undefined;
   const view = viewport
     ? `a ${Math.round(viewport.width)}x${Math.round(viewport.height)} CSS-pixel viewport at device scale ${viewport.devicePixelRatio}, ${viewport.colorScheme} color scheme, scrolled to (${Math.round(viewport.scrollX)}, ${Math.round(viewport.scrollY)})`
-    : 'the pane width (400 to 1280 CSS pixels)';
-  return `No screenshot accompanies this selection. If the request depends on how it looks (layout, spacing, color, overlap, what is visible), rebuild the person's view before editing, per the building-live-sites skill's "Recreating a person's view": serve the imported site, open ${page} in Playwright with ${view}, screenshot the element at the CSS path and the viewport, and look at both with view_image.`;
+    : 'a 400x900 CSS-pixel viewport, the narrowest the pane is used at';
+  const open = live
+    ? `per the building-live-sites skill's "Recreating a person's view": serve the imported site, open the page at the location's pagePath in Playwright with ${view}`
+    : `open the imported file in Playwright with ${view}`;
+  return `No screenshot accompanies this selection. If the request depends on how it looks (layout, spacing, color, overlap, what is visible), rebuild the person's view before editing, ${open}, screenshot the element at the location's CSS path and the viewport, and look at both with view_image.`;
 }
 
 export const ArtifactPickerPinSchema = z.strictObject({ css: z.string().min(1), box, visibleText: z.string(), before: z.string().optional(), after: z.string().optional(), html: z.string(), pagePath: z.string(), replace: z.boolean(), point: z.strictObject({x:z.number().finite().nonnegative(),y:z.number().finite().nonnegative()}).optional(), rect: z.strictObject({x:z.number().finite(),y:z.number().finite(),width:z.number().finite().nonnegative(),height:z.number().finite().nonnegative()}).optional(), viewport: AnnotationViewportSchema.optional(), screenshot: z.string().optional() });

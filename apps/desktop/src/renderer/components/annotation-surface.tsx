@@ -69,7 +69,17 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
   const [imageHover,setImageHover]=useState(false);
   const kind = classifyAttachmentKind({ fileName: name, mimeType: mimeType ?? null });
   const html = isHtmlResource({fileName:name,mimeType});
-  const nonce = useMemo(() => crypto.randomUUID().replaceAll('-', ''), [resourceId,version,picking,text,saved]);
+  const htmlPins = draft?.pins.filter((pin)=>pin.annotation.target.resourceId===resourceId && pin.annotation.target.version===version) ?? [];
+  // The frame carries the script whenever it has something to do; once it
+  // does, toggling Comment mode is a message, not a reload.
+  const scripted = picking || Boolean(saved) || htmlPins.length > 0;
+  const nonce = useMemo(() => crypto.randomUUID().replaceAll('-', ''), [resourceId,version,text,saved,scripted]);
+  // The frame's document is the file Rally wrote; a document that replaced it
+  // (a refresh the file carried, a link it followed) is not, and the frame is
+  // remounted without scripts so nothing from it is heard or run.
+  const loads = useRef(0);
+  const [escaped, setEscaped] = useState(false);
+  useEffect(() => { loads.current = 0; setEscaped(false); }, [nonce]);
   const [savedImage,setSavedImage]=useState<string>();
   useEffect(() => {
     if (!props.loadSavedImage) return;
@@ -77,7 +87,6 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
     void props.loadSavedImage(controller.signal).then((blob)=>{if(!controller.signal.aborted){url=URL.createObjectURL(blob);setSavedImage(url);}}).catch(()=>{});
     return ()=>{controller.abort();if(url)URL.revokeObjectURL(url);};
   },[props.loadSavedImage]);
-  const htmlPins = draft?.pins.filter((pin)=>pin.annotation.target.resourceId===resourceId && pin.annotation.target.version===version) ?? [];
   // The frame is opaque, so its target origin is `*`; only the frame this
   // surface wrote can be reached through its own `contentWindow`.
   const tellFrame = (message: AnnotationHostMessage): void => frame.current?.contentWindow?.postMessage(message,'*');
@@ -95,7 +104,10 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
     const place = placeAnnotationEditor(rect, { x: box.x, y: box.y, width: box.width, height: box.height }, { width: window.innerWidth, height: window.innerHeight });
     setAnchor({ x: place.x, y: place.y - 12 });
   };
-  useEffect(()=>{if(html)syncHtmlComments();},[draft?.pins,editing,html,selectedCss]);
+  // Keyed on what the frame would be told: a keystroke in the editor changes
+  // the draft but not the cards.
+  const commentsKey = JSON.stringify({ pins: htmlPins.filter((pin)=>pin.id!==editing).map(({id,annotation})=>({id,annotation})), selected: selectedCss });
+  useEffect(()=>{if(html)syncHtmlComments();},[commentsKey,html]);
   useEffect(()=>{if(html)tellFrame({type:'rally-annotation-picking',on:picking});},[html,picking]);
   const current = draft?.selections.find((p) => p.id === editing);
 
@@ -187,7 +199,7 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
     // schema admits: the file's own scripts never run in it, but a message is
     // still input.
     const receive = (event: MessageEvent): void => {
-      if (event.source !== frame.current?.contentWindow) return;
+      if (escaped || event.source !== frame.current?.contentWindow) return;
       const parsed = AnnotationFrameMessageSchema.safeParse(event.data);
       if (!parsed.success) return;
       const message = parsed.data;
@@ -301,7 +313,7 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
         if (start === null || end === null) { if (!hover) return; start = hover.start; end = hover.end; }
         commit(locatorFor(start, end), text.slice(start, end), start, end, e.detail > 1);
       }} onDoubleClick={(e) => { if (!picking || html || !text) return; e.preventDefault(); const sel = window.getSelection(); if (!sel?.rangeCount) return; const r = sel.getRangeAt(0); const start = sourceSelectionPoint(r.startContainer, r.startOffset, text); const end = sourceSelectionPoint(r.endContainer, r.endOffset, text); if (start !== null && end !== null && end > start) commit(locatorFor(start, end), text.slice(start,end), start,end,true); }}>
-      {html && text !== undefined ? <iframe ref={frame} onLoad={syncHtmlComments} sandbox={picking || saved || htmlPins.length > 0 ? 'allow-scripts' : ''} srcDoc={annotationHtml(text, picking || saved || htmlPins.length > 0 ? nonce : undefined)} title={`Preview of ${name}`} />
+      {html && text !== undefined ? <iframe key={escaped ? 'escaped' : 'file'} ref={frame} onLoad={() => { loads.current += 1; if (loads.current > 1 && !escaped) { setEscaped(true); setPicking(false); return; } syncHtmlComments(); }} sandbox={scripted && !escaped ? 'allow-scripts' : ''} srcDoc={annotationHtml(text, scripted && !escaped ? nonce : undefined)} title={`Preview of ${name}`} />
         : src ? saved && missing ? null : <ImageViewport key={src} name={name} sizing={props.imageSizing} zoomState={props.imageZoom} zoomOnDoubleClick={!picking} src={src} onLoad={()=>setImageReady(true)} onError={()=>{setImageReady(false);setMissing(Boolean(saved));}} draggable={false} onPointerEnter={()=>setImageHover(true)} onPointerLeave={()=>setImageHover(false)} onPointerMove={(e)=>{const start=startDrag.current;if(!picking||!start)return;const r=e.currentTarget.getBoundingClientRect();const x=Math.max(0,Math.min(1,(e.clientX-r.x)/r.width));const y=Math.max(0,Math.min(1,(e.clientY-r.y)/r.height));setDraftRegion({x:Math.min(start.x,x),y:Math.min(start.y,y),w:Math.abs(start.x-x),h:Math.abs(start.y-y)});}} onPointerDown={(e) => { if (!picking) return; e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); const r = e.currentTarget.getBoundingClientRect(); startDrag.current = { x: (e.clientX-r.x)/r.width, y: (e.clientY-r.y)/r.height }; }} onPointerUp={(e) => void imagePin(e)} >{[...imageRegions,...(hoverRegion?[hoverRegion]:[])].map((region,index)=><div key={index} className="annotation-image-region" style={{left:`${region.x*100}%`,top:`${region.y*100}%`,width:`${region.w*100}%`,height:`${region.h*100}%`}} />)}</ImageViewport>
           : text !== undefined ? kind === 'spreadsheet' ? <AnnotationSheet text={text} pins={draft?.selections.filter((p)=>p.annotation.target.resourceId===resourceId&&p.annotation.target.version===version).map((p)=>p.annotation)??[]} picking={picking} onPin={commit} saved={saved} /> : kind === 'text' && !html ? <PlainAnnotationText text={text} /> : <MarkdownBody verbatim sourcePositions={picking||Boolean(saved)||Boolean(draft?.selections.some((p)=>p.annotation.target.resourceId===resourceId))}>{text}</MarkdownBody> : <p>{name}</p>}
       {picking && hover && !html && <div className="annotation-hover" style={{ left: (hoverBox?.x ?? 0) - (bodyBox?.x ?? 0), top: (hoverBox?.y ?? 0) - (bodyBox?.y ?? 0), width: hoverBox?.width, height: hoverBox?.height }} />}

@@ -488,6 +488,11 @@ describe('the page annotation API over executeJavaScript', () => {
     const { api } = page({ pick: { ...pin, box: { x: 2, y: 0, w: 1, h: 1 } } });
     await expect(api.pick()).rejects.toThrow();
   });
+
+  it('refuses image bytes a page offers as the pin screenshot', async () => {
+    const { api } = page({ pick: { ...pin, screenshot: 'data:image/png;base64,AAAA' } });
+    await expect(api.pick()).rejects.toThrow();
+  });
 });
 
 describe('the rail preview controller', () => {

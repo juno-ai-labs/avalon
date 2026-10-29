@@ -5,7 +5,7 @@ import { AnnotationDraftProvider, AnnotationChips, MessageAnnotations, useAnnota
 import { sourceSelectionPoint,annotationDomRange } from '../lib/annotation-source';
 import { AnnotationSurface } from './annotation-surface';
 const resourceId='00000000-0000-7000-8000-0000000000a1';
-function Observe():React.JSX.Element {const draft=useAnnotationDraft();return <><AnnotationChips /><button onClick={()=>draft?.clearAccepted(draft.pins)}>Accept message</button><output data-testid="pins">{JSON.stringify(draft?.selections.map(p=>p.annotation))}</output></>;}
+function Observe():React.JSX.Element {const draft=useAnnotationDraft();return <><AnnotationChips /><button onClick={()=>draft?.clearAccepted(draft.pins)}>Accept message</button><output data-testid="pins">{JSON.stringify(draft?.selections.map(p=>p.annotation))}</output><output data-testid="pin-ids">{draft?.pins.map((p)=>p.id).join(',')}</output></>;}
 afterEach(cleanup);
 describe('annotation source picker',()=>{
   it('shows website words instead of markup in saved annotations',()=>{
@@ -49,6 +49,43 @@ describe('annotation source picker',()=>{
     fireEvent(window,new MessageEvent('message',{data:{type:'rally-annotation-restored',resolved:false},source:frame.contentWindow,origin:'null'}));
     expect(screen.getByText('The original page cannot be shown again.')).toBeVisible();
     expect(posted).toHaveBeenLastCalledWith({type:'rally-annotation-comments',pins:[],selected:null},'*');
+  });
+  it('takes a pin with its viewport from the opaque frame, drops it on a remove click, and hears no other window',async()=>{
+    render(<Tooltip.Provider><AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={1} name="Pricing.html" mimeType="text/html" text="<h1>Plans</h1>" /><Observe /></AnnotationDraftProvider></Tooltip.Provider>);
+    fireEvent.click(screen.getByRole('button',{name:'Comment mode'}));
+    const frame=screen.getByTitle('Preview of Pricing.html') as HTMLIFrameElement;
+    const viewport={width:416,height:500,scrollX:0,scrollY:40,devicePixelRatio:2,colorScheme:'light'};
+    const pin={css:'h1',box:{x:0,y:0,w:1,h:0.2},visibleText:'Plans',html:'<h1>Plans</h1>',pagePath:'/',replace:false,point:{x:10,y:10},viewport};
+    fireEvent(window,new MessageEvent('message',{data:{type:'rally-artifact-pin',pin},source:window,origin:'null'}));
+    expect(screen.queryByRole('textbox',{name:'Comment on selection'})).toBeNull();
+    fireEvent(window,new MessageEvent('message',{data:{type:'rally-artifact-pin',pin},source:frame.contentWindow,origin:'null'}));
+    expect(await screen.findByRole('textbox',{name:'Comment on selection'})).toBeVisible();
+    const pinned=JSON.parse(screen.getByTestId('pins').textContent??'[]');
+    expect(pinned[0].target.locator).toMatchObject({type:'element',css:'h1',viewport});
+    expect(pinned[0].target.locator.pagePath).toBeUndefined();
+    fireEvent.change(screen.getByRole('textbox',{name:'Comment on selection'}),{target:{value:'Shorter'}});
+    fireEvent.keyDown(screen.getByRole('textbox',{name:'Comment on selection'}),{key:'Enter'});
+    const commented=JSON.parse(screen.getByTestId('pins').textContent??'[]');
+    expect(commented[0].comment).toBe('Shorter');
+    const draftId=(screen.getByTestId('pin-ids').textContent??'').split(',')[0];
+    fireEvent(window,new MessageEvent('message',{data:{type:'rally-annotation-comment-action',action:{id:draftId,action:'remove'}},source:frame.contentWindow,origin:'null'}));
+    expect(screen.getByTestId('pins')).toHaveTextContent('[]');
+  });
+  it('remounts the opaque frame without scripts once a document replaced the file, and stops listening',()=>{
+    render(<Tooltip.Provider><AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={1} name="Pricing.html" mimeType="text/html" text='<meta http-equiv="refresh" content="0;url=https://x-g.rallyusercontent.test/"><h1>Plans</h1>' /><Observe /></AnnotationDraftProvider></Tooltip.Provider>);
+    const button=screen.getByRole('button',{name:'Comment mode'});
+    fireEvent.click(button);
+    const first=screen.getByTitle('Preview of Pricing.html') as HTMLIFrameElement;
+    expect(first).toHaveAttribute('sandbox','allow-scripts');
+    fireEvent.load(first);
+    // A second load of the same srcdoc is a document the file navigated to.
+    fireEvent.load(first);
+    const second=screen.getByTitle('Preview of Pricing.html') as HTMLIFrameElement;
+    expect(second).toHaveAttribute('sandbox','');
+    expect(second.getAttribute('srcdoc')).not.toContain('annotation-frame.js');
+    expect(button).toHaveAttribute('aria-pressed','false');
+    fireEvent(window,new MessageEvent('message',{data:{type:'rally-artifact-pin',pin:{css:'h1',box:{x:0,y:0,w:1,h:0.2},visibleText:'Plans',html:'<h1>Plans</h1>',pagePath:'/',replace:false}},source:second.contentWindow,origin:'null'}));
+    expect(screen.queryByRole('textbox',{name:'Comment on selection'})).toBeNull();
   });
   it('pins rendered Markdown with exact list markup and keeps a removable commented chip',()=>{
     render(<AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={4} name="Pricing.md" mimeType="text/markdown" text={'# Plans\n\n- **Starter**: $12 per seat.\n- Team: $24.\n'} /><Observe /></AnnotationDraftProvider>);
