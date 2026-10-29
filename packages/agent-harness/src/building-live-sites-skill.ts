@@ -331,7 +331,10 @@ NODE_PATH="$(npm root -g)" node - <<'EOF'
 const { chromium } = require('playwright');
 const location = <paste the location JSON here>;
 const view = location.viewport ?? { width: 400, height: 900, devicePixelRatio: 1, colorScheme: 'light', scrollX: 0, scrollY: 0 };
-if (!/^\\/(?!\\/)/.test(location.pagePath ?? '/')) throw new Error('pagePath must be one absolute path on the site');
+// The page set this path; it may only name a page on the served site.
+const base = 'http://127.0.0.1:8765';
+const target = new URL(location.pagePath ?? '/', base);
+if (target.origin !== base || /[\\\\\\t\\n\\r]/.test(location.pagePath ?? '')) throw new Error('pagePath must be one absolute path on the site');
 (async () => {
   const browser = await chromium.launch();
   const context = await browser.newContext({
@@ -340,7 +343,7 @@ if (!/^\\/(?!\\/)/.test(location.pagePath ?? '/')) throw new Error('pagePath mus
     colorScheme: view.colorScheme,
   });
   const page = await context.newPage();
-  await page.goto(new URL(location.pagePath ?? '/', 'http://127.0.0.1:8765').href, { waitUntil: 'networkidle' });
+  await page.goto(target.href, { waitUntil: 'networkidle' });
   await page.evaluate(([x, y]) => window.scrollTo(x, y), [view.scrollX, view.scrollY]);
   await page.waitForTimeout(250);
   await page.screenshot({ path: '.rally/tmp/view.png' });
