@@ -175,12 +175,12 @@ export const SIDEKICK_DELEGATION_SOURCES_ALARM_KIND = "sidekick_delegation_sourc
 export const SIDEKICK_REVIEW_RUN_FLOOR = 10;
 export const SIDEKICK_REVIEW_INTERVAL_MS = 3 * 24 * 60 * 60 * 1_000;
 /**
- * How many runs a review reads, by outcome: every failed or stopped run up to
- * the first, runs waiting for input up to the second, and completed runs
- * spaced evenly across the window up to the third. The host picks the sample
- * so the wizard reads a bounded set however many runs there were. Product
- * numbers, set here with no measurement behind them; the team changes them
- * here and nowhere else.
+ * How many runs a review reads, by outcome: failed runs, then stopped ones,
+ * up to the first, runs waiting for input up to the second, and completed
+ * runs spaced evenly across the window up to the third. The host picks the
+ * sample so the wizard reads a bounded set however many runs there were.
+ * Product numbers, set here with no measurement behind them; the team
+ * changes them here and nowhere else.
  */
 export const SIDEKICK_REVIEW_SAMPLE_LIMITS = { failed: 10, needsInput: 5, completed: 10 } as const;
 /** The one review entry a Sidekick has; its inner key. */
@@ -292,6 +292,7 @@ interface RevisionRow extends Record<string, SqlStorageValue> {
   definition_json: string;
   evaluator_rules_json: string | null;
   ready: number;
+  submitted_by_run_id: string | null;
   created_at: number;
 }
 
@@ -879,10 +880,52 @@ export class HostedSidekick {
   async saveDefinition(input: AutomationSubmitDefinitionRequest & { actor: AutomationActor }): Promise<{ definitionRevision: number; ready: boolean }> {
     const { actor, ...definitionInput } = input;
     const request = parseRpcInput(AutomationSubmitDefinitionRequestSchema, definitionInput, "save_definition");
-    await this.assertManager(this.assertSidekick(request.workspaceId, request.automationId), actor);
+    const row = this.assertSidekick(request.workspaceId, request.automationId);
+    await this.assertManager(row, actor);
+    if (request.origin === "sidekick_review") this.assertReviewSubmission(row, request);
     const submitted = await this.submitDefinition(request);
     if (submitted.ready) await this.apply({ workspaceId: request.workspaceId, automationId: request.automationId, actor });
     return submitted;
+  }
+
+  /**
+   * What a scheduled self-review may submit: a revision of the accepted one
+   * that reaches no further than it. Nobody asked for the review's turn, and
+   * the wizard writes it after reading run transcripts, which hold outside
+   * content, so the guidance's "never widen" is held here too: no plugin,
+   * trigger or capability the accepted revision does not already carry, and
+   * nothing while a person's own unfinished revision is current, which a
+   * ready submission would publish under their name. A refusal names the
+   * field, and reaches the model as the tool's error.
+   */
+  private assertReviewSubmission(row: HostedSidekickRow, request: AutomationSubmitDefinitionRequest): void {
+    if (row.accepted_definition_revision === null) {
+      throw new ApiError(409, "sidekick_review_revision_unaccepted", "A review can only revise an accepted Sidekick");
+    }
+    const current = this.revision(row.current_definition_revision);
+    const ownDraft = current !== null && current.submitted_by_run_id !== null
+      && current.submitted_by_run_id === request.submittedByRunId;
+    if (row.current_definition_revision !== row.accepted_definition_revision && !ownDraft) {
+      throw new ApiError(409, "sidekick_review_draft_pending",
+        "A person's unfinished revision is current; describe the proposed change in the report instead of submitting it");
+    }
+    const accepted = AutomationDraftSchema.parse(JSON.parse(this.revision(row.accepted_definition_revision)!.definition_json));
+    const widened = (field: string, added: string[]): never => {
+      throw new ApiError(422, `sidekick_review_widens_${field}`,
+        `A review may not add ${field.replaceAll("_", " ")} (${added.join(", ")}); describe the proposed change in the report instead`);
+    };
+    const triggerKey = (trigger: AutomationDraft["triggers"][number]): string =>
+      trigger.type === "connector_activity" || trigger.type === "semantic_activity"
+        ? `${trigger.type}:${trigger.connectorType}:${trigger.sourceBindingKey ?? ""}`
+        : trigger.type === "webhook" ? `${trigger.type}:${trigger.sourceBindingKey ?? ""}` : trigger.type;
+    const added = (draft: readonly string[], base: readonly string[]) => draft.filter((key) => !base.includes(key));
+    const plugins = added(request.draft.recommendedPlugins.map((plugin) => plugin.pluginId),
+      accepted.recommendedPlugins.map((plugin) => plugin.pluginId));
+    if (plugins.length > 0) widened("plugins", plugins);
+    const triggers = added(request.draft.triggers.map(triggerKey), accepted.triggers.map(triggerKey));
+    if (triggers.length > 0) widened("triggers", triggers);
+    const capabilities = added(request.draft.requiredCapabilities, accepted.requiredCapabilities);
+    if (capabilities.length > 0) widened("required_capabilities", capabilities);
   }
 
   /**
@@ -1893,6 +1936,18 @@ export class HostedSidekick {
         this.sql.exec(`DELETE FROM sidekick_reviews WHERE sidekick_id = ? AND review_id = ?`, this.sidekickId, pending.review_id);
         logWarn(this.env, "sidekick_review_abandoned", { ...this.logFields(), review_id: pending.review_id });
       } else {
+        // The delegate chosen at the request may have lapsed since; a resend
+        // under one the consumer would refuse is a resend for nothing, so the
+        // request follows the delegate who can take it now, or ends here.
+        const coordinator = await this.reviewCoordinator(row);
+        if (coordinator === null) {
+          this.sql.exec(`DELETE FROM sidekick_reviews WHERE sidekick_id = ? AND review_id = ?`, this.sidekickId, pending.review_id);
+          logWarn(this.env, "sidekick_review_skipped", { ...this.logFields(), review_id: pending.review_id, code: "no_managing_delegate" });
+          this.scheduleReview(now + SIDEKICK_REVIEW_INTERVAL_MS, now);
+          return { progressed: true };
+        }
+        this.sql.exec(`UPDATE sidekick_reviews SET coordinator_user_id = ? WHERE sidekick_id = ? AND review_id = ? AND delivered_at IS NULL`,
+          coordinator, this.sidekickId, pending.review_id);
         await this.host.sendReview({ workspaceId: row.workspace_id, automationId: this.sidekickId, reviewId: pending.review_id });
         if (this.pendingReview()?.review_id === pending.review_id) this.armReviewResend(pending.requested_at, now);
         return { progressed: true };
@@ -1909,9 +1964,13 @@ export class HostedSidekick {
     if (!current || current.lifecycle !== "active" || current.accepted_definition_revision !== row.accepted_definition_revision) {
       return { progressed: true };
     }
-    if (coordinator === null) {
-      logWarn(this.env, "sidekick_review_skipped", { ...this.logFields(), code: "no_managing_delegate" });
-      // Asked again after the interval rather than after every finish.
+    // A person's unfinished revision is current: a review that submitted over
+    // it would publish their draft under their name. Asked again after the
+    // interval rather than after every finish, as when no delegate can take it.
+    const skipped = coordinator === null ? "no_managing_delegate"
+      : current.current_definition_revision !== current.accepted_definition_revision ? "draft_pending" : null;
+    if (skipped) {
+      logWarn(this.env, "sidekick_review_skipped", { ...this.logFields(), code: skipped });
       this.scheduleReview(now + SIDEKICK_REVIEW_INTERVAL_MS, now);
       return { progressed: true };
     }
@@ -1968,35 +2027,42 @@ export class HostedSidekick {
     this.scheduleReview(now + scheduledAlarmRetryDelay(step), now);
   }
 
-  /** What the wizard is told: counts of the finishes in the window since the last request, by state, and how many ran under the accepted revision. */
+  /**
+   * What the wizard is told: counts of the finishes in the window since the
+   * last request, by state, and the sample. Only runs under the accepted
+   * revision: `apply` resets the count and not the clock, so the window can
+   * reach back past a revision, and a run before it followed a procedure the
+   * person already changed.
+   */
   private reviewNotice(row: HostedSidekickRow, reviewId: string, now: number): SidekickReviewNoticeV1 {
     const since = row.reviewed_at ?? 0;
     const revision = row.accepted_definition_revision!;
     // Bounded above as well, so a finish landing while this notice is built
     // belongs to the next window, as the counter treats it.
-    const counts = first(this.sql.exec<{ completed: number; failed: number; stopped: number; needs_input: number; under_revision: number }>(
+    const counts = first(this.sql.exec<{ completed: number; failed: number; stopped: number; needs_input: number }>(
       `SELECT COALESCE(SUM(state = 'completed'), 0) AS completed, COALESCE(SUM(state = 'failed'), 0) AS failed,
-              COALESCE(SUM(state = 'stopped'), 0) AS stopped, COALESCE(SUM(state = 'needs_input'), 0) AS needs_input,
-              COALESCE(SUM(state IN ('completed', 'failed', 'stopped') AND definition_revision = ?3), 0) AS under_revision
+              COALESCE(SUM(state = 'stopped'), 0) AS stopped, COALESCE(SUM(state = 'needs_input'), 0) AS needs_input
          FROM sidekick_runs
-        WHERE sidekick_id = ?1
+        WHERE sidekick_id = ?1 AND definition_revision = ?3
           AND ((completed_at IS NOT NULL AND completed_at > ?2 AND completed_at <= ?4)
             OR (state = 'needs_input' AND updated_at > ?2 AND updated_at <= ?4))`,
       this.sidekickId, since, revision, now,
     ));
     const limits = SIDEKICK_REVIEW_SAMPLE_LIMITS;
     const ids = (cursor: SqlStorageCursor<{ run_id: string }>) => cursor.toArray().map((entry) => entry.run_id);
+    // Failures before stops: a pause stops every open run at once, and those
+    // would otherwise fill the list ahead of the failures it exists to show.
     const failed = ids(this.sql.exec<{ run_id: string }>(
       `SELECT run_id FROM sidekick_runs
-        WHERE sidekick_id = ?1 AND state IN ('failed', 'stopped') AND completed_at > ?2 AND completed_at <= ?4
-        ORDER BY completed_at DESC, run_id LIMIT ?3`,
-      this.sidekickId, since, limits.failed, now,
+        WHERE sidekick_id = ?1 AND definition_revision = ?5 AND state IN ('failed', 'stopped') AND completed_at > ?2 AND completed_at <= ?4
+        ORDER BY state = 'failed' DESC, completed_at DESC, run_id LIMIT ?3`,
+      this.sidekickId, since, limits.failed, now, revision,
     ));
     const needsInput = ids(this.sql.exec<{ run_id: string }>(
       `SELECT run_id FROM sidekick_runs
-        WHERE sidekick_id = ?1 AND state = 'needs_input' AND updated_at > ?2 AND updated_at <= ?4
+        WHERE sidekick_id = ?1 AND definition_revision = ?5 AND state = 'needs_input' AND updated_at > ?2 AND updated_at <= ?4
         ORDER BY updated_at DESC, run_id LIMIT ?3`,
-      this.sidekickId, since, limits.needsInput, now,
+      this.sidekickId, since, limits.needsInput, now, revision,
     ));
     // Every `step`th completed run, newest first, where `step` is what spreads
     // the limit across the window: the newest is always read, the oldest
@@ -2004,10 +2070,11 @@ export class HostedSidekick {
     const completed = ids(this.sql.exec<{ run_id: string }>(
       `WITH finished AS (
          SELECT run_id, ROW_NUMBER() OVER (ORDER BY completed_at DESC, run_id) - 1 AS position, COUNT(*) OVER () AS total
-           FROM sidekick_runs WHERE sidekick_id = ?1 AND state = 'completed' AND completed_at > ?2 AND completed_at <= ?4
+           FROM sidekick_runs
+          WHERE sidekick_id = ?1 AND definition_revision = ?5 AND state = 'completed' AND completed_at > ?2 AND completed_at <= ?4
        )
        SELECT run_id FROM finished WHERE position % MAX(1, (total + ?3 - 1) / ?3) = 0 ORDER BY position LIMIT ?3`,
-      this.sidekickId, since, limits.completed, now,
+      this.sidekickId, since, limits.completed, now, revision,
     ));
     return {
       kind: "sidekick_review_due",
@@ -2021,10 +2088,7 @@ export class HostedSidekick {
         completed: counts?.completed ?? 0, failed: counts?.failed ?? 0,
         needsInput: counts?.needs_input ?? 0, stopped: counts?.stopped ?? 0,
       },
-      finishedUnderRevision: counts?.under_revision ?? 0,
-      sample: { failed, needsInput, completed, limits: { ...limits } },
-      runFloor: SIDEKICK_REVIEW_RUN_FLOOR,
-      intervalDays: SIDEKICK_REVIEW_INTERVAL_MS / (24 * 60 * 60 * 1_000),
+      sample: { failed, needsInput, completed },
     };
   }
 
@@ -2818,7 +2882,7 @@ export class HostedSidekick {
   private revision(definitionRevision: number): RevisionRow | null {
     if (definitionRevision <= 0) return null;
     return first(this.sql.exec<RevisionRow>(
-      `SELECT definition_revision, definition_json, evaluator_rules_json, ready, created_at
+      `SELECT definition_revision, definition_json, evaluator_rules_json, ready, submitted_by_run_id, created_at
          FROM sidekick_revisions WHERE sidekick_id = ? AND definition_revision = ?`,
       this.sidekickId, definitionRevision,
     ));

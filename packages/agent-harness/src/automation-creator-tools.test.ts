@@ -230,6 +230,22 @@ describe("the automations plugin", () => {
     expect(systemMessage).toContain("Scheduled result delivery to a workstream is limited to the owning workstream");
   });
 
+  it("bounds a scheduled self-review to what the host will accept, and tells it to report to the absent owner", () => {
+    const { systemMessage } = createAutomationsPlugin(host());
+
+    // The notice's first line is the one `renderSidekickReviewNotice` writes;
+    // the policy recognizes the review by it.
+    expect(systemMessage).toContain("Notice from Rally, not from a person or an agent: a scheduled\nself-review of this Sidekick is due");
+    expect(systemMessage).toContain("Read only the runs it lists");
+    // What the host refuses in `assertReviewSubmission`, said here so the
+    // model proposes instead of being refused.
+    expect(systemMessage).toContain("A review never adds a connector, plugin, delivery destination, trigger or capability");
+    expect(systemMessage).toContain("never\nenrols a delegate");
+    expect(systemMessage).toContain("Never submit ready=false in a review");
+    expect(systemMessage).toContain("written for the owner, who was not present");
+    expect(systemMessage).toContain("asking here restores\nthe earlier revision");
+  });
+
   it("publishes ready submissions without a separate activation tool", () => {
     // Publication belongs to the authorized host submission boundary.
     const modes = createAutomationsPlugin(host()).tools

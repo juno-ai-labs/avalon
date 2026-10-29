@@ -114,7 +114,9 @@ export type AutomationActivationV1 = z.infer<typeof AutomationActivationV1Schema
  * and what the review Queue message carries. Counts, and a sample of run ids
  * the host picked so the wizard reads a bounded set however many runs there
  * were; nothing here is a second copy of a run. `since` is the previous
- * review, or null for the first.
+ * review, or null for the first. Every count and every sampled run is a run
+ * under `definitionRevision`: an earlier revision's runs followed an earlier
+ * procedure and are not this review's evidence.
  */
 export const SidekickReviewNoticeV1Schema = z.strictObject({
   kind: z.literal("sidekick_review_due"),
@@ -125,18 +127,16 @@ export const SidekickReviewNoticeV1Schema = z.strictObject({
   definitionRevision: z.number().int().positive(),
   since: z.string().datetime({ offset: true }).nullable(),
   until: z.string().datetime({ offset: true }),
-  /** Runs that finished in the window, by the state they finished in. */
+  /** Runs that finished in the window, by the state they finished in; `needsInput` is runs waiting, not finishes. */
   finished: z.strictObject({
     completed: z.number().int().nonnegative(),
     failed: z.number().int().nonnegative(),
     needsInput: z.number().int().nonnegative(),
     stopped: z.number().int().nonnegative(),
   }),
-  /** Of those, how many ran under the accepted revision. */
-  finishedUnderRevision: z.number().int().nonnegative(),
   /**
-   * The runs to read, chosen by the host: every failed or stopped run up to
-   * its limit, newest first; runs waiting for input the same way; and
+   * The runs to read, chosen by the host: failed runs, then stopped ones,
+   * newest first, up to a limit; runs waiting for input the same way; and
    * completed runs spaced evenly across the window, newest first, so a
    * Sidekick that ran a thousand times is read at the same cost as one that
    * ran twenty. A list shorter than its limit is every such run.
@@ -145,15 +145,7 @@ export const SidekickReviewNoticeV1Schema = z.strictObject({
     failed: z.array(IdSchema),
     needsInput: z.array(IdSchema),
     completed: z.array(IdSchema),
-    limits: z.strictObject({
-      failed: z.number().int().positive(),
-      needsInput: z.number().int().positive(),
-      completed: z.number().int().positive(),
-    }),
   }),
-  /** The floors that made this review due, so the wizard can say them back. */
-  runFloor: z.number().int().positive(),
-  intervalDays: z.number().positive(),
 });
 export type SidekickReviewNoticeV1 = z.infer<typeof SidekickReviewNoticeV1Schema>;
 

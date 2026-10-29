@@ -55,6 +55,7 @@ import {
   AUTOMATION_RUN_ALARM_KIND,
   AUTOMATION_SCHEDULE_ALARM_KIND,
   SIDEKICK_REVIEW_ALARM_KIND,
+  type SidekickReviewQueueMessage,
   SidekickReviewQueueMessageSchema,
 } from "../src/durable-objects/automation-do-protocol";
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
@@ -1835,6 +1836,35 @@ describe("a hosted Sidekick", () => {
           FROM canonical_conversation_turn_details WHERE client_message_id LIKE 'sidekick-review:%' ORDER BY sequence_number`).toArray());
   }
 
+  type QueueSend = { send: (body: unknown, options?: QueueSendOptions) => Promise<void> };
+  /**
+   * The activity Queue with its review messages intercepted: `onReview` stands
+   * in for the consumer, and every other body reaches the real Queue. Wired in
+   * before whatever arms the entry, because the object's own alarm may run the
+   * request at once, and a fast Queue delivery lands before the send returns.
+   */
+  function interceptReviewSends(onReview: (message: SidekickReviewQueueMessage) => Promise<void>) {
+    const prototype = Object.getPrototypeOf(TEST_ENV.ACTIVITY_QUEUE) as QueueSend;
+    const original = prototype.send;
+    return vi.spyOn(prototype, "send").mockImplementation(async function (this: QueueSend, body, options) {
+      const review = SidekickReviewQueueMessageSchema.safeParse(body);
+      if (review.success) return onReview(review.data);
+      return original.call(this, body, options);
+    });
+  }
+
+  /** The review entry's instant moved to the past, and the object woken for it. */
+  async function forceReviewEntry(): Promise<void> {
+    await runInDurableObject(workspaceStub(), async (_instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE _internal_durable_alarms SET due_at = ?, retry_at = 0 WHERE kind = ? AND alarm_key = ?`,
+        Date.now() - 1, SIDEKICK_REVIEW_ALARM_KIND, `${AUTOMATION_ID}:review`,
+      );
+      await state.storage.setAlarm(Date.now());
+    });
+    await runDurableObjectAlarm(workspaceStub());
+  }
+
   it("asks its wizard for a review once ten runs have finished, with the counts, and not before", async () => {
     await activeAutomation();
     const runIds = await startRuns(SIDEKICK_REVIEW_RUN_FLOOR, "review-run");
@@ -1844,20 +1874,12 @@ describe("a hosted Sidekick", () => {
     expect((await reviewState()).reviews).toEqual([]);
 
     // The tenth finish arms the review for now, nothing having been reviewed
-    // before, and the object's own alarm may run it at once: the consumer is
-    // wired in first, running before the send returns the way a fast Queue
-    // delivery can, and the review's own double answers the wizard's turn.
-    type QueueSend = { send: (body: unknown, options?: QueueSendOptions) => Promise<void> };
-    const prototype = Object.getPrototypeOf(TEST_ENV.ACTIVITY_QUEUE) as QueueSend;
-    const original = prototype.send;
-    const sent: unknown[] = [];
-    const send = vi.spyOn(prototype, "send").mockImplementation(async function (this: QueueSend, body, options) {
-      const review = SidekickReviewQueueMessageSchema.safeParse(body);
-      if (review.success) {
-        sent.push(body);
-        return deliverSidekickReview(TEST_ENV, review.data);
-      }
-      return original.call(this, body, options);
+    // before; the consumer runs in the send, and the review's own double
+    // answers the wizard's turn.
+    const sent: string[] = [];
+    const send = interceptReviewSends(async (message) => {
+      sent.push(message.reviewId);
+      await deliverSidekickReview(TEST_ENV, message);
     });
     try {
       const before = provider.calls.length;
@@ -1869,29 +1891,33 @@ describe("a hosted Sidekick", () => {
       // A redelivered projection is answered by its receipt and counts nothing.
       await finishRuns([runIds[runIds.length - 1]!]);
       const { directory, reviews } = await reviewState();
-      expect(sent).toHaveLength(1);
+      expect(sent).toEqual([reviews[0]!.review_id]);
       expect(directory.runs_since_review).toBe(0);
       expect(directory.reviewed_at).toBeGreaterThanOrEqual(armedBy);
       const notice = JSON.parse(reviews[0]!.notice_json) as { sample: { failed: string[]; needsInput: string[]; completed: string[] } };
       expect(notice).toMatchObject({
         kind: "sidekick_review_due", automationId: AUTOMATION_ID, definitionRevision: 1, since: null,
-        finished: { completed: SIDEKICK_REVIEW_RUN_FLOOR, failed: 0, needsInput: 0, stopped: 0 },
-        finishedUnderRevision: SIDEKICK_REVIEW_RUN_FLOOR, runFloor: SIDEKICK_REVIEW_RUN_FLOOR, intervalDays: 3,
-        sample: { failed: [], needsInput: [], limits: { failed: 10, needsInput: 5, completed: 10 } },
+        finished: { completed: 10, failed: 0, needsInput: 0, stopped: 0 },
+        sample: { failed: [], needsInput: [] },
       });
       // Ten completed runs within a limit of ten: the sample is all of them.
       expect([...notice.sample.completed].sort()).toEqual([...runIds].sort());
       expect((await alarms()).filter((alarm) => alarm.kind === SIDEKICK_REVIEW_ALARM_KIND)).toEqual([]);
 
-      // The wizard holds the notice as a system row carrying the counts, and
-      // its loop runs on it: the model is asked with the notice attributed to Rally.
+      // The wizard holds the notice as a system row carrying the counts, whose
+      // text is the sentence a person reads there, and its loop runs on it:
+      // the model is asked with the notice attributed to Rally in its first line.
       const turns = await wizardReviewTurns();
       expect(turns).toHaveLength(1);
-      expect(turns[0]).toMatchObject({ client_message_id: `sidekick-review:${reviews[0]!.review_id}`, message_type: "system" });
+      expect(turns[0]).toMatchObject({
+        client_message_id: `sidekick-review:${reviews[0]!.review_id}`, message_type: "system",
+        text_content: "Rally asked this Sidekick's wizard for a scheduled self-review: 10 runs finished since it was created (10 completed)."
+          + " The wizard reads 10 of them and reports here.",
+      });
       expect(JSON.parse(turns[0]!.structured_content_json)).toEqual(notice);
       await runDurableObjectAlarm(childStub("0"));
       await expect.poll(() => provider.calls.slice(before).some((call) => call.messages.some((message) =>
-        message.role === "user" && promptText(message.content).includes("Notice from Rally, not from a person or an agent: a scheduled self-review"))),
+        message.role === "user" && promptText(message.content).startsWith("Notice from Rally, not from a person or an agent: a scheduled self-review"))),
       { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(true);
     } finally {
       send.mockRestore();
@@ -1922,12 +1948,17 @@ describe("a hosted Sidekick", () => {
         AUTOMATION_ID, pendingReview, AUTHOR_ID, Date.now(),
       );
     });
+    const [stale] = await startRuns(1, "stale-run");
     await submit({ ...DEFINITION, instructions: "Do the requested work and say so in two sentences." });
     await apply();
     expect((await reviewState()).directory).toEqual({ runs_since_review: 0, reviewed_at: reviewedAt });
     expect((await reviewState()).reviews).toEqual([]);
     expect((await alarms()).filter((alarm) => alarm.kind === SIDEKICK_REVIEW_ALARM_KIND)).toEqual([]);
     expect(await workspaceStub().sidekickReviewDelivery({ ...addressed(), reviewId: pendingReview })).toBeNull();
+    // A run admitted under the previous revision that finishes now followed
+    // the previous procedure: it is not the new revision's evidence.
+    await finishRuns([stale!]);
+    expect((await reviewState()).directory.runs_since_review).toBe(0);
 
     // Finishes that accumulate while a delivery waits find the resend entry
     // armed and leave it; the delivery's report re-arms from the count.
@@ -1955,52 +1986,114 @@ describe("a hosted Sidekick", () => {
     });
     await workspaceStub().sidekickPause({ ...addressed(), actor: actor() });
     expect((await alarms()).filter((alarm) => alarm.kind === SIDEKICK_REVIEW_ALARM_KIND)).toEqual([]);
-    const resumedAt = Date.now();
-    await workspaceStub().sidekickResume({ ...addressed(), actor: actor() });
-    const resent = (await alarms()).find((alarm) => alarm.kind === SIDEKICK_REVIEW_ALARM_KIND);
-    expect(resent!.due_at).toBeGreaterThanOrEqual(resumedAt);
-    expect(resent!.due_at).toBeLessThanOrEqual(Date.now());
+    // The resume arms the entry for now and the object's own alarm may run it
+    // before the next line: what is asserted is the send it makes, under the
+    // delegate who can take the review now, and the entry moved later for the
+    // next resend.
+    const sent: string[] = [];
+    const send = interceptReviewSends(async (message) => { sent.push(message.reviewId); });
+    try {
+      const resumedAt = Date.now();
+      await workspaceStub().sidekickResume({ ...addressed(), actor: actor() });
+      await runDurableObjectAlarm(workspaceStub());
+      await expect.poll(() => sent, { timeout: RUN_SETTLE_TIMEOUT_MS }).toEqual([owed]);
+      const resent = (await alarms()).find((alarm) => alarm.kind === SIDEKICK_REVIEW_ALARM_KIND);
+      expect(resent!.due_at).toBeGreaterThan(resumedAt);
+      expect((await reviewState()).reviews.find((review) => review.review_id === owed)?.delivered_at).toBeNull();
+    } finally {
+      send.mockRestore();
+    }
   });
 
-  it("samples completed runs evenly across the window when more finished than the review reads", async () => {
+  it("bounds what a scheduled review may submit: nothing the accepted revision does not carry, and nothing over a person's draft", async () => {
     await activeAutomation();
-    const completed = 23;
-    await runInDurableObject(workspaceStub(), (_instance, state) => {
-      for (let index = 0; index < completed; index += 1) {
-        const runId = `00000000-0000-7000-8000-0000000000${String(index).padStart(2, "0")}`;
-        state.storage.sql.exec(
-          `INSERT INTO sidekick_runs(sidekick_id, run_id, occurrence_key, trigger_json, definition_revision, harness_run_id,
-             state, summary, opening_json, seed_json, run_as_user_id, coordinator_user_id, created_at, started_at, completed_at, updated_at)
-           VALUES (?1, ?2, ?3, '{"kind":"manual"}', 1, ?4, 'completed', NULL, NULL, NULL, ?5, ?5, ?6, ?6, ?6, ?6)`,
-          AUTOMATION_ID, runId, `manual:sample-${index}`, `${runId}-harness`, AUTHOR_ID, 1_000_000 + index,
-        );
-      }
+    const reviewRun = "00000000-0000-7000-8000-00000000ad93";
+    const review = (draft: AutomationDraft) => workspaceStub().sidekickSaveDefinition({
+      ...addressed(), draft, evaluatorRules: null, submittedByRunId: reviewRun, actor: actor(), origin: "sidekick_review",
+    }).then(() => null, (error: unknown) => (error as Error).message);
+
+    // Each refusal names what was added, in the message the wizard reads as
+    // its tool error, so it proposes the change instead.
+    expect(await review({ ...DEFINITION, recommendedPlugins: [{ pluginId: "plugin_slack", recommendedTools: [], reason: "Post the summary" }] }))
+      .toBe("A review may not add plugins (plugin_slack); describe the proposed change in the report instead");
+    expect(await review({ ...DEFINITION, triggers: [{ type: "manual" }, { type: "inbound_email" }] }))
+      .toBe("A review may not add triggers (inbound_email); describe the proposed change in the report instead");
+    expect(await review({ ...DEFINITION, requiredCapabilities: ["web_search"] }))
+      .toBe("A review may not add required capabilities (web_search); describe the proposed change in the report instead");
+    expect((await automationRow()).accepted_definition_revision).toBe(1);
+
+    // A revision of the instructions alone is an ordinary ready revision.
+    expect(await review({ ...DEFINITION, instructions: "Do the requested work and say so in two sentences." })).toBeNull();
+    expect((await automationRow()).accepted_definition_revision).toBe(2);
+
+    // A person's unfinished revision is current: a review submits nothing over it.
+    await submit({ ...DEFINITION, instructions: "A person's half-written change.", ready: false });
+    expect(await review({ ...DEFINITION, instructions: "Do the requested work and say so in three sentences." }))
+      .toBe("A person's unfinished revision is current; describe the proposed change in the report instead of submitting it");
+    expect((await automationRow()).accepted_definition_revision).toBe(2);
+  });
+
+  it("samples the accepted revision's runs: failures before stops, waiting runs, and completed runs spread across the window; then resends a lost request", async () => {
+    await activeAutomation();
+    const runId = (suffix: string) => `00000000-0000-7000-8000-00000000${suffix.padStart(4, "0")}`;
+    const seed = (id: string, state: string, revision: number, at: number) => `
+      INSERT INTO sidekick_runs(sidekick_id, run_id, occurrence_key, trigger_json, definition_revision, harness_run_id,
+        state, summary, opening_json, seed_json, run_as_user_id, coordinator_user_id, created_at, started_at, completed_at, updated_at)
+      VALUES ('${AUTOMATION_ID}', '${id}', 'manual:${id}', '{"kind":"manual"}', ${revision}, '${id}-harness', '${state}',
+        NULL, NULL, NULL, '${AUTHOR_ID}', '${AUTHOR_ID}', ${at}, ${at}, ${state === "needs_input" ? "NULL" : at}, ${at})`;
+    await runInDurableObject(workspaceStub(), async (_instance, state) => {
+      // Twenty-three completed, then three failures newer than all of them, then
+      // two stops newer still, two runs waiting for input, and two runs under
+      // another revision that the review must not see.
+      for (let index = 0; index < 23; index += 1) state.storage.sql.exec(seed(runId(String(index)), "completed", 1, 1_000_000 + index));
+      for (let index = 0; index < 3; index += 1) state.storage.sql.exec(seed(runId(`a${index}`), "failed", 1, 2_000_000 + index));
+      for (let index = 0; index < 2; index += 1) state.storage.sql.exec(seed(runId(`b${index}`), "stopped", 1, 3_000_000 + index));
+      for (let index = 0; index < 2; index += 1) state.storage.sql.exec(seed(runId(`c${index}`), "needs_input", 1, 4_000_000 + index));
+      state.storage.sql.exec(seed(runId("d0"), "completed", 2, 5_000_000));
+      state.storage.sql.exec(seed(runId("d1"), "failed", 2, 5_000_001));
       state.storage.sql.exec(`UPDATE automation_directory SET runs_since_review = ? WHERE automation_id = ?`, SIDEKICK_REVIEW_RUN_FLOOR, AUTOMATION_ID);
       state.storage.sql.exec(
         `INSERT INTO _internal_durable_alarms (kind, alarm_key, due_at, repeat_every_ms, retry_at, attempt, payload_json, created_at, updated_at)
          VALUES (?, ?, ?, NULL, 0, 0, NULL, ?, ?)`,
         SIDEKICK_REVIEW_ALARM_KIND, `${AUTOMATION_ID}:review`, Date.now() - 1, Date.now(), Date.now(),
       );
+      await state.storage.setAlarm(Date.now());
     });
-    // The request is what is under test; its delivery is the previous test's.
-    type QueueSend = { send: (body: unknown, options?: QueueSendOptions) => Promise<void> };
-    const prototype = Object.getPrototypeOf(TEST_ENV.ACTIVITY_QUEUE) as QueueSend;
-    const original = prototype.send;
-    const send = vi.spyOn(prototype, "send").mockImplementation(async function (this: QueueSend, body, options) {
-      if (SidekickReviewQueueMessageSchema.safeParse(body).success) return;
-      return original.call(this, body, options);
+    // The Queue loses the first message; the second reaches the consumer.
+    const sent: string[] = [];
+    let deliver = false;
+    const send = interceptReviewSends(async (message) => {
+      sent.push(message.reviewId);
+      if (deliver) await deliverSidekickReview(TEST_ENV, message);
     });
     try {
+      const requestedBy = Date.now();
       await runDurableObjectAlarm(workspaceStub());
       await expect.poll(async () => (await reviewState()).reviews.length, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(1);
-      const notice = JSON.parse((await reviewState()).reviews[0]!.notice_json) as {
-        finished: { completed: number }; sample: { completed: string[]; failed: string[] };
+      const { review_id: reviewId, notice_json } = (await reviewState()).reviews[0]!;
+      const notice = JSON.parse(notice_json) as {
+        finished: { completed: number; failed: number; stopped: number; needsInput: number };
+        sample: { completed: string[]; failed: string[]; needsInput: string[] };
       };
-      expect(notice.finished.completed).toBe(completed);
-      // Every third run, newest first: the newest always, the oldest within one step.
-      expect(notice.sample.completed).toEqual([22, 19, 16, 13, 10, 7, 4, 1].map((index) =>
-        `00000000-0000-7000-8000-0000000000${String(index).padStart(2, "0")}`));
-      expect(notice.sample.failed).toEqual([]);
+      expect(notice.finished).toEqual({ completed: 23, failed: 3, stopped: 2, needsInput: 2 });
+      // Every third completed run, newest first: the newest always, the oldest within one step.
+      expect(notice.sample.completed).toEqual([22, 19, 16, 13, 10, 7, 4, 1].map((index) => runId(String(index))));
+      expect(notice.sample.failed).toEqual(["a2", "a1", "a0", "b1", "b0"].map(runId));
+      expect(notice.sample.needsInput).toEqual(["c1", "c0"].map(runId));
+
+      // Sent once and not delivered: the entry moved later, and the same
+      // request goes again when it fires. A delivery then settles it, the
+      // wizard holding the one turn, and nothing re-arms with the count spent.
+      expect(sent).toEqual([reviewId]);
+      const resend = (await alarms()).find((alarm) => alarm.kind === SIDEKICK_REVIEW_ALARM_KIND);
+      expect(resend!.due_at).toBeGreaterThan(requestedBy);
+      deliver = true;
+      await forceReviewEntry();
+      await expect.poll(async () => (await reviewState()).reviews.map((review) => review.delivered_at !== null), { timeout: RUN_SETTLE_TIMEOUT_MS })
+        .toEqual([true]);
+      expect(sent).toEqual([reviewId, reviewId]);
+      expect((await wizardReviewTurns()).map((turn) => turn.client_message_id)).toEqual([`sidekick-review:${reviewId}`]);
+      expect((await alarms()).filter((alarm) => alarm.kind === SIDEKICK_REVIEW_ALARM_KIND)).toEqual([]);
     } finally {
       send.mockRestore();
     }

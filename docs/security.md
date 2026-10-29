@@ -63,6 +63,21 @@ escaped and treated as data; admitted instructions remain subordinate to platfor
 policy and the current request. Neither loading nor attachment grants access to
 the source credentials, memory, authoring conversation, or run history.
 
+A scheduled self-review is the one authoring turn nobody asked for: the host
+wakes the wizard with a Rally-attributed notice, and the wizard reads sampled
+run transcripts, which hold outside content, before it may submit a
+revision. It executes as an eligible delegate who may also manage the
+Sidekick (the author first), so `saveDefinition` passes for the right
+person; what it may save is bounded on the host, not only in the prompt:
+`assertReviewSubmission` refuses a plugin, trigger or required capability the
+accepted revision does not carry and any submission while a person's
+unfinished revision is current, and the review turn holds no
+`set_delegation`. The residual, accepted deliberately, is a change to the
+instructions alone, made with tools the accepted revision already binds; the
+guidance and the report the wizard owes the owner cover that, and the person
+reverts by asking. [`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)
+owns the mechanism.
+
 Wizard-only run inspection follows the authority, resource reauthorization and
 bounded-evidence contract in [Sidekick lifecycle](automation-lifecycle.md#sidekick-publication-and-loading).
 
