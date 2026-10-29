@@ -27,8 +27,11 @@ describe("who gets the annotation script", () => {
       .toBe(artifactAnnotationScriptPath(APP));
   });
 
-  it("gives it to nobody else: a public read, a crawler, or a frame with no app to listen to", () => {
+  it("gives it to nobody else: a public read, a crawler, a page's own fetch, or a frame with no app to listen to", () => {
     expect(annotationScriptPathFor({ viewerId: null, request: request(), parentOrigin: APP })).toBeNull();
+    // A viewer's page fetching a partial sends the cookie too; the partial stays as published.
+    expect(annotationScriptPathFor({ viewerId: "user-1", request: request({ "sec-fetch-dest": "empty", "sec-fetch-mode": "cors" }), parentOrigin: APP })).toBeNull();
+    expect(annotationScriptPathFor({ viewerId: "user-1", request: request({ "sec-fetch-dest": "document" }), parentOrigin: APP })).toBe(artifactAnnotationScriptPath(APP));
     expect(annotationScriptPathFor({ viewerId: null, request: request({ "sec-fetch-dest": "document", "sec-fetch-mode": "navigate" }), parentOrigin: APP })).toBeNull();
     expect(annotationScriptPathFor({ viewerId: null, request: request({ "sec-fetch-dest": "iframe" }), parentOrigin: null })).toBeNull();
   });

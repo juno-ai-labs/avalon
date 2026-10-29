@@ -1,6 +1,6 @@
 import { ErrorNotice } from './primitives';
 import { isComposingKeyEvent } from '@rally/ui/lib/ime';
-import { AnnotationFrameMessageSchema, buildAnnotation, type AnnotationCommentPins, type AnnotationCommentAction, type AnnotationHostMessage, type ArtifactElementRect, type ArtifactPickerPin } from '@rally/contracts';
+import { AnnotationFrameMessageSchema, buildAnnotation, type AnnotationCommentPins, type AnnotationCommentAction, type AnnotationHostMessage, type AnnotationSelection, type ArtifactElementRect, type ArtifactPickerPin } from '@rally/contracts';
 import { placeAnnotationEditor } from '../lib/annotation-anchor';
 import { AnnotationComment, useAnnotationDraft } from './artifact-annotations';
 import { IconAlertCircle, IconCheck, IconCopy, IconDatabase, IconExternalLink, IconPointerCollaboration, IconWindowMaximize } from '@tabler/icons-react';
@@ -78,7 +78,7 @@ export interface SiteResourceDetailProps {
      */
     ready?: (() => Promise<boolean>) | undefined;
     pick?: (() => Promise<ArtifactPickerPin | null>) | undefined;
-    comments?: ((pins: AnnotationCommentPins, selected?: string | null) => Promise<AnnotationCommentAction | null>) | undefined;
+    comments?: ((pins: AnnotationCommentPins, selected?: AnnotationSelection | null) => Promise<AnnotationCommentAction | null>) | undefined;
     stopPicking?: (() => Promise<void>) | undefined;
     close: () => Promise<void>;
     popOut: (request: DesktopSiteArtifactWindowRequest) => Promise<boolean>;
@@ -477,6 +477,10 @@ export function SiteResourceDetail({
     if (!surface.framed && surface.pick) {
       void (async () => {
         while (active) {
+          // The view follows the site's own links, so the page may have
+          // changed since readiness was asked; a page without the script
+          // turns Comment mode off with its reason rather than silently.
+          if (surface.ready && !(await surface.ready())) { if (active) { setCommentReady(false); setPicking(false); } return; }
           const pin = await surface.pick!();
           if (!active) return;
           if (!pin) { setPicking(false); return; }
@@ -608,13 +612,16 @@ export function SiteResourceDetail({
   const pageComments = React.useMemo(() => {
     if (!annotationDraft) return null;
     const pins=annotationDraft.pins.filter((pin)=>pin.id!==editingPin && pin.annotation.target.resourceId===resourceId && pin.annotation.target.version===version).map(({id,annotation})=>({id,annotation}));
-    // The pin being edited stays highlighted in the page as the selection.
-    const editing = annotationDraft.selections.find((pin) => pin.id === editingPin)?.annotation.target.locator;
-    return JSON.stringify({ pins, selected: editing?.type === 'element' ? editing.css : null });
+    // The pin being edited stays highlighted in the page as the selection,
+    // on its own page and while its markup matches, as a card's element is.
+    const editing = annotationDraft.selections.find((pin) => pin.id === editingPin)?.annotation;
+    const locator = editing?.target.locator;
+    const selected: AnnotationSelection | null = locator?.type === 'element' ? { css: locator.css, ...(locator.pagePath !== undefined ? { pagePath: locator.pagePath } : {}), exact: editing!.content.exact } : null;
+    return JSON.stringify({ pins, selected });
   }, [annotationDraft, editingPin, resourceId, version]);
   React.useEffect(() => {
     if (!annotationDraft || previewShown!==true || pageComments === null) return;
-    const { pins, selected } = JSON.parse(pageComments) as { pins: AnnotationCommentPins; selected: string | null };
+    const { pins, selected } = JSON.parse(pageComments) as { pins: AnnotationCommentPins; selected: AnnotationSelection | null };
     if (surface.framed) { tellFrame({ type: 'rally-annotation-comments', pins, selected }); return; }
     if (!surface.comments) return;
     let active=true;

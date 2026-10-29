@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 type Api = {
   pick: () => Promise<unknown>;
   stopPicking: () => void;
-  comments: (pins: unknown[], selected?: string | null) => Promise<unknown>;
+  comments: (pins: unknown[], selected?: { css: string; pagePath?: string; exact?: string } | null) => Promise<unknown>;
   watchAnchor: (callback: (rect: { x: number; width: number }) => void) => void;
   restore: (locator: unknown, exact: string) => Promise<boolean>;
   rect: (css: string) => { width: number } | null;
@@ -98,7 +98,7 @@ describe('the shared annotation script', () => {
     await tick();
     Object.defineProperty(inner.document, 'readyState', { value: 'loading', configurable: true });
     const pins = [{ id: 'one', annotation: { target: { resourceId: 'r', version: 1, locator: { type: 'element', css: 'p', box: { x: 0, y: 0, w: 1, h: 1 }, visibleText: 'Hello' } }, content: { exact: '<p>Hello</p>', source: 'rendered', before: '', after: '', truncated: false }, comment: 'Shorter' } }];
-    const clicked = api.comments(pins, 'p');
+    const clicked = api.comments(pins, { css: 'p' });
     await tick();
     expect(inner.document.querySelector('[data-rally-picker]')).toBeNull();
     inner.document.body.insertAdjacentHTML('beforeend', '<p>Hello</p>');
@@ -151,11 +151,15 @@ describe('the shared annotation script', () => {
     expect(frame.contentDocument!.querySelector('[data-rally-picker]')).toBeNull();
   });
 
-  it('keeps the selection highlighted and reports where it is', async () => {
+  it('keeps the selection highlighted and reports where it is, only on its page and while its markup matches', async () => {
     const { frame, api } = framed('<p>Hello</p><p id="two">World</p>');
     const anchors: { x: number; width: number }[] = [];
     api.watchAnchor((rect) => anchors.push(rect));
-    await api.comments([], 'p:nth-of-type(2)');
+    await api.comments([], { css: 'p:nth-of-type(2)', pagePath: '/elsewhere', exact: '<p id="two">World</p>' });
+    expect(frame.contentDocument!.querySelector('[data-rally-picker]')).toBeNull();
+    await api.comments([], { css: 'p:nth-of-type(2)', exact: '<p id="two">Changed</p>' });
+    expect(frame.contentDocument!.querySelector('[data-rally-picker]')).toBeNull();
+    await api.comments([], { css: 'p:nth-of-type(2)', exact: '<p id="two">World</p>' });
     await new Promise((resolve) => (frame.contentWindow as unknown as { requestAnimationFrame: (cb: () => void) => void }).requestAnimationFrame(() => resolve(undefined)));
     const highlight = frame.contentDocument!.querySelector('[data-rally-picker]') as HTMLElement | null;
     expect(highlight?.style.position).toBe('fixed');

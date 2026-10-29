@@ -13,6 +13,12 @@ const box = z.strictObject({ x: fraction, y: fraction, w: fraction, h: fraction 
  * with the pin. CSS pixels, scroll offsets of the page, the device scale, and
  * the color scheme the page was rendered under.
  */
+/**
+ * One absolute path on the site, as the picker reads `location.pathname +
+ * location.search`: never protocol-relative, so the skill's recipe, which
+ * resolves it against the local server, cannot be sent to another host.
+ */
+export const PagePathSchema = z.string().regex(/^\/(?!\/)/u);
 export const AnnotationViewportSchema = z.strictObject({
   width: z.number().finite().positive(),
   height: z.number().finite().positive(),
@@ -30,7 +36,7 @@ export const AnnotationLocatorSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('cells'), sheet: z.string(), range: z.string().regex(/^[A-Z]+[1-9]\d*(?::[A-Z]+[1-9]\d*)?$/u) }),
   z.strictObject({ type: z.literal('slide-text'), ...span, slide: z.number().int().positive() }),
   z.strictObject({ type: z.literal('region'), x: fraction, y: fraction, w: fraction, h: fraction }),
-  z.strictObject({ type: z.literal('element'), pagePath: z.string().optional(), css: z.string().min(1), box, visibleText: z.string(), viewport: AnnotationViewportSchema.optional() }),
+  z.strictObject({ type: z.literal('element'), pagePath: PagePathSchema.optional(), css: z.string().min(1), box, visibleText: z.string(), viewport: AnnotationViewportSchema.optional() }),
   z.strictObject({ type: z.literal('file') }),
 ]).superRefine((v, ctx) => {
   if ('start' in v && v.end < v.start) ctx.addIssue({ code: 'custom', path: ['end'], message: 'annotation_range_reversed' });
@@ -131,6 +137,9 @@ export const ArtifactPickerPinSchema = z.strictObject({ css: z.string().min(1), 
 export type ArtifactPickerPin = z.infer<typeof ArtifactPickerPinSchema>;
 
 export const AnnotationCommentPinsSchema = z.array(z.strictObject({id:z.string(),annotation:AnnotationSchema}));
+/** The selection a host wants highlighted: a pin being edited, or a saved spot being viewed. */
+export const AnnotationSelectionSchema = z.strictObject({ css: z.string().min(1), pagePath: z.string().optional(), exact: z.string().optional() });
+export type AnnotationSelection = z.infer<typeof AnnotationSelectionSchema>;
 export type AnnotationCommentPins = z.infer<typeof AnnotationCommentPinsSchema>;
 export const AnnotationCommentActionSchema = z.strictObject({id:z.string(),action:z.enum(['edit','remove']),point:z.strictObject({x:z.number().finite(),y:z.number().finite()}).optional()});
 export type AnnotationCommentAction = z.infer<typeof AnnotationCommentActionSchema>;

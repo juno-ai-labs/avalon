@@ -331,6 +331,7 @@ NODE_PATH="$(npm root -g)" node - <<'EOF'
 const { chromium } = require('playwright');
 const location = <paste the location JSON here>;
 const view = location.viewport ?? { width: 400, height: 900, devicePixelRatio: 1, colorScheme: 'light', scrollX: 0, scrollY: 0 };
+if (!/^\\/(?!\\/)/.test(location.pagePath ?? '/')) throw new Error('pagePath must be one absolute path on the site');
 (async () => {
   const browser = await chromium.launch();
   const context = await browser.newContext({
