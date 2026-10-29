@@ -236,11 +236,13 @@ describe("the automations plugin", () => {
     // The notice's first line is the one `renderSidekickReviewNotice` writes;
     // the policy recognizes the review by it.
     expect(systemMessage).toContain("Notice from Rally, not from a person or an agent: a scheduled\nself-review of this Sidekick is due");
-    expect(systemMessage).toContain("1. Plan, in your first message, before any tool call");
-    expect(systemMessage).toContain("2. Read only the runs the notice lists");
-    expect(systemMessage).toContain("3. Decide against the plan");
-    expect(systemMessage).toContain("Never add a connector, plugin,\ndelivery destination, trigger or capability; never enrol a delegate");
-    expect(systemMessage).toContain("never submit ready=false");
+    // The reads come first, so the plan is a plan of the change, not a restatement of the notice.
+    expect(systemMessage).toContain("1. Read only the runs the notice lists");
+    expect(systemMessage).toContain("2. Plan, in one message, before any write: what the runs showed");
+    expect(systemMessage).toContain("exactly what you will\nchange in the definition and nothing else");
+    expect(systemMessage).toContain("3. Act on the plan");
+    expect(systemMessage).toContain("Never add a connector,\nplugin, delivery destination, trigger or capability; never enrol a delegate");
+    expect(systemMessage).toContain("never submit\nready=false");
     // The publication to the people the Sidekick works for, and only on a change.
     expect(systemMessage).toContain("4. If you saved a change and the notice names where to announce it, post one message there\nwith conversation_post, passing that conversation");
     expect(systemMessage).toContain("Post\nnothing when nothing changed");
