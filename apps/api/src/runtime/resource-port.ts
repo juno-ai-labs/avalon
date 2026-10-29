@@ -74,7 +74,9 @@ export function conversationResourceLinksFrom(
         workspaceId, userId,
         scope: { kind: "sidekick", automationId: context.sidekickId },
       });
-      const sources = conversations.map((conversation) => ({
+      // A Channel in the scope (where a review announces a change) is a feed
+      // of its own, not a conversation object, and holds no attachments.
+      const sources = conversations.filter((conversation) => conversation.kind !== "space").map((conversation) => ({
         key: conversation.conversationId,
         resources: conversationResourceLinks(
           resourcePort(workspaceId, conversation.parentId, conversation.substreamId),
