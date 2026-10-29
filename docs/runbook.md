@@ -1099,9 +1099,8 @@ where to look when one misbehaves.
   last review or revision; `reviewed_at` is the last request. Below ten, or
   within three days of `reviewed_at`, nothing is owed. Otherwise look for the
   `<sidekickId>:review` entry in `_internal_durable_alarms` and the
-  `sidekick_review_skipped` log line: `no_managing_delegate` means no eligible
-  delegate may also manage the Sidekick, `draft_pending` that a person's
-  unfinished revision is current. A `sidekick_reviews` row with
+  `sidekick_review_skipped` log line, whose `no_managing_delegate` means no
+  eligible delegate may also manage the Sidekick. A `sidekick_reviews` row with
   `delivered_at` null is a notice the Queue still owes the wizard; the
   consumer's `sidekick_review_delivery_retry` line carries the refusal code.
   [`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)

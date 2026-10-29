@@ -506,18 +506,18 @@ the open composers. Counts have no REST fetch, polling, or per-Sidekick socket.
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/durable-objects/sidekick-activity.ts` | Target-scoped running count from accepted Sidekick execution projections and the target's attachment relationships. |
-| `apps/api/src/durable-objects/hosted-sidekick.ts` | `HostedSidekick`: `create`, `submitDefinition`, `apply`, `pause`, `resume`, `remove`, `setAppearance`, `setOwningRoomArchived`, `runNow`, `runSeeded`, `admitExternalEvent`, `admitInboundEmail`, `readRunDefinition`, `readRunState`, `continueRun`, `readDetail`, `listRuns`, `claimExecutionPrincipal`, `reviewDelivery`, `reviewDelivered`, `assertReviewSubmission` (what a scheduled review may save), the parent contract (`onChildCommonProjection` moves the run row and counts its finish), and the schedule, run, review and memory-table alarm entries. `WorkspaceDO` answers each as `sidekick*`. |
+| `apps/api/src/durable-objects/hosted-sidekick.ts` | `HostedSidekick`: `create`, `submitDefinition`, `apply`, `pause`, `resume`, `remove`, `setAppearance`, `setOwningRoomArchived`, `runNow`, `runSeeded`, `admitExternalEvent`, `admitInboundEmail`, `readRunDefinition`, `readRunState`, `continueRun`, `readDetail`, `listRuns`, `claimExecutionPrincipal`, `reviewDelivery`, `reviewDelivered`, the parent contract (`onChildCommonProjection` moves the run row and counts its finish), and the schedule, run, review and memory-table alarm entries. `WorkspaceDO` answers each as `sidekick*`. |
 | `apps/api/src/services/sidekick-run-provisioning.ts` | `provisionSidekickRun`: opens a run's conversation and starts its loop from the `sidekick_run_provision` Queue message the run's alarm entry sends. |
 | `apps/api/src/services/sidekick-run-continuation.ts` | `continueSidekickRun`, the run child's call to `continueRun`; `continuationSource`, who continued the run and where; and the refusal text the run's transcript records. |
 | `apps/api/src/services/sidekick-review.ts`, `sidekick-review-notice.ts` | `deliverSidekickReview`: the `sidekick_review` Queue message's consumer, which reads the notice from the Sidekick, admits it into the wizard's conversation and reports back; `sidekickReviewText` and `renderSidekickReviewNotice`, the sentence people read and the Rally-attributed framing the model reads. |
 | `apps/api/src/durable-objects/substream-agent.ts` | `claimPersistentLoopExecution`, which continues a run from a run child's pending input; `refuseSidekickRunInput`, which settles one the Sidekick refused; and `admitSidekickReview`, which admits the review notice into the wizard's conversation and only there. |
 | `apps/api/src/services/workstream-participant-model-message.ts` | `renderRunContinuationNote`, and `externalInputFraming`, which renders outside text in a run child as evidence. |
-| `apps/api/src/durable-objects/automation-do-protocol.ts` | The request schemas the Worker and the Queue consumer send it (`AutomationSubmitDefinitionRequest` carries `origin: "sidekick_review"` for a review's submission; `AutomationReviewRequest` addresses one review), the alarm kinds `automation_schedule`, `automation_run` and `sidekick_review`, and the `sidekick_review` Queue message. |
+| `apps/api/src/durable-objects/automation-do-protocol.ts` | The request schemas the Worker and the Queue consumer send it (`AutomationReviewRequest` addresses one review), the alarm kinds `automation_schedule`, `automation_run` and `sidekick_review`, and the `sidekick_review` Queue message. |
 | `apps/api/src/durable-objects/workstream-external-message-protocol.ts` | `AdmitSidekickReviewInputSchema`, the review's variant of the system-activation union a conversation object admits. |
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | The request shapes and aggregation helpers every hosted parent shares. |
 | `apps/api/src/services/automation-service.ts` | `createAutomation`, the one way an automation comes into existence with its conversation open, used by `POST /automations` and by a room's first draft; and `AutomationService`, the Worker-side access every route goes through. It passes who is asking; whether they manage a room's Sidekick is decided where the Sidekick lives. |
 | `apps/api/src/routes/automations.ts` | `GET /`, `POST /`, `GET /workstream/:workstreamId`, `GET /:id`, `POST /:id/run`, `POST /:id/accept`, `POST /:id/execution-principal`, `POST /:id/appearance`, `POST /:id/pause`, `POST /:id/resume`, `POST /:id/archive`, legacy `DELETE /:id`, `GET /:id/runs`. The conversation itself is reached through `/conversations/:automationId`. |
-| `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the authoring conversation's drafting host, which saves its own Sidekick through domain validation (marking a review turn's submission with `origin: "sidekick_review"` and withholding `set_delegation` from it); the history projection's `sidekick_review_due` branch, which admits the notice row as the model's user turn; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; the run prompt context built from the definition, which names the home conversation; and the loading of `rally:conversations` ([`conversation-tools.md`](conversation-tools.md)), the one way a run reaches a room. |
+| `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the authoring conversation's drafting host, which saves its own Sidekick through domain validation; the history projection's `sidekick_review_due` branch, which admits the notice row as the model's user turn; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; the run prompt context built from the definition, which names the home conversation; and the loading of `rally:conversations` ([`conversation-tools.md`](conversation-tools.md)), the one way a run reaches a room. |
 | `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts` | The home read, `sidekick_conversation_attachments` (WorkspaceDO migration 86), and the conversation scope a Sidekick or a Channel or Breakout loop reaches. |
 | `packages/agent-harness/src/automation-creator-tools.ts` | The `rally:sidekicks` plugin (`rally_sidekicks` to the model, its tools under the `sidekick_` prefix): the draft schema's tools, `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, and the submission pre-check. |
 | `packages/contracts/src/automation-agent.ts` | `AutomationScopeSchema`, `AutomationLifecycleStateSchema`, the run trigger, `AutomationRunReferenceV1` (what a run's loop input carries), `AutomationActivationV1` (the row a result becomes), `SidekickReviewNoticeV1` (the review row's structured content: counts and the sampled run ids), and `AutomationDraftProposedV1` (the card). |
@@ -1019,14 +1019,12 @@ reads the notice back (`reviewDelivery`, `null` once delivered, abandoned,
 superseded by a newer revision, without an eligible delegate, or with the
 Sidekick no longer active), admits it into the authoring conversation, and
 reports `reviewDelivered`. The entry resends on the run-provisioning backoff
-until then, choosing the delegate again each time so a request does not go
-again under one who lapsed, and a request undelivered for one interval is
-abandoned. The review executes as a delegate who may also manage the Sidekick
+until then, and a request undelivered for one interval is abandoned. The
+review executes as a delegate who may also manage the Sidekick
 (`reviewCoordinator`, the author first), because its one write is
-`saveDefinition` and that checks the manager rule. With none, or while a
-person's unfinished revision is current (a ready submission would publish it
-under their name), the request is skipped (`sidekick_review_skipped`, code
-`no_managing_delegate` or `draft_pending`) and asked again one interval later.
+`saveDefinition` and that checks the manager rule; with none it is skipped
+(`sidekick_review_skipped`, code `no_managing_delegate`) and asked again one
+interval later.
 
 **The notice** is `SidekickReviewNoticeV1Schema`, built by `reviewNotice`:
 counts by finished state since the last request, and a sample of run ids the
@@ -1050,22 +1048,14 @@ initializes Bind from canonical history, answered a review it never saw.
 Memory treats the review as agent-derived.
 
 **What the wizard does with it** is guidance in
-`AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`: read the listed runs and the Sidekick's
-posts and replies, sort platform failures from procedure problems, revise and
-submit `ready=true` when the fix is in the procedure, and end with a report
-written for the owner, who was not present, plus one line in the home
-conversation when something changed. What a review may not do is held by the
-host as well as the guidance, because nobody asked for the turn and the
-wizard writes it after reading run transcripts, which hold outside content:
-`saveDefinition` with `origin: "sidekick_review"` (`assertReviewSubmission`)
-refuses a draft that adds a plugin, trigger or required capability the
-accepted revision does not carry (`sidekick_review_widens_<field>`), or any
-draft while a person's unfinished revision is current
-(`sidekick_review_draft_pending`), and the review turn holds no
-`set_delegation` tool. A refusal reaches the model as the tool's error, and
-the guidance tells it to describe the change in its report instead. A
-revision it submits is an ordinary revision, and the person reverts by asking
-for the earlier one.
+`AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, not a gate: read the listed runs and the
+Sidekick's posts and replies, sort platform failures from procedure problems,
+revise and submit `ready=true` when the fix is in the procedure, never add a
+connector, plugin, destination, trigger or capability, never enrol a
+delegate, submit nothing over a person's unfinished draft, and end with a
+report written for the owner, who was not present, plus one line in the home
+conversation when something changed. A revision it submits is an ordinary
+revision, and the person reverts by asking for the earlier one.
 
 ### Home conversation and attachments
 
@@ -1293,16 +1283,7 @@ Sidekicks still start with `NULL` appearance and use their own id-derived mark.
   `sidekick_review_due` branch**, on a `system` row. The wizard's first
   activation initializes Bind from canonical history, so a branch that
   dropped that row would wake the wizard to answer a review it never saw; the
-  worker test asserts on the model's prompt, not only on the row. The branch
-  matches the row type as well as the kind, because the Rally attribution the
-  renderer adds is true of nothing else.
-- **A scheduled review reaches no further than the accepted revision, and the
-  host holds that.** It executes as a delegate who passes `managerAllows`;
-  `assertReviewSubmission` refuses a plugin, trigger or capability the
-  accepted revision does not carry, and any submission over a person's
-  unfinished revision; the review turn holds no `set_delegation`. The
-  guidance says the same so the wizard proposes instead of being refused, but
-  the guidance is not the control.
+  worker test asserts on the model's prompt, not only on the row.
 
 ## Boundary
 
@@ -1341,11 +1322,7 @@ or the memory store the automation scope lives in.
   `sidekick_workspace_connection_required`,
   `sidekick_personal_connection_access_denied`, `sidekick_person_not_found`,
   `sidekick_resource_not_found`, `sidekick_recurrence_has_no_future`,
-  `sidekick_timezone_invalid`, the evaluator blocker codes, and for a
-  scheduled review's submission 409 `sidekick_review_revision_unaccepted`,
-  `sidekick_review_draft_pending` and 422 `sidekick_review_widens_plugins`,
-  `sidekick_review_widens_triggers`,
-  `sidekick_review_widens_required_capabilities`. An identity
+  `sidekick_timezone_invalid`, and the evaluator blocker codes. An identity
   mismatch is a bare `Error`, deliberately, because it is a wiring fault and not
   a refusal.
 - **Apply fails part-way.** The transaction either committed or did not; the
@@ -1381,18 +1358,14 @@ or the memory store the automation scope lives in.
   consumer logs `sidekick_review_delivery_retry` with the code, the Queue
   retries, and the Sidekick's `sidekick_review` entry sends the same review
   id again until `reviewDelivered` lands; the wizard answers a repeat with the
-  turn it already holds. A resend chooses the delegate again, and a request
-  no delegate can take is deleted and skipped; one interval later any
-  undelivered request is abandoned and logged. A review refused by the
+  turn it already holds; one interval later an undelivered request is
+  abandoned and logged. A review refused by the
   wizard's object is logged as `sidekick_review_refused_<code>`:
   `sidekick_review_destination_mismatch` or
   `sidekick_review_destination_unavailable` is a wiring fault,
   `workstream_archived` a deleted Sidekick, for which `reviewDelivery`
   answers `null` on the next send, and `workstream_authority_generation_stale`
   retries until the request is abandoned.
-- **A review's submission is refused.** The wizard reads the code in its tool
-  error (`sidekick_review_widens_<field>`, `sidekick_review_draft_pending`)
-  and reports the proposed change instead; nothing was written.
 - **The sidebar row lags.** The row travels two Queue legs; a person who just
   submitted a draft sees the title update when the row lands, not when the
   tool returned. `GET /automations/:id` reads the object and is never stale.
@@ -1453,8 +1426,8 @@ substreams. Harness `skills.test.ts` proves recommendations do not load bodies.
 
 | Suite | Command | Covers |
 | --- | --- | --- |
-| `apps/api/test-workers/hosted-sidekick.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` in WorkspaceDO and deliberately absent from D1: draft, `submitDefinition`, and `apply` binding a workspace connection, reserving the address, and activating; a missing connection refused; a second ready revision re-applied on an active automation; pause stopping the in-flight run and clearing registrations, resume re-arming; delete tombstoning the row and leaving the sidebar; management refused to a member who is neither author nor principal; `runNow` idempotent on its key; `admitExternalEvent` idempotent and refused before the boundary; `admitInboundEmail` answering a retry from its receipt and refusing a stranger; the run provisioned as a child substream whose loop reads its definition by revision, with `runs.state` following the child's state through the effect leg; and the scheduled self-review: ten finishes arming, requesting and delivering a review with the counts and sample, whose row carries the sentence a person reads and whose model turn is asked with the Rally-attributed notice first; the three-day floor, a new revision resetting the count and retiring a pending request, a finish under the previous revision not counting, delivery re-arming from the count, resume resending a request still owed; the accepted revision's runs sampled with failures before stops and other revisions excluded, a lost message resent and then delivered once; and a review's submission refused for a new plugin, trigger or capability or over a person's draft, and accepted for a narrower one. |
-| `apps/api/test/sidekick-review-notice.test.ts`, `test/model-protocol-transcript.test.ts` | `pnpm --filter @rally/api test` | The notice's row sentence and model framing against literals, both windows and an empty sample; and the history projection admitting the notice as one user turn under Rally's first line from a `system` row, and not from an agent-authored row carrying the same structured content. |
+| `apps/api/test-workers/hosted-sidekick.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` in WorkspaceDO and deliberately absent from D1: draft, `submitDefinition`, and `apply` binding a workspace connection, reserving the address, and activating; a missing connection refused; a second ready revision re-applied on an active automation; pause stopping the in-flight run and clearing registrations, resume re-arming; delete tombstoning the row and leaving the sidebar; management refused to a member who is neither author nor principal; `runNow` idempotent on its key; `admitExternalEvent` idempotent and refused before the boundary; `admitInboundEmail` answering a retry from its receipt and refusing a stranger; the run provisioned as a child substream whose loop reads its definition by revision, with `runs.state` following the child's state through the effect leg; and the scheduled self-review: ten finishes arming, requesting and delivering a review with the counts and sample, whose row carries the sentence a person reads and whose model turn is asked with the Rally-attributed notice first; the three-day floor, a new revision resetting the count and retiring a pending request, a finish under the previous revision not counting, delivery re-arming from the count, resume resending a request still owed; the accepted revision's runs sampled with failures before stops and other revisions excluded, a lost message resent and then delivered once. |
+| `apps/api/test/sidekick-review-notice.test.ts`, `test/model-protocol-transcript.test.ts` | `pnpm --filter @rally/api test` | The notice's row sentence and model framing against literals, both windows and an empty sample; and the history projection admitting the notice as one user turn under Rally's first line. |
 | `apps/api/test-workers/sidekick-run-continuation.test.ts` | `pnpm --filter @rally/api test:workers` | Continuing a finished run as its run-as user; refusals while paused; a pause after a continuation's approval fencing its writes; a run's loop acting while its row still reads `pending`, before provisioning reports it running; and background workers beneath authoring or run conversations executing initial and follow-up assignments with inherited authority. |
 | `apps/api/test-workers/automation-post-result.test.ts` | `pnpm --filter @rally/api test:workers` | The result tool appending into the owning room's substream `0`, and refused for an archived room and a stale generation. |
 | `apps/api/test-workers/automation-directory.test.ts` | `pnpm --filter @rally/api test:workers` | `create` alone putting a draft row in the author's sidebar, a workspace row in everyone's, and a room's row only in `listWorkstreamAutomations`; and `setAppearance` — driven through the object's stub, the boundary `AutomationService` crosses — merging one field at a time, reaching both directory listings through the real effect legs, and refusing somebody who cannot manage the Sidekick; and `AutomationService.listSidekicks` listing each scope to exactly the members it did before while the object sends D1 no `workspace_members` read. |
@@ -1645,12 +1618,9 @@ spread evenly across the window, all under the accepted revision), into the
 authoring conversation as queued system input under a delegate who may also
 manage the Sidekick. The wizard's guidance says what to do with it: read
 exactly those runs with the history tools it already has, sort platform
-failures from procedure problems, revise when the procedure is at fault, and
-report to the owner. The host bounds what the review may save:
-`assertReviewSubmission` refuses a plugin, trigger or capability the accepted
-revision does not carry and any submission over a person's unfinished
-revision, and the review turn has no `set_delegation`. An accepted revision
-resets the count; pause and archive cancel the entry. This overturns the
+failures from procedure problems, revise when the procedure is at fault,
+never widen what the Sidekick can do, and report to the owner. An accepted
+revision resets the count; pause and archive cancel the entry. This overturns the
 2026-10-23 entry's "not an automatic improvement scheduler": the tools were
 the diagnosis, and the scheduler is what nobody was asking them for.
 
@@ -1682,20 +1652,18 @@ that is already overloaded in that Organization, and has no per-Sidekick
 clock. Backfilling the count for existing Sidekicks: with `reviewed_at`
 null, each Sidekick's first review follows its tenth finish after deploy, at
 its own cadence; a backfilled count would have made that the deploy's
-instant for all of them. Holding the capability rule in the guidance alone:
-the turn has no requester, and the wizard writes it after reading run
-transcripts that hold outside content, so a prompt rule was the only control
-on a persistent change applied under a manager's authority. The host refuses
-the widening it can see; a change to the instructions, made with tools
-already bound, is the residual that only the guidance and the report cover.
+instant for all of them. A host-side check on what a review may save (no
+new plugin, trigger or capability; nothing over a person's unfinished
+revision): proposed in review and rejected as securing against a case nobody
+has seen; the review executes as a managing delegate and the rule lives in
+the guidance, where the person's report and revert path cover it.
 
 **Consequences:** The count and `reviewed_at` are the floor's only state;
 a new revision resets the count rather than the clock, and only the accepted
 revision's runs are evidence. Evidence is host-known columns and a
-host-picked sample, never work in the run. A review's submission goes
-through `saveDefinition` with `origin: "sidekick_review"`, and a change to
-what a review may save goes in `assertReviewSubmission` and in the guidance
-together. The row's visible text is facts; the instruction is in the
+host-picked sample, never work in the run. The review executes as a
+managing delegate and can submit a revision, so the capability rule is in
+the guidance. The row's visible text is facts; the instruction is in the
 model-facing renderer and the standing guidance, so a change to either does
 not leave old notices carrying old orders. The product numbers live in
 `hosted-sidekick.ts`, and nothing the model reads repeats them.
