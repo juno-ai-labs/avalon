@@ -25,6 +25,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   asAutomationId,
+  asSpaceId,
   asSubstreamId,
   asUserId,
   asWorkspaceId,
@@ -38,15 +39,25 @@ import {
 import {
   ConversationEffectEnvelopeSchema,
   conversationEffectHash,
+  WorkstreamDirectoryCommonEffectSchema,
   type ConversationEffectEnvelope,
 } from "@rally/contracts/conversation-effects";
 
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
-import { HostedSidekick, SIDEKICK_MEMORY_TABLES_ALARM_KIND, type HostedSidekickHost } from "../src/durable-objects/hosted-sidekick";
+import {
+  HostedSidekick,
+  SIDEKICK_MEMORY_TABLES_ALARM_KIND,
+  SIDEKICK_REVIEW_INTERVAL_MS,
+  SIDEKICK_REVIEW_RUN_FLOOR,
+  type HostedSidekickHost,
+} from "../src/durable-objects/hosted-sidekick";
 import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
 import {
   AUTOMATION_RUN_ALARM_KIND,
   AUTOMATION_SCHEDULE_ALARM_KIND,
+  SIDEKICK_REVIEW_ALARM_KIND,
+  type SidekickReviewQueueMessage,
+  SidekickReviewQueueMessageSchema,
 } from "../src/durable-objects/automation-do-protocol";
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { Env } from "../src/env";
@@ -67,6 +78,7 @@ import { useSelectedModel } from "./helpers/selected-model";
 import { runSidekickAlarms } from "./helpers/sidekick";
 import { SidekickRunProvisionQueueMessageSchema } from "../src/durable-objects/automation-do-protocol";
 import { provisionSidekickRun } from "../src/services/sidekick-run-provisioning";
+import { deliverSidekickReview } from "../src/services/sidekick-review";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 /** Its own workspace: object names are shared across files, storage is not. */
@@ -1769,6 +1781,361 @@ describe("a hosted Sidekick", () => {
     expect(await links(env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, AUTOMATION_ID),
     )))).toEqual([]);
+  });
+
+  /**
+   * Finish `count` pending runs the way their children report it: one
+   * `directory_common` projection per run saying `completed`, through the
+   * parent's own receipt path. No child object or loop is involved, which is
+   * the point: what moves the run row and the review count is the projection.
+   */
+  async function finishRuns(runIds: readonly string[], state = "completed"): Promise<void> {
+    await runInDurableObject(workspaceStub(), async (instance: WorkspaceDO) => {
+      for (const runId of runIds) {
+        // The same bytes for the same run, so a repeat is the redelivery it claims to be.
+        const effect = WorkstreamDirectoryCommonEffectSchema.parse({
+          kind: "directory_common", title: "Manual helper", description: "", preview: `Run ${runId} finished`,
+          scope: "personal", state, systemKind: null, lastActivityAt: NOW, completedAt: NOW, archivedAt: null,
+        });
+        const envelope = ConversationEffectEnvelopeSchema.parse({
+          kind: "conversation_effect", contractVersion: 1, region: "global", workspaceId: WORKSPACE_ID,
+          parentKind: "automation", parentId: AUTOMATION_ID, substreamId: runId, generation: 1,
+          messageId: `finish:${runId}:${state}`, partitionKey: `${AUTOMATION_ID}:${runId}`, sourceVersion: 2,
+          requiredProjectionVersion: null, payloadHash: conversationEffectHash(effect), effect,
+        });
+        await instance.receiveChildEffects({ substreamId: runId, envelopes: [envelope] });
+      }
+    });
+  }
+
+  async function startRuns(count: number, prefix: string): Promise<string[]> {
+    const runIds: string[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: `${prefix}-${index}` });
+      runIds.push(started.runId);
+    }
+    return runIds;
+  }
+
+  async function reviewState() {
+    return runInDurableObject(workspaceStub(), (_instance, state) => ({
+      directory: state.storage.sql.exec<{ runs_since_review: number; reviewed_at: number | null }>(
+        `SELECT runs_since_review, reviewed_at FROM automation_directory WHERE automation_id = ?`, AUTOMATION_ID,
+      ).one(),
+      reviews: state.storage.sql.exec<{ review_id: string; definition_revision: number; notice_json: string; delivered_at: number | null }>(
+        `SELECT review_id, definition_revision, notice_json, delivered_at FROM sidekick_reviews WHERE sidekick_id = ? ORDER BY requested_at`,
+        AUTOMATION_ID,
+      ).toArray(),
+    }));
+  }
+
+  /** The review notice as the wizard's conversation holds it, with the loop it started. */
+  async function wizardReviewTurns() {
+    return runInDurableObject(childStub("0"), (_instance, state) => state.storage.sql.exec<{
+      client_message_id: string; message_type: string; structured_content_json: string; text_content: string | null;
+    }>(`SELECT client_message_id, message_type, structured_content_json, content AS text_content
+          FROM canonical_conversation_turn_details WHERE client_message_id LIKE 'sidekick-review:%' ORDER BY sequence_number`).toArray());
+  }
+
+  type QueueSend = { send: (body: unknown, options?: QueueSendOptions) => Promise<void> };
+  /**
+   * The activity Queue with its review messages intercepted: `onReview` stands
+   * in for the consumer, and every other body reaches the real Queue. Wired in
+   * before whatever arms the entry, because the object's own alarm may run the
+   * request at once, and a fast Queue delivery lands before the send returns.
+   */
+  function interceptReviewSends(onReview: (message: SidekickReviewQueueMessage) => Promise<void>) {
+    const prototype = Object.getPrototypeOf(TEST_ENV.ACTIVITY_QUEUE) as QueueSend;
+    const original = prototype.send;
+    return vi.spyOn(prototype, "send").mockImplementation(async function (this: QueueSend, body, options) {
+      const review = SidekickReviewQueueMessageSchema.safeParse(body);
+      if (review.success) return onReview(review.data);
+      return original.call(this, body, options);
+    });
+  }
+
+  /** The review entry's instant moved to the past, and the object woken for it. */
+  async function forceReviewEntry(): Promise<void> {
+    await runInDurableObject(workspaceStub(), async (_instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE _internal_durable_alarms SET due_at = ?, retry_at = 0 WHERE kind = ? AND alarm_key = ?`,
+        Date.now() - 1, SIDEKICK_REVIEW_ALARM_KIND, `${AUTOMATION_ID}:review`,
+      );
+      await state.storage.setAlarm(Date.now());
+    });
+    await runDurableObjectAlarm(workspaceStub());
+  }
+
+  it("asks its wizard for a review once ten runs have finished, with the counts, and not before", async () => {
+    await activeAutomation();
+    const runIds = await startRuns(SIDEKICK_REVIEW_RUN_FLOOR, "review-run");
+    await finishRuns(runIds.slice(0, -1));
+    expect((await reviewState()).directory).toEqual({ runs_since_review: SIDEKICK_REVIEW_RUN_FLOOR - 1, reviewed_at: null });
+    expect((await alarms()).filter((alarm) => alarm.kind === SIDEKICK_REVIEW_ALARM_KIND)).toEqual([]);
+    expect((await reviewState()).reviews).toEqual([]);
+
+    // The tenth finish arms the review for now, nothing having been reviewed
+    // before; the consumer runs in the send, and the review's own double
+    // answers the wizard's turn.
+    const sent: string[] = [];
+    const send = interceptReviewSends(async (message) => {
+      sent.push(message.reviewId);
+      await deliverSidekickReview(TEST_ENV, message);
+    });
+    try {
+      const before = provider.calls.length;
+      const armedBy = Date.now();
+      await finishRuns([runIds[runIds.length - 1]!]);
+      await runDurableObjectAlarm(workspaceStub());
+      await expect.poll(async () => (await reviewState()).reviews.map((review) => review.delivered_at !== null), { timeout: RUN_SETTLE_TIMEOUT_MS })
+        .toEqual([true]);
+      // A redelivered projection is answered by its receipt and counts nothing.
+      await finishRuns([runIds[runIds.length - 1]!]);
+      const { directory, reviews } = await reviewState();
+      expect(sent).toEqual([reviews[0]!.review_id]);
+      expect(directory.runs_since_review).toBe(0);
+      expect(directory.reviewed_at).toBeGreaterThanOrEqual(armedBy);
+      const notice = JSON.parse(reviews[0]!.notice_json) as { sample: { failed: string[]; needsInput: string[]; completed: string[] } };
+      expect(notice).toMatchObject({
+        kind: "sidekick_review_due", automationId: AUTOMATION_ID, definitionRevision: 1, since: null, announceTo: null,
+        finished: { completed: 10, failed: 0, needsInput: 0, stopped: 0 },
+        sample: { failed: [], needsInput: [] },
+      });
+      // Ten completed runs within a limit of ten: the sample is all of them.
+      expect([...notice.sample.completed].sort()).toEqual([...runIds].sort());
+      expect((await alarms()).filter((alarm) => alarm.kind === SIDEKICK_REVIEW_ALARM_KIND)).toEqual([]);
+
+      // The wizard holds the notice as a system row carrying the counts, whose
+      // text is the sentence a person reads there, and its loop runs on it:
+      // the model is asked with the notice attributed to Rally in its first line.
+      const turns = await wizardReviewTurns();
+      expect(turns).toHaveLength(1);
+      expect(turns[0]).toMatchObject({
+        client_message_id: `sidekick-review:${reviews[0]!.review_id}`, message_type: "system",
+        text_content: "Rally asked this Sidekick's wizard for a scheduled self-review: 10 runs finished since it was created (10 completed)."
+          + " The wizard reads 10 of them and reports here.",
+      });
+      expect(JSON.parse(turns[0]!.structured_content_json)).toEqual(notice);
+      await runDurableObjectAlarm(childStub("0"));
+      await expect.poll(() => provider.calls.slice(before).some((call) => call.messages.some((message) =>
+        message.role === "user" && promptText(message.content).startsWith("Notice from Rally, not from a person or an agent: a scheduled self-review"))),
+      { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(true);
+    } finally {
+      send.mockRestore();
+    }
+  });
+
+  it("waits out three days after a review, and starts the count over on a new revision", async () => {
+    await activeAutomation();
+    const reviewedAt = Date.now() - 24 * 60 * 60 * 1_000;
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE automation_directory SET reviewed_at = ? WHERE automation_id = ?`, reviewedAt, AUTOMATION_ID);
+    });
+    const runIds = await startRuns(SIDEKICK_REVIEW_RUN_FLOOR, "floor-run");
+    await finishRuns(runIds);
+    // Armed, but no earlier than three days after the last review.
+    const armed = (await alarms()).find((alarm) => alarm.kind === SIDEKICK_REVIEW_ALARM_KIND);
+    expect(armed?.due_at).toBe(reviewedAt + SIDEKICK_REVIEW_INTERVAL_MS);
+    await runDurableObjectAlarm(workspaceStub());
+    expect((await reviewState()).reviews).toEqual([]);
+
+    // A new accepted revision makes those finishes stale evidence, and retires
+    // a review requested on them that the Queue has not delivered yet.
+    const pendingReview = "00000000-0000-7000-8000-00000000ad90";
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO sidekick_reviews(sidekick_id, review_id, definition_revision, coordinator_user_id, notice_json, requested_at, delivered_at)
+         VALUES (?, ?, 1, ?, '{}', ?, NULL)`,
+        AUTOMATION_ID, pendingReview, AUTHOR_ID, Date.now(),
+      );
+    });
+    const [stale] = await startRuns(1, "stale-run");
+    await submit({ ...DEFINITION, instructions: "Do the requested work and say so in two sentences." });
+    await apply();
+    expect((await reviewState()).directory).toEqual({ runs_since_review: 0, reviewed_at: reviewedAt });
+    expect((await reviewState()).reviews).toEqual([]);
+    expect((await alarms()).filter((alarm) => alarm.kind === SIDEKICK_REVIEW_ALARM_KIND)).toEqual([]);
+    expect(await workspaceStub().sidekickReviewDelivery({ ...addressed(), reviewId: pendingReview })).toBeNull();
+    // A run admitted under the previous revision that finishes now followed
+    // the previous procedure: it is not the new revision's evidence.
+    await finishRuns([stale!]);
+    expect((await reviewState()).directory.runs_since_review).toBe(0);
+
+    // Finishes that accumulate while a delivery waits find the resend entry
+    // armed and leave it; the delivery's report re-arms from the count.
+    const delivered = "00000000-0000-7000-8000-00000000ad91";
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE automation_directory SET runs_since_review = ? WHERE automation_id = ?`, SIDEKICK_REVIEW_RUN_FLOOR, AUTOMATION_ID);
+      state.storage.sql.exec(
+        `INSERT INTO sidekick_reviews(sidekick_id, review_id, definition_revision, coordinator_user_id, notice_json, requested_at, delivered_at)
+         VALUES (?, ?, 2, ?, '{}', ?, NULL)`,
+        AUTOMATION_ID, delivered, AUTHOR_ID, Date.now(),
+      );
+    });
+    await workspaceStub().sidekickReviewDelivered({ ...addressed(), reviewId: delivered });
+    expect((await reviewState()).reviews.map((review) => review.delivered_at !== null)).toEqual([true]);
+    expect((await alarms()).find((alarm) => alarm.kind === SIDEKICK_REVIEW_ALARM_KIND)?.due_at).toBe(reviewedAt + SIDEKICK_REVIEW_INTERVAL_MS);
+
+    // A revision the wizard submits during that review is recorded against
+    // it; a person's is not. What reviews changed is then one query.
+    await workspaceStub().sidekickSaveDefinition({
+      ...addressed(), draft: { ...DEFINITION, instructions: "Do the requested work and say so in three sentences." },
+      evaluatorRules: null, submittedByRunId: "00000000-0000-7000-8000-00000000ad93", actor: actor(), origin: "sidekick_review",
+    });
+    await submit({ ...DEFINITION, instructions: "A person's own change." });
+    expect(await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{ definition_revision: number; review_id: string | null }>(
+      `SELECT definition_revision, review_id FROM sidekick_revisions WHERE sidekick_id = ? AND definition_revision >= 3 ORDER BY definition_revision`,
+      AUTOMATION_ID,
+    ).toArray())).toEqual([{ definition_revision: 3, review_id: delivered }, { definition_revision: 4, review_id: null }]);
+
+    // A pause drops the entry; a resume sends a request still owed at once.
+    const owed = "00000000-0000-7000-8000-00000000ad92";
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO sidekick_reviews(sidekick_id, review_id, definition_revision, coordinator_user_id, notice_json, requested_at, delivered_at)
+         VALUES (?, ?, 2, ?, '{}', ?, NULL)`,
+        AUTOMATION_ID, owed, AUTHOR_ID, Date.now(),
+      );
+    });
+    await workspaceStub().sidekickPause({ ...addressed(), actor: actor() });
+    expect((await alarms()).filter((alarm) => alarm.kind === SIDEKICK_REVIEW_ALARM_KIND)).toEqual([]);
+    // The resume arms the entry for now and the object's own alarm may run it
+    // before the next line: what is asserted is the send it makes, and the
+    // entry moved later for the next resend.
+    const sent: string[] = [];
+    const send = interceptReviewSends(async (message) => { sent.push(message.reviewId); });
+    try {
+      const resumedAt = Date.now();
+      await workspaceStub().sidekickResume({ ...addressed(), actor: actor() });
+      await runDurableObjectAlarm(workspaceStub());
+      await expect.poll(() => sent, { timeout: RUN_SETTLE_TIMEOUT_MS }).toEqual([owed]);
+      const resent = (await alarms()).find((alarm) => alarm.kind === SIDEKICK_REVIEW_ALARM_KIND);
+      expect(resent!.due_at).toBeGreaterThan(resumedAt);
+      expect((await reviewState()).reviews.find((review) => review.review_id === owed)?.delivered_at).toBeNull();
+    } finally {
+      send.mockRestore();
+    }
+  });
+
+  it("announces a review's change in the author's Personal Channel for a personal Sidekick, and in General for an Organization's", async () => {
+    await activeAutomation();
+    const generalId = asSpaceId("00000000-0000-7000-8000-00000000ad0e");
+    const personalId = asSpaceId("00000000-0000-7000-8000-00000000ad0f");
+    // The Organization's Spaces, opened as a new Organization's are: General
+    // and the creator's Personal Channel in the one object call.
+    const opened = await workspaceStub().initializeWorkspace(WORKSPACE_ID, "wnam", {
+      creatorUserId: AUTHOR_ID, spaceId: generalId, personalSpaceId: personalId, authorityGeneration: 1,
+    });
+    if (!opened.spacesReady) throw new Error("the Organization's Spaces did not open");
+    const scope = { kind: "sidekick" as const, automationId: AUTOMATION_ID, authoring: true };
+    const channels = async () => (await workspaceStub().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, scope }))
+      .conversations.filter((conversation) => conversation.kind === "space").map((conversation) => conversation.parentId);
+
+    // A personal Sidekick's wizard can name its author's Personal Channel, and
+    // post there once per key, from Rally, under the Sidekick's name. A run's
+    // scope, which is not the authoring conversation's, lists no Channel.
+    expect(await channels()).toEqual([personalId]);
+    expect((await workspaceStub().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, scope: { kind: "sidekick", automationId: AUTOMATION_ID } }))
+      .conversations.filter((conversation) => conversation.kind === "space")).toEqual([]);
+    const request = { workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, spaceId: personalId, automationId: AUTOMATION_ID,
+      key: "sidekick-review:ad90", text: "Now says so in two sentences, after a review." };
+    const posted = await workspaceStub().postSidekickChannelMessage(request);
+    expect(posted).toMatchObject({ ok: true, replayed: false });
+    expect(await workspaceStub().postSidekickChannelMessage(request))
+      .toEqual({ ok: true, messageId: (posted as { messageId: string }).messageId, replayed: true });
+    expect(await workspaceStub().postSidekickChannelMessage({ ...request, spaceId: generalId }))
+      .toEqual({ ok: false, code: "space_not_found" });
+    const feed = await workspaceStub().listChannelFeed({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, spaceId: personalId, cursor: null });
+    if (!feed.ok) throw new Error(feed.code);
+    expect(feed.page.items.flatMap((item) => (item.kind === "message" ? [item.message.body] : [])))
+      .toContain("**Manual helper**\n\nNow says so in two sentences, after a review.");
+
+    // An Organization's Sidekick announces in General, and its notice says so.
+    await runInDurableObject(workspaceStub(), async (_instance, state) => {
+      state.storage.sql.exec(`UPDATE automation_directory SET scope = 'workspace', runs_since_review = ? WHERE automation_id = ?`,
+        SIDEKICK_REVIEW_RUN_FLOOR, AUTOMATION_ID);
+      state.storage.sql.exec(
+        `INSERT INTO _internal_durable_alarms (kind, alarm_key, due_at, repeat_every_ms, retry_at, attempt, payload_json, created_at, updated_at)
+         VALUES (?, ?, ?, NULL, 0, 0, NULL, ?, ?)`,
+        SIDEKICK_REVIEW_ALARM_KIND, `${AUTOMATION_ID}:review`, Date.now() - 1, Date.now(), Date.now(),
+      );
+      await state.storage.setAlarm(Date.now());
+    });
+    expect(await channels()).toEqual([generalId]);
+    const send = interceptReviewSends(async () => {});
+    try {
+      await runDurableObjectAlarm(workspaceStub());
+      await expect.poll(async () => (await reviewState()).reviews.length, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(1);
+      expect((JSON.parse((await reviewState()).reviews[0]!.notice_json) as { announceTo: string | null }).announceTo).toBe(generalId);
+    } finally {
+      send.mockRestore();
+    }
+  });
+
+  it("samples the accepted revision's runs: failures before stops, waiting runs, and completed runs spread across the window; then resends a lost request", async () => {
+    await activeAutomation();
+    const runId = (suffix: string) => `00000000-0000-7000-8000-00000000${suffix.padStart(4, "0")}`;
+    const seed = (id: string, state: string, revision: number, at: number) => `
+      INSERT INTO sidekick_runs(sidekick_id, run_id, occurrence_key, trigger_json, definition_revision, harness_run_id,
+        state, summary, opening_json, seed_json, run_as_user_id, coordinator_user_id, created_at, started_at, completed_at, updated_at)
+      VALUES ('${AUTOMATION_ID}', '${id}', 'manual:${id}', '{"kind":"manual"}', ${revision}, '${id}-harness', '${state}',
+        NULL, NULL, NULL, '${AUTHOR_ID}', '${AUTHOR_ID}', ${at}, ${at}, ${state === "needs_input" ? "NULL" : at}, ${at})`;
+    await runInDurableObject(workspaceStub(), async (_instance, state) => {
+      // Twenty-three completed, then three failures newer than all of them, then
+      // two stops newer still, two runs waiting for input, and two runs under
+      // another revision that the review must not see.
+      for (let index = 0; index < 23; index += 1) state.storage.sql.exec(seed(runId(String(index)), "completed", 1, 1_000_000 + index));
+      for (let index = 0; index < 3; index += 1) state.storage.sql.exec(seed(runId(`a${index}`), "failed", 1, 2_000_000 + index));
+      for (let index = 0; index < 2; index += 1) state.storage.sql.exec(seed(runId(`b${index}`), "stopped", 1, 3_000_000 + index));
+      for (let index = 0; index < 2; index += 1) state.storage.sql.exec(seed(runId(`c${index}`), "needs_input", 1, 4_000_000 + index));
+      state.storage.sql.exec(seed(runId("d0"), "completed", 2, 5_000_000));
+      state.storage.sql.exec(seed(runId("d1"), "failed", 2, 5_000_001));
+      state.storage.sql.exec(`UPDATE automation_directory SET runs_since_review = ? WHERE automation_id = ?`, SIDEKICK_REVIEW_RUN_FLOOR, AUTOMATION_ID);
+      state.storage.sql.exec(
+        `INSERT INTO _internal_durable_alarms (kind, alarm_key, due_at, repeat_every_ms, retry_at, attempt, payload_json, created_at, updated_at)
+         VALUES (?, ?, ?, NULL, 0, 0, NULL, ?, ?)`,
+        SIDEKICK_REVIEW_ALARM_KIND, `${AUTOMATION_ID}:review`, Date.now() - 1, Date.now(), Date.now(),
+      );
+      await state.storage.setAlarm(Date.now());
+    });
+    // The Queue loses the first message; the second reaches the consumer.
+    const sent: string[] = [];
+    let deliver = false;
+    const send = interceptReviewSends(async (message) => {
+      sent.push(message.reviewId);
+      if (deliver) await deliverSidekickReview(TEST_ENV, message);
+    });
+    try {
+      const requestedBy = Date.now();
+      await runDurableObjectAlarm(workspaceStub());
+      await expect.poll(async () => (await reviewState()).reviews.length, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(1);
+      const { review_id: reviewId, notice_json } = (await reviewState()).reviews[0]!;
+      const notice = JSON.parse(notice_json) as {
+        finished: { completed: number; failed: number; stopped: number; needsInput: number };
+        sample: { completed: string[]; failed: string[]; needsInput: string[] };
+      };
+      expect(notice.finished).toEqual({ completed: 23, failed: 3, stopped: 2, needsInput: 2 });
+      // Every third completed run, newest first: the newest always, the oldest within one step.
+      expect(notice.sample.completed).toEqual([22, 19, 16, 13, 10, 7, 4, 1].map((index) => runId(String(index))));
+      expect(notice.sample.failed).toEqual(["a2", "a1", "a0", "b1", "b0"].map(runId));
+      expect(notice.sample.needsInput).toEqual(["c1", "c0"].map(runId));
+
+      // Sent once and not delivered: the entry moved later, and the same
+      // request goes again when it fires. A delivery then settles it, the
+      // wizard holding the one turn, and nothing re-arms with the count spent.
+      expect(sent).toEqual([reviewId]);
+      const resend = (await alarms()).find((alarm) => alarm.kind === SIDEKICK_REVIEW_ALARM_KIND);
+      expect(resend!.due_at).toBeGreaterThan(requestedBy);
+      deliver = true;
+      await forceReviewEntry();
+      await expect.poll(async () => (await reviewState()).reviews.map((review) => review.delivered_at !== null), { timeout: RUN_SETTLE_TIMEOUT_MS })
+        .toEqual([true]);
+      expect(sent).toEqual([reviewId, reviewId]);
+      expect((await wizardReviewTurns()).map((turn) => turn.client_message_id)).toEqual([`sidekick-review:${reviewId}`]);
+      expect((await alarms()).filter((alarm) => alarm.kind === SIDEKICK_REVIEW_ALARM_KIND)).toEqual([]);
+    } finally {
+      send.mockRestore();
+    }
   });
 
   it("admits a manual run once per idempotency key", async () => {

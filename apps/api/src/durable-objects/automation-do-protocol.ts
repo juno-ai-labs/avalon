@@ -77,6 +77,12 @@ export const AutomationSubmitDefinitionRequestSchema = z.strictObject({
    * definition leaves the appearance as it is.
    */
   appearance: PickedAppearanceSchema.optional(),
+  /**
+   * Set when the wizard submits during a scheduled self-review: the revision
+   * is then recorded against that review, so what reviews changed is one
+   * query. A marker for reading, not a gate on writing.
+   */
+  origin: z.literal("sidekick_review").optional(),
 });
 export type AutomationSubmitDefinitionRequest = z.infer<typeof AutomationSubmitDefinitionRequestSchema>;
 
@@ -282,6 +288,14 @@ export type SidekickRunContinuation = z.infer<typeof SidekickRunContinuationSche
 
 export const AUTOMATION_SCHEDULE_ALARM_KIND = "automation_schedule";
 export const AUTOMATION_RUN_ALARM_KIND = "automation_run";
+/** One entry per Sidekick, armed when enough runs have finished; see `HostedSidekick.startReview`. */
+export const SIDEKICK_REVIEW_ALARM_KIND = "sidekick_review";
+
+export const AutomationReviewRequestSchema = z.strictObject({
+  ...Addressed,
+  reviewId: IdSchema,
+});
+export type AutomationReviewRequest = z.infer<typeof AutomationReviewRequestSchema>;
 
 export const SidekickSkillReadRequestSchema = z.strictObject({
   ...Addressed,
@@ -328,3 +342,18 @@ export const SidekickRunProvisionQueueMessageSchema = z.strictObject({
   runId: IdSchema,
 });
 export type SidekickRunProvisionQueueMessage = z.infer<typeof SidekickRunProvisionQueueMessageSchema>;
+
+/**
+ * The activity-Queue message that wakes a hosted Sidekick's wizard for a
+ * scheduled self-review. Its consumer reads the notice from `WorkspaceDO`,
+ * admits it into the authoring conversation, and reports back; see
+ * `HostedSidekick.startReview`.
+ */
+export const SidekickReviewQueueMessageSchema = z.strictObject({
+  kind: z.literal("sidekick_review"),
+  region: z.string().min(1),
+  workspaceId: WorkspaceIdSchema,
+  automationId: IdSchema,
+  reviewId: IdSchema,
+});
+export type SidekickReviewQueueMessage = z.infer<typeof SidekickReviewQueueMessageSchema>;

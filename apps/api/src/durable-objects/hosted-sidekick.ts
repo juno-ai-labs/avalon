@@ -5,6 +5,7 @@ import {
   SidekickDelegationAttentionCodeSchema, SIDEKICK_DELEGATION_ATTENTION_MESSAGES, type SidekickDelegationAttentionCode,
   type SidekickDelegationGrant, type SidekickDelegationMutationResult, type SidekickDelegatesResult,
   ExternalEventEvaluatorV1Schema, PersonalPresentationSchema,
+  SidekickReviewNoticeV1Schema, type SidekickReviewNoticeV1,
 } from "@rally/contracts";
 import { SidekickDelegationStorage } from "./sidekick-delegation-storage";
 import { queueSidekickSourceReconciliation, sidekickSourceRegistrations } from "./sidekick-source-registrations";
@@ -86,7 +87,7 @@ import { externalEventOpening } from "../lib/external-event-opening";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { parseRpcInput } from "../lib/rpc-input";
 import { uuidV7 } from "../lib/uuid-v7";
-import { logWarn } from "../observability/logger";
+import { logInfo, logWarn } from "../observability/logger";
 import { ConversationAuthorizationRequestSchema, type ConversationAuthorizationRequest } from "../services/authorization-policy";
 import { validateDraftEvaluatorRules } from "../services/external-event-evaluator";
 import {
@@ -112,6 +113,9 @@ import {
   AutomationSubmitDefinitionRequestSchema,
   AUTOMATION_RUN_ALARM_KIND,
   AUTOMATION_SCHEDULE_ALARM_KIND,
+  AutomationReviewRequestSchema,
+  type AutomationReviewRequest,
+  SIDEKICK_REVIEW_ALARM_KIND,
   SidekickRunContinuationSchema,
   SidekickSkillReadRequestSchema,
   type AutomationActor,
@@ -134,6 +138,7 @@ import { ReceiveChildEffectsRequestSchema, type DirectoryCommonEffect, type Rece
 import { owningThreads, parsedAppearance } from "./channel-rails";
 import { sidekickAudienceAllows } from "./sidekick-audience";
 import { SCHEDULED_ALARM_RETRY_BASE_MS, scheduledAlarmRetryDelay, type ScheduledAlarm, type ScheduledAlarmOutcome, type ScheduledAlarmStore } from "./scheduled-alarms";
+import { conversationIdOf } from "./workspace-sidekick-conversation-storage";
 
 /**
  * A Sidekick's parent, hosted in its Organization's `WorkspaceDO`.
@@ -161,6 +166,26 @@ import { SCHEDULED_ALARM_RETRY_BASE_MS, scheduledAlarmRetryDelay, type Scheduled
 export const SIDEKICK_MEMORY_TABLES_ALARM_KIND = "sidekick_memory_tables";
 export const SIDEKICK_DELEGATION_MIGRATION_ALARM_KIND = "sidekick_delegation_migration";
 export const SIDEKICK_DELEGATION_SOURCES_ALARM_KIND = "sidekick_delegation_sources";
+/**
+ * When a Sidekick's wizard is asked to review its recent runs: once this many
+ * run finishes have accumulated since the last request or accepted revision,
+ * and no sooner than this long after the last request. Product numbers, set
+ * by the request that asked for the review (every ten runs, three days
+ * apart), not defensive ones; `docs/automation-lifecycle.md` has the reasoning.
+ */
+export const SIDEKICK_REVIEW_RUN_FLOOR = 10;
+export const SIDEKICK_REVIEW_INTERVAL_MS = 3 * 24 * 60 * 60 * 1_000;
+/**
+ * How many runs a review reads, by outcome: failed runs, then stopped ones,
+ * up to the first, runs waiting for input up to the second, and completed
+ * runs spaced evenly across the window up to the third. The host picks the
+ * sample so the wizard reads a bounded set however many runs there were.
+ * Product numbers, set here with no measurement behind them; the team
+ * changes them here and nowhere else.
+ */
+export const SIDEKICK_REVIEW_SAMPLE_LIMITS = { failed: 10, needsInput: 5, completed: 10 } as const;
+/** The one review entry a Sidekick has; its inner key. */
+const SIDEKICK_REVIEW_ALARM_INNER_KEY = "review";
 /** The Sidekick alarm kinds `WorkspaceDO` dispatches here. */
 export const HOSTED_SIDEKICK_ALARM_KINDS: ReadonlySet<string> = new Set([
   AUTOMATION_SCHEDULE_ALARM_KIND,
@@ -168,6 +193,7 @@ export const HOSTED_SIDEKICK_ALARM_KINDS: ReadonlySet<string> = new Set([
   SIDEKICK_MEMORY_TABLES_ALARM_KIND,
   SIDEKICK_DELEGATION_MIGRATION_ALARM_KIND,
   SIDEKICK_DELEGATION_SOURCES_ALARM_KIND,
+  SIDEKICK_REVIEW_ALARM_KIND,
 ]);
 
 /** `<sidekickId>:<key>`: every Sidekick entry names its Sidekick, so one Sidekick's are cancelled alone. */
@@ -245,8 +271,21 @@ export interface HostedSidekickRow extends Record<string, SqlStorageValue> {
   authority_generation: number;
   /** Moved by every Sidekick-side stop of open runs; see `continueRun`. */
   stop_generation: number;
+  /** Run finishes since the last review request or accepted revision; see `startReview`. */
+  runs_since_review: number;
+  /** When the wizard was last asked to review; null before the first request. */
+  reviewed_at: number | null;
   created_at: number;
   updated_at: number;
+}
+
+interface ReviewRow extends Record<string, SqlStorageValue> {
+  review_id: string;
+  definition_revision: number;
+  coordinator_user_id: string;
+  notice_json: string;
+  requested_at: number;
+  delivered_at: number | null;
 }
 
 interface RevisionRow extends Record<string, SqlStorageValue> {
@@ -320,6 +359,16 @@ export interface SidekickRunProvisioning {
   seedJson: string | null;
 }
 
+/** What a review's delivery needs, read once by the Queue consumer that wakes the wizard. */
+export interface SidekickReviewDelivery {
+  region: Region;
+  workspaceId: string;
+  automationId: string;
+  reviewId: string;
+  coordinatorUserId: string;
+  notice: SidekickReviewNoticeV1;
+}
+
 /** What `WorkspaceDO` lends a hosted Sidekick. */
 export interface HostedSidekickHost {
   env: Env;
@@ -356,6 +405,10 @@ export interface HostedSidekickHost {
   readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null>;
   /** Hand a run to the activity Queue, whose consumer provisions it. */
   sendRunProvision(message: { workspaceId: string; automationId: string; runId: string }): Promise<void>;
+  /** Hand a review to the activity Queue, whose consumer wakes the wizard with it. */
+  sendReview(message: { workspaceId: string; automationId: string; reviewId: string }): Promise<void>;
+  /** The Channel a review announces a change in, for a Sidekick no room owns; null when there is none. */
+  announcementSpaceId(row: { scope: string; author_user_id: string }): string | null;
 }
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -832,7 +885,22 @@ export class HostedSidekick {
     await this.assertManager(this.assertSidekick(request.workspaceId, request.automationId), actor);
     const submitted = await this.submitDefinition(request);
     if (submitted.ready) await this.apply({ workspaceId: request.workspaceId, automationId: request.automationId, actor });
+    if (request.origin === "sidekick_review") {
+      logInfo(this.env, "sidekick_review_revised", {
+        ...this.logFields(), definition_revision: submitted.definitionRevision, ready: submitted.ready,
+        review_id: this.latestDeliveredReviewId(),
+      });
+    }
     return submitted;
+  }
+
+  /** The review the wizard is answering: the one most recently delivered to it. */
+  private latestDeliveredReviewId(): string | null {
+    return first(this.sql.exec<{ review_id: string }>(
+      `SELECT review_id FROM sidekick_reviews WHERE sidekick_id = ? AND delivered_at IS NOT NULL
+        ORDER BY delivered_at DESC, review_id DESC LIMIT 1`,
+      this.sidekickId,
+    ))?.review_id ?? null;
   }
 
   /**
@@ -871,8 +939,8 @@ export class HostedSidekick {
       this.sql.exec(
         `INSERT INTO sidekick_revisions
            (sidekick_id, definition_revision, definition_json, definition_hash, evaluator_rules_json, ready,
-            submitted_by_run_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            submitted_by_run_id, review_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         this.sidekickId,
         definitionRevision,
         definitionJson,
@@ -880,6 +948,8 @@ export class HostedSidekick {
         request.evaluatorRules ? JSON.stringify(request.evaluatorRules) : null,
         request.draft.ready ? 1 : 0,
         request.submittedByRunId,
+        // Which review this revision answers, so what reviews changed is one query.
+        request.origin === "sidekick_review" ? this.latestDeliveredReviewId() : null,
         now,
       );
       const scope = latest.lifecycle === "draft" && latest.scope !== "workstream" && request.draft.suggestedScope !== "workstream"
@@ -968,12 +1038,18 @@ export class HostedSidekick {
       this.host.alarms.cancelByKeyPrefix([SIDEKICK_MEMORY_TABLES_ALARM_KIND], `${this.sidekickId}:`);
       const paused = current.lifecycle === "paused";
       this.replaceSchedules(revision.definition_revision, prepared.schedules, paused, now);
+      // Runs under the previous revision are stale review evidence: the count
+      // starts over, a review armed on them is dropped, and one already
+      // requested but not yet delivered is retired, so the Queue cannot wake
+      // the wizard to fix what the person just fixed.
+      this.host.alarms.cancel(SIDEKICK_REVIEW_ALARM_KIND, this.reviewAlarmKey());
+      this.sql.exec(`DELETE FROM sidekick_reviews WHERE sidekick_id = ? AND delivered_at IS NULL`, this.sidekickId);
       this.sql.exec(
         `UPDATE automation_directory
             SET lifecycle = CASE WHEN lifecycle = 'paused' THEN 'paused' ELSE 'active' END,
                 accepted_definition_revision = ?, connector_bindings_json = ?, default_plugin_ids_json = ?,
                 activity_source_plugin_ids_json = ?, evaluator_projection_json = ?,
-                email_address = ?, loadable = ?, updated_at = ?
+                email_address = ?, loadable = ?, updated_at = ?, runs_since_review = 0
           WHERE automation_id = ?`,
         revision.definition_revision,
         JSON.stringify(prepared.connectorBindings),
@@ -1745,8 +1821,10 @@ export class HostedSidekick {
     const live = !TERMINAL_RUN_STATES.has(next);
     // One statement. An open run takes the new summary, and the new state when
     // it differs. A finished run is left alone unless it reopens: a live state
-    // other than `idle`, while the Sidekick is active.
-    this.sql.exec(
+    // other than `idle`, while the Sidekick is active. `completed_at` is
+    // written only when the row moves into a finished state, so the returned
+    // instant equal to `now` is the witness that this projection finished it.
+    const moved = first(this.sql.exec<{ completed_at: number | null; definition_revision: number }>(
       `UPDATE sidekick_runs
           SET summary = ?1, updated_at = ?2,
               state = CASE WHEN state <> ?3 THEN ?3 ELSE state END,
@@ -1755,10 +1833,272 @@ export class HostedSidekick {
           AND (state NOT IN (SELECT value FROM json_each(?8))
             OR (?4 = 1 AND ?7 = 1 AND (
               SELECT lifecycle FROM automation_directory WHERE automation_id = ?5
-            ) = 'active'))`,
+            ) = 'active'))
+        RETURNING completed_at, definition_revision`,
       effect.preview || null, now, next, live ? 1 : 0, this.sidekickId, substreamId, effect.state !== "idle" ? 1 : 0,
       JSON.stringify([...TERMINAL_RUN_STATES]),
+    ));
+    if (!live && moved?.completed_at === now) this.noteRunFinished(moved.definition_revision, now);
+  }
+
+  // ---------------------------------------------------------------------------
+  // The scheduled self-review: a run finish counts, enough finishes arm one
+  // entry, and the entry asks the wizard once the interval has passed.
+  // ---------------------------------------------------------------------------
+
+  private reviewAlarmKey(): string {
+    return sidekickAlarmKey(this.sidekickId, SIDEKICK_REVIEW_ALARM_INNER_KEY);
+  }
+
+  /**
+   * One more finish toward the next review, counted only for a run admitted
+   * under the accepted revision: a run still in flight when a revision was
+   * applied is the previous procedure's evidence, and `apply` reset the count
+   * for exactly that reason. A run that finishes twice (a continued run)
+   * counts twice: its second finish is a second activation's evidence. Inside
+   * the projection's transaction.
+   */
+  private noteRunFinished(definitionRevision: number, now: number): void {
+    this.sql.exec(
+      `UPDATE automation_directory SET runs_since_review = runs_since_review + 1
+        WHERE automation_id = ? AND accepted_definition_revision = ?`,
+      this.sidekickId, definitionRevision,
     );
+    this.armReviewIfDue(now);
+  }
+
+  /**
+   * Arm the review entry once the floor is reached, no earlier than the
+   * interval after the last request, and only while none is armed: a rewrite
+   * at a later instant would reset the gate the drain earned.
+   */
+  private armReviewIfDue(now: number): void {
+    const row = first(this.sql.exec<{ runs_since_review: number; reviewed_at: number | null; lifecycle: Lifecycle }>(
+      `SELECT runs_since_review, reviewed_at, lifecycle FROM automation_directory WHERE automation_id = ?`, this.sidekickId,
+    ));
+    if (!row || row.lifecycle !== "active" || row.runs_since_review < SIDEKICK_REVIEW_RUN_FLOOR) return;
+    if (this.host.alarms.get(SIDEKICK_REVIEW_ALARM_KIND, this.reviewAlarmKey())) return;
+    this.scheduleReview(Math.max(now, (row.reviewed_at ?? 0) + SIDEKICK_REVIEW_INTERVAL_MS), now);
+  }
+
+  private scheduleReview(dueAt: number, now: number): void {
+    this.host.alarms.schedule({ kind: SIDEKICK_REVIEW_ALARM_KIND, key: this.reviewAlarmKey(), dueAt }, now);
+  }
+
+  private pendingReview(): ReviewRow | null {
+    return first(this.sql.exec<ReviewRow>(
+      `SELECT review_id, definition_revision, coordinator_user_id, notice_json, requested_at, delivered_at
+         FROM sidekick_reviews WHERE sidekick_id = ? AND delivered_at IS NULL ORDER BY requested_at LIMIT 1`,
+      this.sidekickId,
+    ));
+  }
+
+  /**
+   * Ask the wizard to review the Sidekick's recent runs, without waiting on it.
+   *
+   * The request row, the counter reset and `reviewed_at` commit together; then
+   * one Queue message, whose consumer admits the notice into the authoring
+   * conversation and reports back with `reviewDelivered`. Until it does, the
+   * entry sends again later, as a run's provisioning does. A request nobody
+   * could deliver inside one interval is abandoned, so a Sidekick whose
+   * delegates lapsed does not carry it forever.
+   */
+  private async startReview(): Promise<ScheduledAlarmOutcome> {
+    const row = this.row();
+    if (!row || row.lifecycle !== "active") return { progressed: true };
+    const now = Date.now();
+    const pending = this.pendingReview();
+    if (pending) {
+      if (pending.requested_at + SIDEKICK_REVIEW_INTERVAL_MS <= now) {
+        this.sql.exec(`DELETE FROM sidekick_reviews WHERE sidekick_id = ? AND review_id = ?`, this.sidekickId, pending.review_id);
+        logWarn(this.env, "sidekick_review_abandoned", { ...this.logFields(), review_id: pending.review_id });
+      } else {
+        await this.host.sendReview({ workspaceId: row.workspace_id, automationId: this.sidekickId, reviewId: pending.review_id });
+        if (this.pendingReview()?.review_id === pending.review_id) this.armReviewResend(pending.requested_at, now);
+        return { progressed: true };
+      }
+    }
+    if (row.runs_since_review < SIDEKICK_REVIEW_RUN_FLOOR || row.accepted_definition_revision === null) return { progressed: true };
+    const earliest = (row.reviewed_at ?? 0) + SIDEKICK_REVIEW_INTERVAL_MS;
+    if (earliest > now) {
+      this.scheduleReview(earliest, now);
+      return { progressed: true };
+    }
+    const coordinator = await this.reviewCoordinator(row);
+    const current = this.row();
+    if (!current || current.lifecycle !== "active" || current.accepted_definition_revision !== row.accepted_definition_revision) {
+      return { progressed: true };
+    }
+    if (coordinator === null) {
+      logWarn(this.env, "sidekick_review_skipped", { ...this.logFields(), code: "no_managing_delegate" });
+      // Asked again after the interval rather than after every finish.
+      this.scheduleReview(now + SIDEKICK_REVIEW_INTERVAL_MS, now);
+      return { progressed: true };
+    }
+    const reviewId = uuidV7(now);
+    const notice = this.reviewNotice(current, reviewId, now);
+    this.storage.transactionSync(() => {
+      this.sql.exec(
+        `INSERT INTO sidekick_reviews(sidekick_id, review_id, definition_revision, coordinator_user_id, notice_json, requested_at, delivered_at)
+         VALUES (?, ?, ?, ?, ?, ?, NULL)`,
+        this.sidekickId, reviewId, notice.definitionRevision, coordinator, JSON.stringify(notice), now,
+      );
+      // Subtract what this review covers rather than zeroing: a finish that
+      // landed during the delegate lookup above is after `now`, outside this
+      // notice's window, and stays counted toward the next.
+      this.sql.exec(
+        `UPDATE automation_directory SET runs_since_review = MAX(0, runs_since_review - ?), reviewed_at = ? WHERE automation_id = ?`,
+        row.runs_since_review, now, this.sidekickId,
+      );
+    });
+    logInfo(this.env, "sidekick_review_requested", {
+      ...this.logFields(), review_id: reviewId, definition_revision: notice.definitionRevision,
+      finished_completed: notice.finished.completed, finished_failed: notice.finished.failed,
+      finished_stopped: notice.finished.stopped, needs_input: notice.finished.needsInput,
+    });
+    await this.host.sendReview({ workspaceId: row.workspace_id, automationId: this.sidekickId, reviewId });
+    // The report can land while the send is awaited; a delivered review needs no resend.
+    if (this.pendingReview()?.review_id === reviewId) this.armReviewResend(now, now);
+    return { progressed: true };
+  }
+
+  /**
+   * Who the review executes as: an eligible delegate, as a run's coordinator
+   * is, who may also manage the Sidekick, because the review's one write is
+   * `saveDefinition` and that checks the manager rule. The author first, then
+   * any other delegate; `null` when no delegate can both execute and save.
+   */
+  private async reviewCoordinator(row: HostedSidekickRow): Promise<string | null> {
+    const authority = await this.readExecutionDelegation({ workspaceId: row.workspace_id, automationId: this.sidekickId });
+    const candidates = [...authority.delegates].sort((a, b) =>
+      Number(b.userId === row.author_user_id) - Number(a.userId === row.author_user_id));
+    for (const grant of candidates) {
+      const relationship = await this.host.readRelationship(row.workspace_id, grant.userId);
+      if (relationship?.status !== "active") continue;
+      if (await this.managerAllows(row, { userId: grant.userId, actorRole: relationship.role, participantOfOwningWorkstream: false })) {
+        return grant.userId;
+      }
+    }
+    return null;
+  }
+
+  /** The entry moved later: the wait grows with the request's age, as a run's resend does. */
+  private armReviewResend(requestedAt: number, now: number): void {
+    const step = 1 + Math.floor(Math.log2(1 + Math.max(0, now - requestedAt) / SCHEDULED_ALARM_RETRY_BASE_MS));
+    this.scheduleReview(now + scheduledAlarmRetryDelay(step), now);
+  }
+
+  /**
+   * What the wizard is told: counts of the finishes in the window since the
+   * last request, by state, and the sample. Only runs under the accepted
+   * revision: `apply` resets the count and not the clock, so the window can
+   * reach back past a revision, and a run before it followed a procedure the
+   * person already changed.
+   */
+  private reviewNotice(row: HostedSidekickRow, reviewId: string, now: number): SidekickReviewNoticeV1 {
+    const since = row.reviewed_at ?? 0;
+    const revision = row.accepted_definition_revision!;
+    // Bounded above as well, so a finish landing while this notice is built
+    // belongs to the next window, as the counter treats it.
+    const counts = first(this.sql.exec<{ completed: number; failed: number; stopped: number; needs_input: number }>(
+      `SELECT COALESCE(SUM(state = 'completed'), 0) AS completed, COALESCE(SUM(state = 'failed'), 0) AS failed,
+              COALESCE(SUM(state = 'stopped'), 0) AS stopped, COALESCE(SUM(state = 'needs_input'), 0) AS needs_input
+         FROM sidekick_runs
+        WHERE sidekick_id = ?1 AND definition_revision = ?3
+          AND ((completed_at IS NOT NULL AND completed_at > ?2 AND completed_at <= ?4)
+            OR (state = 'needs_input' AND updated_at > ?2 AND updated_at <= ?4))`,
+      this.sidekickId, since, revision, now,
+    ));
+    const limits = SIDEKICK_REVIEW_SAMPLE_LIMITS;
+    const ids = (cursor: SqlStorageCursor<{ run_id: string }>) => cursor.toArray().map((entry) => entry.run_id);
+    // Failures before stops: a pause stops every open run at once, and those
+    // would otherwise fill the list ahead of the failures it exists to show.
+    const failed = ids(this.sql.exec<{ run_id: string }>(
+      `SELECT run_id FROM sidekick_runs
+        WHERE sidekick_id = ?1 AND definition_revision = ?5 AND state IN ('failed', 'stopped') AND completed_at > ?2 AND completed_at <= ?4
+        ORDER BY state = 'failed' DESC, completed_at DESC, run_id LIMIT ?3`,
+      this.sidekickId, since, limits.failed, now, revision,
+    ));
+    const needsInput = ids(this.sql.exec<{ run_id: string }>(
+      `SELECT run_id FROM sidekick_runs
+        WHERE sidekick_id = ?1 AND definition_revision = ?5 AND state = 'needs_input' AND updated_at > ?2 AND updated_at <= ?4
+        ORDER BY updated_at DESC, run_id LIMIT ?3`,
+      this.sidekickId, since, limits.needsInput, now, revision,
+    ));
+    // Every `step`th completed run, newest first, where `step` is what spreads
+    // the limit across the window: the newest is always read, the oldest
+    // within one step of it.
+    const completed = ids(this.sql.exec<{ run_id: string }>(
+      `WITH finished AS (
+         SELECT run_id, ROW_NUMBER() OVER (ORDER BY completed_at DESC, run_id) - 1 AS position, COUNT(*) OVER () AS total
+           FROM sidekick_runs
+          WHERE sidekick_id = ?1 AND definition_revision = ?5 AND state = 'completed' AND completed_at > ?2 AND completed_at <= ?4
+       )
+       SELECT run_id FROM finished WHERE position % MAX(1, (total + ?3 - 1) / ?3) = 0 ORDER BY position LIMIT ?3`,
+      this.sidekickId, since, limits.completed, now, revision,
+    ));
+    return {
+      kind: "sidekick_review_due",
+      schemaVersion: 1,
+      reviewId,
+      automationId: asAutomationId(this.sidekickId),
+      definitionRevision: revision,
+      since: iso(row.reviewed_at),
+      until: new Date(now).toISOString(),
+      announceTo: row.owning_workstream_id !== null
+        ? conversationIdOf({ parentId: row.owning_workstream_id, substreamId: row.owning_substream_id })
+        : this.host.announcementSpaceId(row),
+      finished: {
+        completed: counts?.completed ?? 0, failed: counts?.failed ?? 0,
+        needsInput: counts?.needs_input ?? 0, stopped: counts?.stopped ?? 0,
+      },
+      sample: { failed, needsInput, completed },
+    };
+  }
+
+  /** What the review consumer needs for one undelivered review; `null` once it is delivered, abandoned, or the Sidekick is not active. */
+  async reviewDelivery(input: AutomationReviewRequest): Promise<SidekickReviewDelivery | null> {
+    const request = parseRpcInput(AutomationReviewRequestSchema, input, "review_delivery");
+    const row = this.assertSidekick(request.workspaceId, request.automationId);
+    if (row.lifecycle !== "active") return null;
+    const review = first(this.sql.exec<ReviewRow>(
+      `SELECT review_id, definition_revision, coordinator_user_id, notice_json, requested_at, delivered_at
+         FROM sidekick_reviews WHERE sidekick_id = ? AND review_id = ? AND delivered_at IS NULL`,
+      this.sidekickId, request.reviewId,
+    ));
+    if (!review) return null;
+    // A revision accepted since the request supersedes its evidence.
+    if (review.definition_revision !== row.accepted_definition_revision) return null;
+    const authority = await this.readExecutionDelegation({ workspaceId: request.workspaceId, automationId: request.automationId });
+    if (!authority.delegates.some((grant) => grant.userId === review.coordinator_user_id)) return null;
+    return {
+      region: row.region,
+      workspaceId: row.workspace_id,
+      automationId: row.automation_id,
+      reviewId: review.review_id,
+      coordinatorUserId: review.coordinator_user_id,
+      notice: SidekickReviewNoticeV1Schema.parse(JSON.parse(review.notice_json)),
+    };
+  }
+
+  /** The review consumer admitted the notice into the wizard's conversation: record it and settle the entry. */
+  reviewDelivered(input: AutomationReviewRequest): void {
+    const request = parseRpcInput(AutomationReviewRequestSchema, input, "review_delivered");
+    this.assertSidekick(request.workspaceId, request.automationId);
+    const now = Date.now();
+    this.storage.transactionSync(() => {
+      const delivered = this.sql.exec<{ review_id: string }>(
+        `UPDATE sidekick_reviews SET delivered_at = ? WHERE sidekick_id = ? AND review_id = ? AND delivered_at IS NULL RETURNING review_id`,
+        now, this.sidekickId, request.reviewId,
+      ).toArray().length === 1;
+      if (delivered) {
+        this.host.alarms.cancel(SIDEKICK_REVIEW_ALARM_KIND, this.reviewAlarmKey());
+        logInfo(this.env, "sidekick_review_delivered", { ...this.logFields(), review_id: request.reviewId });
+        // Finishes that accumulated while this one waited found the resend
+        // entry armed and left it; the next review is theirs to arm now.
+        this.armReviewIfDue(now);
+      }
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -1780,6 +2120,7 @@ export class HostedSidekick {
       return { progressed: true };
     }
     if (alarm.kind === AUTOMATION_RUN_ALARM_KIND) return this.startRun(innerKey, alarm.attempt);
+    if (alarm.kind === SIDEKICK_REVIEW_ALARM_KIND) return this.startReview();
     if (alarm.kind === SIDEKICK_MEMORY_TABLES_ALARM_KIND) {
       try {
         await this.materializeMemoryTables(Number(innerKey));
@@ -2101,6 +2442,10 @@ export class HostedSidekick {
       now, this.sidekickId,
     ));
     if (!resumed) throw new Error("sidekick_missing");
+    // The pause cancelled the review entry. A request still owed to the wizard
+    // is sent again now; otherwise finishes counted before the pause still count.
+    if (this.pendingReview()) this.scheduleReview(now, now);
+    else this.armReviewIfDue(now);
     const evaluators = JSON.parse(resumed.evaluator_projection_json) as unknown[];
     this.touchDirectory(now, this.writeRegistrations(evaluators));
     this.scheduleSourceReconciliation();
@@ -2127,7 +2472,8 @@ export class HostedSidekick {
    */
   private cancelSidekickAlarms(): void {
     this.host.alarms.cancelByKeyPrefix(
-      [AUTOMATION_SCHEDULE_ALARM_KIND, AUTOMATION_RUN_ALARM_KIND, SIDEKICK_DELEGATION_SOURCES_ALARM_KIND], sidekickAlarmKey(this.sidekickId, ""),
+      [AUTOMATION_SCHEDULE_ALARM_KIND, AUTOMATION_RUN_ALARM_KIND, SIDEKICK_DELEGATION_SOURCES_ALARM_KIND, SIDEKICK_REVIEW_ALARM_KIND],
+      sidekickAlarmKey(this.sidekickId, ""),
     );
   }
 

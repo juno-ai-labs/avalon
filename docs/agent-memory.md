@@ -329,7 +329,8 @@ tool call passes).
 - `memory_remember(text, kind, validUntil?, about?)`: writes one fact under
   the acting person (`about: "me"`) or the conversation's own subject. The
   trust class is the input that started the run (`derivedFromOf`): a Slack or
-  email trigger writes `external`, an agent exchange `agent`. A sentence that
+  email trigger writes `external`, an agent exchange or a Sidekick's
+  scheduled self-review `agent`. A sentence that
   matches an active fact on the subject word for word, among the facts the
   reader may see from here, returns that fact with `deduplicated: true`; a
   match they can no longer open is written again, since a dedupe against it

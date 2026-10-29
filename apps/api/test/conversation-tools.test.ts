@@ -151,6 +151,7 @@ class Ports implements ConversationToolPorts {
       : { ok: true as const, conversation: this.scoped.find((entry) => entry.conversationId === request.reference) ?? home,
         sidekickName: "Weekly call prep" },
     attachSidekickConversation: async () => ({ ok: true as const, conversation: home, alreadyAttached: false }),
+    postSidekickChannelMessage: async () => ({ ok: true as const, messageId: "00000000-0000-7000-8000-00000000c0de", replayed: false }),
     listChannelFeed: async (request: { cursor: string | null }) => {
       this.feedReads.push(request.cursor);
       // The feed's own pages: a cursor is the index its page starts at.
@@ -239,7 +240,7 @@ describe("which loops get the conversation tools", () => {
 
   it("gives a Sidekick's configuration every tool but merge and its runs no attach", () => {
     expect(conversationToolAccess(configLoop())).toEqual({ actingUserId: USER_ID,
-      tools: ["list", "read", "search", "post", "attach"], scope: { kind: "sidekick", automationId: SIDEKICK_ID } });
+      tools: ["list", "read", "search", "post", "attach"], scope: { kind: "sidekick", automationId: SIDEKICK_ID, authoring: true } });
     expect(conversationToolAccess(runLoop())).toEqual({ actingUserId: USER_ID,
       tools: ["list", "read", "search", "post"], scope: { kind: "sidekick", automationId: SIDEKICK_ID } });
   });

@@ -49,7 +49,7 @@ selection and the event cutoffs that unchanged rows preserve.
 | `apps/api/src/services/workspace-schedule-execution.ts` | What a workspace target actually *does* when it fires — connector polls, digests, watch polls, maintenance, Terminal lifecycle — as plain functions over a context. Automations are no longer among them; each has its own alarm. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Adopts it for a work stream's agent: `agent_timer` entries index `workstream_wakeups`, and `merge_suggestion` entries retain an incoming merged result through classification and drafting. Execution, external settlement, projection, realtime, and keep-alive deadlines remain derived from their owning rows or lease. |
 | `apps/api/src/durable-objects/hosted-parent.ts` | Channel and Space parents, which share the `WorkspaceDO` alarm: the `parent_outbox` lane, whose deadline stays derived, stored `parent_participant_projection` deliveries retried per parent/conversation/user/revision, resumable `parent_participant_migration` handoffs, and `parent_invitation_delivery`. The same alarm imports pending legacy parents and drains due breakout effects. See [`hosted-conversation-parents.md`](hosted-conversation-parents.md). |
-| `apps/api/src/durable-objects/automation-do.ts` | Adopts it for one automation: two stored kinds, `automation_schedule` and `automation_run`, and a derived parent-outbox lane like the hosted parents' one. |
+| `apps/api/src/durable-objects/hosted-sidekick.ts` | A hosted Sidekick's entries in `WorkspaceDO`'s store, each keyed `<sidekickId>:<key>`: `automation_schedule`, `automation_run`, `sidekick_review` (one per Sidekick, armed by run finishes; [`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)), `sidekick_memory_tables`, and the delegation kinds. |
 
 ### Two kinds of wake reason
 
@@ -267,6 +267,7 @@ itself:
 | Fire one calendar or interval occurrence | `automation_schedule` (stored) | the schedule id |
 | Hand one admitted occurrence to provisioning, which opens its child conversation and starts its loop | `automation_run` (stored) | the run id |
 | Materialize the memory tables an accepted revision declares | `sidekick_memory_tables` (stored) | the revision |
+| Ask the wizard for a scheduled self-review, and send the request again until the wizard reports it admitted | `sidekick_review` (stored) | the one `review` key; armed by the tenth run finish, cancelled by pause, archive, an accepted revision and the delivery report ([`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)) |
 
 **A handler that wants to run again later moves its own entry.** The drain
 deletes an entry at the instant that ran whatever its handler returned, and
