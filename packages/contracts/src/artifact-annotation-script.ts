@@ -71,34 +71,47 @@ const ARTIFACT_COMMENTS_SOURCE = String.raw`(function(pins,report) {
     const emphasis=(on)=>{outline.style.borderColor=on?'#2563eb':'rgba(59,130,246,.75)';outline.style.backgroundColor=on?'rgba(37,99,235,.10)':'rgba(59,130,246,.06)';outline.style.boxShadow=on?'0 0 0 3px rgba(59,130,246,.18)':'none';};
     card.addEventListener('mouseenter',()=>emphasis(true));card.addEventListener('mouseleave',()=>emphasis(false));
     document.documentElement.append(outline,host);
-    const entry={element,host,outline,card,update:()=>layout()};
+    const entry={element,host,outline,card,update:schedule};
     entries.push(entry);
   }
+  // The tracker reports each moved element in turn; one layout per frame
+  // serves them all, after the last report of that frame.
+  let pending=false;
+  function schedule(){if(pending)return;pending=true;queueMicrotask(()=>{pending=false;layout();});}
   // One pass for every card, so none covers another card or another
   // commented element: cards go beside their element when the viewport has
   // room, below it otherwise, and slide down past whatever is in the way.
+  // Reads come before writes, and the heights after the widths, so the pass
+  // forces one layout rather than one per card.
   function layout(){
     const edge=document.documentElement.clientWidth||innerWidth;
     const items=entries.map(e=>({e,r:e.element.getBoundingClientRect()}));
     items.sort((a,b)=>a.r.top-b.r.top||a.r.left-b.r.left);
     const elements=new Map();
-    for(const {e,r} of items) if(visible(e.element,r)) elements.set(e,{left:r.left,top:r.top,right:r.right,bottom:r.bottom});
-    const placed=[];
-    const overlaps=(b,o)=>b.left<o.right&&b.right>o.left&&b.top<o.bottom&&b.bottom>o.top;
-    for(const {e,r} of items){
+    for(const {e,r} of items) if(r.width+r.height>0&&visible(e.element,r)) elements.set(e,{left:r.left,top:r.top,right:r.right,bottom:r.bottom});
+    const shown=[];
+    for(const item of items){
+      const {e,r}=item;
       if(!elements.has(e)){e.host.style.display='none';e.outline.style.display='none';continue;}
       e.outline.style.display='block';
       Object.assign(e.outline.style,{left:r.x+'px',top:r.y+'px',width:r.width+'px',height:r.height+'px'});
       const room=edge-8-(r.right+12);
-      const beside=room>=180;
-      const width=beside?Math.min(292,room):292;
-      e.host.style.width=width+'px';
+      item.beside=room>=180;
+      item.width=item.beside?Math.min(292,room):292;
+      e.host.style.width=item.width+'px';
       e.host.style.display='block';
-      const height=e.host.offsetHeight||48;
+      shown.push(item);
+    }
+    for(const item of shown)item.height=item.e.host.offsetHeight||48;
+    const placed=[];
+    const overlaps=(b,o)=>b.left<o.right&&b.right>o.left&&b.top<o.bottom&&b.bottom>o.top;
+    for(const {e,r,beside,width,height} of shown){
       const left=beside?r.right+12:Math.max(8,Math.min(r.left,edge-300));
       let top=beside?r.top:r.bottom+8;
       const blockers=[...placed,...[...elements].filter(([other])=>other!==e).map(([,box])=>box)];
-      for(let guard=0;guard<12;guard++){
+      // Each step clears the lowest blocker in the way for good, so the
+      // blockers themselves bound the search.
+      for(let step=0;step<=blockers.length;step++){
         const box={left,top,right:left+width,bottom:top+height};
         const hit=blockers.filter(o=>overlaps(box,o)).sort((a,b)=>a.bottom-b.bottom)[0];
         if(!hit)break;
@@ -239,7 +252,7 @@ const ARTIFACT_RESTORE_SOURCE = String.raw`(function(locator,exact){return new P
  *   moves, for a host that draws its editor beside it.
  *
  * Everything drawn is kept in place by one tracker: a frame-synced loop that
- * runs only while something is on screen and repositions what moved, so an
+ * runs only while something is drawn and repositions what moved, so an
  * outline, a selection or a card follows a scroll in any container, a resize,
  * a transition or a layout shift without a listener for each.
  *
@@ -389,7 +402,9 @@ function artifactAnnotationBridgeSource(parentOrigin: string | null): string {
  * the artifact Worker serves; `null` for the opaque file frame.
  */
 export function artifactAnnotationScript(parentOrigin: string | null): string {
-  return `${artifactAnnotationBridgeSource(parentOrigin)}(${ARTIFACT_ANNOTATION_API_SOURCE});`;
+  // Once per document, bridge included: a second evaluation would otherwise
+  // add a second listener and announce the document again.
+  return `if (!globalThis.rallyAnnotations) ${artifactAnnotationBridgeSource(parentOrigin)}(${ARTIFACT_ANNOTATION_API_SOURCE});`;
 }
 
 /**

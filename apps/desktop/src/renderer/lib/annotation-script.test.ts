@@ -17,7 +17,7 @@ type Api = {
   rect: (css: string) => { width: number } | null;
 };
 
-function framed(html: string): { frame: HTMLIFrameElement; api: Api; received: unknown[] } {
+function framed(html: string, parentOrigin: string | null = null): { frame: HTMLIFrameElement; api: Api; received: unknown[] } {
   const received: unknown[] = [];
   window.addEventListener('message', (event) => { received.push(event.data); });
   const frame = document.createElement('iframe');
@@ -26,7 +26,9 @@ function framed(html: string): { frame: HTMLIFrameElement; api: Api; received: u
   inner.document.open();
   inner.document.write(`<!doctype html><html><head></head><body>${html}</body></html>`);
   inner.document.close();
-  (inner as unknown as { eval: (code: string) => unknown }).eval(artifactAnnotationScript(null));
+  // jsdom lays nothing out; every element reports one on-screen rectangle.
+  (inner as unknown as { Element: { prototype: Element } }).Element.prototype.getBoundingClientRect = () => DOMRect.fromRect({ x: 10, y: 10, width: 100, height: 20 });
+  (inner as unknown as { eval: (code: string) => unknown }).eval(artifactAnnotationScript(parentOrigin));
   return { frame, api: (inner as unknown as { rallyAnnotations: Api }).rallyAnnotations, received };
 }
 
@@ -42,10 +44,12 @@ function fromParent(frame: HTMLIFrameElement, data: unknown): void {
 afterEach(() => { document.body.innerHTML = ''; });
 
 describe('the shared annotation script', () => {
-  it('installs one API per document and answers a rectangle for a selector', () => {
-    const { frame, api } = framed('<p id="x">Hello</p>');
+  it('installs one API per document and answers a rectangle for a selector', async () => {
+    const { frame, api, received } = framed('<p id="x">Hello</p>');
     (frame.contentWindow as unknown as { eval: (code: string) => unknown }).eval(artifactAnnotationScript(null));
     expect((frame.contentWindow as unknown as { rallyAnnotations: Api }).rallyAnnotations).toBe(api);
+    await tick();
+    expect(received.filter((message) => (message as { type: string }).type === 'rally-annotation-ready')).toHaveLength(1);
     expect(api.rect('p')).toMatchObject({ width: expect.any(Number), viewportWidth: expect.any(Number) });
     expect(api.rect('h1')).toBeNull();
     expect(api.rect('p[')).toBeNull();
@@ -160,8 +164,23 @@ describe('the shared annotation script', () => {
     expect(frame.contentDocument!.querySelector('[data-rally-picker]')).toBeNull();
   });
 
+  it('hears only a parent at the origin it was built for', async () => {
+    const { frame, received } = framed('<p>Hello</p>', 'https://app.example');
+    await tick();
+    const inner = frame.contentWindow as unknown as { MessageEvent: typeof MessageEvent; parent: Window; dispatchEvent: (event: Event) => boolean };
+    const picking = { type: 'rally-annotation-picking', on: true };
+    inner.dispatchEvent(new inner.MessageEvent('message', { data: picking, source: inner.parent, origin: 'https://other.example' }));
+    await tick();
+    expect(frame.contentDocument!.querySelector('[data-rally-picker]')).toBeNull();
+    inner.dispatchEvent(new inner.MessageEvent('message', { data: picking, source: inner.parent, origin: 'https://app.example' }));
+    await tick();
+    expect(frame.contentDocument!.querySelector('[data-rally-picker]')).not.toBeNull();
+    // Its answers go to that origin alone, so this test window, at another, hears none.
+    expect(received).toEqual([]);
+  });
+
   it('names its served path by content', () => {
-    expect(artifactAnnotationScriptPath('https://app.example')).toBe(`/__rally/picker-${artifactAnnotationScriptVersion('https://app.example')}.js`);
+    expect(artifactAnnotationScriptPath('https://app.example')).toMatch(/^\/__rally\/picker-[0-9a-f]{8}\.js$/u);
     expect(artifactAnnotationScriptVersion('https://app.example')).not.toBe(artifactAnnotationScriptVersion('https://other.example'));
   });
 });

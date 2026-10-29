@@ -372,14 +372,14 @@ describe("artifact serving hostname routes", () => {
     const viewer = await (await artifactWorker.fetch(new Request(`${origin}/`, { headers: {
       cookie: "__rally_artifact_session=secret", "sec-fetch-dest": "document", "sec-fetch-mode": "navigate", "sec-fetch-site": "none",
     } }), framing, context())).text();
-    expect(viewer.indexOf(`<head><script src="${path}"></script><title>`)).toBeGreaterThan(-1);
+    expect(viewer.indexOf(`<head><script defer src="${path}"></script><title>`)).toBeGreaterThan(-1);
     expect(viewer).toContain(`property="og:title" content="Public artifact"`);
 
     // The browser client's frame, without the cookie Safari refuses.
     const framed = await (await artifactWorker.fetch(new Request(`${origin}/pricing.html`, { headers: {
       "sec-fetch-dest": "iframe", "sec-fetch-mode": "navigate", "sec-fetch-site": "cross-site",
     } }), framing, context())).text();
-    expect(framed.startsWith(`<!doctype html><html><head><script src="${path}"></script>`)).toBe(true);
+    expect(framed.startsWith(`<!doctype html><html><head><script defer src="${path}"></script>`)).toBe(true);
 
     // A public read, and a frame nobody configured an app for, get the page as published.
     const crawler = await (await artifactWorker.fetch(new Request(`${origin}/pricing.html`), framing, context())).text();

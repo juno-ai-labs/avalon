@@ -117,8 +117,9 @@ Every HTML surface runs the same script, which installs
 the next pin (or `null` on Escape, with early pins queued), `stopPicking()`
 removes it, `comments(pins, selected)` draws the confirmed cards, keeps
 `selected` highlighted, and resolves with an edit or remove click,
-`restore(locator, exact)` highlights a saved selection, and `rect(css)` answers
-an element's viewport rectangle. `comments` and `restore` look their elements up
+`restore(locator, exact)` highlights a saved selection, `rect(css)` answers an
+element's viewport rectangle, and `watchAnchor(callback)` reports the
+selection's rectangle whenever it moves. `comments` and `restore` look their elements up
 once the document has parsed: the script runs from the head and announces
 itself at once, so a host may answer while the page is still streaming in, and
 a card asked for then must still appear. A host that keeps a restored
@@ -163,7 +164,7 @@ card or commented element already in its way, so no card covers another
 comment's card or element.
 
 Everything drawn is kept in place by one frame-synced tracker inside the
-script: it runs only while something is on screen, reads each tracked
+script: it runs only while something is drawn, reads each tracked
 element's rectangle once per frame, and moves what changed. That is what makes
 an outline, a selection or a card follow a scroll in any container, a resize,
 a transition or a layout shift without a listener for each, and it is why the
@@ -199,6 +200,11 @@ app-origin script. Using an external script satisfies the app CSP inherited by
 desktop/web renderer, and website and HTML-file comments work in the browser
 client as on the desktop; only the browser pop-out, a plain tab with no Rally
 parent, has no Comment mode.
+`allow-scripts` also lets the file navigate its frame (a `<meta refresh>`, a
+link), and the document that replaces it would run its own scripts under the
+app's `frame-src`. The surface counts the frame's loads per document it wrote:
+a second load is such a replacement, and the frame is remounted without
+scripts, Comment mode turned off, and its messages ignored from then on.
 
 A pop-out has a real isolated app renderer, with narrow IPC for its own preview,
 picker and transfer. It does not receive the main app's general IPC authority.
@@ -319,25 +325,18 @@ on the configured medium fallback model, separately from end-to-end tool edits.
 ### 2026-10-29 — One annotation script on every host, injected by the serving Worker
 
 **What changed:** The picker, cards and restore became one script that installs
-`rallyAnnotations` in the page. The serving Worker prepends it to every HTML
-response for a viewer session or a framed browser-client request; the desktop
-calls it through `executeJavaScript` instead of evaluating sources in an
-isolated world; the browser client's framed preview and the opaque HTML-file
-frame drive it over the same `postMessage` bridge; and the browser host serves
-`/annotation-frame.js`, so HTML files and saved site spots work there too.
-Website comments in the browser client went from disabled to working. The
-inspector stopped offering the document body as a target, the pinned element
-stays highlighted while its comment is written, cards took the app's own look
-and placement, and one frame-synced tracker keeps the outline, the selection,
-the cards and the framed hosts' editor beside their elements through scrolls
-in any container, resizes and layout shifts. The editor goes beside, below or
-above its element rather than over it, a confirmed card keeps its element
-outlined so the comment's scope is visible, and the surface root no longer
-draws a focus ring when the editor hands focus back to it. Website pins now
-record the viewer's window, and a rendered pin without a screenshot tells the
-model to rebuild that window in its sandbox before a visual edit, with the
-recipe in the site skill, so browser-client comments lose nothing the model
-needs that a desktop crop would have given it.
+`rallyAnnotations` in the page. The serving Worker prepends it, deferred, to
+every HTML response for a viewer session or a framed browser-client request;
+the desktop calls it through `executeJavaScript` instead of evaluating sources
+in an isolated world; the browser client's framed preview and the opaque
+HTML-file frame drive it over the same `postMessage` bridge; and the browser
+host serves `/annotation-frame.js`, so HTML files and saved site spots work
+there too. Website comments in the browser client went from disabled to
+working. One frame-synced tracker keeps everything the script draws beside its
+element, with clip-aware visibility and one card layout per frame. Website
+pins record the viewer's window, and a rendered pin without a screenshot tells
+the model to rebuild that window in its sandbox before a visual edit, with the
+recipe in the site skill.
 
 **Why:** The browser client had no way to put a script into a cross-origin
 artifact frame, and the opaque frame's script was built only for the desktop.
@@ -356,7 +355,15 @@ Each was cost against a threat that is not real. See
 source, origin, mode and schema, not isolation. A page without the script
 keeps Comment mode disabled, so the serving Worker's injection rule is what
 decides where comments are offered. Public, crawler and unfurled responses stay
-as published, which the hostname tests pin.
+as published, which the hostname tests pin. The page sets a pin's `pagePath`
+and `css`, so the model projection quotes them only inside `<location>` and
+never copies either into its guidance. The served file is cached for a year
+only under the serving isolate's own content hash, so an older isolate asked
+for a newer path during a deploy cannot pin its script under that name. The
+element locator's `viewport` is a new key on a strict schema: a desktop build
+older than this change fails to parse a message that carries a browser
+website pin and shows no chip for it, which was accepted over keeping the
+window out of the locator.
 
 ### 2026-10-21 — Image previews own a scroll viewport
 

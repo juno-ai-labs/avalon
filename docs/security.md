@@ -1195,7 +1195,10 @@ script.
 An uploaded HTML file is not agent-authored, so it stays in an opaque
 `allow-scripts` `srcdoc` frame with a fresh nonce admitting only the app-origin
 script; `allow-same-origin` is never added, and the file's own scripts never
-run. Pop-outs keep their narrow sender-checked preview/transfer bridge, require
+run. `allow-scripts` does let the file navigate its frame to a page the app's
+`frame-src` admits, whose scripts would then run there: the surface treats a
+second load of the frame as that, remounts it without scripts, ends Comment
+mode and ignores its messages. Pop-outs keep their narrow sender-checked preview/transfer bridge, require
 an active originating composer scope and wait for its ACK. Canonical target
 read/version checks precede message admission. The owner-window-only
 `artifact:preview-comments` and `artifact:preview-ready` IPC validate schemas
@@ -1248,20 +1251,14 @@ Details in [`code-mode.md`](code-mode.md#security-and-trust-model).
 
 ### 2026-10-29 — Website picking shares the page's origin on every host
 
-**What changed:** The annotation script is injected by the serving Worker into
-a Rally viewer's artifact pages and runs in the page's own world on the desktop
-and in the browser client; the desktop's isolated world is gone. The browser
-client's framed preview listens for the script's messages, from that frame's
-window at the artifact origin only.
+**What changed:** The annotation script runs in the artifact page's own world
+on every host; the desktop's isolated world is gone, and the browser client's
+framed preview hears the script's messages from that frame's window at the
+artifact origin only.
 
-**Why:** A live artifact is written by the workspace's own agent through Rally's
-publish tool, so a picker isolated from the page's scripts defended against the
-page's author. The requester chose one transport for both hosts over keeping
-that isolation.
-
-**Considered and rejected:** App-side input capture over the frame, and a
-headless render to pick against; both recorded in
-[the PRD](PRDs/2026-10-29_browser-website-comments/prd.md).
+**Why and what was considered:** Recorded once, in
+[artifact annotations](artifact-annotations.md#changelog); the trust model
+above is the summary this document keeps.
 
 **Consequences:** The uploaded-file frame keeps its opaque origin and nonce
 rule, and the artifact CSP, fetch-metadata and viewer-session fences are

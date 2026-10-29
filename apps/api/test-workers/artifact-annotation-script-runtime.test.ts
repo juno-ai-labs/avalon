@@ -10,7 +10,7 @@ import { injectAnnotationScriptResponse } from "../src/artifacts/annotation-scri
  * script lands relative to what the page authored.
  */
 const PATH = "/__rally/picker-0123abcd.js";
-const TAG = `<script src="${PATH}"></script>`;
+const TAG = `<script defer src="${PATH}"></script>`;
 
 function stream(html: string, headers: Record<string, string> = { "content-type": "text/html; charset=utf-8" }): Response {
   const encoder = new TextEncoder();

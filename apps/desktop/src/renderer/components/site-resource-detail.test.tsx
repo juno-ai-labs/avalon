@@ -170,9 +170,12 @@ describe('showing a live artifact in the rail', () => {
       expect(screen.getByTestId('site-pins')).toHaveTextContent('<button>RSVP</button>');
       // The window the person saw travels with the pin, for an agent with no screenshot.
       expect(JSON.parse(screen.getByTestId('site-pins').textContent ?? '[]')[0].target.locator.viewport).toEqual(viewport);
-      // Escape inside the page ends picking the same way as in the app.
+      // Escape inside the page ends picking the same way as in the app: the
+      // unfinished pin and its editor go with it.
       fromFrame(frame, { type: 'rally-artifact-pin', pin: null });
       await waitFor(() => expect(button).toHaveAttribute('aria-pressed', 'false'));
+      expect(screen.queryByRole('textbox', { name: 'Comment on site selection' })).toBeNull();
+      expect(screen.getByTestId('site-pins')).toHaveTextContent('[]');
     });
 
     it('keeps the editor beside its element as the page scrolls and tells the page which selection is open', async () => {

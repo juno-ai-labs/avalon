@@ -662,21 +662,6 @@ who visits a site URL; the lookup returns it only to a reader.
 the browser has opened one of that deployment's organizations, because the
 regional cookie is set by opening an organization.
 
-### 2026-10-29: Website and HTML-file comments work in the browser
-
-**What changed:** The host serves `/annotation-frame.js`, built by the shared
-Vite plugin, so an HTML file's opaque preview frame can run Rally's annotation
-script here; and the framed live-artifact preview takes comments through the
-script the serving Worker injects. The "Website comments require the Rally Mac
-app." control is gone.
-
-**Why:** The opaque frame's script was emitted only by the desktop build, and
-the frame had no way to get Rally code at all. Both were host gaps, not
-product decisions; [`artifact-annotations.md`](artifact-annotations.md) owns
-the mechanism and the reasoning.
-
-PR pending.
-
 ### 2026-10-10: Every connector but Canva connects from the browser
 
 **What changed:** The browser offers every connector except those marked

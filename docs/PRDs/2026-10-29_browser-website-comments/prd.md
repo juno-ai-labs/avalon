@@ -117,6 +117,79 @@ Identical to the desktop, with these differences a person can notice:
 - Following a link inside the site in Comment mode keeps Comment mode on; the
   next page is ready after it loads.
 
+## Impact on the product contract
+
+None. This refines behavior within the existing contract: the browser client
+gains a pin kind the Mac app already had, and what the agent is allowed to do
+with a pin is unchanged. The one new thing the agent is told is to rebuild
+the person's window before a visual edit when no screenshot came with the pin.
+
+## Decision log
+
+### 2026-10-29 — The script's path carries its content hash and the app origin lives in its body
+
+**Decided:** The served file is `/__rally/picker-<hash>.js`, where the hash is
+over the script text including the app origin, and the bridge reads its
+`parentOrigin` from that text rather than from a `data-app-origin` attribute.
+The Worker answers any hash spelling, but sends a year-long cache header only
+when the hash is its own.
+
+**Why:** A browser caches the file for a year, so a different app origin has to
+be a different file, and a page must not be able to change the origin the
+bridge listens to by editing an attribute. The cache rule keeps an older
+isolate, asked for a newer path during a deploy, from pinning its script under
+that name.
+
+**Changes:** The design section's `<script src="/__rally/picker.js"
+data-app-origin="…">`. Shipped in #1452.
+
+### 2026-10-29 — The desktop's own surfaces move onto the injected script
+
+**Decided:** The desktop's rail view and pop-out load the same injected script
+and call it through `executeJavaScript`; the isolated world is retired.
+
+**Why:** Goal 5 asked for one script and one API on every host, and a second
+transport that happened to be free was still a second thing to change and
+test.
+
+**Changes:** Goal 4 narrows: public visitors and crawlers still get no script
+and no change, but the desktop's own surfaces do change transport. Shipped in
+#1452.
+
+### 2026-10-29 — A browser pin carries the viewer's window, not a screenshot
+
+**Decided:** The element locator gains an optional `viewport` (CSS-pixel size,
+scroll offsets, device pixel ratio, color scheme), the picker records it, and
+a rendered pin without a screenshot tells the model to rebuild that window in
+its sandbox with the recipe in the building-live-sites skill. The page sets a
+pin's `pagePath` and `css`, so neither is copied into that guidance; they
+stay quoted in `<location>`.
+
+**Why:** A browser cannot capture its frame, and the desktop's crop was what
+let the model see a visual request. Rebuilding the view costs the agent one
+command and no new service. `viewport` is a new key on a strict schema, so a
+desktop build older than this change shows no chip for a message carrying a
+browser website pin; accepted over keeping the window out of the locator.
+
+**Changes:** Product behavior gains the window on a pin; nothing else in the
+agreed scope. Shipped in #1452.
+
+### 2026-10-29 — The tag is deferred, and a navigated opaque frame loses its scripts
+
+**Decided:** The injected tag carries `defer`, so a page parses without waiting
+on the fetch; `comments()` and `restore()` look elements up once the document
+has parsed. The uploaded-file frame's `allow-scripts` lets the file navigate
+its frame, so the surface treats a second load of the frame as a document it
+did not write: it remounts the frame without scripts, ends Comment mode and
+ignores its messages.
+
+**Why:** Review of #1452. The parser block cost every artifact open a round
+trip for a script most opens never use, and a navigated frame would have run a
+page's scripts inside the Rally pane with the pane still listening to it.
+
+**Changes:** Nothing in the agreed scope; the trust model's "the file's own
+scripts never run" gains the navigation caveat. Shipped in #1452.
+
 ## Design
 
 ### The serving Worker injects the picker for Rally viewers
@@ -241,7 +314,7 @@ there. Model-authored content is still never same-origin with the app. Public,
 top-level and crawler responses are byte-identical to today. The desktop
 renderer still never frames.
 
-### Decision log
+### The decision behind the trust model
 
 **2026-10-29: website picking shares the page's origin on every host.**
 Reverses the 2026-10-19 decision that accepted native-only website support over
@@ -341,4 +414,4 @@ Turning it off is reverting the client change.
 ## Open questions
 
 None. The desktop's move to the injected transport was decided on 2026-10-29
-(see the decision log).
+(see the decision log and the trust model).

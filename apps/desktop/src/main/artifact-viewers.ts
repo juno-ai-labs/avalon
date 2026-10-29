@@ -106,7 +106,9 @@ export function artifactPageAnnotations(execute: (code: string) => Promise<unkno
       await execute('typeof globalThis.rallyAnnotations === "object" && globalThis.rallyAnnotations !== null') === true,
     pick: async (): Promise<ArtifactPickerPin | null> => {
       const raw = await call('pick()');
-      return raw === null || raw === undefined ? null : ArtifactPickerPinSchema.parse(raw);
+      // Never the page's bytes: a pin's `screenshot` is main's own capture or
+      // nothing, so the field is not even read from the page's answer.
+      return raw === null || raw === undefined ? null : ArtifactPickerPinSchema.omit({ screenshot: true }).parse(raw);
     },
     stopPicking: async (): Promise<void> => { await call('stopPicking()'); },
     comments: async (pins: AnnotationCommentPins, selected: string | null = null): Promise<AnnotationCommentAction | null> => {
