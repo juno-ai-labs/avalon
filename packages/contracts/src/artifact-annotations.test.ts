@@ -66,6 +66,12 @@ describe('artifact annotations', () => {
     // A page path is one absolute path: a protocol-relative one would send the recipe to another host.
     expect(AnnotationSchema.safeParse({...pin(),target:{...pin().target,locator:{...element,pagePath:'//evil.example/x'}},content:{...pin().content,source:'rendered'}}).success).toBe(false);
     expect(AnnotationSchema.safeParse({...pin(),target:{...pin().target,locator:{...element,pagePath:'pricing'}},content:{...pin().content,source:'rendered'}}).success).toBe(false);
+    // The URL parser would read these as protocol-relative too: a backslash is a slash, and a tab or newline is dropped.
+    for (const pagePath of ['/\\evil.example/x', '/\t/evil.example/x', '/\n/evil.example/x', '/a\\b']) {
+      expect(AnnotationSchema.safeParse({...pin(),target:{...pin().target,locator:{...element,pagePath}},content:{...pin().content,source:'rendered'}}).success).toBe(false);
+      expect(new URL(pagePath, 'http://127.0.0.1:8765').origin === 'http://127.0.0.1:8765' || pagePath === '/a\\b').toBe(pagePath === '/a\\b');
+    }
+    expect(AnnotationSchema.safeParse({...pin(),target:{...pin().target,locator:{...element,pagePath:'/pricing?plan=team'}},content:{...pin().content,source:'rendered'}}).success).toBe(true);
   });
   it('decodes XML quoting exactly once before exact replacements',()=>{
     const exact='Say "tea & <milk>" and keep &amp; literally.';
