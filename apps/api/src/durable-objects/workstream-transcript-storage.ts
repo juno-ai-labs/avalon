@@ -2844,27 +2844,14 @@ export class WorkstreamTranscriptStorage {
    * provider request only; this brings state written before then to the same
    * shape. The rewrite keeps each fact's identity and moves it to a new
    * payload, so receipts and positions that reference the fact are untouched.
-   * Hashing is async, so it cannot run as a schema migration.
+   * Hashing is async, so it cannot run as a schema migration, and it reads one
+   * payload at a time so a Thread too large to load whole can still recover.
    */
   async retireInlineToolMessageContent(loopId: string): Promise<number> {
-    const rows = this.sql.exec<{
-      fact_id: string;
-      fact_kind: string;
-      payload_id: string;
-      origin_kind: BindLoopMessageOrigin["originKind"];
-      source_kind: string | null;
-      source_id: string | null;
-      source_revision: number | null;
-      run_id: string | null;
-      turn_id: string | null;
-      tool_call_id: string | null;
-      payload_json: string;
-    } & Record<string, SqlStorageValue>>(
+    const factIds = this.sql.exec<{ fact_id: string } & Record<string, SqlStorageValue>>(
       // Canonical JSON sorts keys, so a tool message with array content starts
-      // with this prefix; it spares parsing every other message on each run.
-      `SELECT fact.fact_id, fact.fact_kind, fact.payload_id, fact.origin_kind,
-              fact.source_kind, fact.source_id, fact.source_revision,
-              fact.run_id, fact.turn_id, fact.tool_call_id, payload.payload_json
+      // with this prefix; it spares parsing every other message on each start.
+      `SELECT fact.fact_id
          FROM bind_loop_state_messages projected
          JOIN transcript_facts fact ON fact.fact_id = projected.fact_id
          JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
@@ -2876,48 +2863,75 @@ export class WorkstreamTranscriptStorage {
              WHERE json_extract(part.value, '$.type') IS NOT 'text'
           )`,
       loopId,
-    ).toArray();
-    if (rows.length === 0) return 0;
-    const rewrites = await Promise.all(rows.map(async (row) => {
+    ).toArray().map((row) => row.fact_id);
+    let rewritten = 0;
+    for (const factId of factIds) {
+      const row = this.sql.exec<{
+        fact_kind: string;
+        payload_id: string;
+        origin_kind: BindLoopMessageOrigin["originKind"];
+        source_kind: string | null;
+        source_id: string | null;
+        source_revision: number | null;
+        run_id: string | null;
+        turn_id: string | null;
+        tool_call_id: string | null;
+        payload_json: string;
+      } & Record<string, SqlStorageValue>>(
+        `SELECT fact.fact_kind, fact.payload_id, fact.origin_kind, fact.source_kind,
+                fact.source_id, fact.source_revision, fact.run_id, fact.turn_id,
+                fact.tool_call_id, payload.payload_json
+           FROM transcript_facts fact
+           JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
+          WHERE fact.fact_id = ?`,
+        factId,
+      ).one();
       const message = JSON.parse(row.payload_json) as { content: Array<{ type: string; text?: unknown }> };
       const text = message.content.filter((part) => part.type === "text");
-      return {
-        previousPayloadId: row.payload_id,
-        fact: await this.prepareFact({
-          factId: row.fact_id,
-          factKind: row.fact_kind,
-          audience: "model",
-          payload: { ...message, content: text.length === 1 ? String(text[0]!.text) : text },
-          origin: {
-            originKind: row.origin_kind,
-            sourceKind: row.source_kind,
-            sourceId: row.source_id,
-            sourceRevision: row.source_revision,
-          } as TranscriptFactMaterial["origin"],
-          runId: row.run_id,
-          turnId: row.turn_id,
-          toolCallId: row.tool_call_id,
-        }),
-      };
-    }));
-    const now = Date.now();
-    const rewritten = this.storage.transactionSync(() => rewrites.filter(({ previousPayloadId, fact }) => {
-      const current = this.sql.exec<{ payload_id: string } & Record<string, SqlStorageValue>>(
-        `SELECT payload_id FROM transcript_facts WHERE fact_id = ?`,
-        fact.factId,
-      ).toArray()[0];
-      if (current?.payload_id !== previousPayloadId) return false;
-      this.insertFact(fact, now);
-      this.sql.exec(
-        `DELETE FROM transcript_payloads
-          WHERE payload_id = ?
-            AND NOT EXISTS (SELECT 1 FROM transcript_facts WHERE payload_id = ?)`,
-        previousPayloadId,
-        previousPayloadId,
-      );
-      return true;
-    }).length);
-    this.bindProjectionCache.delete(loopId);
+      const fact = await this.prepareFact({
+        factId,
+        factKind: row.fact_kind,
+        audience: "model",
+        payload: { ...message, content: text.length === 1 ? String(text[0]!.text) : text },
+        origin: {
+          originKind: row.origin_kind,
+          sourceKind: row.source_kind,
+          sourceId: row.source_id,
+          sourceRevision: row.source_revision,
+        } as TranscriptFactMaterial["origin"],
+        runId: row.run_id,
+        turnId: row.turn_id,
+        toolCallId: row.tool_call_id,
+      });
+      const previousPayloadId = row.payload_id;
+      this.storage.transactionSync(() => {
+        const current = this.sql.exec<{ payload_id: string } & Record<string, SqlStorageValue>>(
+          `SELECT payload_id FROM transcript_facts WHERE fact_id = ?`,
+          factId,
+        ).toArray()[0];
+        if (current?.payload_id !== previousPayloadId) return;
+        this.insertFact(fact, Date.now());
+        this.sql.exec(
+          `DELETE FROM transcript_payloads
+            WHERE payload_id = ?
+              AND NOT EXISTS (SELECT 1 FROM transcript_facts WHERE payload_id = ?)`,
+          previousPayloadId,
+          previousPayloadId,
+        );
+        // A boundary recorded at the current revision hashed the old bytes, so
+        // a resumed request at that revision would read as a conflicting
+        // replay. Earlier revisions are history and are never replayed.
+        this.sql.exec(
+          `DELETE FROM bind_provider_boundaries
+            WHERE loop_id = ?
+              AND state_revision = (SELECT state_revision FROM bind_loop_heads WHERE loop_id = ?)`,
+          loopId,
+          loopId,
+        );
+        rewritten += 1;
+      });
+    }
+    if (rewritten > 0) this.bindProjectionCache.delete(loopId);
     return rewritten;
   }
 
