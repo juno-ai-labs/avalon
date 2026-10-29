@@ -5,6 +5,8 @@ import { AnnotationDraftProvider, AnnotationChips, MessageAnnotations, useAnnota
 import { sourceSelectionPoint,annotationDomRange } from '../lib/annotation-source';
 import { AnnotationSurface } from './annotation-surface';
 const resourceId='00000000-0000-7000-8000-0000000000a1';
+/** The per-document key the surface put in the frame's script URL. */
+const keyOf=(frame:HTMLIFrameElement):string=>/annotation-frame\.js\?key=([0-9a-f]+)/u.exec(frame.getAttribute('srcdoc')??'')?.[1]??'';
 function Observe():React.JSX.Element {const draft=useAnnotationDraft();return <><AnnotationChips /><button onClick={()=>draft?.clearAccepted(draft.pins)}>Accept message</button><output data-testid="pins">{JSON.stringify(draft?.selections.map(p=>p.annotation))}</output><output data-testid="pin-ids">{draft?.pins.map((p)=>p.id).join(',')}</output></>;}
 afterEach(cleanup);
 describe('annotation source picker',()=>{
@@ -31,7 +33,7 @@ describe('annotation source picker',()=>{
     const document=frame.getAttribute('srcdoc')??'';
     const nonce=/script-src 'nonce-([0-9a-f]+)'/u.exec(document)?.[1];
     expect(nonce).toBeDefined();
-    expect(document).toContain(`<script nonce="${nonce}" src="http://localhost:3000/annotation-frame.js"></script>`);
+    expect(document).toContain(`<script nonce="${nonce}" src="http://localhost:3000/annotation-frame.js?key=${nonce}"></script>`);
     expect(document).not.toContain('data-annotation-');
     // The file's own script is in the document but carries no nonce.
     expect(document).toContain('<script>alert(1)</script>');
@@ -40,13 +42,13 @@ describe('annotation source picker',()=>{
     render(<Tooltip.Provider><AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={1} name="Pricing.html" mimeType="text/html" text="<h1>Plans</h1>" saved={{target:{resourceId,version:1,locator:{type:'element',css:'h1',box:{x:0,y:0,w:1,h:1},visibleText:'Plans'}},content:{exact:'<h1>Plans</h1>',source:'rendered',before:'',after:'',truncated:false},comment:'Shorter'}} /></AnnotationDraftProvider></Tooltip.Provider>);
     const frame=screen.getByTitle('Preview of Pricing.html') as HTMLIFrameElement;
     const posted=vi.spyOn(frame.contentWindow!,'postMessage');
-    fireEvent(window,new MessageEvent('message',{data:{type:'rally-annotation-ready',pagePath:'/'},source:frame.contentWindow,origin:'null'}));
+    fireEvent(window,new MessageEvent('message',{data:{type:'rally-annotation-ready',pagePath:'/',key:keyOf(frame)},source:frame.contentWindow,origin:'null'}));
     expect(posted).toHaveBeenCalledWith({type:'rally-annotation-restore',locator:{type:'element',css:'h1',box:{x:0,y:0,w:1,h:1},visibleText:'Plans'},exact:'<h1>Plans</h1>'},'*');
     expect(posted).toHaveBeenCalledWith({type:'rally-annotation-picking',on:false},'*');
     // Each comment sync names the saved selection, so it stays highlighted
     // after the restore; once it is known to be missing, nothing is.
-    expect(posted).toHaveBeenCalledWith({type:'rally-annotation-comments',pins:[],selected:'h1'},'*');
-    fireEvent(window,new MessageEvent('message',{data:{type:'rally-annotation-restored',resolved:false},source:frame.contentWindow,origin:'null'}));
+    expect(posted).toHaveBeenCalledWith({type:'rally-annotation-comments',pins:[],selected:{css:'h1',exact:'<h1>Plans</h1>'}},'*');
+    fireEvent(window,new MessageEvent('message',{data:{type:'rally-annotation-restored',resolved:false,key:keyOf(frame)},source:frame.contentWindow,origin:'null'}));
     expect(screen.getByText('The original page cannot be shown again.')).toBeVisible();
     expect(posted).toHaveBeenLastCalledWith({type:'rally-annotation-comments',pins:[],selected:null},'*');
   });
@@ -56,9 +58,11 @@ describe('annotation source picker',()=>{
     const frame=screen.getByTitle('Preview of Pricing.html') as HTMLIFrameElement;
     const viewport={width:416,height:500,scrollX:0,scrollY:40,devicePixelRatio:2,colorScheme:'light'};
     const pin={css:'h1',box:{x:0,y:0,w:1,h:0.2},visibleText:'Plans',html:'<h1>Plans</h1>',pagePath:'/',replace:false,point:{x:10,y:10},viewport};
-    fireEvent(window,new MessageEvent('message',{data:{type:'rally-artifact-pin',pin},source:window,origin:'null'}));
-    expect(screen.queryByRole('textbox',{name:'Comment on selection'})).toBeNull();
+    fireEvent(window,new MessageEvent('message',{data:{type:'rally-artifact-pin',pin,key:keyOf(frame)},source:window,origin:'null'}));
+    // The frame's window, but without the document's key: a document the file navigated to.
     fireEvent(window,new MessageEvent('message',{data:{type:'rally-artifact-pin',pin},source:frame.contentWindow,origin:'null'}));
+    expect(screen.queryByRole('textbox',{name:'Comment on selection'})).toBeNull();
+    fireEvent(window,new MessageEvent('message',{data:{type:'rally-artifact-pin',pin,key:keyOf(frame)},source:frame.contentWindow,origin:'null'}));
     expect(await screen.findByRole('textbox',{name:'Comment on selection'})).toBeVisible();
     const pinned=JSON.parse(screen.getByTestId('pins').textContent??'[]');
     expect(pinned[0].target.locator).toMatchObject({type:'element',css:'h1',viewport});
@@ -68,7 +72,7 @@ describe('annotation source picker',()=>{
     const commented=JSON.parse(screen.getByTestId('pins').textContent??'[]');
     expect(commented[0].comment).toBe('Shorter');
     const draftId=(screen.getByTestId('pin-ids').textContent??'').split(',')[0];
-    fireEvent(window,new MessageEvent('message',{data:{type:'rally-annotation-comment-action',action:{id:draftId,action:'remove'}},source:frame.contentWindow,origin:'null'}));
+    fireEvent(window,new MessageEvent('message',{data:{type:'rally-annotation-comment-action',action:{id:draftId,action:'remove'},key:keyOf(frame)},source:frame.contentWindow,origin:'null'}));
     expect(screen.getByTestId('pins')).toHaveTextContent('[]');
   });
   it('remounts the opaque frame without scripts once a document replaced the file, and stops listening',()=>{

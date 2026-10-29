@@ -189,7 +189,7 @@ describe('showing a live artifact in the rail', () => {
       fromFrame(frame, { type: 'rally-artifact-pin', pin: { ...PIN, rect: { x: 20, y: 100, width: 80, height: 30 } } });
       const editor = await screen.findByRole('dialog', { name: 'Comment on site selection' });
       expect(editor.style.top).toBe('160px');
-      await waitFor(() => expect(posted).toHaveBeenCalledWith(expect.objectContaining({ type: 'rally-annotation-comments', selected: PIN.css }), CANONICAL));
+      await waitFor(() => expect(posted).toHaveBeenCalledWith(expect.objectContaining({ type: 'rally-annotation-comments', selected: { css: PIN.css, pagePath: PIN.pagePath, exact: PIN.html } }), CANONICAL));
       fromFrame(frame, { type: 'rally-annotation-anchor', rect: { x: 20, y: 300, width: 80, height: 30 } });
       await waitFor(() => expect(editor.style.top).toBe('360px'));
       geometry.mockRestore();

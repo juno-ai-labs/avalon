@@ -7,7 +7,7 @@ import { IconPointerCollaboration } from '@tabler/icons-react';
 import { useDetailHeaderActions } from './detail-header-actions';
 import { AnnotationSheet } from './annotation-sheet';
 import { useEffect, useRef, useState, useMemo } from 'react';
-import { ARTIFACT_COMMENT_CURSOR, isHtmlResource, ANNOTATION_CONTEXT_CHARACTERS, AnnotationFrameMessageSchema, AnnotationLocatorSchema, buildAnnotation, classifyAttachmentKind, type Annotation, type AnnotationHostMessage, type AnnotationLocator, type ArtifactElementRect } from '@rally/contracts';
+import { ARTIFACT_COMMENT_CURSOR, isHtmlResource, ANNOTATION_CONTEXT_CHARACTERS, AnnotationFrameMessageSchema, AnnotationLocatorSchema, buildAnnotation, classifyAttachmentKind, type Annotation, type AnnotationHostMessage, type AnnotationLocator, type AnnotationSelection, type ArtifactElementRect } from '@rally/contracts';
 import { placeAnnotationEditor } from '../lib/annotation-anchor';
 import { AnchoredAnnotationComment, AnnotationComment, annotationQuote, useAnnotationDraft } from './artifact-annotations';
 import { annotationDomRange, sourceSelectionPoint } from '../lib/annotation-source';
@@ -22,7 +22,9 @@ import { MarkdownBody } from './workstream-blocks';
 export function annotationHtml(source: string, nonce?: string): string {
   const policy = `default-src 'none'; img-src data: blob:; font-src data:; style-src 'unsafe-inline';${nonce ? ` script-src 'nonce-${nonce}';` : ''}`;
   // Policy and trusted script precede file markup, including malformed heads.
-  const scriptUrl = new URL('/annotation-frame.js',window.location.href).href;
+  // The nonce doubles as the document's key: the script echoes it on every
+  // message, and a document the file navigated to never had it.
+  const scriptUrl = new URL(`/annotation-frame.js?key=${nonce ?? ''}`,window.location.href).href;
   return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${policy}"></head><body>${nonce ? `<script nonce="${nonce}" src="${scriptUrl}"></script>` : ''}${source}</body></html>`;
 }
 export interface AnnotationSurfaceProps {
@@ -94,9 +96,10 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
   // The selection the frame keeps highlighted: the pin being edited, else the
   // saved selection a restore found, which every later sync would otherwise
   // clear.
+  const editingPin = draft?.selections.find((pin) => pin.id === editing)?.annotation;
   const savedLocator = saved?.target.locator;
-  const selectedCss = editingLocator?.type==='element' ? editingLocator.css : savedLocator?.type==='element' && !picking && !missing ? savedLocator.css : null;
-  const syncHtmlComments = (): void => tellFrame({type:'rally-annotation-comments',pins:htmlPins.filter((pin)=>pin.id!==editing).map(({id,annotation})=>({id,annotation})),selected:selectedCss});
+  const selected: AnnotationSelection | null = editingLocator?.type==='element' ? { css: editingLocator.css, exact: editingPin!.content.exact } : savedLocator?.type==='element' && !picking && !missing ? { css: savedLocator.css, exact: saved!.content.exact } : null;
+  const syncHtmlComments = (): void => tellFrame({type:'rally-annotation-comments',pins:htmlPins.filter((pin)=>pin.id!==editing).map(({id,annotation})=>({id,annotation})),selected});
   /** The editor beside its element; the style below adds 12px, so take it off here. */
   const anchorEditor = (rect: ArtifactElementRect): void => {
     const box = frame.current?.getBoundingClientRect();
@@ -106,7 +109,7 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
   };
   // Keyed on what the frame would be told: a keystroke in the editor changes
   // the draft but not the cards.
-  const commentsKey = JSON.stringify({ pins: htmlPins.filter((pin)=>pin.id!==editing).map(({id,annotation})=>({id,annotation})), selected: selectedCss });
+  const commentsKey = JSON.stringify({ pins: htmlPins.filter((pin)=>pin.id!==editing).map(({id,annotation})=>({id,annotation})), selected });
   useEffect(()=>{if(html)syncHtmlComments();},[commentsKey,html]);
   useEffect(()=>{if(html)tellFrame({type:'rally-annotation-picking',on:picking});},[html,picking]);
   const current = draft?.selections.find((p) => p.id === editing);
@@ -201,7 +204,9 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
     const receive = (event: MessageEvent): void => {
       if (escaped || event.source !== frame.current?.contentWindow) return;
       const parsed = AnnotationFrameMessageSchema.safeParse(event.data);
-      if (!parsed.success) return;
+      // Only the script this surface wrote knows the document's key; a
+      // document the file navigated to is heard by the same window.
+      if (!parsed.success || parsed.data.key !== nonce) return;
       const message = parsed.data;
       if (message.type === 'rally-annotation-ready') {
         // A new document: tell it what this surface is doing.

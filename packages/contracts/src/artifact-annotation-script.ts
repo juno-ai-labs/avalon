@@ -237,8 +237,9 @@ const ARTIFACT_RESTORE_SOURCE = String.raw`(function(locator,exact){return new P
  *   element stays highlighted as the selection until the host says otherwise.
  * - `stopPicking()` removes the inspector and resolves a waiting `pick()` with
  *   `null`.
- * - `comments(pins, selected)` replaces the cards, keeps `selected` (a CSS
- *   path, or `null`) highlighted as the selection being commented on, and
+ * - `comments(pins, selected)` replaces the cards, keeps `selected` (`{ css,
+ *   pagePath?, exact? }`, or `null`) highlighted as the selection being
+ *   commented on when it is on this page and its markup still matches, and
  *   resolves with the first edit or remove click, or `null` when the cards are
  *   replaced or there are none.
  * - `restore(locator, exact)` highlights a saved selection and resolves
@@ -325,15 +326,21 @@ const ARTIFACT_ANNOTATION_API_SOURCE = String.raw`(function(){
       picking.cleanup?.(); picking.cleanup = null; picking.queue.length = 0;
       const waiter = picking.waiter; picking.waiter = null; waiter?.(null);
     },
-    comments(pins, selectedCss) {
+    comments(pins, selected) {
       return new Promise(resolve => {
         clearComments?.();
         let cleanup = null, live = true;
         clearComments = () => { live = false; cleanup?.(); resolve(null); };
         parsed(() => {
           if (!live) return;
+          // The selection is verified the way a card's element is: same page,
+          // same markup. A path alone would light up whatever it matches on
+          // another page of the site.
           let element = null;
-          if (typeof selectedCss === 'string') { try { element = document.querySelector(selectedCss); } catch {} }
+          if (selected && typeof selected === 'object' && typeof selected.css === 'string' && !(typeof selected.pagePath === 'string' && selected.pagePath !== location.pathname + location.search)) {
+            try { element = document.querySelector(selected.css); } catch {}
+            if (element && typeof selected.exact === 'string' && ${ARTIFACT_ELEMENT_HTML_SOURCE}(element) !== selected.exact) element = null;
+          }
           selectElement(element);
           cleanup = ${ARTIFACT_COMMENTS_SOURCE}(pins, resolve);
           if (!pins.length) resolve(null);
@@ -360,7 +367,9 @@ const ARTIFACT_ANNOTATION_API_SOURCE = String.raw`(function(){
  * `rally-artifact-pin`, `rally-annotation-comment-action` and
  * `rally-annotation-restored` back. With a `parentOrigin`, only a parent at
  * that origin is heard and answered; without one (the opaque file frame, whose
- * parent is the app that wrote it) any parent is.
+ * parent is the app that wrote it) any parent is, and every message carries
+ * the `key` the frame's script URL was given, so the parent can tell the
+ * document it wrote from one that replaced it.
  */
 function artifactAnnotationBridgeSource(parentOrigin: string | null): string {
   const origin = JSON.stringify(parentOrigin);
@@ -368,7 +377,12 @@ function artifactAnnotationBridgeSource(parentOrigin: string | null): string {
   if (window.parent === window) return;
   const parentOrigin = ${origin};
   const target = parentOrigin ?? '*';
-  const post = (message) => window.parent.postMessage(message, target);
+  // The opaque file frame's parent cannot tell its own document from one the
+  // file navigated to, so the script it wrote carries a key in its URL and
+  // echoes it on every message; a replacement document never had it.
+  let key = null;
+  try { if (parentOrigin === null && document.currentScript) key = new URL(document.currentScript.src, location.href).searchParams.get('key'); } catch {}
+  const post = (message) => window.parent.postMessage(key ? { ...message, key } : message, target);
   let session = 0;
   async function pickLoop(id) {
     while (session === id) {
@@ -386,7 +400,7 @@ function artifactAnnotationBridgeSource(parentOrigin: string | null): string {
       session += 1;
       if (message.on) void pickLoop(session); else api.stopPicking();
     } else if (message.type === 'rally-annotation-comments') {
-      void api.comments(Array.isArray(message.pins) ? message.pins : [], typeof message.selected === 'string' ? message.selected : null).then(action => { if (action) post({ type: 'rally-annotation-comment-action', action }); });
+      void api.comments(Array.isArray(message.pins) ? message.pins : [], message.selected ?? null).then(action => { if (action) post({ type: 'rally-annotation-comment-action', action }); });
     } else if (message.type === 'rally-annotation-restore') {
       void api.restore(message.locator, message.exact).then(resolved => post({ type: 'rally-annotation-restored', resolved }));
     }

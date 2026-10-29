@@ -1,7 +1,7 @@
 import { annotationDraftKeyForScope } from '../common/draft-keys';
 import { createElectronFetch } from '@rally/electron-network';
 import { artifactWindowActionRequest, artifactWindowSessionMatches } from './artifact-window-actions';
-import { AnnotationCommentPinsSchema, AnnotationSchema } from "@rally/contracts";
+import { AnnotationCommentPinsSchema, AnnotationSchema, AnnotationSelectionSchema } from "@rally/contracts";
 import { startCanvaConnection } from './canva-loopback';
 import { clampWindowBounds, readMainWindowState, writeMainWindowState } from './main-window-state';
 import { macosMajorVersion } from './macos-version';
@@ -4316,7 +4316,7 @@ function registerIpc(): void {
   ipcMain.handle('artifact:preview-comments', async (event, raw: unknown, rawSelected: unknown) => {
     assertArtifactSurfaceSender(event);
     const pins=AnnotationCommentPinsSchema.parse(raw);
-    const selected=z.string().nullable().optional().parse(rawSelected) ?? null;
+    const selected=AnnotationSelectionSchema.nullable().optional().parse(rawSelected) ?? null;
     const window=BrowserWindow.fromWebContents(event.sender);
     return window ? await artifactPreviews.get(window)?.comments(pins, selected) ?? null : null;
   });

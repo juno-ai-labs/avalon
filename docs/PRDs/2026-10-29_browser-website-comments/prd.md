@@ -190,6 +190,23 @@ page's scripts inside the Rally pane with the pane still listening to it.
 **Changes:** Nothing in the agreed scope; the trust model's "the file's own
 scripts never run" gains the navigation caveat. Shipped in #1452.
 
+### 2026-10-29 — The opaque frame's bridge carries a per-document key, and injection is for navigations only
+
+**Decided:** The surface puts the frame's nonce into the script URL as a key;
+the script echoes it on every message and the surface refuses any without it.
+The host names the open selection as the pin's CSS path, page path and quoted
+markup, which the script verifies as it does a card's element. The Worker
+injects the script only into navigations, not into a page's own fetches. A
+locator's `pagePath` must be one absolute path.
+
+**Why:** Second review of #1452. A document the file navigated to shares the
+frame's `contentWindow` and could post before its `load` fired; a bare CSS
+path lit up a look-alike element on another page; a viewer's page fetching a
+partial got Rally markup prepended to it; and a protocol-relative page path
+would have sent the skill's recipe to another host.
+
+**Changes:** Nothing in the agreed scope. Shipped in #1452.
+
 ## Design
 
 ### The serving Worker injects the picker for Rally viewers
