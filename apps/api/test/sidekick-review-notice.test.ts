@@ -11,6 +11,7 @@ const NOTICE: SidekickReviewNoticeV1 = {
   definitionRevision: 3,
   since: "2026-10-23T10:00:00.000Z",
   until: "2026-10-26T10:00:00.000Z",
+  home: "00000000-0000-7000-8000-0000000000bb/00000000-0000-7000-8000-0000000000b1",
   finished: { completed: 10, failed: 2, needsInput: 1, stopped: 0 },
   sample: {
     failed: ["00000000-0000-7000-8000-0000000000f1", "00000000-0000-7000-8000-0000000000f0"],
@@ -39,14 +40,16 @@ describe("the self-review notice", () => {
       "Notice from Rally, not from a person or an agent: a scheduled self-review of this Sidekick is due.",
       "The row's sentence.",
       "Every count and run above is from definition revision 3, between 2026-10-23T10:00:00.000Z and 2026-10-26T10:00:00.000Z.",
+      "Home conversation to tell about a change: 00000000-0000-7000-8000-0000000000bb/00000000-0000-7000-8000-0000000000b1.",
       "Read exactly these runs, by id, and no others:",
       "- failed or stopped: 00000000-0000-7000-8000-0000000000f1, 00000000-0000-7000-8000-0000000000f0",
       "- waiting for input: 00000000-0000-7000-8000-0000000000e0",
       "- completed, spread evenly across the window: 00000000-0000-7000-8000-0000000000c9, 00000000-0000-7000-8000-0000000000c4",
     ].join("\n"));
-    expect(renderSidekickReviewNotice({ ...NOTICE, since: null, sample: { failed: [], needsInput: [], completed: [] } }, "First.").split("\n").slice(2))
+    expect(renderSidekickReviewNotice({ ...NOTICE, since: null, home: null, sample: { failed: [], needsInput: [], completed: [] } }, "First.").split("\n").slice(2))
       .toEqual([
         "Every count and run above is from definition revision 3, between creation and 2026-10-26T10:00:00.000Z.",
+        "Home conversation to tell about a change: none.",
         "Read exactly these runs, by id, and no others:",
         "- failed or stopped: none",
         "- waiting for input: none",

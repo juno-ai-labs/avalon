@@ -1035,7 +1035,10 @@ window, `SIDEKICK_REVIEW_SAMPLE_LIMITS`). Every count and every sampled run is
 under the accepted revision, since the window can reach back past a revision
 and an earlier revision's runs followed a procedure the person already
 changed. It carries no run content: the wizard reads a run with
-`sidekick_runs_read`. It is admitted through `admitSystemActivation`
+`sidekick_runs_read`. It names the Sidekick's home conversation as the
+conversation tools name it (`home`, null for a Sidekick no room owns), which
+is where the wizard tells people about a change. It is admitted through
+`admitSystemActivation`
 (`SubstreamAgent.admitSidekickReview`, only on a Sidekick's substream `0`) as
 a queued `system` row whose text (`sidekickReviewText`) is the one sentence a
 person opening the conversation reads: what Rally asked for, in counts, with
@@ -1048,13 +1051,20 @@ initializes Bind from canonical history, answered a review it never saw.
 Memory treats the review as agent-derived.
 
 **What the wizard does with it** is guidance in
-`AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, not a gate: read the listed runs and the
-Sidekick's posts and replies, sort platform failures from procedure problems,
-revise and submit `ready=true` when the fix is in the procedure, never add a
-connector, plugin, destination, trigger or capability, never enrol a
-delegate, submit nothing over a person's unfinished draft, and end with a
-report written for the owner, who was not present, plus one line in the home
-conversation when something changed. A revision it submits is an ordinary
+`AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, not a gate, in four stages. It plans
+first, as its first message and before any tool call: what the notice
+reports, which runs it will read, what it expects, and what would justify a
+change (a procedure problem seen in the runs) and what never does (a platform
+failure). It reads only the listed runs, and the Sidekick's posts and replies
+in its home. It decides against the plan: nothing justified, say so and stop;
+otherwise revise and submit `ready=true`, never adding a connector, plugin,
+destination, trigger or capability, never enrolling a delegate, and
+submitting nothing over a person's unfinished draft. When a change was saved
+and the notice names a home, it publishes one message there with
+`conversation_post`, for the people the Sidekick works for: what it now does
+differently, why, and how to restore the earlier version; nothing is posted
+when nothing changed. It ends with a report in the authoring conversation for
+the owner, who was not present. A revision it submits is an ordinary
 revision, and the person reverts by asking for the earlier one.
 
 ### Home conversation and attachments
@@ -1656,14 +1666,20 @@ instant for all of them. A host-side check on what a review may save (no
 new plugin, trigger or capability; nothing over a person's unfinished
 revision): proposed in review and rejected as securing against a case nobody
 has seen; the review executes as a managing delegate and the rule lives in
-the guidance, where the person's report and revert path cover it.
+the guidance, where the person's report and revert path cover it. The
+review's turn is staged by the prompt, plan then read then decide then
+publish, rather than by a host state machine: the stages exist to make a
+change deliberate and announced, and a prompt is the cheapest place to hold
+them.
 
 **Consequences:** The count and `reviewed_at` are the floor's only state;
 a new revision resets the count rather than the clock, and only the accepted
 revision's runs are evidence. Evidence is host-known columns and a
 host-picked sample, never work in the run. The review executes as a
 managing delegate and can submit a revision, so the capability rule is in
-the guidance. The row's visible text is facts; the instruction is in the
+the guidance. A change is announced where the Sidekick works: the notice
+carries the home conversation id, and the wizard posts there after a saved
+change and never otherwise. The row's visible text is facts; the instruction is in the
 model-facing renderer and the standing guidance, so a change to either does
 not leave old notices carrying old orders. The product numbers live in
 `hosted-sidekick.ts`, and nothing the model reads repeats them.
