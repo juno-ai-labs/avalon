@@ -1103,6 +1103,9 @@ where to look when one misbehaves.
   eligible delegate may also manage the Sidekick. A `sidekick_reviews` row with
   `delivered_at` null is a notice the Queue still owes the wizard; the
   consumer's `sidekick_review_delivery_retry` line carries the refusal code.
+  What reviews changed: `sidekick_revisions` rows whose `review_id` is not
+  null, each the revision a review submitted, joined to `sidekick_reviews`
+  for when; the `sidekick_review_revised` log line counts them.
   [`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)
   owns the review.
 - **A scheduled run did not fire.** Inspect the object's `schedules`

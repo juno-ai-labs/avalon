@@ -1976,6 +1976,18 @@ describe("a hosted Sidekick", () => {
     expect((await reviewState()).reviews.map((review) => review.delivered_at !== null)).toEqual([true]);
     expect((await alarms()).find((alarm) => alarm.kind === SIDEKICK_REVIEW_ALARM_KIND)?.due_at).toBe(reviewedAt + SIDEKICK_REVIEW_INTERVAL_MS);
 
+    // A revision the wizard submits during that review is recorded against
+    // it; a person's is not. What reviews changed is then one query.
+    await workspaceStub().sidekickSaveDefinition({
+      ...addressed(), draft: { ...DEFINITION, instructions: "Do the requested work and say so in three sentences." },
+      evaluatorRules: null, submittedByRunId: "00000000-0000-7000-8000-00000000ad93", actor: actor(), origin: "sidekick_review",
+    });
+    await submit({ ...DEFINITION, instructions: "A person's own change." });
+    expect(await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{ definition_revision: number; review_id: string | null }>(
+      `SELECT definition_revision, review_id FROM sidekick_revisions WHERE sidekick_id = ? AND definition_revision >= 3 ORDER BY definition_revision`,
+      AUTOMATION_ID,
+    ).toArray())).toEqual([{ definition_revision: 3, review_id: delivered }, { definition_revision: 4, review_id: null }]);
+
     // A pause drops the entry; a resume sends a request still owed at once.
     const owed = "00000000-0000-7000-8000-00000000ad92";
     await runInDurableObject(workspaceStub(), (_instance, state) => {
