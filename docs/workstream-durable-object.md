@@ -1340,6 +1340,7 @@ complete relationship map is:
 | regional Queue Worker | WorkspaceDO (hosted parent) | typed RPC | `receiveChildEffects`: parent receipt, child projection, aggregate, state row, and outbox row in one transaction; a replay is answered from the receipt. A hosted parent's directory rows are applied inside that same transaction, never through `parent_outbox` |
 | WorkspaceDO (hosted parent) | regional Queue | Cloudflare Queue | activity and notification rows of `parent_outbox`, sent with the `parent_effect` envelope inline and deleted when the Queue accepts it |
 | WorkspaceDO alarm | regional Queue, then WorkspaceDO | Cloudflare Queue, typed RPC | `sidekick_run_provision`: a run's entry hands it to the consumer, which opens its conversation and reports `sidekickRunProvisioned`; the entry sends again, later each time, until the report |
+| WorkspaceDO alarm | regional Queue, then WorkspaceDO and the wizard's SubstreamAgent, then WorkspaceDO | Cloudflare Queue, typed RPC | `sidekick_review`: a Sidekick's review entry hands the request to the consumer, which reads the notice back with `sidekickReviewDelivery`, admits it with `admitSidekickReview` (idempotent on the review id) and reports `sidekickReviewDelivered`; the entry sends again, later each time, until the report ([`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)) |
 | regional Queue Worker | WorkspaceDO | typed RPC | `applyWorkstreamRegionalEffect`: first-party activity event, all target edges, and the replay receipt commit atomically; the object-local sequence is the feed cursor |
 | regional Queue Worker | WorkspaceDO | typed RPC | notification intent, bounded destination payload, and the replay receipt commit atomically; current user/member identity is resolved from D1 before the call and crosses as data |
 | (none) | | local | the provisional directory row a `reserveChild("0")` at creation writes is applied by `WorkspaceDO` to its own directory before `reserveChild` answers; there is no longer an object boundary to cross |
@@ -1799,8 +1800,9 @@ A Sidekick's rows are `WorkspaceDO`'s, keyed by `sidekick_id`:
 [`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-sidekick-is-hosted-beside-them)
 maps them, and [`automation-lifecycle.md`](automation-lifecycle.md) owns what
 they mean. `onChildCommonProjection` maps a run child's accepted conversation
-state onto `sidekick_runs.state`, and only a newer projection with a live state
-reopens a finished run (see
+state onto `sidekick_runs.state`, counts a finish under the accepted revision
+toward the Sidekick's next self-review, and only a newer projection with a
+live state reopens a finished run (see
 [continuing a run](automation-lifecycle.md#continuing-a-run)).
 
 ### `SubstreamAgent`

@@ -2418,7 +2418,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const identity = this.objectStore.identity();
     if (!identity) return { accepted: false, code: "sidekick_review_destination_unavailable" };
     if (identity.workspaceId !== request.workspaceId || identity.parentKind !== "automation"
-      || identity.parentId !== request.workstreamId || this.externalSubstreamId() !== "0") {
+      || identity.parentId !== request.workstreamId || identity.parentId !== request.review.automationId
+      || this.externalSubstreamId() !== "0") {
       return { accepted: false, code: "sidekick_review_destination_mismatch" };
     }
     const parent = await conversationParentStub(this.env, {
