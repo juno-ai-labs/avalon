@@ -35,6 +35,7 @@ import {
   type HarnessPluginActivationContext,
   type HarnessResidentContext,
   type HarnessTool,
+  type HarnessToolResult,
   type HarnessToolContext,
   type InferenceAttemptEvent,
   type InferenceRequestEvent,
@@ -4305,6 +4306,59 @@ describe("agent harness", () => {
     expect(render.mock.calls.length).toBeGreaterThanOrEqual(3);
   });
 
+  it("sends a tool's image parts to the compaction summary when that turn crosses the threshold", async () => {
+    const imageUrl = "data:image/png;base64,c3VtbWFyaXNlLW1l";
+    const requestBodies: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const responses = [
+      streamResponse([{
+        model: "test/model",
+        choices: [{ delta: { tool_calls: [toolDelta(0, "provider-view", "view_resource")] }, finish_reason: "tool_calls" }],
+        usage: { prompt_tokens: 81, completion_tokens: 1 },
+      }]),
+      streamResponse([{
+        model: "test/model",
+        choices: [{ delta: { content: "A beach at dusk was viewed." }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 82, completion_tokens: 8 },
+      }]),
+      streamResponse([{
+        model: "test/model",
+        choices: [{ delta: { content: "done" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 24, completion_tokens: 2 },
+      }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(providerRequestView(JSON.parse(String(init?.body))) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const viewTool: HarnessTool = {
+      definition: {
+        name: "view_resource",
+        description: "View an image resource",
+        capability: "workstream.resources.view",
+        mode: "read",
+        idempotency: "safe",
+        inputSchema: { type: "object", additionalProperties: false },
+      },
+      execute: async () => ({
+        output: { returned: 1 },
+        summary: "Viewed one image",
+        contentParts: [{ type: "image_url" as const, image_url: { url: imageUrl, detail: "auto" as const } }],
+      }),
+    };
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([viewTool])],
+      compaction: { contextWindowTokensByModel: { "test/model": 100 }, persist: vi.fn() },
+    });
+
+    expect(outcome.status).toBe("completed");
+    expect(requestBodies[1]?.messages.find((message) => message.role === "tool")?.content).toEqual([
+      { type: "text", text: '{"success":true,"data":{"returned":1}}' },
+      { type: "image_url", image_url: { url: imageUrl, detail: "auto" } },
+    ]);
+    expect(JSON.stringify(requestBodies[2]?.messages)).not.toContain("data:image/");
+  });
+
   it("keeps the principal's own system section out of the compaction summary but on every model turn", async () => {
     const requestBodies: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
     const responses = [
@@ -7025,6 +7079,60 @@ describe("agent harness", () => {
     expect(JSON.stringify(completed)).not.toContain("data:image/");
     expect(completed && completed.type === "tool_completed" ? completed.result : null)
       .not.toHaveProperty("contentParts");
+  });
+
+  it("sends tool image parts on the next request only and never persists them in the loop state", async () => {
+    const imageUrl = "data:image/png;base64,bmV4dC1yZXF1ZXN0LW9ubHk=";
+    const tool = (name: string, result: HarnessToolResult): HarnessTool => ({
+      definition: {
+        name,
+        description: name,
+        capability: `test.${name}`,
+        mode: "read",
+        idempotency: "safe",
+        inputSchema: { type: "object", additionalProperties: false },
+      },
+      execute: async () => result,
+    });
+    const responses = [
+      streamResponse([{
+        choices: [{ delta: { tool_calls: [toolDelta(0, "provider-view", "view_resource")] }, finish_reason: "tool_calls" }],
+      }]),
+      streamResponse([{
+        choices: [{ delta: { tool_calls: [toolDelta(0, "provider-note", "take_note")] }, finish_reason: "tool_calls" }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "done" }, finish_reason: "stop" }] }]),
+    ];
+    const requestBodies: Array<{ messages: Array<{ role: string; tool_call_id?: string; content?: unknown }> }> = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(providerRequestView(JSON.parse(String(init?.body))) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const transitions: BindLoopTransition[] = [];
+
+    await expect(runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([
+        tool("view_resource", {
+          output: { returned: 1 },
+          summary: "Viewed one image",
+          contentParts: [{ type: "image_url", image_url: { url: imageUrl, detail: "auto" } }],
+        }),
+        tool("take_note", { output: { noted: true }, summary: "Noted" }),
+      ])],
+      onBindLoopTransition: async (transition) => { transitions.push(transition); },
+    })).resolves.toMatchObject({ status: "completed", content: "done" });
+
+    const viewResult = (body: typeof requestBodies[number]) => body.messages
+      .find((message) => message.role === "tool" && message.tool_call_id === "provider-view")?.content;
+    expect(viewResult(requestBodies[1]!)).toEqual([
+      { type: "text", text: '{"success":true,"data":{"returned":1}}' },
+      { type: "image_url", image_url: { url: imageUrl, detail: "auto" } },
+    ]);
+    expect(viewResult(requestBodies[2]!)).toBe('{"success":true,"data":{"returned":1}}');
+    expect(transitions.filter((transition) => transition.kind === "tool_result_accepted")
+      .map((transition) => transition.kind === "tool_result_accepted" ? transition.message.content : null))
+      .toEqual(['{"success":true,"data":{"returned":1}}', '{"success":true,"data":{"noted":true}}']);
   });
 
   it("relays reauthorized ephemeral parts from a completed JSON receipt without executing the tool again", async () => {

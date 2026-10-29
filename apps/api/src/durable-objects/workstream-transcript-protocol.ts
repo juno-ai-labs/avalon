@@ -57,6 +57,8 @@ type LocalOnlyTranscriptOperation =
   // Read by the owning object while it prepares a compaction; the positions
   // are meaningless to any caller that does not hold the loop.
   | "bindMessagePositionsBySourceKind"
+  // A repair the owning object runs before its harness reads the projection.
+  | "retireInlineToolMessageContent"
   | "omittedTurnEnvelope"
   // Accepted assistant turns may enqueue regional effects in the same SQLite
   // transaction. Function callbacks cannot cross the object-port boundary.
