@@ -209,6 +209,21 @@ would have sent the skill's recipe to another host.
 
 **Changes:** Nothing in the agreed scope. Shipped in #1452.
 
+### 2026-10-29 — Readers of stored annotations strip unknown keys
+
+**Decided:** `AnnotatedMessageContentSchema`, which every read of a stored
+turn goes through, is built from the same locator shapes as the strict
+`AnnotationSchema` but with plain objects, so a key a reader does not know is
+dropped rather than failing the whole message. Admission stays strict.
+
+**Why:** The `viewport` entry above cost older desktop builds a message's
+chips, and so would every optional field after it. Strictness earns its keep
+only where Rally's own client is the sender; on a read it turns a newer
+writer's field into a hidden message. This does not help builds already
+shipped with the strict reader, which was accepted; it ends the pattern.
+
+**Changes:** Nothing in the agreed scope. Shipped in #1452.
+
 ## Design
 
 ### The serving Worker injects the picker for Rally viewers

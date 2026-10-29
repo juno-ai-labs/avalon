@@ -73,6 +73,14 @@ describe('artifact annotations', () => {
     }
     expect(AnnotationSchema.safeParse({...pin(),target:{...pin().target,locator:{...element,pagePath:'/pricing?plan=team'}},content:{...pin().content,source:'rendered'}}).success).toBe(true);
   });
+  it('reads a stored annotation with a key this build does not know, and still refuses one at admission',()=>{
+    const stored={kind:'artifact_annotations',annotations:[{...pin(),target:{...pin().target,locator:{type:'element',css:'h1',box:{x:0,y:0,w:1,h:1,later:true},visibleText:'Plans',viewport:{width:400,height:900,scrollX:0,scrollY:0,devicePixelRatio:1,colorScheme:'light',later:true},later:true}},later:true}]};
+    const read=AnnotatedMessageContentSchema.safeParse(stored);
+    expect(read.success).toBe(true);
+    expect(read.success && read.data.annotations[0]?.target.locator).toEqual({type:'element',css:'h1',box:{x:0,y:0,w:1,h:1},visibleText:'Plans',viewport:{width:400,height:900,scrollX:0,scrollY:0,devicePixelRatio:1,colorScheme:'light'}});
+    expect(renderAnnotations(stored)).not.toContain('later');
+    expect(AnnotationsSchema.safeParse(stored.annotations).success).toBe(false);
+  });
   it('decodes XML quoting exactly once before exact replacements',()=>{
     const exact='Say "tea & <milk>" and keep &amp; literally.';
     const rendered=renderAnnotations({kind:'artifact_annotations',annotations:[{...pin(),content:{...pin().content,exact}}]});
