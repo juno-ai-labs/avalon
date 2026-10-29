@@ -318,7 +318,10 @@ width they never used.
 
 With the site imported (recovery above), serve it and open the page in
 Playwright with the person's window, in one \`run_command\` from the
-workspace root. Fill in the values from \`<location>\`; keep the quotes:
+workspace root. Paste the \`<location>\` JSON once, as the \`location\`
+object, and let the script read the fields: the page path and the CSS path
+are page data, and pasting them into a quoted literal would let a quote in
+either break or rewrite the script.
 
 \`\`\`
 mkdir -p .rally/tmp && rm -f .rally/tmp/view.png .rally/tmp/element.png
@@ -326,19 +329,21 @@ python3 -m http.server 8765 --bind 127.0.0.1 --directory "$AVALON_RESOURCE_DIR/<
 sleep 1
 NODE_PATH="$(npm root -g)" node - <<'EOF'
 const { chromium } = require('playwright');
+const location = <paste the location JSON here>;
+const view = location.viewport ?? { width: 400, height: 900, devicePixelRatio: 1, colorScheme: 'light', scrollX: 0, scrollY: 0 };
 (async () => {
   const browser = await chromium.launch();
   const context = await browser.newContext({
-    viewport: { width: <viewport.width>, height: <viewport.height> },
-    deviceScaleFactor: <viewport.devicePixelRatio>,
-    colorScheme: '<viewport.colorScheme>',
+    viewport: { width: view.width, height: view.height },
+    deviceScaleFactor: view.devicePixelRatio,
+    colorScheme: view.colorScheme,
   });
   const page = await context.newPage();
-  await page.goto('http://127.0.0.1:8765<pagePath>', { waitUntil: 'networkidle' });
-  await page.evaluate(([x, y]) => window.scrollTo(x, y), [<viewport.scrollX>, <viewport.scrollY>]);
+  await page.goto(new URL(location.pagePath ?? '/', 'http://127.0.0.1:8765').href, { waitUntil: 'networkidle' });
+  await page.evaluate(([x, y]) => window.scrollTo(x, y), [view.scrollX, view.scrollY]);
   await page.waitForTimeout(250);
   await page.screenshot({ path: '.rally/tmp/view.png' });
-  const element = page.locator('<css>').first();
+  const element = page.locator(location.css).first();
   if (await element.count()) await element.screenshot({ path: '.rally/tmp/element.png' });
   else console.log('element not found at that CSS path; the page may have changed since the comment');
   await browser.close();

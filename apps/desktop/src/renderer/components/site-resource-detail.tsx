@@ -504,6 +504,7 @@ export function SiteResourceDetail({
   // artifact's origin, is heard, and only shapes the shared schema admits.
   React.useEffect(() => {
     if (!surface.framed || !frameUrl || !artifactOrigin) return undefined;
+    readySinceLoad.current = false;
     const receive = (event: MessageEvent): void => {
       if (event.source !== frameRef.current?.contentWindow || event.origin !== artifactOrigin) return;
       const parsed = AnnotationFrameMessageSchema.safeParse(event.data);
@@ -515,7 +516,9 @@ export function SiteResourceDetail({
         setFrameDocument((count) => count + 1);
       } else if (message.type === 'rally-artifact-pin') {
         if (!pickingRef.current) return;
-        if (message.pin === null) { setPicking(false); return; }
+        // Escape inside the page: ends picking and drops the unfinished pin,
+        // as the app's own Escape handler does.
+        if (message.pin === null) { if (editingRef.current) annotationDraft?.discard(editingRef.current); setEditingPin(null); setPicking(false); return; }
         void acceptPinRef.current(message.pin);
       } else if (message.type === 'rally-annotation-comment-action') {
         const action = message.action;
@@ -600,12 +603,18 @@ export function SiteResourceDetail({
   const orderedHeaderActions = React.useMemo(() => [...headerActions.filter((action) => action.key !== 'comment-mode'), ...headerActions.filter((action) => action.key === 'comment-mode')], [headerActions]);
   useDetailHeaderActions(orderedHeaderActions);
 
-  React.useEffect(() => {
-    if (!annotationDraft || previewShown!==true) return;
+  // Keyed on what the page would be told, not on the draft's identity: a
+  // keystroke in the editor changes the draft but not the cards.
+  const pageComments = React.useMemo(() => {
+    if (!annotationDraft) return null;
     const pins=annotationDraft.pins.filter((pin)=>pin.id!==editingPin && pin.annotation.target.resourceId===resourceId && pin.annotation.target.version===version).map(({id,annotation})=>({id,annotation}));
     // The pin being edited stays highlighted in the page as the selection.
     const editing = annotationDraft.selections.find((pin) => pin.id === editingPin)?.annotation.target.locator;
-    const selected = editing?.type === 'element' ? editing.css : null;
+    return JSON.stringify({ pins, selected: editing?.type === 'element' ? editing.css : null });
+  }, [annotationDraft, editingPin, resourceId, version]);
+  React.useEffect(() => {
+    if (!annotationDraft || previewShown!==true || pageComments === null) return;
+    const { pins, selected } = JSON.parse(pageComments) as { pins: AnnotationCommentPins; selected: string | null };
     if (surface.framed) { tellFrame({ type: 'rally-annotation-comments', pins, selected }); return; }
     if (!surface.comments) return;
     let active=true;
@@ -615,7 +624,7 @@ export function SiteResourceDetail({
       else {const pane=paneRef.current?.getBoundingClientRect();if(action.point && pane)setCommentAnchor({x:Math.max(8,Math.min(pane.x+action.point.x,window.innerWidth-308)),y:pane.y+action.point.y});setEditingPin(action.id);}
     }).catch(()=>{});
     return ()=>{active=false;};
-  },[annotationDraft?.pins,editingPin,resourceId,version,surface,previewShown,frameDocument,commentReady,tellFrame]);
+  },[pageComments,surface,previewShown,frameDocument,commentReady,tellFrame]);
 
   const editingSelection = annotationDraft?.selections.find((p) => p.id === editingPin);
   return (
@@ -639,10 +648,12 @@ export function SiteResourceDetail({
                 data-loading={previewShown === true ? undefined : ''}
                 onLoad={() => {
                   setPreviewShown(true);
-                  // The script announces itself while the document parses, so
-                  // by `load` a page that carries it has already said so; one
-                  // that does not (a refusal, an error page) has not.
+                  // The script announces itself before the document finishes
+                  // loading, so by `load` a page that carries it has already
+                  // said so; one that does not (a refusal, an error page) has
+                  // not, and Comment mode cannot stay on there.
                   setCommentReady(readySinceLoad.current);
+                  if (!readySinceLoad.current) setPicking(false);
                   readySinceLoad.current = false;
                 }}
                 ref={frameRef}

@@ -35,21 +35,24 @@ describe("who gets the annotation script", () => {
 });
 
 describe("the served script", () => {
-  it("is cacheable JavaScript that a browser may not sniff", async () => {
-    const response = annotationScriptResponse(APP);
+  it("is JavaScript a browser may not sniff, kept for a year only under this build's own path", async () => {
+    const path = artifactAnnotationScriptPath(APP);
+    const response = annotationScriptResponse(APP, path);
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("javascript");
-    expect(response.headers.get("cache-control")).toContain("immutable");
+    expect(response.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
-    const body = await response.text();
-    expect(body).toContain("rallyAnnotations");
-    expect(body).toContain(JSON.stringify(APP));
+    expect(await response.text()).toContain("rallyAnnotations");
+    // Another build's path, asked of this isolate during a deploy: served, not cached as that build.
+    const stale = annotationScriptResponse(APP, "/__rally/picker-00000000.js");
+    expect(stale.status).toBe(200);
+    expect(stale.headers.get("cache-control")).toBe("no-store");
   });
 });
 
 describe("placing the script in static HTML", () => {
   const path = "/__rally/picker-0123abcd.js";
-  const tag = `<script src="${path}"></script>`;
+  const tag = `<script defer src="${path}"></script>`;
 
   it("goes first in the head, before the page's own metadata and scripts", () => {
     const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><script>page()</script></head><body>Body</body></html>`;
@@ -64,6 +67,13 @@ describe("placing the script in static HTML", () => {
       .toBe(`<!doctype html><head>${tag}</head><p>Body</p>`);
     expect(injectAnnotationScriptIntoHtml(`<p>Body</p>`, path))
       .toBe(`<head>${tag}</head><p>Body</p>`);
+  });
+
+  it("skips a head named inside a comment and finds the real one", () => {
+    expect(injectAnnotationScriptIntoHtml(`<!-- template uses <head> --><html><head><title>T</title></head></html>`, path))
+      .toBe(`<!-- template uses <head> --><html><head>${tag}<title>T</title></head></html>`);
+    expect(injectAnnotationScriptIntoHtml(`<!-- <html> and <head> are below --><html><body>B</body></html>`, path))
+      .toBe(`<!-- <html> and <head> are below --><html><head>${tag}</head><body>B</body></html>`);
   });
 
   it("handles a head element carrying attributes and mixed case", () => {

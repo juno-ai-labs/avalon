@@ -720,16 +720,19 @@ this module holds, and [`engineering-mcp.md`](engineering-mcp.md) owns it.
 ### Annotation picking
 
 A Rally viewer's HTML responses carry Rally's annotation script, prepended as
-the first child of `<head>` in `serveCurrent`: a string edit on a static
-asset, an `HTMLRewriter` on an active site's streamed response, in the same
-places the social preview is injected. The rule in `annotation-script.ts` is
+the first child of `<head>` in `serveCurrent`, with `defer` so the page parses
+without waiting on it: a string edit on a static asset (skipping any `<head>`
+inside a comment), an `HTMLRewriter` on an active site's streamed response, in
+the same places the social preview is injected. The rule in `annotation-script.ts` is
 a valid viewer session (the desktop's view and pop-out, or a person who opened
 the site from Rally in their own browser, where it is inert) or a framed
 request when `BROWSER_APP_ORIGIN` is configured (the browser client, whose
 frame Safari views without the partitioned cookie). A public read, a crawler
 and an unfurler get the page as published. The file itself is served at
 `/__rally/picker-<hash>.js` before the hostname lookup, like the bootstrap,
-and cached by its content-addressed path. The desktop calls the script's API
+and cached for a year only when the hash is the serving isolate's own; another
+build's path is answered but not cached, so a deploy cannot leave a browser
+holding the old script under the new name. The desktop calls the script's API
 through `executeJavaScript` and captures the selected element as a PNG crop;
 the browser client posts to the frame. Prior-version mounts carry no script:
 a saved spot reopens through the authorized
@@ -787,8 +790,9 @@ lookup. Static assets are rewritten as text and active responses through
 `HTMLRewriter`, next to the social-preview injection.
 
 **Why:** The desktop and the browser client both needed Rally's picker inside
-the artifact's document, and neither can put it there from outside: the
-desktop's view has no preload and the browser's frame is another origin. The
+the artifact's document. The browser's frame is another origin, which the app
+cannot reach; the desktop could, through an isolated world, and retiring that
+was a choice for one transport over two. The
 2026-10-19 design had refused injection for the forgery it allows; the
 requester judged that not a real threat for agent-authored pages.
 

@@ -218,7 +218,7 @@ const artifactServer = {
     // hash in its path only busts caches, so any spelling serves the current
     // script. See `annotation-script.ts`.
     if (ARTIFACT_ANNOTATION_SCRIPT_PATH_PATTERN.test(url.pathname)) {
-      return annotationScriptResponse(browserFrameAncestor(env.BROWSER_APP_ORIGIN));
+      return annotationScriptResponse(browserFrameAncestor(env.BROWSER_APP_ORIGIN), url.pathname);
     }
 
     let artifactId = host.legacyArtifactId;

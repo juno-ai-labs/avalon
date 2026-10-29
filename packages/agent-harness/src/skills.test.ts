@@ -753,6 +753,8 @@ describe("built-in skills", () => {
     expect(examples[0]?.path).toBe("reference/worked-examples.md");
     expect(examples[0]?.body).toContain("env.ASSETS.fetch");
     expect(BUILDING_LIVE_SITES_SKILL.body).not.toContain("beta-signups/signups.json");
+    // The annotation projection sends the agent to this heading by name.
+    expect(BUILDING_LIVE_SITES_SKILL.body).toContain("## Recreating a person's view");
   });
 
   it("keeps the outbound-write skills provider-agnostic and cross-referenced", () => {

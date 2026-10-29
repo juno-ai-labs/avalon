@@ -32,23 +32,47 @@ export function annotationScriptPathFor(input: {
 }): string | null {
   const framed = input.request.headers.get("sec-fetch-dest") === "iframe" && input.parentOrigin !== null;
   if (!input.viewerId && !framed) return null;
-  return artifactAnnotationScriptPath(input.parentOrigin);
+  return scriptPath(input.parentOrigin);
 }
 
-/** The served script: cacheable by its content-addressed path, never sniffed. */
-export function annotationScriptResponse(parentOrigin: string | null): Response {
-  return new Response(artifactAnnotationScript(parentOrigin), {
+// The script and its hash are the same for every request of an isolate, so
+// they are built once per origin rather than once per asset served.
+const built = new Map<string | null, { path: string; source: string }>();
+function script(parentOrigin: string | null): { path: string; source: string } {
+  let entry = built.get(parentOrigin);
+  if (!entry) {
+    entry = { path: artifactAnnotationScriptPath(parentOrigin), source: artifactAnnotationScript(parentOrigin) };
+    built.set(parentOrigin, entry);
+  }
+  return entry;
+}
+const scriptPath = (parentOrigin: string | null): string => script(parentOrigin).path;
+
+/**
+ * The served script, never sniffed. A browser may keep it for a year only
+ * under this isolate's own content-addressed path: while a deploy rolls out,
+ * an older isolate can be asked for the newer path, and what it serves then
+ * must not be cached as if it were the newer script.
+ */
+export function annotationScriptResponse(parentOrigin: string | null, requestedPath: string): Response {
+  const { path, source } = script(parentOrigin);
+  return new Response(source, {
     status: 200,
     headers: {
       "content-type": "application/javascript; charset=utf-8",
-      "cache-control": "public, max-age=31536000, immutable",
+      "cache-control": requestedPath === path ? "public, max-age=31536000, immutable" : "no-store",
       "x-content-type-options": "nosniff",
     },
   });
 }
 
+/**
+ * Deferred: the page parses and starts rendering without waiting on the
+ * fetch, and the script still runs before `DOMContentLoaded`, which is all
+ * any host waits for.
+ */
 function scriptTag(path: string): string {
-  return `<script src="${path}"></script>`;
+  return `<script defer src="${path}"></script>`;
 }
 
 /**
@@ -61,21 +85,24 @@ function scriptTag(path: string): string {
  */
 export function injectAnnotationScriptIntoHtml(source: string, path: string): string {
   const tag = scriptTag(path);
-  const head = /<head\b[^>]*>/iu.exec(source);
-  if (head?.index !== undefined) {
-    const at = head.index + head[0].length;
-    return `${source.slice(0, at)}${tag}${source.slice(at)}`;
-  }
-  const html = /<html\b[^>]*>/iu.exec(source);
-  if (html?.index !== undefined) {
-    const at = html.index + html[0].length;
-    return `${source.slice(0, at)}<head>${tag}</head>${source.slice(at)}`;
-  }
+  const head = openingTag(source, "head");
+  if (head !== null) return `${source.slice(0, head)}${tag}${source.slice(head)}`;
+  const html = openingTag(source, "html");
+  if (html !== null) return `${source.slice(0, html)}<head>${tag}</head>${source.slice(html)}`;
   const doctype = /^\s*<!doctype\b[^>]*>/iu.exec(source);
   if (doctype) {
     return `${source.slice(0, doctype[0].length)}<head>${tag}</head>${source.slice(doctype[0].length)}`;
   }
   return `<head>${tag}</head>${source}`;
+}
+
+/** Where the first real `<name …>` tag ends, skipping any inside a comment. */
+function openingTag(source: string, name: string): number | null {
+  const scan = new RegExp(`<!--[\\s\\S]*?(?:-->|$)|<${name}\\b[^>]*>`, "giu");
+  for (const match of source.matchAll(scan)) {
+    if (!match[0].startsWith("<!--")) return match.index + match[0].length;
+  }
+  return null;
 }
 
 /**
