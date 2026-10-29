@@ -13,7 +13,7 @@ import {
   asWorkstreamId,
   type WorkstreamWorkflowInput,
 } from "@rally/contracts";
-import { runHarness, bindLoopNonSystemMessages } from "@rally/agent-harness";
+import { runHarness, bindLoopNonSystemMessages, BIND_LOOP_PROJECTOR_VERSION } from "@rally/agent-harness";
 
 import { providerRequestView, responsesStreamResponse } from "@rally/agent-harness/test-support/responses-stream";
 import { completionVerificationNudge } from "../src/services/completion-verification";
@@ -222,7 +222,7 @@ describe("work-stream transcript on workerd SQLite", () => {
     });
   });
 
-  it("retires tool image bytes that earlier loop state persisted, keeping the result text", async () => {
+  it("retires tool image bytes that earlier loop state persisted when the object starts, keeping the result text", async () => {
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
@@ -249,12 +249,15 @@ describe("work-stream transcript on workerd SQLite", () => {
           { originKind: "canonical", sourceKind: null, sourceId: null, sourceRevision: null },
           { originKind: "derived", sourceKind: "tool_receipt", sourceId: "call-1", sourceRevision: null },
         ] });
-      // Warm the projection cache, which the repair must not leave stale.
-      expect(bindLoopNonSystemMessages(transcript.readBindProjection(LOOP_ID)!).at(-1)?.content)
-        .toEqual(expect.arrayContaining([expect.objectContaining({ type: "image_url" })]));
-
-      await expect(transcript.retireInlineToolMessageContent(LOOP_ID)).resolves.toBe(1);
-
+      // A request at this revision was verified before the deploy, over the old bytes.
+      transcript.recordProviderBoundary({ loopId: LOOP_ID, generation: 1, stateRevision: 1,
+        systemProjectionRevision: 1, projectorVersion: BIND_LOOP_PROJECTOR_VERSION,
+        projectedHash: "hash-over-image-bytes", bindHash: "hash-over-image-bytes" });
+    });
+    // The repair runs in the constructor, before anything reads the projection.
+    await evictDurableObject(stub);
+    await runInDurableObject(stub, async (_instance, state) => {
+      const transcript = new WorkstreamTranscriptStorage(state.storage);
       expect(bindLoopNonSystemMessages(transcript.readBindProjection(LOOP_ID)!)).toEqual([
         { role: "user", content: "Draw a beach" },
         { role: "assistant", content: null,
@@ -264,12 +267,10 @@ describe("work-stream transcript on workerd SQLite", () => {
       expect(state.storage.sql.exec(
         `SELECT COUNT(*) AS n FROM transcript_payloads WHERE payload_json LIKE '%data:image/%'`,
       ).one().n).toBe(0);
+      expect(state.storage.sql.exec(
+        `SELECT COUNT(*) AS n FROM bind_provider_boundaries WHERE loop_id = ?`, LOOP_ID,
+      ).one().n).toBe(0);
       await expect(transcript.retireInlineToolMessageContent(LOOP_ID)).resolves.toBe(0);
-    });
-    await evictDurableObject(stub);
-    await runInDurableObject(stub, (_instance, state) => {
-      expect(bindLoopNonSystemMessages(new WorkstreamTranscriptStorage(state.storage).readBindProjection(LOOP_ID)!).at(-1))
-        .toEqual({ role: "tool", tool_call_id: "call-1", content: resultText });
     });
   });
 

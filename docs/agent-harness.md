@@ -285,10 +285,12 @@ that carries the JSON alone. When that next request is a compaction summary,
 the summary carries them, since it replaces the tool messages they belong to. A model that needs an image again asks for it
 again, through `view_resource` or the tool that made it. A restart between a
 tool result's acceptance and that next request loses the parts for that one
-request; the JSON result, which names the resource, survives. Before every
-execution the host rewrites any loop-state tool message that still holds
-non-text parts, written before this rule, to its text alone
-(`retireInlineToolMessageContent`).
+request; the JSON result, which names the resource, survives. When the object
+starts, before its first projection read, the host rewrites any loop-state
+tool message that still holds non-text parts, written before this rule, to its
+text alone, one payload at a time (`retireInlineToolMessageContent`). It also
+drops a provider-boundary record at the current revision, which hashed the old
+bytes and would otherwise read as a conflicting replay.
 
 Host context messages carry non-provider `provenance` metadata until Bind heals
 the initial array. The initialization transition records an origin beside each
@@ -1867,9 +1869,11 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 **What changed:** `harnessResultOutcome` no longer folds a tool result's
 `contentParts` into the tool message that Bind keeps and the host persists.
 The harness holds them in memory and `withCurrentTurnContent` adds them to the
-next provider request only, including a compaction summary request. Before each execution the host rewrites loop-state
-tool messages that still hold non-text parts to their text, under the same
-fact identity, and logs `bind_loop_inline_tool_content_retired`.
+next provider request only, including a compaction summary request. When the
+object starts, before its first projection read, the host rewrites loop-state
+tool messages that still hold non-text parts to their text, one payload at a
+time under the same fact identity, clears the provider-boundary record at the
+current revision, and logs `bind_loop_inline_tool_content_retired`.
 
 **Why:** On 2026-10-25 four `generate_image` results put 15.6 MB of base64
 PNGs into one Thread's loop state. Every later step rebuilt that state several
