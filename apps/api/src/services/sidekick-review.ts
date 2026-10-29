@@ -42,6 +42,7 @@ export async function deliverSidekickReview(env: Env, message: SidekickReviewQue
     origin: "sidekick_review",
     now,
   });
-  if (!admitted.accepted) throw new Error(`sidekick_review_refused:${admitted.code}`);
+  // One stable code, so the consumer's log names the refusal rather than its fallback.
+  if (!admitted.accepted) throw new Error(`sidekick_review_refused_${admitted.code}`);
   await workspace.sidekickReviewDelivered(address);
 }

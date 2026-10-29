@@ -1,40 +1,45 @@
 import type { SidekickReviewNoticeV1 } from "@rally/contracts";
 
 /**
- * The host's scheduled self-review notice, as the wizard reads it.
+ * The host's scheduled self-review notice: the sentence people see on the
+ * row, and the request the wizard reads.
  *
- * The first line attributes it to Rally, which is the whole defence against a
- * teammate or a run's content dressing itself up as a review: every notice
- * arrives through this one renderer and no agent message does. The counts are
- * repeated as JSON so the model reads data as data; the sentence says what is
- * asked. `docs/automation-lifecycle.md` owns the review.
+ * The model-facing first line attributes it to Rally, which is the whole
+ * defence against a teammate or a run's content dressing itself up as a
+ * review: every notice arrives through this one renderer and no agent message
+ * does. The row's own text is facts only, because it is what a person opening
+ * the authoring conversation reads; what to do with the facts is the wizard's
+ * standing guidance. `docs/automation-lifecycle.md` owns the review.
  */
 
-/** What the authoring conversation shows people, and the sentence the model is asked with. */
+/** What the authoring conversation shows people: what Rally asked for, in plain words. */
 export function sidekickReviewText(notice: SidekickReviewNoticeV1): string {
   const { finished, sample } = notice;
   const total = finished.completed + finished.failed + finished.stopped;
-  const window = notice.since === null ? "since it was created" : `since ${notice.since}`;
+  const outcomes = [
+    `${finished.completed} completed`,
+    ...(finished.failed > 0 ? [`${finished.failed} failed`] : []),
+    ...(finished.stopped > 0 ? [`${finished.stopped} stopped`] : []),
+  ].join(", ");
+  const waiting = finished.needsInput > 0
+    ? `, and ${finished.needsInput} ${finished.needsInput === 1 ? "is" : "are"} waiting for input`
+    : "";
   const sampled = sample.failed.length + sample.needsInput.length + sample.completed.length;
-  const reading = sampled < total + finished.needsInput
-    ? `Read the ${sampled} runs sampled below (every failed or stopped run up to ${sample.limits.failed}, runs waiting for input up to ${sample.limits.needsInput},`
-      + ` and ${sample.completed.length} completed runs spread evenly across the window), not every run.`
-    : `Read the ${sampled} runs listed below.`;
-  return [
-    `Scheduled self-review: ${total} run${total === 1 ? "" : "s"} finished ${window}`
-      + ` (${finished.completed} completed, ${finished.failed} failed, ${finished.stopped} stopped),`
-      + ` ${finished.needsInput} waiting for input; ${notice.finishedUnderRevision} ran under revision ${notice.definitionRevision}.`,
-    reading,
-    "Then read any replies to the Sidekick's posts, sort platform failures from procedure problems,"
-      + " revise the definition where the procedure is at fault, and report what changed or why nothing did.",
-  ].join(" ");
+  const window = notice.since === null ? "since it was created" : "since the last review";
+  return `Rally asked this Sidekick's wizard for a scheduled self-review: ${total} run${total === 1 ? "" : "s"} finished ${window}`
+    + ` (${outcomes})${waiting}. The wizard reads ${sampled} of them and reports here.`;
 }
 
-/** How an admitted review notice reads to the model that receives it. */
+/** How an admitted review notice reads to the model that receives it: the row's sentence, then the runs to read. */
 export function renderSidekickReviewNotice(notice: SidekickReviewNoticeV1, text: string): string {
+  const list = (ids: readonly string[]) => (ids.length === 0 ? "none" : ids.join(", "));
   return [
     "Notice from Rally, not from a person or an agent: a scheduled self-review of this Sidekick is due.",
     text,
-    `Review data: ${JSON.stringify(notice)}`,
+    `Every count and run above is from definition revision ${notice.definitionRevision}, between ${notice.since ?? "creation"} and ${notice.until}.`,
+    "Read exactly these runs, by id, and no others:",
+    `- failed or stopped: ${list(notice.sample.failed)}`,
+    `- waiting for input: ${list(notice.sample.needsInput)}`,
+    `- completed, spread evenly across the window: ${list(notice.sample.completed)}`,
   ].join("\n");
 }

@@ -1456,8 +1456,9 @@ async function projectModelProtocolTranscript(
     // row by actor, but the one the run was woken to answer, and standing
     // context for every turn after it, admitted the way an agent's message is.
     // Left to the rule below it was dropped with the UI rows, and the wizard
-    // answered a review it never saw.
-    if (message.structuredContent?.kind === "sidekick_review_due") {
+    // answered a review it never saw. The row's type is part of the match:
+    // the Rally attribution the renderer adds is only true of a system row.
+    if (message.messageType === "system" && message.structuredContent?.kind === "sidekick_review_due") {
       const notice = SidekickReviewNoticeV1Schema.parse(message.structuredContent);
       projected.push(modelDerivative(
         { role: "user", content: renderSidekickReviewNotice(notice, modelMessageContent(message)) },
@@ -2168,6 +2169,9 @@ function createAvalonAutomationsPlugin(
           submittedByRunId: input.harnessRunId,
           appearance: target.appearance,
           actor: actorRequest.actor,
+          // A scheduled self-review's submission is bounded by the host, not
+          // only by its guidance: nobody asked for the turn.
+          ...(input.reason === "sidekick_review" ? { origin: "sidekick_review" as const } : {}),
         });
         return { ...submitted, saved: draft.ready, description: draft.description };
       },
@@ -2201,7 +2205,10 @@ function createAvalonAutomationsPlugin(
       },
     })), ...createSidekickRunTools(env, input, (ref) => loadToolReplayOutput(env, ref))
       .flatMap((tool) => expandPages(tool, "sidekick", null)),
-      ...(delegationUser ? sidekickDelegationTools(env, input, delegationUser, false) : [])],
+      // A scheduled self-review may not enrol a delegate: that is a widening
+      // of who the Sidekick runs as, which nobody present asked for.
+      ...(delegationUser ? sidekickDelegationTools(env, input, delegationUser, false)
+        .filter((tool) => input.reason !== "sidekick_review" || tool.definition.name !== "set_delegation") : [])],
     onActivate: async () => prepare(),
   };
 }
