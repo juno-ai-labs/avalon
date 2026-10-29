@@ -1069,8 +1069,8 @@ Sidekick works for: what it now does differently, why, and how to restore
 the earlier version; nothing is posted when nothing changed. A Channel
 target (General or a Personal Channel) lands in the Channel's own feed as a
 message from Rally opening with the Sidekick's name
-(`postSidekickChannelMessage`), which a Sidekick's conversation scope lists
-and only that Channel; a Thread or Breakout target is an ordinary post
+(`postSidekickChannelMessage`), which the authoring conversation's scope
+lists, only that Channel, and no run's scope; a Thread or Breakout target is an ordinary post
 ([`conversation-tools.md`](conversation-tools.md)). It ends with a report in the authoring conversation for
 the owner, who was not present. A revision it submits is an ordinary
 revision, and the person reverts by asking for the earlier one.

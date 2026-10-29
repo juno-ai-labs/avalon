@@ -142,7 +142,7 @@ export function conversationToolAccess(input: WorkstreamWorkflowInput): Conversa
       tools: ["list", "read", "search", "post"], actingUserId };
   }
   if (substreamId !== "0") return null;
-  return { scope: { kind: "sidekick", automationId: input.parentId },
+  return { scope: { kind: "sidekick", automationId: input.parentId, authoring: true },
     tools: ["list", "read", "search", "post", "attach"], actingUserId };
 }
 

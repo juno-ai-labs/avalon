@@ -339,8 +339,9 @@ conversation chose that audience.
 
 ### 2026-10-29 — A Sidekick's scope lists the Channel its review announces in, and `post` reaches it
 
-**What changed:** A Sidekick scope (its authoring conversation and its runs)
-lists one Channel beside its home and attachments: General for an
+**What changed:** A Sidekick's authoring conversation's scope (`authoring:
+true` on the scope; a run's scope never carries it) lists one Channel beside
+its home and attachments: General for an
 Organization Sidekick, or its author's Personal Channel when General is
 archived or absent, and the author's Personal Channel for a personal one
 (`WorkspaceDO.sidekickAnnouncementSpaceId`). `post` to a Channel target
@@ -356,7 +357,8 @@ announcement is one of those rather than a new surface.
 
 **Consequences:** A Channel entry in a Sidekick scope is never its home and
 never `isHome`; a post with no reference still goes to the Thread or
-Breakout home. The author of a Channel message is `rally` or a member, so the
+Breakout home. A run never lists or posts to the Channel: it acts on its
+trigger's content, and the Channel's feed is not its audience. The author of a Channel message is `rally` or a member, so the
 Sidekick's name is in the body, not the author.
 
 ### 2026-10-23 — Guide Sidekick delivery toward its own identity

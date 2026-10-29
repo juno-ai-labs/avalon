@@ -9326,8 +9326,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!viewer) return [];
     const spaces = this.spaceStorage();
     if (scope.kind === "sidekick") {
-      // The one Channel a Sidekick's review announces a change in, listed so
-      // the wizard can name it; the feed read and the post admit the person again.
+      // The one Channel a Sidekick's review announces a change in, listed for
+      // the authoring conversation so the wizard can name it, and for no run:
+      // a run acts on its trigger's content, and a Channel's feed is not its
+      // audience. The feed read and the post admit the person again.
+      if (!scope.authoring) return [];
       const row = this.state.storage.sql.exec<{ scope: string; author_user_id: string } & Record<string, SqlStorageValue>>(
         `SELECT scope, author_user_id FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
         scope.automationId,
