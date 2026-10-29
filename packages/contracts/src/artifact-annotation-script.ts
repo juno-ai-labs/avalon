@@ -181,7 +181,10 @@ const ARTIFACT_PICKER_SOURCE = String.raw`(function(report) {
     const x = Math.min(1,Math.max(0,(r.x+scrollX)/width));
     const y = Math.min(1,Math.max(0,(r.y+scrollY)/height));
     selectElement(element);
-    report({ point:{x:Math.max(0,e.clientX),y:Math.max(0,e.clientY)}, rect:{x:r.x,y:r.y,width:r.width,height:r.height}, css:path.join(' > '), box:{x,y,w:Math.max(0,Math.min(1-x,r.width/width)),h:Math.max(0,Math.min(1-y,r.height/height))},visibleText:selected || element.textContent || '',html:trim(element),before:${ARTIFACT_ELEMENT_CONTEXT_SOURCE}(element.previousElementSibling,true,${ANNOTATION_CONTEXT_CHARACTERS}),after:${ARTIFACT_ELEMENT_CONTEXT_SOURCE}(element.nextElementSibling,false,${ANNOTATION_CONTEXT_CHARACTERS}),pagePath:location.pathname+location.search,replace:e.detail>1 });
+    // The window the person is looking at, so an agent with no screenshot can
+    // rebuild the same view in its own browser.
+    const viewport={width:innerWidth,height:innerHeight,scrollX:Math.max(0,scrollX),scrollY:Math.max(0,scrollY),devicePixelRatio:devicePixelRatio||1,colorScheme:matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'};
+    report({ point:{x:Math.max(0,e.clientX),y:Math.max(0,e.clientY)}, rect:{x:r.x,y:r.y,width:r.width,height:r.height}, viewport, css:path.join(' > '), box:{x,y,w:Math.max(0,Math.min(1-x,r.width/width)),h:Math.max(0,Math.min(1-y,r.height/height))},visibleText:selected || element.textContent || '',html:trim(element),before:${ARTIFACT_ELEMENT_CONTEXT_SOURCE}(element.previousElementSibling,true,${ANNOTATION_CONTEXT_CHARACTERS}),after:${ARTIFACT_ELEMENT_CONTEXT_SOURCE}(element.nextElementSibling,false,${ANNOTATION_CONTEXT_CHARACTERS}),pagePath:location.pathname+location.search,replace:e.detail>1 });
   }
   function trim(element) { return ${ARTIFACT_ELEMENT_HTML_SOURCE}(element); }
   function double(e) { pin(e); }

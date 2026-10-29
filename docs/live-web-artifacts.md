@@ -800,7 +800,11 @@ Safari's cookieless frame).
 **Consequences:** Public responses must stay byte-identical, which the hostname
 tests pin. The script path is reserved under `/__rally/`, and the artifact CSP's
 `script-src 'self'` is what admits it; a page's own `<meta>` policy cannot
-refuse a script that precedes it, which is why it goes first in `<head>`.
+refuse a script that precedes it, which is why it goes first in `<head>`. The
+`building-live-sites` skill gained a "Recreating a person's view" step: a
+browser-client comment carries the viewer's window instead of a screenshot,
+and the agent rebuilds that window in its sandbox with the Playwright already
+in the snapshot before a visual edit.
 
 ### 2026-10-22 — Preserve raw source data before building a site
 

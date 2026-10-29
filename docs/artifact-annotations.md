@@ -90,6 +90,17 @@ Composer chips provide a comment editor even after their original preview closes
 Annotation-bearing sends exclude another submission until the receipt returns;
 an open elicitation must be answered before artifact comments are sent.
 
+A pin made in a frame carries the window the person saw it in: the element
+locator's optional `viewport` (CSS-pixel width and height, the page's scroll
+offsets, the device pixel ratio and the color scheme), which the picker reads
+when it reports the pin. A rendered annotation with no screenshot (every
+browser-client website pin, since a browser cannot capture its frame) projects
+that window into the model's guidance, and the `building-live-sites` skill's
+"Recreating a person's view" step holds the Playwright recipe that rebuilds it
+in the Terminal sandbox from the imported site, so the agent sees what the
+person saw rather than the page at a width they never used. A desktop pin
+still carries its own crop and gets no such instruction.
+
 The canonical turn's existing `structuredContent` contains
 `{kind: 'artifact_annotations', annotations, names}`. Image annotations also
 retain server-built immutable image descriptors, version identity and model-image metadata for replay; clients cannot
@@ -316,7 +327,11 @@ the cards and the framed hosts' editor beside their elements through scrolls
 in any container, resizes and layout shifts. The editor goes beside, below or
 above its element rather than over it, a confirmed card keeps its element
 outlined so the comment's scope is visible, and the surface root no longer
-draws a focus ring when the editor hands focus back to it.
+draws a focus ring when the editor hands focus back to it. Website pins now
+record the viewer's window, and a rendered pin without a screenshot tells the
+model to rebuild that window in its sandbox before a visual edit, with the
+recipe in the site skill, so browser-client comments lose nothing the model
+needs that a desktop crop would have given it.
 
 **Why:** The browser client had no way to put a script into a cross-origin
 artifact frame, and the opaque frame's script was built only for the desktop.

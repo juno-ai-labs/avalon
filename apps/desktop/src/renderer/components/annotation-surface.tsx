@@ -205,7 +205,7 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
       if (!picking) return;
       const pin = message.pin;
       if (pin === null) { if(editing)draft?.discard(editing);setEditing(null);setPicking(false); return; }
-      const locator = AnnotationLocatorSchema.safeParse({ type: 'element', css: pin.css, box: pin.box, visibleText: pin.visibleText });
+      const locator = AnnotationLocatorSchema.safeParse({ type: 'element', css: pin.css, box: pin.box, visibleText: pin.visibleText, ...(pin.viewport ? { viewport: pin.viewport } : {}) });
       if (!locator.success) return;
       const frameBox = frame.current?.getBoundingClientRect();
       if (pin.rect) anchorEditor(pin.rect);
