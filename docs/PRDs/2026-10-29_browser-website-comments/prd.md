@@ -13,378 +13,277 @@
 
 ## Summary
 
-The browser client previews a live artifact in a cross-origin `<iframe>` and
-has no way to run trusted code inside it, so Comment mode is disabled there.
-The desktop gets trust from an Electron isolated world. A browser has no such
-thing: any script that runs in the artifact's document runs with the same
-authority as the model-authored page.
+The browser client previews a live artifact in an `<iframe>` on the artifact's
+own origin, and the one picker script Rally has cannot get into that document
+from outside. The desktop puts it there through an Electron isolated world. The
+browser has no such thing, so the serving Worker puts it there instead: every
+HTML response the browser client frames carries Rally's picker, dormant until the
+app speaks to it over `postMessage`. Comment cards render inside the artifact's
+DOM, exactly as they do on the desktop.
 
-This PRD accepts that fact and designs around it instead of pretending it away.
-The page-side script becomes a **DOM inspector that only answers questions**,
-and every question is asked by the Rally app in response to the person's own
-click on a **glass overlay the app draws over the frame**. During Comment mode
-no pointer event reaches the page at all. The page cannot start a pin, cannot
-read a comment, and cannot answer a question nobody asked. What it can still do
-is lie about its own DOM, which it can do today by rendering it.
+The 2026-10-19 PRD proposed this and then narrowed to native-only because the
+page's scripts share the picker's origin and could post a pin. This PRD records
+why that is not a threat worth building around: the page is written by the
+workspace's own agent through `publish_resource`, nobody edits it by hand, and a
+pin a page could forge can only quote what the page is already showing. The
+checks that remain are the cheap structural ones the opaque HTML frame already
+uses.
 
-The same change also fixes the smaller, unrelated reason HTML _files_ cannot
-take comments in the browser: the opaque frame's picker asset is built only for
-the desktop renderer. Both fixes apply only to content Rally serves, which is the
-agreed scope: Rally does not need to support arbitrary third-party iframes.
+The same change fixes the unrelated reason HTML _files_ cannot take comments in
+the browser: the opaque frame's picker asset is built only for the desktop.
+Both fixes apply to content Rally serves. Arbitrary third-party iframes are out
+of scope.
 
 ## What exists today
 
 Read with [`artifact-annotations.md`](../../artifact-annotations.md) open.
 
-**Four HTML surfaces, three transports.** One picker script in
-`packages/contracts/src/artifact-picker.ts` does the outline, grow and pin work
-everywhere. What differs is how it gets into the document:
+One picker in `packages/contracts/src/artifact-picker.ts` does the outline,
+grow, pin and comment-card work on every HTML surface. What differs is how it
+gets into the document:
 
-| Surface                                              | How the script gets in                                                                                                                  | Who can forge a pin                      | Browser client          |
-| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- | ----------------------- |
-| HTML file, rail or lightbox                          | `srcdoc` frame, `sandbox="allow-scripts"`, fresh nonce, external `/annotation-frame.js` from the app origin                             | Nobody: the file's own scripts never run | **Disabled**, see gap A |
-| Saved site annotation (feed excerpt, draft reattach) | Same opaque frame over frozen HTML from `GET /resources/:id/versions/:v/site-preview`                                                   | Nobody                                   | **Disabled**, gap A     |
-| Live site, desktop rail and pop-out                  | `executeJavaScriptInIsolatedWorld(1001)` in the `WebContentsView`; comment cards drawn in the same world; screenshot from `capturePage` | Nobody: the page cannot reach the world  | n/a                     |
-| Live site, browser client                            | Nothing. The frame is the artifact's own origin and the app cannot add a script to it                                                   | n/a                                      | **Disabled**, gap B     |
+| Surface                                              | How the script gets in                                                                                          | Browser client      |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------- |
+| HTML file, rail or lightbox                          | `srcdoc` frame, `sandbox="allow-scripts"`, fresh nonce, external `/annotation-frame.js` from the app origin     | **Disabled**, gap A |
+| Saved site annotation (feed excerpt, draft reattach) | Same opaque frame over frozen HTML from `GET /resources/:id/versions/:v/site-preview`                           | **Disabled**, gap A |
+| Live site, desktop rail and pop-out                  | `executeJavaScriptInIsolatedWorld(1001)` in the `WebContentsView`; cards in the same world; `capturePage` crops | n/a                 |
+| Live site, browser client                            | Nothing                                                                                                         | **Disabled**, gap B |
 
-**Gap A is a packaging gap, not a security one.** `annotation-frame.js` is
-emitted by `apps/desktop/artifact-picker-plugin.ts`, which only the desktop Vite
-build and dev server use. The browser host Worker serves `/assets/*` and five
-install files and nothing else. `annotation-surface.tsx` therefore gates picking
-on `window.rally`, and `site-resource-detail.tsx` disables Comment mode whenever
-`surface.framed` is set. Because the feed's "open at the saved spot" for a site
-goes through this same opaque frame rather than the live page, gap A also means a
-browser reader cannot see where a saved site comment pointed.
+**Gap A is packaging.** `annotation-frame.js` is emitted by
+`apps/desktop/artifact-picker-plugin.ts`, which only the desktop build and dev
+server use, and the browser host Worker serves `/assets/*` plus five install
+files. So `annotation-surface.tsx` gates picking on `window.rally`. Because the
+feed's "open at the saved spot" for a site goes through this same opaque frame,
+gap A also hides where a saved site comment pointed from a browser reader.
 
 Verified on 2026-10-29 in the sandbox's Chromium: under the browser host's exact
 CSP (`script-src 'self'`, `frame-src` naming only the artifact domain), a
 `srcdoc` frame with `sandbox="allow-scripts"` loads an external app-origin script
 carrying the frame's nonce, blocks the file's own inline script, reports origin
-`null`, and is identifiable as `event.source`. Nothing in the policy has to
-change.
+`null`, and is identifiable as `event.source`. The policy does not change.
 
-**Gap B is the real one.** The 2026-10-19 PRD proposed serving-Worker injection
-of a page-origin picker for the browser, and its decision log records why it was
-not built: it needed a reload with a pick flag, and the page could forge pins
-because its scripts share the picker's origin. The requester accepted
-native-only website support instead. This PRD reopens that decision with a
-design that removes the reload and takes the page out of the input path.
+**Gap B is the missing transport.** `artifactFrameScript()` already contains
+everything the live frame needs: it listens for `rally-annotation-comments` from
+its parent, draws cards, runs the picker, and posts `rally-artifact-pin` and
+`rally-annotation-comment-action` back. It is only ever loaded into the opaque
+frame. `site-resource-detail.tsx` disables Comment mode whenever
+`surface.framed` is set.
 
 ## Motivation
 
-The browser client is a first-class host: members and guests use it, and guests
-have no other host. A guest shared into a thread about a landing page is exactly
-the person who wants to click a button and say "this should say Book a demo",
-and today they get a disabled icon and a tooltip telling them to install a Mac
-app they may not have a Mac for. Every other annotation kind already works in
-the browser, so websites are the one artifact kind a browser reader can see but
-not point at.
+The browser client is a first-class host, and guests have no other host. A
+guest shared into a thread about a landing page is exactly the person who wants
+to click a button and say "this should say Book a demo". Every other annotation
+kind already works in the browser; websites are the one artifact kind a browser
+reader can see but not point at.
 
 ## Goals
 
-1. Comment mode works on a live artifact in the browser client's inline preview,
-   with the same pin sizes as the desktop: element, word, dragged range, and
-   Alt or arrow growth to the container.
-2. Comment mode works on an HTML file in the browser client, and a saved site
-   or HTML annotation opened from the feed highlights its spot there.
-3. A hostile or buggy page cannot create a pin, cannot read a comment, and
-   cannot receive any pointer or keyboard input while Comment mode is on.
-4. Entering Comment mode never reloads the page or loses its state, and
-   following a link inside the site keeps Comment mode on.
-5. Public visitors, crawlers and the desktop's own surfaces receive no injected
+1. Comment mode works on a live artifact in the browser client's inline
+   preview, with the desktop's pin sizes: element, word, dragged range, and Alt
+   or arrow growth to the container.
+2. Comment mode works on an HTML file in the browser client, and a saved site or
+   HTML annotation opened from the feed highlights its spot there.
+3. Entering Comment mode never reloads the page, and following a link inside
+   the site keeps Comment mode on.
+4. Public visitors, crawlers and the desktop's own surfaces receive no injected
    script and no behavior change.
-6. The desktop and the browser share one inspector implementation; only the
-   driver that feeds it input differs.
+5. One picker, one card renderer, three transports. No second implementation.
 
 ## Non-goals
 
 1. **Comments in the browser pop-out.** It is a plain `window.open` tab with no
-   Rally parent to drive it. Deferred; the inline preview is the surface.
+   Rally parent to drive it. Deferred.
 2. **A screenshot with a browser pin.** A cross-origin frame cannot be captured
-   from the app, and bytes supplied by the page are refused on purpose. The
-   model receives the element HTML, visible text and context, as it does for a
-   static HTML file. A server-rendered crop (Cloudflare Browser Rendering of the
-   saved version) is a possible follow-up, not part of this.
-3. **Arbitrary third-party iframes.** Only Rally-served artifact responses carry
-   the inspector. Nothing here applies to a page Rally does not serve.
-4. **Protecting the page from the person.** Comment mode is a tool the viewer
-   points at a page they can already read; this PRD protects the viewer and the
-   app from the page, not the reverse.
-5. **iOS.** Per the platform default.
+   from the app, and the page is not asked for one. The model receives the
+   element HTML, visible text and context, as it does for an HTML file.
+3. **Isolating the picker from the page's own scripts.** See
+   [Trust model](#trust-model).
+4. **iOS.** Per the platform default.
 
 ## Product behavior
 
-Identical to the desktop as described in the annotations PRD, with these
-differences a person can notice:
+Identical to the desktop, with these differences a person can notice:
 
-- In the browser, the Comment control is enabled once the preview reports it is
-  ready to take comments. On the public neutral page, a protected site's 401 or
-  an error page it stays disabled, with the tooltip "This page cannot take
-  comments here."
-- While Comment mode is on, the page does not react to the pointer: buttons do
-  not hover, links do not follow, and the site's own drag behavior is off. The
-  page still scrolls under the wheel, and the hover outline, cursor and comment
-  cards are drawn by Rally over the page.
-- Pins made in the browser carry no screenshot. The composer chip and the feed
-  excerpt look the same as a desktop pin without one.
-- Following a link inside the site while in Comment mode keeps Comment mode
-  on; the new page is ready after it loads. Leaving the artifact origin is not
-  possible from the frame, as today.
+- The Comment control is enabled once the frame's picker reports ready. On the
+  public neutral page, a protected site's 401 or an error page it stays
+  disabled, with the tooltip "This page cannot take comments here."
+- Browser pins carry no screenshot. The composer chip and the feed excerpt look
+  the same as a desktop pin without one.
+- Following a link inside the site in Comment mode keeps Comment mode on; the
+  next page is ready after it loads.
 
-## Key design decisions
+## Design
 
-### 1. The page-side script answers questions; it never initiates
+### The serving Worker injects the picker on framed loads
 
-Today's picker listens for the page's own `mousemove`, `click`, `dblclick` and
-`keydown`, decides what was selected, and reports a pin. In a browser the page's
-scripts can dispatch those events, remove the listeners' effects, or post a
-pin themselves. So the browser transport inverts the direction: the script
-registers one `message` listener and otherwise does nothing. Each message is a
-request with a `requestId` from the app, and each produces at most one reply
-carrying that id. The app ignores a reply whose id it did not issue or has
-already consumed. A page that forges messages can only answer a question that
-was really asked, once, and the only questions are "what block is at this
-point", "what is this element's description", "scroll here", "select between
-these points" and "where are these anchors now".
+In the Worker's outer `fetch`, beside `allowBrowserFraming`, a successful
+`text/html` response to a request carrying `Sec-Fetch-Dest: iframe` gets
+`<script src="/__rally/picker.js" data-app-origin="…"></script>` prepended as
+the first child of `<head>`, only when `BROWSER_APP_ORIGIN` is configured. It
+mirrors the social-preview injection: a string edit on buffered static HTML, an
+`HTMLRewriter` on a streamed active response. `/__rally/picker.js` is served
+before the hostname lookup, as `/__rally/open` is, from the contracts source,
+with a content-addressed path so a browser caches it. The artifact CSP's
+`script-src 'self'` admits it; a page's own `<meta>` policy applies only from
+where it is parsed, so head-first keeps the page from blocking it by accident.
 
-Rejected: keeping the event-driven picker and gating accepted pins on
-`navigator.userActivation.isActive` in the app, which browsers propagate from a
-frame click to its ancestors. It bounds forged pins to one per real click but
-leaves the page in the input path: it sees every pointer event, can suppress
-the outline, and can swap the pinned element between hover and click.
+Why every framed load rather than a pick flag: this removes the reload the
+2026-10-19 PRD worried about. The script is already there when the person
+presses Comment and is there again after an in-site link. `frame-ancestors`
+admits exactly the browser client, so a framed artifact load is a browser-client
+load by construction; a `curl` that spells the header gets a public page with a
+public, inert script. Keying on the viewer session instead would exclude
+Safari, which refuses the partitioned cookie and views the public page.
 
-### 2. A glass overlay owns every input while Comment mode is on
+### The script is the one that exists
 
-`site-resource-detail.tsx` draws a transparent `div` over the whole frame when
-`picking` is true. The overlay has focus and receives every pointer, wheel and
-key event. Pointer moves become `inspect` requests, clicks become `pin`
-requests, wheel deltas become `scroll` requests, drags become `select`
-requests, and Alt, ↑, ↓ and Escape are handled in the app exactly as the
-Markdown surface handles them. The hover outline and the comment-mode cursor are
-app DOM over the frame, positioned from the rects the frame reports, so the
-page cannot hide them.
+`/__rally/picker.js` is `artifactFrameScript()` with two changes: picking and
+restore start on a `rally-annotation-picking` message instead of
+`data-annotation-*` attributes, and every message it accepts must have
+`event.source === window.parent` and `event.origin` equal to the app origin it
+was served with. It installs nothing and draws nothing until the app speaks.
 
-Verified on 2026-10-29 in the sandbox's Chromium with a two-origin harness: with
-the overlay in place the framed page observed zero `click` and zero
-`mousemove` events; an app click produced an `inspect` reply with the element's
-rect; a forwarded wheel scrolled the frame; a later click resolved a different
-element; `caretPositionFromPoint` answered for drag selection.
+### The app talks to the frame the way it already talks to the opaque frame
 
-Rejected: `pointer-events: none` on the overlay with input entering the page.
-That is today's desktop model and it depends on an isolated world to be safe.
+`site-resource-detail.tsx` gains a `framed` branch where today it disables the
+control. It posts `rally-annotation-picking { on }` and
+`rally-annotation-comments { pins }` to the frame and accepts
+`rally-annotation-ready`, `rally-artifact-pin` and
+`rally-annotation-comment-action` from it. Acceptance is what
+`annotation-surface.tsx` does for the opaque frame: `event.source` is the
+preview frame's window, `event.origin` is the artifact origin from the minted
+access, Comment mode is on, the payload parses with the shared schemas, a
+comment action names a pin the app holds, and `screenshot` is deleted before
+parsing. The comment editor anchors at `pin.point` offset by the frame's
+rectangle. The ready message enables the control; a frame `load` with no ready
+message leaves it disabled.
 
-### 3. The inspector is injected on every framed load, dormant until spoken to
+Comment cards render in the page from the same `ARTIFACT_COMMENTS_SOURCE` the
+desktop uses, so the person sees the same card in both hosts.
 
-The serving Worker prepends `<script src="/__rally/picker.js" data-app-origin="…">`
-as the first child of `<head>` on a successful `text/html` response whose
-request carries `Sec-Fetch-Dest: iframe`, and only when `BROWSER_APP_ORIGIN`
-is configured. The script captures the native DOM functions it needs, installs
-one `message` listener that accepts only `event.source === window.parent` with
-`event.origin` equal to the configured app origin, and returns. It adds nothing
-to the DOM and runs nothing until the app sends `hello`.
+### Gap A
 
-Why framed loads rather than a pick flag: this is what removes the reload. The
-script is already in the document when the person presses Comment, and it is in
-the next document after an in-site link, so Comment mode survives navigation.
+Move `artifact-picker-plugin.ts` beside the contracts it serializes, use it from
+the browser build too, serve `/annotation-frame.js` from the browser host
+Worker with `nosniff`, and replace the `window.rally` gates in
+`annotation-surface.tsx` with a host capability that is true everywhere.
 
-Why framed loads rather than viewer sessions: `frame-ancestors` admits exactly
-the browser client, so a framed artifact response is a Rally browser-client
-load by construction. Keying on the session instead would exclude Safari, which
-refuses the partitioned viewer cookie and views the public representation. A
-`curl` that spells the header gets a public page with a public, inert script.
+## Trust model
 
-Why first in `<head>`: it precedes any page `<meta>` CSP, which applies only
-from the point it is parsed, and it captures native functions before page code
-can replace them. The artifact CSP's `script-src 'self'` already admits it.
+What the page's own scripts can now do that they could not: see a Rally script
+in their head, see Comment mode messages from the parent, post a message the
+app will read while Comment mode is on, and read the comment cards drawn in
+their DOM.
 
-Rejected: inlining the script with a nonce. The page's own `unsafe-inline`
-policy makes that no tighter, and an external same-origin file is cacheable.
+Why none of that is worth defending against:
 
-### 4. Comment cards live in the app, not in the page
+- **The author is the workspace's agent.** A live artifact is published by
+  `publish_resource` from a Terminal run acting for this workspace. Members do
+  not edit the files by hand and guests cannot publish. A page that posts a
+  forged pin was written by the same agent that will receive the pin.
+- **A forged pin is content the page shows.** The pin carries a CSS path,
+  trimmed HTML, visible text and context. The person sees the chip before
+  typing a comment, and the model already treats quoted content as untrusted
+  data. The page could show the same text on screen with less effort.
+- **Comments are already the page's audience.** A comment is an instruction
+  about this page that goes to the agent that wrote it, in a thread the page's
+  workspace owns. Egress from the page is closed by the artifact CSP, so the
+  text cannot leave the origin; a stateful site storing it writes to data the
+  workspace can read anyway.
+- **The checks that stay are free.** Source, origin, mode and schema checks are
+  a few lines, catch bugs and stray messages, and are the same lines the opaque
+  frame runs today. Nothing about the sandbox, the CSP egress fences, the
+  fetch-metadata fence or the viewer-session rules changes.
 
-The desktop draws confirmed comment cards inside the page because a
-`WebContentsView` composites above the app's DOM. A frame does not, so the
-browser draws `AnchoredAnnotationComment` over the frame, as the Markdown and
-image surfaces already do, and asks the frame only for the anchors' rects. The
-comment text never enters the page. Edit and remove are app clicks with no
-`isTrusted` dance.
+What stays closed, because those are real threats: an **uploaded** HTML file is
+not agent-authored, so it keeps the opaque `srcdoc` frame where its own scripts
+never run, and `allow-scripts` and `allow-same-origin` are never combined
+there. Model-authored content is still never same-origin with the app. Public,
+top-level and crawler responses are byte-identical to today. The desktop
+renderer still never frames.
 
-### 5. One inspector, two drivers
+### Decision log
 
-`artifact-picker.ts` is split into **primitives** that take elements and points
-and return data, and **drivers** that feed them. The primitives are
-`blockAt(point)`, `grow(element)`, `shrink(element, leaf)`,
-`describe(element)` (CSS path, fractional box, trimmed HTML, visible text,
-before and after context, page path), `selectBetween(a, b)` and
-`anchors(locators)`. The existing event-driven picker becomes the **event
-driver**: the same listeners as today, calling the primitives, used by the
-desktop isolated world and the opaque `srcdoc` frame. The new **message driver**
-exposes the primitives over `postMessage` for the browser's live frame. Element
-identity across requests is an opaque token the frame mints per document,
-backed by a `WeakRef`, cleared on `end`.
+**2026-10-29: website picking may share the page's origin in the browser.**
+Reverses the 2026-10-19 decision that accepted native-only website support over
+serving-Worker injection. The requester judged the forgery boundary not a real
+threat for pages the workspace's own agent writes, and asked for a startup-scale
+design rather than one hardened against the page's author. Considered and
+rejected on the way here, all for cost against a threat that is not real:
 
-This is the platform split: the picker becomes a block, and each host composes
-it with the input it can trust.
-
-### 6. The pin shape does not change
-
-A browser pin is an `ArtifactPickerPin` minus `point` and `screenshot`. The app
-knows the point because it received the click, and it strips `screenshot` from
-anything a frame sends before parsing, so the page cannot supply image bytes.
-The server-side schema and the stored annotation are untouched.
-
-## Protocol
-
-Messages from the app to the frame, each with a `requestId`; every reply echoes
-it. All shapes are Zod schemas in `@rally/contracts` and are parsed on both
-sides as untrusted input.
-
-| Request                                      | Reply                                             | Notes                                                                                                                |
-| -------------------------------------------- | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `hello`                                      | `ready { pagePath }`                              | Sent after each frame `load`. No reply means no Comment mode.                                                        |
-| `begin`                                      | none                                              | Installs the cursor-free picking state; captures nothing.                                                            |
-| `inspect { x, y, level }`                    | `inspected { hit: { token, rect, tag } \| null }` | Point in frame CSS pixels; `level` is the grow depth from the hovered leaf.                                          |
-| `pin { token }`                              | `pinned { pin }`                                  | `pin` is `ArtifactPickerPin` without `point` or `screenshot`.                                                        |
-| `pin { x, y, word: true }`                   | `pinned { pin }`                                  | Caret at point, expanded to a word where the browser can; else the block.                                            |
-| `select { from, to }`                        | `selected { rect }`                               | Sets the native selection between two caret positions so the person sees it.                                         |
-| `pin { selection: true }`                    | `pinned { pin }`                                  | The selection's text and its common block.                                                                           |
-| `scroll { x, y, dx, dy }`                    | `scrolled`                                        | Scrolls the nearest scrollable ancestor at the point.                                                                |
-| `anchors { pins: [{ id, locator, exact }] }` | `anchored { rects }` then pushes                  | The only unsolicited message: `anchors-moved { rects }`, throttled to animation frames while anchors are registered. |
-| `end`                                        | none                                              | Clears tokens, selection and anchors.                                                                                |
-
-Acceptance rules in the app, in order: `event.source` is the preview frame's
-window; `event.origin` is the artifact origin from the minted access; the
-message parses; for replies, the `requestId` is outstanding, and it is consumed
-on first use; `anchors-moved` is accepted only while anchors are registered and
-only repositions cards. Nothing the frame sends can add, confirm, edit or
-remove a pin. There are no timeouts: an unanswered `inspect` draws no outline
-and an unanswered `pin` adds nothing, and the next click issues a new request
-that supersedes the old id.
-
-## Security and trust model
-
-What this changes for a page Rally serves, and only when it is framed by the
-browser client:
-
-- The page gains a Rally script in its head. It can read the script, which is
-  public source. It can replace the DOM functions the script uses, but the
-  script captured the native ones first.
-- While Comment mode is on, the page learns pointer coordinates and receives
-  scroll deltas. It receives no pointer, wheel or key events and no user
-  activation, so it cannot open a popup, start a download or follow a link on
-  the person's click.
-- The page can answer a question with a lie: a different element's HTML, a
-  wrong rect. The person sees the resulting chip and the outline before they
-  type a comment, the model already treats quoted content as untrusted data,
-  and the locator is verified against frozen HTML before it is ever
-  highlighted again. This is the same power the page has by rendering.
-- The page never sees a comment, a viewer identity, an attachment id or a
-  draft. The only thing the app sends about a pin is its locator and trimmed
-  HTML, both of which the page produced.
-
-What stays closed: `allow-scripts` and `allow-same-origin` are never combined
-on an opaque frame; the frame sandbox for a live artifact is unchanged; the
-desktop renderer still never frames; prior-version mounts are untouched
-because the feed opens a saved spot through frozen HTML, not the live origin;
-public, top-level and crawler responses are byte-identical to today.
-
-Both new boundaries, the serving-Worker injection and the message driver, get a
-security review before Comment mode is enabled in the browser, and
-[`security.md`](../../security.md) records the result.
+- A **glass overlay** in the app taking every pointer and key event in Comment
+  mode and driving the page script as a query-only inspector. Verified
+  workable in Chromium; adds a request protocol, scroll and selection
+  forwarding, and app-drawn cards, to deny the page input it may as well have.
+- **Freeze-to-canvas**: render the page in Cloudflare Browser Run on entering
+  Comment mode, read a DOM map from an isolated world, pick against a
+  screenshot. Adds a browser binding, a warm-session object and a second of
+  latency per entry, and loses client-side state, to keep Rally code out of a
+  page Rally's agent wrote.
+- **Full remote display** of every artifact through a streamed canvas. Worse
+  page for members than for strangers, per-view browser cost, and against the
+  low-latency rule for opening resources.
 
 ## Change outline
 
-Grouped by the gap each closes. Gap A is independent and small; ship it first.
-
-**Gap A, HTML files and saved spots in the browser**
-
-- Move `artifact-picker-plugin.ts` beside the contracts it serializes and use
-  it from `apps/browser/vite.config.ts` as well as the desktop build.
-- `apps/browser/src/worker.tsx`: serve `/annotation-frame.js` from assets with
-  `nosniff`, beside the install files.
-- `annotation-surface.tsx`: replace the `window.rally` gates with a host
-  capability from `useShellCapabilities`, true on both hosts.
-- `security.md`: the opaque-frame rule is host-independent; verify in a real
-  browser window per [`dev-environment.md`](../../dev-environment.md).
-
-**Gap B, live sites in the browser**
-
-- `packages/contracts/src/artifact-picker.ts`: split into primitives, the event
-  driver and the message driver; add the protocol schemas. The desktop
-  isolated-world calls and the opaque frame keep their behavior through the
-  event driver.
-- `apps/api/src/artifacts/serving-policy.ts`: `shouldInjectInspector(request,
-response, appOrigin)` and the `<head>`-first injection, by string on buffered
-  static HTML and by `HTMLRewriter` on a streamed active response, next to the
-  social-preview injection it mirrors. Serve `/__rally/picker.js` before the
-  hostname lookup, as `/__rally/open` is, from the contracts source, with a
-  content-addressed path so it caches.
-- `apps/desktop/src/renderer/lib/framed-artifact-picker.ts`: the message
-  driver's app half: request ids, origin checks, the overlay's event handling,
-  and a `surface`-shaped result (`pick`, `stopPicking`, `anchors`) so
-  `site-resource-detail.tsx` branches on `framed` once for the overlay and the
-  cards and otherwise runs the loop it runs today.
-- `site-resource-detail.tsx`: the glass overlay, the app-drawn outline and
-  cursor, app-side keyboard handling, cards from `anchors`, the ready-gated
-  Comment control, and the `screenshot` strip on framed pins.
+- `packages/contracts/src/artifact-picker.ts`: `artifactLiveFrameScript(appOrigin)`,
+  built from the same pieces as `artifactFrameScript()`, plus the message
+  schemas for `rally-annotation-picking` and `rally-annotation-ready`.
+- `apps/api/src/artifacts/serving-policy.ts`: `shouldInjectPicker(request,
+response, appOrigin)` and the head-first injection (string and
+  `HTMLRewriter`); `index.ts` serves `/__rally/picker.js` before the hostname
+  lookup and applies the injection in the outer `fetch`.
+- `apps/desktop/src/renderer/components/site-resource-detail.tsx`: the
+  `framed` branch described above; the disabled reason goes.
+- `apps/desktop/artifact-picker-plugin.ts` moves to a shared location;
+  `apps/browser/vite.config.ts` uses it; `apps/browser/src/worker.tsx` serves
+  the file; `annotation-surface.tsx` drops the `window.rally` gates.
 - `live-web-artifacts.md`, `artifact-annotations.md`, `security.md`,
-  `browser-client.md`: update in the same change, with changelog entries where
-  the mechanism changed.
+  `browser-client.md` updated in the same change, with changelog entries where
+  the mechanism changed. `security.md`'s "Website selection is native-only"
+  paragraph is rewritten to the trust model above.
 
-No new defensive limit is introduced. Replies are bounded by request ids rather
-than counts, and readiness is an event rather than a wait.
+No new defensive limit. Readiness is a message, not a wait.
 
 ## Testing
 
-- **Contracts:** primitives against a jsdom document for description, path
-  and context; the message driver's acceptance rules with forged `source`,
-  wrong origin, unsolicited reply, reused id and an unregistered anchor push.
 - **API Node:** injection on a framed 2xx HTML response and on nothing else
   (top level, anonymous read, JSON, 401, the neutral page); the script is the
-  first child of `<head>`, and the page's own head content follows it;
-  `/__rally/picker.js` resolves without a hostname lookup.
+  first child of `<head>`; `/__rally/picker.js` resolves without a hostname
+  lookup and carries a cacheable content type.
 - **`test-workers/`:** real `HTMLRewriter` on a streamed stateless active
   response, with a production break (skip the `head` handler) to prove the test
   fails.
-- **Browser lane:** a Playwright check in Chromium against a local two-origin
-  harness like the one used for this PRD: the page sees no input in Comment
-  mode; inspect, pin, word, drag, scroll and anchors round-trip; a page that
-  overrides `elementFromPoint` and posts forged pins produces no pin.
-- **Visual:** both gaps checked in a real browser window and the desktop
-  rechecked for no change, per the rule in the agent rule sheet.
+- **Renderer:** the framed branch accepts a pin from the frame's window and
+  origin while picking and ignores one from another source, another origin,
+  with Comment mode off, or with a `screenshot`; a comment action for an
+  unknown pin is ignored.
+- **Visual:** both gaps in a real browser window, and the desktop rechecked for
+  no change, per the rule in the agent rule sheet.
 
 ## Rollout
 
-Gap A ships to everybody on merge. Gap B ships behind the existing
-`liveArtifactsEnabled` client flag's host check: the serving Worker injection
-is inert without an app sending `hello`, so it can deploy first, and the client
-enables the browser Comment control once the security review passes. Turning it
-off is reverting the client change; the injection may stay.
+Ships to everybody on merge. The injection is inert without an app that sends
+`rally-annotation-picking`, so the Worker can deploy ahead of the client.
+Turning it off is reverting the client change.
 
 ## Acceptance
 
-- In the browser client, pin a button on a live site, type a comment, send. The
-  model's turn shows the element's HTML and visible text, and Rally edits it.
+- In the browser client, pin a button on a live site, type a comment, send.
+  The model's turn shows the element's HTML and visible text, and Rally edits
+  it.
 - Pin a word by double-click and a range by drag on the same site.
-- Follow a link inside the site while in Comment mode; pin on the new page.
+- Follow a link inside the site in Comment mode; pin on the new page.
 - Open a feed excerpt for a site annotation in the browser; the saved spot is
   highlighted in the frozen page, or the saved quote shows when it cannot be.
 - Pin a button on an HTML file attachment in the browser.
-- A hostile test page that posts `pinned` messages on load and on a timer adds
-  no pin, and its `click` and `mousemove` listeners never fire during Comment
-  mode.
 - A public visitor and a desktop viewer of the same site receive responses
   with no `/__rally/picker.js` reference.
 
 ## Open questions
 
-1. **Safari before 18.4** lacks `caretPositionFromPoint`; the driver falls back
-   to `caretRangeFromPoint`, and where neither exists a double-click pins the
-   block. Confirm the floor the team supports.
-2. **Keyboard scrolling** inside Comment mode (space, Page Down) is forwarded
-   as `scroll`; arrow keys are taken by grow and shrink as on the desktop.
-   Decide whether that is acceptable or whether arrows should scroll when no
-   block is outlined.
-3. **Should the desktop move to the message driver too?** It cannot use the
-   glass overlay (the native view composites above the DOM), so it keeps the
-   event driver in its isolated world. Revisit if the desktop ever frames.
+1. Should the desktop's live view move from the isolated world to this same
+   injected transport, so there are two transports instead of three? It would
+   need the Worker to inject on the desktop's top-level viewer-session loads
+   too. Nothing forces it; the isolated world works and costs nothing.
