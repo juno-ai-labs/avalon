@@ -236,12 +236,16 @@ describe("the automations plugin", () => {
     // The notice's first line is the one `renderSidekickReviewNotice` writes;
     // the policy recognizes the review by it.
     expect(systemMessage).toContain("Notice from Rally, not from a person or an agent: a scheduled\nself-review of this Sidekick is due");
-    expect(systemMessage).toContain("Read only the runs it lists");
-    expect(systemMessage).toContain("A review never adds a connector, plugin, delivery destination, trigger or capability");
-    expect(systemMessage).toContain("never\nenrols a delegate");
+    expect(systemMessage).toContain("Plan first, as your first message and before any tool call");
+    expect(systemMessage).toContain("Then read only the runs the notice lists");
+    expect(systemMessage).toContain("Then decide against your plan");
+    expect(systemMessage).toContain("A review never adds a connector, plugin, delivery\ndestination, trigger or capability, never enrols a delegate");
     expect(systemMessage).toContain("Never submit ready=false in a review");
-    expect(systemMessage).toContain("written for the owner, who was not present");
-    expect(systemMessage).toContain("asking here restores\nthe earlier revision");
+    // The publication to the people the Sidekick works for, and only on a change.
+    expect(systemMessage).toContain("post one message there\nwith conversation_post, leaving the conversation out");
+    expect(systemMessage).toContain("Post nothing there when nothing changed");
+    expect(systemMessage).toContain("for the owner, who was not present");
+    expect(systemMessage).toContain("asking here restores the earlier revision");
   });
 
   it("publishes ready submissions without a separate activation tool", () => {
