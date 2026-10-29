@@ -1,7 +1,8 @@
 import { ConversationViewJobSchema } from "../durable-objects/conversation-view-projection";
 import { ConnectorDeliveryReferenceSchema, readConnectorDeliveryReference, sendConnectorEventDelivery } from "../services/connector-queue-payload";
-import { SidekickRunProvisionQueueMessageSchema } from "../durable-objects/automation-do-protocol";
+import { SidekickReviewQueueMessageSchema, SidekickRunProvisionQueueMessageSchema } from "../durable-objects/automation-do-protocol";
 import { provisionSidekickRun } from "../services/sidekick-run-provisioning";
+import { deliverSidekickReview } from "../services/sidekick-review";
 import { publishAccessRevocation } from "../services/access-revocation";
 import type { Region } from "@rally/contracts/regions";
 import { ConnectorMaintenanceQueueSchema, runConnectorMaintenance } from "../services/connector-maintenance-service";
@@ -973,6 +974,31 @@ async function consumeOne(message: Message<unknown>, env: Env,
         run_id: runProvision.data.runId,
         queue_attempts: message.attempts,
         code: diagnosticErrorCode(error, "sidekick_run_provision_failed"),
+      });
+      message.retry();
+    }
+    return;
+  }
+  const review = SidekickReviewQueueMessageSchema.safeParse(message.body);
+  if (review.success) {
+    // A Sidekick's scheduled self-review, handed off by its Organization's
+    // alarm entry, which sends again on its own backoff until the wizard
+    // reports the notice admitted; a failure here is retried by the Queue
+    // and, past that, by the entry.
+    if (review.data.region !== env.AVALON_REGION) {
+      message.ack();
+      return;
+    }
+    try {
+      await deliverSidekickReview(env, review.data);
+      message.ack();
+    } catch (error) {
+      logWarn(env, "sidekick_review_delivery_retry", {
+        workspace_id: review.data.workspaceId,
+        automation_id: review.data.automationId,
+        review_id: review.data.reviewId,
+        queue_attempts: message.attempts,
+        code: diagnosticErrorCode(error, "sidekick_review_delivery_failed"),
       });
       message.retry();
     }

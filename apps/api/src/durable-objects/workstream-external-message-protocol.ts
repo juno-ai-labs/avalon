@@ -6,6 +6,7 @@ import {
   ExternalActorSchema,
   IdSchema,
   MESSAGE_MAX_CHARACTERS,
+  SidekickReviewNoticeV1Schema,
   SlackOriginContextSchema,
   SlackSearchAuthorizationSchema,
   WorkstreamMessageAdmissionReceiptSchema,
@@ -102,8 +103,30 @@ export const AdmitAgentMessageInputSchema = z.strictObject({
   origin: z.literal("agent_message"),
   now: z.number().int().nonnegative(),
 }).refine((input) => input.agentExchange.messageId === input.messageId, "Agent exchange and input message IDs must match.");
+/**
+ * The host's own notice to a Sidekick's wizard that a scheduled self-review is
+ * due. Like an agent message it is system-attributed input with no person
+ * behind it, and it carries the review's counts as structured content so a
+ * later reader can tell the host's notice from a teammate's words; unlike one
+ * it names no sender and joins no team, so it is queued behind in-flight work
+ * rather than steered into it. See `HostedSidekick.startReview`.
+ */
+export const AdmitSidekickReviewInputSchema = z.strictObject({
+  workspaceId: WorkspaceIdSchema,
+  workstreamId: WorkstreamIdSchema,
+  messageId: IdSchema,
+  clientMessageId: z.string().min(1).max(120),
+  text: z.string().min(1).max(MESSAGE_MAX_CHARACTERS),
+  review: SidekickReviewNoticeV1Schema,
+  /** Whose authority the woken wizard carries: an eligible delegate's. */
+  executionPrincipal: ExecutionPrincipalSchema,
+  origin: z.literal("sidekick_review"),
+  now: z.number().int().nonnegative(),
+});
+export type AdmitSidekickReviewInput = z.infer<typeof AdmitSidekickReviewInputSchema>;
+
 export const AdmitSystemActivationInputSchema = z.union([
-  AdmitAutomationActivationInputSchema, AdmitAgentMessageInputSchema,
+  AdmitAutomationActivationInputSchema, AdmitAgentMessageInputSchema, AdmitSidekickReviewInputSchema,
 ]);
 export type AdmitAgentMessageInput = z.infer<typeof AdmitAgentMessageInputSchema>;
 export type AdmitSystemActivationInput = z.infer<typeof AdmitSystemActivationInputSchema>;

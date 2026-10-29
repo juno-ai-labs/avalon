@@ -17,7 +17,12 @@ import { z } from "zod";
  */
 
 export const ConversationToolScopeSchema = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("sidekick"), automationId: IdSchema }),
+  z.strictObject({
+    kind: z.literal("sidekick"),
+    automationId: IdSchema,
+    /** The Sidekick's authoring conversation, which alone may announce a review's change in a Channel; a run never sees that Channel. */
+    authoring: z.boolean().optional(),
+  }),
   z.strictObject({ kind: z.literal("conversation"), parentId: IdSchema, substreamId: SubstreamIdSchema }),
 ]);
 /**

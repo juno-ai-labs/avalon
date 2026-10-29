@@ -35,10 +35,10 @@ it, is [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 | `apps/api/src/durable-objects/workspace-do.ts` | The RPC facade: every conversation-parent method now answers here, dispatching to `HostedParent` for its `parentId`. Also the Channel rows on the workspace socket (with each viewer's breakouts and running background agents), the retired Channel control socket kept for older clients, the in-transaction apply of what a parent publishes, the outbox drain, and the workspace relationship table. |
 | `apps/api/src/durable-objects/scope-grant-storage.ts`, `scope-invitation-storage.ts`, `scope-invitation-service.ts` | The grant and invitation repositories, now scoped by `parent_id`. |
 | `apps/api/src/durable-objects/hosted-sidekick.ts` | `HostedSidekick`: one Sidekick's parent and lifecycle, scoped to a `sidekick_id` inside `WorkspaceDO`'s SQLite. The port of what `SidekickDO` did for one object. Also `sidekickReaderAllows`, the read rule the library listing shares. |
-| `apps/api/src/durable-objects/hosted-sidekick-schema.ts` | `WorkspaceDO` migration 91: the definition columns on `automation_directory`, the `sidekick_*` tables and the `sidekick_imports` ledger, which migration 92 drops. |
+| `apps/api/src/durable-objects/hosted-sidekick-schema.ts` | `WorkspaceDO` migration 91: the definition columns on `automation_directory`, the `sidekick_*` tables and the `sidekick_imports` ledger, which migration 92 drops; and migration 132: the self-review columns and `sidekick_reviews`. |
 | `apps/api/src/services/sidekick-run-provisioning.ts` | `provisionSidekickRun`: the Queue consumer step that opens a run's conversation and starts its loop, off the Organization's alarm. |
 | `apps/api/src/services/conversation-parent-client.ts` | `hostedParentStub` and `conversationParentStub`: `WorkspaceDO` for every parent. |
-| `apps/api/src/queues/activity-consumer.ts` | A `conversation_effect` for any parent goes to `WorkspaceDO.receiveChildEffects`; a `sidekick_run_provision` message to `provisionSidekickRun`. |
+| `apps/api/src/queues/activity-consumer.ts` | A `conversation_effect` for any parent goes to `WorkspaceDO.receiveChildEffects`; a `sidekick_run_provision` message to `provisionSidekickRun`; a `sidekick_review` message to `deliverSidekickReview`. |
 
 ## How it works
 

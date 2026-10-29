@@ -499,6 +499,37 @@ describe("durable UI-to-model transcript projection", () => {
     expect(activation.messages.some((entry) => entry.role === "system")).toBe(false);
   });
 
+  it("admits Rally's self-review notice as a user turn under Rally's own first line", async () => {
+    // The wizard's first activation initializes from canonical history, so a
+    // system row this projection dropped would be a review the model never saw.
+    const noticeId = "00000000-0000-4000-8000-000000000061";
+    const notice = {
+      kind: "sidekick_review_due", schemaVersion: 1, reviewId: "00000000-0000-7000-8000-00000000ad00",
+      automationId: "00000000-0000-7000-8000-0000000000aa", definitionRevision: 2,
+      since: null, until: "2026-10-26T10:00:00.000Z", announceTo: "00000000-0000-7000-8000-0000000000bb",
+      finished: { completed: 9, failed: 1, needsInput: 0, stopped: 0 },
+      sample: { failed: ["00000000-0000-7000-8000-0000000000f0"], needsInput: [], completed: [] },
+    };
+    const text = "Rally asked this Sidekick's wizard for a scheduled self-review: 10 runs finished since it was created (9 completed, 1 failed). The wizard reads 1 of them and reports here.";
+    const projection = await __integrationTesting.projectModelProtocolTranscript(
+      projectionEnv([], {}),
+      { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, triggerMessageId: noticeId },
+      [message(noticeId, 1, { author: "system", messageType: "system", textContent: text, structuredContent: notice })],
+    );
+    const users = projection.messages.filter((entry) => entry.role === "user" && typeof entry.content === "string");
+    expect(users).toHaveLength(1);
+    expect(users[0]!.content).toBe([
+      "Notice from Rally, not from a person or an agent: a scheduled self-review of this Sidekick is due.",
+      text,
+      "Every count and run above is from definition revision 2, between creation and 2026-10-26T10:00:00.000Z.",
+      "Where to announce a change, as the conversation to post to: 00000000-0000-7000-8000-0000000000bb.",
+      "Read exactly these runs, by id, and no others:",
+      "- failed or stopped: 00000000-0000-7000-8000-0000000000f0",
+      "- waiting for input: none",
+      "- completed, spread evenly across the window: none",
+    ].join("\n"));
+  });
+
   it("renders a Sidekick's post from history the way the gap-fill does, as an aside from the Sidekick", async () => {
     const postId = "00000000-0000-4000-8000-000000000051";
     const triggerId = "00000000-0000-4000-8000-000000000052";
