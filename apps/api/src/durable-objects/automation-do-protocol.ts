@@ -77,12 +77,6 @@ export const AutomationSubmitDefinitionRequestSchema = z.strictObject({
    * definition leaves the appearance as it is.
    */
   appearance: PickedAppearanceSchema.optional(),
-  /**
-   * Set when the wizard submits during a scheduled self-review, where no
-   * person is present: `saveDefinition` then refuses a draft that widens the
-   * accepted revision or publishes over a person's unfinished one.
-   */
-  origin: z.literal("sidekick_review").optional(),
 });
 export type AutomationSubmitDefinitionRequest = z.infer<typeof AutomationSubmitDefinitionRequestSchema>;
 

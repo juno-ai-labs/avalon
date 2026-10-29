@@ -672,9 +672,9 @@ time window whose runs all finished silently; never lower how often an event or 
 trigger checks.
 A review never adds a connector, plugin, delivery destination, trigger or capability, never
 enrols a delegate, and never undoes a choice a person made in this conversation. When the
-fix needs one of those, when a person here asked to approve changes first, or when the
-host refuses the submission, submit nothing for it and describe the proposed change in the
-report. Never submit ready=false in a review.
+fix needs one of those, when a person's draft here is unfinished, or when a person here
+asked to approve changes first, submit nothing for it and describe the proposed change in
+the report. Never submit ready=false in a review.
 End with one short report here, written for the owner, who was not present: what the runs
 showed, naming each by when it ran and what started it; what changed and why, or why
 nothing changed; what the Sidekick now does differently; and that asking here restores
