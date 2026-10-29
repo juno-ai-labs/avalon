@@ -127,6 +127,12 @@ export const SidekickReviewNoticeV1Schema = z.strictObject({
   definitionRevision: z.number().int().positive(),
   since: z.string().datetime({ offset: true }).nullable(),
   until: z.string().datetime({ offset: true }),
+  /**
+   * The Sidekick's home conversation as the conversation tools name it (a
+   * Channel's Main conversation or a Breakout), where the wizard tells people
+   * what a review changed; null for a Sidekick no room owns.
+   */
+  home: z.string().min(1).nullable(),
   /** Runs that finished in the window, by the state they finished in; `needsInput` is runs waiting, not finishes. */
   finished: z.strictObject({
     completed: z.number().int().nonnegative(),

@@ -506,7 +506,7 @@ describe("durable UI-to-model transcript projection", () => {
     const notice = {
       kind: "sidekick_review_due", schemaVersion: 1, reviewId: "00000000-0000-7000-8000-00000000ad00",
       automationId: "00000000-0000-7000-8000-0000000000aa", definitionRevision: 2,
-      since: null, until: "2026-10-26T10:00:00.000Z",
+      since: null, until: "2026-10-26T10:00:00.000Z", home: "00000000-0000-7000-8000-0000000000bb",
       finished: { completed: 9, failed: 1, needsInput: 0, stopped: 0 },
       sample: { failed: ["00000000-0000-7000-8000-0000000000f0"], needsInput: [], completed: [] },
     };
@@ -522,6 +522,7 @@ describe("durable UI-to-model transcript projection", () => {
       "Notice from Rally, not from a person or an agent: a scheduled self-review of this Sidekick is due.",
       text,
       "Every count and run above is from definition revision 2, between creation and 2026-10-26T10:00:00.000Z.",
+      "Home conversation to tell about a change: 00000000-0000-7000-8000-0000000000bb.",
       "Read exactly these runs, by id, and no others:",
       "- failed or stopped: 00000000-0000-7000-8000-0000000000f0",
       "- waiting for input: none",

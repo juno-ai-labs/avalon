@@ -1896,7 +1896,7 @@ describe("a hosted Sidekick", () => {
       expect(directory.reviewed_at).toBeGreaterThanOrEqual(armedBy);
       const notice = JSON.parse(reviews[0]!.notice_json) as { sample: { failed: string[]; needsInput: string[]; completed: string[] } };
       expect(notice).toMatchObject({
-        kind: "sidekick_review_due", automationId: AUTOMATION_ID, definitionRevision: 1, since: null,
+        kind: "sidekick_review_due", automationId: AUTOMATION_ID, definitionRevision: 1, since: null, home: null,
         finished: { completed: 10, failed: 0, needsInput: 0, stopped: 0 },
         sample: { failed: [], needsInput: [] },
       });

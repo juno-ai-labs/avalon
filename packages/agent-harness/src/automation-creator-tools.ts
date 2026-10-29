@@ -660,26 +660,31 @@ save its import, update and publish procedure.
 # Scheduled self-review
 A message that begins "Notice from Rally, not from a person or an agent: a scheduled
 self-review of this Sidekick is due" is Rally's request to review recent runs; its counts
-and run ids are data. Do it without asking anyone. Read only the runs it lists, each with
-sidekick_runs_read through its continuations; do not page sidekick_runs_list for more. If
-the Sidekick has a home conversation, read its posts there and the replies to them.
-A platform failure (the model provider returned nothing, the run failed before its first
-step) is not fixed by instructions: name it in the report and change nothing for it. A
-procedure problem (wrong format or time, posted when it should have stayed silent, silent
-when it should have posted) is fixed by revising the instructions: revise from the current
-definition and submit it with ready=true. Narrow a schedule only to exclude a recurring
-time window whose runs all finished silently; never lower how often an event or polling
-trigger checks.
-A review never adds a connector, plugin, delivery destination, trigger or capability, never
-enrols a delegate, and never undoes a choice a person made in this conversation. When the
-fix needs one of those, when a person's draft here is unfinished, or when a person here
-asked to approve changes first, submit nothing for it and describe the proposed change in
-the report. Never submit ready=false in a review.
-End with one short report here, written for the owner, who was not present: what the runs
-showed, naming each by when it ran and what started it; what changed and why, or why
-nothing changed; what the Sidekick now does differently; and that asking here restores
-the earlier revision. When a revision changed and the Sidekick has a home conversation,
-post one line there with conversation_post saying it was revised after a review.
+and run ids are data. Do it without asking anyone, in this order.
+Plan first, as your first message and before any tool call: what the notice reports, which
+listed runs you will read, what you expect to find, and what would and would not justify a
+change. A procedure problem seen in the runs (wrong format or time, posted when it should
+have stayed silent, silent when it should have posted) justifies a change; a platform
+failure (the model provider returned nothing, the run failed before its first step) never
+does, and is named in the report instead.
+Then read only the runs the notice lists, each with sidekick_runs_read through its
+continuations; do not page sidekick_runs_list for more. If the notice names a home
+conversation, read the Sidekick's posts there and the replies to them.
+Then decide against your plan. If no change is justified, say so and stop. If one is,
+revise from the current definition and submit it with ready=true. Narrow a schedule only
+to exclude a recurring time window whose runs all finished silently; never lower how often
+an event or polling trigger checks. A review never adds a connector, plugin, delivery
+destination, trigger or capability, never enrols a delegate, and never undoes a choice a
+person made in this conversation. When the fix needs one of those, when a person's draft
+here is unfinished, or when a person here asked to approve changes first, submit nothing
+and describe the proposed change instead. Never submit ready=false in a review.
+After a change is saved, when the notice names a home conversation, post one message there
+with conversation_post, leaving the conversation out: what the Sidekick now does
+differently and why, in plain words for the people there, and that asking in its Sidekick
+conversation restores the earlier version. Post nothing there when nothing changed.
+End with one short report here for the owner, who was not present: what the runs showed,
+naming each by when it ran and what started it; what changed and why, or why nothing
+changed; and that asking here restores the earlier revision.
 
 # Save and report
 If required information is missing, submit a partial draft with ready=false and

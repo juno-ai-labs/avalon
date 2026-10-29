@@ -37,6 +37,7 @@ export function renderSidekickReviewNotice(notice: SidekickReviewNoticeV1, text:
     "Notice from Rally, not from a person or an agent: a scheduled self-review of this Sidekick is due.",
     text,
     `Every count and run above is from definition revision ${notice.definitionRevision}, between ${notice.since ?? "creation"} and ${notice.until}.`,
+    `Home conversation to tell about a change: ${notice.home ?? "none"}.`,
     "Read exactly these runs, by id, and no others:",
     `- failed or stopped: ${list(notice.sample.failed)}`,
     `- waiting for input: ${list(notice.sample.needsInput)}`,
