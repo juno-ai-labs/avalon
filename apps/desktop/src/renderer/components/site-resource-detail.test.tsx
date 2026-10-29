@@ -172,6 +172,23 @@ describe('showing a live artifact in the rail', () => {
       await waitFor(() => expect(button).toHaveAttribute('aria-pressed', 'false'));
     });
 
+    it('keeps the editor beside its element as the page scrolls and tells the page which selection is open', async () => {
+      const geometry = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(DOMRect.fromRect({ x: 200, y: 60, width: 460, height: 800 }));
+      const { frame, posted } = await framedSite();
+      fromFrame(frame, { type: 'rally-annotation-ready', pagePath: '/' });
+      fireEvent.load(frame);
+      const button = screen.getByRole('button', { name: 'Comment mode' });
+      await waitFor(() => expect(button).not.toHaveAttribute('aria-disabled'));
+      fireEvent.click(button);
+      fromFrame(frame, { type: 'rally-artifact-pin', pin: { ...PIN, rect: { x: 20, y: 100, width: 80, height: 30 } } });
+      const editor = await screen.findByRole('dialog', { name: 'Comment on site selection' });
+      expect(editor.style.top).toBe('160px');
+      await waitFor(() => expect(posted).toHaveBeenCalledWith(expect.objectContaining({ type: 'rally-annotation-comments', selected: PIN.css }), CANONICAL));
+      fromFrame(frame, { type: 'rally-annotation-anchor', rect: { x: 20, y: 300, width: 80, height: 30 } });
+      await waitFor(() => expect(editor.style.top).toBe('360px'));
+      geometry.mockRestore();
+    });
+
     it('ignores pins from another window, another origin, with Comment mode off, or carrying image bytes', async () => {
       const { frame } = await framedSite();
       fromFrame(frame, { type: 'rally-annotation-ready', pagePath: '/' });

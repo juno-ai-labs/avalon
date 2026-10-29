@@ -71,12 +71,13 @@ export interface ArtifactViewHandle {
   ready?: () => Promise<boolean>;
   pick?: () => Promise<unknown>;
   stopPicking?: () => Promise<void>;
-  comments?: (pins: AnnotationCommentPins) => Promise<AnnotationCommentAction | null>;
+  /** Draw the confirmed cards and keep `selected` (a CSS path) highlighted as the selection being edited. */
+  comments?: (pins: AnnotationCommentPins, selected: string | null) => Promise<AnnotationCommentAction | null>;
   close(): void;
 }
 
-/** What `rallyAnnotations.rect(css)` answers: an element's viewport rectangle. */
-export const ArtifactElementRectSchema = z.object({
+/** What `rallyAnnotations.rect(css)` answers: an element's rectangle and the viewport it is in. */
+export const ArtifactViewportRectSchema = z.object({
   x: z.number().finite(),
   y: z.number().finite(),
   width: z.number().nonnegative(),
@@ -84,7 +85,7 @@ export const ArtifactElementRectSchema = z.object({
   viewportWidth: z.number().positive(),
   viewportHeight: z.number().positive(),
 }).nullable();
-export type ArtifactElementRect = z.infer<typeof ArtifactElementRectSchema>;
+export type ArtifactViewportRect = z.infer<typeof ArtifactViewportRectSchema>;
 
 /**
  * The page's annotation API, reached through `executeJavaScript`.
@@ -108,12 +109,12 @@ export function artifactPageAnnotations(execute: (code: string) => Promise<unkno
       return raw === null || raw === undefined ? null : ArtifactPickerPinSchema.parse(raw);
     },
     stopPicking: async (): Promise<void> => { await call('stopPicking()'); },
-    comments: async (pins: AnnotationCommentPins): Promise<AnnotationCommentAction | null> => {
-      const raw = await call(`comments(${JSON.stringify(pins)})`);
+    comments: async (pins: AnnotationCommentPins, selected: string | null = null): Promise<AnnotationCommentAction | null> => {
+      const raw = await call(`comments(${JSON.stringify(pins)}, ${JSON.stringify(selected)})`);
       return raw === null || raw === undefined ? null : AnnotationCommentActionSchema.parse(raw);
     },
-    rect: async (css: string): Promise<ArtifactElementRect> =>
-      ArtifactElementRectSchema.parse(await call(`rect(${JSON.stringify(css)})`) ?? null),
+    rect: async (css: string): Promise<ArtifactViewportRect> =>
+      ArtifactViewportRectSchema.parse(await call(`rect(${JSON.stringify(css)})`) ?? null),
   };
 }
 
@@ -697,10 +698,10 @@ export class ArtifactPreviewController {
     const result = await view.pick?.() ?? null;
     return this.view === view && !view.destroyed() ? result : null;
   }
-  async comments(pins: AnnotationCommentPins): Promise<AnnotationCommentAction | null> {
+  async comments(pins: AnnotationCommentPins, selected: string | null = null): Promise<AnnotationCommentAction | null> {
     const view=this.view;
     if (!view || view.destroyed() || this.pendingLoad?.view===view) return null;
-    const result=await view.comments?.(pins) ?? null;
+    const result=await view.comments?.(pins, selected) ?? null;
     return this.view===view && !view.destroyed() ? result : null;
   }
   async stopPicking(): Promise<void> { await this.view?.stopPicking?.(); }

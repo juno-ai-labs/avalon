@@ -469,7 +469,8 @@ describe('the page annotation API over executeJavaScript', () => {
     const { api, calls } = page({ pick: pin, comments: { id: 'one', action: 'edit', point: { x: 1, y: 2 } }, rect: { x: 1, y: 2, width: 30, height: 40, viewportWidth: 800, viewportHeight: 600 } });
     expect(await api.ready()).toBe(true);
     expect(await api.pick()).toEqual(pin);
-    expect(await api.comments([])).toEqual({ id: 'one', action: 'edit', point: { x: 1, y: 2 } });
+    expect(await api.comments([], 'main > p:nth-of-type(1)')).toEqual({ id: 'one', action: 'edit', point: { x: 1, y: 2 } });
+    expect(calls.at(-1)).toContain('comments([], "main > p:nth-of-type(1)")');
     expect(await api.rect(pin.css)).toMatchObject({ width: 30, viewportWidth: 800 });
     // The selector travels as a JSON literal, so quotes in it cannot end the call.
     expect(calls.at(-1)).toContain(JSON.stringify(pin.css));

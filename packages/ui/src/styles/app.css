@@ -9215,6 +9215,8 @@ button.merged-into-label:hover { color: var(--av-sys-color-text-default); }
 
 /* Artifact annotations: transient pins and the excerpts carried by a message. */
 .annotation-surface { position: relative; min-width: 0; width: 100%; }
+/* Focused by script when the comment editor closes, so its key handling keeps working; a focus ring here would draw a line around the preview. */
+.annotation-surface:focus, .annotation-surface:focus-visible { outline: none; }
 .annotation-toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; position:sticky; top:0; z-index:2; padding:8px 0; background:var(--av-sys-color-surface-default); }
 .annotation-toolbar button { border:1px solid var(--av-sys-color-border-default); border-radius:7px; padding:5px 10px; background:transparent; color:inherit; font-size:12px; cursor:pointer; }
 /* Keep after the title-pill toggle rule so active comment mode retains its blue fill. */

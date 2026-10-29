@@ -579,7 +579,8 @@ export interface RallyDesktopBridge {
   /** Whether the shown page carries Rally's annotation API, so Comment mode can be offered. */
   artifactPreviewReady?: () => Promise<boolean>;
   pickArtifactPreview?: () => Promise<ArtifactPickerPin | null>;
-  showArtifactPreviewComments?: (pins: AnnotationCommentPins) => Promise<AnnotationCommentAction | null>;
+  /** Draw confirmed cards in the page and keep `selected` (a CSS path) highlighted while its comment is edited. */
+  showArtifactPreviewComments?: (pins: AnnotationCommentPins, selected?: string | null) => Promise<AnnotationCommentAction | null>;
   stopPickingArtifactPreview?: () => Promise<void>;
   snapshotArtifactPreview: () => Promise<string | null>;
   /** Tear the preview down: the detail closed, or the work stream changed. */

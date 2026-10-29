@@ -11,7 +11,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 type Api = {
   pick: () => Promise<unknown>;
   stopPicking: () => void;
-  comments: (pins: unknown[]) => Promise<unknown>;
+  comments: (pins: unknown[], selected?: string | null) => Promise<unknown>;
+  watchAnchor: (callback: (rect: { x: number; width: number }) => void) => void;
   restore: (locator: unknown, exact: string) => Promise<boolean>;
   rect: (css: string) => { width: number } | null;
 };
@@ -102,6 +103,19 @@ describe('the shared annotation script', () => {
     await tick(); await tick();
     // The host turned it off, so no "Escape" pin is reported back to it.
     expect(received.filter((message) => (message as { type: string }).type === 'rally-artifact-pin')).toEqual([]);
+    expect(frame.contentDocument!.querySelector('[data-rally-picker]')).toBeNull();
+  });
+
+  it('keeps the selection highlighted and reports where it is', async () => {
+    const { frame, api } = framed('<p>Hello</p><p id="two">World</p>');
+    const anchors: { x: number; width: number }[] = [];
+    api.watchAnchor((rect) => anchors.push(rect));
+    await api.comments([], 'p:nth-of-type(2)');
+    await new Promise((resolve) => (frame.contentWindow as unknown as { requestAnimationFrame: (cb: () => void) => void }).requestAnimationFrame(() => resolve(undefined)));
+    const highlight = frame.contentDocument!.querySelector('[data-rally-picker]') as HTMLElement | null;
+    expect(highlight?.style.position).toBe('fixed');
+    expect(anchors.length).toBeGreaterThan(0);
+    await api.comments([], null);
     expect(frame.contentDocument!.querySelector('[data-rally-picker]')).toBeNull();
   });
 
