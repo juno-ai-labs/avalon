@@ -277,6 +277,21 @@ the never-started loop's canonical bootstrap; after initialization the durable
 Bind projection is the exact provider-boundary value. Bind's internal
 `state.messages` remains private and may be replaced by compaction.
 
+A tool result's `contentParts` (images, audio, files) never enter that
+projection, Bind's messages or the boundary hash. The harness holds them in
+memory by provider tool call ID and adds them after the JSON text of the
+matching tool message in the next provider request only; the request after
+that carries the JSON alone. When that next request is a compaction summary,
+the summary carries them, since it replaces the tool messages they belong to. A model that needs an image again asks for it
+again, through `view_resource` or the tool that made it. A restart between a
+tool result's acceptance and that next request loses the parts for that one
+request; the JSON result, which names the resource, survives. When the object
+starts, before its first projection read, the host rewrites any loop-state
+tool message that still holds non-text parts, written before this rule, to its
+text alone, one payload at a time (`retireInlineToolMessageContent`). It also
+drops a provider-boundary record at the current revision, which hashed the old
+bytes and would otherwise read as a conflicting replay.
+
 Host context messages carry non-provider `provenance` metadata until Bind heals
 the initial array. The initialization transition records an origin beside each
 surviving exact message: participant and trigger wrappers point to their durable
@@ -1848,6 +1863,37 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-10-29 — Tool image parts ride the next provider request only
+
+**What changed:** `harnessResultOutcome` no longer folds a tool result's
+`contentParts` into the tool message that Bind keeps and the host persists.
+The harness holds them in memory and `withCurrentTurnContent` adds them to the
+next provider request only, including a compaction summary request. When the
+object starts, before its first projection read, the host rewrites loop-state
+tool messages that still hold non-text parts to their text, one payload at a
+time under the same fact identity, clears the provider-boundary record at the
+current revision, and logs `bind_loop_inline_tool_content_retired`.
+
+**Why:** On 2026-10-25 four `generate_image` results put 15.6 MB of base64
+PNGs into one Thread's loop state. Every later step rebuilt that state several
+times over (projection, prepared messages, a clone, two canonical hashes, the
+request body), the Durable Object ran past its memory limit, and because the
+bytes were durable every restart did the same: 28 attempts, then a cancel.
+`HarnessToolResult.contentParts` was already documented as content that must
+never enter a durable receipt or transcript; the bind runtime broke that.
+
+**Considered and rejected:** Storing an image reference in loop state and
+loading the bytes for every later request. It keeps every image a Thread has
+made in every request, so memory still grows with history and would need a new
+cap; the documented design was already current-turn only. A schema migration
+for the repair: migrations are synchronous SQL and the payload ID is an
+async SHA-256.
+
+**Consequences:** The model sees a tool's image on the turn right after the
+tool ran, not on later turns. Any new tool that returns `contentParts` gets
+this for free. A restart in the gap between a tool result and the next
+request drops that request's parts.
 
 ### 2026-10-25 — The model reads Sidekick posts, skipped questions and its opening author
 

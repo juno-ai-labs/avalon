@@ -1192,7 +1192,23 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         // thing that must not exist, and every other caller is asking to run
         // something. This one is only asking to *recover*, and there is
         // nothing of the kind to recover.
-        if (constructedIdentity.parentKind !== "space") this.ensurePersistentLoop();
+        if (constructedIdentity.parentKind !== "space") {
+          // Before the first projection read, which caches every message:
+          // loop state written before the harness stopped persisting tool
+          // image parts would otherwise load them all, the very load that ran
+          // these objects past their memory limit.
+          const loopId = substreamLoopId(asWorkstreamId(constructedIdentity.parentId), this.externalSubstreamId());
+          const retired = await this.transcript.retireInlineToolMessageContent(loopId);
+          if (retired > 0) {
+            logWarn(this.env, "bind_loop_inline_tool_content_retired", {
+              workspace_id: constructedIdentity.workspaceId,
+              workstream_id: constructedIdentity.parentId,
+              substream_id: this.externalSubstreamId(),
+              messages: retired,
+            });
+          }
+          this.ensurePersistentLoop();
+        }
       }
     });
     const initialRecovery = this.initialized;
