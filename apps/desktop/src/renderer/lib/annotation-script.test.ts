@@ -68,6 +68,21 @@ describe('the shared annotation script', () => {
     await expect(first).resolves.toBeNull();
   });
 
+  it('outlines the element a card is about, and takes the outline away with the card', async () => {
+    const { frame, api } = framed('<p>Hello</p>');
+    const pins = [{ id: 'one', annotation: { target: { resourceId: 'r', version: 1, locator: { type: 'element', css: 'p', box: { x: 0, y: 0, w: 1, h: 1 }, visibleText: 'Hello' } }, content: { exact: '<p>Hello</p>', source: 'rendered', before: '', after: '', truncated: false }, comment: 'Shorter' } }];
+    void api.comments(pins);
+    await new Promise((resolve) => (frame.contentWindow as unknown as { requestAnimationFrame: (cb: () => void) => void }).requestAnimationFrame(() => resolve(undefined)));
+    const drawn = [...frame.contentDocument!.querySelectorAll<HTMLElement>('[data-rally-picker]')];
+    const outline = drawn.find((node) => node.style.pointerEvents === 'none');
+    const card = drawn.find((node) => node.style.pointerEvents !== 'none');
+    expect(outline?.style.position).toBe('fixed');
+    expect(outline?.style.display).toBe('block');
+    expect(card?.style.display).toBe('block');
+    await api.comments([]);
+    expect(frame.contentDocument!.querySelectorAll('[data-rally-picker]')).toHaveLength(0);
+  });
+
   it('restores only the element whose markup still matches the saved quote', async () => {
     const { api } = framed('<p>Hello</p><p>World</p>');
     const locator = { type: 'element', css: 'p:nth-of-type(2)', box: { x: 0, y: 0, w: 1, h: 1 }, visibleText: 'World' };

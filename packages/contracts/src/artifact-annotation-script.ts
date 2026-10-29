@@ -41,9 +41,12 @@ export const ARTIFACT_COMMENT_CURSOR = `url("data:image/svg+xml,${encodeURICompo
 
 /**
  * Confirmed comment cards, drawn beside their elements and kept there through
- * scrolling and layout changes by the tracker. A card sits to the right of its
- * element with a connector when there is room, else below it, and hides while
- * the element is out of the viewport. `report` gets edit and remove clicks.
+ * scrolling and layout changes by the tracker. Each card comes with an outline
+ * around the element it is about, so the comment's scope is visible, and the
+ * outline strengthens while the card is hovered. A card sits to the right of
+ * its element with a connector when there is room, else below it, and both
+ * hide while the element is out of the viewport. `report` gets edit and
+ * remove clicks.
  */
 const ARTIFACT_COMMENTS_SOURCE = String.raw`(function(pins,report) {
   const entries=[];
@@ -62,25 +65,52 @@ const ARTIFACT_COMMENTS_SOURCE = String.raw`(function(pins,report) {
     const comment=document.createElement('button');comment.className='comment';comment.textContent=annotation.comment;comment.setAttribute('aria-label','Edit comment');
     const remove=document.createElement('button');remove.className='remove';remove.textContent='×';remove.setAttribute('aria-label','Remove comment');
     for(const [button,action] of [[comment,'edit'],[remove,'remove']])button.addEventListener('click',event=>{event.stopPropagation();if(event.isTrusted){const r=element.getBoundingClientRect();report({id:pin.id,action,point:{x:r.right,y:r.top}});}});
-    card.append(comment,remove);shadow.append(style,card);document.documentElement.append(host);
-    const entry={element,update:(r)=>{
-      if(!visible(element, r)){host.style.display='none';return;}
-      // Beside the element, narrowed to fit when the viewport is tight, and
-      // only below it when less than a readable width would remain.
-      // Measured against the document's client width, which stops short of
-      // a vertical scrollbar that innerWidth would count as room.
-      const edge=document.documentElement.clientWidth||innerWidth;
+    card.append(comment,remove);shadow.append(style,card);
+    const outline=document.createElement('div');outline.setAttribute('data-rally-picker','');
+    outline.style.cssText='position:fixed;pointer-events:none;z-index:2147483644;box-sizing:border-box;border-radius:6px;display:none;border:1.5px solid rgba(59,130,246,.75);background:rgba(59,130,246,.06);transition:border-color .12s,background-color .12s,box-shadow .12s';
+    const emphasis=(on)=>{outline.style.borderColor=on?'#2563eb':'rgba(59,130,246,.75)';outline.style.backgroundColor=on?'rgba(37,99,235,.10)':'rgba(59,130,246,.06)';outline.style.boxShadow=on?'0 0 0 3px rgba(59,130,246,.18)':'none';};
+    card.addEventListener('mouseenter',()=>emphasis(true));card.addEventListener('mouseleave',()=>emphasis(false));
+    document.documentElement.append(outline,host);
+    const entry={element,host,outline,card,update:()=>layout()};
+    entries.push(entry);
+  }
+  // One pass for every card, so none covers another card or another
+  // commented element: cards go beside their element when the viewport has
+  // room, below it otherwise, and slide down past whatever is in the way.
+  function layout(){
+    const edge=document.documentElement.clientWidth||innerWidth;
+    const items=entries.map(e=>({e,r:e.element.getBoundingClientRect()}));
+    items.sort((a,b)=>a.r.top-b.r.top||a.r.left-b.r.left);
+    const elements=new Map();
+    for(const {e,r} of items) if(visible(e.element,r)) elements.set(e,{left:r.left,top:r.top,right:r.right,bottom:r.bottom});
+    const placed=[];
+    const overlaps=(b,o)=>b.left<o.right&&b.right>o.left&&b.top<o.bottom&&b.bottom>o.top;
+    for(const {e,r} of items){
+      if(!elements.has(e)){e.host.style.display='none';e.outline.style.display='none';continue;}
+      e.outline.style.display='block';
+      Object.assign(e.outline.style,{left:r.x+'px',top:r.y+'px',width:r.width+'px',height:r.height+'px'});
       const room=edge-8-(r.right+12);
       const beside=room>=180;
-      card.className=beside?'beside':'below';
-      host.style.width=(beside?Math.min(292,room):292)+'px';
-      host.style.display='block';
-      host.style.left=(beside?r.right+12:Math.max(8,Math.min(r.left,edge-300)))+'px';
-      host.style.top=(beside?r.top:r.bottom+8)+'px';
-    }};
-    track(entry);entries.push({host,entry});
+      const width=beside?Math.min(292,room):292;
+      e.host.style.width=width+'px';
+      e.host.style.display='block';
+      const height=e.host.offsetHeight||48;
+      const left=beside?r.right+12:Math.max(8,Math.min(r.left,edge-300));
+      let top=beside?r.top:r.bottom+8;
+      const blockers=[...placed,...[...elements].filter(([other])=>other!==e).map(([,box])=>box)];
+      for(let guard=0;guard<12;guard++){
+        const box={left,top,right:left+width,bottom:top+height};
+        const hit=blockers.filter(o=>overlaps(box,o)).sort((a,b)=>a.bottom-b.bottom)[0];
+        if(!hit)break;
+        top=hit.bottom+6;
+      }
+      e.card.className=beside&&top===r.top?'beside':'below';
+      e.host.style.left=left+'px';e.host.style.top=top+'px';
+      placed.push({left,top,right:left+width,bottom:top+height});
+    }
   }
-  return ()=>{entries.forEach(({host,entry})=>{untrack(entry);host.remove();});};
+  entries.forEach(track);
+  return ()=>{entries.forEach((entry)=>{untrack(entry);entry.host.remove();entry.outline.remove();});};
 })`;
 
 /**
