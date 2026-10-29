@@ -2015,13 +2015,16 @@ describe("a hosted Sidekick", () => {
       creatorUserId: AUTHOR_ID, spaceId: generalId, personalSpaceId: personalId, authorityGeneration: 1,
     });
     if (!opened.spacesReady) throw new Error("the Organization's Spaces did not open");
-    const scope = { kind: "sidekick" as const, automationId: AUTOMATION_ID };
+    const scope = { kind: "sidekick" as const, automationId: AUTOMATION_ID, authoring: true };
     const channels = async () => (await workspaceStub().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, scope }))
       .conversations.filter((conversation) => conversation.kind === "space").map((conversation) => conversation.parentId);
 
     // A personal Sidekick's wizard can name its author's Personal Channel, and
-    // post there once per key, from Rally, under the Sidekick's name.
+    // post there once per key, from Rally, under the Sidekick's name. A run's
+    // scope, which is not the authoring conversation's, lists no Channel.
     expect(await channels()).toEqual([personalId]);
+    expect((await workspaceStub().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, scope: { kind: "sidekick", automationId: AUTOMATION_ID } }))
+      .conversations.filter((conversation) => conversation.kind === "space")).toEqual([]);
     const request = { workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, spaceId: personalId, automationId: AUTOMATION_ID,
       key: "sidekick-review:ad90", text: "Now says so in two sentences, after a review." };
     const posted = await workspaceStub().postSidekickChannelMessage(request);
