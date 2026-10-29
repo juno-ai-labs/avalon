@@ -43,8 +43,12 @@ describe('annotation source picker',()=>{
     fireEvent(window,new MessageEvent('message',{data:{type:'rally-annotation-ready',pagePath:'/'},source:frame.contentWindow,origin:'null'}));
     expect(posted).toHaveBeenCalledWith({type:'rally-annotation-restore',locator:{type:'element',css:'h1',box:{x:0,y:0,w:1,h:1},visibleText:'Plans'},exact:'<h1>Plans</h1>'},'*');
     expect(posted).toHaveBeenCalledWith({type:'rally-annotation-picking',on:false},'*');
+    // Each comment sync names the saved selection, so it stays highlighted
+    // after the restore; once it is known to be missing, nothing is.
+    expect(posted).toHaveBeenCalledWith({type:'rally-annotation-comments',pins:[],selected:'h1'},'*');
     fireEvent(window,new MessageEvent('message',{data:{type:'rally-annotation-restored',resolved:false},source:frame.contentWindow,origin:'null'}));
     expect(screen.getByText('The original page cannot be shown again.')).toBeVisible();
+    expect(posted).toHaveBeenLastCalledWith({type:'rally-annotation-comments',pins:[],selected:null},'*');
   });
   it('pins rendered Markdown with exact list markup and keeps a removable commented chip',()=>{
     render(<AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={4} name="Pricing.md" mimeType="text/markdown" text={'# Plans\n\n- **Starter**: $12 per seat.\n- Team: $24.\n'} /><Observe /></AnnotationDraftProvider>);
