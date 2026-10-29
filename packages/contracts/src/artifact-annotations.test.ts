@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AnnotationSchema, AnnotatedMessageContentSchema, AnnotationsSchema, MESSAGE_MAX_CHARACTERS, isHtmlResource, CreateMessageRequestSchema, CreateWorkstreamRequestSchema, annotationAllowedForResource, buildAnnotation, renderAnnotations } from './index';
+import { AnnotationSchema, AnnotatedMessageContentSchema, AnnotationsSchema, MESSAGE_MAX_CHARACTERS, isHtmlResource, CreateMessageRequestSchema, CreateWorkstreamRequestSchema, annotationAllowedForResource, buildAnnotation, renderAnnotations, type Annotation } from './index';
 const resourceId = '00000000-0000-7000-8000-0000000000a1';
 const pin = () => buildAnnotation({ target: { resourceId, version: 4, locator: { type: 'markdown', start: 9, end: 15, headingPath: ['Plans'] } }, content: { exact: '**$12**', source: 'exact', before: 'Starter: ', after: ' yearly', truncated: false }, comment: 'Make this monthly' });
 describe('artifact annotations', () => {
@@ -43,6 +43,17 @@ describe('artifact annotations', () => {
     expect(render('rendered')).toContain('rendered HTML, not source');
     expect(render('rendered',true)).toContain('read_resource before editing');
     expect(render('converted')).not.toContain('<comment>');
+  });
+  it('tells the agent how to rebuild the view of a rendered pin that carries no screenshot',()=>{
+    const viewport={width:416,height:500,scrollX:0,scrollY:120,devicePixelRatio:2,colorScheme:'dark' as const};
+    const element={type:'element' as const,pagePath:'/pricing',css:'main > button:nth-of-type(1)',box:{x:0,y:0,w:1,h:1},visibleText:'Start free',viewport};
+    const rendered=(extra:Partial<Annotation['content']>={})=>renderAnnotations({kind:'artifact_annotations',annotations:[{...pin(),target:{...pin().target,locator:element},content:{...pin().content,source:'rendered',...extra}}]});
+    expect(rendered()).toContain('open /pricing in Playwright with a 416x500 CSS-pixel viewport at device scale 2, dark color scheme, scrolled to (0, 120)');
+    expect(rendered()).toContain("Recreating a person's view");
+    expect(rendered({imageAttachmentId:'00000000-0000-7000-8000-0000000000a2'})).not.toContain('No screenshot accompanies');
+    const bare=renderAnnotations({kind:'artifact_annotations',annotations:[{...pin(),target:{...pin().target,locator:{...element,viewport:undefined}},content:{...pin().content,source:'rendered'}}]});
+    expect(bare).toContain('the pane width (400 to 1280 CSS pixels)');
+    expect(AnnotationSchema.safeParse({...pin(),target:{...pin().target,locator:{...element,viewport:{...viewport,colorScheme:'sepia'}}},content:{...pin().content,source:'rendered'}}).success).toBe(false);
   });
   it('decodes XML quoting exactly once before exact replacements',()=>{
     const exact='Say "tea & <milk>" and keep &amp; literally.';

@@ -456,7 +456,7 @@ export function SiteResourceDetail({
       imageAttachmentId = await annotationDraft.upload(new File([bytes], `Site annotation — ${title}.png`, { type: 'image/png' }));
     }
     if (!pickingRef.current) return;
-    const id = annotationDraft.add(buildAnnotation({ target: { resourceId, version, locator: { type: 'element', pagePath: pin.pagePath, css: pin.css, box: pin.box, visibleText: pin.visibleText } },
+    const id = annotationDraft.add(buildAnnotation({ target: { resourceId, version, locator: { type: 'element', pagePath: pin.pagePath, css: pin.css, box: pin.box, visibleText: pin.visibleText, ...(pin.viewport ? { viewport: pin.viewport } : {}) } },
       content: { exact: pin.html, source: 'rendered', before: pin.before??'', after: pin.after??'', truncated: false, ...(imageAttachmentId ? { imageAttachmentId } : {}) }, comment: '' }), title, () => {if(!paneRef.current?.isConnected)return false;paneRef.current.scrollIntoView({block:'center'});setEditingPin(id);return true;}, pin.replace ? lastPin.current : undefined, true);
     const pane=paneRef.current?.getBoundingClientRect();
     if (pin.rect) anchorEditor(pin.rect);

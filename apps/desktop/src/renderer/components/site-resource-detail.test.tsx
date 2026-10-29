@@ -163,10 +163,13 @@ describe('showing a live artifact in the rail', () => {
       const button = screen.getByRole('button', { name: 'Comment mode' });
       await waitFor(() => expect(button).not.toHaveAttribute('aria-disabled'));
       fireEvent.click(button);
-      fromFrame(frame, { type: 'rally-artifact-pin', pin: PIN });
+      const viewport = { width: 416, height: 500, scrollX: 0, scrollY: 40, devicePixelRatio: 2, colorScheme: 'light' };
+      fromFrame(frame, { type: 'rally-artifact-pin', pin: { ...PIN, viewport } });
       const editor = await screen.findByRole('textbox', { name: 'Comment on site selection' });
       expect(editor).toBeVisible();
       expect(screen.getByTestId('site-pins')).toHaveTextContent('<button>RSVP</button>');
+      // The window the person saw travels with the pin, for an agent with no screenshot.
+      expect(JSON.parse(screen.getByTestId('site-pins').textContent ?? '[]')[0].target.locator.viewport).toEqual(viewport);
       // Escape inside the page ends picking the same way as in the app.
       fromFrame(frame, { type: 'rally-artifact-pin', pin: null });
       await waitFor(() => expect(button).toHaveAttribute('aria-pressed', 'false'));
