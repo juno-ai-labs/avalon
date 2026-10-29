@@ -588,7 +588,7 @@ edge or byte limit changes what that tool accepts too.
   and sampled-partial summaries, prompt trust placement, source-ID citation
   validation, output budgets, and provider failure. The harness suite proves
   ephemeral image parts reach only the next model request and never its durable
-  completion event. `apps/api/test/workstream-read-state.test.ts` proves the
+  completion event or the persisted loop state. `apps/api/test/workstream-read-state.test.ts` proves the
 sidebar uses the same visibility boundary.
 - `apps/api/test/resource-upload.test.ts`,
   `apps/api/test/attachment-derivative-state.test.ts`, and

@@ -222,6 +222,57 @@ describe("work-stream transcript on workerd SQLite", () => {
     });
   });
 
+  it("retires tool image bytes that earlier loop state persisted, keeping the result text", async () => {
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    const resultText = '{"success":true,"data":{"resourceId":"generated-1"}}';
+    await runInDurableObject(stub, async (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
+      const transcript = new WorkstreamTranscriptStorage(state.storage);
+      await transcript.commitBindTransition({ kind: "state_initialized", loopId: LOOP_ID,
+        generation: 1, stateRevision: 1,
+        systemProjection: { revision: 1, rendererVersion: "workstream-system-v1", inputHash: "test",
+          message: { role: "system", content: "System" } },
+        nonSystemMessages: [
+          { role: "user", content: "Draw a beach" },
+          { role: "assistant", content: null,
+            tool_calls: [{ id: "call-1", type: "function", function: { name: "generate_image", arguments: "{}" } }] },
+          // The shape the harness persisted before it kept image parts out of loop state.
+          { role: "tool", tool_call_id: "call-1", content: [
+            { type: "text", text: resultText },
+            { type: "image_url", image_url: { url: "data:image/png;base64,aW1hZ2UtYnl0ZXM=", detail: "auto" } },
+          ] },
+        ],
+        nonSystemMessageOrigins: [
+          { originKind: "derived", sourceKind: "participant_turn", sourceId: "message-1", sourceRevision: 1 },
+          { originKind: "canonical", sourceKind: null, sourceId: null, sourceRevision: null },
+          { originKind: "derived", sourceKind: "tool_receipt", sourceId: "call-1", sourceRevision: null },
+        ] });
+      // Warm the projection cache, which the repair must not leave stale.
+      expect(bindLoopNonSystemMessages(transcript.readBindProjection(LOOP_ID)!).at(-1)?.content)
+        .toEqual(expect.arrayContaining([expect.objectContaining({ type: "image_url" })]));
+
+      await expect(transcript.retireInlineToolMessageContent(LOOP_ID)).resolves.toBe(1);
+
+      expect(bindLoopNonSystemMessages(transcript.readBindProjection(LOOP_ID)!)).toEqual([
+        { role: "user", content: "Draw a beach" },
+        { role: "assistant", content: null,
+          tool_calls: [{ id: "call-1", type: "function", function: { name: "generate_image", arguments: "{}" } }] },
+        { role: "tool", tool_call_id: "call-1", content: resultText },
+      ]);
+      expect(state.storage.sql.exec(
+        `SELECT COUNT(*) AS n FROM transcript_payloads WHERE payload_json LIKE '%data:image/%'`,
+      ).one().n).toBe(0);
+      await expect(transcript.retireInlineToolMessageContent(LOOP_ID)).resolves.toBe(0);
+    });
+    await evictDurableObject(stub);
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(bindLoopNonSystemMessages(new WorkstreamTranscriptStorage(state.storage).readBindProjection(LOOP_ID)!).at(-1))
+        .toEqual({ role: "tool", tool_call_id: "call-1", content: resultText });
+    });
+  });
+
   it("delivers the committed completion verification prompt after eviction without a second recovery", async () => {
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
