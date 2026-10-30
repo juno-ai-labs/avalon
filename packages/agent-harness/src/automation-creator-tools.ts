@@ -642,7 +642,7 @@ A run that has nothing to report ends with one short line in its own run convers
 which notifies nobody; never instruct a run to end with no text.
 A run that reports data delivers the report on schedule even when a number is zero, looks
 wrong or disagrees with another source, and says so in one line inside the report; never
-add a check whose failure withholds the report.
+invent a check whose failure withholds the report, and add one only when the person asks.
 Name every result destination and the action that delivers it: a run must be told
 to send to an inbox, channel, DM or document.
 For the Sidekick's own reports and updates in Rally, save conversation_post as the

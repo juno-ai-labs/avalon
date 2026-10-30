@@ -245,7 +245,7 @@ describe("the automations plugin", () => {
     expect(systemMessage).toContain("Answer a question from it with\nreply_to_message, then end the turn with one short line here.");
     expect(systemMessage).toContain("never instruct a run to end with no text.");
     expect(systemMessage).toContain(
-      "A run that reports data delivers the report on schedule even when a number is zero, looks\nwrong or disagrees with another source, and says so in one line inside the report; never\nadd a check whose failure withholds the report.",
+      "A run that reports data delivers the report on schedule even when a number is zero, looks\nwrong or disagrees with another source, and says so in one line inside the report; never\ninvent a check whose failure withholds the report, and add one only when the person asks.",
     );
     expect(systemMessage).toContain(
       "Never add a freshness, consistency or sanity check that withholds a report",
