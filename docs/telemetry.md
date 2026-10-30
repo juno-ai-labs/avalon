@@ -794,13 +794,62 @@ flushes in batches of 50 every 30 seconds. API telemetry ingest awaits validatio
 plus its durable D1 acceptance boundary. Telemetry derived from product actions
 registers that whole acceptance flow on the current Worker invocation, while
 destination calls and symbolication remain deferred as before.
-Crash processing selects ten reports per pass and Global delivery selects five.
+Crash processing selects ten reports per pass. Global delivery drains the outbox
+in pages of `TELEMETRY_DELIVERY_PAGE_SIZE` rows, in acceptance order, and keeps
+taking pages until one is not full, one leaves a row behind for a reason other
+than an identity-transition hold, the next page would not fit
+`TELEMETRY_DELIVERY_PASS_RPC_BUDGET` (the Service Binding calls left to the pass
+after the profile and crash outboxes in the same tick), or the next page would
+carry the pass past `TELEMETRY_DELIVERY_PASS_BUDGET_MS`, the cron period. All
+three are in `apps/api/src/telemetry/delivery.ts`; the page size is the
+throughput lever, the other two are transcribed platform and configuration
+facts. `telemetry_operations_snapshot` reports `accepted_pending` and
+`oldest_accepted_age_seconds` every tick; an oldest age that climbs tick over
+tick while `open_circuits` is zero means intake is outrunning the pass, and
+that is the signal to read before any other.
 
 The engineering budgets remain: API ingest p95 under 25 ms, typical desktop
 telemetry under 0.5% CPU/15 MiB/1 MiB per day, and 95% owned-frame symbolication
 when matching artifacts exist. Operational snapshots and packaged fixtures provide
 the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
+
+### 2026-10-30 — Global delivery drains the outbox instead of taking one page per tick
+
+**What changed:** `processTelemetryOutbox` loops over pages of
+`TELEMETRY_DELIVERY_PAGE_SIZE` (500, raised from the 50 it always took) until a page
+comes back short, a page leaves a row behind (a retried or rejected page, a closed circuit),
+the next page would not fit `TELEMETRY_DELIVERY_PASS_RPC_BUDGET`, or the next
+page would carry the pass past `TELEMETRY_DELIVERY_PASS_BUDGET_MS`. A row held
+for an identity transition is paged past on a keyset cursor rather than ending
+the pass. The three bounds are arguments to the pass so a test can drive small
+values against the shipped constants.
+
+**Why:** One page per five-minute tick is 14,400 rows a day. Intake crossed
+that on 2026-10-19 and reached 45,059 on 2026-10-22, so the pass fell behind
+and never recovered: by 2026-10-26 the delivery frontier had stopped
+advancing, with 66,000 rows `pending` behind it, while every tick still
+delivered its 50 and nothing reported unhealthy, because the snapshot's
+`oldest_accepted_age_seconds` was the only signal and it had no reader.
+
+**Considered and rejected:** A bigger page or a tighter cron alone: a fixed
+ceiling, moved. Marking rows `delivering` on selection so two passes can never
+send the same row: the pass stops before crossing its tick, so at most one page
+can overlap the next, and a recovery sweep for rows stranded in `delivering` is
+more mechanism than that one page justifies. A drain in its own invocation (a
+self-enqueued Queue message or an alarm) to escape the per-invocation RPC cap:
+the right shape if the budget below proves too small, but a new queue is
+infrastructure this change did not need. Dropping the per-tool-call events
+that make up most of the volume: a product decision about what is measured.
+
+**Consequences:** The pass is bounded by the Service Binding cap first: 32
+invocations per request, less up to 25 the profile and crash outboxes can
+spend in the same tick, leaves 7 calls, and a page needs up to two, so a tick
+drains at most three pages. At 500 rows a page that is 1,500 rows a tick,
+432,000 a day, which clears the 66,000-row backlog in under four hours. The
+page size is the lever, within PostHog's 20 MB batch and D1's per-statement
+limits; the next lever is a drain in its own invocation. A held row no longer holds the rows behind it; it is read once per
+tick until its transition commits.
 
 ### 2026-09-14 — Configurable deployment isolation
 
