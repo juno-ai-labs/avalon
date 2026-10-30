@@ -477,6 +477,83 @@ describe("Global telemetry delivery", () => {
     database.close();
   });
 
+  it("drains the outbox page after page within one pass", async () => {
+    const database = migratedObservabilityFixture();
+    const deliverTelemetryBatch = vi.fn(async () => ({
+      postHog: { result: "delivered" as const, requestId: null, retryAfterMs: null },
+    }));
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      POSTHOG_HOST: "https://us.i.posthog.com",
+      POSTHOG_PROJECT_TOKEN: "phc_test",
+      TELEMETRY_DELIVERY: { deliverTelemetryBatch },
+    });
+    for (const eventId of [
+      "018f22f2-4c22-7abc-8def-0123456789ab",
+      "018f22f2-4c22-7abc-8def-0123456789ac",
+      "018f22f2-4c22-7abc-8def-0123456789ae",
+    ]) {
+      await new TelemetryCollector(env).accept(envelope(eventId), {
+        route: "global",
+        routingBasis: "geolocation_fallback",
+        analyticsSubjectId: "018f22f2-4c22-7abc-8def-0123456789ad",
+        subjectUserId: null,
+        workspaceAnalyticsId: null,
+      });
+    }
+
+    await expect(processTelemetryOutbox(env, { pageSize: 2 })).resolves.toMatchObject({
+      selected: 3,
+      delivered: 3,
+      retried: 0,
+    });
+    expect(deliverTelemetryBatch).toHaveBeenCalledTimes(2);
+    expect(database.prepare(
+      "SELECT COUNT(*) AS delivered FROM telemetry_accepted_events WHERE delivery_state = 'delivered'",
+    ).get()).toEqual({ delivered: 3 });
+    database.close();
+  });
+
+  it("ends the pass before a page that would cross the pass budget", async () => {
+    const database = migratedObservabilityFixture();
+    const deliverTelemetryBatch = vi.fn(async () => {
+      vi.setSystemTime(new Date(Date.now() + 2_000));
+      return { postHog: { result: "delivered" as const, requestId: null, retryAfterMs: null } };
+    });
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      POSTHOG_HOST: "https://us.i.posthog.com",
+      POSTHOG_PROJECT_TOKEN: "phc_test",
+      TELEMETRY_DELIVERY: { deliverTelemetryBatch },
+    });
+    for (const eventId of [
+      "018f22f2-4c22-7abc-8def-0123456789ab",
+      "018f22f2-4c22-7abc-8def-0123456789ac",
+      "018f22f2-4c22-7abc-8def-0123456789ae",
+    ]) {
+      await new TelemetryCollector(env).accept(envelope(eventId), {
+        route: "global",
+        routingBasis: "geolocation_fallback",
+        analyticsSubjectId: "018f22f2-4c22-7abc-8def-0123456789ad",
+        subjectUserId: null,
+        workspaceAnalyticsId: null,
+      });
+    }
+
+    // Each page takes two seconds; a third second would not fit a second page.
+    await expect(processTelemetryOutbox(env, { pageSize: 1, passBudgetMs: 3_000 })).resolves.toMatchObject({
+      selected: 1,
+      delivered: 1,
+    });
+    expect(deliverTelemetryBatch).toHaveBeenCalledTimes(1);
+    expect(database.prepare(
+      "SELECT COUNT(*) AS pending FROM telemetry_accepted_events WHERE delivery_state = 'pending'",
+    ).get()).toEqual({ pending: 2 });
+    database.close();
+  });
+
   it("leaves accepted rows untouched while the destination circuit is open", async () => {
     const database = migratedObservabilityFixture();
     const deliverTelemetryBatch = vi.fn(async () => ({
