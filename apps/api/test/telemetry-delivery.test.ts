@@ -646,6 +646,84 @@ describe("Global telemetry delivery", () => {
     database.close();
   });
 
+  it("ends the pass at the first page the destination rejects", async () => {
+    const database = migratedObservabilityFixture();
+    const deliverTelemetryBatch = vi.fn(async () => ({
+      postHog: { result: "terminal" as const, requestId: "posthog-request-3", retryAfterMs: null },
+    }));
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      POSTHOG_HOST: "https://us.i.posthog.com",
+      POSTHOG_PROJECT_TOKEN: "phc_test",
+      TELEMETRY_DELIVERY: { deliverTelemetryBatch },
+    });
+    for (const eventId of [
+      "018f22f2-4c22-7abc-8def-0123456789ab",
+      "018f22f2-4c22-7abc-8def-0123456789ac",
+      "018f22f2-4c22-7abc-8def-0123456789ae",
+    ]) {
+      await new TelemetryCollector(env).accept(envelope(eventId), {
+        route: "global",
+        routingBasis: "geolocation_fallback",
+        analyticsSubjectId: "018f22f2-4c22-7abc-8def-0123456789ad",
+        subjectUserId: null,
+        workspaceAnalyticsId: null,
+      });
+    }
+
+    await expect(processTelemetryOutbox(env, { pageSize: 1 })).resolves.toMatchObject({
+      selected: 1,
+      terminal: 1,
+      delivered: 0,
+    });
+    expect(deliverTelemetryBatch).toHaveBeenCalledTimes(1);
+    expect(database.prepare(
+      "SELECT delivery_state, COUNT(*) AS n FROM telemetry_accepted_events GROUP BY delivery_state ORDER BY delivery_state",
+    ).all()).toEqual([
+      { delivery_state: "pending", n: 2 },
+      { delivery_state: "terminal", n: 1 },
+    ]);
+    database.close();
+  });
+
+  it("budgets the next page by the slowest page seen, not the latest", async () => {
+    const database = migratedObservabilityFixture();
+    const pageCosts = [2_000, 100, 100];
+    const deliverTelemetryBatch = vi.fn(async () => {
+      vi.setSystemTime(new Date(Date.now() + (pageCosts.shift() ?? 0)));
+      return { postHog: { result: "delivered" as const, requestId: null, retryAfterMs: null } };
+    });
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      POSTHOG_HOST: "https://us.i.posthog.com",
+      POSTHOG_PROJECT_TOKEN: "phc_test",
+      TELEMETRY_DELIVERY: { deliverTelemetryBatch },
+    });
+    for (const eventId of [
+      "018f22f2-4c22-7abc-8def-0123456789ab",
+      "018f22f2-4c22-7abc-8def-0123456789ac",
+      "018f22f2-4c22-7abc-8def-0123456789ae",
+    ]) {
+      await new TelemetryCollector(env).accept(envelope(eventId), {
+        route: "global",
+        routingBasis: "geolocation_fallback",
+        analyticsSubjectId: "018f22f2-4c22-7abc-8def-0123456789ad",
+        subjectUserId: null,
+        workspaceAnalyticsId: null,
+      });
+    }
+
+    // After a two-second page and a fast one, 2.1 s have passed. The latest page
+    // would fit a third in a four-second budget; the slowest would not.
+    await expect(processTelemetryOutbox(env, { pageSize: 1, passBudgetMs: 4_000 })).resolves.toMatchObject({
+      delivered: 2,
+    });
+    expect(deliverTelemetryBatch).toHaveBeenCalledTimes(2);
+    database.close();
+  });
+
   it("leaves accepted rows untouched while the destination circuit is open", async () => {
     const database = migratedObservabilityFixture();
     const deliverTelemetryBatch = vi.fn(async () => ({
