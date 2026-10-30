@@ -1087,7 +1087,8 @@ capability, never enrolling a delegate, submitting nothing over a
 person's unfinished draft, and never adding a validation step that can turn
 a report into a blocker: a run that withheld a data report because two
 sources disagreed is a run that was silent when it should have posted, and
-the fix is to post with the discrepancy named in one line. When a change was saved
+the fix is to post with the discrepancy named in one line; a review that
+finds such a check removes it, unless a person asked for it. When a change was saved
 and the notice names where to announce it, it publishes one message there
 with `conversation_post`, naming that conversation, for the people the
 Sidekick works for: what it now does differently, why, and how to restore
@@ -1663,6 +1664,26 @@ The Sidekick authoring prompt carries no Google-specific lookup or attachment
 instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
+
+### 2026-10-30 — A person's check stays; a review removes the wizard's own
+
+**What changed:** On top of the entry below, the authoring prompt says a
+data report is delivered even when a number is zero or looks wrong, that a
+report is held back when the person asked for that check, and that the
+wizard never invents a freshness gate and adds a check only when the
+person asks. The self-review removes a check that held a report back,
+unless a person asked for it.
+
+**Why:** The entry below forbids a review from saving a new gate; it did not
+say what a review does with one already saved, and the PostHog report's
+revision 8 was such a gate until its owner rewrote it by hand. The
+exception for a person's request keeps the review's rule that it never
+undoes a choice a person made, which review bots on the pull request read
+the first wording as breaking.
+
+**Consequences:** A gate a review wrote is removed at the next review that
+finds it holding a report back; a gate a person wrote is kept at setup and
+at review.
 
 ### 2026-10-30 — A review may not make a data Sidekick quieter
 
