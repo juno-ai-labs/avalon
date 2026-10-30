@@ -87,10 +87,10 @@ new evaluation and deploy; leaving an editable Flagship value in front of the
 measured route would let production silently diverge from its evidence. The
 work-stream entry matches the `AgentInferenceSource` value written to the
 inference ledger, so a ledger row and its flag key name the same agent; an
-automation activation and its background agents remain `workstream` runs on
+automation activation and its delegation workers remain `workstream` runs on
 the work-stream agent's flag. The Sidekick's authoring Main (`automation` parent,
-substream `0`) uses `sidekick_authoring`, independently defaulting to Sol even
-when the work-stream flag serves Terra. An explicit conversation model pin still
+substream `0`) and the background agents it starts use `sidekick_authoring`,
+independently defaulting to Sol even when the work-stream flag serves Terra. An explicit conversation model pin still
 wins. The rest
 are the standalone structured-output agents: message addressing uses the
 agent-harness JEV/fallback cascade; work-stream naming, the two halves of suggested work, and the

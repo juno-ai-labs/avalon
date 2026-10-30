@@ -194,11 +194,43 @@ describe("Sidekick wizard run inspection", () => {
     await expect(list.execute(first.pagination!.continuations[0]!.input, context)).rejects.toThrow("archived");
   });
 
-  it("offers run inspection only to the authoring conversation", () => {
+  it("offers run inspection to the authoring conversation and the agents it starts there", () => {
+    const reads = (overrides: Partial<typeof input> = {}) =>
+      plugin(overrides).tools.some((candidate) => candidate.definition.capability.startsWith("rally.sidekick.runs."));
     expect(plugin().tools.filter((candidate) => candidate.definition.capability.startsWith("rally.sidekick.runs.")).map((candidate) => candidate.definition.mode)).toEqual(["read", "read"]);
-    for (const overrides of [{ parentKind: "workstream" as const }, { substreamId: asSubstreamId(runId(1)) }, { backgroundAgent: true }]) {
-      expect(plugin(overrides).tools.some((candidate) => candidate.definition.capability.startsWith("rally.sidekick.runs."))).toBe(false);
+    expect(reads({ substreamId: asSubstreamId(runId(8)), backgroundAgent: true })).toBe(true);
+    for (const overrides of [{ parentKind: "workstream" as const }, { substreamId: asSubstreamId(runId(1)) },
+      { substreamId: asSubstreamId(runId(9)), backgroundAgent: true, automationDelegation: { runId: runId(1), stopGeneration: 0 } }]) {
+      expect(reads(overrides)).toBe(false);
     }
+  });
+
+  it("reads the due review's runs in the notice's order when no run is named", async () => {
+    await seedRuns(SIDEKICK, 3);
+    const agent = { substreamId: asSubstreamId(runId(8)), backgroundAgent: true };
+    await expect(tool("runs_read", agent).execute({}, context)).rejects.toThrow("Pass a runId");
+    const reviewId = "00000000-0000-7000-8000-00000000fa41";
+    const notice = { kind: "sidekick_review_due", schemaVersion: 1, reviewId, automationId: SIDEKICK, definitionRevision: 1,
+      since: null, until: "2026-10-30T00:00:00.000Z", announceTo: null,
+      finished: { completed: 2, failed: 1, needsInput: 0, stopped: 0 },
+      sample: { failed: [runId(2)], needsInput: [], completed: [runId(1), runId(3)] } };
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO sidekick_reviews(sidekick_id, review_id, definition_revision, coordinator_user_id, notice_json, requested_at, delivered_at)
+         VALUES (?, ?, 1, ?, ?, 100, 101)`, SIDEKICK, reviewId, USER, JSON.stringify(notice));
+    });
+    // The agent names nothing; the cursor carries the rest of the list.
+    const read = tool("runs_read", agent);
+    const visited: [string, number][] = [];
+    let result = await read.execute({}, context);
+    for (;;) {
+      const { runId: id, runsRemaining } = z.object({ runId: z.string(), runsRemaining: z.number() }).parse(result.output);
+      visited.push([id, runsRemaining]);
+      const next = result.pagination?.continuations[0];
+      if (!next) break;
+      result = await read.execute(next.input, context);
+    }
+    expect(visited).toEqual([[runId(2), 2], [runId(1), 1], [runId(3), 0]]);
   });
 
   it.each(["needs_input", "stopped"])("returns stored evidence for an unprovisioned %s run", async (status) => {
@@ -265,14 +297,67 @@ describe("Sidekick wizard run inspection", () => {
     expect(collected.split(draft.instructions)).toHaveLength(2);
   });
 
-  it("refuses a fragment continuation when the evidence changes", async () => {
+  it("refuses a fragment continuation after the run's result moved", async () => {
     await seedRuns(SIDEKICK, 1);
     await seedHistory();
     await env.PAYLOADS.put(`sidekick-history/${runId(1)}`, JSON.stringify({ replayVersion: 1, output: { text: "x".repeat(20000) } }));
+    const first = await tool("runs_read").execute({ runId: runId(1) }, context);
+    // The evidence is the run and its transcript: a run whose result moved is a different run.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE sidekick_runs SET summary = 'Report delivered after all' WHERE run_id = ?", runId(1));
+    });
+    // A fresh tool instance rebuilds the page rather than serving the one it remembers.
+    await expect(tool("runs_read").execute(first.pagination!.continuations[0]!.input, context)).rejects.toThrow("Run evidence changed");
+  });
+
+  it("serves every fragment of a page from one document, whatever a payload read does meanwhile", async () => {
+    await seedRuns(SIDEKICK, 1);
+    await seedHistory();
+    const text = "x".repeat(20000);
+    await env.PAYLOADS.put(`sidekick-history/${runId(1)}`, JSON.stringify({ replayVersion: 1, output: { text } }));
+    // Full output on the first fragment, then the payload becomes unreadable:
+    // the activation that served the first fragment still serves the rest,
+    // and the whole parses to the output it started with.
     const read = tool("runs_read");
     const first = await read.execute({ runId: runId(1) }, context);
     await env.PAYLOADS.delete(`sidekick-history/${runId(1)}`);
-    await expect(read.execute(first.pagination!.continuations[0]!.input, context)).rejects.toThrow("Run evidence changed");
+    // A read restarted meanwhile builds its own document and does not replace the one still being sliced.
+    await read.execute({ runId: runId(1) }, context);
+    let collected = z.object({ content: z.string() }).parse(first.output).content;
+    let result = first;
+    while (result.pagination?.continuations[0]) {
+      result = await read.execute(result.pagination.continuations[0].input, context);
+      collected += z.object({ content: z.string() }).parse(result.output).content;
+    }
+    expect(toolsIn({ content: collected })).toEqual([expect.objectContaining({ toolCallId: "delivery-call", output: { text }, resultAvailability: "full" })]);
+    // Another activation cannot serve the first fragment's document and says so, rather than splicing a summary into it.
+    await expect(tool("runs_read").execute(first.pagination!.continuations[0]!.input, context)).rejects.toThrow("can no longer be loaded");
+  });
+
+  it("keeps a summary on every fragment once the payload becomes readable", async () => {
+    await seedRuns(SIDEKICK, 1);
+    await seedHistory();
+    const text = "x".repeat(20000);
+    // A summary on the first fragment stays a summary on every later one,
+    // whichever activation serves them, so the fragments join into one document.
+    await env.PAYLOADS.put(`sidekick-history/${runId(1)}`, JSON.stringify({ replayVersion: 1, output: { text } }));
+    await runInDurableObject(child(runId(1)), async (_instance, state) => {
+      await new WorkstreamTranscriptStorage(state.storage).appendParticipantMessage({ turnId: "long-feedback", actor: "human",
+        authorUserId: USER, authorSnapshot: { displayName: "Adam", avatarUrl: null }, text: "y".repeat(20000),
+        createdAtUtc: "2026-10-23T00:00:03.000Z", attentionOrdinal: null });
+    });
+    await env.PAYLOADS.delete(`sidekick-history/${runId(1)}`);
+    const summaryFirst = await tool("runs_read").execute({ runId: runId(1) }, context);
+    await env.PAYLOADS.put(`sidekick-history/${runId(1)}`, JSON.stringify({ replayVersion: 1, output: { text } }));
+    let joined = z.object({ content: z.string() }).parse(summaryFirst.output).content;
+    let result = summaryFirst;
+    while (result.pagination?.continuations[0]) {
+      result = await tool("runs_read").execute(result.pagination.continuations[0].input, context);
+      joined += z.object({ content: z.string() }).parse(result.output).content;
+    }
+    const [block] = toolsIn({ content: joined });
+    expect(block).toMatchObject({ toolCallId: "delivery-call", resultAvailability: "not_available" });
+    expect(block).not.toHaveProperty("output");
   });
 
   it("reauthorizes resource results against the selected run and withholds revoked content", async () => {
@@ -321,6 +406,65 @@ describe("Sidekick wizard run inspection", () => {
     expect(JSON.stringify(detached.output)).not.toContain("Confidential attachment");
     expect(JSON.stringify(detached.output)).not.toContain("Private report summary");
     expect(JSON.stringify(detached.output)).not.toContain(RESOURCE);
+
+    // A page that holds a resource result is reauthorized on every fragment,
+    // not served from memory: once the version moves, the continuation that
+    // carried the content in full is refused rather than sliced from a cache.
+    await runInDurableObject(child(runId(1)), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO workstream_resource_links
+        (resource_id,attached_by_user_id,watch_enabled,relationship_type,resource_json,attached_at,updated_at)
+        VALUES (?,NULL,0,'attachment','{}',1,1)`, RESOURCE);
+    });
+    await env.PAYLOADS.put(`sidekick-history/${runId(1)}`, JSON.stringify({ replayVersion: 1,
+      output: { resourceId: RESOURCE, text: `Confidential attachment content ${"x".repeat(20000)}`, version: { sha256: hash } } }));
+    const read = tool("runs_read");
+    const fragment = await read.execute({ runId: runId(1) }, context);
+    expect(fragment.output).toMatchObject({ pageComplete: false });
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE resources SET model_content_sha256 = ? WHERE id = ?", "c".repeat(64), RESOURCE);
+    });
+    await expect(read.execute(fragment.pagination!.continuations[0]!.input, context)).rejects.toThrow("can no longer be loaded");
+  });
+
+  it("records a revision against the review while its notice is the authoring conversation's last word", async () => {
+    // The wizard may hand reads to a background agent and end its turn; the
+    // agent's reply wakes it with that reply as the reason, and the revision
+    // it then saves is still the review's. A person's message ends the review.
+    await bootstrapConversationChildRuntime(env, WORKSPACE, "automation", SIDEKICK, "0");
+    await provisionWorkstreamObject(env, { workspaceId: WORKSPACE, workstreamId: SIDEKICK, substreamId: "0",
+      title: "Incident report", objective: draft.instructions, scope: "personal", createdByUserId: USER,
+      participantUserIds: [USER], harnessStatus: "idle", emailAddress: null, emailRouteStatus: null, systemKind: null, modelOverride: null, now: 100 });
+    const delivered = "00000000-0000-7000-8000-00000000fa40";
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO sidekick_reviews(sidekick_id, review_id, definition_revision, coordinator_user_id, notice_json, requested_at, delivered_at)
+         VALUES (?, ?, 1, ?, '{}', 100, 101)`, SIDEKICK, delivered, USER);
+    });
+    const say = (turnId: string, message: Partial<Parameters<WorkstreamTranscriptStorage["appendParticipantMessage"]>[0]>) =>
+      runInDurableObject(child("0"), (_instance, state) => new WorkstreamTranscriptStorage(state.storage).appendParticipantMessage({
+        turnId, actor: "assistant", authorUserId: null, authorSnapshot: null, text: turnId, createdAtUtc: "2026-10-30T00:00:00.000Z",
+        attentionOrdinal: null, ...message }));
+    const agentRow = (turnId: string, senderAgentId: string) => say(turnId, { actor: "system", messageType: "system",
+      structuredContentJson: JSON.stringify({ kind: "agent_message", senderAgentId, teamId: senderAgentId, messageId: runId(50) }) });
+    const ownAgent = `automation/${SIDEKICK}/${runId(8)}`;
+    await say("notice", { actor: "system", messageType: "system", structuredContentJson: JSON.stringify({ kind: "sidekick_review_due", reviewId: delivered }) });
+    await agentRow("agent-reply", ownAgent);
+    const submit = (reason: string, instructions: string) => tool("submit_draft", { reason })
+      .execute({ ...draft, sidekickId: null, icon: "inbox", color: "blue", instructions, ready: true }, context);
+    await submit("agent_message", "Reviewed: list active incidents with owners.");
+    // A turn the person woke is theirs before any row is read.
+    await submit("human_message", "A person's own change.");
+    // The wizard's own agents keep the review open; a request from another conversation's agent ends it.
+    await agentRow("agent-reply-again", ownAgent);
+    await submit("agent_message", "Reviewed again: name the owner first.");
+    await agentRow("outside-request", `workstream/${runId(7)}/0`);
+    await submit("agent_message", "A change a person asked for from another Thread.");
+    await say("person", { actor: "human", authorUserId: USER, authorSnapshot: { displayName: "Adam", avatarUrl: null } });
+    await submit("agent_message", "An agent's reply after the person spoke.");
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ definition_revision: number; review_id: string | null }>(
+      `SELECT definition_revision, review_id FROM sidekick_revisions WHERE sidekick_id = ? AND definition_revision >= 2 ORDER BY definition_revision`,
+      SIDEKICK).toArray())).toEqual([{ definition_revision: 2, review_id: delivered }, { definition_revision: 3, review_id: null },
+      { definition_revision: 4, review_id: delivered }, { definition_revision: 5, review_id: null }, { definition_revision: 6, review_id: null }]);
   });
 
   it("exposes first/next companions and rejects invented page IDs before reading history", async () => {

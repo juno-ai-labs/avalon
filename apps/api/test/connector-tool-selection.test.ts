@@ -726,10 +726,17 @@ describe("connector tools selected for harness runs", () => {
     const room = await __integrationTesting.loadHarnessTools(runtimeEnv, workflowInput());
     const authoring = await __integrationTesting.loadHarnessTools(runtimeEnv, automationConversationInput());
     const child = await __integrationTesting.loadHarnessTools(runtimeEnv, childWorkflowInput(automationConversationInput()));
+    const worker = await __integrationTesting.loadHarnessTools(runtimeEnv, { ...childWorkflowInput(automationConversationInput()),
+      automationDelegation: { runId: "00000000-0000-7000-8000-00000000d001", stopGeneration: 0 } });
     expect(room.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")
       ?.tools.map((tool) => tool.definition.name)).toEqual(["list_skill_recommendations", "recommend_skill", "unrecommend_skill",
         "sidekick_my_delegations_list", "sidekick_delegates_list", "sidekick_set_delegation"]);
-    expect(child.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")?.tools.map((tool) => tool.definition.name))
+    // The wizard's background agent reads runs for it; a run's delegation worker does not.
+    const sidekicks = child.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks");
+    expect(sidekicks?.tools.map((tool) => tool.definition.name))
+      .toEqual(["runs_list", "runs_list_next", "runs_read", "runs_read_next", "my_delegations_list", "delegates_list", "set_delegation"]);
+    expect(sidekicks?.preload).toBe(true);
+    expect(worker.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")?.tools.map((tool) => tool.definition.name))
       .toEqual(["my_delegations_list", "delegates_list", "set_delegation"]);
     expect(authoring.plugins.map((plugin) => plugin.canonicalId)).toContain("rally:sidekicks");
     expect(room.plugins.find((plugin) => plugin.canonicalId === "avalon:agents")
