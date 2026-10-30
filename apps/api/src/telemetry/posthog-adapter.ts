@@ -25,6 +25,13 @@ const POSTHOG_LIBRARY_VERSION = "1";
 
 export interface PostHogCapture {
   event: string;
+  /**
+   * The outbox row's id. With `event`, `timestamp` and `distinct_id`, all read
+   * from the stored row, it is PostHog's deduplication key, so a re-sent row
+   * collapses to one event once PostHog's background merge runs. `$insert_id`
+   * carries the same id for readers that expect it; PostHog ignores it.
+   */
+  uuid: string;
   timestamp: string;
   properties: Record<string, unknown>;
 }
@@ -249,6 +256,7 @@ export function mapPostHogCapture(
   const settingsPersonProperties = personless ? null : applicationSettingsPersonProperties(envelope);
   return {
     event: mapped.event,
+    uuid: row.eventId,
     timestamp: row.normalizedTimestamp,
     properties: {
       distinct_id: row.analyticsSubjectId,
@@ -365,6 +373,7 @@ export function mapPostHogProfileCapture(row: GlobalProfileDeliveryRow): PostHog
     if (!row.anonymousEpochId) throw new Error("posthog_anonymous_epoch_required");
     return {
       event: "$identify",
+      uuid: row.jobId,
       timestamp: row.createdAt,
       properties: {
         distinct_id: row.destinationAnalyticsId,
@@ -377,12 +386,14 @@ export function mapPostHogProfileCapture(row: GlobalProfileDeliveryRow): PostHog
   if (row.kind === "person_profile") {
     return {
       event: "$set",
+      uuid: row.jobId,
       timestamp: row.createdAt,
       properties: { distinct_id: row.destinationAnalyticsId, $set: row.properties, ...shared },
     };
   }
   return {
     event: "$groupidentify",
+    uuid: row.jobId,
     timestamp: row.createdAt,
     properties: {
       distinct_id: "avalon-server",
