@@ -194,11 +194,43 @@ describe("Sidekick wizard run inspection", () => {
     await expect(list.execute(first.pagination!.continuations[0]!.input, context)).rejects.toThrow("archived");
   });
 
-  it("offers run inspection only to the authoring conversation", () => {
+  it("offers run inspection to the authoring conversation and the agents it starts there", () => {
+    const reads = (overrides: Partial<typeof input> = {}) =>
+      plugin(overrides).tools.some((candidate) => candidate.definition.capability.startsWith("rally.sidekick.runs."));
     expect(plugin().tools.filter((candidate) => candidate.definition.capability.startsWith("rally.sidekick.runs.")).map((candidate) => candidate.definition.mode)).toEqual(["read", "read"]);
-    for (const overrides of [{ parentKind: "workstream" as const }, { substreamId: asSubstreamId(runId(1)) }, { backgroundAgent: true }]) {
-      expect(plugin(overrides).tools.some((candidate) => candidate.definition.capability.startsWith("rally.sidekick.runs."))).toBe(false);
+    expect(reads({ substreamId: asSubstreamId(runId(8)), backgroundAgent: true })).toBe(true);
+    for (const overrides of [{ parentKind: "workstream" as const }, { substreamId: asSubstreamId(runId(1)) },
+      { substreamId: asSubstreamId(runId(9)), backgroundAgent: true, automationDelegation: { runId: runId(1), stopGeneration: 0 } }]) {
+      expect(reads(overrides)).toBe(false);
     }
+  });
+
+  it("reads the due review's runs in the notice's order when no run is named", async () => {
+    await seedRuns(SIDEKICK, 3);
+    const agent = { substreamId: asSubstreamId(runId(8)), backgroundAgent: true };
+    await expect(tool("runs_read", agent).execute({}, context)).rejects.toThrow("Pass a runId");
+    const reviewId = "00000000-0000-7000-8000-00000000fa41";
+    const notice = { kind: "sidekick_review_due", schemaVersion: 1, reviewId, automationId: SIDEKICK, definitionRevision: 1,
+      since: null, until: "2026-10-30T00:00:00.000Z", announceTo: null,
+      finished: { completed: 2, failed: 1, needsInput: 0, stopped: 0 },
+      sample: { failed: [runId(2)], needsInput: [], completed: [runId(1), runId(3)] } };
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO sidekick_reviews(sidekick_id, review_id, definition_revision, coordinator_user_id, notice_json, requested_at, delivered_at)
+         VALUES (?, ?, 1, ?, ?, 100, 101)`, SIDEKICK, reviewId, USER, JSON.stringify(notice));
+    });
+    // The agent names nothing; the cursor carries the rest of the list.
+    const read = tool("runs_read", agent);
+    const visited: [string, number][] = [];
+    let result = await read.execute({}, context);
+    for (;;) {
+      const { runId: id, runsRemaining } = z.object({ runId: z.string(), runsRemaining: z.number() }).parse(result.output);
+      visited.push([id, runsRemaining]);
+      const next = result.pagination?.continuations[0];
+      if (!next) break;
+      result = await read.execute(next.input, context);
+    }
+    expect(visited).toEqual([[runId(2), 2], [runId(1), 1], [runId(3), 0]]);
   });
 
   it.each(["needs_input", "stopped"])("returns stored evidence for an unprovisioned %s run", async (status) => {

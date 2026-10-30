@@ -270,7 +270,7 @@ import {
 } from "./workstream-wakeup-service";
 import type { ToolReceiptRecord, ToolReceiptStatus } from "../durable-objects/workstream-tool-receipt-storage";
 import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
-import { createSidekickRunTools } from "./sidekick-run-tools";
+import { createSidekickRunTools, readsSidekickRuns, SIDEKICK_RUN_READING_GUIDANCE } from "./sidekick-run-tools";
 import { withToolPagination } from "./tool-pagination";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
@@ -5690,14 +5690,22 @@ async function loadHarnessTools(
   // Drafting belongs to the Sidekick's authoring conversation. Other agents
   // discover or create that conversation and send it the setup request.
   const loadedAutomationPluginIds = new Set<string>();
+  // A background agent the wizard starts reads runs for it, with the reader
+  // in hand from its first turn; drafting stays the wizard's.
+  const readsRuns = (input.substreamId ?? "0") !== "0" && readsSidekickRuns(input);
   const automationsPlugin = input.executionPrincipal.type === "user" && !input.automationRun && (input.parentKind === "workstream"
     || (input.parentKind === "automation" && (input.substreamId ?? "0") === "0"))
     ? createAvalonAutomationsPlugin(env, input, loadedAutomationPluginIds, expandPages)
     : input.executionPrincipal.type === "user" ? {
       canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_sidekicks", shortWireName: "sidekick",
-      displayName: "Sidekick delegation", description: "Inspect and manage Sidekick delegation for Organization users.",
-      preload: false, explicit: false, systemMessage: sidekickDelegationGuidance(),
-      tools: sidekickDelegationTools(env, input, input.executionPrincipal.userId, false),
+      displayName: readsRuns ? "Sidekick runs and delegation" : "Sidekick delegation",
+      description: readsRuns ? "Read this Sidekick's runs for its wizard; inspect and manage Sidekick delegation."
+        : "Inspect and manage Sidekick delegation for Organization users.",
+      preload: readsRuns, explicit: false,
+      systemMessage: readsRuns ? `${SIDEKICK_RUN_READING_GUIDANCE} ${sidekickDelegationGuidance()}` : sidekickDelegationGuidance(),
+      tools: [...(readsRuns ? createSidekickRunTools(env, input, (ref) => loadToolReplayOutput(env, ref))
+        .flatMap((tool) => expandPages(tool, "sidekick", null)) : []),
+      ...sidekickDelegationTools(env, input, input.executionPrincipal.userId, false)],
     } : null;
   // List, read and post to Rally conversations, scoped by the loop: a
   // Breakout loop reaches its own conversation and its Channel's Main; a
