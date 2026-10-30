@@ -1084,11 +1084,11 @@ reader wants to see before the revision lands. It acts on the plan: nothing
 to change, stop after the report; otherwise revise as planned and submit
 `ready=true`, never adding a connector, plugin, destination, trigger or
 capability, never enrolling a delegate, submitting nothing over a
-person's unfinished draft, and never adding a check that withholds a
-scheduled report: a report the person asked for is delivered with its
-doubt stated in one line, and a review that finds runs holding one back
-removes the check that held it, unless a person asked for that check.
-When a change was saved
+person's unfinished draft, and never adding a validation step that can turn
+a report into a blocker: a run that withheld a data report because two
+sources disagreed is a run that was silent when it should have posted, and
+the fix is to post with the discrepancy named in one line; a review that
+finds such a check removes it, unless a person asked for it. When a change was saved
 and the notice names where to announce it, it publishes one message there
 with `conversation_post`, naming that conversation, for the people the
 Sidekick works for: what it now does differently, why, and how to restore
@@ -1665,37 +1665,63 @@ instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
 
-### 2026-10-30 — A report is delivered with its doubt, never withheld by a check
+### 2026-10-30 — A person's check stays; a review removes the wizard's own
 
-**What changed:** The authoring prompt tells the wizard that a report the
-person asked for on a schedule is delivered on that schedule even when a
-number is zero, looks wrong or disagrees with another source, and says so
-in one line inside the report; the wizard never invents a check whose
-failure withholds the report, and adds one only when the person asks. The
-self-review never adds a freshness, consistency or sanity check that
-withholds a scheduled report, and when the runs it read held one back for
-such a reason, it removes the check that held them, unless a person asked
-for it.
+**What changed:** On top of the entry below, the authoring prompt says a
+data report is delivered even when a number is zero or looks wrong, that a
+report is held back when the person asked for that check, and that the
+wizard never invents a freshness gate and adds a check only when the
+person asks. The self-review removes a check that held a report back,
+unless a person asked for it.
 
-**Why:** Left to itself, a review of a data Sidekick reads a run that posted
-a doubtful number as a procedure defect and fixes it by adding a gate: a
-freshness check, a cross-source comparison, a minimum count. The daily
-PostHog report to Slack did exactly this: asked to check an all-zero
-report, its wizard saved a rule that raw counts and freshness must be
-verified before any report is published, and the next day's run, holding
-good data with freshness confirmed, withheld the report because three
-differently defined page-view counts for the prior day did not agree. The
-owner then rewrote the rule by hand. The owner of a scheduled report
-wants the report, and a doubtful number named in one line is worth
-more to them than a missing report; a gate also hides the outage it was
-meant to catch, because a report that is never posted is what an outage
-looks like. The rule is written for the wizard rather than enforced by the
-host because the host cannot tell a report from any other post.
+**Why:** The entry below forbids a review from saving a new gate; it did not
+say what a review does with one already saved, and the PostHog report's
+revision 8 was such a gate until its owner rewrote it by hand. The
+exception for a person's request keeps the review's rule that it never
+undoes a choice a person made, which review bots on the pull request read
+the first wording as breaking.
 
-**Consequences:** A data Sidekick's own revisions keep reports flowing;
-a review that finds a gate removes it rather than tightening it. Validation
-a person asked for stays, since the review never undoes a choice a person
-made.
+**Consequences:** A gate a review wrote is removed at the next review that
+finds it holding a report back; a gate a person wrote is kept at setup and
+at review.
+
+### 2026-10-30 — A review may not make a data Sidekick quieter
+
+**What changed:** `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE` says, when the
+procedure is written and again in the self-review's plan and act stages,
+that a procedure which reports data delivers its report: two sources that
+measure differently will not agree exactly, so a run names the difference in
+one line and posts, and holds a report back only when a required source
+failed or returned nothing while another shows data. A review treats a report
+withheld over a disagreement as "silent when it should have posted", and may
+never save a check that compares independently defined measures and blocks on
+a mismatch.
+
+**Why:** The Daily Signup, Traffic & Attribution Report's self-review, asked
+to explain a day of zeros that a telemetry backlog had caused, added
+freshness and cross-source checks and a rule to block when "diagnostics
+disagree". Its next scheduled run had the numbers in hand (82 visitors,
+105 views, 90 sessions, freshness confirmed) and withheld them because
+PostHog's web overview counted `$pageview` plus `$screen` where the run's SQL
+counted `$pageview` alone, 56 against 50, with a third figure from a
+differently bounded window. A person had to read the blocker, work out that
+the measures differed by definition, and ask the wizard to relax the rule.
+The review had made the Sidekick stricter, which for a report is the same as
+quieter, and the previous guidance named only the opposite failure, posting
+when it should have stayed silent.
+
+**Considered and rejected:** A host-side rule that a review's revision may
+not lengthen the instructions or add a condition: the guidance already keeps
+the rule on what a review may save in the prompt rather than in a gate, and
+a length rule would block a legitimate fix. A tolerance number for
+cross-source agreement: it would be a guess, and the rule needed is that a
+disagreement is reported rather than measured.
+
+**Consequences:** The bar for withholding a data report is a source that
+failed or came back empty while another shows data, in the first draft and
+after every review. A caveat line is the way to carry doubt; a blocker is
+not. Over-validation that still reaches a saved definition is a procedure
+problem the next review is told to recognize and remove.
 
 ### 2026-10-30 — A silent run ends with one line, never with nothing
 
