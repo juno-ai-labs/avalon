@@ -257,10 +257,16 @@ maximum page size (50); evidence fragments share its 12,000-character allowance.
 page, concatenated before parsing. Opaque `_next` cursors retain the sequence
 fence, character offset and content hash; each fragment reauthorizes and a
 changed or revoked result requires restarting the read. There is no second
-history store or new defensive allowance. Execution runs, background agents and
-instruction-loading conversations do not receive these tools.
+history store or new defensive allowance. The wizard's Main and the background
+agents it starts there receive these tools (`readsSidekickRuns` in
+`sidekick-run-tools.ts`); execution runs, their delegation workers and
+instruction-loading conversations do not. A read that names no run serves the
+latest delivered review's runs in the notice's order (`reviewRunsToRead` on
+the Organization object), carrying the rest of the list in its cursor, so the
+wizard hands an agent the assignment and no ids.
 
-The authoring wizard has its own model route, `sidekick_authoring`, defaulting
+The authoring wizard, and the background agents it starts, have their own model
+route, `sidekick_authoring`, defaulting
 to Sol independently of the ordinary Thread and activation route. Explicit model
 pins still win; see [`feature-flags.md`](feature-flags.md). For work requested
 after an external change, authoring guidance loads `polling-for-events`, inspects
@@ -1063,9 +1069,10 @@ Memory treats the review as agent-derived.
 
 **What the wizard does with it** is guidance in
 `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, not a gate, in four stages. It reads
-first, saying nothing: only the listed runs, and the Sidekick's posts and
-replies in its home, and it reads them itself, because a background agent
-has no run-reading tools. It then plans, in one message before any write: what
+first, saying nothing: it hands the listed runs to one background agent,
+whose reader walks them without a run id and which reports run by run, and
+when the reply wakes it, it reads the Sidekick's posts and replies in its
+home itself. It then plans, in one message before any write: what
 the runs showed, run by run; whether anything justifies a change (a
 procedure problem seen in the runs, never a platform failure); and if so
 exactly what it will change and nothing else. The plan comes after the reads
@@ -1659,8 +1666,10 @@ is the last word in the authoring conversation that is not the wizard's own,
 not only when the turn's reason is the review's. The run reader hashes the
 run and its transcript rather than the serialized page, remembers the pages
 an activation built, and makes a rebuilt continuation load exactly the
-outputs the first fragment carried. The review guidance tells the wizard to
-read the runs itself.
+outputs the first fragment carried. The background agents the wizard starts
+get the run reader and the wizard's model route, a read that names no run
+walks the due review's runs from the notice, and the guidance makes one such
+agent the reader.
 
 **Why:** Help email triage's review handed its reads to a background agent
 and ended its turn; the agent's reply woke the wizard with that reply as the
@@ -1673,7 +1682,12 @@ two-second deadline, some reads timed out and fell back to summaries, the
 page's hash no longer matched the first fragment's, and the reader refused
 every one as changed evidence though all twelve runs had finished days
 before. Two of the three reviews first delegated the reads to agents that
-have no run tools and lost a minute each. The alternative for the marker, a
+have no run tools and lost a minute each; the wizard was delegating as its
+coordination guidance tells every agent to, and reading twelve runs in its
+own context would have spent the context its plan and revision need, so the
+agents got the reader rather than the wizard losing the delegation. The ids
+moved into the reader because an assignment that has to carry them is where
+a wrong or missing id enters. The alternative for the marker, a
 host rule stamping any revision that follows a delivered review, would have
 claimed a person's own edit made an hour later; the conversation's state is
 the honest signal. The alternative for the reader, a longer deadline, would
