@@ -153,6 +153,7 @@ import {
 import { z } from "zod";
 import { connectorTextPages } from "./connector-text-pages";
 import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
+import { PERSONAL_SYSTEM_PROMPT_REASONS } from "../durable-objects/personal-system-prompt";
 import { AutomationService } from "./automation-service";
 import { WorkstreamService } from "./workstream-service";
 import { ResourceService } from "./resource-service";
@@ -2218,9 +2219,17 @@ function createAvalonAutomationsPlugin(
  * own, and a person's message ends it. A bounded newest-first read; the
  * notice sits behind at most the review's own tool rows.
  */
+/**
+ * A submission belongs to the review when its turn is the review's, or when the
+ * review's notice is the last word in the authoring conversation that is not
+ * the wizard's own: the wizard may end its turn and be woken again by an agent
+ * it delegated to. A person's message, as the turn's reason or in the recent
+ * rows, ends the review. The rows read are the lister's page, the most recent
+ * 250; a notice older than that is out of the review's reach.
+ */
 async function reviewOwnsThisTurn(env: Env, input: WorkstreamWorkflowInput): Promise<boolean> {
   if (input.reason === "sidekick_review") return true;
-  if (input.parentKind !== "automation") return false;
+  if (input.parentKind !== "automation" || PERSONAL_SYSTEM_PROMPT_REASONS.has(input.reason)) return false;
   const transcript = createMessageObjectPort(env, input.workspaceId, input.parentId, undefined, "0");
   const recent = await transcriptLister(transcript, { workspaceId: input.workspaceId, workstreamId: input.parentId })(
     input.workspaceId, input.parentId, 250);
