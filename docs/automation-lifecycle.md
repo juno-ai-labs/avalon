@@ -1083,8 +1083,11 @@ reviews showed, whereas a plan written from the runs is the proposal a
 reader wants to see before the revision lands. It acts on the plan: nothing
 to change, stop after the report; otherwise revise as planned and submit
 `ready=true`, never adding a connector, plugin, destination, trigger or
-capability, never enrolling a delegate, and submitting nothing over a
-person's unfinished draft. When a change was saved
+capability, never enrolling a delegate, submitting nothing over a
+person's unfinished draft, and never adding a check that withholds a
+report: a run that reports data delivers it on schedule with its doubt
+stated in one line, and a review that finds runs holding a report back
+removes the check that held it. When a change was saved
 and the notice names where to announce it, it publishes one message there
 with `conversation_post`, naming that conversation, for the people the
 Sidekick works for: what it now does differently, why, and how to restore
@@ -1660,6 +1663,36 @@ The Sidekick authoring prompt carries no Google-specific lookup or attachment
 instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
+
+### 2026-10-30 — A report is delivered with its doubt, never withheld by a check
+
+**What changed:** The authoring prompt tells the wizard that a run which
+reports data delivers the report on schedule even when a number is zero,
+looks wrong or disagrees with another source, and says so in one line
+inside the report; a run's instructions never get a check whose failure
+withholds the report. The self-review carries the same rule: it never adds
+a freshness, consistency or sanity check that withholds a report, and when
+the runs it read held a report back for such a reason, it removes the check
+that held them.
+
+**Why:** Left to itself, a review of a data Sidekick reads a run that posted
+a doubtful number as a procedure defect and fixes it by adding a gate: a
+freshness check, a cross-source comparison, a minimum count. A wizard asked
+to check an all-zero traffic report saved a rule that no all-zero report may
+be published until a raw count confirms it; the zeros were real, the
+delivery pipeline behind them had stalled, and the gate kept the report
+from saying so. Another Sidekick's runs declined, seven times in one
+afternoon, to refresh a calendar over one date without a year. The owner of a scheduled
+report wants the report, and a doubtful number named in one line is worth
+more to them than a missing report; a gate also hides the outage it was
+meant to catch, because a report that is never posted is what an outage
+looks like. The rule is written for the wizard rather than enforced by the
+host because the host cannot tell a report from any other post.
+
+**Consequences:** A data Sidekick's own revisions keep reports flowing;
+a review that finds a gate removes it rather than tightening it. Validation
+a person asked for stays, since the review never undoes a choice a person
+made.
 
 ### 2026-10-30 — A silent run ends with one line, never with nothing
 
