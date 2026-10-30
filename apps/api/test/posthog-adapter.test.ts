@@ -178,6 +178,7 @@ describe("PostHog adapter", () => {
     };
     expect(mapPostHogProfileCapture(transition)).toEqual({
       event: "$identify",
+      uuid: transition.jobId,
       timestamp: transition.createdAt,
       properties: {
         distinct_id: transition.destinationAnalyticsId,
@@ -198,6 +199,7 @@ describe("PostHog adapter", () => {
       envelope: { ...event, identityScope: "workspace-user" },
     }), WEB_BASE)).toEqual({
       event: "workspace_create_completed",
+      uuid: event.eventId,
       timestamp: "2026-08-12T20:00:02.000Z",
       properties: {
         distinct_id: "018f22f2-4c22-7abc-8def-0123456789ad",
