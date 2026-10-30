@@ -2169,7 +2169,7 @@ function createAvalonAutomationsPlugin(
           appearance: target.appearance,
           actor: actorRequest.actor,
           // A review's revision is recorded against the review, for reading later.
-          ...(input.reason === "sidekick_review" ? { origin: "sidekick_review" as const } : {}),
+          ...(await reviewOwnsThisTurn(env, input) ? { origin: "sidekick_review" as const } : {}),
         });
         return { ...submitted, saved: draft.ready, description: draft.description };
       },
@@ -2206,6 +2206,31 @@ function createAvalonAutomationsPlugin(
       ...(delegationUser ? sidekickDelegationTools(env, input, delegationUser, false) : [])],
     onActivate: async () => prepare(),
   };
+}
+
+/**
+ * Whether a wizard submission answers a delivered review. The review's own
+ * turn carries the reason; a turn that continues it does not. The wizard may
+ * hand reads to a background agent and end its turn, and the agent's reply
+ * wakes it with that reply as the reason, so the revision it then saves was
+ * stamped with no review. The authoring conversation knows: the review is in
+ * progress while its notice is the last word there that is not the wizard's
+ * own, and a person's message ends it. A bounded newest-first read; the
+ * notice sits behind at most the review's own tool rows.
+ */
+async function reviewOwnsThisTurn(env: Env, input: WorkstreamWorkflowInput): Promise<boolean> {
+  if (input.reason === "sidekick_review") return true;
+  if (input.parentKind !== "automation") return false;
+  const transcript = createMessageObjectPort(env, input.workspaceId, input.parentId, undefined, "0");
+  const recent = await transcriptLister(transcript, { workspaceId: input.workspaceId, workstreamId: input.parentId })(
+    input.workspaceId, input.parentId, 250);
+  let notice = -1;
+  let person = -1;
+  for (const message of recent) {
+    if (message.structuredContent?.kind === "sidekick_review_due") notice = Math.max(notice, message.sequenceNumber);
+    else if (message.author.type === "human" || message.author.type === "external") person = Math.max(person, message.sequenceNumber);
+  }
+  return notice >= 0 && notice > person;
 }
 
 async function loadAutomationCreatorPluginCatalog(

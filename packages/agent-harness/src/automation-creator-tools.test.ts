@@ -238,6 +238,8 @@ describe("the automations plugin", () => {
     expect(systemMessage).toContain("Notice from Rally, not from a person or an agent: a scheduled\nself-review of this Sidekick is due");
     // The reads come first, so the plan is a plan of the change, not a restatement of the notice.
     expect(systemMessage).toContain("1. Read only the runs the notice lists");
+    // Two production reviews handed the reads to a background agent, which has no run tools, and lost a minute each.
+    expect(systemMessage).toContain("Read them yourself: a background agent has no\nrun-reading tools.");
     expect(systemMessage).toContain("2. Plan, in one message, before any write: what the runs showed");
     expect(systemMessage).toContain("exactly what you will\nchange in the definition and nothing else");
     expect(systemMessage).toContain("3. Act on the plan");
