@@ -139,9 +139,13 @@ async function parkUnparseableRow(env: Env, row: DeliveryDatabaseRow, code: stri
 
 /**
  * Rows one delivery page selects, sends as one PostHog batch and settles as one
- * D1 batch. Not a guard: the shape every page has had since delivery shipped.
+ * D1 batch. The team set it (2026-10-30, raised from 50) as the throughput
+ * lever under the RPC budget below: three pages a tick is 1,500 rows, 432,000
+ * a day. A row is about 1 KB, so a page is about 500 KB against PostHog's
+ * 20 MB batch limit, and its settlement is one D1 `batch()` of 500 statements,
+ * which counts as one query.
  */
-export const TELEMETRY_DELIVERY_PAGE_SIZE = 50;
+export const TELEMETRY_DELIVERY_PAGE_SIZE = 500;
 
 /**
  * How long one pass may keep taking pages: the Worker's cron period, five
