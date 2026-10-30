@@ -201,6 +201,7 @@ import {
 import { createClassifierDiagnosticSink } from "./classifier-diagnostics";
 import {
   AGENT_MODEL_FLAG_KEYS,
+  conversationModelContext,
   conversationModelRole,
   resolveAgentModelRouting,
   resolveWorkstreamModelRouting,
@@ -2930,19 +2931,15 @@ export async function runWorkstreamHarness(
   });
   const attemptLease = runtime.lease;
   const runs = createHarnessRunObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId);
-  const modelRole = profile?.role ?? conversationModelRole(input);
+  const modelContext = conversationModelContext(input, conversationSubstreamId);
+  const modelRole = profile?.role ?? conversationModelRole(modelContext);
   const modelRoutingPreparation = new Preparation(() => profile
     ? resolveAgentModelRouting(env, profile.role, {
       workspaceId: input.workspaceId,
       workstreamId: input.parentId,
       ...(input.executionPrincipal.type === "user" ? { userId: input.executionPrincipal.userId } : {}),
     })
-    : resolveWorkstreamModelRouting(env, {
-      workspaceId: input.workspaceId,
-      workstreamId: input.parentId,
-      parentKind: input.parentKind,
-      substreamId: conversationSubstreamId,
-    }));
+    : resolveWorkstreamModelRouting(env, { workspaceId: input.workspaceId, workstreamId: input.parentId, ...modelContext }));
   const contextWindowPreparation = new Preparation(() =>
     runtime?.persistentLoop?.contextWindowTokensByModel() ?? Promise.resolve({}));
   const attachmentGroundingPreparation = new Preparation(async () => {

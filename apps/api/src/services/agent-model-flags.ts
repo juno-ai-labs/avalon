@@ -330,6 +330,23 @@ type ConversationModelContext = {
 };
 
 /**
+ * The one place the fields a route reads are picked off an activation, so the
+ * role a caller logs and the route it resolves cannot read different ones.
+ */
+export function conversationModelContext(
+  input: Pick<WorkstreamWorkflowInput, "parentKind"> & Partial<Pick<WorkstreamWorkflowInput, "backgroundAgent" | "automationRun" | "automationDelegation">>,
+  substreamId: string | undefined,
+): ConversationModelContext {
+  return {
+    parentKind: input.parentKind,
+    substreamId,
+    backgroundAgent: input.backgroundAgent === true,
+    automationRun: input.automationRun,
+    automationDelegation: input.automationDelegation,
+  };
+}
+
+/**
  * A Sidekick's Main is its wizard, and the background agents the wizard
  * starts read runs for it on the same route; a run's activation and its
  * delegation workers keep their existing route.
