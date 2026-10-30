@@ -36,7 +36,7 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { truncateUtf16Safe } from "../lib/text";
 import { activateWorkstreamLoop, publishWorkstreamEvent } from "./integrations";
 import { logStructuredEvent, logWarn } from "../observability/logger";
-import { scheduledWorkstreamModelForExisting } from "./agent-model-flags";
+import { scheduledWorkstreamModelForExisting, conversationModelContext } from "./agent-model-flags";
 import { issueWorkstreamControlSocketTicket } from "./socket-service";
 import { WorkstreamDirectoryService } from "./workstream-directory-service";
 import {
@@ -249,8 +249,7 @@ export async function launchWorkstreamHarness(
   const model = await scheduledWorkstreamModelForExisting(executionEnv, {
     workspaceId: input.workspaceId,
     workstreamId: input.workstreamId,
-    parentKind,
-    substreamId,
+    ...conversationModelContext({ parentKind, backgroundAgent: backgroundAgent === true, automationRun: input.automationRun }, substreamId),
   });
   const runs = createHarnessRunObjectPort(
     executionEnv,
