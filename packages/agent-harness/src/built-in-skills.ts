@@ -521,7 +521,7 @@ all of them is almost always what the person wanted, not one message each.
   say that wiring one up is a conversation with the team.
 - **Reaching for \`resource_watch\`.** Nothing starts a Sidekick from it. Use the
   source's declared events, or an interval.
-- **A run that posts to say it found nothing.** Finish silently instead.`;
+- **A run that posts to say it found nothing.** Post nothing; say so in one line in the run's own conversation instead.`;
 
 /**
  * How to configure work after an external change and justify any polling fallback.
