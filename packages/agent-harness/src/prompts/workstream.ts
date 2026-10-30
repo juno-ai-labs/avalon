@@ -118,7 +118,7 @@ export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): st
 - A later scheduled activation is separate work. Finish this activation when its requested work is done, following its saved reporting policy.
 ${input.outputSurface === "external_delivery"
     ? "- End every activation with a final message, never with no text: an empty final message is read as a failed model call, not as silence. Where it is delivered is in the next section."
-    : "- End every activation with one short final message here, in this run's own conversation, which notifies nobody. When there is nothing to report, that line says so, and you post nothing and send nothing. Never end with no text: an empty final message is read as a failed model call, not as silence."}
+    : "- End every activation with a final message, never with no text: an empty final message is read as a failed model call, not as silence. The final message here, in this run's own conversation, notifies nobody; when there is nothing to report, one short line saying so is enough, and you post nothing and send nothing."}
 - When permissions prevent you from finishing, report the unresolved problem once for this run, with a concrete recovery step. Successful fallback needs no permission-error message. Use the available reporting tools to alert the owning conversation; with no owning conversation, explain the blocked work on this activation. Do not share private event contents, tokens or raw provider errors, and do not claim delivery when reporting fails.` : null,
     outputSurfaceSection,
     workspaceAuthoritySection,

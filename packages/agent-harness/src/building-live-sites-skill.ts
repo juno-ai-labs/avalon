@@ -63,7 +63,8 @@ Save this sequence for each activation:
 3. **Compare.** Compare transformed source data with the imported data, ignoring
    synchronization timestamps. Do this on the first activation too; an empty
    tracking table does not prove the site is current. If they match, record the
-   verified no-op, release the claim and finish silently. Otherwise update the
+   verified no-op, release the claim and finish with one line here, posting
+   nothing. Otherwise update the
    necessary files in the site's expected format.
 4. **Publish and verify.** Check the updated files, then publish the original
    path. Confirm successful publication of the same site before recording
