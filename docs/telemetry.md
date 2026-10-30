@@ -814,6 +814,24 @@ when matching artifacts exist. Operational snapshots and packaged fixtures provi
 the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
+### 2026-10-30 — Every capture carries the outbox row's id as `uuid`
+
+**What changed:** `mapPostHogCapture` and `mapPostHogProfileCapture` set
+`uuid` on each batch item to the outbox row's `eventId` or the profile job's
+`jobId`, beside the `$insert_id` they already carried.
+
+**Why:** PostHog ignores `$insert_id` and deduplicates only events that carry
+a `uuid`, on `uuid` with event name, timestamp and `distinct_id` (its
+documentation, read 2026-10-30). Reconciling the recovered Oct 20 to 29
+figures against `telemetry_accepted_events` found ten `$pageview` rows PostHog
+held twice that the outbox had sent once. The drain shipped earlier today can
+also send a page twice when a tick overlaps the next.
+
+**Consequences:** A re-sent row collapses to one event once PostHog's
+background merge runs; a raw query can see both copies until then. The
+duplicates already stored stay. Events reaching PostHog by other paths, the
+public site's browser SDK and the inference export, are unchanged.
+
 ### 2026-10-30 — Global delivery drains the outbox instead of taking one page per tick
 
 **What changed:** `processTelemetryOutbox` loops over pages of
