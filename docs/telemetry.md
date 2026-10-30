@@ -820,21 +820,17 @@ signals, never by weakening policy or deadline tests.
 `uuid` on each batch item to the outbox row's `eventId` or the profile job's
 `jobId`, beside the `$insert_id` they already carried.
 
-**Why:** Reconciling the recovered Oct 20 to 29 figures against
-`telemetry_accepted_events` found ten `$pageview` rows PostHog held twice
-(one on Oct 23, four on Oct 24, five on Oct 29) while every source row showed
-one attempt, so the repeats arose between the Worker's send and PostHog's
-store. PostHog deduplicates an event only when it carries a `uuid`: its
-documentation treats events with the same `uuid`, name, timestamp and
-`distinct_id` as duplicates and says that without a `uuid` it cannot tell a
-retry from a new event (read 2026-10-30). `$insert_id` is not consulted. The
-drain that shipped earlier today can also send a page twice when a tick
-overlaps the next, which this makes harmless.
+**Why:** PostHog ignores `$insert_id` and deduplicates only events that carry
+a `uuid`, on `uuid` with event name, timestamp and `distinct_id` (its
+documentation, read 2026-10-30). Reconciling the recovered Oct 20 to 29
+figures against `telemetry_accepted_events` found ten `$pageview` rows PostHog
+held twice that the outbox had sent once. The drain shipped earlier today can
+also send a page twice when a tick overlaps the next.
 
-**Consequences:** A re-sent row, from a retry after a lost acknowledgement or
-an overlapping pass, lands once. The duplicates already stored stay; nothing
-here rewrites history. Events reaching PostHog by other paths, the public
-site's browser SDK and the inference export, are unchanged.
+**Consequences:** A re-sent row collapses to one event once PostHog's
+background merge runs; a raw query can see both copies until then. The
+duplicates already stored stay. Events reaching PostHog by other paths, the
+public site's browser SDK and the inference export, are unchanged.
 
 ### 2026-10-30 — Global delivery drains the outbox instead of taking one page per tick
 
