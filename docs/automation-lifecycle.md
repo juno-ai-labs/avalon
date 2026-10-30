@@ -232,17 +232,15 @@ reauthorized against the inspecting principal, selected run's attachment scope,
 and recorded derivative dependencies; denied results omit input, summary and
 payload. Missing, transient and serialization-placeholder results have explicit
 availability markers. A page larger than the conversation read budget is served
-as fragments of one document: the activation that built the page remembers it
-(the last 32, never a page holding a resource result, which is reauthorized on
-every fragment) and serves later fragments from memory, and a continuation that
-has to rebuild it loads in full exactly the tool outputs the first fragment
-carried (`full` in its cursor), so a payload read that misses its deadline
-on one fragment and not another cannot make the fragments disagree. The hash
-a continuation checks covers the run and its transcript, the turns and their
-tool calls, not the output bodies; a run whose transcript or result moved is
-refused as changed evidence, and so is a continuation that can no longer load,
-or may no longer show, an output the first fragment carried. Receipt authority metadata, credentials and private
-reasoning stay private. Feedback in the home or another attached conversation
+as fragments of one document: the activation that built the page serves later
+fragments from memory (never a page holding a resource result, which is
+reauthorized on every fragment), and a continuation that rebuilds it loads in
+full exactly the tool outputs the first fragment carried (`full` in its
+cursor). The hash a continuation checks covers the run and its transcript, the
+turns and their tool calls, not the output bodies. A run whose transcript or
+result moved is refused as changed evidence, and so is a continuation whose
+rebuilt page does not carry the same outputs in full. Receipt authority
+metadata, credentials and private reasoning stay private. Feedback in the home or another attached conversation
 is read separately through conversation tools.
 
 Every page resolves current Organization membership and Sidekick read access;
@@ -1067,8 +1065,7 @@ Memory treats the review as agent-derived.
 `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, not a gate, in four stages. It reads
 first, saying nothing: only the listed runs, and the Sidekick's posts and
 replies in its home, and it reads them itself, because a background agent
-has no run-reading tools and two of the first production reviews lost a
-minute each handing the reads to one. It then plans, in one message before any write: what
+has no run-reading tools. It then plans, in one message before any write: what
 the runs showed, run by run; whether anything justifies a change (a
 procedure problem seen in the runs, never a platform failure); and if so
 exactly what it will change and nothing else. The plan comes after the reads
@@ -1630,7 +1627,9 @@ its turn carries the review's reason, or when the review's notice is the
 last word in the authoring conversation that is not the wizard's own
 (`reviewOwnsThisTurn` in `integrations.ts`): the wizard may hand reads to a
 background agent and end its turn, and the agent's reply wakes it with that
-reply as the reason. A person's message ends the review.
+reply as the reason. A turn a person woke is theirs without reading the
+conversation; otherwise a review stays open until a person speaks or the next
+notice lands.
 [`runbook.md`](runbook.md) has the production inspection paths.
 
 ## Scoped Sidekick discovery reuse
@@ -1685,8 +1684,8 @@ it.
 recent rows, read once per submission. A continuation cursor carries the
 tool calls served in full; a cursor minted before this change has none and
 is served as a first fragment would be. Pages are remembered per activation,
-the last 32, so a continuation from another activation rebuilds and may
-refuse where the first activation would have served.
+so a continuation from another activation rebuilds and may refuse where the
+first activation would have served.
 
 ### 2026-10-26 — The wizard reviews its Sidekick every ten runs, three days apart
 

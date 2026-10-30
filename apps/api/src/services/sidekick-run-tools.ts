@@ -29,8 +29,6 @@ const ReadCursorSchema = z.strictObject({ runId: IdSchema, afterSequence: z.numb
   // page must be slices of one document, and whether a payload read makes
   // its two-second deadline is not something the document may depend on.
   full: z.array(z.string()).optional() });
-/** Pages this activation has served, so a continuation is a slice of the same document, not a rebuild. */
-const REMEMBERED_PAGES = 32;
 const ReviewDefinitionSchema = AutomationRunDefinitionV1Schema.extend({ resultSummary: z.string().nullable() });
 const PlanSchema = z.object({ capability: z.string().optional() });
 const attachmentToolName = /^(?:workstream_)?(?:list_resources|read_resource(?:_next|_previous)?|search_resource|summarize_resource|view_resource)$/u;
@@ -42,12 +40,90 @@ export function createSidekickRunTools(env: Env, input: WorkstreamWorkflowInput,
     || input.automationRun || input.backgroundAgent || input.executionPrincipal.type !== "user") return [];
   const workspaceId = input.workspaceId;
   const sidekickId = input.parentId;
-  const pages = new Map<string, { serialized: string; contentHash: string; full: string[]; transcriptAvailability: string;
-    throughSequence: number; nextAfterSequence: number | null }>();
   const workspace = () => durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
     workspaceDOName(env.AVALON_REGION, workspaceId));
   const auth = () => agentToolAuth(env, input, "run", () => new ApiError(403, "sidekick_history_membership_required",
     "Active Organization membership is required to read Sidekick runs."));
+  type Page = { serialized: string; contentHash: string; full: string[]; transcriptAvailability: string;
+    throughSequence: number; nextAfterSequence: number | null };
+  // The activation that built a page serves its later fragments from memory,
+  // so they are slices of one document. A document is identified by its hash
+  // and the outputs it carried in full, so a read restarted meanwhile cannot
+  // replace one a continuation is still slicing. The map lives one activation.
+  const pages = new Map<string, Page>();
+  const documentKey = (runId: string, afterSequence: number, limit: number | undefined, contentHash: string, full: string[]) =>
+    `${runId}:${afterSequence}:${limit ?? ""}:${contentHash}:${[...full].sort().join(",")}`;
+  async function buildPage(currentAuth: Awaited<ReturnType<typeof auth>>, definition: z.infer<typeof ReviewDefinitionSchema>,
+    runId: string, afterSequence: number, limit: number | undefined, cursor: z.infer<typeof ReadCursorSchema> | null): Promise<Page> {
+    const page = await WorkstreamObjectClient.forParent(env, currentAuth, "automation", sidekickId, runId)
+      .inspectSidekickRunTranscript({ afterSequence,
+        ...(cursor ? { throughSequence: cursor.throughSequence } : {}), ...(limit === undefined ? {} : { limit }) });
+    const calls = page.turns.flatMap((turn) => turn.blocks.flatMap((block) => block.type === "tool" ? [block] : []));
+    // The transcript is the evidence; a loaded output is a rendering of a
+    // receipt the transcript already names. So the hash that tells a
+    // continuation "this run changed" covers the turns and their tool calls,
+    // not the output bodies, whose presence depends on a payload read.
+    const header = afterSequence === 0 ? { definitionRevision: definition.definitionRevision,
+      definition: definition.definition, trigger: definition.trigger, resultSummary: definition.resultSummary } : {};
+    const contentHash = await sha256(JSON.stringify({ ...header, turns: page.turns.map((turn) => ({
+      turnId: turn.turnId, transcriptSequence: turn.transcriptSequence, actor: turn.actor,
+      blocks: turn.blocks.flatMap((block): unknown[] => block.type === "thinking" ? []
+        : block.type === "tool" ? [{ type: "tool", toolCallId: block.toolCallId, toolName: block.toolName, status: block.status }] : [block]) })) }));
+    if (cursor?.contentHash && cursor.contentHash !== contentHash) throw new ApiError(409, "sidekick_history_evidence_changed",
+      "Run evidence changed or is no longer accessible. Start a new runs_read.");
+    // A rebuilt continuation loads exactly the outputs the first fragment carried.
+    const served = cursor?.full === undefined ? null : new Set(cursor.full);
+    const port = createToolReceiptObjectPort(env, workspaceId, sidekickId, undefined, runId);
+    const receipts = calls.length === 0 ? [] : await port.receiptsForCalls({ toolCallIds: calls.map((call) => call.toolCallId) });
+    const byCall = new Map(receipts.map((receipt) => [receipt.toolCallId, receipt]));
+    // A resource result is reauthorized on every read, so a page holding one
+    // is never remembered: each fragment rebuilds and checks again.
+    let holdsResource = false;
+    const results = new Map<string, unknown>(await Promise.all(calls.map(async (call) => {
+      const receipt = byCall.get(call.toolCallId);
+      const plan = PlanSchema.safeParse(receipt?.executionPlanJson ? JSON.parse(receipt.executionPlanJson) : {});
+      const capability = plan.success ? plan.data.capability : undefined;
+      const attachment = capability?.startsWith("workstream.resources.") || attachmentToolName.test(call.toolName);
+      if (attachment) holdsResource = true;
+      if (attachment && (!receipt || !capability || await validateAttachmentToolReceiptReplay(env, {
+        workspaceId, workstreamId: sidekickId, substreamId: runId, principal: input.executionPrincipal,
+        invocationId: receipt.effectIntentId, capability,
+      }, port) !== "valid")) {
+        return [call.toolCallId, { type: "tool", toolCallId: call.toolCallId, toolName: call.toolName,
+          resultAvailability: "unavailable", reason: "resource_access_or_version_unavailable" }] as const;
+      }
+      if (!receipt) return [call.toolCallId, { type: "tool", toolCallId: call.toolCallId, toolName: call.toolName,
+        status: call.status, input: call.participantSafeInput, summary: call.participantSafeResult, error: call.error,
+        resultAvailability: "summary_only" }] as const;
+      const output = receipt.outputRef && (served === null || served.has(call.toolCallId)) ? await loadOutput(receipt.outputRef) : null;
+      const placeholder = output !== null && typeof output === "object"
+        && (("transient" in output && output.transient === true) || ("truncated" in output && output.truncated === true));
+      const full = output !== null && !placeholder;
+      return [call.toolCallId, { type: "tool", toolCallId: call.toolCallId, toolName: receipt.toolName,
+        activationId: receipt.runId, status: receipt.status, input: JSON.parse(receipt.inputJson) as unknown,
+        ...(full ? { output } : { summary: receipt.outputSummary ?? call.participantSafeResult }),
+        ...(receipt.errorJson ? { error: JSON.parse(receipt.errorJson) as unknown } : {}),
+        resultAvailability: full ? "full" : placeholder || receipt.status === "completed" ? "summary_only" : "not_available" }] as const;
+    })));
+    const full = calls.map((call) => call.toolCallId).filter((id) => {
+      const result = results.get(id);
+      return typeof result === "object" && result !== null && "resultAvailability" in result && result.resultAvailability === "full";
+    });
+    // The same outputs in full, no more and no fewer, or it is not the same document.
+    if (served !== null && (served.size !== full.length || !full.every((id) => served.has(id)))) {
+      throw new ApiError(409, "sidekick_history_evidence_changed",
+        "An output the first fragment carried can no longer be loaded or shown. Start a new runs_read.");
+    }
+    // One representation of each block. Full results replace participant summaries.
+    const turns = page.turns.map((turn) => ({ turnId: turn.turnId, transcriptSequence: turn.transcriptSequence,
+      actor: turn.actor, author: turn.authorSnapshot?.displayName ?? turn.externalActor?.displayName ?? turn.actor,
+      createdAt: turn.createdAtUtc, blocks: turn.blocks.flatMap((block): unknown[] => block.type === "thinking" ? []
+        : block.type === "tool" ? [results.get(block.toolCallId)] : [block]) }));
+    const built: Page = { serialized: JSON.stringify({ ...header, turns }), contentHash, full,
+      transcriptAvailability: page.transcriptAvailability, throughSequence: page.throughSequence, nextAfterSequence: page.nextAfterSequence };
+    if (!holdsResource) pages.set(documentKey(runId, afterSequence, limit, contentHash, full), built);
+    return built;
+  }
   const list: HarnessTool = {
     definition: { name: "runs_list", description: "List this Sidekick's own runs, newest first, with status, trigger type, definition revision, timestamps and result summary. A completed run is not proof the task succeeded.",
       capability: "rally.sidekick.runs.list", mode: "read", idempotency: "safe", pagination: { cursorParameter: "cursor" },
@@ -77,83 +153,9 @@ export function createSidekickRunTools(env: Env, input: WorkstreamWorkflowInput,
       const currentAuth = await auth();
       const actor = await new AutomationService(env, currentAuth).actorRequest(sidekickId);
       const definition = ReviewDefinitionSchema.parse(await (await workspace()).sidekickReadRunForReview({ ...actor, runId }));
-      const pageKey = `${runId}:${afterSequence}:${limit ?? ""}`;
-      const remembered = cursor?.contentHash === undefined ? undefined : pages.get(pageKey);
-      const built = remembered !== undefined && remembered.contentHash === cursor?.contentHash
-        && remembered.throughSequence === cursor?.throughSequence ? remembered : await (async () => {
-      const page = await WorkstreamObjectClient.forParent(env, currentAuth, "automation", sidekickId, runId)
-        .inspectSidekickRunTranscript({ afterSequence,
-          ...(cursor ? { throughSequence: cursor.throughSequence } : {}), ...(limit === undefined ? {} : { limit }) });
-      const calls = page.turns.flatMap((turn) => turn.blocks.flatMap((block) => block.type === "tool" ? [block] : []));
-      // The transcript is the evidence; a loaded output is a rendering of a
-      // receipt the transcript already names. So the hash that tells a
-      // continuation "this run changed" covers the turns and their tool calls,
-      // not the output bodies, whose presence depends on a payload read.
-      const header = afterSequence === 0 ? { definitionRevision: definition.definitionRevision,
-        definition: definition.definition, trigger: definition.trigger, resultSummary: definition.resultSummary } : {};
-      const contentHash = await sha256(JSON.stringify({ ...header, turns: page.turns.map((turn) => ({
-        turnId: turn.turnId, transcriptSequence: turn.transcriptSequence, actor: turn.actor,
-        blocks: turn.blocks.flatMap((block): unknown[] => block.type === "thinking" ? []
-          : block.type === "tool" ? [{ type: "tool", toolCallId: block.toolCallId, toolName: block.toolName, status: block.status }] : [block]) })) }));
-      if (cursor?.contentHash && cursor.contentHash !== contentHash) throw new ApiError(409, "sidekick_history_evidence_changed",
-        "Run evidence changed or is no longer accessible. Start a new runs_read.");
-      const served = cursor?.full === undefined ? null : new Set(cursor.full);
-      const port = createToolReceiptObjectPort(env, workspaceId, sidekickId, undefined, runId);
-      const receipts = calls.length === 0 ? [] : await port.receiptsForCalls({ toolCallIds: calls.map((call) => call.toolCallId) });
-      const byCall = new Map(receipts.map((receipt) => [receipt.toolCallId, receipt]));
-      // A resource result is reauthorized on every read, so a page holding one
-      // is never remembered: each fragment rebuilds and checks again.
-      let holdsResource = false;
-      const results = new Map<string, unknown>(await Promise.all(calls.map(async (call) => {
-        const receipt = byCall.get(call.toolCallId);
-        const plan = PlanSchema.safeParse(receipt?.executionPlanJson ? JSON.parse(receipt.executionPlanJson) : {});
-        const capability = plan.success ? plan.data.capability : undefined;
-        const attachment = capability?.startsWith("workstream.resources.") || attachmentToolName.test(call.toolName);
-        if (attachment) holdsResource = true;
-        if (attachment && (!receipt || !capability || await validateAttachmentToolReceiptReplay(env, {
-          workspaceId, workstreamId: sidekickId, substreamId: runId, principal: input.executionPrincipal,
-          invocationId: receipt.effectIntentId, capability,
-        }, port) !== "valid")) {
-          // Served in full on the first fragment, withheld now: not the same document.
-          if (served?.has(call.toolCallId)) throw new ApiError(409, "sidekick_history_evidence_changed",
-            "Run evidence changed or is no longer accessible. Start a new runs_read.");
-          return [call.toolCallId, { type: "tool", toolCallId: call.toolCallId, toolName: call.toolName,
-            resultAvailability: "unavailable", reason: "resource_access_or_version_unavailable" }] as const;
-        }
-        if (!receipt) return [call.toolCallId, { type: "tool", toolCallId: call.toolCallId, toolName: call.toolName,
-          status: call.status, input: call.participantSafeInput, summary: call.participantSafeResult, error: call.error,
-          resultAvailability: "summary_only" }] as const;
-        const output = receipt.outputRef && (served === null || served.has(call.toolCallId)) ? await loadOutput(receipt.outputRef) : null;
-        const placeholder = output !== null && typeof output === "object"
-          && (("transient" in output && output.transient === true) || ("truncated" in output && output.truncated === true));
-        const full = output !== null && !placeholder;
-        // The first fragment carried this output in full; a continuation that cannot is no longer the same document.
-        if (served?.has(call.toolCallId) && !full) throw new ApiError(409, "sidekick_history_evidence_changed",
-          "Run evidence changed or is no longer accessible. Start a new runs_read.");
-        return [call.toolCallId, { type: "tool", toolCallId: call.toolCallId, toolName: receipt.toolName,
-          activationId: receipt.runId, status: receipt.status, input: JSON.parse(receipt.inputJson) as unknown,
-          ...(full ? { output } : { summary: receipt.outputSummary ?? call.participantSafeResult }),
-          ...(receipt.errorJson ? { error: JSON.parse(receipt.errorJson) as unknown } : {}),
-          resultAvailability: full ? "full" : placeholder || receipt.status === "completed" ? "summary_only" : "not_available" }] as const;
-      })));
-      // One representation of each block. Full results replace participant summaries.
-      const turns = page.turns.map((turn) => ({ turnId: turn.turnId, transcriptSequence: turn.transcriptSequence,
-        actor: turn.actor, author: turn.authorSnapshot?.displayName ?? turn.externalActor?.displayName ?? turn.actor,
-        createdAt: turn.createdAtUtc, blocks: turn.blocks.flatMap((block): unknown[] => block.type === "thinking" ? []
-          : block.type === "tool" ? [results.get(block.toolCallId)] : [block]) }));
-      const serialized = JSON.stringify({ ...header, turns });
-      const full = calls.map((call) => call.toolCallId).filter((id) => {
-        const result = results.get(id);
-        return typeof result === "object" && result !== null && "resultAvailability" in result && result.resultAvailability === "full";
-      });
-      const entry = { serialized, contentHash, full, transcriptAvailability: page.transcriptAvailability,
-        throughSequence: page.throughSequence, nextAfterSequence: page.nextAfterSequence };
-      if (!holdsResource) {
-        if (pages.size >= REMEMBERED_PAGES) pages.delete(pages.keys().next().value!);
-        pages.set(pageKey, entry);
-      }
-      return entry;
-      })();
+      const remembered = cursor?.contentHash === undefined ? undefined
+        : pages.get(documentKey(runId, afterSequence, limit, cursor.contentHash, cursor.full ?? []));
+      const built = remembered ?? await buildPage(currentAuth, definition, runId, afterSequence, limit, cursor);
       const { serialized, contentHash, full, transcriptAvailability, throughSequence, nextAfterSequence } = built;
       const offset = cursor?.offset ?? 0;
       const content = truncateUtf16Safe(serialized.slice(offset), CONVERSATION_READ_CHARACTER_BUDGET);
