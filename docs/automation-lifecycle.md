@@ -231,7 +231,16 @@ Exact results use the existing R2 replay reader. Resource receipts are first
 reauthorized against the inspecting principal, selected run's attachment scope,
 and recorded derivative dependencies; denied results omit input, summary and
 payload. Missing, transient and serialization-placeholder results have explicit
-availability markers. Receipt authority metadata, credentials and private
+availability markers. A page larger than the conversation read budget is served
+as fragments of one document: the activation that built the page remembers it
+(the last 32) and serves later fragments from memory, and a continuation that
+has to rebuild it loads in full exactly the tool outputs the first fragment
+carried (`full` in its cursor), so a payload read that misses its deadline
+on one fragment and not another cannot make the fragments disagree. The hash
+a continuation checks covers the run and its transcript, the turns and their
+tool calls, not the output bodies; a run whose transcript or result moved is
+refused as changed evidence, and so is a continuation that can no longer load
+an output the first fragment carried. Receipt authority metadata, credentials and private
 reasoning stay private. Feedback in the home or another attached conversation
 is read separately through conversation tools.
 
@@ -1056,7 +1065,9 @@ Memory treats the review as agent-derived.
 **What the wizard does with it** is guidance in
 `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, not a gate, in four stages. It reads
 first, saying nothing: only the listed runs, and the Sidekick's posts and
-replies in its home. It then plans, in one message before any write: what
+replies in its home, and it reads them itself, because a background agent
+has no run-reading tools and two of the first production reviews lost a
+minute each handing the reads to one. It then plans, in one message before any write: what
 the runs showed, run by run; whether anything justifies a change (a
 procedure problem seen in the runs, never a platform failure); and if so
 exactly what it will change and nothing else. The plan comes after the reads
@@ -1613,7 +1624,12 @@ refusal's reason. What reviews changed is `sidekick_revisions` where
 `review_id` is not null, joined to `sidekick_reviews` on it, and the
 `sidekick_review_revised` log line (review id, revision, ready) the save
 writes when the wizard submits during a review; both are written by the
-host from the turn's reason, with nothing for the model to do.
+host, with nothing for the model to do. A submission is the review's when
+its turn carries the review's reason, or when the review's notice is the
+last word in the authoring conversation that is not the wizard's own
+(`reviewOwnsThisTurn` in `integrations.ts`): the wizard may hand reads to a
+background agent and end its turn, and the agent's reply wakes it with that
+reply as the reason. A person's message ends the review.
 [`runbook.md`](runbook.md) has the production inspection paths.
 
 ## Scoped Sidekick discovery reuse
@@ -1634,6 +1650,42 @@ The Sidekick authoring prompt carries no Google-specific lookup or attachment
 instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
+
+### 2026-10-30 — The first production reviews: a continued turn keeps its review, and run pages stay one document
+
+**What changed:** Three things the first three production reviews showed.
+A wizard submission is recorded against the review when the review's notice
+is the last word in the authoring conversation that is not the wizard's own,
+not only when the turn's reason is the review's. The run reader hashes the
+run and its transcript rather than the serialized page, remembers the pages
+an activation built, and makes a rebuilt continuation load exactly the
+outputs the first fragment carried. The review guidance tells the wizard to
+read the runs itself.
+
+**Why:** Help email triage's review handed its reads to a background agent
+and ended its turn; the agent's reply woke the wizard with that reply as the
+reason, and the revision it saved carried no review id and no
+`sidekick_review_revised` line, so the one query that lists what reviews
+changed missed it. Content Calendar Refresh's review could not finish: it
+asked for eight to eleven continuations in one batch, each of which
+refetched every tool output of its run from the payload bucket under a
+two-second deadline, some reads timed out and fell back to summaries, the
+page's hash no longer matched the first fragment's, and the reader refused
+every one as changed evidence though all twelve runs had finished days
+before. Two of the three reviews first delegated the reads to agents that
+have no run tools and lost a minute each. The alternative for the marker, a
+host rule stamping any revision that follows a delivered review, would have
+claimed a person's own edit made an hour later; the conversation's state is
+the honest signal. The alternative for the reader, a longer deadline, would
+have moved the race rather than removed it; one document per page removes
+it.
+
+**Consequences:** `review_id` depends on the authoring conversation's
+recent rows, read once per submission. A continuation cursor carries the
+tool calls served in full; a cursor minted before this change has none and
+is served as a first fragment would be. Pages are remembered per activation,
+the last 32, so a continuation from another activation rebuilds and may
+refuse where the first activation would have served.
 
 ### 2026-10-26 — The wizard reviews its Sidekick every ten runs, three days apart
 
@@ -1697,8 +1749,9 @@ revision's runs are evidence. Evidence is host-known columns and a
 host-picked sample, never work in the run. The review executes as a
 managing delegate and can submit a revision, so the capability rule is in
 the guidance. A revision a review submits carries the review's id
-(`sidekick_revisions.review_id`, from the turn's reason, not from the
-model), so what reviews changed is one query. A change is announced where the Sidekick's people are: the
+(`sidekick_revisions.review_id`, from the turn's reason or the authoring
+conversation's state, never from the model), so what reviews changed is one
+query. A change is announced where the Sidekick's people are: the
 notice carries the conversation to post to (a room's Sidekick's home, General
 for an Organization's or the author's Personal Channel when General is
 gone, the author's Personal Channel for a personal one), and the wizard
