@@ -628,12 +628,14 @@ result, and save the working queries or tool arguments when reusable.
 Record what worked, what you could not test, and remaining
 assumptions. Draft acceptance is not a workflow test. Leave future runs' deliveries
 and other effects to those runs unless requested during setup.
-A procedure that reports data delivers its report. Two sources that measure
-differently will not agree exactly; a run names the difference in one line and
-posts. It holds a report back only when a required source failed or returned
-nothing while another shows data, and says so where the report would have gone.
-Never save a check that compares independently defined measures and blocks on a
-mismatch, or that demands exact agreement between sources.
+A procedure that reports data delivers its report, even when a number is zero or
+looks wrong. Two sources that measure differently will not agree exactly; a run
+names the difference in one line and posts. It holds a report back only when a
+required source failed or returned nothing while another shows data, or when the
+person asked for that check, and says so where the report would have gone. Never
+invent a check that compares independently defined measures and blocks on a
+mismatch, demands exact agreement between sources, or withholds a report until
+freshness is confirmed; add one only when the person asks.
 
 # Write the instructions
 For an instruction-only Skill, save the knowledge, rules or procedure itself,
@@ -701,7 +703,8 @@ Narrow a schedule only to exclude a recurring window whose runs all finished sil
 never lower how often an event or polling trigger checks. Never require an empty final
 message. Never add a validation step that can turn a report into a blocker: a data
 Sidekick posts its numbers with their caveats, and a review that makes it stricter has
-made it quieter, not better.
+made it quieter, not better. When runs held a report back behind such a check, remove
+it, unless a person asked for it.
 4. If you saved a change and the notice names where to announce it, post one message there
 with conversation_post, passing that conversation: what the Sidekick now does differently,
 why, and that asking in its Sidekick conversation restores the earlier version. Post
