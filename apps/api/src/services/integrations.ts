@@ -9,7 +9,7 @@ import { Preparation, ToolSurfacePreparations } from "./harness-preparation";
 import { validateCompletedToolReplay } from "./completed-tool-replay";
 import { completionVerificationNudge } from "./completion-verification";
 import type { CompletionVerificationSnapshot } from "../durable-objects/completion-verification-storage";
-import { AGENT_MESSAGE_CONTENT_KIND, ImportedMessageProvenanceSchema, SidekickReviewNoticeV1Schema } from "@rally/contracts";
+import { AGENT_MESSAGE_CONTENT_KIND, agentAddressForId, AgentIdSchema, ImportedMessageProvenanceSchema, SidekickReviewNoticeV1Schema } from "@rally/contracts";
 import { agentCoordinationRoleGuidance } from './agent-communication-prompts';
 import { conversationParentStub, hostedParentStub } from "./conversation-parent-client";
 import { AgentCommunicationService } from "./agent-communication-service";
@@ -2222,24 +2222,37 @@ function createAvalonAutomationsPlugin(
 /**
  * A submission belongs to the review when its turn is the review's, or when the
  * review's notice is the last word in the authoring conversation that is not
- * the wizard's own: the wizard may end its turn and be woken again by an agent
- * it delegated to. A person's message, as the turn's reason or in the recent
- * rows, ends the review. The rows read are the lister's page, the most recent
- * 250; a notice older than that is out of the review's reach.
+ * the wizard's own or its own background agents': the wizard ends its turn
+ * after handing the reads to an agent and is woken again by its reply. A
+ * person's message, or a request from an agent outside this conversation
+ * (another Thread's Rally relaying an edit), as the turn's wake or in the
+ * recent rows, ends the review. The rows read are the lister's page, the most
+ * recent 250; a notice older than that is out of the review's reach.
  */
 async function reviewOwnsThisTurn(env: Env, input: WorkstreamWorkflowInput): Promise<boolean> {
   if (input.reason === "sidekick_review") return true;
   if (input.parentKind !== "automation" || PERSONAL_SYSTEM_PROMPT_REASONS.has(input.reason)) return false;
+  const ownAgent = (sender: unknown): boolean => {
+    const id = AgentIdSchema.safeParse(sender);
+    if (!id.success) return false;
+    const address = agentAddressForId(id.data);
+    return address.parentKind === "automation" && address.parentId === input.parentId && address.substreamId !== "0";
+  };
+  if (input.agentExchange && !ownAgent(input.agentExchange.senderAgentId)) return false;
   const transcript = createMessageObjectPort(env, input.workspaceId, input.parentId, undefined, "0");
   const recent = await transcriptLister(transcript, { workspaceId: input.workspaceId, workstreamId: input.parentId })(
     input.workspaceId, input.parentId, 250);
   let notice = -1;
-  let person = -1;
+  let other = -1;
   for (const message of recent) {
-    if (message.structuredContent?.kind === "sidekick_review_due") notice = Math.max(notice, message.sequenceNumber);
-    else if (message.author.type === "human" || message.author.type === "external") person = Math.max(person, message.sequenceNumber);
+    const kind = message.structuredContent?.kind;
+    if (kind === "sidekick_review_due") notice = Math.max(notice, message.sequenceNumber);
+    else if (message.author.type === "human" || message.author.type === "external"
+      || (kind === AGENT_MESSAGE_CONTENT_KIND && !ownAgent(message.structuredContent?.senderAgentId))) {
+      other = Math.max(other, message.sequenceNumber);
+    }
   }
-  return notice >= 0 && notice > person;
+  return notice >= 0 && notice > other;
 }
 
 async function loadAutomationCreatorPluginCatalog(

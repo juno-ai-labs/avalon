@@ -444,19 +444,27 @@ describe("Sidekick wizard run inspection", () => {
       runInDurableObject(child("0"), (_instance, state) => new WorkstreamTranscriptStorage(state.storage).appendParticipantMessage({
         turnId, actor: "assistant", authorUserId: null, authorSnapshot: null, text: turnId, createdAtUtc: "2026-10-30T00:00:00.000Z",
         attentionOrdinal: null, ...message }));
+    const agentRow = (turnId: string, senderAgentId: string) => say(turnId, { actor: "system", messageType: "system",
+      structuredContentJson: JSON.stringify({ kind: "agent_message", senderAgentId, teamId: senderAgentId, messageId: runId(50) }) });
+    const ownAgent = `automation/${SIDEKICK}/${runId(8)}`;
     await say("notice", { actor: "system", messageType: "system", structuredContentJson: JSON.stringify({ kind: "sidekick_review_due", reviewId: delivered }) });
-    await say("agent-reply", { actor: "system", messageType: "system", structuredContentJson: JSON.stringify({ kind: "agent_message" }) });
+    await agentRow("agent-reply", ownAgent);
     const submit = (reason: string, instructions: string) => tool("submit_draft", { reason })
       .execute({ ...draft, sidekickId: null, icon: "inbox", color: "blue", instructions, ready: true }, context);
     await submit("agent_message", "Reviewed: list active incidents with owners.");
     // A turn the person woke is theirs before any row is read.
     await submit("human_message", "A person's own change.");
+    // The wizard's own agents keep the review open; a request from another conversation's agent ends it.
+    await agentRow("agent-reply-again", ownAgent);
+    await submit("agent_message", "Reviewed again: name the owner first.");
+    await agentRow("outside-request", `workstream/${runId(7)}/0`);
+    await submit("agent_message", "A change a person asked for from another Thread.");
     await say("person", { actor: "human", authorUserId: USER, authorSnapshot: { displayName: "Adam", avatarUrl: null } });
     await submit("agent_message", "An agent's reply after the person spoke.");
     expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ definition_revision: number; review_id: string | null }>(
       `SELECT definition_revision, review_id FROM sidekick_revisions WHERE sidekick_id = ? AND definition_revision >= 2 ORDER BY definition_revision`,
       SIDEKICK).toArray())).toEqual([{ definition_revision: 2, review_id: delivered }, { definition_revision: 3, review_id: null },
-      { definition_revision: 4, review_id: null }]);
+      { definition_revision: 4, review_id: delivered }, { definition_revision: 5, review_id: null }, { definition_revision: 6, review_id: null }]);
   });
 
   it("exposes first/next companions and rejects invented page IDs before reading history", async () => {
