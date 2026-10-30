@@ -817,7 +817,7 @@ signals, never by weakening policy or deadline tests.
 ### 2026-10-30 — Global delivery drains the outbox instead of taking one page per tick
 
 **What changed:** `processTelemetryOutbox` loops over pages of
-`TELEMETRY_DELIVERY_PAGE_SIZE` (50, the page it always took) until a page
+`TELEMETRY_DELIVERY_PAGE_SIZE` (500, raised from the 50 it always took) until a page
 comes back short, a page leaves a row behind (a retried or rejected page, a closed circuit),
 the next page would not fit `TELEMETRY_DELIVERY_PASS_RPC_BUDGET`, or the next
 page would carry the pass past `TELEMETRY_DELIVERY_PASS_BUDGET_MS`. A row held
@@ -845,10 +845,10 @@ that make up most of the volume: a product decision about what is measured.
 **Consequences:** The pass is bounded by the Service Binding cap first: 32
 invocations per request, less up to 25 the profile and crash outboxes can
 spend in the same tick, leaves 7 calls, and a page needs up to two, so a tick
-drains at most three pages of 50. That holds steady intake but clears a
-backlog slowly; raising the page size is the lever, within PostHog's 20 MB
-batch and D1's per-statement limits, and the next lever is a drain in its own
-invocation. A held row no longer holds the rows behind it; it is read once per
+drains at most three pages. At 500 rows a page that is 1,500 rows a tick,
+432,000 a day, which clears the 66,000-row backlog in under four hours. The
+page size is the lever, within PostHog's 20 MB batch and D1's per-statement
+limits; the next lever is a drain in its own invocation. A held row no longer holds the rows behind it; it is read once per
 tick until its transition commits.
 
 ### 2026-09-14 — Configurable deployment isolation
