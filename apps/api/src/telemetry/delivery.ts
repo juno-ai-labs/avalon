@@ -30,6 +30,7 @@ interface DeliveryDatabaseRow {
   attempt_count: number;
   delete_at: string;
   subject_user_id: string | null;
+  accepted_at: string;
   product_analytics_enabled: number | null;
 }
 
@@ -152,9 +153,23 @@ export const TELEMETRY_DELIVERY_PAGE_SIZE = 50;
  */
 export const TELEMETRY_DELIVERY_PASS_BUDGET_MS = 5 * 60_000;
 
+/**
+ * Service Binding calls one pass may make. A request may invoke at most 32
+ * Workers, each Service Binding call counting one, and the next call throws
+ * (Cloudflare, Service Bindings limits, read 2026-10-30). The budget is that
+ * cap less what the rest of the same tick can spend on `TELEMETRY_DELIVERY`:
+ * `processProfileOutbox` makes one call per job for up to 20 jobs, and
+ * `processCrashOutbox` one per report for up to 5. A page needs up to two
+ * calls, one per batch method, so the pass starts a page only while two remain.
+ * D1 is not the tighter bound: a page makes about six queries against the
+ * 1,000 per invocation D1 allows, and a `batch()` counts as one.
+ */
+export const TELEMETRY_DELIVERY_PASS_RPC_BUDGET = 32 - 20 - 5;
+
 export interface TelemetryDeliveryOptions {
   pageSize?: number;
   passBudgetMs?: number;
+  passRpcBudget?: number;
 }
 
 interface TelemetryDeliveryPageContext {
@@ -166,20 +181,33 @@ interface TelemetryDeliveryPageContext {
   exceptionAllowed: boolean;
 }
 
+/** The last row a page read, so the next page starts after it. */
+interface DeliveryCursor {
+  acceptedAt: string;
+  eventId: string;
+}
+
+interface DeliveryPageOutcome {
+  /** True when the page was full and every row in it was settled or held. */
+  continues: boolean;
+  /** Service Binding calls the page made. */
+  rpcCalls: number;
+  /** Where the next page starts; null when the page read nothing. */
+  cursor: DeliveryCursor | null;
+}
+
 /**
- * Drains the outbox toward PostHog: pages of `pageSize` rows in acceptance
- * order, until a page is not full, a page leaves a row behind, or the next page
- * would cross the pass budget.
+ * Drains the outbox toward PostHog in pages of `pageSize` rows, in acceptance
+ * order, and stops at the first of: a page that is not full, a page that leaves
+ * a row behind for a reason other than an identity-transition hold, the next
+ * page not fitting the pass's RPC budget, or the next page carrying the pass
+ * past its time budget.
  *
- * One page per tick was the original shape, and it capped delivery at 50 rows
- * per five minutes, 14,400 a day, below what the product now accepts on an
- * ordinary day. The backlog that built up behind that cap reached PostHog days
- * late and read as missing data downstream (docs/telemetry.md, 2026-10-30).
- *
- * A page that leaves a row behind ends the pass: a retried page means the
- * destination is refusing and the next page would be refused too, and a row
- * held for an identity transition stays at the head of the order until the
- * transition commits, so paging past it would re-read it forever.
+ * A retried page ends the pass because the destination is refusing and the
+ * next page would be refused too. A row held for an identity transition is
+ * paged past: it stays `pending` at the head of the order, and the cursor
+ * keeps the pass from re-reading it, so the rows behind it are not held with
+ * it. It is read again next tick.
  */
 export async function processTelemetryOutbox(
   env: Env,
@@ -187,6 +215,7 @@ export async function processTelemetryOutbox(
 ): Promise<TelemetryDeliverySummary> {
   const pageSize = options.pageSize ?? TELEMETRY_DELIVERY_PAGE_SIZE;
   const passBudgetMs = options.passBudgetMs ?? TELEMETRY_DELIVERY_PASS_BUDGET_MS;
+  const passRpcBudget = options.passRpcBudget ?? TELEMETRY_DELIVERY_PASS_RPC_BUDGET;
   const passStartedAt = Date.now();
   const summary: TelemetryDeliverySummary = {
     selected: 0,
@@ -220,41 +249,55 @@ export async function processTelemetryOutbox(
   };
 
   let longestPageMs = 0;
-  for (;;) {
+  let rpcCalls = 0;
+  let cursor: DeliveryCursor | null = null;
+  while (rpcCalls + 2 <= passRpcBudget) {
     const pageStartedAt = Date.now();
-    const page = await deliverTelemetryPage(env, context, summary);
+    const page = await deliverTelemetryPage(env, context, summary, cursor);
     longestPageMs = Math.max(longestPageMs, Date.now() - pageStartedAt);
-    if (!page.drained) break;
+    rpcCalls += page.rpcCalls;
+    cursor = page.cursor;
+    if (!page.continues) break;
     if (Date.now() - passStartedAt + longestPageMs > passBudgetMs) break;
   }
   return summary;
 }
 
-/**
- * One page of the outbox. `drained` is true only when the page was full and
- * every row in it left the `pending`/`retrying` set, which is when another page
- * can be taken without re-reading this one.
- */
+/** One page of the outbox, starting after `cursor`. */
 async function deliverTelemetryPage(
   env: Env,
   context: TelemetryDeliveryPageContext,
   summary: TelemetryDeliverySummary,
-): Promise<{ drained: boolean }> {
+  cursor: DeliveryCursor | null,
+): Promise<DeliveryPageOutcome> {
   const now = new Date();
   const settledBefore = summary.delivered + summary.terminal + summary.suppressed + summary.unparseable;
   const pending = await env.TELEMETRY_DB.prepare(
     `SELECT e.event_id, e.envelope_json, e.analytics_subject_id, e.workspace_analytics_id,
-            e.normalized_timestamp, e.attempt_count, e.delete_at, e.subject_user_id
+            e.normalized_timestamp, e.attempt_count, e.delete_at, e.subject_user_id, e.accepted_at
      FROM telemetry_accepted_events e
      WHERE e.delivery_state IN ('pending', 'retrying')
        AND (e.next_attempt_at IS NULL OR e.next_attempt_at <= ?)
        AND e.delete_at > ?
-     ORDER BY e.accepted_at
+       AND (e.accepted_at > ? OR (e.accepted_at = ? AND e.event_id > ?))
+     ORDER BY e.accepted_at, e.event_id
      LIMIT ?`,
-  ).bind(now.toISOString(), now.toISOString(), context.pageSize).all<DeliveryDatabaseRow>();
-  const drained = () => {
+  ).bind(
+    now.toISOString(),
+    now.toISOString(),
+    cursor?.acceptedAt ?? "",
+    cursor?.acceptedAt ?? "",
+    cursor?.eventId ?? "",
+    context.pageSize,
+  ).all<DeliveryDatabaseRow>();
+  const last = pending.results.at(-1);
+  const outcome = (rpcCalls: number, held: number): DeliveryPageOutcome => {
     const settled = summary.delivered + summary.terminal + summary.suppressed + summary.unparseable - settledBefore;
-    return pending.results.length === context.pageSize && settled === pending.results.length;
+    return {
+      continues: pending.results.length === context.pageSize && settled + held === pending.results.length,
+      rpcCalls,
+      cursor: last ? { acceptedAt: last.accepted_at, eventId: last.event_id } : cursor,
+    };
   };
 
   // Read transition fences after selecting events, for only this page of subjects.
@@ -269,9 +312,13 @@ async function deliverTelemetryPage(
     .all<{ id: string; product_analytics_enabled: number; transition_pending: number }>();
   const preferences = new Map(subjects.results.map((row) => [row.id, row]));
   const eligible: ParsedDeliveryRow[] = [];
+  let held = 0;
   for (const row of pending.results) {
     const subject = row.subject_user_id === null ? undefined : preferences.get(row.subject_user_id);
-    if (subject?.transition_pending === 1) continue;
+    if (subject?.transition_pending === 1) {
+      held += 1;
+      continue;
+    }
     row.product_analytics_enabled = subject?.product_analytics_enabled ?? null;
     const stored = parseStoredEnvelope(row);
     if ("code" in stored) {
@@ -295,7 +342,7 @@ async function deliverTelemetryPage(
   const ordinary = context.captureAllowed ? ordinaryCandidates : [];
   const exceptions = context.exceptionAllowed ? exceptionCandidates : [];
   summary.selected += ordinary.length + exceptions.length;
-  if (ordinary.length + exceptions.length === 0) return { drained: drained() };
+  if (ordinary.length + exceptions.length === 0) return outcome(0, held);
   const { telemetryDelivery, postHogHost, postHogProjectToken } = context;
   const exceptionDeliveries = await Promise.all(
     exceptions.map((row) => javascriptDeliveryRow(env, row)),
@@ -327,7 +374,7 @@ async function deliverTelemetryPage(
       ).catch(() => undefined);
     }
   }
-  return { drained: drained() };
+  return outcome((ordinary.length > 0 ? 1 : 0) + (exceptions.length > 0 ? 1 : 0), held);
 }
 
 async function applyDestinationResult(
