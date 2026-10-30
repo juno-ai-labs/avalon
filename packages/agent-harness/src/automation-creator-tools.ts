@@ -667,12 +667,12 @@ sidekick_runs_read_next until none remains; send nothing while reading; then sen
 report covering every run: when it ran, what started it, what it did, what went wrong, and
 any feedback a person left in it. Pass no run ids: the
 agent's reader already has them. Then end your turn; its report wakes you. A progress
-message from the agent needs no reply and no post: end the turn again. A notice that the
-agent failed or finished without replying is its reply: read the listed runs yourself, with
-sidekick_runs_read and no runId, and continue. Do not page sidekick_runs_list for more, and
-read the runs yourself otherwise only if start_agent is unavailable. When the report
-arrives, if the Sidekick has a home conversation, read its posts there and the replies
-yourself. Say nothing before these reads.
+message from the agent needs no reply and no post: end the turn again. Answer a question it
+asks, then end the turn. A notice that the agent failed or finished without replying is its
+reply: read the listed runs yourself, with sidekick_runs_read and no runId, and continue. Do
+not page sidekick_runs_list for more, and read the runs yourself otherwise only if
+start_agent is unavailable. When the report arrives, if the Sidekick has a home
+conversation, read its posts there and the replies yourself. Say nothing before these reads.
 2. Plan, in one message, before any write: what the runs showed, named by when each ran and
 what started it; whether anything justifies a change; and if so, exactly what you will
 change in the definition and nothing else. Only a procedure problem seen in the runs
