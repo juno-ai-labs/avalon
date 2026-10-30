@@ -368,6 +368,24 @@ describe("Sidekick wizard run inspection", () => {
     expect(JSON.stringify(detached.output)).not.toContain("Confidential attachment");
     expect(JSON.stringify(detached.output)).not.toContain("Private report summary");
     expect(JSON.stringify(detached.output)).not.toContain(RESOURCE);
+
+    // A page that holds a resource result is reauthorized on every fragment,
+    // not served from memory: once the version moves, the continuation that
+    // carried the content in full is refused rather than sliced from a cache.
+    await runInDurableObject(child(runId(1)), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO workstream_resource_links
+        (resource_id,attached_by_user_id,watch_enabled,relationship_type,resource_json,attached_at,updated_at)
+        VALUES (?,NULL,0,'attachment','{}',1,1)`, RESOURCE);
+    });
+    await env.PAYLOADS.put(`sidekick-history/${runId(1)}`, JSON.stringify({ replayVersion: 1,
+      output: { resourceId: RESOURCE, text: `Confidential attachment content ${"x".repeat(20000)}`, version: { sha256: hash } } }));
+    const read = tool("runs_read");
+    const fragment = await read.execute({ runId: runId(1) }, context);
+    expect(fragment.output).toMatchObject({ pageComplete: false });
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE resources SET model_content_sha256 = ? WHERE id = ?", "c".repeat(64), RESOURCE);
+    });
+    await expect(read.execute(fragment.pagination!.continuations[0]!.input, context)).rejects.toThrow("Run evidence changed");
   });
 
   it("records a revision against the review while its notice is the authoring conversation's last word", async () => {
