@@ -25,6 +25,13 @@ const POSTHOG_LIBRARY_VERSION = "1";
 
 export interface PostHogCapture {
   event: string;
+  /**
+   * The outbox row's own id. PostHog deduplicates on `uuid` and nothing else,
+   * so a row the pass sends twice (an overlapping tick, a retry after a lost
+   * acknowledgement) lands once. `$insert_id` carries the same id for readers
+   * that expect it, but PostHog does not deduplicate on it.
+   */
+  uuid: string;
   timestamp: string;
   properties: Record<string, unknown>;
 }
@@ -249,6 +256,7 @@ export function mapPostHogCapture(
   const settingsPersonProperties = personless ? null : applicationSettingsPersonProperties(envelope);
   return {
     event: mapped.event,
+    uuid: row.eventId,
     timestamp: row.normalizedTimestamp,
     properties: {
       distinct_id: row.analyticsSubjectId,
@@ -365,6 +373,7 @@ export function mapPostHogProfileCapture(row: GlobalProfileDeliveryRow): PostHog
     if (!row.anonymousEpochId) throw new Error("posthog_anonymous_epoch_required");
     return {
       event: "$identify",
+      uuid: row.jobId,
       timestamp: row.createdAt,
       properties: {
         distinct_id: row.destinationAnalyticsId,
@@ -377,12 +386,14 @@ export function mapPostHogProfileCapture(row: GlobalProfileDeliveryRow): PostHog
   if (row.kind === "person_profile") {
     return {
       event: "$set",
+      uuid: row.jobId,
       timestamp: row.createdAt,
       properties: { distinct_id: row.destinationAnalyticsId, $set: row.properties, ...shared },
     };
   }
   return {
     event: "$groupidentify",
+    uuid: row.jobId,
     timestamp: row.createdAt,
     properties: {
       distinct_id: "avalon-server",
