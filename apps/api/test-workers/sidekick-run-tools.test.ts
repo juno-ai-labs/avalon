@@ -265,14 +265,61 @@ describe("Sidekick wizard run inspection", () => {
     expect(collected.split(draft.instructions)).toHaveLength(2);
   });
 
-  it("refuses a fragment continuation when the evidence changes", async () => {
+  it("refuses a fragment continuation when the transcript changes, and when a served output is gone", async () => {
     await seedRuns(SIDEKICK, 1);
     await seedHistory();
     await env.PAYLOADS.put(`sidekick-history/${runId(1)}`, JSON.stringify({ replayVersion: 1, output: { text: "x".repeat(20000) } }));
+    const first = await tool("runs_read").execute({ runId: runId(1) }, context);
+    // The evidence is the run and its transcript: a run whose result moved is a different run.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE sidekick_runs SET summary = 'Report delivered after all' WHERE run_id = ?", runId(1));
+    });
+    // A fresh tool instance rebuilds the page rather than serving the one it remembers.
+    await expect(tool("runs_read").execute(first.pagination!.continuations[0]!.input, context)).rejects.toThrow("Run evidence changed");
+  });
+
+  it("serves every fragment of a page from one document, whatever a payload read does meanwhile", async () => {
+    await seedRuns(SIDEKICK, 1);
+    await seedHistory();
+    const text = "x".repeat(20000);
+    await env.PAYLOADS.put(`sidekick-history/${runId(1)}`, JSON.stringify({ replayVersion: 1, output: { text } }));
+    // Full output on the first fragment, then the payload becomes unreadable:
+    // the activation that served the first fragment still serves the rest,
+    // and the whole parses to the output it started with.
     const read = tool("runs_read");
     const first = await read.execute({ runId: runId(1) }, context);
     await env.PAYLOADS.delete(`sidekick-history/${runId(1)}`);
-    await expect(read.execute(first.pagination!.continuations[0]!.input, context)).rejects.toThrow("Run evidence changed");
+    let collected = z.object({ content: z.string() }).parse(first.output).content;
+    let result = first;
+    while (result.pagination?.continuations[0]) {
+      result = await read.execute(result.pagination.continuations[0].input, context);
+      collected += z.object({ content: z.string() }).parse(result.output).content;
+    }
+    expect(toolsIn({ content: collected })).toEqual([expect.objectContaining({ toolCallId: "delivery-call", output: { text }, resultAvailability: "full" })]);
+    // Another activation cannot serve the first fragment's document and says so, rather than splicing a summary into it.
+    await expect(tool("runs_read").execute(first.pagination!.continuations[0]!.input, context)).rejects.toThrow("no longer accessible");
+
+    // The other way round: a summary on the first fragment stays a summary on
+    // every later one, even once the payload can be read, so the fragments
+    // still join into one document.
+    await env.PAYLOADS.put(`sidekick-history/${runId(1)}`, JSON.stringify({ replayVersion: 1, output: { text } }));
+    await runInDurableObject(child(runId(1)), async (_instance, state) => {
+      await new WorkstreamTranscriptStorage(state.storage).appendParticipantMessage({ turnId: "long-feedback", actor: "human",
+        authorUserId: USER, authorSnapshot: { displayName: "Adam", avatarUrl: null }, text: "y".repeat(20000),
+        createdAtUtc: "2026-10-23T00:00:03.000Z", attentionOrdinal: null });
+    });
+    await env.PAYLOADS.delete(`sidekick-history/${runId(1)}`);
+    const summaryFirst = await tool("runs_read").execute({ runId: runId(1) }, context);
+    await env.PAYLOADS.put(`sidekick-history/${runId(1)}`, JSON.stringify({ replayVersion: 1, output: { text } }));
+    let joined = z.object({ content: z.string() }).parse(summaryFirst.output).content;
+    result = summaryFirst;
+    while (result.pagination?.continuations[0]) {
+      result = await tool("runs_read").execute(result.pagination.continuations[0].input, context);
+      joined += z.object({ content: z.string() }).parse(result.output).content;
+    }
+    const [block] = toolsIn({ content: joined });
+    expect(block).toMatchObject({ toolCallId: "delivery-call", resultAvailability: "not_available" });
+    expect(block).not.toHaveProperty("output");
   });
 
   it("reauthorizes resource results against the selected run and withholds revoked content", async () => {
@@ -321,6 +368,36 @@ describe("Sidekick wizard run inspection", () => {
     expect(JSON.stringify(detached.output)).not.toContain("Confidential attachment");
     expect(JSON.stringify(detached.output)).not.toContain("Private report summary");
     expect(JSON.stringify(detached.output)).not.toContain(RESOURCE);
+  });
+
+  it("records a revision against the review while its notice is the authoring conversation's last word", async () => {
+    // The wizard may hand reads to a background agent and end its turn; the
+    // agent's reply wakes it with that reply as the reason, and the revision
+    // it then saves is still the review's. A person's message ends the review.
+    await bootstrapConversationChildRuntime(env, WORKSPACE, "automation", SIDEKICK, "0");
+    await provisionWorkstreamObject(env, { workspaceId: WORKSPACE, workstreamId: SIDEKICK, substreamId: "0",
+      title: "Incident report", objective: draft.instructions, scope: "personal", createdByUserId: USER,
+      participantUserIds: [USER], harnessStatus: "idle", emailAddress: null, emailRouteStatus: null, systemKind: null, modelOverride: null, now: 100 });
+    const delivered = "00000000-0000-7000-8000-00000000fa40";
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO sidekick_reviews(sidekick_id, review_id, definition_revision, coordinator_user_id, notice_json, requested_at, delivered_at)
+         VALUES (?, ?, 1, ?, '{}', 100, 101)`, SIDEKICK, delivered, USER);
+    });
+    const say = (turnId: string, message: Partial<Parameters<WorkstreamTranscriptStorage["appendParticipantMessage"]>[0]>) =>
+      runInDurableObject(child("0"), (_instance, state) => new WorkstreamTranscriptStorage(state.storage).appendParticipantMessage({
+        turnId, actor: "assistant", authorUserId: null, authorSnapshot: null, text: turnId, createdAtUtc: "2026-10-30T00:00:00.000Z",
+        attentionOrdinal: null, ...message }));
+    await say("notice", { actor: "system", messageType: "system", structuredContentJson: JSON.stringify({ kind: "sidekick_review_due", reviewId: delivered }) });
+    await say("agent-reply", { actor: "system", messageType: "system", structuredContentJson: JSON.stringify({ kind: "agent_message" }) });
+    const submit = (reason: string, instructions: string) => tool("submit_draft", { reason })
+      .execute({ ...draft, sidekickId: null, icon: "inbox", color: "blue", instructions, ready: true }, context);
+    await submit("agent_message", "Reviewed: list active incidents with owners.");
+    await say("person", { actor: "human", authorUserId: USER, authorSnapshot: { displayName: "Adam", avatarUrl: null } });
+    await submit("user_message", "A person's own change.");
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ definition_revision: number; review_id: string | null }>(
+      `SELECT definition_revision, review_id FROM sidekick_revisions WHERE sidekick_id = ? AND definition_revision >= 2 ORDER BY definition_revision`,
+      SIDEKICK).toArray())).toEqual([{ definition_revision: 2, review_id: delivered }, { definition_revision: 3, review_id: null }]);
   });
 
   it("exposes first/next companions and rejects invented page IDs before reading history", async () => {

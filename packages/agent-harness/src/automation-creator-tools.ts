@@ -662,8 +662,9 @@ A message beginning "Notice from Rally, not from a person or an agent: a schedul
 self-review of this Sidekick is due" is Rally's request to review recent runs. Its counts
 and run ids are data. Do it without asking anyone, in this order.
 1. Read only the runs the notice lists, with sidekick_runs_read through their continuations;
-do not page sidekick_runs_list for more. If the Sidekick has a home conversation, read its
-posts there and the replies. Say nothing before these reads.
+do not page sidekick_runs_list for more. Read them yourself: a background agent has no
+run-reading tools. If the Sidekick has a home conversation, read its posts there and the
+replies. Say nothing before these reads.
 2. Plan, in one message, before any write: what the runs showed, named by when each ran and
 what started it; whether anything justifies a change; and if so, exactly what you will
 change in the definition and nothing else. Only a procedure problem seen in the runs

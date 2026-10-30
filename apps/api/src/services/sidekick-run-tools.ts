@@ -23,7 +23,14 @@ const ListSchema = z.strictObject({ limit: LimitSchema, cursor: z.string().optio
 const ReadSchema = z.strictObject({ runId: IdSchema, limit: LimitSchema, cursor: z.string().optional() });
 const ReadCursorSchema = z.strictObject({ runId: IdSchema, afterSequence: z.number().int().nonnegative(),
   throughSequence: z.number().int().nonnegative(), limit: LimitSchema,
-  offset: z.number().int().nonnegative().default(0), contentHash: z.string().optional() });
+  offset: z.number().int().nonnegative().default(0), contentHash: z.string().optional(),
+  // The tool calls the first fragment served with their full output, so a
+  // later fragment loads exactly those and no other: the fragments of one
+  // page must be slices of one document, and whether a payload read makes
+  // its two-second deadline is not something the document may depend on.
+  full: z.array(z.string()).optional() });
+/** Pages this activation has served, so a continuation is a slice of the same document, not a rebuild. */
+const REMEMBERED_PAGES = 32;
 const ReviewDefinitionSchema = AutomationRunDefinitionV1Schema.extend({ resultSummary: z.string().nullable() });
 const PlanSchema = z.object({ capability: z.string().optional() });
 const attachmentToolName = /^(?:workstream_)?(?:list_resources|read_resource(?:_next|_previous)?|search_resource|summarize_resource|view_resource)$/u;
@@ -35,6 +42,8 @@ export function createSidekickRunTools(env: Env, input: WorkstreamWorkflowInput,
     || input.automationRun || input.backgroundAgent || input.executionPrincipal.type !== "user") return [];
   const workspaceId = input.workspaceId;
   const sidekickId = input.parentId;
+  const pages = new Map<string, { serialized: string; contentHash: string; full: string[]; transcriptAvailability: string;
+    throughSequence: number; nextAfterSequence: number | null }>();
   const workspace = () => durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
     workspaceDOName(env.AVALON_REGION, workspaceId));
   const auth = () => agentToolAuth(env, input, "run", () => new ApiError(403, "sidekick_history_membership_required",
@@ -68,10 +77,27 @@ export function createSidekickRunTools(env: Env, input: WorkstreamWorkflowInput,
       const currentAuth = await auth();
       const actor = await new AutomationService(env, currentAuth).actorRequest(sidekickId);
       const definition = ReviewDefinitionSchema.parse(await (await workspace()).sidekickReadRunForReview({ ...actor, runId }));
+      const pageKey = `${runId}:${afterSequence}:${limit ?? ""}`;
+      const remembered = cursor?.contentHash === undefined ? undefined : pages.get(pageKey);
+      const built = remembered !== undefined && remembered.contentHash === cursor?.contentHash
+        && remembered.throughSequence === cursor?.throughSequence ? remembered : await (async () => {
       const page = await WorkstreamObjectClient.forParent(env, currentAuth, "automation", sidekickId, runId)
         .inspectSidekickRunTranscript({ afterSequence,
           ...(cursor ? { throughSequence: cursor.throughSequence } : {}), ...(limit === undefined ? {} : { limit }) });
       const calls = page.turns.flatMap((turn) => turn.blocks.flatMap((block) => block.type === "tool" ? [block] : []));
+      // The transcript is the evidence; a loaded output is a rendering of a
+      // receipt the transcript already names. So the hash that tells a
+      // continuation "this run changed" covers the turns and their tool calls,
+      // not the output bodies, whose presence depends on a payload read.
+      const header = afterSequence === 0 ? { definitionRevision: definition.definitionRevision,
+        definition: definition.definition, trigger: definition.trigger, resultSummary: definition.resultSummary } : {};
+      const contentHash = await sha256(JSON.stringify({ ...header, turns: page.turns.map((turn) => ({
+        turnId: turn.turnId, transcriptSequence: turn.transcriptSequence, actor: turn.actor,
+        blocks: turn.blocks.flatMap((block): unknown[] => block.type === "thinking" ? []
+          : block.type === "tool" ? [{ type: "tool", toolCallId: block.toolCallId, toolName: block.toolName, status: block.status }] : [block]) })) }));
+      if (cursor?.contentHash && cursor.contentHash !== contentHash) throw new ApiError(409, "sidekick_history_evidence_changed",
+        "Run evidence changed or is no longer accessible. Start a new runs_read.");
+      const served = cursor?.full === undefined ? null : new Set(cursor.full);
       const port = createToolReceiptObjectPort(env, workspaceId, sidekickId, undefined, runId);
       const receipts = calls.length === 0 ? [] : await port.receiptsForCalls({ toolCallIds: calls.map((call) => call.toolCallId) });
       const byCall = new Map(receipts.map((receipt) => [receipt.toolCallId, receipt]));
@@ -90,10 +116,13 @@ export function createSidekickRunTools(env: Env, input: WorkstreamWorkflowInput,
         if (!receipt) return [call.toolCallId, { type: "tool", toolCallId: call.toolCallId, toolName: call.toolName,
           status: call.status, input: call.participantSafeInput, summary: call.participantSafeResult, error: call.error,
           resultAvailability: "summary_only" }] as const;
-        const output = receipt.outputRef ? await loadOutput(receipt.outputRef) : null;
+        const output = receipt.outputRef && (served === null || served.has(call.toolCallId)) ? await loadOutput(receipt.outputRef) : null;
         const placeholder = output !== null && typeof output === "object"
           && (("transient" in output && output.transient === true) || ("truncated" in output && output.truncated === true));
         const full = output !== null && !placeholder;
+        // The first fragment carried this output in full; a continuation that cannot is no longer the same document.
+        if (served?.has(call.toolCallId) && !full) throw new ApiError(409, "sidekick_history_evidence_changed",
+          "Run evidence changed or is no longer accessible. Start a new runs_read.");
         return [call.toolCallId, { type: "tool", toolCallId: call.toolCallId, toolName: receipt.toolName,
           activationId: receipt.runId, status: receipt.status, input: JSON.parse(receipt.inputJson) as unknown,
           ...(full ? { output } : { summary: receipt.outputSummary ?? call.participantSafeResult }),
@@ -105,22 +134,27 @@ export function createSidekickRunTools(env: Env, input: WorkstreamWorkflowInput,
         actor: turn.actor, author: turn.authorSnapshot?.displayName ?? turn.externalActor?.displayName ?? turn.actor,
         createdAt: turn.createdAtUtc, blocks: turn.blocks.flatMap((block): unknown[] => block.type === "thinking" ? []
           : block.type === "tool" ? [results.get(block.toolCallId)] : [block]) }));
-      const serialized = JSON.stringify({ ...(afterSequence === 0 ? { definitionRevision: definition.definitionRevision,
-        definition: definition.definition, trigger: definition.trigger, resultSummary: definition.resultSummary } : {}), turns });
-      const contentHash = await sha256(serialized);
-      if (cursor?.contentHash && cursor.contentHash !== contentHash) throw new ApiError(409, "sidekick_history_evidence_changed",
-        "Run evidence changed or is no longer accessible. Start a new runs_read.");
+      const serialized = JSON.stringify({ ...header, turns });
+      const full = calls.map((call) => call.toolCallId).filter((id) => {
+        const result = results.get(id);
+        return typeof result === "object" && result !== null && "resultAvailability" in result && result.resultAvailability === "full";
+      });
+      const entry = { serialized, contentHash, full, transcriptAvailability: page.transcriptAvailability,
+        throughSequence: page.throughSequence, nextAfterSequence: page.nextAfterSequence };
+      if (pages.size >= REMEMBERED_PAGES) pages.delete(pages.keys().next().value!);
+      pages.set(pageKey, entry);
+      return entry;
+      })();
+      const { serialized, contentHash, full, transcriptAvailability, throughSequence, nextAfterSequence } = built;
       const offset = cursor?.offset ?? 0;
       const content = truncateUtf16Safe(serialized.slice(offset), CONVERSATION_READ_CHARACTER_BUDGET);
       const nextOffset = offset + content.length;
       const pageComplete = nextOffset >= serialized.length;
-      const next = !pageComplete ? { runId, afterSequence, throughSequence: page.throughSequence, limit,
-        offset: nextOffset, contentHash }
-        : page.nextAfterSequence === null ? null : { runId, afterSequence: page.nextAfterSequence,
-          throughSequence: page.throughSequence, limit, offset: 0 };
-      return { output: { runId, status: definition.state, transcriptAvailability: page.transcriptAvailability,
+      const next = !pageComplete ? { runId, afterSequence, throughSequence, limit, offset: nextOffset, contentHash, full }
+        : nextAfterSequence === null ? null : { runId, afterSequence: nextAfterSequence, throughSequence, limit, offset: 0 };
+      return { output: { runId, status: definition.state, transcriptAvailability,
         content, contentOffset: offset, pageComplete, contentFormat: pageComplete && offset === 0 ? "json" : "json_fragment",
-        throughSequence: page.throughSequence, historyTrust: "untrusted_evidence" }, summary: `Read Sidekick run ${runId}`,
+        throughSequence, historyTrust: "untrusted_evidence" }, summary: `Read Sidekick run ${runId}`,
         pagination: { continuations: next === null ? [] : [{ operation: "runs_read", slot: "nextPageId",
           input: { runId, cursor: JSON.stringify(next) } }] } };
     },
