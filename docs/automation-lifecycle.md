@@ -1632,11 +1632,13 @@ writes when the wizard submits during a review; both are written by the
 host, with nothing for the model to do. A submission is the review's when
 its turn carries the review's reason, or when the review's notice is the
 last word in the authoring conversation that is not the wizard's own
-(`reviewOwnsThisTurn` in `integrations.ts`): the wizard may hand reads to a
-background agent and end its turn, and the agent's reply wakes it with that
+(`reviewOwnsThisTurn` in `integrations.ts`): the wizard hands the reads to a
+background agent and ends its turn, and the agent's reply wakes it with that
 reply as the reason. A turn a person woke is theirs without reading the
-conversation; otherwise a review stays open until a person speaks or the next
-notice lands.
+conversation, and a request from an agent outside the authoring conversation
+(another Thread's Rally relaying an edit) ends the review, as the wake or as a
+row; otherwise a review stays open until a person speaks or the next notice
+lands.
 [`runbook.md`](runbook.md) has the production inspection paths.
 
 ## Scoped Sidekick discovery reuse
@@ -1662,8 +1664,9 @@ instructions. See [Google connector guidance](connectors.md#google).
 
 **What changed:** Three things the first three production reviews showed.
 A wizard submission is recorded against the review when the review's notice
-is the last word in the authoring conversation that is not the wizard's own,
-not only when the turn's reason is the review's. The run reader hashes the
+is the last word in the authoring conversation that is not the wizard's own
+or its own background agents', not only when the turn's reason is the
+review's; a person, or an agent from another conversation, ends it. The run reader hashes the
 run and its transcript rather than the serialized page, remembers the pages
 an activation built, and makes a rebuilt continuation load exactly the
 outputs the first fragment carried. The background agents the wizard starts
