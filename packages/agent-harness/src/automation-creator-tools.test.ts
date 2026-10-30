@@ -237,7 +237,9 @@ describe("the automations plugin", () => {
     // the policy recognizes the review by it.
     expect(systemMessage).toContain("Notice from Rally, not from a person or an agent: a scheduled\nself-review of this Sidekick is due");
     // The reads come first, so the plan is a plan of the change, not a restatement of the notice.
-    expect(systemMessage).toContain("1. Read only the runs the notice lists");
+    expect(systemMessage).toContain("1. Hand the reads to one background agent with start_agent.");
+    // The agent's reader walks the notice's runs itself, so the assignment carries no ids.
+    expect(systemMessage).toContain("Pass no run ids: the\nagent's reader already has them.");
     expect(systemMessage).toContain("2. Plan, in one message, before any write: what the runs showed");
     expect(systemMessage).toContain("exactly what you will\nchange in the definition and nothing else");
     expect(systemMessage).toContain("3. Act on the plan");
