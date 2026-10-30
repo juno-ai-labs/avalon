@@ -26,10 +26,10 @@ const POSTHOG_LIBRARY_VERSION = "1";
 export interface PostHogCapture {
   event: string;
   /**
-   * The outbox row's own id. PostHog deduplicates on `uuid` and nothing else,
-   * so a row the pass sends twice (an overlapping tick, a retry after a lost
-   * acknowledgement) lands once. `$insert_id` carries the same id for readers
-   * that expect it, but PostHog does not deduplicate on it.
+   * The outbox row's id. With `event`, `timestamp` and `distinct_id`, all read
+   * from the stored row, it is PostHog's deduplication key, so a re-sent row
+   * collapses to one event once PostHog's background merge runs. `$insert_id`
+   * carries the same id for readers that expect it; PostHog ignores it.
    */
   uuid: string;
   timestamp: string;
