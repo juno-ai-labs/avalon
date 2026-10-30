@@ -101,15 +101,22 @@ export function createSidekickRunTools(env: Env, input: WorkstreamWorkflowInput,
       const port = createToolReceiptObjectPort(env, workspaceId, sidekickId, undefined, runId);
       const receipts = calls.length === 0 ? [] : await port.receiptsForCalls({ toolCallIds: calls.map((call) => call.toolCallId) });
       const byCall = new Map(receipts.map((receipt) => [receipt.toolCallId, receipt]));
+      // A resource result is reauthorized on every read, so a page holding one
+      // is never remembered: each fragment rebuilds and checks again.
+      let holdsResource = false;
       const results = new Map<string, unknown>(await Promise.all(calls.map(async (call) => {
         const receipt = byCall.get(call.toolCallId);
         const plan = PlanSchema.safeParse(receipt?.executionPlanJson ? JSON.parse(receipt.executionPlanJson) : {});
         const capability = plan.success ? plan.data.capability : undefined;
         const attachment = capability?.startsWith("workstream.resources.") || attachmentToolName.test(call.toolName);
+        if (attachment) holdsResource = true;
         if (attachment && (!receipt || !capability || await validateAttachmentToolReceiptReplay(env, {
           workspaceId, workstreamId: sidekickId, substreamId: runId, principal: input.executionPrincipal,
           invocationId: receipt.effectIntentId, capability,
         }, port) !== "valid")) {
+          // Served in full on the first fragment, withheld now: not the same document.
+          if (served?.has(call.toolCallId)) throw new ApiError(409, "sidekick_history_evidence_changed",
+            "Run evidence changed or is no longer accessible. Start a new runs_read.");
           return [call.toolCallId, { type: "tool", toolCallId: call.toolCallId, toolName: call.toolName,
             resultAvailability: "unavailable", reason: "resource_access_or_version_unavailable" }] as const;
         }
@@ -141,8 +148,10 @@ export function createSidekickRunTools(env: Env, input: WorkstreamWorkflowInput,
       });
       const entry = { serialized, contentHash, full, transcriptAvailability: page.transcriptAvailability,
         throughSequence: page.throughSequence, nextAfterSequence: page.nextAfterSequence };
-      if (pages.size >= REMEMBERED_PAGES) pages.delete(pages.keys().next().value!);
-      pages.set(pageKey, entry);
+      if (!holdsResource) {
+        if (pages.size >= REMEMBERED_PAGES) pages.delete(pages.keys().next().value!);
+        pages.set(pageKey, entry);
+      }
       return entry;
       })();
       const { serialized, contentHash, full, transcriptAvailability, throughSequence, nextAfterSequence } = built;

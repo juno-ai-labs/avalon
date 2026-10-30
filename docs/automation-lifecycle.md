@@ -233,14 +233,15 @@ and recorded derivative dependencies; denied results omit input, summary and
 payload. Missing, transient and serialization-placeholder results have explicit
 availability markers. A page larger than the conversation read budget is served
 as fragments of one document: the activation that built the page remembers it
-(the last 32) and serves later fragments from memory, and a continuation that
+(the last 32, never a page holding a resource result, which is reauthorized on
+every fragment) and serves later fragments from memory, and a continuation that
 has to rebuild it loads in full exactly the tool outputs the first fragment
 carried (`full` in its cursor), so a payload read that misses its deadline
 on one fragment and not another cannot make the fragments disagree. The hash
 a continuation checks covers the run and its transcript, the turns and their
 tool calls, not the output bodies; a run whose transcript or result moved is
-refused as changed evidence, and so is a continuation that can no longer load
-an output the first fragment carried. Receipt authority metadata, credentials and private
+refused as changed evidence, and so is a continuation that can no longer load,
+or may no longer show, an output the first fragment carried. Receipt authority metadata, credentials and private
 reasoning stay private. Feedback in the home or another attached conversation
 is read separately through conversation tools.
 
