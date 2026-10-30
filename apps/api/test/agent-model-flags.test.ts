@@ -11,6 +11,7 @@ import {
   defaultAgentModelRouting,
   resolveAgentModelRouting,
   resolveNewWorkstreamModelRouting,
+  conversationModelContext,
   resolveWorkstreamModelRouting,
   scheduledWorkstreamModel,
 } from "../src/services/agent-model-flags";
@@ -503,6 +504,14 @@ describe("agent model flags", () => {
     await expect(resolveWorkstreamModelRouting(env, {
       ...context, parentKind: "automation", substreamId: "0",
     })).resolves.toEqual({ model: "openai/gpt-6.1-sol", fallbackModels: ["google/gemini-3.8-flash"] });
+    // Routed as the harness routes it: the context is picked off the activation
+    // by the one helper both the logged role and the resolved route read.
+    const agent = { parentKind: "automation" as const, backgroundAgent: true as const };
+    await expect(resolveWorkstreamModelRouting(env, { ...context, ...conversationModelContext(agent, "agent") }))
+      .resolves.toEqual({ model: "openai/gpt-6.1-sol", fallbackModels: ["google/gemini-3.8-flash"] });
+    const worker = { ...agent, automationDelegation: { runId: "00000000-0000-7000-8000-000000000001", stopGeneration: 0 } };
+    await expect(resolveWorkstreamModelRouting(env, { ...context, ...conversationModelContext(worker, "worker") }))
+      .resolves.toEqual({ model: "openai/gpt-5.6-terra", fallbackModels: [] });
     await expect(resolveWorkstreamModelRouting(env, {
       ...context, parentKind: "automation", substreamId: "activation",
     })).resolves.toEqual({ model: "openai/gpt-5.6-terra", fallbackModels: [] });
