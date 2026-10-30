@@ -504,6 +504,9 @@ describe("agent model flags", () => {
       ...context, parentKind: "automation", substreamId: "0",
     })).resolves.toEqual({ model: "openai/gpt-6.1-sol", fallbackModels: ["google/gemini-3.8-flash"] });
     await expect(resolveWorkstreamModelRouting(env, {
+      ...context, parentKind: "automation", substreamId: "agent", backgroundAgent: true,
+    })).resolves.toEqual({ model: "openai/gpt-6.1-sol", fallbackModels: ["google/gemini-3.8-flash"] });
+    await expect(resolveWorkstreamModelRouting(env, {
       ...context, parentKind: "automation", substreamId: "activation",
     })).resolves.toEqual({ model: "openai/gpt-5.6-terra", fallbackModels: [] });
     await expect(resolveWorkstreamModelRouting(env, context)).resolves.toEqual({
