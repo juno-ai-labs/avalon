@@ -690,8 +690,7 @@ choice a person made here; never submit over a person's unfinished draft; never 
 ready=false. When the fix needs any of those, submit nothing and say so in the report.
 Narrow a schedule only to exclude a recurring window whose runs all finished silently;
 never lower how often an event or polling trigger checks. Never require an empty final
-message: a run that has nothing to report ends with one short line in its own run
-conversation and posts nothing.
+message.
 4. If you saved a change and the notice names where to announce it, post one message there
 with conversation_post, passing that conversation: what the Sidekick now does differently,
 why, and that asking in its Sidekick conversation restores the earlier version. Post
