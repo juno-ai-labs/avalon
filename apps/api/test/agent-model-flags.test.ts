@@ -478,10 +478,13 @@ describe("agent model flags", () => {
       .resolves.toEqual({ model: "x-ai/grok-4.5", fallbackModels: ["google/gemini-3.6-flash"] });
   });
 
-  it("gives only the Sidekick wizard its authoring role", () => {
+  it("gives the Sidekick wizard and the agents it starts the authoring role", () => {
     expect(conversationModelRole({ parentKind: "automation" })).toBe("sidekick_authoring");
     expect(conversationModelRole({ parentKind: "automation", substreamId: "0" })).toBe("sidekick_authoring");
-    expect(conversationModelRole({ parentKind: "automation", substreamId: "activation-or-worker" })).toBe("workstream");
+    expect(conversationModelRole({ parentKind: "automation", substreamId: "agent", backgroundAgent: true })).toBe("sidekick_authoring");
+    expect(conversationModelRole({ parentKind: "automation", substreamId: "activation" })).toBe("workstream");
+    expect(conversationModelRole({ parentKind: "automation", substreamId: "worker", backgroundAgent: true,
+      automationDelegation: { runId: "00000000-0000-7000-8000-000000000001", stopGeneration: 0 } })).toBe("workstream");
     expect(conversationModelRole({ parentKind: "workstream", substreamId: "0" })).toBe("workstream");
   });
 

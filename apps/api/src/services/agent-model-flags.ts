@@ -324,13 +324,21 @@ export function pinnedModelRouting(model: string): AgentModelRouting {
 type ConversationModelContext = {
   parentKind?: WorkstreamWorkflowInput["parentKind"];
   substreamId?: string | undefined;
+  backgroundAgent?: boolean | undefined;
+  automationRun?: unknown;
+  automationDelegation?: unknown;
 };
 
-/** Only a Sidekick's Main is its wizard; activations and workers keep their existing route. */
+/**
+ * A Sidekick's Main is its wizard, and the background agents the wizard
+ * starts read runs for it on the same route; a run's activation and its
+ * delegation workers keep their existing route.
+ */
 export function conversationModelRole(
   context: ConversationModelContext,
 ): "workstream" | "sidekick_authoring" {
-  return context.parentKind === "automation" && (context.substreamId ?? "0") === "0"
+  return context.parentKind === "automation" && !context.automationRun && !context.automationDelegation
+    && ((context.substreamId ?? "0") === "0" || context.backgroundAgent === true)
     ? "sidekick_authoring"
     : "workstream";
 }

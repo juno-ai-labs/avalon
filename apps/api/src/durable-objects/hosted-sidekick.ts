@@ -1543,6 +1543,21 @@ export class HostedSidekick {
     return { ...this.runDefinition(view), resultSummary: view.run?.summary ?? null };
   }
 
+  /** The runs the latest delivered review asked for, in the notice's order, for a reader that names no run. */
+  async reviewRunsToRead(input: AutomationActorRequest): Promise<{ reviewId: string; runIds: string[] } | null> {
+    const request = parseRpcInput(AutomationActorRequestSchema, input, "review_runs_to_read");
+    await this.assertReader(this.assertSidekick(request.workspaceId, request.automationId), request.actor);
+    const review = first(this.sql.exec<ReviewRow>(
+      `SELECT review_id, definition_revision, coordinator_user_id, notice_json, requested_at, delivered_at
+         FROM sidekick_reviews WHERE sidekick_id = ? AND delivered_at IS NOT NULL
+        ORDER BY delivered_at DESC, review_id DESC LIMIT 1`,
+      this.sidekickId,
+    ));
+    if (!review) return null;
+    const { sample } = SidekickReviewNoticeV1Schema.parse(JSON.parse(review.notice_json));
+    return { reviewId: review.review_id, runIds: [...sample.failed, ...sample.needsInput, ...sample.completed] };
+  }
+
   /** Installed clients' claim enrolls the caller without changing human access. */
   async claimExecutionPrincipal(input: AutomationActorRequest): Promise<AutomationExecutionPrincipalClaim> {
     const request = parseRpcInput(AutomationActorRequestSchema, input, "claim_execution_principal");

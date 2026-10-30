@@ -9,7 +9,7 @@ import { Preparation, ToolSurfacePreparations } from "./harness-preparation";
 import { validateCompletedToolReplay } from "./completed-tool-replay";
 import { completionVerificationNudge } from "./completion-verification";
 import type { CompletionVerificationSnapshot } from "../durable-objects/completion-verification-storage";
-import { AGENT_MESSAGE_CONTENT_KIND, ImportedMessageProvenanceSchema, SidekickReviewNoticeV1Schema } from "@rally/contracts";
+import { AGENT_MESSAGE_CONTENT_KIND, agentAddressForId, AgentIdSchema, ImportedMessageProvenanceSchema, SidekickReviewNoticeV1Schema } from "@rally/contracts";
 import { agentCoordinationRoleGuidance } from './agent-communication-prompts';
 import { conversationParentStub, hostedParentStub } from "./conversation-parent-client";
 import { AgentCommunicationService } from "./agent-communication-service";
@@ -153,6 +153,7 @@ import {
 import { z } from "zod";
 import { connectorTextPages } from "./connector-text-pages";
 import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
+import { PERSONAL_SYSTEM_PROMPT_REASONS } from "../durable-objects/personal-system-prompt";
 import { AutomationService } from "./automation-service";
 import { WorkstreamService } from "./workstream-service";
 import { ResourceService } from "./resource-service";
@@ -269,7 +270,7 @@ import {
 } from "./workstream-wakeup-service";
 import type { ToolReceiptRecord, ToolReceiptStatus } from "../durable-objects/workstream-tool-receipt-storage";
 import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
-import { createSidekickRunTools } from "./sidekick-run-tools";
+import { createSidekickRunTools, readsSidekickRuns, SIDEKICK_RUN_READING_GUIDANCE } from "./sidekick-run-tools";
 import { withToolPagination } from "./tool-pagination";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
@@ -2169,7 +2170,7 @@ function createAvalonAutomationsPlugin(
           appearance: target.appearance,
           actor: actorRequest.actor,
           // A review's revision is recorded against the review, for reading later.
-          ...(input.reason === "sidekick_review" ? { origin: "sidekick_review" as const } : {}),
+          ...(await reviewOwnsThisTurn(env, input) ? { origin: "sidekick_review" as const } : {}),
         });
         return { ...submitted, saved: draft.ready, description: draft.description };
       },
@@ -2206,6 +2207,52 @@ function createAvalonAutomationsPlugin(
       ...(delegationUser ? sidekickDelegationTools(env, input, delegationUser, false) : [])],
     onActivate: async () => prepare(),
   };
+}
+
+/**
+ * Whether a wizard submission answers a delivered review. The review's own
+ * turn carries the reason; a turn that continues it does not. The wizard may
+ * hand reads to a background agent and end its turn, and the agent's reply
+ * wakes it with that reply as the reason, so the revision it then saves was
+ * stamped with no review. The authoring conversation knows: the review is in
+ * progress while its notice is the last word there that is not the wizard's
+ * own, and a person's message ends it. A bounded newest-first read; the
+ * notice sits behind at most the review's own tool rows.
+ */
+/**
+ * A submission belongs to the review when its turn is the review's, or when the
+ * review's notice is the last word in the authoring conversation that is not
+ * the wizard's own or its own background agents': the wizard ends its turn
+ * after handing the reads to an agent and is woken again by its reply. A
+ * person's message, or a request from an agent outside this conversation
+ * (another Thread's Rally relaying an edit), as the turn's wake or in the
+ * recent rows, ends the review. The rows read are the lister's page, the most
+ * recent 250; a notice older than that is out of the review's reach.
+ */
+async function reviewOwnsThisTurn(env: Env, input: WorkstreamWorkflowInput): Promise<boolean> {
+  if (input.reason === "sidekick_review") return true;
+  if (input.parentKind !== "automation" || PERSONAL_SYSTEM_PROMPT_REASONS.has(input.reason)) return false;
+  const ownAgent = (sender: unknown): boolean => {
+    const id = AgentIdSchema.safeParse(sender);
+    if (!id.success) return false;
+    const address = agentAddressForId(id.data);
+    return address.parentKind === "automation" && address.parentId === input.parentId && address.substreamId !== "0";
+  };
+  if (input.agentExchange && !ownAgent(input.agentExchange.senderAgentId)) return false;
+  const transcript = createMessageObjectPort(env, input.workspaceId, input.parentId, undefined, "0");
+  const recent = await transcriptLister(transcript, { workspaceId: input.workspaceId, workstreamId: input.parentId })(
+    input.workspaceId, input.parentId, 250);
+  let notice = -1;
+  let other = -1;
+  for (const message of recent) {
+    const kind = message.structuredContent?.kind;
+    if (kind === "sidekick_review_due") notice = Math.max(notice, message.sequenceNumber);
+    else if (message.author.type === "human" || message.author.type === "external"
+      || (kind === AGENT_MESSAGE_CONTENT_KIND && !ownAgent(message.structuredContent?.senderAgentId))) {
+      other = Math.max(other, message.sequenceNumber);
+    }
+  }
+  return notice >= 0 && notice > other;
 }
 
 async function loadAutomationCreatorPluginCatalog(
@@ -5656,14 +5703,22 @@ async function loadHarnessTools(
   // Drafting belongs to the Sidekick's authoring conversation. Other agents
   // discover or create that conversation and send it the setup request.
   const loadedAutomationPluginIds = new Set<string>();
+  // A background agent the wizard starts reads runs for it, with the reader
+  // in hand from its first turn; drafting stays the wizard's.
+  const readsRuns = (input.substreamId ?? "0") !== "0" && readsSidekickRuns(input);
   const automationsPlugin = input.executionPrincipal.type === "user" && !input.automationRun && (input.parentKind === "workstream"
     || (input.parentKind === "automation" && (input.substreamId ?? "0") === "0"))
     ? createAvalonAutomationsPlugin(env, input, loadedAutomationPluginIds, expandPages)
     : input.executionPrincipal.type === "user" ? {
       canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_sidekicks", shortWireName: "sidekick",
-      displayName: "Sidekick delegation", description: "Inspect and manage Sidekick delegation for Organization users.",
-      preload: false, explicit: false, systemMessage: sidekickDelegationGuidance(),
-      tools: sidekickDelegationTools(env, input, input.executionPrincipal.userId, false),
+      displayName: readsRuns ? "Sidekick runs and delegation" : "Sidekick delegation",
+      description: readsRuns ? "Read this Sidekick's runs for its wizard; inspect and manage Sidekick delegation."
+        : "Inspect and manage Sidekick delegation for Organization users.",
+      preload: readsRuns, explicit: false,
+      systemMessage: readsRuns ? `${SIDEKICK_RUN_READING_GUIDANCE} ${sidekickDelegationGuidance()}` : sidekickDelegationGuidance(),
+      tools: [...(readsRuns ? createSidekickRunTools(env, input, (ref) => loadToolReplayOutput(env, ref))
+        .flatMap((tool) => expandPages(tool, "sidekick", null)) : []),
+      ...sidekickDelegationTools(env, input, input.executionPrincipal.userId, false)],
     } : null;
   // List, read and post to Rally conversations, scoped by the loop: a
   // Breakout loop reaches its own conversation and its Channel's Main; a
