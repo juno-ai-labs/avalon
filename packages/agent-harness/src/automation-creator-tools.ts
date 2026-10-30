@@ -640,6 +640,9 @@ runs can execute without repeating discovery. Separate setup facts from data eac
 run must refresh. Include success checks, when to do nothing, and recovery steps.
 A run that has nothing to report ends with one short line in its own run conversation,
 which notifies nobody; never instruct a run to end with no text.
+A run that reports data delivers the report on schedule even when a number is zero, looks
+wrong or disagrees with another source, and says so in one line inside the report; never
+add a check whose failure withholds the report.
 Name every result destination and the action that delivers it: a run must be told
 to send to an inbox, channel, DM or document.
 For the Sidekick's own reports and updates in Rally, save conversation_post as the
@@ -690,7 +693,10 @@ choice a person made here; never submit over a person's unfinished draft; never 
 ready=false. When the fix needs any of those, submit nothing and say so in the report.
 Narrow a schedule only to exclude a recurring window whose runs all finished silently;
 never lower how often an event or polling trigger checks. Never require an empty final
-message.
+message. Never add a freshness, consistency or sanity check that withholds a report: a run
+that reports data delivers it on schedule even when a number is zero, looks wrong or
+disagrees with another source, and says so in one line inside the report. When runs held a
+report back for such a reason, remove the check that held it.
 4. If you saved a change and the notice names where to announce it, post one message there
 with conversation_post, passing that conversation: what the Sidekick now does differently,
 why, and that asking in its Sidekick conversation restores the earlier version. Post
