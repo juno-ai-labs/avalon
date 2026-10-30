@@ -794,13 +794,63 @@ flushes in batches of 50 every 30 seconds. API telemetry ingest awaits validatio
 plus its durable D1 acceptance boundary. Telemetry derived from product actions
 registers that whole acceptance flow on the current Worker invocation, while
 destination calls and symbolication remain deferred as before.
-Crash processing selects ten reports per pass and Global delivery selects five.
+Crash processing selects ten reports per pass. Global delivery drains the outbox
+in pages of `TELEMETRY_DELIVERY_PAGE_SIZE` rows, in acceptance order, and keeps
+taking pages until one is not full, one leaves a row behind, or the next page
+would carry the pass past `TELEMETRY_DELIVERY_PASS_BUDGET_MS`, the cron period
+(both in `apps/api/src/telemetry/delivery.ts`). `telemetry_operations_snapshot`
+reports `accepted_pending` and `oldest_accepted_age_seconds` every tick; an
+oldest age that climbs tick over tick while `open_circuits` is zero means intake
+is outrunning the pass, and that is the signal to read before any other.
 
 The engineering budgets remain: API ingest p95 under 25 ms, typical desktop
 telemetry under 0.5% CPU/15 MiB/1 MiB per day, and 95% owned-frame symbolication
 when matching artifacts exist. Operational snapshots and packaged fixtures provide
 the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
+
+### 2026-10-30 — Global delivery drains the outbox instead of taking one page per tick
+
+**What changed:** `processTelemetryOutbox` loops over pages of
+`TELEMETRY_DELIVERY_PAGE_SIZE` (50, the page it always took) until a page comes
+back short, a page leaves a row in `pending`/`retrying` (a retried page, a row
+held for an identity transition), or the next page would carry the pass past
+`TELEMETRY_DELIVERY_PASS_BUDGET_MS`, which is the cron period transcribed from
+`wrangler.global.jsonc`. Both are arguments to the pass so a test can drive a
+small page and a short budget against the shipped constants.
+
+**Why:** One page per five-minute tick is 14,400 rows a day. Intake crossed
+that on 2026-10-19 (13,164 accepted), and on 2026-10-22 reached 45,059, most
+of it `agent_tool_started`/`agent_tool_terminal`. From then on the pass never
+caught up: rows reached PostHog 11 hours late on the 19th, 70 hours late on the
+22nd, and by the 26th the delivery frontier stopped advancing at all, parked at
+2026-10-26 07:07 UTC with 66,000 rows behind it while every scheduled tick still
+delivered its 50 and returned 200. Nothing was unhealthy by the pass's own
+account: `open_circuits` 0, `accepted_terminal` 0, every row `attempt_count` 0.
+Downstream, a Sidekick reading PostHog web analytics for the 26th through the
+28th found zero visitors and zero signups and published that as the day's
+report. The snapshot had been logging `oldest_accepted_age_seconds` climbing
+past 350,000 every five minutes; nobody reads it.
+
+**Considered and rejected:** A bigger page alone: PostHog's batch endpoint
+takes 20 MB and 50 rows is 50 KB, so the page could grow, but a fixed page is a
+fixed ceiling and the next volume step lands here again. A tighter cron: the
+same ceiling, moved. Marking rows `delivering` on selection so two passes can
+never send the same row: the pass stops before crossing its tick, so at most one
+page can overlap the next tick, and a recovery sweep for rows stranded in
+`delivering` by a killed invocation is more mechanism than that one page
+justifies. Dropping the per-tool-call events that make up most of the volume:
+a product decision about what is measured, not a delivery one.
+
+**Consequences:** A pass's wall time is now proportional to the backlog, up to
+the cron period, so a tick that falls behind drains at roughly 50 rows per
+1.3 seconds (one D1 select, one RPC, one D1 batch) until it is level. A page
+that leaves a row behind ends the pass, which means a row held for an identity
+transition at the head of the acceptance order holds everything behind it
+until the transition commits, as it did before, only now the pass stops rather
+than re-reading it. If intake ever exceeds what one tick can drain, the oldest
+accepted age climbs again and the snapshot says so; the next lever is the page
+size, and the one after that is what is accepted at all.
 
 ### 2026-09-14 — Configurable deployment isolation
 
