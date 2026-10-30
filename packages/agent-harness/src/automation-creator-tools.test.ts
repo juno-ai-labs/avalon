@@ -242,6 +242,7 @@ describe("the automations plugin", () => {
     expect(systemMessage).toContain("Pass no run ids: the\nagent's reader already has them.");
     // The wizard ends no turn with nothing: the harness reads that as a defect and falls back.
     expect(systemMessage).toContain("Then say one line here that the agent is reading the runs");
+    expect(systemMessage).toContain("Answer a question from it with\nreply_to_message, then end the turn with one short line here.");
     expect(systemMessage).toContain("never instruct a run to end with no text.");
     expect(systemMessage).toContain("2. Plan, in one message, before any write: what the runs showed");
     expect(systemMessage).toContain("exactly what you will\nchange in the definition and nothing else");
