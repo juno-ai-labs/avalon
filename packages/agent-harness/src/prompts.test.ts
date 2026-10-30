@@ -207,7 +207,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           sidekick: workstreamAutomation,
         }),
-        hash: "3d8511c87aa063095c252a4eea75e5f8f53ce975b3a22789d6d812373183c891",
+        hash: "0e9c39a066cbf445e3b46940e93522bc970064055213609742f145f1577014b8",
       },
       workstreamName: {
         actual: renderWorkstreamNameMessages({
@@ -428,6 +428,10 @@ describe("prompt renderers", () => {
       outputSurface: "self_delivery",
       sidekick: { ...workstreamAutomation, homeConversationId: null },
     });
+    // A silent run ends with one line in its own conversation; an empty final
+    // message is a failed model call to the harness, not silence.
+    expect(renderWorkstreamSystemPrompt({ title: "t", objective: "o", sidekick: workstreamAutomation }))
+      .toContain("Never end with no text: an empty final message is read as a failed model call, not as silence.");
 
     expect(undelivered).toContain('"homeConversationId": null');
     expect(undelivered).toContain("A final message describing a send that did not happen is a failed run");
