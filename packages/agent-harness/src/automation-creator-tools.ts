@@ -638,6 +638,8 @@ For triggered work, each run has its own conversation and cannot see this setup
 discussion. Save a detailed, self-contained procedure using the instructions field's checklist, so
 runs can execute without repeating discovery. Separate setup facts from data each
 run must refresh. Include success checks, when to do nothing, and recovery steps.
+A run that has nothing to report ends with one short line in its own run conversation,
+which notifies nobody; never instruct a run to end with no text.
 Name every result destination and the action that delivers it: a run must be told
 to send to an inbox, channel, DM or document.
 For the Sidekick's own reports and updates in Rally, save conversation_post as the
@@ -666,13 +668,14 @@ sidekick_runs_read with no runId, which serves the listed runs one after another
 sidekick_runs_read_next until none remains; send nothing while reading; then send one
 report covering every run: when it ran, what started it, what it did, what went wrong, and
 any feedback a person left in it. Pass no run ids: the
-agent's reader already has them. Then end your turn; its report wakes you. A progress
-message from the agent needs no reply and no post: end the turn again. Answer a question it
-asks, then end the turn. A notice that the agent failed or finished without replying is its
-reply: read the listed runs yourself, with sidekick_runs_read and no runId, and continue. Do
-not page sidekick_runs_list for more, and read the runs yourself otherwise only if
-start_agent is unavailable. When the report arrives, if the Sidekick has a home
-conversation, read its posts there and the replies yourself. Say nothing before these reads.
+agent's reader already has them. Then say one line here that the agent is reading the runs
+and you will report when it replies, and end the turn; its report wakes you. Answer a
+progress message or a question from the agent with one short line, then end the turn. A
+notice that the agent failed or finished without replying is its reply: read the listed runs
+yourself, with sidekick_runs_read and no runId, and continue. Do not page
+sidekick_runs_list for more, and read the runs yourself otherwise only if start_agent is
+unavailable. When the report arrives, if the Sidekick has a home conversation, read its
+posts there and the replies yourself. Post nothing elsewhere before these reads.
 2. Plan, in one message, before any write: what the runs showed, named by when each ran and
 what started it; whether anything justifies a change; and if so, exactly what you will
 change in the definition and nothing else. Only a procedure problem seen in the runs
@@ -685,7 +688,9 @@ plugin, delivery destination, trigger or capability; never enrol a delegate; nev
 choice a person made here; never submit over a person's unfinished draft; never submit
 ready=false. When the fix needs any of those, submit nothing and say so in the report.
 Narrow a schedule only to exclude a recurring window whose runs all finished silently;
-never lower how often an event or polling trigger checks.
+never lower how often an event or polling trigger checks. Never require an empty final
+message: a run that has nothing to report ends with one short line in its own run
+conversation and posts nothing.
 4. If you saved a change and the notice names where to announce it, post one message there
 with conversation_post, passing that conversation: what the Sidekick now does differently,
 why, and that asking in its Sidekick conversation restores the earlier version. Post
