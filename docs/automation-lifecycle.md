@@ -1070,9 +1070,10 @@ Memory treats the review as agent-derived.
 **What the wizard does with it** is guidance in
 `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, not a gate, in four stages. It reads
 first, posting nowhere else: it hands the listed runs to one background
-agent, whose reader walks them without a run id and which sends one report,
-says in one line that it is waiting, and when the reply wakes it, it reads
-the Sidekick's posts and replies in its home itself. It then plans, in one message before any write: what
+agent, whose reader walks them without a run id and which sends one
+report, says in one line that it is waiting, and when the reply wakes it,
+it reads the Sidekick's posts and replies in its home itself. It then
+plans, in one message before any write: what
 the runs showed, run by run; whether anything justifies a change (a
 procedure problem seen in the runs, never a platform failure); and if so
 exactly what it will change and nothing else. The plan comes after the reads
@@ -1672,25 +1673,23 @@ rather than ending the turn with nothing.
 
 **Why:** The harness reads an empty completion as a provider defect
 (`acceptEmptyCompletion` is off for every production harness): it retries
-the route three times and then falls back to the next model. Two prompts
-asked for exactly that output. Help email triage's own review saved
-"require an empty final response when there is nothing to report", after
-which 112 of 114 runs failed as `harness_execution_failed` once Terra,
-Gemini Flash and Grok had all obeyed; its second review tightened the same
-rule. The wizard's "end your turn" after `start_agent` produced three Sol
-defects and a Gemini Flash turn that ignored the instruction: the twenty
-narrated progress posts on GitHub PR Firehose and the Content Calendar
-Refresh wizard paging its runs in parallel with its agent were both Flash.
-Fleet-wide in the day before this change, about 2,800 defect attempts
-across some 900 turns. The alternative, accepting an empty completion as a
-silent end of turn, would have hidden a real provider failure in the same
-shape as an instructed silence; one visible line keeps the two apart and
-costs the owner one sentence.
+the route and then falls back to the next model. Two prompts asked for
+exactly that output. A self-review that saved "require an empty final
+response when there is nothing to report" made nearly every later run of
+that Sidekick fail as `harness_execution_failed` once every model in the
+cascade had obeyed, and the wizard's "end your turn" after `start_agent`
+handed the turn to a fallback model that ignored the instruction and
+narrated, or read the runs a second time. Fleet-wide in the day before
+this change, about 2,800 defect attempts across some 900 turns. The
+alternative, accepting an empty completion as a silent end of turn, would
+have hidden a real provider failure in the same shape as an instructed
+silence; one visible line keeps the two apart and costs the owner one
+sentence.
 
 **Consequences:** A run's record always ends with text, so the run summary
-is never empty for a silent run. Definitions that still ask for an empty
-final message are overridden by the activation prompt but should be
-corrected; Help email triage's revisions 6 and 7 are the known ones.
+is never empty for a silent run. A definition that still asks for an empty
+final message is overridden by the activation prompt and should be
+corrected where found.
 
 ### 2026-10-30 — The wizard's agents reach its route, and read before they report
 
