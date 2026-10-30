@@ -245,12 +245,12 @@ describe("the automations plugin", () => {
     expect(systemMessage).toContain("Answer a question from it with\nreply_to_message, then end the turn with one short line here.");
     expect(systemMessage).toContain("never instruct a run to end with no text.");
     expect(systemMessage).toContain(
-      "A run that reports data delivers the report on schedule even when a number is zero, looks\nwrong or disagrees with another source, and says so in one line inside the report; never\ninvent a check whose failure withholds the report, and add one only when the person asks.",
+      "A report the person asked for on a schedule is delivered on that schedule even when a\nnumber is zero, looks wrong or disagrees with another source, and says so in one line\ninside the report: doubt about a number is never a reason to withhold it.",
     );
     expect(systemMessage).toContain(
-      "Never add a freshness, consistency or sanity check that withholds a report",
+      "Never add a freshness, consistency or sanity check that withholds a scheduled\nreport",
     );
-    expect(systemMessage).toContain("remove the check that held it.");
+    expect(systemMessage).toContain("remove the check that held it, unless a\nperson asked for it.");
     expect(systemMessage).toContain("2. Plan, in one message, before any write: what the runs showed");
     expect(systemMessage).toContain("exactly what you will\nchange in the definition and nothing else");
     expect(systemMessage).toContain("3. Act on the plan");

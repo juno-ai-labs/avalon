@@ -1085,9 +1085,10 @@ to change, stop after the report; otherwise revise as planned and submit
 `ready=true`, never adding a connector, plugin, destination, trigger or
 capability, never enrolling a delegate, submitting nothing over a
 person's unfinished draft, and never adding a check that withholds a
-report: a run that reports data delivers it on schedule with its doubt
-stated in one line, and a review that finds runs holding a report back
-removes the check that held it. When a change was saved
+scheduled report: a report the person asked for is delivered with its
+doubt stated in one line, and a review that finds runs holding one back
+removes the check that held it, unless a person asked for that check.
+When a change was saved
 and the notice names where to announce it, it publishes one message there
 with `conversation_post`, naming that conversation, for the people the
 Sidekick works for: what it now does differently, why, and how to restore
@@ -1666,14 +1667,15 @@ instructions. See [Google connector guidance](connectors.md#google).
 
 ### 2026-10-30 — A report is delivered with its doubt, never withheld by a check
 
-**What changed:** The authoring prompt tells the wizard that a run which
-reports data delivers the report on schedule even when a number is zero,
-looks wrong or disagrees with another source, and says so in one line
-inside the report; a run's instructions never get a check whose failure
-withholds the report. The self-review carries the same rule: it never adds
-a freshness, consistency or sanity check that withholds a report, and when
-the runs it read held a report back for such a reason, it removes the check
-that held them.
+**What changed:** The authoring prompt tells the wizard that a report the
+person asked for on a schedule is delivered on that schedule even when a
+number is zero, looks wrong or disagrees with another source, and says so
+in one line inside the report; the wizard never invents a check whose
+failure withholds the report, and adds one only when the person asks. The
+self-review never adds a freshness, consistency or sanity check that
+withholds a scheduled report, and when the runs it read held one back for
+such a reason, it removes the check that held them, unless a person asked
+for it.
 
 **Why:** Left to itself, a review of a data Sidekick reads a run that posted
 a doubtful number as a procedure defect and fixes it by adding a gate: a
@@ -1683,10 +1685,8 @@ report, its wizard saved a rule that raw counts and freshness must be
 verified before any report is published, and the next day's run, holding
 good data with freshness confirmed, withheld the report because three
 differently defined page-view counts for the prior day did not agree. The
-owner then rewrote the rule by hand. Another Sidekick's runs declined,
-seven times in one afternoon, to refresh a calendar over one date without
-a year. The owner of a scheduled
-report wants the report, and a doubtful number named in one line is worth
+owner then rewrote the rule by hand. The owner of a scheduled report
+wants the report, and a doubtful number named in one line is worth
 more to them than a missing report; a gate also hides the outage it was
 meant to catch, because a report that is never posted is what an outage
 looks like. The rule is written for the wizard rather than enforced by the
