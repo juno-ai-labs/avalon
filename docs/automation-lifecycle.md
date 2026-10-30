@@ -1677,12 +1677,15 @@ that held them.
 
 **Why:** Left to itself, a review of a data Sidekick reads a run that posted
 a doubtful number as a procedure defect and fixes it by adding a gate: a
-freshness check, a cross-source comparison, a minimum count. A wizard asked
-to check an all-zero traffic report saved a rule that no all-zero report may
-be published until a raw count confirms it; the zeros were real, the
-delivery pipeline behind them had stalled, and the gate kept the report
-from saying so. Another Sidekick's runs declined, seven times in one
-afternoon, to refresh a calendar over one date without a year. The owner of a scheduled
+freshness check, a cross-source comparison, a minimum count. The daily
+PostHog report to Slack did exactly this: asked to check an all-zero
+report, its wizard saved a rule that raw counts and freshness must be
+verified before any report is published, and the next day's run, holding
+good data with freshness confirmed, withheld the report because three
+differently defined page-view counts for the prior day did not agree. The
+owner then rewrote the rule by hand. Another Sidekick's runs declined,
+seven times in one afternoon, to refresh a calendar over one date without
+a year. The owner of a scheduled
 report wants the report, and a doubtful number named in one line is worth
 more to them than a missing report; a gate also hides the outage it was
 meant to catch, because a report that is never posted is what an outage
