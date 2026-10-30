@@ -188,7 +188,7 @@ interface DeliveryCursor {
 }
 
 interface DeliveryPageOutcome {
-  /** True when the page was full and every row in it was settled or held. */
+  /** True when the page was full and every row was delivered, suppressed, parked or held. */
   continues: boolean;
   /** Service Binding calls the page made. */
   rpcCalls: number;
@@ -203,8 +203,8 @@ interface DeliveryPageOutcome {
  * page not fitting the pass's RPC budget, or the next page carrying the pass
  * past its time budget.
  *
- * A retried page ends the pass because the destination is refusing and the
- * next page would be refused too. A row held for an identity transition is
+ * A retried or rejected page ends the pass because the destination is refusing
+ * and the next page would be refused too. A row held for an identity transition is
  * paged past: it stays `pending` at the head of the order, and the cursor
  * keeps the pass from re-reading it, so the rows behind it are not held with
  * it. It is read again next tick.
@@ -271,7 +271,7 @@ async function deliverTelemetryPage(
   cursor: DeliveryCursor | null,
 ): Promise<DeliveryPageOutcome> {
   const now = new Date();
-  const settledBefore = summary.delivered + summary.terminal + summary.suppressed + summary.unparseable;
+  const settledBefore = summary.delivered + summary.suppressed + summary.unparseable;
   const pending = await env.TELEMETRY_DB.prepare(
     `SELECT e.event_id, e.envelope_json, e.analytics_subject_id, e.workspace_analytics_id,
             e.normalized_timestamp, e.attempt_count, e.delete_at, e.subject_user_id, e.accepted_at
@@ -291,8 +291,11 @@ async function deliverTelemetryPage(
     context.pageSize,
   ).all<DeliveryDatabaseRow>();
   const last = pending.results.at(-1);
+  // Terminal rows are not settled for this purpose: a destination answering 4xx
+  // rejects every page, and the pass must stop at the first rather than mark
+  // the whole outbox terminal.
   const outcome = (rpcCalls: number, held: number): DeliveryPageOutcome => {
-    const settled = summary.delivered + summary.terminal + summary.suppressed + summary.unparseable - settledBefore;
+    const settled = summary.delivered + summary.suppressed + summary.unparseable - settledBefore;
     return {
       continues: pending.results.length === context.pageSize && settled + held === pending.results.length,
       rpcCalls,

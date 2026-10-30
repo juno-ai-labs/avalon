@@ -818,7 +818,7 @@ signals, never by weakening policy or deadline tests.
 
 **What changed:** `processTelemetryOutbox` loops over pages of
 `TELEMETRY_DELIVERY_PAGE_SIZE` (50, the page it always took) until a page
-comes back short, a page leaves a row behind (a retried page, a closed circuit),
+comes back short, a page leaves a row behind (a retried or rejected page, a closed circuit),
 the next page would not fit `TELEMETRY_DELIVERY_PASS_RPC_BUDGET`, or the next
 page would carry the pass past `TELEMETRY_DELIVERY_PASS_BUDGET_MS`. A row held
 for an identity transition is paged past on a keyset cursor rather than ending
