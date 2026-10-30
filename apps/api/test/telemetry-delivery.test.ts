@@ -554,6 +554,98 @@ describe("Global telemetry delivery", () => {
     database.close();
   });
 
+  it("ends the pass when the next page would not fit the RPC budget", async () => {
+    const database = migratedObservabilityFixture();
+    const deliverTelemetryBatch = vi.fn(async () => ({
+      postHog: { result: "delivered" as const, requestId: null, retryAfterMs: null },
+    }));
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      POSTHOG_HOST: "https://us.i.posthog.com",
+      POSTHOG_PROJECT_TOKEN: "phc_test",
+      TELEMETRY_DELIVERY: { deliverTelemetryBatch },
+    });
+    for (const eventId of [
+      "018f22f2-4c22-7abc-8def-0123456789ab",
+      "018f22f2-4c22-7abc-8def-0123456789ac",
+      "018f22f2-4c22-7abc-8def-0123456789ae",
+    ]) {
+      await new TelemetryCollector(env).accept(envelope(eventId), {
+        route: "global",
+        routingBasis: "geolocation_fallback",
+        analyticsSubjectId: "018f22f2-4c22-7abc-8def-0123456789ad",
+        subjectUserId: null,
+        workspaceAnalyticsId: null,
+      });
+    }
+
+    // A page may need two calls; with three allowed, a third page cannot start.
+    await expect(processTelemetryOutbox(env, { pageSize: 1, passRpcBudget: 3 })).resolves.toMatchObject({
+      selected: 2,
+      delivered: 2,
+    });
+    expect(deliverTelemetryBatch).toHaveBeenCalledTimes(2);
+    expect(database.prepare(
+      "SELECT COUNT(*) AS pending FROM telemetry_accepted_events WHERE delivery_state = 'pending'",
+    ).get()).toEqual({ pending: 1 });
+    database.close();
+  });
+
+  it("pages past a row held for an identity transition instead of stopping behind it", async () => {
+    const database = migratedObservabilityFixture();
+    database.prepare(`INSERT INTO users (id, google_subject, email, name, created_at, updated_at,
+      product_analytics_enabled) VALUES ('018f22f2-4c22-7abc-8def-0123456789ad', 'google-1', 'person@example.com', 'Person', ?, ?, 1)`).run(now, now);
+    database.prepare(`INSERT INTO telemetry_profile_jobs
+      (id, subject_user_id, job_kind, destination_analytics_id, anonymous_epoch_id,
+       properties_json, version, state, created_at, delete_at)
+      VALUES ('transition-1', '018f22f2-4c22-7abc-8def-0123456789ad', 'epoch_transition', 'person-1', 'epoch-1',
+              '{"email":"person@example.com"}', 1, 'pending', ?, '2026-11-10T20:00:00.000Z')`).run(now);
+    const deliverTelemetryBatch = vi.fn(async () => ({
+      postHog: { result: "delivered" as const, requestId: null, retryAfterMs: null },
+    }));
+    // The transition keeps retrying, so the profile outbox leaves it pending and the hold stands.
+    const deliverProfileBatch = vi.fn(async () => ({
+      postHog: { result: "retry" as const, requestId: null, retryAfterMs: null },
+    }));
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      POSTHOG_HOST: "https://us.i.posthog.com",
+      POSTHOG_PROJECT_TOKEN: "phc_test",
+      TELEMETRY_DELIVERY: { deliverTelemetryBatch, deliverProfileBatch },
+    });
+    // The held row is accepted first, so it heads the delivery order.
+    await new TelemetryCollector(env).accept(envelope("018f22f2-4c22-7abc-8def-0123456789aa"), {
+      route: "global", routingBasis: "explicit_binding", analyticsSubjectId: "person-1",
+      subjectUserId: "018f22f2-4c22-7abc-8def-0123456789ad", workspaceAnalyticsId: null,
+    });
+    for (const eventId of ["018f22f2-4c22-7abc-8def-0123456789ab", "018f22f2-4c22-7abc-8def-0123456789ac"]) {
+      vi.setSystemTime(new Date(Date.now() + 1));
+      await new TelemetryCollector(env).accept(envelope(eventId), {
+        route: "global",
+        routingBasis: "geolocation_fallback",
+        analyticsSubjectId: "018f22f2-4c22-7abc-8def-0123456789ae",
+        subjectUserId: null,
+        workspaceAnalyticsId: null,
+      });
+    }
+
+    await expect(processTelemetryOutbox(env, { pageSize: 1 })).resolves.toMatchObject({
+      selected: 2,
+      delivered: 2,
+    });
+    expect(deliverTelemetryBatch).toHaveBeenCalledTimes(2);
+    expect(database.prepare(
+      "SELECT event_id, delivery_state FROM telemetry_accepted_events ORDER BY event_id",
+    ).all()).toEqual([
+      { event_id: "018f22f2-4c22-7abc-8def-0123456789aa", delivery_state: "pending" },
+      { event_id: "018f22f2-4c22-7abc-8def-0123456789ab", delivery_state: "delivered" },
+      { event_id: "018f22f2-4c22-7abc-8def-0123456789ac", delivery_state: "delivered" },
+    ]);
+    database.close();
+  });
+
   it("leaves accepted rows untouched while the destination circuit is open", async () => {
     const database = migratedObservabilityFixture();
     const deliverTelemetryBatch = vi.fn(async () => ({
