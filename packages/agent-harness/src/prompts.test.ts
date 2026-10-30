@@ -432,6 +432,10 @@ describe("prompt renderers", () => {
     // message is a failed model call to the harness, not silence.
     expect(renderWorkstreamSystemPrompt({ title: "t", objective: "o", sidekick: workstreamAutomation }))
       .toContain("Never end with no text: an empty final message is read as a failed model call, not as silence.");
+    // A run whose final message is delivered elsewhere is still told never to end empty, but not that nobody reads it.
+    const delivered = renderWorkstreamSystemPrompt({ title: "t", objective: "o", sidekick: workstreamAutomation, outputSurface: "external_delivery" });
+    expect(delivered).toContain("End every activation with a final message, never with no text");
+    expect(delivered).not.toContain("which notifies nobody");
 
     expect(undelivered).toContain('"homeConversationId": null');
     expect(undelivered).toContain("A final message describing a send that did not happen is a failed run");
