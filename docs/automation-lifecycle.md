@@ -1660,6 +1660,32 @@ instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
 
+### 2026-10-30 — The wizard's agents reach its route, and read before they report
+
+**What changed:** The harness run's model routing passes the agent's
+background, run and delegation fields to `resolveWorkstreamModelRouting`,
+as the flag key beside it already did, so a background agent the wizard
+starts runs on `sidekick_authoring`. The reading guidance for that agent,
+and the wizard's assignment to it, ask for one report once every run is
+read, and the wizard ends its turn again on any message from the agent
+that is not that report.
+
+**Why:** The first three reviews on the delegated path showed both gaps.
+Each wizard's agent ran on Terra while the flag key logged said
+`sidekick_authoring`: the call site that resolves the route built its own
+context from the parent kind and substream alone and dropped the fields
+that tell the wizard's agent from a run's worker. And "report run by run"
+read as one message per run: GitHub PR Firehose's agent sent a progress
+message after each of twenty runs, every one woke the wizard, and the
+wizard narrated each to the owner, twenty-odd posts before any plan. The
+alternative, a host rule dropping agent progress messages, would have
+hidden a question the agent had to ask; one report is what the assignment
+should have said.
+
+**Consequences:** A wizard's background agents and its Main share a route,
+so a pin or flag change for the wizard moves its agents too. A review's
+authoring conversation gains one agent report, not one row per run.
+
 ### 2026-10-30 — The first production reviews: a continued turn keeps its review, and run pages stay one document
 
 **What changed:** Three things the first three production reviews showed.

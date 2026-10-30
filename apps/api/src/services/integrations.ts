@@ -2942,6 +2942,11 @@ export async function runWorkstreamHarness(
       workstreamId: input.parentId,
       parentKind: input.parentKind,
       substreamId: conversationSubstreamId,
+      // The same fields `modelRole` above reads: a wizard's background agent
+      // takes the wizard's route, a run's activation and workers keep theirs.
+      backgroundAgent: input.backgroundAgent,
+      automationRun: input.automationRun,
+      automationDelegation: input.automationDelegation,
     }));
   const contextWindowPreparation = new Preparation(() =>
     runtime?.persistentLoop?.contextWindowTokensByModel() ?? Promise.resolve({}));
