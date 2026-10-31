@@ -183,9 +183,9 @@ export interface GatewaySessionOptions {
  * isolate holds a `CodeToolGateway`, whose only method forwards here; nothing
  * on this object is reachable from a program.
  *
- * Lifetime: `close()` ends the session when the program returns, aborts any
- * nested call still running and waits for it to settle, and turns every later
- * call into a refusal. A thrown authorization or settlement is `fatal`: the
+ * Lifetime: `close()` ends the session when the program returns, waits for any
+ * nested call still running to settle, and turns every later call into a
+ * refusal. A thrown authorization or settlement is `fatal`: the
  * program is stopped and the error is rethrown to Bind by the tool, so the run
  * sees the real failure rather than a program's account of it.
  */
@@ -202,10 +202,15 @@ export class GatewaySession {
     this.gateway = new CodeToolGateway(this);
   }
 
-  /** The program is over: refuse new calls, abort running ones, wait for them to settle. */
+  /**
+   * The program is over: refuse new calls and wait for the ones still running
+   * to settle. They are not aborted: a program that returned without awaiting
+   * a write still made that write, and cutting it off would turn a receipt
+   * that was about to complete into an ambiguous one. Only the run's own
+   * signal, or a host failure through `stop`, aborts a call.
+   */
   async close(): Promise<void> {
     this.closed = true;
-    this.controller.abort(new DOMException("The program finished", "AbortError"));
     while (this.inFlight.size > 0) await Promise.allSettled([...this.inFlight]);
   }
 

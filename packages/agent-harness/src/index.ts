@@ -2715,7 +2715,7 @@ export const sidekickCustomToolJsonSchema = {
       required: ["type", "properties"],
     },
     code: { type: "string", minLength: 1, description: "The body of an async JavaScript function with `input` and `tools` in scope, the same API code_execute shows in # Code API. Return the answer the run needs." },
-    requiredPlugins: { type: "array", minItems: 1, items: { type: "string", pattern: "^(plugin_[a-z][a-z0-9_]{0,62}|rally_core|rally_tables|rally_memory)$" }, description: "The plugin ids the program calls: a connector plugin from plugins_list (which must also be in recommendedPlugins), or rally_core, rally_tables or rally_memory." },
+    requiredPlugins: { type: "array", minItems: 1, items: { type: "string", pattern: "^(plugin_[a-z][a-z0-9_]{0,62}|rally_core|rally_tables|rally_memory|rally_web)$" }, description: "The plugin ids the program calls: a connector plugin from plugins_list (which must also be in recommendedPlugins), or rally_core, rally_tables, rally_memory or rally_web." },
   },
   required: ["name", "description", "inputSchema", "code", "requiredPlugins"],
 } as const;

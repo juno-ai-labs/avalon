@@ -114,28 +114,12 @@ export default class extends WorkerEntrypoint {
 `;
 
 /**
- * Why a program cannot be loaded as written, or null. A program is the body
- * of one function: a module statement at its top level, or a dynamic import,
- * would make it a module of its own, and a module could import
- * `cloudflare:workers` and reach the entrypoint machinery the host built for
- * it. Refused by the host before the loader sees the code, with a sentence
- * the model can act on.
- */
-export function programSyntaxRefusal(code: string): string | null {
-  if (/^\s*(?:import|export)\b/m.test(code)) {
-    return "The program is the body of an async function: remove top-level import and export statements and return the answer instead.";
-  }
-  if (/\bimport\s*\(/.test(code)) {
-    return "The program cannot import modules: remove the import() call. Math, Date, JSON, Intl, strings, arrays and regular expressions are already available.";
-  }
-  return null;
-}
-
-/**
  * The program as a module: the model's function body, always wrapped, with
  * `tools`, `console` and `input` in scope. The wrapping is unconditional so
- * the module's shape is the host's, never the program's; `programSyntaxRefusal`
- * has already refused the statements that would change it.
+ * the module's shape is the host's, never the program's. A body that uses
+ * module syntax, or escapes its braces, fails to compile or runs at module
+ * level in an isolate that holds nothing to reach: no bindings, no network,
+ * and the loader's own error is the program's failure.
  */
 export function wrapProgram(code: string): string {
   return `export default async function run(tools, console, input) {\n${code}\n}`;

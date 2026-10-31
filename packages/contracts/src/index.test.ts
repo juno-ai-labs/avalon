@@ -1759,9 +1759,9 @@ describe("SidekickCustomToolSchema on a draft", () => {
     expect(issues({ ...baseDraft, triggers: [], customTools: [dayMath] })).toEqual(["customTools.0"]);
     expect(issues({ ...baseDraft, customTools: [dayMath, dayMath] })).toEqual(["customTools.1.name"]);
     expect(issues({ ...baseDraft, customTools: [{ ...dayMath, requiredPlugins: ["plugin_linear"] }] })).toEqual(["customTools.0.requiredPlugins.0"]);
-    // Only the three always-active Rally plugins are callable from a saved tool.
-    expect(issues({ ...baseDraft, customTools: [{ ...dayMath, requiredPlugins: ["rally_web"] }] })).toEqual(["customTools.0.requiredPlugins.0"]);
-    expect(issues({ ...baseDraft, customTools: [{ ...dayMath, requiredPlugins: ["rally_tables", "rally_memory", "plugin_linear"] }], recommendedPlugins: [{ pluginId: "plugin_linear", reason: "Issues." }] })).toEqual([]);
+    // Only the allowlisted Rally plugins are callable from a saved tool.
+    expect(issues({ ...baseDraft, customTools: [{ ...dayMath, requiredPlugins: ["rally_terminal"] }] })).toEqual(["customTools.0.requiredPlugins.0"]);
+    expect(issues({ ...baseDraft, customTools: [{ ...dayMath, requiredPlugins: ["rally_tables", "rally_memory", "rally_web", "plugin_linear"] }], recommendedPlugins: [{ pluginId: "plugin_linear", reason: "Issues." }] })).toEqual([]);
     expect(issues({ ...baseDraft, ready: false, triggers: [], customTools: [dayMath] })).toEqual([]);
   });
 

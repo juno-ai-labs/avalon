@@ -1699,8 +1699,8 @@ the drafting state and restored from receipts instead).
 **Consequences:** A tool needs a triggered Sidekick; an instruction-only one is
 a Skill and carries none. A `plugin_*` the tool calls must also be in
 `recommendedPlugins`, so the run has it loaded; of Rally's own plugins only
-`rally_core`, `rally_tables` and `rally_memory` may be called, and they need no
-recommendation. A changed program, schema or plugin list is an untested tool
+`rally_core`, `rally_tables`, `rally_memory` and `rally_web` may be called, and
+they need no recommendation. A changed program, schema or plugin list is an untested tool
 again, refused as `custom_tool_untested` by field. The review revises a tool
 under the same gate, never adds a plugin through one, and changes a tool's code
 only when its program makes no writes.
