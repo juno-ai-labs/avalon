@@ -360,6 +360,26 @@ inside it, and ran on until the plan's CPU limit.
 and gain the CPU limit. The kill is the platform's and is not reproducible on
 local workerd, so it has no test in the suite.
 
+### 2026-10-31 — The prompts were tuned against evaluations, and output shape was the whole story
+
+**Decided:** `scripts/code-mode-evals.mjs` runs the acceptance evaluations
+(items 1, 2, 4, 5, 7, 9, 10, 11 and the spirit of 8 and 12) against the local
+API and real models; the Code and custom-tool prompts carry what three rounds
+of it taught.
+
+**Why:** Round 1 passed every scenario but one pattern: a program guessing a
+tool's output shape, reading `current_time` as an object and a direct result's
+`{success, data}` envelope inside a program. Two sentences naming those shapes,
+and a line on `current_time` itself, took the Code Mode suite from 23 of 26 to
+26 of 26 on Sol and Terra; the wizard suite held at 12 of 12, and the final
+twenty scenarios of rising complexity passed 38 of 38 checks in substance.
+
+**Changes:** Acceptance items 8 and 12 are met on Sol and, by accident of
+routing, once on Gemini Flash, not on the "configured medium fallback model"
+the acceptance named; `state.md` records that. No call cap, loop rule or
+static type check was needed; the runtime validates each nested call's
+arguments and the models never failed there.
+
 ### 2026-10-31 — What shipped differs from the design in seven places
 
 **Decided:** Recorded here rather than silently: (1) a program is one row of
