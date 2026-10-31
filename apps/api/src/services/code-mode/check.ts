@@ -7,12 +7,20 @@
  * made. A program that passes can still fail; one that is refused has written
  * nothing, and the refusal names the line.
  *
+ * The balance is latency against certainty. The parse of a few-kilobyte
+ * program takes well under a millisecond; a refusal the model did not deserve
+ * costs a model turn, seconds and tokens. So every rule here is one with no
+ * legitimate program on the other side. A write inside `try`/`catch` is not
+ * refused: the gateway classifies a definitive failure as a write that did
+ * not happen and halts the session on an ambiguous one, so a caught failure
+ * is safe by mechanism and a retry in the `catch` is refused at run time
+ * where it matters.
+ *
  * What it looks for, and why each is a write problem:
  *
- * - A write not awaited where it is called: the program goes on without
- *   knowing whether the write happened, and may return before it settles.
- * - A write inside `try`/`catch`/`finally`: a caught failure hides the
- *   outcome, and a `catch` is where a retry is written.
+ * - A write called as a bare statement, its promise dropped: the program goes
+ *   on without knowing whether the write happened, and may return before it
+ *   settles.
  * - A write inside `Promise.all` and the like: the writes serialize in the
  *   gateway, but a failure of one does not stop the next from being
  *   dispatched.
@@ -36,7 +44,6 @@ import { wrapProgram } from "./entry-module";
 export type ProgramIssueCode =
   | "syntax_error"
   | "write_not_awaited"
-  | "write_in_try"
   | "write_in_parallel"
   | "write_in_callback"
   | "write_with_clock_or_random";
@@ -132,7 +139,7 @@ function walk(root: Program, visit: (node: AnyNode, ancestors: readonly AnyNode[
  * answer per call site, the most specific: a write inside a `map` callback
  * is also not awaited, and the callback is what to change.
  */
-type WriteShape = "write_not_awaited" | "write_in_try" | "write_in_parallel" | "write_in_callback";
+type WriteShape = "write_not_awaited" | "write_in_parallel" | "write_in_callback";
 
 function writeShape(ancestors: readonly AnyNode[]): WriteShape | null {
   const parent = ancestors[0];
@@ -147,12 +154,12 @@ function writeShape(ancestors: readonly AnyNode[]): WriteShape | null {
       const callee = memberCallee(above.callee);
       if (callee && callee.object === "Promise" && PARALLEL_COMBINATORS.has(callee.property)) return "write_in_parallel";
     }
-    if (node.type === "TryStatement") return "write_in_try";
     // The wrapper's own function is the body's boundary; nothing above it is the program's.
     if (node.type === "FunctionDeclaration" && above?.type === "ExportDefaultDeclaration") break;
   }
-  if (parent?.type === "AwaitExpression" || parent?.type === "ReturnStatement") return null;
-  return "write_not_awaited";
+  // Only a dropped promise is certain: a call stored in a variable may be
+  // awaited later, and refusing it would cost a model turn for nothing.
+  return parent?.type === "ExpressionStatement" ? "write_not_awaited" : null;
 }
 
 function writeIssue(code: WriteShape, node: AnyNode, label: string, ancestors: readonly AnyNode[]): ProgramIssue {
@@ -163,8 +170,6 @@ function writeIssue(code: WriteShape, node: AnyNode, label: string, ancestors: r
     }
     case "write_in_parallel":
       return issue(code, node, `${label} is a write inside Promise.all() or a similar combinator. Writes run one at a time; call it with await, in sequence, so a failure stops before the next write.`);
-    case "write_in_try":
-      return issue(code, node, `${label} is a write inside try/catch/finally. A caught write failure hides whether the write happened; let the failure end the program and read the writes it names.`);
     case "write_not_awaited":
       return issue(code, node, `${label} is a write that is not awaited where it is called. Put await in front of it, so the program knows whether it happened before going on.`);
   }

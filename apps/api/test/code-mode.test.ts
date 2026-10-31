@@ -453,11 +453,14 @@ describe("checkProgram", () => {
   const writeTools = new Set(["rally_tables.insert_rows", "plugin_slack.send_message"]);
   const check = (code: string) => checkProgram(code, { writeTools }).map((found) => [found.code, found.line, found.message]);
 
-  it("passes awaited writes in sequence, reads in any shape, a returned write, and a program with no writes", () => {
+  it("passes awaited writes in sequence, writes in try/catch, a write kept in a variable, reads in any shape, and a program with no writes", () => {
     expect(check([
       "const [a, b] = await Promise.all([tools.rally_tables.query({}), tools.rally_tables.query({ n: 1 })]);",
       "let rows; try { rows = await tools.rally_tables.query({}); } catch (e) { rows = []; }",
       "for (const row of rows) { await tools.rally_tables.insert_rows({ rows: [row] }); }",
+      "try { await tools.rally_tables.insert_rows({ rows }); } catch (e) { return { failed: e.message }; }",
+      "const pending = tools.plugin_slack.send_message({ text: 'later' });",
+      "await pending;",
       "const ids = rows.map((row) => row.id);",
       "return tools.plugin_slack.send_message({ text: ids.join(',') });",
     ].join("\n"))).toEqual([]);
@@ -469,13 +472,9 @@ describe("checkProgram", () => {
     expect(issues).toEqual([{ code: "syntax_error", line: 2, column: 11, message: "Line 2, column 11: Unexpected token." }]);
   });
 
-  it("refuses a write not awaited, in try, in Promise.all, or in an iteration callback, once per call site", () => {
+  it("refuses a write whose promise is dropped, one in Promise.all, and one in an iteration callback, once per call site", () => {
     expect(check("tools.rally_tables.insert_rows({});\nreturn 1;")).toEqual([
       ["write_not_awaited", 1, expect.stringContaining("Line 1: rally_tables.insert_rows is a write that is not awaited where it is called.")],
-    ]);
-    expect(check("try {\n  await tools.rally_tables.insert_rows({});\n} catch (e) {\n  await tools.plugin_slack.send_message({});\n}")).toEqual([
-      ["write_in_try", 2, expect.stringContaining("inside try/catch/finally")],
-      ["write_in_try", 4, expect.stringContaining("plugin_slack.send_message is a write inside try/catch/finally")],
     ]);
     expect(check("await Promise.all([tools.rally_tables.query({}), tools.plugin_slack.send_message({})]);")).toEqual([
       ["write_in_parallel", 1, expect.stringContaining("inside Promise.all()")],
