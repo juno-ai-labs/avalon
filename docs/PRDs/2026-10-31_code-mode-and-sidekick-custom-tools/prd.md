@@ -284,6 +284,88 @@ input carries today. The test tool covers the authoring loop.
 
 **Changes:** Goal 9 is met for runs and deferred for the wizard conversation.
 
+### 2026-10-31 — A program cannot run a program, and cannot hold a turn's content
+
+**Decided:** `callableTools` leaves out `rally:code` and `rally:custom-tools`,
+and any tool flagged `yieldsContentParts` (`view_image`, `view_resource`,
+`browser_js`, the image generators).
+
+**Why:** A program calling `code_execute` nests receipts without bound and
+hides one program inside another's row. A tool whose result is an image for
+the current turn has nothing a JSON value can hold; calling it from a program
+would run it for nothing, and `browser_js` is a write.
+
+**Changes:** "What a program may call" in [`design.md`](design.md) gains two
+exclusions; the model is told to call those tools directly.
+
+### 2026-10-31 — A saved tool may call three Rally plugins, not any
+
+**Decided:** `requiredPlugins` admits `plugin_*` and exactly `rally_core`,
+`rally_tables` and `rally_memory` (`CUSTOM_TOOL_RALLY_PLUGIN_IDS`).
+
+**Why:** The earlier entry admitted any `rally_*` id, which would have saved a
+tool over `rally_web` or `rally_terminal` (loadable, not always active, so the
+tool would fail in most runs) or over `rally_sidekicks` and
+`rally_conversations`, which act on the run's own conversation and are the
+run's to decide. The three listed are in every run.
+
+**Changes:** The schema in [`design.md`](design.md#schema); the earlier "may
+call Rally's own plugins" entry is narrowed, not reversed.
+
+### 2026-10-31 — A saved tool's identity is its code, schema and plugins together
+
+**Decided:** `sidekick_tool_test` records, and `submit_draft` checks, one hash
+over `{ code, inputSchema, requiredPlugins }`; the run's `providerOperationName`
+carries the same hash. Several tested identities may stand per name.
+
+**Why:** The gate hashed the code alone, so a schema or plugin change after the
+test shipped untested, and the run hashed the code alone for replay, so the two
+could disagree. One function, three readers.
+
+**Changes:** The receipt output key is `identityHash`; the refusal is the typed
+`custom_tool_untested` naming `customTools.<i>.code`.
+
+### 2026-10-31 — Nested calls share Bind's lookup and classification, not a copy
+
+**Decided:** The gateway calls the host's own `findCompletedToolResult` (with a
+`nested` flag that skips transcript rows and events) and classifies a failure
+exactly as Bind does; it exposes one RPC method; it has a lifetime (closed on
+return, stopped on a host failure); every nested settlement writes the audit row
+and telemetry a direct call writes.
+
+**Why:** The first implementation read the receipt itself and classified on its
+own, which was a second answer to replay and to ambiguity, and its `private`
+helpers were reachable over RPC. One implementation, or the two drift.
+
+**Changes:** `CodeModeHost` gains `findCompletedToolResult`, `toolTimeoutMs`
+and tool identity on `fail`; the gateway's replay and refusal codes are read
+from its records by `finishProgram`.
+
+### 2026-10-31 — What shipped differs from the design in seven places
+
+**Decided:** Recorded here rather than silently: (1) a program is one row of
+the Rally group with no nested-call detail; the per-call detail in
+"Receipts, activity rows and the wizard" is not built. (2) Nested receipts are
+keyed by `tool_call_id` with a `:call:<index>` suffix, not by a derived
+`occurrence_key`. (3) A program calling a plugin the run has not loaded is a
+refusal telling the model to load it directly, not an activation from inside
+the program. (4) The profile's disabled and unavailable states for a tool are
+not built; the profile lists tools and their code. (5) Open question 3 (who may
+read the code) is unresolved and the section is built. (6) The refusal codes
+are `code_call_refused`, `code_call_failed`, `code_program_failed`,
+`code_program_timed_out`, `code_result_too_large`, `code_unavailable` and the
+carried `ambiguous_external_write`; `code_replay_diverged` and
+`code_budget_exhausted` are gone with the gateway's own replay and the call
+cap. (7) Acceptance items 3 (kill mid-program), 6 (byte-for-byte snapshots of
+every shape), 8 and 12 (the medium-model evaluations) are not written.
+
+**Why:** Each was either a cheaper reversible shape (1, 2, 3) or work the first
+trip did not reach (4, 6, 7). Recording the gap is what lets the next change
+close it rather than rediscover it.
+
+**Changes:** [`state.md`](state.md) stays in progress until items 6 and 7 are
+done.
+
 ## Key design decisions
 
 1. **The program's tool calls go through `HarnessTool.execute`, not around

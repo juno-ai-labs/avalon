@@ -716,8 +716,10 @@ people and other runs wrote in the conversations a Sidekick is attached to.
 
 ### Terminal sandbox boundary
 
-The model may run bounded code only inside the private Daytona sandbox described
-in [`terminal-workspaces.md`](terminal-workspaces.md). Discovering the plugin
+The model runs code in two places: the private Daytona sandbox described in
+[`terminal-workspaces.md`](terminal-workspaces.md), which has a filesystem and a
+network, and the Code Mode isolate described in the next section, which has
+neither. Discovering the Terminal plugin
 performs no provider operation; an explicit load starts the sandbox acquisition
 in the background and returns, so the model is never held behind provider work
 and a provider failure surfaces on the first Terminal tool rather than at load.
@@ -775,6 +777,24 @@ installation token to one branch, so branch discipline is explicit model
 guidance rather than a custom proxy or claimed technical boundary. Policy
 changes invalidate the cached expiry and force credential rotation before the
 next command.
+
+### Code Mode boundary
+
+A `code_execute` program, and a Sidekick's saved `custom_<name>` tool, is
+model-authored JavaScript run in a Cloudflare Dynamic Worker the regional
+Worker loads per program: no network (`globalOutbound: null`), no bindings, and
+one capability, an `RpcTarget` with a single `call` method passed in as an
+argument. Every call it makes is dispatched on the host side through the same
+authorization hook, receipt and settlement a direct tool call takes, under the
+run's execution principal, so a program has the authority of the model that
+wrote it and no more, and its writes are in the ledger as the model's own are.
+The program's return value is data: parsed by schema, its failure classified
+from the host's own records rather than from the error it threw, its message
+bounded. Connector and saved-tool descriptions enter the prompt inside the
+`# Code API` comments, framed as data. A saved tool is saved only after the
+wizard tested its exact code, input schema and plugins, and runs with the run's
+connections, never the wizard's. [`code-mode.md`](code-mode.md) owns the
+mechanism and its trust model.
 
 ### Logging and audit
 
@@ -1172,6 +1192,28 @@ actions against the current native view. Edit/remove actions require trusted
 clicks; artifact scripts receive no application bridge.
 
 ## Changelog
+
+### 2026-10-31 — Model-authored code runs in a second, smaller boundary
+
+**What changed:** Code Mode adds a place the model runs code besides the
+Terminal: a Dynamic Worker with no network, no bindings and one capability, the
+gateway stub, whose calls are host-dispatched tool calls under the run's
+principal. The Terminal paragraph no longer claims to be the only such place.
+
+**Why:** The Sidekick runs that motivated Code Mode spent most of their calls
+re-deriving a method; a program composes those calls in one step. The Terminal
+was the wrong boundary for it: a sandbox with a filesystem and a network, and
+no callback into Rally tools. The isolate has exactly the reach the model
+already had.
+
+**Considered and rejected:** Running programs in the Terminal sandbox with a
+tool-calling shim (a network path into Rally from an untrusted machine); a
+loopback `WorkerEntrypoint` (self-RPC into the Durable Object, which the
+subrequest depth limit ends).
+
+**Consequences:** Every refusal, receipt and audit row a direct call gets, a
+nested call gets. What a program returns is untrusted data, parsed by schema.
+Details in [`code-mode.md`](code-mode.md#security-and-trust-model).
 
 ### 2026-10-24 — Admit the Sidekicks window to composer microphone capture
 

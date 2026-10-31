@@ -386,6 +386,28 @@ describe('Rally API wire adapter', () => {
     ]);
   });
 
+  it('carries a saved tool through the detail parse, Rally plugin and all', async () => {
+    const tool = {
+      name: 'day_math',
+      description: 'Doubles a day count.',
+      inputSchema: { type: 'object', properties: { days: { type: 'integer', description: 'Days to double.' } }, required: ['days'] },
+      code: 'return { doubled: input.days * 2 };',
+      requiredPlugins: ['rally_core'],
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => json({
+      ...wireAutomationDetail,
+      currentDefinition: { ...wireAutomationDetail.currentDefinition, customTools: [tool] },
+    })));
+    const api = new RallyApi('https://api.rally.test', session);
+    const detail = await api.getAutomation(automationId);
+    expect(detail.currentDefinition?.customTools).toEqual([expect.objectContaining({
+      name: 'day_math',
+      code: 'return { doubled: input.days * 2 };',
+      requiredPlugins: ['rally_core'],
+      inputSchema: expect.objectContaining({ properties: { days: { type: 'integer', description: 'Days to double.' } } }),
+    })]);
+  });
+
   it('maps an automation detail: scope, lifecycle, revisions, trigger lines and runs', async () => {
     // The header reads the two revisions to decide whether Create may be
     // pressed, so both have to survive the mapping exactly as the wire says

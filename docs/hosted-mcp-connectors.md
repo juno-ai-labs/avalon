@@ -533,7 +533,8 @@ that live surface; Notion's official MCP server is now the personal counterpart
 to its workspace bot connection.
 
 Every hosted-MCP tool receives write confirmation and a record-before-execute
-receipt regardless of `readOnlyHint`. OAuth discovery uses RFC path insertion
+receipt regardless of `readOnlyHint`, whether the model calls it directly or
+from a `code_execute` program ([`code-mode.md`](code-mode.md)). OAuth discovery uses RFC path insertion
 before the root fallback, a loaded deferred surface is retained on the host
 plugin so later child narrowing sees the activated tools, and exact remote
 operation identities survive model-safe aliasing. Restored dynamic activations
