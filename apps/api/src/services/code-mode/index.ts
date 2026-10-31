@@ -12,7 +12,12 @@ export { ENTRY_SOURCE, wrapProgram } from "./entry-module";
 export {
   CODE_PLUGIN_DESCRIPTION,
   CODE_SYSTEM_MESSAGE,
+  CUSTOM_TOOLS_PLUGIN_ID,
+  CUSTOM_TOOLS_PLUGIN_MODEL_ID,
+  CUSTOM_TOOLS_SYSTEM_MESSAGE,
   createCodePlugin,
+  createCustomToolsPlugin,
+  runCustomTool,
   finishProgram,
   renderCallableApi,
   runProgram,

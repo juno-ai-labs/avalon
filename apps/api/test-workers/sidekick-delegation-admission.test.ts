@@ -31,7 +31,7 @@ const SOURCE_RECONCILIATION_TIMEOUT_MS = 15_000;
 const definition: AutomationDraft = {
   name: "Content calendar", description: "Report content changes", overview: "Watch the calendar",
   instructions: "Read the calendar and report changes.", triggers: [{ type: "manual" }],
-  requiredCapabilities: [], expectedOutputs: [], defaultBehavior: {}, recommendedPlugins: [], memoryTables: [],
+  requiredCapabilities: [], expectedOutputs: [], defaultBehavior: {}, recommendedPlugins: [], memoryTables: [], customTools: [],
   suggestedScope: "workspace", followUpQuestion: null, elicitation: null, ready: true, definitionVersion: 2,
 };
 useHeldEffectQueue();

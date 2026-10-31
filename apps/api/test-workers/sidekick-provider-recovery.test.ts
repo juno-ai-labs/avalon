@@ -74,7 +74,7 @@ describe("Sidekick provider recovery on real workerd", () => {
     });
     const draft: AutomationDraft = { name: "Calendar helper", description: "Create an event", overview: "Create an event",
       instructions: "Create the requested calendar event.", definitionVersion: 2, triggers: [{ type: "manual" }],
-      requiredCapabilities: [], expectedOutputs: [], defaultBehavior: {}, recommendedPlugins: [], memoryTables: [],
+      requiredCapabilities: [], expectedOutputs: [], defaultBehavior: {}, recommendedPlugins: [], memoryTables: [], customTools: [],
       suggestedScope: "workspace", followUpQuestion: null, elicitation: null, ready: true };
     await workspace().sidekickSubmitDefinition({ ...address, draft, evaluatorRules: null, submittedByRunId: null });
     const actor = { userId: creator, participantOfOwningWorkstream: false };

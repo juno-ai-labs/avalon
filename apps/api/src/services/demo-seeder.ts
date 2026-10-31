@@ -624,6 +624,7 @@ function sidekickDraft(action: Extract<DemoSeedAction, { kind: "sidekick" }>): A
     defaultBehavior: {},
     recommendedPlugins: [],
     memoryTables: [],
+    customTools: [],
     suggestedScope: action.scope,
     followUpQuestion: null,
     elicitation: null,

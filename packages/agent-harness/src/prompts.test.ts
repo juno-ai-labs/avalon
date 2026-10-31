@@ -40,6 +40,7 @@ const currentDraft: AutomationDraft = {
   requiredCapabilities: ["github.pull_requests.read"],
   recommendedPlugins: [],
   memoryTables: [],
+  customTools: [],
   expectedOutputs: ["Engineering brief"],
   defaultBehavior: { noChanges: "Record a concise no-change result" },
   suggestedScope: "workspace",
