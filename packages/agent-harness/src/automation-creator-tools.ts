@@ -2,27 +2,54 @@ import { z } from "zod";
 
 import {
   AutomationSetEvaluatorRulesModelInputV1Schema,
+  SidekickCustomToolSchema,
   automationActivitySourcePluginIds,
   automationDraftAcceptanceBlocker,
   automationTriggersAdmitResourceType,
   type AutomationDraft,
   type PickedAppearance,
   type AutomationSetEvaluatorRulesInputV1,
+  type SidekickCustomTool,
 } from "@rally/contracts";
 
 import {
   activityTriggerScopeRefusal,
   asRecord,
+  canonicalToolInputHash,
   executeAutomationCreatorDiscoveryTool,
+  formatToolArgumentValidationError,
   parseAutomationSubmission,
   AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS,
   automationSubmissionTarget,
+  validateToolArguments,
   withoutUnusableDraftResourceIds,
   type AutomationCreatorPluginCatalogEntry,
   type HarnessTool,
   type HarnessToolContext,
   type StructuredModelDiagnostic,
 } from "./index";
+
+/** A typed refusal from a drafting tool: a stable code and allowlisted details. */
+export class AutomationCreatorToolError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly details?: Record<string, unknown>,
+  ) {
+    super(message);
+    this.name = "AutomationCreatorToolError";
+  }
+}
+
+const ToolTestInputSchema = z.strictObject({
+  tool: SidekickCustomToolSchema,
+  input: z.record(z.string(), z.unknown()),
+});
+
+/** The hash `sidekick_tool_test` records and `submit_draft` checks; one function so the two agree. */
+export function customToolCodeHash(code: string): Promise<string> {
+  return canonicalToolInputHash(code);
+}
 
 /**
  * Everything the automation-drafting tools need from whoever is hosting them.
@@ -61,6 +88,13 @@ export interface AutomationCreatorToolHost {
   draftState: {
     submitted: AutomationDraft | null;
     evaluatorRules?: AutomationSetEvaluatorRulesInputV1 | null;
+    /**
+     * Custom tools that ran successfully in this conversation, by name, with
+     * the hash of the code that ran. `submit_draft` refuses a ready draft whose
+     * tool's current code has no entry here, so a saved tool was always a tool
+     * that worked at least once.
+     */
+    toolTests?: Map<string, string>;
   };
   model: string;
   draftResearchPort?: {
@@ -85,6 +119,16 @@ export interface AutomationCreatorToolHost {
       rules: unknown,
       context: HarnessToolContext,
     ): Promise<{ accepted: true }>;
+    /**
+     * Run a candidate custom tool once, for real, through the Code Mode
+     * executor with the tool's own plugin allowance. Returns the program's
+     * result; the drafting tool records the test.
+     */
+    testTool?(
+      tool: SidekickCustomTool,
+      input: Record<string, unknown>,
+      context: HarnessToolContext,
+    ): Promise<{ output: unknown }>;
   };
   onDiagnostic?: (event: StructuredModelDiagnostic) => void | Promise<void>;
 }
@@ -106,6 +150,17 @@ export function rememberAutomationPeopleSearchResult(
     const id = asRecord(person).id;
     if (typeof id === "string") resolvedPersonIds.add(id);
   }
+}
+
+/** Restore a recorded successful tool test from its receipt output on a resumed run. */
+export function rememberAutomationToolTest(
+  output: unknown,
+  draftState: AutomationCreatorToolHost["draftState"],
+): void {
+  const record = asRecord(output);
+  if (typeof record.name !== "string" || typeof record.codeHash !== "string") return;
+  draftState.toolTests ??= new Map();
+  draftState.toolTests.set(record.name, record.codeHash);
 }
 
 export function rememberAutomationResourceSearchResult(
@@ -266,6 +321,44 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
       },
     },
     {
+      definition: creatorDefinition("tool_test"),
+      serial: true,
+      validateInput: (raw) => {
+        const parsed = ToolTestInputSchema.safeParse(raw);
+        return parsed.success ? null : parsed.error;
+      },
+      execute: async (raw, context) => {
+        if (!input.draftMutationPort?.testTool) throw new Error("sidekick_tool_test_host_unavailable");
+        const { tool, input: toolInput } = ToolTestInputSchema.parse(raw);
+        const argumentError = validateToolArguments(toolInput, tool.inputSchema as Record<string, unknown>);
+        if (argumentError) {
+          throw new AutomationCreatorToolError(
+            "custom_tool_input_invalid",
+            `input does not match tool.inputSchema: ${formatToolArgumentValidationError(argumentError)} Fix the input or the schema and test again.`,
+            { field: "input", reason: formatToolArgumentValidationError(argumentError).slice(0, 500) },
+          );
+        }
+        // A connector plugin has to be loaded here to be called; Rally's own
+        // (`rally_*`) are in every run and need no loading.
+        const unloaded = tool.requiredPlugins.find((pluginId) => pluginId.startsWith("plugin_") && !loadedAutomationPluginIds.has(pluginId));
+        if (unloaded) {
+          throw new AutomationCreatorToolError(
+            "custom_tool_plugin_unbound",
+            `${unloaded} is not loaded in this conversation. Load and inspect it first, or remove it from requiredPlugins.`,
+            { field: "requiredPlugins", reason: `${unloaded} not loaded`, available: [...loadedAutomationPluginIds].slice(0, 40) },
+          );
+        }
+        const result = await input.draftMutationPort.testTool(tool, toolInput, context);
+        const codeHash = await customToolCodeHash(tool.code);
+        draftState.toolTests ??= new Map();
+        draftState.toolTests.set(tool.name, codeHash);
+        return {
+          output: { ...asRecord(result.output), name: tool.name, codeHash, testedAt: new Date().toISOString() },
+          summary: `Tested custom tool ${tool.name}`,
+        };
+      },
+    },
+    {
       definition: creatorDefinition("sidekicks_list"),
       execute: async () => {
         if (!input.automationDirectoryPort) throw new Error("sidekick_directory_host_unavailable");
@@ -372,6 +465,21 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
               + "Call set_evaluator_rules again with rules that name the triggers' bindings, "
               + "or with [] when the draft no longer has such a trigger",
             );
+          }
+        }
+        if (draft.ready) {
+          // The test gate: a saved tool is a tool that ran. The schema already
+          // refuses a tool on an instruction-only Sidekick and a plugin missing
+          // from recommendedPlugins, by field; this is the one check only the
+          // conversation's own history can answer.
+          for (const tool of draft.customTools) {
+            const codeHash = await customToolCodeHash(tool.code);
+            if (draftState.toolTests?.get(tool.name) !== codeHash) {
+              throw new Error(
+                `Tool ${tool.name} has no successful sidekick_tool_test for its current code. `
+                + "Test it with representative input, then submit.",
+              );
+            }
           }
         }
         await input.draftMutationPort?.submitDraft(draft, context, {
@@ -625,6 +733,14 @@ For new or changed executable work, test the workflow with available reads or
 non-destructive trials. Inspecting tool schemas is discovery, not a workflow test.
 Exercise the data retrieval and transformation needed to produce a representative
 result, and save the working queries or tool arguments when reusable.
+When that tested method is work every run repeats, save it as a custom tool:
+declare its input, write the program against the tools you used (the same API
+code_execute shows), test it with sidekick_tool_test on representative input,
+and in the instructions tell runs to call custom_<name> and what to do when it
+fails. A test performs its writes; leave the write step out of the tool, or
+point it at a scratch destination, when a real delivery is not wanted during setup.
+Keep judgement, formatting and delivery in the instructions; put the
+deterministic part in the tool. Every plugin a tool calls goes in recommendedPlugins.
 Record what worked, what you could not test, and remaining
 assumptions. Draft acceptance is not a workflow test. Leave future runs' deliveries
 and other effects to those runs unless requested during setup.

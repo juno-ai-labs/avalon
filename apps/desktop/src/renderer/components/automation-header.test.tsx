@@ -22,6 +22,7 @@ const definition: NonNullable<AutomationDetail['currentDefinition']> = {
   defaultBehavior: {},
   recommendedPlugins: [],
   memoryTables: [],
+  customTools: [],
   suggestedScope: 'personal',
   followUpQuestion: null,
   elicitation: null,

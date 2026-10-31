@@ -1,8 +1,9 @@
 import { z } from "zod";
-import type { WorkstreamWorkflowInput } from "@rally/contracts";
+import type { SidekickCustomTool, WorkstreamWorkflowInput } from "@rally/contracts";
 import {
   renderCodeApi,
   repairRootSchemaForProviders,
+  validateToolArguments,
   type HarnessPlugin,
   type HarnessRuntimeView,
   type HarnessTool,
@@ -236,10 +237,20 @@ export function finishProgram(result: EntryResult, calls: readonly RecordedCall[
   };
 }
 
+/** The advertised schema, with unknown properties refused as the schema says. */
+function validateToolArgumentsStrict(raw: unknown, inputSchema: Record<string, unknown>): z.ZodError | null {
+  return validateToolArguments(raw, inputSchema);
+}
+
 export interface CodePlugin {
   plugin: HarnessPlugin;
   /** Bind the host seams once the run's lease and hooks exist. */
   attachHost(host: CodeModeHost): void;
+  /** Run a saved tool's program with its declared plugin allowance. */
+  runProgramForTool(
+    run: { tool: SidekickCustomTool; input: unknown; context: HarnessToolContext },
+    options: { loader: WorkerLoader; input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "harnessRunId"> },
+  ): Promise<HarnessToolResult>;
 }
 
 /**
@@ -308,5 +319,125 @@ export function createCodePlugin(options: {
     attachHost: (attached) => {
       host = attached;
     },
+    runProgramForTool: async ({ tool, input, context }, runOptions) => {
+      if (!host || !view) {
+        throw new CodeModeToolError("code_unavailable", "Programs cannot run in this conversation right now. Call the tools directly.", { reason: "code runtime not attached" });
+      }
+      const allowed = new Set(tool.requiredPlugins);
+      const callable = callableTools(view, allowed);
+      const missing = tool.requiredPlugins.filter((pluginId) => !callable.some(({ plugin }) => plugin.modelId === pluginId));
+      if (missing.length) {
+        throw new CodeModeToolError(
+          "code_call_refused",
+          `${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} not loaded; call load_plugin directly first.`,
+          { reason: "required plugin not active", field: "requiredPlugins", available: callable.map(({ plugin }) => plugin.modelId).slice(0, 40) },
+        );
+      }
+      const api = Object.fromEntries(callable.map(({ plugin, tools }) => [plugin.modelId, tools.map((candidate) => candidate.definition.name)]));
+      const gateway = new CodeToolGateway({ host, view, context, input: runOptions.input, allowedPluginIds: allowed });
+      const result = await runProgram({
+        loader: runOptions.loader,
+        code: tool.code,
+        gateway,
+        api,
+        programInput: input,
+        signal: context.signal,
+      });
+      return finishProgram(result, gateway.calls, tool.description);
+    },
+  };
+}
+
+/** Plugin identity for a Sidekick's saved tools. */
+export const CUSTOM_TOOLS_PLUGIN_ID = "rally:custom-tools";
+export const CUSTOM_TOOLS_PLUGIN_MODEL_ID = "rally_custom_tools";
+
+export const CUSTOM_TOOLS_SYSTEM_MESSAGE = "Custom tools were written and tested for this Sidekick. Prefer one over rediscovering its method. A failed custom tool names the call that failed and the writes that stand; follow the instructions' failure step rather than reconstructing the method by hand.";
+
+/** A saved tool's program failure, in the run's vocabulary. */
+function customToolFailure(name: string, error: unknown): never {
+  if (!(error instanceof CodeModeToolError)) throw error;
+  const suffix = " Do not rebuild its method by hand; follow the failure step in your instructions.";
+  switch (error.code) {
+    case "code_program_failed":
+      throw new CodeModeToolError("custom_tool_failed", `custom_${name} failed: ${error.message}${suffix}`, error.details);
+    case "code_program_timed_out":
+      throw new CodeModeToolError("custom_tool_timed_out", `custom_${name} ${error.message}${suffix}`, error.details);
+    case "code_result_too_large":
+      throw new CodeModeToolError("custom_tool_result_too_large", `custom_${name} returned too much: ${error.message} This is a tool defect; say so where your instructions send failures, so the review can fix the tool.`, error.details);
+    case "code_call_refused":
+      throw new CodeModeToolError("custom_tool_unavailable", `custom_${name} needs a plugin this run does not hold: ${error.message} Post that the tool is unavailable where your instructions say, and stop this step.`, error.details);
+    default:
+      throw error;
+  }
+}
+
+export interface RunCustomToolInput {
+  tool: SidekickCustomTool;
+  input: unknown;
+  context: HarnessToolContext;
+}
+
+/**
+ * Run a saved tool's program: the same executor and gateway as `code_execute`,
+ * narrowed to the plugins the tool declared, with the validated input in
+ * scope as `input`. Used by `sidekick_tool_test` in the wizard and by every
+ * materialized `custom_<name>` in a run.
+ */
+export function runCustomTool(codePlugin: CodePlugin, run: RunCustomToolInput, options: { loader: WorkerLoader; input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "harnessRunId"> }): Promise<HarnessToolResult> {
+  return codePlugin.runProgramForTool(run, options);
+}
+
+/**
+ * The `rally:custom-tools` plugin for one run: one `HarnessTool` per saved tool,
+ * always active, each running its program through the Code Mode executor. The
+ * surface hash folds the code in through `providerOperationName`, so a receipt
+ * replays only against the program that produced it.
+ */
+export async function createCustomToolsPlugin(
+  codePlugin: CodePlugin,
+  tools: readonly SidekickCustomTool[],
+  options: { loader: WorkerLoader; input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "harnessRunId"> },
+): Promise<HarnessPlugin | null> {
+  if (tools.length === 0) return null;
+  const harnessTools = await Promise.all(tools.map(async (tool): Promise<HarnessTool> => {
+    const codeHash = await sha256Hex(tool.code);
+    const inputSchema = { ...tool.inputSchema, type: "object" as const, additionalProperties: false } as Record<string, unknown>;
+    return {
+      definition: {
+        name: tool.name,
+        description: tool.description,
+        capability: "sidekick.tools.run",
+        mode: "write",
+        idempotency: "record_before_execute",
+        timeoutMs: CODE_PROGRAM_DEADLINE_MS + 2 * CODE_PROGRAM_LOAD_ALLOWANCE_MS,
+        providerOperationName: `custom:${codeHash}`,
+        inputSchema,
+      },
+      serial: true,
+      reenterable: true,
+      validateInput: (raw) => validateToolArgumentsStrict(raw, inputSchema),
+      execute: async (raw, context) => {
+        const argumentError = validateToolArgumentsStrict(raw, inputSchema);
+        if (argumentError) throw argumentError;
+        try {
+          return await codePlugin.runProgramForTool({ tool, input: raw, context }, options);
+        } catch (error) {
+          return customToolFailure(tool.name, error);
+        }
+      },
+    };
+  }));
+  return {
+    canonicalId: CUSTOM_TOOLS_PLUGIN_ID,
+    modelId: CUSTOM_TOOLS_PLUGIN_MODEL_ID,
+    shortWireName: "custom",
+    displayName: "Custom tools",
+    activityDisplayName: "Custom tools",
+    description: `Tools written and tested for this Sidekick: ${tools.map((tool) => tool.name).join(", ")}.`,
+    systemMessage: CUSTOM_TOOLS_SYSTEM_MESSAGE,
+    tools: harnessTools,
+    preload: true,
+    explicit: true,
   };
 }

@@ -57,6 +57,7 @@ import {
   renderCompactionCheckpointContent,
   rememberAutomationPeopleSearchResult,
   rememberAutomationResourceSearchResult,
+  rememberAutomationToolTest,
   runHarness,
   judgeCompletionStop,
   type AddressingContextMessage,
@@ -322,7 +323,7 @@ import {
 } from "./conversation-tools";
 import { conversationIdOf } from "../durable-objects/workspace-sidekick-conversation-storage";
 import { createAvalonTerminalPlugin } from "./terminal/plugin";
-import { createCodePlugin, type CodePlugin } from "./code-mode";
+import { createCodePlugin, createCustomToolsPlugin, type CodePlugin } from "./code-mode";
 import { TerminalToolError } from "./terminal/tools";
 import type { WorkstreamRuntimeResourceAttacher } from "./workstream-object-client";
 
@@ -1794,6 +1795,7 @@ function createAvalonAutomationsPlugin(
   input: WorkstreamWorkflowInput,
   loadedPluginIds: Set<string>,
   expandPages: (tool: HarnessTool, prefix: string, connectionId: string | null) => HarnessTool[],
+  codeMode: CodePlugin | null = null,
 ): HarnessPlugin {
   const delegationUser = input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : null;
   const catalog: AutomationCreatorPluginCatalogEntry[] = [];
@@ -1913,6 +1915,7 @@ function createAvalonAutomationsPlugin(
         "resources.search",
         "resources.register",
         "evaluators.set",
+        "tools.test",
       ].flatMap((capability) => [`rally.sidekick.${capability}`, `rally.automation.${capability}`]);
       const receiptPort = createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0");
       // An automation's own conversation drafts across turns, so what it
@@ -1954,6 +1957,11 @@ function createAvalonAutomationsPlugin(
           rememberAutomationResourceSearchResult(
             await loadToolReplayOutput(env, receipt.outputRef, replayDeadline),
             resolvedResources,
+          );
+        } else if (receipt.outputRef && plan.canonicalToolName === "tool_test") {
+          rememberAutomationToolTest(
+            await loadToolReplayOutput(env, receipt.outputRef, replayDeadline),
+            draftState,
           );
         }
       }
@@ -2186,6 +2194,18 @@ function createAvalonAutomationsPlugin(
         draftState.evaluatorRules = AutomationSetEvaluatorRulesInputV1Schema.parse(rules);
         return { accepted: true as const };
       },
+      // The candidate tool runs for real, through the same executor a run will
+      // use, narrowed to the plugins it declares. The loader is the one gate:
+      // without it there is no program runtime in this deployment.
+      ...(codeMode && env.CODE_LOADER ? {
+        testTool: async (tool, toolInput, context) => {
+          const result = await codeMode.runProgramForTool({ tool, input: toolInput, context }, {
+            loader: env.CODE_LOADER!,
+            input,
+          });
+          return { output: result.output };
+        },
+      } : {}),
     },
   });
   return {
@@ -5754,9 +5774,18 @@ async function loadHarnessTools(
   // A background agent the wizard starts reads runs for it, with the reader
   // in hand from its first turn; drafting stays the wizard's.
   const readsRuns = (input.substreamId ?? "0") !== "0" && readsSidekickRuns(input);
+  // The code plugin needs no inventory to be built; its host seams (lease,
+  // authorization, receipts) are attached by `runWorkstreamHarness` once they
+  // exist. Absent the loader binding, no plugin and no catalog line. Built
+  // before the Sidekick plugin, whose `sidekick_tool_test` runs programs on it.
+  const codeMode = env.CODE_LOADER ? createCodePlugin({ loader: env.CODE_LOADER, input }) : null;
+  // A Sidekick run's saved tools, each a program over the plugins it declared.
+  const customToolsPlugin = codeMode && env.CODE_LOADER && runDefinition?.definition.customTools.length
+    ? await createCustomToolsPlugin(codeMode, runDefinition.definition.customTools, { loader: env.CODE_LOADER, input })
+    : null;
   const automationsPlugin = input.executionPrincipal.type === "user" && !input.automationRun && (input.parentKind === "workstream"
     || (input.parentKind === "automation" && (input.substreamId ?? "0") === "0"))
-    ? createAvalonAutomationsPlugin(env, input, loadedAutomationPluginIds, expandPages)
+    ? createAvalonAutomationsPlugin(env, input, loadedAutomationPluginIds, expandPages, codeMode)
     : input.executionPrincipal.type === "user" ? {
       canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_sidekicks", shortWireName: "sidekick",
       displayName: readsRuns ? "Sidekick runs and delegation" : "Sidekick delegation",
@@ -5781,10 +5810,6 @@ async function loadHarnessTools(
   // tests. Bind receives stable always-active core plugins plus loadable
   // built-in and credential-scoped plugins.
   const tools: HarnessTool[] = [...coreTools];
-  // The code plugin needs no inventory to be built; its host seams (lease,
-  // authorization, receipts) are attached by `runWorkstreamHarness` once they
-  // exist. Absent the loader binding, no plugin and no catalog line.
-  const codeMode = env.CODE_LOADER ? createCodePlugin({ loader: env.CODE_LOADER, input }) : null;
   const builtinPlugins = [
     createAgentCommunicationPlugin(new AgentCommunicationService(env, input), agentCoordinationRoleGuidance(input)),
     workstreamPlugin,
@@ -5794,6 +5819,7 @@ async function loadHarnessTools(
     automationsPlugin,
     conversationsPlugin,
     codeMode?.plugin ?? null,
+    customToolsPlugin,
   ].filter(
     (plugin): plugin is HarnessPlugin => plugin !== null,
   );

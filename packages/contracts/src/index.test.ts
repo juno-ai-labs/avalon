@@ -7,6 +7,7 @@ import {
   ActiveStreamCheckpointSchema,
   AnswerElicitationRequestSchema,
   AutomationDraftSchema,
+  SidekickCustomToolSchema,
   AGENT_MODEL_FLAG_KEYS,
   AGENT_MODEL_OVERRIDES,
   AGENT_MODEL_ROLES,
@@ -424,6 +425,7 @@ describe("boundary contracts", () => {
       defaultBehavior: {},
       recommendedPlugins: [],
       memoryTables: [],
+      customTools: [],
       suggestedScope: "personal",
       followUpQuestion: null,
       elicitation: null,
@@ -474,6 +476,7 @@ describe("boundary contracts", () => {
       defaultBehavior: {},
       recommendedPlugins: [],
       memoryTables: [],
+      customTools: [],
       suggestedScope: "workstream",
       requestedDelivery: ["email", "channel"],
       followUpQuestion: null,
@@ -507,6 +510,7 @@ describe("boundary contracts", () => {
       defaultBehavior: {},
       recommendedPlugins: [],
       memoryTables: [],
+      customTools: [],
       suggestedScope: "personal",
       followUpQuestion: "Which GitHub connection should Avalon use?",
       elicitation: null,
@@ -531,6 +535,7 @@ describe("boundary contracts", () => {
       defaultBehavior: {},
       recommendedPlugins: [],
       memoryTables: [],
+      customTools: [],
       suggestedScope: "personal",
       followUpQuestion: null,
       elicitation: null,
@@ -597,6 +602,7 @@ describe("boundary contracts", () => {
       defaultBehavior: {},
       recommendedPlugins: [],
       memoryTables: [],
+      customTools: [],
       suggestedScope: "personal",
       followUpQuestion: null,
       elicitation: null,
@@ -1725,5 +1731,43 @@ describe("who asked for a run", () => {
     })).toBe("00000000-0000-7000-8000-000000000006");
     expect(runRequesterUserId({ executionPrincipal: person, automationRun: scheduled, automationContinuation: continuation }))
       .toBeNull();
+  });
+});
+
+describe("SidekickCustomToolSchema on a draft", () => {
+  const baseDraft = {
+    name: "Doubler", description: "Doubles days.", overview: "Doubles.", instructions: "Call custom_day_math.",
+    triggers: [{ type: "manual" }], requiredCapabilities: [], expectedOutputs: [], defaultBehavior: {},
+    recommendedPlugins: [], memoryTables: [], suggestedScope: "personal", followUpQuestion: null, elicitation: null, ready: true,
+  };
+  const dayMath = {
+    name: "day_math", description: "Doubles a day count.",
+    inputSchema: { type: "object", properties: { days: { type: "integer", description: "Days to double." } }, required: ["days"] },
+    code: "return input.days * 2;", requiredPlugins: ["rally_core"],
+  };
+
+  it("accepts a tool over a Rally plugin and defaults customTools to none", () => {
+    expect(AutomationDraftSchema.parse({ ...baseDraft, customTools: [dayMath] }).customTools).toHaveLength(1);
+    expect(AutomationDraftSchema.parse(baseDraft).customTools).toEqual([]);
+  });
+
+  it("names the field when a tool sits on an instruction-only draft, repeats a name, or calls an unrecommended connector", () => {
+    const issues = (draft: unknown) => {
+      const parsed = AutomationDraftSchema.safeParse(draft);
+      return parsed.success ? [] : parsed.error.issues.map((issue) => issue.path.join("."));
+    };
+    expect(issues({ ...baseDraft, triggers: [], customTools: [dayMath] })).toEqual(["customTools.0"]);
+    expect(issues({ ...baseDraft, customTools: [dayMath, dayMath] })).toEqual(["customTools.1.name"]);
+    expect(issues({ ...baseDraft, customTools: [{ ...dayMath, requiredPlugins: ["plugin_linear"] }] })).toEqual(["customTools.0.requiredPlugins.0"]);
+    expect(issues({ ...baseDraft, ready: false, triggers: [], customTools: [dayMath] })).toEqual([]);
+  });
+
+  it("refuses an input schema that is not a described plain object", () => {
+    const paths = (inputSchema: unknown) => {
+      const parsed = SidekickCustomToolSchema.safeParse({ ...dayMath, inputSchema });
+      return parsed.success ? [] : parsed.error.issues.map((issue) => issue.path.join("."));
+    };
+    expect(paths({ type: "object", properties: { days: { type: "integer" } }, required: ["days"] })).toEqual(["inputSchema.properties.days.description"]);
+    expect(paths({ type: "object", properties: { days: { type: "integer", description: "Days." } }, required: ["weeks"] })).toEqual(["inputSchema.required"]);
   });
 });
