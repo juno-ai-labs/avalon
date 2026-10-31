@@ -298,16 +298,18 @@ would run it for nothing, and `browser_js` is a write.
 **Changes:** "What a program may call" in [`design.md`](design.md) gains two
 exclusions; the model is told to call those tools directly.
 
-### 2026-10-31 — A saved tool may call three Rally plugins, not any
+### 2026-10-31 — A saved tool may call four Rally plugins, not any
 
 **Decided:** `requiredPlugins` admits `plugin_*` and exactly `rally_core`,
-`rally_tables` and `rally_memory` (`CUSTOM_TOOL_RALLY_PLUGIN_IDS`).
+`rally_tables`, `rally_memory` and `rally_web` (`CUSTOM_TOOL_RALLY_PLUGIN_IDS`).
 
 **Why:** The earlier entry admitted any `rally_*` id, which would have saved a
-tool over `rally_web` or `rally_terminal` (loadable, not always active, so the
-tool would fail in most runs) or over `rally_sidekicks` and
-`rally_conversations`, which act on the run's own conversation and are the
-run's to decide. The three listed are in every run.
+tool over `rally_terminal` (a sandbox to acquire before the first call) or
+over `rally_sidekicks` and `rally_conversations`, which act on the run's own
+conversation and are the run's to decide. The first three are in every run;
+`rally_web` is loadable, and a tool's "not loaded" refusal already tells the
+run to load it and call again, so excluding it was security that guarded
+nothing.
 
 **Changes:** The schema in [`design.md`](design.md#schema); the earlier "may
 call Rally's own plugins" entry is narrowed, not reversed.

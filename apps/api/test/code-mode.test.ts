@@ -22,7 +22,6 @@ import {
   callableTools,
   customToolFailure,
   finishProgram,
-  programSyntaxRefusal,
   wrapProgram,
   type CodeModeHost,
   type RecordedCall,
@@ -246,7 +245,7 @@ describe("GatewaySession", () => {
     expect(rows()).toEqual([]);
   });
 
-  it("closing waits for a call in flight, aborts it, and refuses every call made after the program returned", async () => {
+  it("closing waits for a call in flight without aborting it, and refuses every call made after the program returned", async () => {
     let release: (() => void) | undefined;
     const aborted: unknown[] = [];
     const hanging = plugin("rally:core", "rally_core", [tool({
@@ -264,7 +263,7 @@ describe("GatewaySession", () => {
     const closing = session.close().then(() => { closed = true; });
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(closed).toBe(false);
-    expect(aborted).toHaveLength(1);
+    expect(aborted).toEqual([]);
     release!();
     await closing;
     expect(await inFlight).toEqual({ ok: true, output: { late: true } });
@@ -344,13 +343,9 @@ describe("customToolFailure", () => {
 });
 
 describe("the program module", () => {
-  it("always wraps the body, and refuses module syntax before the loader sees it", () => {
+  it("always wraps the body, whatever shape the model wrote", () => {
     expect(wrapProgram("return 1;")).toBe("export default async function run(tools, console, input) {\nreturn 1;\n}");
     expect(wrapProgram("export default async function run() { return 1; }")).toContain("export default async function run(tools, console, input) {\nexport default");
-    expect(programSyntaxRefusal("return 1;")).toBeNull();
-    expect(programSyntaxRefusal("import x from 'y';\nreturn 1;")).toContain("remove top-level import and export");
-    expect(programSyntaxRefusal("const m = await import('cloudflare:workers');")).toContain("import()");
-    expect(programSyntaxRefusal("const exported = 1; return 'import ' + exported;")).toBeNull();
   });
 
   it("parses the isolate's answer with a schema and rejects anything else", () => {
