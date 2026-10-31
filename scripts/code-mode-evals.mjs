@@ -4,7 +4,7 @@
 // a tool contract changes. docs/code-mode.md#testing records what each round
 // changed.
 //
-// usage: node scripts/code-mode-evals.mjs --suite code|wizard|final|all
+// usage: node scripts/code-mode-evals.mjs --suite code|wizard|final|prod|all
 //        [--models sol,terra] [--only E1,M1] [--concurrency 2] [--timeout 600] [--out round.json]
 //
 // `code` runs work-stream conversations (Sol is the primary model, Terra is
@@ -131,6 +131,15 @@ const CODE = [
   { id: "X6", level: "extra", message: "Using one program only and no direct tool calls: read the current time tool and return the exact ISO 8601 timestamp it reports plus the weekday name in Pacific time. Then tell me both.",
     grade: (s) => ({ pass: s.status === "completed" && called(s, "current_time").length === 0 && programs(s).some((p) => p.status === "completed") && /Saturday|Sunday|Monday|Tuesday|Wednesday|Thursday|Friday/.test(s.finalText) && /2026-\d\d-\d\dT/.test(s.finalText),
       notes: `programs=${programs(s).map((p) => p.status).join(",")} direct=${called(s, "current_time").length} text=${s.finalText.slice(0, 120)}` }) },
+  { id: "T1", level: "choice", message: "Run this Python and tell me what it prints: print(sum(i*i for i in range(1, 101)))",
+    grade: (s) => { const terminal = called(s, "load_plugin").some((t) => JSON.stringify(t.input ?? "").includes("rally_terminal")); const code = called(s, "load_plugin").some((t) => JSON.stringify(t.input ?? "").includes("rally_code"));
+      return { pass: s.status === "completed" && terminal && !code, notes: `terminal=${terminal} code=${code} text=${s.finalText.slice(0, 80)}` }; } },
+  { id: "T2", level: "choice", message: "What is 17.5% of 36,480, exactly? And what is that divided by 7, to three decimals?",
+    grade: (s) => { const terminal = called(s, "load_plugin").some((t) => JSON.stringify(t.input ?? "").includes("rally_terminal"));
+      return { pass: s.status === "completed" && !terminal && has(s.finalText, "6384") && has(s.finalText, "912"), notes: `terminal=${terminal} programs=${programs(s).length} text=${s.finalText.slice(0, 80)}` }; } },
+  { id: "T3", level: "choice", message: "Create a CSV file with the numbers 1 through 10 and their squares, and publish it as a file I can download from this conversation.",
+    grade: (s) => { const terminal = called(s, "load_plugin").some((t) => JSON.stringify(t.input ?? "").includes("rally_terminal")); const code = called(s, "load_plugin").some((t) => JSON.stringify(t.input ?? "").includes("rally_code"));
+      return { pass: terminal && !code, notes: `status=${s.status} terminal=${terminal} code=${code} tools=${s.tools.map((t) => t.name).join(",")}` }; } },
 ];
 
 const WIZARD = [
@@ -229,6 +238,51 @@ const FINAL = [
     gradeWizard: (w, sk) => ({ pass: active(sk) && toolsOf(sk).some((t) => t.requiredPlugins.includes("rally_tables") && Object.keys(t.inputSchema.properties ?? {}).length >= 1) && tested(w), notes: `tools=${toolsOf(sk).map((t) => `${t.name}(${Object.keys(t.inputSchema.properties ?? {}).join(",")})`).join(",")}` }), run: true,
     gradeRun: (r) => ({ pass: ranCustom(r) && has(r.finalText, "98.7") && /widget|gadget/.test(r.finalText), notes: `text=${r.finalText.slice(0, 160)}` }) },
 ];
+
+/**
+ * Scenarios shaped after Sidekicks running in production (daily signup and
+ * activity reports, careers-page monitors with baseline ledgers, note deltas
+ * behind a cursor, weekly call prep, hourly dashboards, polling windows,
+ * research dedup, triage over connectors), rewritten over the plugins a local
+ * run holds: memory tables, time, the public web. A connector the request
+ * names and the run lacks is the point of that scenario.
+ */
+const PROD = [
+  { id: "P01", level: "daily activity report", message: "Set up a Sidekick that every day at 9am Pacific reports how many rows were added to memory table 'org_messages' (columns org text, sent_at text ISO timestamp) during the preceding Pacific calendar day, DST-aware, and how many distinct orgs sent them. Keep a checkpoint in a second table so a day a run missed is covered by the next run. During setup create the tables and insert 8 rows spread over yesterday and today across three orgs. Put the counting in a saved tool that takes the day to count as input.",
+    gradeWizard: (w, sk) => ({ pass: active(sk) && toolsOf(sk).some((t) => t.requiredPlugins.includes("rally_tables") && Object.keys(t.inputSchema.properties ?? {}).length >= 1) && tested(w), notes: `tools=${toolsOf(sk).map((t) => `${t.name}(${Object.keys(t.inputSchema.properties ?? {}).join(",")})`).join(",")} triggers=${(sk.definition?.triggers ?? []).map((t) => t.type).join(",")}` }), run: true,
+    gradeRun: (r) => ({ pass: ranCustom(r) && /\b\d+\b/.test(r.finalText) && /org/i.test(r.finalText), notes: `text=${r.finalText.slice(0, 160)}` }) },
+  { id: "P02", level: "monitor with baseline ledger", message: "Set up a Sidekick that runs every morning at 8am Pacific and monitors pages for new matching headings. Sources live in memory table 'sources' (company text, url text); during setup insert two: Cloudflare https://developers.cloudflare.com/dynamic-workers/ and Cloudflare Docs https://developers.cloudflare.com/workers/. Each run fetches every source, extracts headings containing the word 'Worker', inserts each into a ledger table keyed by company plus heading plus url, and reports only the net-new ones. The first successful run is a baseline that records everything and reports nothing. Put the fetch, extract and ledger insert in a saved tool.",
+    gradeWizard: (w, sk) => ({ pass: active(sk) && toolsOf(sk).some((t) => t.requiredPlugins.includes("rally_web") && t.requiredPlugins.includes("rally_tables")) && tested(w), notes: `tools=${toolsOf(sk).map((t) => `${t.name}[${t.requiredPlugins.join("+")}]`).join(",")}` }), run: true,
+    gradeRun: (r) => ({ pass: ranCustom(r) && /baseline|no new|nothing new|0 new|net-new/i.test(r.finalText), notes: `text=${r.finalText.slice(0, 160)}` }) },
+  { id: "P03", level: "delta behind a cursor", message: "Set up a Sidekick that every morning at 9:30am Eastern posts the delta of notes added to memory table 'notes' (columns note_id integer, title text, created_at text ISO) since the cursor stored in table 'notes_cursor', and advances the cursor only after the report is produced. During setup create both tables and insert 5 notes. Put the read-since-cursor and the cursor advance in a saved tool.",
+    gradeWizard: (w, sk) => ({ pass: active(sk) && toolsOf(sk).some((t) => t.requiredPlugins.includes("rally_tables")) && tested(w), notes: `tools=${toolsOf(sk).map((t) => t.name).join(",")}` }), run: true,
+    gradeRun: (r) => ({ pass: ranCustom(r) && /\b[0-5]\b|five|no new/i.test(r.finalText), notes: `text=${r.finalText.slice(0, 160)}` }) },
+  { id: "P04", level: "weekly call prep", message: "Set up a Sidekick for Tuesday call prep: every Tuesday at 1pm Pacific it records the week's key (that Tuesday's date) in memory table 'weekly_calls', and at 2pm it reports which of Alex, Katherine and Adam have an entry for that week key in table 'call_responses' (person text, week_key text, items text) and who is missing. Put the week-key computation and the missing-responder check in a saved tool. Create both tables during setup.",
+    gradeWizard: (w, sk) => ({ pass: active(sk) && toolsOf(sk).length >= 1 && tested(w) && (sk.definition?.triggers ?? []).filter((t) => t.type === "calendar").length >= 1, notes: `tools=${toolsOf(sk).map((t) => t.name).join(",")} triggers=${(sk.definition?.triggers ?? []).length}` }), run: true,
+    gradeRun: (r) => ({ pass: ranCustom(r) && /Alex|Katherine|Adam/.test(r.finalText), notes: `text=${r.finalText.slice(0, 160)}` }) },
+  { id: "P05", level: "daily signup report", message: "Set up a Sidekick that every day at 3pm Pacific reports, for the previous Pacific calendar day: web signups, desktop signups, and the top attribution source, from memory table 'signups' (signed_up_at text ISO, platform text web or desktop, source text). During setup create the table and insert 10 rows across yesterday with both platforms and three sources. Put the counting in a saved tool that takes the day as input; the instructions decide the wording.",
+    gradeWizard: (w, sk) => ({ pass: active(sk) && toolsOf(sk).some((t) => t.requiredPlugins.includes("rally_tables") && Object.keys(t.inputSchema.properties ?? {}).length >= 1) && tested(w), notes: `tools=${toolsOf(sk).map((t) => `${t.name}(${Object.keys(t.inputSchema.properties ?? {}).join(",")})`).join(",")}` }), run: true,
+    gradeRun: (r) => ({ pass: ranCustom(r) && /web/i.test(r.finalText) && /desktop/i.test(r.finalText) && /\b\d+\b/.test(r.finalText), notes: `text=${r.finalText.slice(0, 160)}` }) },
+  { id: "P06", level: "connector firehose", message: "Set up a Sidekick that posts a natural Slack alert to #eng whenever a pull request is opened or merged in our GitHub repositories, keeping a ledger of seen PR events so nothing is alerted twice, with the ledger logic in a saved tool.",
+    gradeWizard: (w, sk) => ({ pass: toolsOf(sk).every((t) => !t.requiredPlugins.some((p) => p.startsWith("plugin_"))) && /github|slack|not (connected|available|configured)|unavailable/i.test(w.finalText), notes: `lifecycle=${sk.lifecycle} tools=${toolsOf(sk).map((t) => `${t.name}[${t.requiredPlugins.join("+")}]`).join(",")} text=${w.finalText.slice(0, 160)}` }), run: false },
+  { id: "P07", level: "weekly metrics", message: "Set up a Sidekick that every Monday at 5pm Pacific computes weekly metrics from memory table 'orgs' (org_id text, created_at text ISO, last_seen_at text ISO): organizations created in the last 7 days, organizations active in the last 7 days, and the week-over-week change in both. During setup create the table and insert 12 rows spread over the last three weeks. Put the computation in a saved tool that takes the week end as input.",
+    gradeWizard: (w, sk) => ({ pass: active(sk) && toolsOf(sk).some((t) => t.requiredPlugins.includes("rally_tables") && Object.keys(t.inputSchema.properties ?? {}).length >= 1) && tested(w), notes: `tools=${toolsOf(sk).map((t) => `${t.name}(${Object.keys(t.inputSchema.properties ?? {}).join(",")})`).join(",")}` }), run: true,
+    gradeRun: (r) => ({ pass: ranCustom(r) && /week/i.test(r.finalText) && /\b\d+\b/.test(r.finalText), notes: `text=${r.finalText.slice(0, 160)}` }) },
+  { id: "P08", level: "instruction-only skill", message: "Save a reusable NDA review skill with no triggers: review an NDA the user provides and return exactly one decision, APPROVED STANDARD, APPROVED WITH NOTES, or LEGAL REVIEW REQUIRED, checking mutuality, term, definition breadth, non-solicit and non-compete clauses, and governing law. Internal triage only, not legal advice.",
+    gradeWizard: (w, sk) => ({ pass: active(sk) && (sk.definition?.triggers ?? []).length === 0 && toolsOf(sk).length === 0, notes: `triggers=${(sk.definition?.triggers ?? []).length} tools=${toolsOf(sk).length}` }), run: false },
+  { id: "P09", level: "manual judgement", message: "Set up an on-demand Sidekick that evaluates a customer-conversation transcript I paste for product fit, rating eight criteria Low, Medium or High with evidence, and refusing to infer a transcript when none is supplied.",
+    gradeWizard: (w, sk) => ({ pass: active(sk) && toolsOf(sk).length === 0, notes: `tools=${toolsOf(sk).length} triggers=${(sk.definition?.triggers ?? []).map((t) => t.type).join(",")}` }), run: true,
+    gradeRun: (r) => ({ pass: r.status === "completed" && /transcript/i.test(r.finalText), notes: `text=${r.finalText.slice(0, 120)}` }) },
+  { id: "P10", level: "hourly dashboard", message: "Set up a Sidekick that every weekday hour from 8am to 6pm Pacific summarizes open pull requests from memory table 'open_prs' (number integer, title text, author text, updated_at text ISO, is_draft integer), grouped by author with each author's PRs sorted most recently updated first, and reports the groups. During setup create the table and insert 6 PRs from three authors. Put the grouping and sorting in a saved tool.",
+    gradeWizard: (w, sk) => ({ pass: active(sk) && toolsOf(sk).some((t) => t.requiredPlugins.includes("rally_tables")) && tested(w) && (sk.definition?.triggers ?? []).some((t) => t.type === "calendar"), notes: `tools=${toolsOf(sk).map((t) => t.name).join(",")} triggers=${(sk.definition?.triggers ?? []).map((t) => t.type).join(",")}` }), run: true,
+    gradeRun: (r) => ({ pass: ranCustom(r) && /\b\d+\b/.test(r.finalText) && r.finalText.length > 60, notes: `text=${r.finalText.slice(0, 160)}` }) },
+  { id: "P11", level: "polling window", message: "Set up a Sidekick that starts at 9am Pacific daily and polls every 10 minutes until noon: if memory table 'call_notes' (note_date text, body text) has a note for today's Pacific date that is not yet in table 'processed_calls', post the note's action items once and record it; outside 9am to noon it ends with one short line and no other work. Put the window check, the today lookup and the processed check in a saved tool that takes the current ISO time as input. Create both tables during setup, empty.",
+    gradeWizard: (w, sk) => ({ pass: active(sk) && toolsOf(sk).some((t) => t.requiredPlugins.includes("rally_tables") && Object.keys(t.inputSchema.properties ?? {}).length >= 1) && tested(w), notes: `tools=${toolsOf(sk).map((t) => `${t.name}(${Object.keys(t.inputSchema.properties ?? {}).join(",")})`).join(",")} triggers=${(sk.definition?.triggers ?? []).map((t) => t.type).join(",")}` }), run: true,
+    gradeRun: (r) => ({ pass: r.status === "completed" && r.finalText.length > 5, notes: `custom=${customCalls(r).map((t) => t.status).join(",")} text=${r.finalText.slice(0, 120)}` }) },
+  { id: "P12", level: "research dedup", message: "Set up a Sidekick that every weekday at 9am Pacific searches the web for three fixed queries about AI agent harnesses, skips any result URL already in memory table 'research_findings' (url text, title text, found_at text ISO), inserts the new ones, and reports only the new findings. Put the search, dedup and insert in a saved tool.",
+    gradeWizard: (w, sk) => ({ pass: active(sk) && toolsOf(sk).some((t) => t.requiredPlugins.includes("rally_web") && t.requiredPlugins.includes("rally_tables")) && tested(w), notes: `tools=${toolsOf(sk).map((t) => `${t.name}[${t.requiredPlugins.join("+")}]`).join(",")}` }), run: true,
+    gradeRun: (r) => ({ pass: ranCustom(r) && /\b\d+\b|new/i.test(r.finalText), notes: `custom=${customCalls(r).map((t) => t.status).join(",")} loads=${called(r, "load_plugin").length} text=${r.finalText.slice(0, 160)}` }) },
+];
 const only = args.only ? new Set(args.only.split(",")) : null;
 const models = (args.models ?? "sol,terra").split(",");
 const timeoutMs = Number(args.timeout ?? 420) * 1000;
@@ -247,8 +301,8 @@ if (args.suite === "code" || args.suite === "all" || !args.suite) {
     }
   });
 }
-if (args.suite === "wizard" || args.suite === "all" || args.suite === "final") {
-  for (const scenario of (args.suite === "final" ? FINAL : WIZARD)) if (!only || only.has(scenario.id)) jobs.push(async () => {
+if (args.suite === "wizard" || args.suite === "all" || args.suite === "final" || args.suite === "prod") {
+  for (const scenario of (args.suite === "final" ? FINAL : args.suite === "prod" ? PROD : WIZARD)) if (!only || only.has(scenario.id)) jobs.push(async () => {
     const started = Date.now();
     try {
       const created = await request("/sidekicks", { method: "POST", headers });
