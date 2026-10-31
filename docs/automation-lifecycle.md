@@ -1701,6 +1701,13 @@ row never lands in a table the runs read, so a checkpoint cannot move on test
 input) while letting a review fix a writing tool that can be tested that way,
 and the `custom_tool_untested` gate still refuses an untested rewrite.
 
+**Considered and rejected:** Keeping the no-writes rule and letting a review
+only add tools: a review that found a writing tool wrong could then neither fix
+nor remove it, and the wrong tool would run every day until a person noticed.
+Putting the sentence in review step 3 of the authoring prompt: that text is
+shown in every deployment, and one without a program runtime would be told to
+test a tool it cannot have.
+
 **Consequences:** The test gate and the single-purpose rule apply to a tool a
 review adds or rewrites as they apply at setup, so a rewritten tool is an
 untested tool until `sidekick_tool_test` runs it again. Removing a tool needs
