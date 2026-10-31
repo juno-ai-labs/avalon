@@ -12,6 +12,7 @@ import {
   type HarnessToolContext,
   type HarnessToolResult,
 } from "@rally/agent-harness";
+import { checkProgram, writeToolKeys } from "./check";
 import { CodeModeToolError } from "./errors";
 import { ENTRY_MODULE, ENTRY_SOURCE, PROGRAM_MODULE, wrapProgram } from "./entry-module";
 import {
@@ -132,7 +133,12 @@ ${Math.round(CODE_PROGRAM_DEADLINE_MS / 1000)} seconds of runtime, then it is
 stopped; split work larger than that across programs.
 
 A write made from a program is made for real. Compute first and write last, so a
-failure before the write leaves nothing half done. When Rally re-runs an
+failure before the write leaves nothing half done. Before it runs, a program is
+checked and refused by line, with nothing written, when a write is not awaited
+where it is called, sits inside try/catch/finally, runs inside Promise.all or a
+map/forEach callback, or when a program that writes reads Date.now(), new Date()
+or Math.random(). Await each write in order, in a for...of loop when there are
+several, and take the time from the time tool. When Rally re-runs an
 interrupted program, calls that already completed replay instead of running
 again; a program you send again is a new run and repeats its writes. A failed
 program names the call that failed and the writes that stand. Correct the
@@ -375,10 +381,28 @@ function programDeadlineAt(): number {
   return Date.now() + CODE_PROGRAM_DEADLINE_MS + CODE_PROGRAM_LOAD_ALLOWANCE_MS;
 }
 
+/**
+ * The pre-run check as a refusal. Nothing was loaded and nothing written, so
+ * the sentence says so and lists every issue by line; `reason` carries the
+ * issue codes for the receipt, and the lines stay in the message the model
+ * reads.
+ */
+function refuseFlaggedProgram(code: string, writeTools: ReadonlySet<string>): void {
+  const issues = checkProgram(code, { writeTools });
+  if (issues.length === 0) return;
+  throw new CodeModeToolError(
+    "code_program_rejected",
+    `The program was not run and nothing was written. ${issues.map((found) => found.message).join(" ")} Fix these and run it again.`,
+    { reason: [...new Set(issues.map((found) => found.code))].join(","), field: "code" },
+  );
+}
+
 async function executeProgram(input: {
   session: GatewaySession;
   loader: WorkerLoader;
   code: string;
+  /** `<plugin>.<tool>` of every callable write, for the pre-run check. */
+  writeTools: ReadonlySet<string>;
   api: Record<string, string[]>;
   programInput: unknown;
   signal: AbortSignal;
@@ -388,6 +412,7 @@ async function executeProgram(input: {
   const { session } = input;
   let run: ProgramRun;
   try {
+    refuseFlaggedProgram(input.code, input.writeTools);
     run = await runProgram({
       loader: input.loader,
       code: input.code,
@@ -432,6 +457,7 @@ export function createCodePlugin(options: {
         session,
         loader: options.loader,
         code: parsed.code,
+        writeTools: writeToolKeys(callable),
         api: apiNames(callable),
         programInput: undefined,
         signal: context.signal,
@@ -483,6 +509,7 @@ export function createCodePlugin(options: {
         session,
         loader: runOptions.loader,
         code: tool.code,
+        writeTools: writeToolKeys(callable),
         api: apiNames(callable),
         programInput: input,
         signal: context.signal,
@@ -517,6 +544,12 @@ export function customToolFailure(name: string, error: unknown): never {
       throw new CodeModeToolError("custom_tool_failed", `${tool} failed: ${error.message}${report}`, error.details);
     case "code_program_timed_out":
       throw new CodeModeToolError("custom_tool_timed_out", `${tool} timed out: ${error.message}${report}`, error.details);
+    case "code_program_rejected":
+      throw new CodeModeToolError(
+        "custom_tool_failed",
+        `${tool} was refused before it ran: ${error.message} This is a defect in the tool; report it where your instructions send failures so the review can fix it.`,
+        error.details,
+      );
     case "code_result_too_large":
       throw new CodeModeToolError(
         "custom_tool_result_too_large",

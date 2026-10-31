@@ -20,6 +20,7 @@ import {
   EntryResultSchema,
   GatewaySession,
   callableTools,
+  checkProgram,
   customToolFailure,
   finishProgram,
   wrapProgram,
@@ -445,5 +446,54 @@ describe("the program module", () => {
     expect(EntryResultSchema.safeParse({ ok: false, error: { code: null, message: "m", callIndex: 2 }, logs: [{ level: "warn", text: "t" }] }).success).toBe(true);
     expect(EntryResultSchema.safeParse({ ok: true, value: 1 }).success).toBe(false);
     expect(EntryResultSchema.safeParse({ ok: false, error: { message: 1 }, logs: [] }).success).toBe(false);
+  });
+});
+
+describe("checkProgram", () => {
+  const writeTools = new Set(["rally_tables.insert_rows", "plugin_slack.send_message"]);
+  const check = (code: string) => checkProgram(code, { writeTools }).map((found) => [found.code, found.line, found.message]);
+
+  it("passes awaited writes in sequence, reads in any shape, a returned write, and a program with no writes", () => {
+    expect(check([
+      "const [a, b] = await Promise.all([tools.rally_tables.query({}), tools.rally_tables.query({ n: 1 })]);",
+      "let rows; try { rows = await tools.rally_tables.query({}); } catch (e) { rows = []; }",
+      "for (const row of rows) { await tools.rally_tables.insert_rows({ rows: [row] }); }",
+      "const ids = rows.map((row) => row.id);",
+      "return tools.plugin_slack.send_message({ text: ids.join(',') });",
+    ].join("\n"))).toEqual([]);
+    expect(check("return Date.now() + Math.random();")).toEqual([]);
+  });
+
+  it("names the body's own line of a program that does not parse", () => {
+    const issues = checkProgram("const a = 1;\nconst b = ;", { writeTools });
+    expect(issues).toEqual([{ code: "syntax_error", line: 2, column: 11, message: "Line 2, column 11: Unexpected token." }]);
+  });
+
+  it("refuses a write not awaited, in try, in Promise.all, or in an iteration callback, once per call site", () => {
+    expect(check("tools.rally_tables.insert_rows({});\nreturn 1;")).toEqual([
+      ["write_not_awaited", 1, expect.stringContaining("Line 1: rally_tables.insert_rows is a write that is not awaited where it is called.")],
+    ]);
+    expect(check("try {\n  await tools.rally_tables.insert_rows({});\n} catch (e) {\n  await tools.plugin_slack.send_message({});\n}")).toEqual([
+      ["write_in_try", 2, expect.stringContaining("inside try/catch/finally")],
+      ["write_in_try", 4, expect.stringContaining("plugin_slack.send_message is a write inside try/catch/finally")],
+    ]);
+    expect(check("await Promise.all([tools.rally_tables.query({}), tools.plugin_slack.send_message({})]);")).toEqual([
+      ["write_in_parallel", 1, expect.stringContaining("inside Promise.all()")],
+    ]);
+    expect(check("await Promise.all(rows.map(async (row) => {\n  await tools.rally_tables.insert_rows({ rows: [row] });\n}));")).toEqual([
+      ["write_in_callback", 2, expect.stringContaining("inside a map() callback")],
+    ]);
+    expect(check("rows.forEach((row) => tools.rally_tables.insert_rows({ rows: [row] }));")).toEqual([
+      ["write_in_callback", 1, expect.stringContaining("inside a forEach() callback")],
+    ]);
+  });
+
+  it("refuses the clock and random numbers only in a program that writes, and follows no alias or computed name", () => {
+    expect(check("const at = Date.now();\nconst id = Math.random();\nconst when = new Date();\nconst parsed = new Date('2026-01-01');\nawait tools.rally_tables.insert_rows({ at, id, when, parsed });")).toEqual([
+      ["write_with_clock_or_random", 1, expect.stringContaining("Date.now() in a program that writes")],
+      ["write_with_clock_or_random", 2, expect.stringContaining("Math.random() in a program that writes")],
+      ["write_with_clock_or_random", 3, expect.stringContaining("new Date() in a program that writes")],
+    ]);
+    expect(check("const t = tools.rally_tables;\nt.insert_rows({});\nreturn tools['rally_tables'].insert_rows({});")).toEqual([]);
   });
 });
