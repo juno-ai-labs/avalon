@@ -233,7 +233,56 @@ recorded, not what the agent is allowed to do.
 
 ## Decision log
 
-None yet.
+### 2026-10-31 — The gateway is an RPC argument, not a loopback entrypoint
+
+**Decided:** The program's capability is a `CodeToolGateway extends RpcTarget`
+created inside the Durable Object and passed as an argument to the isolate's
+`run` method. Nothing in the isolate's `env`.
+
+**Why:** Design decision 3 modelled the gateway on the live artifacts'
+`ctx.exports` loopback. A loopback entrypoint runs outside the object and would
+have to call back into it per nested call, which the self-RPC audit shows
+accumulates against the subrequest depth limit: fifteen self-calls ended a run.
+A spike on real workerd confirmed a Dynamic Worker can call methods on an
+`RpcTarget` passed as an argument, with the network still blocked.
+
+**Changes:** Design decision 3's mechanism; the goals are unchanged.
+
+### 2026-10-31 — A nested ambiguous write fails the program; the loop is not aborted
+
+**Decided:** When a nested `record_before_execute` write is left unsettled by
+an interruption, the child receipt is marked ambiguous and the program fails
+with `ambiguous_external_write`, telling the model not to repeat it and to
+stop. The run itself continues.
+
+**Why:** Bind raises its `AmbiguousExternalWriteError` only from its own
+dispatch path; a tool has no way to raise it. The honest alternative was to
+let the model stop, with the receipt carrying the truth.
+
+**Changes:** Goal 4 narrows: the write is never repeated, but the run stops only
+because the model is told to. Revisit when the harness exposes a host path.
+
+### 2026-10-31 — A saved tool may call Rally's own plugins
+
+**Decided:** `requiredPlugins` accepts `rally_*` ids beside `plugin_*`. Only a
+`plugin_*` entry must also be in `recommendedPlugins`.
+
+**Why:** The plugin id schema admitted connector plugins only, which would have
+refused a tool over `rally_tables` or `rally_core`. Rally's own plugins are in
+every run, so they need no recommendation to be loaded.
+
+**Changes:** The data model in [`design.md`](design.md#schema).
+
+### 2026-10-31 — The wizard tests tools but does not yet hold them
+
+**Decided:** Only runs receive `custom_<name>`; the wizard's own conversation
+exercises a tool through `sidekick_tool_test`.
+
+**Why:** Materializing a Sidekick's saved tools into its wizard conversation
+needs the accepted definition read at the wizard's tool load, which no run
+input carries today. The test tool covers the authoring loop.
+
+**Changes:** Goal 9 is met for runs and deferred for the wizard conversation.
 
 ## Key design decisions
 

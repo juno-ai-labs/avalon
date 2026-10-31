@@ -1866,6 +1866,32 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 ## Changelog
 
+### 2026-10-31 — A plugin may render its system message from the active set, and see the run it is in
+
+**What changed:** `HarnessPlugin` gains `renderSystemMessage(view)`, rendered on
+every model call in place of the static `systemMessage` while the plugin is
+active, and `attachRuntimeView(view)`, handed the run's live view once when
+`createPluginRuntime` builds it. `HarnessRuntimeView` answers which plugins are
+active and which the run holds. The first user is `rally:code`, whose `# Code
+API` block lists the callable tools of whatever is active this turn
+([`code-mode.md`](code-mode.md)).
+
+**Why:** Bind's plugin system message is a static string, and no hook let a
+plugin see the run. The code plugin's prompt depends on the active set, and its
+gateway has to refuse a call to a plugin the run has not loaded; both needed a
+read-only view, and rendering per turn is the same discipline the tool list and
+the skill sections already follow.
+
+**Considered and rejected:** Rendering the API into the catalog line, which
+every run would pay for whether or not it composes; a host-side activation API
+so a program could load a plugin, which would let a tool widen the run's
+surface.
+
+**Consequences:** A dynamic message changes the system projection when the
+active set changes, which Bind already records as `system_projection_changed`.
+A plugin that renders from the view must be a pure function of it, or it costs
+the cached prefix on every turn.
+
 ### 2026-10-29 — Tool image parts ride the next provider request only
 
 **What changed:** `harnessResultOutcome` no longer folds a tool result's
