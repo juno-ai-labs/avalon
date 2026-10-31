@@ -341,6 +341,23 @@ helpers were reachable over RPC. One implementation, or the two drift.
 and tool identity on `fail`; the gateway's replay and refusal codes are read
 from its records by `finishProgram`.
 
+### 2026-10-31 — Loops are allowed; one maximum runtime, with a force kill
+
+**Decided:** A program may loop and call as often as it needs. The only
+runtime bound is `CODE_PROGRAM_DEADLINE_MS`, enforced by the entry's timer for
+a program that waits and by the Dynamic Worker's `limits.cpuMs`, set to the
+same number, for a program that is busy. Past it, every failure is reported as
+`code_program_timed_out`.
+
+**Why:** A call cap or a loop rule would have to guess at the work; the clock
+does not. The first implementation had the clock but not the kill: a busy loop
+outlived the host-side timer because the isolate's own timer cannot fire
+inside it, and ran on until the plan's CPU limit.
+
+**Changes:** The limits in [`design.md`](design.md#limits) lose the call cap
+and gain the CPU limit. The kill is the platform's and is not reproducible on
+local workerd, so it has no test in the suite.
+
 ### 2026-10-31 — What shipped differs from the design in seven places
 
 **Decided:** Recorded here rather than silently: (1) a program is one row of

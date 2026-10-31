@@ -27,6 +27,7 @@ import {
 } from "./gateway";
 import {
   CODE_ERROR_MESSAGE_MAX_CHARS,
+  CODE_PROGRAM_CPU_MS,
   CODE_PROGRAM_DEADLINE_MS,
   CODE_PROGRAM_LOAD_ALLOWANCE_MS,
   CODE_RESULT_MAX_BYTES,
@@ -112,6 +113,10 @@ participant's. \`return\` the smallest value that answers the question. Throw an
 Error for a condition you cannot handle; its message reaches you. console.log
 output comes back with the value.
 
+Loops are fine; a program may make as many calls as the work needs. It has
+${Math.round(CODE_PROGRAM_DEADLINE_MS / 1000)} seconds of runtime, then it is
+stopped; split work larger than that across programs.
+
 A write made from a program is made for real. Compute first and write last, so a
 failure before the write leaves nothing half done. When Rally re-runs an
 interrupted program, calls that already completed replay instead of running
@@ -159,17 +164,20 @@ export interface RunProgramInput {
   programInput: unknown;
   signal: AbortSignal;
   deadlineMs?: number;
+  cpuMs?: number;
 }
 
 /**
  * Load a fresh isolate for this program and run it. `load`, not `get`: an
  * isolate kept by name would carry one program's globals into the next, across
- * runs of the same conversation. The host-side race is the backstop for a
- * program that blocks its own isolate, where the entry's own timer cannot
- * fire; a loader or syntax failure is the program's failure, named.
+ * runs of the same conversation. Two clocks end it: the entry's own timer for
+ * a program that waits, and the runtime's CPU limit for one that is busy,
+ * where no timer can fire; the host-side race is the backstop behind both. A
+ * loader or syntax failure is the program's failure, named.
  */
 export async function runProgram(input: RunProgramInput): Promise<ProgramRun> {
   const deadlineMs = input.deadlineMs ?? CODE_PROGRAM_DEADLINE_MS;
+  const cpuMs = input.cpuMs ?? CODE_PROGRAM_CPU_MS;
   const syntaxRefusal = programSyntaxRefusal(input.code);
   if (syntaxRefusal) {
     throw new CodeModeToolError("code_program_failed", syntaxRefusal, { reason: "module_syntax", field: "code" });
@@ -180,14 +188,23 @@ export async function runProgram(input: RunProgramInput): Promise<ProgramRun> {
     modules: { [ENTRY_MODULE]: ENTRY_SOURCE, [PROGRAM_MODULE]: wrapProgram(input.code) },
     env: {},
     globalOutbound: null,
+    limits: { cpuMs },
   });
   const entry = worker.getEntrypoint<ProgramEntrypoint>();
   const startedAt = Date.now();
+  const killed = (): ProgramRun => ({
+    result: { ok: false, error: { code: "deadline", message: "The program did not answer by its deadline", callIndex: null }, logs: [] },
+    deadlinePassed: true,
+  });
   let timer: ReturnType<typeof setTimeout> | undefined;
   let raw: unknown;
+  // Kept so a program the host stopped waiting for cannot surface later as
+  // an unhandled rejection when the runtime ends it.
+  const running: Promise<unknown> = Promise.resolve(entry.run(input.gateway, input.api, { deadlineMs, input: input.programInput }));
+  running.catch(() => undefined);
   try {
     raw = await Promise.race([
-      entry.run(input.gateway, input.api, { deadlineMs, input: input.programInput }),
+      running,
       new Promise<unknown>((resolve, reject) => {
         timer = setTimeout(() => resolve({
           ok: false,
@@ -199,6 +216,10 @@ export async function runProgram(input: RunProgramInput): Promise<ProgramRun> {
     ]);
   } catch (error) {
     if (input.signal.aborted) throw error;
+    // The runtime's CPU limit ends a busy program by throwing inside the
+    // isolate; CPU time cannot exceed wall time, so a rejection that arrives
+    // once the limit could have fired is the kill, not a load failure.
+    if (Date.now() - startedAt >= Math.min(cpuMs, deadlineMs)) return killed();
     const message = error instanceof Error ? error.message : String(error);
     throw new CodeModeToolError(
       "code_program_failed",
@@ -255,7 +276,12 @@ export function finishProgram(
   if (!result.ok) {
     const failure = result.error;
     const message = bounded(failure.message);
-    if (failure.code === "deadline" && run.deadlinePassed) {
+    // Past the deadline, every failure is the deadline: the entry's timer, the
+    // runtime's CPU kill (whose exception the program may have caught and
+    // rethrown as anything) and the host's own race all land here. A program
+    // that claims the deadline before the host's clock agrees is a program
+    // failure below.
+    if (run.deadlinePassed) {
       throw new CodeModeToolError(
         "code_program_timed_out",
         `The program did not finish within ${deadlineMs} ms after ${calls.length} calls. Split the work into smaller programs or call the tools directly; do not repeat the completed writes it names.${note}`,
