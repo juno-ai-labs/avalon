@@ -1043,7 +1043,7 @@ describe("custom tools in the drafting plugin", () => {
     }));
     expect(withRuntime.tools.some((tool) => tool.definition.name === "tool_test")).toBe(true);
     expect(withRuntime.systemMessage).toContain(CUSTOM_TOOLS_GUIDE);
-    expect(withRuntime.systemMessage.replace(/\s+/g, " ")).toContain("Change a saved tool's code only if its program makes no writes");
+    expect(withRuntime.systemMessage.replace(/\s+/g, " ")).toContain("In a self-review, tools change with the procedure");
   });
 
   it("refuses a test whose input misses the tool's schema, and one naming an unloaded plugin, by field", async () => {
