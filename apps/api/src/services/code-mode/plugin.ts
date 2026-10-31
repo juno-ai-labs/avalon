@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { SidekickCustomTool, WorkstreamWorkflowInput } from "@rally/contracts";
 import {
+  AmbiguousExternalWriteError,
   customToolIdentityHash,
   renderCodeApi,
   repairRootSchemaForProviders,
@@ -260,25 +261,26 @@ function writesNote(calls: readonly RecordedCall[]): string {
  * Turn the isolate's answer into the tool result or the typed failure. The
  * failure code comes from what the host recorded about the calls, never from
  * the code the program chose to throw: a call the gateway refused is a
- * refusal, one it recorded as ambiguous is ambiguous, one it recorded as
- * failed is a failed call, and anything else is the program's own throw. The
- * sentence names the writes that completed, so the model never repeats them.
+ * refusal, one it recorded as failed is a failed call, and anything else is
+ * the program's own throw. One it recorded as ambiguous raises Bind's own
+ * ambiguous-write halt, so the run stops as it stops after a direct write
+ * left unknown. The sentence names the writes that completed, so the model
+ * never repeats them.
  */
 export function finishProgram(
   run: ProgramRun,
   calls: readonly RecordedCall[],
   description: string,
-  options: { deadlineMs?: number; resultMaxBytes?: number } = {},
+  options: { deadlineMs?: number; resultMaxBytes?: number; toolCallId?: string } = {},
 ): HarnessToolResult {
   const deadlineMs = options.deadlineMs ?? CODE_PROGRAM_DEADLINE_MS;
   const resultMaxBytes = options.resultMaxBytes ?? CODE_RESULT_MAX_BYTES;
   const note = writesNote(calls);
   const ambiguousCall = calls.find((call) => call.outcome === "ambiguous");
   if (ambiguousCall) {
-    throw new CodeModeToolError(
-      "ambiguous_external_write",
-      `Rally could not confirm whether ${ambiguousCall.tool} (call ${ambiguousCall.index}) completed. Do not repeat it; tell the participant what is uncertain and stop.${note}`,
-      { reason: "unknown external outcome", field: ambiguousCall.tool },
+    throw new AmbiguousExternalWriteError(
+      options.toolCallId ?? "",
+      `Rally could not confirm whether ${ambiguousCall.tool} (call ${ambiguousCall.index}) completed and stopped the run so it is not repeated.${note}`,
     );
   }
   const { result } = run;
@@ -364,6 +366,15 @@ function unavailable(): CodeModeToolError {
  * refused), and the host's own failure rethrown ahead of the program's account
  * of it.
  */
+/**
+ * When the program about to start runs out of budget: its deadline plus the
+ * load allowance from now. Nested calls are clamped to it, so the session
+ * closes before Bind's own timer on the program tool fires.
+ */
+function programDeadlineAt(): number {
+  return Date.now() + CODE_PROGRAM_DEADLINE_MS + CODE_PROGRAM_LOAD_ALLOWANCE_MS;
+}
+
 async function executeProgram(input: {
   session: GatewaySession;
   loader: WorkerLoader;
@@ -372,6 +383,7 @@ async function executeProgram(input: {
   programInput: unknown;
   signal: AbortSignal;
   description: string;
+  toolCallId: string;
 }): Promise<HarnessToolResult> {
   const { session } = input;
   let run: ProgramRun;
@@ -388,7 +400,7 @@ async function executeProgram(input: {
     await session.close();
   }
   if (session.fatal !== null) throw session.fatal;
-  return finishProgram(run, session.calls, input.description);
+  return finishProgram(run, session.calls, input.description, { toolCallId: input.toolCallId });
 }
 
 /**
@@ -415,7 +427,7 @@ export function createCodePlugin(options: {
       const parsed = CodeExecuteInputSchema.parse(raw);
       if (!host || !view) throw unavailable();
       const callable = callableTools(view, null);
-      const session = new GatewaySession({ host, view, context, input: options.input, allowedPluginIds: null });
+      const session = new GatewaySession({ host, view, context, input: options.input, allowedPluginIds: null, deadlineAt: programDeadlineAt() });
       return executeProgram({
         session,
         loader: options.loader,
@@ -424,6 +436,7 @@ export function createCodePlugin(options: {
         programInput: undefined,
         signal: context.signal,
         description: parsed.description,
+        toolCallId: context.toolCallId,
       });
     },
   };
@@ -465,7 +478,7 @@ export function createCodePlugin(options: {
           { reason: "plugin_not_loaded", field: "requiredPlugins", available: callable.map(({ plugin }) => plugin.modelId) },
         );
       }
-      const session = new GatewaySession({ host, view, context, input: runOptions.input, allowedPluginIds: allowed });
+      const session = new GatewaySession({ host, view, context, input: runOptions.input, allowedPluginIds: allowed, deadlineAt: programDeadlineAt() });
       return executeProgram({
         session,
         loader: runOptions.loader,
@@ -474,6 +487,7 @@ export function createCodePlugin(options: {
         programInput: input,
         signal: context.signal,
         description: tool.description,
+        toolCallId: context.toolCallId,
       });
     },
   };
@@ -490,7 +504,8 @@ rebuilding the method by hand.`;
 /**
  * A saved tool's program failure, in the run's vocabulary: every code the
  * executor can raise becomes a sentence that names the tool and says what the
- * run does next. Only a plugin the run has not loaded is the run's to fix.
+ * run does next. Only a plugin the run has not loaded is the run's to fix. An
+ * ambiguous-write halt is not a program failure and passes through untouched.
  */
 export function customToolFailure(name: string, error: unknown): never {
   if (!(error instanceof CodeModeToolError)) throw error;
@@ -516,8 +531,6 @@ export function customToolFailure(name: string, error: unknown): never {
     }
     case "code_unavailable":
       throw new CodeModeToolError("custom_tool_unavailable", `${tool} cannot run: ${error.message}`, error.details);
-    case "ambiguous_external_write":
-      throw new CodeModeToolError("ambiguous_external_write", `${tool} may have completed a write Rally could not confirm: ${error.message}`, error.details);
     default:
       throw new CodeModeToolError("custom_tool_failed", `${tool} failed: ${error.message}${report}`, error.details);
   }

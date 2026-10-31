@@ -380,6 +380,62 @@ the acceptance named; `state.md` records that. No call cap, loop rule or
 static type check was needed; the runtime validates each nested call's
 arguments and the models never failed there.
 
+### 2026-10-31 — A saved tool does one thing; the run keeps the decisions
+
+**Decided:** The wizard's guide and the `customTools` schema description say
+one tool does one thing a run can name in a sentence, takes only that thing's
+inputs and returns the facts the run decides with. Two steps are two tools,
+never one behind a `mode`, `action`, `dryRun` or `preview` input; a tool that
+writes takes what it writes as input and never reads the clock to decide
+whether to act; whether to post, whether it is time and which step is next stay
+in the instructions.
+
+**Why:** Reading the production-shaped suite's saved tools found four that
+decided for the run: a notes cursor behind `action`, a call-prep check behind
+`record_week`, a polling tool that bundled the time window, the lookup and the
+processed check, and two tools with a `dryRun`/`preview` input the guide's own
+"tested with a preview input" sentence had invited. A run on a model the size
+of Terra reads a narrow contract correctly and guesses at a wide one; the
+Sidekick's judgement belongs in its instructions, where the person can read and
+change it, not inside a program they cannot. After the first rewrite one tool
+still read the clock and wrote only on a Tuesday, so the writing-tool sentence
+was added; after that all twelve production-shaped scenarios saved flag-free
+tools whose writing tools take their inputs, and the runs that reached their
+tool reported correctly.
+
+**Changes:** The eval runner grades every prod wizard check for flag inputs and
+for a writing tool with no input or a clock read. A compute-and-record monitor
+is now two tools, which matches the tracking skill's order (deliver, then mark
+done) that the one-tool form broke. One run deferred because the wizard told it
+to read `runs_list`, a wizard-only tool; that instruction defect is outside
+this change.
+
+### 2026-10-31 — Reversed: a nested ambiguous write halts the program and the run
+
+**Decided:** Supersedes "A nested ambiguous write fails the program; the loop
+is not aborted" above. A nested `record_before_execute` write left unknown
+marks its child receipt ambiguous, halts the gateway session (every later call
+is refused), and once the isolate answers the tool raises the harness's
+`AmbiguousExternalWriteError`, now exported and honoured by Bind's dispatch for
+an error a tool raises itself. The program's receipt is ambiguous, the run's
+flag is set, and the loop stops without a model turn, as after a direct write.
+
+**Why:** Four reviewers (Cursor's security review twice, Cursor Bugbot, the
+review swarm) found the same hole: the program got a catchable error while the
+session stayed open, so a `try/catch` retry loop, or the model's next turn,
+could repeat the write at a new call index that no receipt replays. The
+earlier decision rested on Bind having no host path; the path is six lines in
+Bind's own classification, so the stand-in is withdrawn.
+
+**Changes:** Goal 4 is met in full: the write is never repeated, by mechanism,
+not by instruction. The `ambiguous_external_write` program code is gone from
+`customToolFailure`'s mapping; the halt passes through untouched. A nested
+call's timer is also clamped to what is left of the program's budget, so no
+call outlives the program and Bind's timer on the program tool never fires
+first and turns a read-only program into an interrupted write. Slack's
+real-time search, whose direct result is kept out of the replay object and the
+inference log, is not callable from a program, whose result is durable.
+
 ### 2026-10-31 — What shipped differs from the design in seven places
 
 **Decided:** Recorded here rather than silently: (1) a program is one row of

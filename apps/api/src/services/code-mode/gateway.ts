@@ -43,6 +43,14 @@ export const LOOP_CONTROL_TOOLS: ReadonlySet<string> = new Set(["load_plugin", "
 export const PROGRAM_RUNNING_CAPABILITIES: ReadonlySet<string> = new Set(["rally.sidekick.tools.test"]);
 
 /**
+ * A tool whose result is transient: kept for the turn that fetched it and
+ * never copied into a durable replay object or an inference log. A program's
+ * result is durable (the receipt, the replay object, the next request), so a
+ * program cannot hold one. Slack's Real-time Search API is the one such tool.
+ */
+export const TRANSIENT_RESULT_CAPABILITIES: ReadonlySet<string> = new Set(["slack.search"]);
+
+/**
  * What the gateway needs from the host to make a nested call exactly as Bind
  * makes a direct one: the same authorization hook, the same receipt lookup,
  * the same plan and the same settlement. Built in `runWorkstreamHarness`,
@@ -123,6 +131,7 @@ export type RefusalReason =
   | "plugin_not_loaded"
   | "loop_control"
   | "turn_scoped_result"
+  | "transient_result"
   | "unknown_tool"
   | "not_authorized"
   | "program_finished"
@@ -146,8 +155,9 @@ export interface CallablePlugin {
 /**
  * The tools a program may call right now: every active plugin's tools except
  * the two program plugins' own (a program cannot run a program), the loop
- * controls, and a tool whose result is current-turn content a program cannot
- * hold; narrowed to `allowedPluginIds` when a saved tool declared its plugins.
+ * controls, a tool whose result is current-turn content a program cannot
+ * hold, and a tool whose result is transient and may not be stored; narrowed
+ * to `allowedPluginIds` when a saved tool declared its plugins.
  */
 export function callableTools(
   view: HarnessRuntimeView,
@@ -157,7 +167,8 @@ export function callableTools(
     if (plugin.canonicalId === CODE_PLUGIN_ID || plugin.canonicalId === CUSTOM_TOOLS_PLUGIN_ID) return [];
     if (allowedPluginIds && !allowedPluginIds.has(plugin.modelId) && !allowedPluginIds.has(plugin.canonicalId)) return [];
     const tools = plugin.tools.filter((tool) => !LOOP_CONTROL_TOOLS.has(tool.definition.name)
-      && !PROGRAM_RUNNING_CAPABILITIES.has(tool.definition.capability) && !tool.yieldsContentParts);
+      && !PROGRAM_RUNNING_CAPABILITIES.has(tool.definition.capability) && !TRANSIENT_RESULT_CAPABILITIES.has(tool.definition.capability)
+      && !tool.yieldsContentParts);
     return tools.length ? [{ plugin, tools }] : [];
   });
 }
@@ -224,6 +235,13 @@ export interface GatewaySessionOptions {
   context: HarnessToolContext;
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "harnessRunId">;
   allowedPluginIds: ReadonlySet<string> | null;
+  /**
+   * When the program's own budget ends, as a clock time. A nested call's
+   * timer is clamped to it, so no call outlives the program: Bind's timer on
+   * the program tool would otherwise fire first and classify the whole
+   * program as an interrupted write.
+   */
+  deadlineAt?: number;
 }
 
 /**
@@ -235,12 +253,16 @@ export interface GatewaySessionOptions {
  * nested call still running to settle, and turns every later call into a
  * refusal. A thrown authorization or settlement is `fatal`: the
  * program is stopped and the error is rethrown to Bind by the tool, so the run
- * sees the real failure rather than a program's account of it.
+ * sees the real failure rather than a program's account of it. A nested write
+ * left unknown is `halted`: the program is stopped too, so it cannot catch the
+ * error and write again, and the tool raises Bind's own ambiguous-write halt.
  */
 export class GatewaySession {
   readonly calls: RecordedCall[] = [];
   readonly gateway: CodeToolGateway;
   fatal: unknown = null;
+  /** The first nested write whose outcome is unknown; every later call is refused. */
+  halted: CodeModeToolError | null = null;
   private closed = false;
   private readonly controller = new AbortController();
   private readonly inFlight = new Set<Promise<unknown>>();
@@ -270,9 +292,7 @@ export class GatewaySession {
     const started = Date.now();
     const work = (async (): Promise<GatewayAnswer> => {
       try {
-        if (this.fatal !== null) {
-          throw refusal(label, "program_stopped", "an earlier call failed in a way that stopped the program.", []);
-        }
+        if (this.fatal !== null || this.halted !== null) throw this.stopped(label);
         if (this.closed) {
           throw refusal(label, "program_finished", "the program already returned; a call started after return is not made.", []);
         }
@@ -310,9 +330,7 @@ export class GatewaySession {
    */
   private serialized<T>(run: () => Promise<T>, label: string): Promise<T> {
     const guarded = () => {
-      if (this.fatal !== null) {
-        throw refusal(label, "program_stopped", "an earlier call failed in a way that stopped the program.", []);
-      }
+      if (this.fatal !== null || this.halted !== null) throw this.stopped(label);
       return run();
     };
     const next = this.serialChain.then(guarded, guarded);
@@ -347,6 +365,9 @@ export class GatewaySession {
       if (PROGRAM_RUNNING_CAPABILITIES.has(declared.definition.capability)) {
         throw refusal(label, "program_in_program", "it runs a program, and a program cannot run another program. Call it directly.", available);
       }
+      if (TRANSIENT_RESULT_CAPABILITIES.has(declared.definition.capability)) {
+        throw refusal(label, "transient_result", "its result may not be stored, and a program's result is. Call it directly.", available);
+      }
       throw refusal(label, "turn_scoped_result", "its result is content for the current turn, which a program cannot hold. Call it directly.", available);
     }
     return { plugin: plugin.plugin, tool };
@@ -355,6 +376,25 @@ export class GatewaySession {
   private replayed(record: RecordedCall, output: unknown): GatewayAnswer {
     record.outcome = "replayed";
     return { ok: true, output };
+  }
+
+  private stopped(label: string): CodeModeToolError {
+    return this.halted !== null
+      ? refusal(label, "program_stopped", "an earlier write has an unknown outcome, so the program was stopped before it could repeat one.", [])
+      : refusal(label, "program_stopped", "an earlier call failed in a way that stopped the program.", []);
+  }
+
+  /**
+   * A nested write whose outcome is unknown: the call is ambiguous and the
+   * program is stopped, as the run is stopped after a direct one. Calls in
+   * flight are not aborted (an abort would turn a write about to complete
+   * into a second unknown); calls made from here on are refused.
+   */
+  private halt(record: RecordedCall, label: string): CodeModeToolError {
+    record.outcome = "ambiguous";
+    const error = ambiguous(label);
+    if (this.halted === null) this.halted = error;
+    return error;
   }
 
   /** A failure of the host's own machinery: stop the program and keep the error for Bind. */
@@ -431,10 +471,7 @@ export class GatewaySession {
       );
     }
     if (prior) {
-      if (prior.halt === "needs_input") {
-        record.outcome = "ambiguous";
-        throw ambiguous(label);
-      }
+      if (prior.halt === "needs_input") throw this.halt(record, label);
       return this.replayed(record, prior.output);
     }
     const planned = host.plan(plugin.canonicalId, tool);
@@ -463,13 +500,14 @@ export class GatewaySession {
       const output = receipt?.outputRef ? await host.replayOutput(receipt.outputRef) : null;
       return this.replayed(record, output ?? { summary: receipt?.outputSummary ?? "" });
     }
-    if (claim.state === "ambiguous_external_write") {
-      record.outcome = "ambiguous";
-      throw ambiguous(label);
-    }
+    if (claim.state === "ambiguous_external_write") throw this.halt(record, label);
     // Bind's per-call timer, so a nested call that hangs ends as a direct one
-    // would, and the program learns which call it was.
-    const timeoutMs = tool.resolveTimeoutMs?.(args) ?? definition.timeoutMs ?? host.toolTimeoutMs;
+    // would, and the program learns which call it was; clamped to what is left
+    // of the program's own budget, so no call outlives the program.
+    const timeoutMs = Math.min(
+      tool.resolveTimeoutMs?.(args) ?? definition.timeoutMs ?? host.toolTimeoutMs,
+      this.options.deadlineAt === undefined ? Number.POSITIVE_INFINITY : Math.max(1, this.options.deadlineAt - Date.now()),
+    );
     const timeout = new AbortController();
     const timer = setTimeout(() => timeout.abort(new DOMException(`Call exceeded ${timeoutMs} ms`, "TimeoutError")), timeoutMs);
     const toolSignal = abortSignals(signal, timeout.signal);
@@ -490,7 +528,7 @@ export class GatewaySession {
         signal: toolSignal,
       }), toolSignal);
     } catch (error) {
-      throw await this.failed(index, label, plugin, tool, args, { invocationId: claim.invocationId, toolCallId, policy }, error, toolSignal, timeout.signal, record);
+      throw await this.failed(index, label, plugin, tool, args, { invocationId: claim.invocationId, toolCallId, policy }, error, toolSignal, timeout.signal, timeoutMs, record);
     } finally {
       clearTimeout(timer);
     }
@@ -521,6 +559,7 @@ export class GatewaySession {
     error: unknown,
     toolSignal: AbortSignal,
     timeoutSignal: AbortSignal,
+    timeoutMs: number,
     record: RecordedCall,
   ): Promise<CodeModeToolError> {
     const definition = tool.definition;
@@ -552,7 +591,7 @@ export class GatewaySession {
         : downstreamValidationError
           ? `The tool failed while validating data after accepting its arguments: ${rejectedFields}.`
           : timeoutSignal.aborted
-            ? `The call exceeded its ${tool.resolveTimeoutMs?.(args) ?? definition.timeoutMs ?? this.options.host.toolTimeoutMs} ms limit.`
+            ? `The call exceeded its ${timeoutMs} ms limit.`
             : error instanceof Error ? error.message : "Tool execution failed";
     const code = ambiguousExternalWrite
       ? "ambiguous_external_write"
@@ -572,15 +611,12 @@ export class GatewaySession {
         status: ambiguousExternalWrite ? "ambiguous" : "failed",
         phase: ambiguousExternalWrite ? "ambiguous_external_write" : declaredArgumentError ? "validation" : "execution",
         outcome: ambiguousExternalWrite ? "ambiguous_external_write" : timeoutSignal.aborted ? "timed_out" : interrupted ? "aborted" : "definitive_failure",
-        error: { code, message: message.slice(0, 500), ...(structured ? { data: structured } : {}) },
+        error: { code, message: bounded(message), ...(structured ? { data: structured } : {}) },
       });
     } catch (settlementError) {
       this.stop(settlementError);
     }
-    if (ambiguousExternalWrite) {
-      record.outcome = "ambiguous";
-      return ambiguous(label);
-    }
+    if (ambiguousExternalWrite) return this.halt(record, label);
     record.outcome = "failed";
     return new CodeModeToolError(
       "code_call_failed",

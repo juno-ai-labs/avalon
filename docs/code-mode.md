@@ -83,8 +83,11 @@ code: a plugin not in the run, the two program plugins and the wizard's
 saved tool's `requiredPlugins`, a plugin not loaded, a loop control
 (`load_plugin`, `load_skill`, `request_elicitation`),
 a tool whose result is current-turn content (`yieldsContentParts`: `view_image`,
-`view_resource`, `browser_js`, the image generators), a tool the plugin does
-not have. Only "not loaded" is something the run can fix, and the sentence
+`view_resource`, `browser_js`, the image generators), a tool whose result is
+transient and may not be stored (`TRANSIENT_RESULT_CAPABILITIES`: Slack's
+real-time search, which a direct call keeps out of the replay object and the
+inference log, and which a program's durable result would otherwise carry), a
+tool the plugin does not have. Only "not loaded" is something the run can fix, and the sentence
 says how.
 
 For the rest it does what Bind does for a direct call, in Bind's order:
@@ -97,9 +100,10 @@ grounding guard sees a nested read as it sees a direct one, so a program's
 successful read clears a failure a direct read left), execute through
 `HarnessTool.execute` with the
 run's principal, the child's own `effectIntentId` and a signal that aborts on
-the run, on a host failure and on the tool's own timer (the execution is raced
-against that signal, as Bind races it, so a tool that never reads its signal
-still ends), then settle through the host's `complete` or `fail`, which also
+the run, on a host failure and on the tool's own timer, clamped to what is left
+of the program's budget so no nested call outlives the program (the execution
+is raced against that signal, as Bind races it, so a tool that never reads its
+signal still ends), then settle through the host's `complete` or `fail`, which also
 write the audit row and telemetry a direct call gets. A failure is classified
 as Bind classifies it: a `ZodError` after valid arguments on a
 record-before-execute write, an interrupted or timed out such write, or
@@ -117,7 +121,13 @@ await is still a write, and cutting it off would make its receipt ambiguous),
 and a call made after return is refused. A thrown authorization or settlement is fatal: the program is stopped,
 every later call is refused, and the tool rethrows the host's error to Bind
 once the isolate has answered, so the run sees the real failure rather than
-the program's account of it. The program's own tool is `reenterable`: an
+the program's account of it. A nested record-before-execute write left unknown
+halts the program the same way: the call is `ambiguous`, every later call is
+refused (so a program cannot catch the error and write again), and once the
+isolate has answered the tool raises Bind's own `AmbiguousExternalWriteError`,
+which Bind treats as it treats a direct write it interrupted: the program's
+receipt is ambiguous, the run's flag is set, and the loop stops without a
+model turn. A direct write and a nested one end the same way. The program's own tool is `reenterable`: an
 attempt interrupted mid-program re-enters, and the children that completed
 replay through the same lookup a direct call uses.
 
@@ -181,7 +191,7 @@ takes the saved schema and returns what `code_execute` returns.
 | --- | --- | --- |
 | `code_call_refused` | A nested call was refused by name | which name, why, and to call it directly or load the plugin |
 | `code_call_failed` | A nested call ran and failed, or rejected its arguments | the call index, the tool, the tool's own message, and the completed writes |
-| `ambiguous_external_write` | A nested record-before-execute write has an unknown outcome | the call, "do not repeat it", and to stop |
+| `ambiguous_external_write` | A nested record-before-execute write has an unknown outcome; raised as Bind's `AmbiguousExternalWriteError`, so the loop stops | the call and that the run stopped so it is not repeated |
 | `code_program_failed` | The program threw, did not compile, or returned an unserializable value | the message and what to fix |
 | `code_program_timed_out` | The program ran past `CODE_PROGRAM_DEADLINE_MS` | the deadline, the call count, and the completed writes |
 | `code_result_too_large` | Value plus logs exceed `CODE_RESULT_MAX_BYTES` | the sizes and to return the answer, not the data |
@@ -208,9 +218,11 @@ twenty values, `expected`, `retryAfterMs`); a tool's message text is bounded to
   replay protects. Guard: `test/code-mode.test.ts` fails when the completion
   is dropped; `test-workers/code-mode.test.ts` asserts the child rows.
 - **A completed child replays through the host's own lookup; an ambiguous one
-  fails the program.** Breaking it means a re-run repeating a provider write.
-  Guard: `test/code-mode.test.ts` replays and halts without executing; the
-  kill-mid-program case is on the open list below.
+  halts the program and the run.** Breaking it means a re-run, or the program's
+  own `catch`, repeating a provider write. Guard: `test/code-mode.test.ts`
+  replays, halts without executing and refuses the next call; the harness test
+  shows the loop stop on the raised error; the kill-mid-program case is on the
+  open list below.
 - **The `# Code API` block is a pure function of the active set.** Breaking it
   costs the provider's cached prefix on every turn. Guard: `code-api.test.ts`
   renders a fixed set to a literal, including a duplicate name and a comment
@@ -308,12 +320,12 @@ own.
 - **A nested call fails:** its child receipt is `failed` with the tool's own
   code, audited and counted as a direct failure is; the program fails
   `code_call_failed` carrying the inner sentence.
-- **A nested write is ambiguous:** the child is `ambiguous`, the run's
-  ambiguous flag is set as for a direct write, and the program fails
-  `ambiguous_external_write`; the model is told to stop and report. The run is
-  not aborted by the loop, which differs from a direct ambiguous write; the
-  decision log records why. Crash repair of an interrupted program names the
-  nested calls that completed in the ambiguity it records.
+- **A nested write is ambiguous:** the child is `ambiguous`, the program is
+  halted (every later call refused), and the tool raises Bind's
+  `AmbiguousExternalWriteError`, so the program's own receipt is ambiguous, the
+  run's flag is set and the loop stops, exactly as after a direct write Bind
+  interrupted. Crash repair of an interrupted program names the nested calls
+  that completed in the ambiguity it records.
 - **The host cannot authorize or settle a call:** the program is stopped and
   the host's own error (an authority loss, an ownership fence) reaches Bind as
   it would from a direct call.
@@ -333,7 +345,7 @@ Limits, for the team to confirm or move
 | `CODE_PROGRAM_LOAD_ALLOWANCE_MS` | 15,000 | provisional, set | a stuck isolate holds the program's tool timer past the deadline |
 | `CODE_PROGRAM_TOOL_TIMEOUT_MS` | deadline plus twice the allowance | follows the deadline | Bind's 30 s default would end `code_execute`, a saved tool or the wizard's test before the program's own clock |
 | `CODE_RESULT_MAX_BYTES` | `+Infinity` | LIMIT UNSET | a program returns the data instead of the answer and fills the context |
-| `CODE_ERROR_MESSAGE_MAX_CHARS` | 500 | set | a tool's message swamps the failure sentence |
+| `CODE_ERROR_MESSAGE_MAX_CHARS` | `+Infinity` | LIMIT UNSET | a program that throws a payload as its message puts it in the transcript and the receipt |
 | `CODE_API_DOC_MAX_CHARS` (`packages/agent-harness/src/code-api.ts`) | `+Infinity` | LIMIT UNSET | a verbose connector description is copied whole into `# Code API` on every turn, once per tool; the wire already carries it once |
 
 Program bytes, calls per program and log bytes have no guard, written open or
@@ -409,11 +421,6 @@ otherwise: the loader compiles what it is given, the deadline ends a loop
 
 ## Open questions
 
-- **Aborting the run on a nested ambiguous write.** A direct write in that
-  state throws Bind's `AmbiguousExternalWriteError` and the run stops; a nested
-  one fails the program and relies on the model to stop. Bind exposes no host
-  path to raise that error from inside a tool. Revisit when the harness grows
-  one.
 - **The replay path has no workerd test.** Re-entry after a relocation
   mid-program is implemented through `reenterable` and the host's lookup, and
   proved in Node over a real receipt store; the test that kills the object
