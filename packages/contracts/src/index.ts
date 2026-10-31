@@ -1519,6 +1519,67 @@ export function semanticConditionsForEventType(
   };
 }
 
+/**
+ * The plain-object JSON Schema a custom tool's input must be: the shape every
+ * other tool's parameters take on the wire, with a description on every
+ * property so the model is never left to guess what an argument is for.
+ */
+export const ToolInputObjectSchema = z.looseObject({
+  type: z.literal("object"),
+  properties: z.record(z.string().min(1).max(120), z.looseObject({
+    description: z.string().trim().min(1).max(800),
+  })).default({}),
+  required: z.array(z.string().min(1)).default([]),
+  // Closed by default, so the schema the wizard tests against is the one a
+  // run validates against; an open schema would let a test pass an input a
+  // run then rejects.
+  additionalProperties: z.literal(false).default(false),
+}).superRefine((schema, context) => {
+  for (const name of schema.required) {
+    if (!(name in schema.properties)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["required"], message: `Required property ${name} is not declared` });
+    }
+  }
+});
+export type ToolInputObject = z.infer<typeof ToolInputObjectSchema>;
+
+/**
+ * Rally's own plugins a saved tool may call. Every run holds the first three,
+ * so a tool over them needs no recommendation to be loadable; `rally_web` is
+ * loadable, and a run that has not loaded it is told to and calls the tool
+ * again. The rest of Rally's built-ins are left out on purpose:
+ * `rally_terminal` is a machine with a sandbox to acquire, and
+ * `rally_sidekicks` and `rally_conversations` act on the run's own
+ * conversation, which is the run's to decide.
+ */
+export const CUSTOM_TOOL_RALLY_PLUGIN_IDS = ["rally_core", "rally_tables", "rally_memory", "rally_web"] as const;
+
+/**
+ * A plugin a saved tool may call: a connector plugin (`plugin_*`, which must
+ * also be recommended so the run loads it) or one of the Rally plugins above.
+ */
+export const CustomToolPluginIdSchema = z.union([
+  z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u),
+  z.enum(CUSTOM_TOOL_RALLY_PLUGIN_IDS),
+]);
+
+/**
+ * A tool the Sidekick wizard wrote and tested: a program with a name, a
+ * model-facing description and an input schema, materialized for every run of
+ * the Sidekick as `custom_<name>`. The program is the body of an async
+ * function with `input` and `tools` in scope; `requiredPlugins` names the
+ * plugins it calls, each of which must also be in `recommendedPlugins` so a
+ * run has them loaded before the tool runs.
+ */
+export const SidekickCustomToolSchema = z.strictObject({
+  name: z.string().regex(/^[a-z][a-z0-9_]{2,40}$/, "Lower snake case, 3 to 41 characters, starting with a letter"),
+  description: z.string().trim().min(1).max(800),
+  inputSchema: ToolInputObjectSchema,
+  code: z.string().min(1),
+  requiredPlugins: z.array(CustomToolPluginIdSchema).min(1).max(8),
+});
+export type SidekickCustomTool = z.infer<typeof SidekickCustomToolSchema>;
+
 export const AutomationDraftSchema = z.object({
   name: z.string().min(1).max(140),
   description: z.string().min(1).max(1200),
@@ -1532,6 +1593,7 @@ export const AutomationDraftSchema = z.object({
   defaultBehavior: z.record(z.string(), z.unknown()).default({}),
   recommendedPlugins: z.array(AutomationPluginRecommendationSchema).default([]),
   memoryTables: z.array(AutomationMemoryTableSchema).default([]),
+  customTools: z.array(SidekickCustomToolSchema).default([]),
   /**
    * Who will be able to see and change this automation, asked before it is
    * submitted because it cannot be changed afterwards. `workstream` is the room
@@ -1554,6 +1616,35 @@ export const AutomationDraftSchema = z.object({
       });
     }
     names.add(normalized);
+  });
+  const toolNames = new Set<string>();
+  const recommended = new Set(draft.recommendedPlugins.map((plugin) => plugin.pluginId));
+  draft.customTools.forEach((tool, index) => {
+    if (toolNames.has(tool.name)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["customTools", index, "name"],
+        message: "Custom tool names must be unique within a Sidekick",
+      });
+    }
+    toolNames.add(tool.name);
+    if (!draft.ready) return;
+    if (draft.triggers.length === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["customTools", index],
+        message: "A custom tool needs a triggered Sidekick; an instruction-only Sidekick is a Skill and carries no tools",
+      });
+    }
+    tool.requiredPlugins.forEach((pluginId, pluginIndex) => {
+      if (pluginId.startsWith("plugin_") && !recommended.has(pluginId)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["customTools", index, "requiredPlugins", pluginIndex],
+          message: `${pluginId} must also be in recommendedPlugins so runs load it before the tool runs`,
+        });
+      }
+    });
   });
   const sourceBindings = new Map<string, { connectorType: string; pluginId: string }>();
   draft.triggers.forEach((trigger, index) => {
@@ -1719,6 +1810,7 @@ export const AutomationRunDefinitionV1Schema = z.strictObject({
     defaultBehavior: z.record(z.string(), z.unknown()),
     recommendedPlugins: z.array(AutomationPluginRecommendationSchema),
     memoryTables: z.array(AutomationMemoryTableSchema),
+    customTools: z.array(SidekickCustomToolSchema).default([]),
   }),
   defaultPluginIds: z.array(ModelPluginIdSchema),
   activitySourcePluginIds: ActivitySourcePluginIdsSchema,

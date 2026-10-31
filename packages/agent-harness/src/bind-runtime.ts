@@ -77,6 +77,7 @@ import {
   type HarnessOutcome,
   type HarnessStartupTiming,
   type HarnessPlugin,
+  type HarnessRuntimeView,
   type HarnessTool,
   type HarnessToolContext,
   type HarnessToolPolicyIdentity,
@@ -477,7 +478,7 @@ class FatalHarnessPortError extends Error {
   }
 }
 
-class AmbiguousExternalWriteError extends Error {
+export class AmbiguousExternalWriteError extends Error {
   constructor(readonly toolCallId: string, message: string) {
     super(message);
     this.name = "AmbiguousExternalWriteError";
@@ -1895,9 +1896,13 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           const recoverableTerminalObservation = structured?.code === "command_outcome_unknown"
             && dispatched.pluginId === "rally:terminal"
             && dispatched.tool.definition.name === "run_command";
-          const ambiguousExternalWrite = (interrupted || ambiguousResponseValidation || recoverableTerminalObservation)
-            && dispatched.tool.definition.mode === "write"
-            && dispatched.tool.definition.idempotency === "record_before_execute";
+          // A tool that dispatches writes of its own (a Code Mode program) raises
+          // this error when one of them is left unknown, and gets the halt a
+          // direct write gets: the receipt, the flag, and the loop stopped.
+          const ambiguousExternalWrite = error instanceof AmbiguousExternalWriteError
+            || ((interrupted || ambiguousResponseValidation || recoverableTerminalObservation)
+              && dispatched.tool.definition.mode === "write"
+              && dispatched.tool.definition.idempotency === "record_before_execute");
           const failureOutcome = ambiguousExternalWrite
             ? "ambiguous_external_write" as const
             : interrupted
@@ -1928,7 +1933,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             }));
             throw new AmbiguousExternalWriteError(
               receiptId,
-              recoverableTerminalObservation
+              error instanceof AmbiguousExternalWriteError
+                ? error.message
+                : recoverableTerminalObservation
                 ? "Terminal command has an unknown provider outcome and must be reconciled from its durable task"
                 : ambiguousResponseValidation
                 ? `Write ${dispatched.tool.definition.name} has an unknown external outcome because its response could not be validated`
@@ -2887,6 +2894,24 @@ async function createPluginRuntime(
     registry.register(plugin);
   }
   const active = new Set(initialActivePlugins(registry.corePlugins()));
+  // The host-authored plugins by id, for the two hooks a plugin may use to see
+  // the run it is in: a per-turn system message rendered from the active set,
+  // and a live view handed over once. A `loadTools` plugin is re-registered
+  // with its loaded tools, but the host object is the same, so the map holds.
+  const harnessPluginById = new Map<string, HarnessPlugin>(
+    [...(input.corePlugins ?? []), ...(input.plugins ?? [])].map((plugin) => [plugin.canonicalId, plugin] as const),
+  );
+  const runtimeView: HarnessRuntimeView = {
+    isActive: (id) => active.has(id),
+    activePlugins: () => [...active].sort().flatMap((id) => {
+      const plugin = harnessPluginById.get(id);
+      return plugin ? [plugin] : [];
+    }),
+    plugins: () => [...harnessPluginById.values()],
+  };
+  for (const plugin of harnessPluginById.values()) plugin.attachRuntimeView?.(runtimeView);
+  const dynamicSystemMessage = (id: string): string | undefined =>
+    harnessPluginById.get(id)?.renderSystemMessage?.(runtimeView);
   // `preload` is a host-side selection hint, not proof that activation crossed
   // the durable boundary. Only IDs the host returns after persistence may be
   // restored into Bind's active surface.
@@ -2988,7 +3013,7 @@ async function createPluginRuntime(
     active,
     skills,
     renderSystemPrompt: (residentSection = null, options) => renderStableSystemPrompt(input.systemPrompt, active, registry, input.config.maxCatalogTokens ?? DEFAULT_CATALOG_TOKENS, skills, residentSection,
-      options?.withPrincipal === false ? "" : input.principalSystemSection ?? ""),
+      options?.withPrincipal === false ? "" : input.principalSystemSection ?? "", dynamicSystemMessage),
     buildWireTools: () => {
       const definitions: ProviderTool[] = [];
       for (const id of [...active].sort()) {
@@ -3130,16 +3155,19 @@ function renderStableSystemPrompt(
    */
   residentSection: string | null = null,
   principalSection = "",
+  /** A plugin's per-turn message, taking precedence over its static one. */
+  dynamicSystemMessage: (id: string) => string | undefined = () => undefined,
 ): RenderedSystemPrompt {
   const activeSections = [...active]
     .sort()
     .flatMap((id) => {
       const plugin = registry.get(id);
-      if (!plugin?.systemMessage) return [];
+      const message = plugin ? dynamicSystemMessage(id) ?? plugin.systemMessage : undefined;
+      if (!plugin || !message) return [];
       const heading = plugin.displayName
         ? `${plugin.modelId} — ${plugin.displayName}`
         : plugin.modelId;
-      return [`## ${heading}\n${plugin.systemMessage}`];
+      return [`## ${heading}\n${message}`];
     });
   const activeModelIds = new Set([...active].flatMap((id) => {
     const plugin = registry.get(id);

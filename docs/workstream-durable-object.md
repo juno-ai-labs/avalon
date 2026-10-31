@@ -1816,7 +1816,7 @@ live state reopens a finished run (see
 | `participant_transcript_turns`, `participant_transcript_blocks`, `participant_transcript_attachments`, `participant_transcript_mentions`, `transcript_facts`, `transcript_payloads`, `content_refs` | One provider-neutral semantic order whose canonical turns reference content-addressed payloads plus exact attachment, mention, and large-content joins. Accepted human and assistant content, identity, and order never change. One stable tool turn may advance only its explicit lifecycle from started to terminal; a different turn under the same client id remains an ignored replay. Terminal residual-receipt repair asynchronously prepares the replacement payload, then commits its fact and tool metadata synchronously so alarm/reaper settlement cannot leave a started card behind. Tool UI rows project only as complete assistant-call/tool-result pairs; pending messages have no canonical order and enter Bind only through the persistent loop's delivery transaction. |
 | `substream_loops`, `pending_loop_inputs`, `delivered_loop_inputs`, `assistant_turn_reservations`, `bind_loop_heads`, `bind_loop_state_messages`, `bind_activation_inputs`, `bind_provider_boundaries` | One persistent loop lifecycle and execution fence, server-authoritative prepared input awaiting atomic promotion, minimal delivery replay identity after promotion, exact canonical slots reserved before assistant generation, the current Bind projection, immutable activation receipts, and provider-boundary hashes. `bind_loop_heads` is the only current Bind metadata authority; ordered message rows reference it directly. Pending inputs have neither transcript nor attention order until delivery; `starts_run = 0` marks one that lands in order but starts no run. |
 | `runs`, `run_scopes`, `run_plugin_activations`, `run_lifecycle_events`, `inference_attempts` | Subordinate execution receipts, frozen authority/context, and provider attempts. A run records restart context and loop provenance but is never the loop identity. |
-| `tool_effects`, `tool_effect_checkpoints`, `attachment_tool_receipts`, `plugin_activation_hints`, `elicitation_requests` | Planned/executed tools, replay fences, resumable activation, and human-input pauses. Each elicitation retains the stable Bind tool slot that its eventual answer must close. |
+| `tool_effects`, `tool_effect_checkpoints`, `attachment_tool_receipts`, `plugin_activation_hints`, `elicitation_requests` | Planned/executed tools, replay fences, resumable activation, and human-input pauses. Each elicitation retains the stable Bind tool slot that its eventual answer must close. A `code_execute` program's nested calls are rows at `<program toolCallId>:call:<index>`; crash repair of an interrupted program names the completed ones in the ambiguity it records ([`code-mode.md`](code-mode.md)). |
 | `active_output_turns`, `active_output_chunks`, `active_agent_compaction`, `realtime_state` | Reconnect-safe partial output keyed by an explicit transient `stream_id`, active compaction phase, and the room sequence. Canonical output identity remains the turn's `turn_id`; `active_agent_compaction` is a singleton operational checkpoint and immutable summary history remains below. |
 | `conversation_suggestions`, `turn_disposition_judgements` | One suggestion per judged turn (merge up, or start a Breakout) with its lifecycle, draft and resolution, and every turn-disposition decision per run; conversation-object schema v75. Owned by [`conversation-suggestions.md`](conversation-suggestions.md). |
 | `transcript_compaction_checkpoints`, `description_refresh_state` | Sequence/revision-fenced context derivations. Checkpoints reference immutable model-only facts per principal/run/sequence so a derived run can bind an exact compaction event rather than mutable “latest” state. |
@@ -1957,6 +1957,26 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-10-31 — Crash repair names a program's completed nested calls
+
+**What changed:** `recoverInterruptedToolBatch`, on an interrupted
+`code_execute` or `custom_<name>` receipt, reads the child receipts at
+`<toolCallId>:call:<index>` and writes which nested calls completed, and which
+are unknown, into the ambiguity reason it records.
+
+**Why:** A program has no re-entry executor (`reenterInterruptedWriteForRecovery`
+answers `no_recovery_executor`), so the repair's old sentence said only that an
+unnamed write could not be confirmed. The children are receipts settled as the
+program ran, so the ledger already knew how far it got; an operator and the
+model reading the ambiguity now learn which writes stand.
+
+**Considered and rejected:** Re-entering the program (the children replay
+through the live `reenterable` path when the run resumes; the repair path has
+no isolate and should not grow one).
+
+**Consequences:** The ambiguity sentence for a program is longer and names
+tools; nothing else in the repair changes.
 
 ### 2026-10-25 — A run's token and cost columns carry its usage
 

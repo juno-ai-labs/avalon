@@ -116,6 +116,8 @@ export function createMultimodalGenerationPlugin(
     return {
       definition: toolDefinitions[name],
       serial: true,
+      // The picture is the result and lives only in this turn; audio is a resource.
+      ...(name === "generate_audio" ? {} : { yieldsContentParts: true as const }),
       validateInput: (input) => {
         const result = schema.safeParse(input);
         return result.success ? null : result.error;

@@ -128,6 +128,7 @@ export function createBrowserPlugin(
       inputSchema: inputSchema(ScriptArgumentsSchema),
     },
     reenterable: true,
+    yieldsContentParts: true,
     execute: async (raw, context): Promise<HarnessToolResult> => {
       const args = ScriptArgumentsSchema.parse(raw);
       const result = await runDesktopAction(executor, input, context, { kind: "browser.script", ...args });

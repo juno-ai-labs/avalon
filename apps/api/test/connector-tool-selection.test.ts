@@ -5,7 +5,7 @@ import type {
   AutomationRunDefinitionV1,
   WorkstreamWorkflowInput,
 } from "@rally/contracts";
-import { runHarness, type HarnessEvent } from "@rally/agent-harness";
+import { customToolIdentityHash, runHarness, type HarnessEvent } from "@rally/agent-harness";
 import { slackTools, notionTools, granolaTools } from "@rally/connectors";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ToolDefinition } from "@rally/contracts";
@@ -516,6 +516,7 @@ function manualDraft(name: string): AutomationDraft {
     defaultBehavior: {},
     recommendedPlugins: [],
     memoryTables: [],
+    customTools: [],
     suggestedScope: "workstream",
     followUpQuestion: null,
     elicitation: null,
@@ -586,6 +587,7 @@ function runDefinition(database: ToolSelectionDatabase): AutomationRunDefinition
       defaultBehavior: {},
       recommendedPlugins: [],
       memoryTables: [],
+      customTools: [],
     },
     defaultPluginIds: database.defaultPluginIds,
     activitySourcePluginIds: {},
@@ -1091,6 +1093,7 @@ describe("connector tools selected for harness runs", () => {
       defaultBehavior: {},
       recommendedPlugins: [],
       memoryTables: [],
+      customTools: [],
       suggestedScope: "personal",
       followUpQuestion: null,
       elicitation: null,
@@ -1260,6 +1263,7 @@ describe("connector tools selected for harness runs", () => {
       defaultBehavior: {},
       recommendedPlugins: [],
       memoryTables: [],
+      customTools: [],
       suggestedScope: "personal",
       followUpQuestion: null,
       elicitation: null,
@@ -1925,6 +1929,58 @@ describe("editing an automation a conversation already owns", () => {
     // to already exists, and its own chat has no room to post a proposal into.
     expect(database.createdAutomations).toEqual([]);
     expect(database.proposedDraftCards).toEqual([]);
+  });
+
+  it("restores a recorded custom tool test from its receipt, so a resumed wizard can submit the tool", async () => {
+    const dayMath = {
+      name: "day_math",
+      description: "Doubles a day count.",
+      inputSchema: { type: "object" as const, properties: { days: { type: "integer", description: "Days to double." } }, required: ["days"], additionalProperties: false as const },
+      code: "return { doubled: input.days * 2 };",
+      requiredPlugins: ["rally_core"],
+    };
+    const draft = { ...manualDraft("Doubler"), customTools: [dayMath], icon: "file-text", color: "blue", sidekickId: null };
+    const untested = new ToolSelectionDatabase([]);
+    const submitUntested = await automationCreatorTool(untested, automationConversationInput(), "submit_draft");
+    await expect(submitUntested.execute(draft, { toolCallId: "submit-untested-tool" } as never))
+      .rejects.toMatchObject({ code: "custom_tool_untested", details: { field: "customTools.0.code" } });
+    expect(untested.submittedDefinitions).toEqual([]);
+
+    const database = new ToolSelectionDatabase([]);
+    database.objectStore.prepare(
+      `INSERT INTO runs
+         (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+          next_action_cursor, input_fence_seq, revision, started_at,
+          active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count,
+          retry_count, tool_count, input_tokens, output_tokens, cost_micros,
+          output_bytes, created_at, updated_at)
+       VALUES (?, '0', 'running', '{}', 0, 0, '', 0, 0, 1,
+               0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1)`,
+    ).run(HARNESS_RUN_ID);
+    database.replayOutputs.set("payloads/tool-test.json", {
+      value: { doubled: 42 }, calls: [], name: "day_math", identityHash: await customToolIdentityHash(dayMath), testedAt: "2026-10-31T00:00:00.000Z",
+    });
+    database.objectStore.prepare(
+      `INSERT INTO tool_effects
+         (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key,
+          tool_name, mode, request_hash, authority_revision, status, tool_call_id,
+          connection_id, input_json, output_ref, output_summary, execution_plan_json,
+          started_at, settled_at)
+       VALUES (?, ?, 0, 1, ?, 'sidekick_tool_test', 'write', ?,
+               'development_fixture', 'completed', 'tool-test-before-eviction',
+               NULL, ?, 'payloads/tool-test.json', 'Tested custom tool day_math', ?, 1, 2)`,
+    ).run(
+      "persisted-tool-test",
+      HARNESS_RUN_ID,
+      "development_fixture:persisted-tool-test",
+      "tool-test-input",
+      JSON.stringify({ tool: dayMath, input: { days: 21 } }),
+      JSON.stringify({ canonicalToolName: "tool_test", capability: "rally.sidekick.tools.test" }),
+    );
+    const submit = await automationCreatorTool(database, automationConversationInput(), "submit_draft");
+    await expect(submit.execute(draft, { toolCallId: "submit-after-tool-test-replay" } as never))
+      .resolves.toMatchObject({ output: { accepted: true } });
+    expect(database.submittedDefinitions).toHaveLength(1);
   });
 
   it("lists only itself from a Sidekick authoring conversation", async () => {

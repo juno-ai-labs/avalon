@@ -87,6 +87,13 @@ export interface Env {
    * to its assets, which is a visible partial failure rather than a dead origin.
    */
   ARTIFACT_LOADER?: WorkerLoader;
+  /**
+   * Cloudflare's Worker Loader again, for `code_execute` programs: a program
+   * runs in a fresh isolate with no network and one capability stub. Optional
+   * for the same reason as `ARTIFACT_LOADER`; absent, the code plugin is not
+   * registered and runs behave as before.
+   */
+  CODE_LOADER?: WorkerLoader;
   ACTIVITY_QUEUE: Queue;
   /** Regional durable hand-off from inference capture to Pipeline ingestion. */
   INFERENCE_LAKEHOUSE_QUEUE?: Queue;
@@ -457,6 +464,7 @@ const EnvContractSchema = z.object({
   CRASH_SYMBOLICATOR: binding<DurableObjectNamespace<CrashSymbolicatorContainer>>(),
   ARTIFACT_HOSTS: binding<DurableObjectNamespace<ArtifactHostDO>>(),
   ARTIFACT_LOADER: binding<WorkerLoader>().optional(),
+  CODE_LOADER: binding<WorkerLoader>().optional(),
   ACTIVITY_QUEUE: binding<Queue>(),
   INFERENCE_LAKEHOUSE_QUEUE: binding<Queue>().optional(),
   ANALYTICS_LAKEHOUSE_QUEUE: binding<Queue>().optional(),

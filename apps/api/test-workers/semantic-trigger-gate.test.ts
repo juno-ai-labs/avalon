@@ -74,6 +74,7 @@ const SEMANTIC_DEFINITION: AutomationDraft = {
   defaultBehavior: {},
   recommendedPlugins: [],
   memoryTables: [],
+  customTools: [],
   suggestedScope: "workspace",
   followUpQuestion: null,
   elicitation: null,
