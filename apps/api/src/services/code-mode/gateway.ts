@@ -36,6 +36,13 @@ export const CUSTOM_TOOLS_PLUGIN_MODEL_ID = "rally_custom_tools";
 export const LOOP_CONTROL_TOOLS: ReadonlySet<string> = new Set(["load_plugin", "load_skill", "request_elicitation"]);
 
 /**
+ * A tool that itself runs a program: the wizard's `sidekick_tool_test`. Not
+ * callable from a program for the reason the two program plugins are not,
+ * since it would start a second isolate and a second receipt tree.
+ */
+export const PROGRAM_RUNNING_CAPABILITIES: ReadonlySet<string> = new Set(["rally.sidekick.tools.test"]);
+
+/**
  * What the gateway needs from the host to make a nested call exactly as Bind
  * makes a direct one: the same authorization hook, the same receipt lookup,
  * the same plan and the same settlement. Built in `runWorkstreamHarness`,
@@ -73,13 +80,30 @@ export interface CodeModeHost {
     connectionId: string | null;
   };
   replayOutput(outputRef: string): Promise<unknown>;
-  complete(input: { invocationId: string; toolCallId: string; tool: HarnessTool; result: HarnessToolResult }): Promise<void>;
+  /**
+   * The call is about to execute: what Bind's `tool_started` tells the host,
+   * so run-scoped observers (the attachment grounding guard) see a nested read
+   * as they see a direct one.
+   */
+  started(call: { toolCallId: string; toolName: string; pluginId: string; policy: HarnessToolPolicyIdentity; input: unknown }): void;
+  complete(input: {
+    invocationId: string;
+    toolCallId: string;
+    pluginId: string;
+    policy: HarnessToolPolicyIdentity;
+    tool: HarnessTool;
+    result: HarnessToolResult;
+  }): Promise<void>;
   fail(input: {
     invocationId: string;
+    toolCallId: string;
+    pluginId: string;
+    policy: HarnessToolPolicyIdentity;
     toolName: string;
     mode: "read" | "write";
     status: "failed" | "ambiguous";
-    phase: string;
+    phase: "validation" | "execution" | "ambiguous_external_write";
+    outcome: "definitive_failure" | "timed_out" | "aborted" | "ambiguous_external_write";
     error: { code: string; message: string; data?: { code: string; details?: Record<string, unknown> } };
   }): Promise<void>;
 }
@@ -132,7 +156,8 @@ export function callableTools(
   return view.activePlugins().flatMap((plugin) => {
     if (plugin.canonicalId === CODE_PLUGIN_ID || plugin.canonicalId === CUSTOM_TOOLS_PLUGIN_ID) return [];
     if (allowedPluginIds && !allowedPluginIds.has(plugin.modelId) && !allowedPluginIds.has(plugin.canonicalId)) return [];
-    const tools = plugin.tools.filter((tool) => !LOOP_CONTROL_TOOLS.has(tool.definition.name) && !tool.yieldsContentParts);
+    const tools = plugin.tools.filter((tool) => !LOOP_CONTROL_TOOLS.has(tool.definition.name)
+      && !PROGRAM_RUNNING_CAPABILITIES.has(tool.definition.capability) && !tool.yieldsContentParts);
     return tools.length ? [{ plugin, tools }] : [];
   });
 }
@@ -319,6 +344,9 @@ export class GatewaySession {
       if (LOOP_CONTROL_TOOLS.has(declared.definition.name)) {
         throw refusal(label, "loop_control", "it is a loop control, not a tool a program can use. Call it directly.", available);
       }
+      if (PROGRAM_RUNNING_CAPABILITIES.has(declared.definition.capability)) {
+        throw refusal(label, "program_in_program", "it runs a program, and a program cannot run another program. Call it directly.", available);
+      }
       throw refusal(label, "turn_scoped_result", "its result is content for the current turn, which a program cannot hold. Call it directly.", available);
     }
     return { plugin: plugin.plugin, tool };
@@ -445,6 +473,7 @@ export class GatewaySession {
     const timeout = new AbortController();
     const timer = setTimeout(() => timeout.abort(new DOMException(`Call exceeded ${timeoutMs} ms`, "TimeoutError")), timeoutMs);
     const toolSignal = abortSignals(signal, timeout.signal);
+    host.started({ toolCallId, toolName: definition.name, pluginId: plugin.canonicalId, policy, input: args });
     let result: HarnessToolResult;
     try {
       result = await raceWithSignal(tool.execute(args, {
@@ -461,12 +490,12 @@ export class GatewaySession {
         signal: toolSignal,
       }), toolSignal);
     } catch (error) {
-      throw await this.failed(index, label, plugin, tool, args, claim.invocationId, error, toolSignal, timeout.signal, record);
+      throw await this.failed(index, label, plugin, tool, args, { invocationId: claim.invocationId, toolCallId, policy }, error, toolSignal, timeout.signal, record);
     } finally {
       clearTimeout(timer);
     }
     try {
-      await host.complete({ invocationId: claim.invocationId, toolCallId, tool, result });
+      await host.complete({ invocationId: claim.invocationId, toolCallId, pluginId: plugin.canonicalId, policy, tool, result });
     } catch (error) {
       this.stop(error);
     }
@@ -488,7 +517,7 @@ export class GatewaySession {
     plugin: HarnessPlugin,
     tool: HarnessTool,
     args: unknown,
-    invocationId: string,
+    receipt: { invocationId: string; toolCallId: string; policy: HarnessToolPolicyIdentity },
     error: unknown,
     toolSignal: AbortSignal,
     timeoutSignal: AbortSignal,
@@ -534,11 +563,15 @@ export class GatewaySession {
           : structured?.code ?? (timeoutSignal.aborted ? "tool_timeout" : interrupted ? "tool_aborted" : "tool_failed");
     try {
       await this.options.host.fail({
-        invocationId,
+        invocationId: receipt.invocationId,
+        toolCallId: receipt.toolCallId,
+        pluginId: plugin.canonicalId,
+        policy: receipt.policy,
         toolName: definition.name,
         mode: definition.mode,
         status: ambiguousExternalWrite ? "ambiguous" : "failed",
         phase: ambiguousExternalWrite ? "ambiguous_external_write" : declaredArgumentError ? "validation" : "execution",
+        outcome: ambiguousExternalWrite ? "ambiguous_external_write" : timeoutSignal.aborted ? "timed_out" : interrupted ? "aborted" : "definitive_failure",
         error: { code, message: message.slice(0, 500), ...(structured ? { data: structured } : {}) },
       });
     } catch (settlementError) {

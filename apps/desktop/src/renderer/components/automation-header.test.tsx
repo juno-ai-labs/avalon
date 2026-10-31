@@ -137,7 +137,7 @@ describe('AutomationHeader', () => {
     const tool = {
       name: 'day_math',
       description: 'Doubles a day count.',
-      inputSchema: { type: 'object' as const, properties: { days: { type: 'integer', description: 'Days to double.' } }, required: ['days'] },
+      inputSchema: { type: 'object' as const, properties: { days: { type: 'integer', description: 'Days to double.' } }, required: ['days'], additionalProperties: false as const },
       code: 'return { doubled: input.days * 2 };',
       requiredPlugins: ['rally_core', 'plugin_slack'],
     };

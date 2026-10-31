@@ -3885,7 +3885,15 @@ export async function runWorkstreamHarness(
       return { plan, compatiblePriorPlans: compatiblePriorReceiptPlans(plan, receiptPolicy), connectionId: receiptPolicy.connectionId };
     },
     replayOutput: (outputRef) => loadToolReplayOutput(env, outputRef),
-    complete: async ({ invocationId, toolCallId, tool, result }) => {
+    // The grounding guard sees a nested attachment read as it sees a direct
+    // one, so a program's successful read clears a failure a direct read
+    // left, and a failed nested read installs the guard. Transcript rows and
+    // events stay the root call's.
+    started: ({ toolCallId, toolName, pluginId, policy, input: callInput }) => {
+      attachmentGrounding.onStarted({ type: "tool_started", toolCallId, toolName, pluginId, policy, input: callInput });
+    },
+    complete: async ({ invocationId, toolCallId, pluginId, policy, tool, result }) => {
+      attachmentGrounding.onCompleted({ type: "tool_completed", toolCallId, toolName: tool.definition.name, pluginId, policy, result });
       await settleRootHarnessToolCompletion(env, input, liveness.lease, {
         invocationId,
         toolCallId,
@@ -3906,7 +3914,11 @@ export async function runWorkstreamHarness(
         ...automationRunProvenance(input),
       });
     },
-    fail: async ({ invocationId, toolName, mode, status, phase, error }) => {
+    fail: async ({ invocationId, toolCallId, pluginId, policy, toolName, mode, status, phase, outcome, error }) => {
+      attachmentGrounding.onFailed({
+        type: "tool_failed", toolCallId, toolName, pluginId, policy, error: error.message,
+        ...(error.data ? { data: error.data } : {}), phase: phase === "validation" ? "validation" : "execution", outcome,
+      });
       if (status === "ambiguous") ambiguousToolOutcome = true;
       await settleRootHarnessToolFailure(
         createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),

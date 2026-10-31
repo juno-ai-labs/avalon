@@ -55,10 +55,21 @@ function renderNamespace(plugin: CodeApiPlugin): string {
   return lines.join("\n");
 }
 
-/** One line, no comment terminators, bounded so a verbose description cannot swamp the section. */
+/**
+ * LIMIT UNSET — open, enforcing nothing. Awaiting a value from the team; see
+ * docs/adding-security-defensive-and-other-limits.md.
+ *
+ * Bounds: characters of one description rendered into a `# Code API` comment.
+ * Without it: a verbose connector description is copied whole into the
+ *   prompt on every turn, once per tool. The wire already carries the same
+ *   description in the tool list, so the block at most doubles that cost.
+ */
+export const CODE_API_DOC_MAX_CHARS = Number.POSITIVE_INFINITY;
+
+/** One line, no comment terminators; bounded only once the team sets `CODE_API_DOC_MAX_CHARS`. */
 function docText(text: string): string {
   const flat = text.replace(/\s+/g, " ").replace(/\*\//g, "* /").trim();
-  return flat.length > 400 ? `${flat.slice(0, 397)}...` : flat;
+  return flat.length > CODE_API_DOC_MAX_CHARS ? `${flat.slice(0, CODE_API_DOC_MAX_CHARS - 3)}...` : flat;
 }
 
 function identifier(name: string): string {
