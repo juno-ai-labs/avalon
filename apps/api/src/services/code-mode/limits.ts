@@ -56,5 +56,15 @@ export const CODE_PROGRAM_LOAD_ALLOWANCE_MS = 15_000;
  */
 export const CODE_RESULT_MAX_BYTES = Number.POSITIVE_INFINITY;
 
+/**
+ * Bind's timer for the tools that run a program: `code_execute`, a saved
+ * `custom_<name>` and the wizard's `sidekick_tool_test`. The deadline plus
+ * the load allowance at both ends, so Bind's clock never fires before the
+ * program's own. One constant so the three tools cannot disagree: a test
+ * that timed out at Bind's 30 s default would refuse a tool that a run could
+ * execute.
+ */
+export const CODE_PROGRAM_TOOL_TIMEOUT_MS = CODE_PROGRAM_DEADLINE_MS + 2 * CODE_PROGRAM_LOAD_ALLOWANCE_MS;
+
 /** The one-line bound on a model-visible error message copied from a program. */
 export const CODE_ERROR_MESSAGE_MAX_CHARS = 500;

@@ -324,7 +324,7 @@ import {
 } from "./conversation-tools";
 import { conversationIdOf } from "../durable-objects/workspace-sidekick-conversation-storage";
 import { createAvalonTerminalPlugin } from "./terminal/plugin";
-import { createCodePlugin, createCustomToolsPlugin, type CodePlugin } from "./code-mode";
+import { CODE_PROGRAM_TOOL_TIMEOUT_MS, createCodePlugin, createCustomToolsPlugin, type CodePlugin } from "./code-mode";
 import { TerminalToolError } from "./terminal/tools";
 import type { WorkstreamRuntimeResourceAttacher } from "./workstream-object-client";
 
@@ -2221,6 +2221,11 @@ function createAvalonAutomationsPlugin(
     // the inspection/evaluator facts a replacement object lost from memory.
     tools: [...plugin.tools.map((tool): HarnessTool => ({
       ...tool,
+      // The test runs a program, so it gets the program's timer: at Bind's
+      // 30 s default a tool a run could execute would be refused at test.
+      ...(tool.definition.name === "tool_test"
+        ? { definition: { ...tool.definition, timeoutMs: CODE_PROGRAM_TOOL_TIMEOUT_MS } }
+        : {}),
       execute: async (raw, context) => {
         await prepare();
         return tool.execute(raw, context);

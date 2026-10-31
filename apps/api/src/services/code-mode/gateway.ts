@@ -1,6 +1,7 @@
 import { RpcTarget } from "cloudflare:workers";
 import { z } from "zod";
 import { MAXIMUM_FAILURE_AVAILABLE_VALUES, readStructuredFailure, type WorkstreamWorkflowInput } from "@rally/contracts";
+import { describeZodIssues, zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import {
   canonicalToolInputHash,
   formatToolArgumentValidationError,
@@ -156,6 +157,28 @@ function ambiguous(label: string): CodeModeToolError {
   );
 }
 
+/**
+ * Bind's own race: a tool that never reads its signal still ends when the
+ * signal fires, so a per-call timer or the run's abort settles the call and
+ * the session's close cannot wait on it forever.
+ */
+async function raceWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) throw signal.reason instanceof Error ? signal.reason : new Error(String(signal.reason));
+  let rejectAbort: ((reason: unknown) => void) | null = null;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAbort = reject;
+  });
+  const onAbort = () => rejectAbort?.(signal.reason instanceof Error ? signal.reason : new Error(String(signal.reason)));
+  signal.addEventListener("abort", onAbort, { once: true });
+  // The abandoned promise must not surface as an unhandled rejection later.
+  promise.catch(() => undefined);
+  try {
+    return await Promise.race([promise, aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
+
 function abortSignals(...signals: AbortSignal[]): AbortSignal {
   const controller = new AbortController();
   for (const signal of signals) {
@@ -232,7 +255,7 @@ export class GatewaySession {
         record.mode = resolved.tool.definition.mode;
         const run = () => this.execute(index, resolved.plugin, resolved.tool, rawInput, record);
         return resolved.tool.serial || resolved.tool.definition.mode === "write"
-          ? await this.serialized(run)
+          ? await this.serialized(run, label)
           : await run();
       } catch (error) {
         if (record.outcome === "refused" && error instanceof CodeModeToolError && error.code === "code_call_refused") {
@@ -255,8 +278,19 @@ export class GatewaySession {
     }
   }
 
-  private serialized<T>(run: () => Promise<T>): Promise<T> {
-    const next = this.serialChain.then(run, run);
+  /**
+   * One write at a time. A call checked the stopped state when it was made;
+   * it checks again when its turn comes, because the call ahead of it may be
+   * the one that stopped the program.
+   */
+  private serialized<T>(run: () => Promise<T>, label: string): Promise<T> {
+    const guarded = () => {
+      if (this.fatal !== null) {
+        throw refusal(label, "program_stopped", "an earlier call failed in a way that stopped the program.", []);
+      }
+      return run();
+    };
+    const next = this.serialChain.then(guarded, guarded);
     this.serialChain = next.catch(() => undefined);
     return next;
   }
@@ -413,7 +447,7 @@ export class GatewaySession {
     const toolSignal = abortSignals(signal, timeout.signal);
     let result: HarnessToolResult;
     try {
-      result = await tool.execute(args, {
+      result = await raceWithSignal(tool.execute(args, {
         workspaceId: input.workspaceId,
         workstreamId: input.parentId,
         harnessRunId: input.harnessRunId,
@@ -425,7 +459,7 @@ export class GatewaySession {
           ? { authorizationContext: decision.authorizationContext }
           : {}),
         signal: toolSignal,
-      });
+      }), toolSignal);
     } catch (error) {
       throw await this.failed(index, label, plugin, tool, args, claim.invocationId, error, toolSignal, timeout.signal, record);
     } finally {
@@ -477,12 +511,17 @@ export class GatewaySession {
     const recoverableTerminalObservation = structured?.code === "command_outcome_unknown"
       && plugin.canonicalId === "rally:terminal" && definition.name === "run_command";
     const ambiguousExternalWrite = (interrupted || ambiguousResponseValidation || recoverableTerminalObservation) && recordBeforeExecuteWrite;
+    // A schema failure downstream of valid arguments names the field it
+    // rejected, as every boundary must: the receipt's code carries the paths
+    // (`tool_response_invalid:<field>`), the sentence Bind would say carries
+    // them too. Paths are schema shape; the rejected values stay out.
+    const rejectedFields = downstreamValidationError ? describeZodIssues(error as z.ZodError) : null;
     const message = declaredArgumentError
       ? formatToolArgumentValidationError(declaredArgumentError)
       : ambiguousResponseValidation
-        ? "The write may have succeeded, but the tool could not validate the provider response. Rally stopped without retrying because repeating the call could duplicate the write."
+        ? `The write may have succeeded, but the tool could not validate the provider response (${rejectedFields}). Rally stopped without retrying because repeating the call could duplicate the write.`
         : downstreamValidationError
-          ? "The tool failed while validating data after accepting its arguments."
+          ? `The tool failed while validating data after accepting its arguments: ${rejectedFields}.`
           : timeoutSignal.aborted
             ? `The call exceeded its ${tool.resolveTimeoutMs?.(args) ?? definition.timeoutMs ?? this.options.host.toolTimeoutMs} ms limit.`
             : error instanceof Error ? error.message : "Tool execution failed";
@@ -490,7 +529,9 @@ export class GatewaySession {
       ? "ambiguous_external_write"
       : declaredArgumentError
         ? "tool_validation_failed"
-        : structured?.code ?? (timeoutSignal.aborted ? "tool_timeout" : interrupted ? "tool_aborted" : "tool_failed");
+        : downstreamValidationError
+          ? zodDiagnosticCode(error, "tool_response") ?? "tool_failed"
+          : structured?.code ?? (timeoutSignal.aborted ? "tool_timeout" : interrupted ? "tool_aborted" : "tool_failed");
     try {
       await this.options.host.fail({
         invocationId,

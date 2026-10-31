@@ -232,6 +232,59 @@ describe("GatewaySession", () => {
     expect(host.fail).toHaveBeenLastCalledWith(expect.objectContaining({ status: "ambiguous" }));
   });
 
+  it("names the rejected field when a tool fails validating data after valid arguments", async () => {
+    const issues = [{ code: "invalid_type" as const, expected: "number" as const, received: "string" as const, path: ["rows", 0, "n"], message: "Expected number" }];
+    const strict = plugin("rally:core", "rally_core", [
+      tool({ name: "read_rows", execute: async () => { throw new z.ZodError(issues as never); } }),
+      tool({ name: "write_rows", mode: "write", execute: async () => { throw new z.ZodError(issues as never); } }),
+    ]);
+    const { host } = await hostOver();
+    const session = new GatewaySession({ host, view: view([strict]), context: context(), input: { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, harnessRunId: RUN_ID }, allowedPluginIds: null });
+    const read = await session.gateway.call("rally_core", "read_rows", {});
+    expect(read).toMatchObject({ ok: false, code: "code_call_failed", error: expect.stringContaining("rows.0.n") });
+    expect(host.fail).toHaveBeenLastCalledWith(expect.objectContaining({ status: "failed", error: expect.objectContaining({ code: expect.stringMatching(/^tool_response_invalid:.*rows/) }) }));
+    const write = await session.gateway.call("rally_core", "write_rows", {});
+    expect(write).toMatchObject({ ok: false, code: "ambiguous_external_write" });
+    expect(host.fail).toHaveBeenLastCalledWith(expect.objectContaining({ status: "ambiguous", error: expect.objectContaining({ code: "ambiguous_external_write", message: expect.stringContaining("rows.0.n") }) }));
+  });
+
+  it("ends a tool that ignores its signal at the per-call timer, so the session can close", async () => {
+    const deaf = plugin("rally:core", "rally_core", [tool({ name: "deaf", execute: () => new Promise(() => undefined), definition: { ...tool({ name: "deaf" }).definition, timeoutMs: 20 } })]);
+    const { host } = await hostOver();
+    const session = new GatewaySession({ host, view: view([deaf]), context: context(), input: { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, harnessRunId: RUN_ID }, allowedPluginIds: null });
+    const started = Date.now();
+    expect(await session.gateway.call("rally_core", "deaf", {})).toMatchObject({ ok: false, code: "code_call_failed", error: expect.stringContaining("20 ms") });
+    await session.close();
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  it("refuses a write queued behind the call that stopped the program", async () => {
+    let authorizations = 0;
+    const executed: string[] = [];
+    const { host, rows } = await hostOver({
+      authorize: vi.fn(async () => {
+        authorizations += 1;
+        if (authorizations === 1) throw new Error("run_authority_lost");
+        return { allowed: true as const };
+      }),
+    });
+    const writes = plugin("rally:core", "rally_core", [
+      tool({ name: "first", mode: "write", execute: async () => { executed.push("first"); return { output: {}, summary: "first" }; } }),
+      tool({ name: "second", mode: "write", execute: async () => { executed.push("second"); return { output: {}, summary: "second" }; } }),
+    ]);
+    const session = new GatewaySession({ host, view: view([writes]), context: context(), input: { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, harnessRunId: RUN_ID }, allowedPluginIds: null });
+    const [first, second] = await Promise.all([
+      session.gateway.call("rally_core", "first", {}),
+      session.gateway.call("rally_core", "second", {}),
+    ]);
+    expect(first).toMatchObject({ ok: false, code: "code_call_refused" });
+    expect(second).toMatchObject({ ok: false, code: "code_call_refused" });
+    expect(session.calls.map((call) => call.refusal)).toEqual(["program_stopped", "program_stopped"]);
+    expect(executed).toEqual([]);
+    expect(authorizations).toBe(1);
+    expect(rows()).toEqual([]);
+  });
+
   it("stops the program when authorization throws, and keeps that error for the host", async () => {
     const authorityLost = new Error("run_authority_lost");
     const { host, rows } = await hostOver({ authorize: vi.fn(async () => { throw authorityLost; }) });
