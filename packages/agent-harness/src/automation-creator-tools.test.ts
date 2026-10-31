@@ -970,7 +970,7 @@ describe("custom tools in the drafting plugin", () => {
     const plugin = createAutomationsPlugin(state);
     const submit = plugin.tools.find((tool) => tool.definition.name === "submit_draft")!;
     const test = plugin.tools.find((tool) => tool.definition.name === "tool_test")!;
-    const context = { workspaceId: "w", workstreamId: "s", harnessRunId: "r", toolCallId: "c", executionPrincipal: { type: "user" as const, userId: "u" }, signal: new AbortController().signal };
+    const context = toolContext;
 
     await expect(submit.execute(readyDraft, context)).rejects.toThrow("Tool day_math has no successful sidekick_tool_test for its current code");
     expect(submitted).toEqual([]);
@@ -998,7 +998,7 @@ describe("custom tools in the drafting plugin", () => {
       },
     }));
     const test = plugin.tools.find((tool) => tool.definition.name === "tool_test")!;
-    const context = { workspaceId: "w", workstreamId: "s", harnessRunId: "r", toolCallId: "c", executionPrincipal: { type: "user" as const, userId: "u" }, signal: new AbortController().signal };
+    const context = toolContext;
     await expect(test.execute({ tool: dayMath, input: { days: "many" } }, context)).rejects.toMatchObject({ code: "custom_tool_input_invalid", details: { field: "input" } });
     await expect(test.execute({ tool: { ...dayMath, requiredPlugins: ["plugin_linear"] }, input: { days: 2 } }, context))
       .rejects.toMatchObject({ code: "custom_tool_plugin_unbound", details: { field: "requiredPlugins", available: ["plugin_slack"] } });

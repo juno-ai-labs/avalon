@@ -669,6 +669,11 @@ correct, and sent the run looking for another event and then a schedule. The
 model already saw `scope: "personal"` beside four healthy-looking triggers and
 reasonably concluded the connection was usable.
 
+A draft may also carry `customTools`, programs the wizard wrote and tested with
+`sidekick_tool_test`; `submit_draft` refuses a ready draft whose tool's current
+code has no recorded test, and a run receives each as `custom_<name>`
+([`code-mode.md`](code-mode.md)).
+
 Instruction-only definitions bypass connector binding, schedule preparation,
 email reservation and memory-table creation. Triggered definitions reuse the
 existing validation and execution setup: bindings resolve against WorkspaceDO,
@@ -1664,6 +1669,36 @@ The Sidekick authoring prompt carries no Google-specific lookup or attachment
 instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
+
+### 2026-10-31 — The wizard saves a tested program as a tool its runs call
+
+**What changed:** The definition gains `customTools`: a name, a model-facing
+description, a plain-object input schema, a program and the plugins it calls.
+The wizard tests a candidate with `sidekick_tool_test`, which runs it for real
+through Code Mode with that plugin allowance and records the code hash;
+`submit_draft` refuses a ready draft whose tool has no recorded test for its
+current code. A run receives every saved tool as `custom_<name>` through the
+always-active `rally:custom-tools` plugin. The profile lists them read-only.
+[`code-mode.md`](code-mode.md) owns the mechanism.
+
+**Why:** The 2026-10-22 entry made the wizard save its tested method as prose,
+and the PostHog report runs showed what prose costs on a weaker model: most of
+each run re-verifying what the wizard had verified, and blocks on arithmetic the
+run re-derived. A program is the method in a form the run executes rather than
+interprets.
+
+**Considered and rejected:** Letting a run paste the saved program into
+`code_execute` itself (the point is that the run never handles the code); a
+separate tools table (a tool is pure definition, unlike a memory table, which
+is shared storage); checking the wizard's receipts from WorkspaceDO at
+publication (a cross-object read on the publish path; the test is buffered in
+the drafting state and restored from receipts instead).
+
+**Consequences:** A tool needs a triggered Sidekick; an instruction-only one is
+a Skill and carries none. A `plugin_*` the tool calls must also be in
+`recommendedPlugins`, so the run has it loaded; `rally_*` plugins need no
+recommendation. A changed program is an untested program again. The review
+revises a tool under the same gate and never adds a plugin through one.
 
 ### 2026-10-30 — A person's check stays; a review removes the wizard's own
 

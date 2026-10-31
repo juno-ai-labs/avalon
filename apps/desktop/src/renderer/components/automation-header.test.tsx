@@ -133,6 +133,30 @@ describe('AutomationHeader', () => {
     expect(handlers.onResume).toHaveBeenCalledOnce();
   });
 
+  it('lists the saved tools with their code behind a disclosure, and no section without any', () => {
+    const tool = {
+      name: 'day_math',
+      description: 'Doubles a day count.',
+      inputSchema: { type: 'object' as const, properties: { days: { type: 'integer', description: 'Days to double.' } }, required: ['days'] },
+      code: 'return { doubled: input.days * 2 };',
+      requiredPlugins: ['rally_core'],
+    };
+    const active: AutomationDetail = {
+      ...draft, status: 'active', lifecycle: 'active', currentDefinitionRevision: 1, acceptedDefinitionRevision: 1,
+      currentDefinition: { ...definition, customTools: [tool] },
+    };
+    const { unmount } = render(<Tooltip.Provider><AutomationHeader automation={active} {...actions()} /></Tooltip.Provider>);
+    const list = screen.getByRole('list', { name: 'Custom tools' });
+    expect(within(list).getByText('custom_day_math')).toBeInTheDocument();
+    expect(within(list).getByText('Doubles a day count.')).toBeInTheDocument();
+    expect(within(list).getByText('Input: days. Uses rally_core.')).toBeInTheDocument();
+    expect(within(list).getByText('return { doubled: input.days * 2 };')).toBeInTheDocument();
+    unmount();
+    render(<Tooltip.Provider><AutomationHeader automation={{ ...active, currentDefinition: definition }} {...actions()} /></Tooltip.Provider>);
+    expect(screen.queryByRole('list', { name: 'Custom tools' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Tools' })).toBeNull();
+  });
+
   it('shows the generated description and triggers without manual publication', () => {
     renderHeader({
       ...draft,
