@@ -14,7 +14,7 @@ import { env } from "cloudflare:workers";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asHarnessRunId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { AuthContext, Env } from "../src/env";
 import {
@@ -242,11 +242,12 @@ describe("code_execute on workerd", () => {
 });
 
 describe("runProgram on workerd", () => {
+  const STUB_RUN_ID = asHarnessRunId("00000000-0000-7000-8000-00000000c0d9");
   const stubSession = () => new GatewaySession({
     host: {} as never,
     view: { isActive: () => false, activePlugins: () => [], plugins: () => [] },
-    context: { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: "run", toolCallId: "call", executionPrincipal: { type: "user", userId: AUTHOR_ID }, signal: new AbortController().signal },
-    input: { workspaceId: WORKSPACE_ID, parentId: ROOM_ID, harnessRunId: "run" },
+    context: { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: STUB_RUN_ID, toolCallId: "call", executionPrincipal: { type: "user", userId: AUTHOR_ID }, signal: new AbortController().signal },
+    input: { workspaceId: WORKSPACE_ID, parentId: ROOM_ID, harnessRunId: STUB_RUN_ID },
     allowedPluginIds: null,
   });
 
@@ -259,6 +260,12 @@ describe("runProgram on workerd", () => {
     expect(run).toMatchObject({ deadlinePassed: true, result: { ok: false, error: { code: "deadline" } } });
     expect(() => finishProgram(run, session.calls, "d", { deadlineMs: 200 })).toThrow(expect.objectContaining({ code: "code_program_timed_out" }));
   });
+
+  // Not here: a program that loops without yielding. The runtime's CPU limit
+  // (`limits.cpuMs`) is what ends it, and the platform enforces that only when
+  // deployed; on local workerd the loop runs until the host process is
+  // stopped, and starves the host's own timers, so the test that proves the
+  // kill cannot run in this suite.
 
   it("gives the program its input, its console and plain JavaScript, and no isolate state from an earlier program", async () => {
     const first = await runProgram({

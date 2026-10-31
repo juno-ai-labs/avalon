@@ -306,6 +306,8 @@ describe("finishProgram", () => {
     expect(code({ result: thrown("code_call_refused", null), deadlinePassed: false }, [])).toBe("code_program_failed");
     expect(code({ result: thrown("deadline", null), deadlinePassed: false }, [])).toBe("code_program_failed");
     expect(code({ result: thrown("deadline", null), deadlinePassed: true }, [])).toBe("code_program_timed_out");
+    // Past the deadline the failure is the deadline whatever the program threw: the runtime's CPU kill is caught like any error.
+    expect(code({ result: thrown(null, null), deadlinePassed: true }, [])).toBe("code_program_timed_out");
   });
 
   it("names the completed writes in every failure, and bounds the result over value and logs", () => {
