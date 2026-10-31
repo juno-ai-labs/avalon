@@ -28,7 +28,7 @@ const workspace = () => env.WORKSPACE_DOS.getByName(workspaceDOName("global", WO
 const child = (id: string) => env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE, SIDEKICK, asSubstreamId(id)));
 const draft: AutomationDraft = { name: "Incident report", description: "Reports incidents", overview: "Report preparation",
   instructions: "List only active incidents, with their owners.", triggers: [{ type: "manual" }], requiredCapabilities: [],
-  expectedOutputs: [], defaultBehavior: {}, recommendedPlugins: [], memoryTables: [], suggestedScope: "personal",
+  expectedOutputs: [], defaultBehavior: {}, recommendedPlugins: [], memoryTables: [], customTools: [], suggestedScope: "personal",
   followUpQuestion: null, elicitation: null, ready: false };
 const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE, parentKind: "automation",
   parentId: SIDEKICK, substreamId: "0", loopId: "wizard-history", harnessRunId: ACTIVATION, triggerMessageId: null,

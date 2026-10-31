@@ -57,7 +57,7 @@ describe("custom MCP connections", () => {
     const saved: AutomationDraft = {
       definitionVersion: 2, name: "Engineering", description: "Inspect Rally", overview: "Inspect Rally",
       instructions: "Inspect the selected Thread.", triggers: [{ type: "manual" }], requiredCapabilities: [],
-      expectedOutputs: [], defaultBehavior: {}, memoryTables: [], suggestedScope: "personal",
+      expectedOutputs: [], defaultBehavior: {}, memoryTables: [], customTools: [], suggestedScope: "personal",
       followUpQuestion: null, elicitation: null, ready: true,
       recommendedPlugins: [{ pluginId: "plugin_custom_mcp", recommendedTools: [], reason: "Inspect Rally" }],
     };

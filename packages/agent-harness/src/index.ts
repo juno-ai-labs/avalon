@@ -153,6 +153,9 @@ export {
   AUTOMATIONS_PLUGIN_ID,
   AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE,
   createAutomationsPlugin,
+  rememberAutomationToolTest,
+  AutomationCreatorToolError,
+  customToolCodeHash,
   rememberAutomationPeopleSearchResult,
   rememberAutomationResourceSearchResult,
   type AutomationCreatorToolHost,
@@ -2692,6 +2695,30 @@ function addressingProviderRouting(model: string): OpenRouterProviderPreferences
   };
 }
 
+/** One saved tool, as `submit_draft` and `sidekick_tool_test` both take it. */
+export const sidekickCustomToolJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    name: { type: "string", pattern: "^[a-z][a-z0-9_]{2,40}$", description: "Lower snake case, unique within the Sidekick; runs call it as custom_<name>." },
+    description: { type: "string", description: "Model-facing: what the tool does, what it returns, and when a run should call it." },
+    inputSchema: {
+      type: "object",
+      description: "A plain JSON Schema object for the tool's input: type \"object\", a properties map with a description on every property, and required. The program receives the validated input as `input`.",
+      properties: {
+        type: { type: "string", enum: ["object"] },
+        properties: { type: "object", additionalProperties: { type: "object", properties: { type: { type: "string" }, description: { type: "string" } }, required: ["description"] } },
+        required: { type: "array", items: { type: "string" } },
+        additionalProperties: { type: "boolean", enum: [false] },
+      },
+      required: ["type", "properties"],
+    },
+    code: { type: "string", minLength: 1, description: "The body of an async JavaScript function with `input` and `tools` in scope, the same API code_execute shows in # Code API. Return the answer the run needs." },
+    requiredPlugins: { type: "array", minItems: 1, items: { type: "string", pattern: "^(plugin|rally)_[a-z][a-z0-9_]{0,62}$" }, description: "The plugin ids the program calls: a connector plugin from plugins_list (which must also be in recommendedPlugins) or one of Rally's own such as rally_core or rally_tables." },
+  },
+  required: ["name", "description", "inputSchema", "code", "requiredPlugins"],
+} as const;
+
 const automationDraftSubmissionJsonSchema = {
   type: "object",
   additionalProperties: false,
@@ -2826,6 +2853,11 @@ const automationDraftSubmissionJsonSchema = {
         required: ["name", "description", "usageInstructions", "columns", "keyColumns"]
       }
     },
+    customTools: {
+      type: "array",
+      description: "Tools this Sidekick's runs call instead of rediscovering a method: each is a tested JavaScript program with a name, a model-facing description and an input schema, offered to every run as custom_<name>. Test each with sidekick_tool_test before submitting; a tool whose current code has no successful test is refused. Use [] when the runs need none.",
+      items: sidekickCustomToolJsonSchema,
+    },
     suggestedScope: {
       type: "string",
       enum: ["personal", "workspace", "workstream"],
@@ -2848,6 +2880,7 @@ const automationDraftSubmissionJsonSchema = {
     "defaultBehavior",
     "recommendedPlugins",
     "memoryTables",
+    "customTools",
     "suggestedScope",
     "ready"
   ]
@@ -3249,6 +3282,7 @@ function normalizeAutomationDraft(value: unknown): unknown {
     requiredCapabilities: [],
     defaultBehavior: parseJsonObject(draft.defaultBehavior),
     memoryTables: Array.isArray(draft.memoryTables) ? draft.memoryTables : [],
+    customTools: Array.isArray(draft.customTools) ? draft.customTools : [],
     ready,
     followUpQuestion: null,
     elicitation: null,
@@ -3879,6 +3913,22 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
     idempotency: "record_before_execute",
     get inputSchema() {
       return automationEvaluatorRulesJsonSchema();
+    },
+  },
+  {
+    name: "tool_test",
+    description: "Run a candidate custom tool once, for real, against live data, and record the successful test for the next submit_draft. Pass the whole tool and a representative input. Writes the program makes are made. A tool whose current code has no successful test is refused at submit.",
+    capability: "rally.sidekick.tools.test",
+    mode: "write",
+    idempotency: "record_before_execute",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        tool: { ...sidekickCustomToolJsonSchema, description: "The tool as it will be submitted: name, description, inputSchema, code, requiredPlugins." },
+        input: { type: "object", description: "Arguments a run would pass, matching tool.inputSchema. Validated before the program runs." },
+      },
+      required: ["tool", "input"],
     },
   },
   {

@@ -165,6 +165,7 @@ const wireAutomationDetail = {
     defaultBehavior: {},
     recommendedPlugins: [],
     memoryTables: [],
+    customTools: [],
     suggestedScope: 'personal' as const,
     followUpQuestion: null,
     elicitation: null,

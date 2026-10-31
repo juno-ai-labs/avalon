@@ -204,7 +204,7 @@ describe("reaching one resource through whichever connection can", () => {
     const address = { workspaceId: WORKSPACE_ID, automationId: WORKSTREAM_ID };
     const draft: AutomationDraft = { name: "Sheet helper", description: "Update the sheet", overview: "Update the sheet",
       instructions: "Read and update the sheet.", definitionVersion: 2, triggers: [{ type: "manual" }],
-      requiredCapabilities: [], expectedOutputs: [], defaultBehavior: {}, recommendedPlugins: [], memoryTables: [],
+      requiredCapabilities: [], expectedOutputs: [], defaultBehavior: {}, recommendedPlugins: [], memoryTables: [], customTools: [],
       suggestedScope: "workspace", followUpQuestion: null, elicitation: null, ready: true };
     await workspaceObject.instance.sidekickSubmitDefinition({ ...address, draft, evaluatorRules: null, submittedByRunId: null });
     const actor = { userId: USER_ID, participantOfOwningWorkstream: false };
