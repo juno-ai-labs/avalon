@@ -1530,7 +1530,10 @@ export const ToolInputObjectSchema = z.looseObject({
     description: z.string().trim().min(1).max(800),
   })).default({}),
   required: z.array(z.string().min(1)).default([]),
-  additionalProperties: z.literal(false).optional(),
+  // Closed by default, so the schema the wizard tests against is the one a
+  // run validates against; an open schema would let a test pass an input a
+  // run then rejects.
+  additionalProperties: z.literal(false).default(false),
 }).superRefine((schema, context) => {
   for (const name of schema.required) {
     if (!(name in schema.properties)) {

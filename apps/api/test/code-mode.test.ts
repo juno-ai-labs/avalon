@@ -103,6 +103,7 @@ async function hostOver(overrides: Partial<CodeModeHost> = {}) {
     toolTimeoutMs: 30_000,
     authorize: vi.fn(async () => ({ allowed: true as const })),
     findCompletedToolResult: vi.fn(async () => null),
+    started: vi.fn(),
     plan: (pluginId, candidate) => ({
       plan: { pluginId, canonicalToolName: candidate.definition.name, capability: candidate.definition.capability, mode: candidate.definition.mode, idempotency: candidate.definition.idempotency, toolSurfaceHash: "surface" },
       compatiblePriorPlans: [],
@@ -126,12 +127,16 @@ describe("callableTools", () => {
   it("offers every active plugin's tools except programs, loop controls and turn-scoped results, narrowed to an allowance", () => {
     const image = tool({ name: "view_image", yieldsContentParts: true });
     const terminal = plugin("rally:terminal", "rally_terminal", [tool({ name: "run_command", mode: "write" }), image]);
+    const testTool = tool({ name: "tool_test", mode: "write" });
+    testTool.definition = { ...testTool.definition, capability: "rally.sidekick.tools.test" };
+    const sidekicks = plugin("rally:sidekicks", "rally_sidekicks", [tool({ name: "plugins_list" }), testTool]);
     const code = plugin(CODE_PLUGIN_ID, CODE_PLUGIN_MODEL_ID, [tool({ name: "execute", mode: "write" })]);
     const custom = plugin(CUSTOM_TOOLS_PLUGIN_ID, CUSTOM_TOOLS_PLUGIN_MODEL_ID, [tool({ name: "day_math", mode: "write" })]);
-    const all = callableTools(view([core, terminal, code, custom]), null);
+    const all = callableTools(view([core, terminal, code, custom, sidekicks]), null);
     expect(all.map((entry) => [entry.plugin.modelId, entry.tools.map((candidate) => candidate.definition.name)])).toEqual([
       ["rally_core", ["current_time"]],
       ["rally_terminal", ["run_command"]],
+      ["rally_sidekicks", ["plugins_list"]],
     ]);
     expect(callableTools(view([core, terminal]), new Set(["rally_core"])).map((entry) => entry.plugin.modelId)).toEqual(["rally_core"]);
   });
@@ -146,7 +151,8 @@ describe("GatewaySession", () => {
     expect(rows()).toEqual([{ tool_call_id: "program-call:call:0", tool_name: "current_time", status: "executing", mode: "read" }]);
     expect(host.authorize).toHaveBeenCalledWith(expect.objectContaining({ pluginId: "rally:core", toolName: "current_time" }));
     expect(host.findCompletedToolResult).toHaveBeenCalledWith("program-call:call:0", expect.any(String), expect.objectContaining({ pluginId: "rally:core", canonicalToolName: "current_time" }), { nested: true });
-    expect(host.complete).toHaveBeenCalledWith(expect.objectContaining({ toolCallId: "program-call:call:0" }));
+    expect(host.started).toHaveBeenCalledWith(expect.objectContaining({ toolCallId: "program-call:call:0", pluginId: "rally:core", input: { n: 2 } }));
+    expect(host.complete).toHaveBeenCalledWith(expect.objectContaining({ toolCallId: "program-call:call:0", pluginId: "rally:core", policy: expect.objectContaining({ canonicalToolName: "current_time" }) }));
     expect(session.calls.map((call) => [call.index, call.tool, call.outcome])).toEqual([[0, "rally_core.current_time", "completed"]]);
   });
 
@@ -227,7 +233,7 @@ describe("GatewaySession", () => {
     const { host } = await hostOver();
     const session = new GatewaySession({ host, view: view([slow]), context: context(), input: { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, harnessRunId: RUN_ID }, allowedPluginIds: null });
     expect(await session.gateway.call("rally_core", "slow_read", {})).toMatchObject({ ok: false, code: "code_call_failed", error: expect.stringContaining("20 ms") });
-    expect(host.fail).toHaveBeenLastCalledWith(expect.objectContaining({ status: "failed", error: expect.objectContaining({ code: "tool_timeout" }) }));
+    expect(host.fail).toHaveBeenLastCalledWith(expect.objectContaining({ status: "failed", outcome: "timed_out", toolCallId: "program-call:call:0", error: expect.objectContaining({ code: "tool_timeout" }) }));
     expect(await session.gateway.call("rally_core", "slow_write", {})).toMatchObject({ ok: false, code: "ambiguous_external_write" });
     expect(host.fail).toHaveBeenLastCalledWith(expect.objectContaining({ status: "ambiguous" }));
   });
