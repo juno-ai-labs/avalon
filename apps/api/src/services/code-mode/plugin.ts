@@ -113,12 +113,14 @@ participant's. \`return\` the smallest value that answers the question. Throw an
 Error for a condition you cannot handle; its message reaches you. console.log
 output comes back with the value.
 
-A tool returns exactly what its direct call returns, and some return text, not
-an object: current_time returns lines, the last one \`iso8601 timestamp: <UTC
-ISO 8601>\`. When you have not seen a tool's output in this conversation, call
-it directly once, or return it unchanged from a short program, before writing
-code that reads its fields; a program that guesses a shape fails and costs a
-run.
+A call inside a program returns the tool's data itself: what a direct result
+shows inside \`data\`, with no \`success\`/\`data\` wrapper around it. Some tools
+return text, not an object: current_time returns lines, the last one \`iso8601
+timestamp: <UTC ISO 8601>\`. When you have not seen a tool's output in this
+conversation, call it directly once, or return it unchanged from a short
+program, before writing code that reads its fields; a program that guesses a
+shape fails and costs a run. Return any id a later step needs, such as a table
+id, together with the answer.
 
 Loops are fine; a program may make as many calls as the work needs. It has
 ${Math.round(CODE_PROGRAM_DEADLINE_MS / 1000)} seconds of runtime, then it is
