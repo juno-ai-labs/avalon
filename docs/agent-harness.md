@@ -1403,7 +1403,11 @@ in-flight receipt even though receipt cancellation has been requested; the
 narrow settlement path still requires the current attempt id, lease owner,
 unexpired lease, `running` parent, and no prior terminalization. A
 `record_before_execute` write remains ambiguous, while a definitive read failure
-remains failed. In every checkpoint, successful-completion, and failure batch,
+remains failed. A tool that dispatches writes of its own (a Code Mode program)
+reports one left unknown by throwing the exported `AmbiguousExternalWriteError`
+itself; Bind's dispatch classifies that as it classifies its own interrupted
+write, so the receipt, the `tool_failed` event, the host's ambiguous flag and
+the loop stop are the same for a nested write as for a direct one. In every checkpoint, successful-completion, and failure batch,
 the live-lease fence admits the checkpoint insert; the immediately following
 receipt update is tied to that admitted checkpoint rather than re-reading
 wall-clock expiry. Crossing the lease deadline between serialized statements

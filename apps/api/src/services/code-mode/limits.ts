@@ -66,5 +66,14 @@ export const CODE_RESULT_MAX_BYTES = Number.POSITIVE_INFINITY;
  */
 export const CODE_PROGRAM_TOOL_TIMEOUT_MS = CODE_PROGRAM_DEADLINE_MS + 2 * CODE_PROGRAM_LOAD_ALLOWANCE_MS;
 
-/** The one-line bound on a model-visible error message copied from a program. */
-export const CODE_ERROR_MESSAGE_MAX_CHARS = 500;
+/**
+ * LIMIT UNSET — open, enforcing nothing. Awaiting a value from the team; see
+ * docs/adding-security-defensive-and-other-limits.md.
+ *
+ * Bounds: characters of a program's or a nested tool's error message copied
+ *   into the failure sentence the model reads and the child receipt records.
+ * Without it: a program that throws a payload as its message puts that
+ *   payload in the transcript and the receipt. Bind's own receipt error
+ *   messages carry no cap either.
+ */
+export const CODE_ERROR_MESSAGE_MAX_CHARS = Number.POSITIVE_INFINITY;

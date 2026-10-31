@@ -24,6 +24,7 @@ import {
   rejectToolModesBeforeCall,
   renderAddressingMessages,
   runHarness,
+  AmbiguousExternalWriteError,
   type AddressingContextMessage,
   type AzureModelPricing,
   type BindLoopTransition,
@@ -5470,6 +5471,60 @@ describe("agent harness", () => {
       outcome: "definitive_failure",
     });
     expect(onAmbiguousExternalWrite).not.toHaveBeenCalled();
+  });
+
+  it("halts when a tool raises the ambiguous-write error for a write it dispatched itself", async () => {
+    const fetcher = vi.fn(async () => streamResponse([{
+      choices: [{
+        delta: { tool_calls: [toolDelta(0, "program-1", "code_execute")] },
+        finish_reason: "tool_calls",
+      }],
+    }])) as typeof fetch;
+    const events: HarnessEvent[] = [];
+    const onAmbiguousExternalWrite = vi.fn();
+    const program: HarnessTool = {
+      definition: {
+        name: "code_execute",
+        description: "Run a program",
+        inputSchema: { type: "object", additionalProperties: false },
+        capability: "code.program.execute",
+        mode: "write",
+        idempotency: "record_before_execute",
+      },
+      // The program's nested write was left unknown; the tool reports it as
+      // Bind reports its own, and gets the same halt.
+      execute: async () => {
+        throw new AmbiguousExternalWriteError("program-1:call:0", "Rally could not confirm whether plugin_slack.post (call 0) completed.");
+      },
+    };
+    const codePlugin: HarnessPlugin = {
+      canonicalId: "rally:code",
+      modelId: "rally_code",
+      shortWireName: "",
+      description: "Code",
+      preload: true,
+      explicit: false,
+      tools: [program],
+    };
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      corePlugins: [codePlugin],
+      onAmbiguousExternalWrite,
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(outcome).toMatchObject({
+      status: "failed",
+      failure: { kind: "ambiguous_external_write", code: "ambiguous_external_write" },
+    });
+    expect(events.find((event) => event.type === "tool_failed")).toMatchObject({
+      outcome: "ambiguous_external_write",
+      error: "Rally could not confirm whether plugin_slack.post (call 0) completed.",
+    });
+    expect(onAmbiguousExternalWrite).toHaveBeenCalledOnce();
+    // One completion request: the loop did not go back to the model.
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it("halts and preserves a Terminal command whose provider observation was lost", async () => {

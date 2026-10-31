@@ -478,7 +478,7 @@ class FatalHarnessPortError extends Error {
   }
 }
 
-class AmbiguousExternalWriteError extends Error {
+export class AmbiguousExternalWriteError extends Error {
   constructor(readonly toolCallId: string, message: string) {
     super(message);
     this.name = "AmbiguousExternalWriteError";
@@ -1896,9 +1896,13 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           const recoverableTerminalObservation = structured?.code === "command_outcome_unknown"
             && dispatched.pluginId === "rally:terminal"
             && dispatched.tool.definition.name === "run_command";
-          const ambiguousExternalWrite = (interrupted || ambiguousResponseValidation || recoverableTerminalObservation)
-            && dispatched.tool.definition.mode === "write"
-            && dispatched.tool.definition.idempotency === "record_before_execute";
+          // A tool that dispatches writes of its own (a Code Mode program) raises
+          // this error when one of them is left unknown, and gets the halt a
+          // direct write gets: the receipt, the flag, and the loop stopped.
+          const ambiguousExternalWrite = error instanceof AmbiguousExternalWriteError
+            || ((interrupted || ambiguousResponseValidation || recoverableTerminalObservation)
+              && dispatched.tool.definition.mode === "write"
+              && dispatched.tool.definition.idempotency === "record_before_execute");
           const failureOutcome = ambiguousExternalWrite
             ? "ambiguous_external_write" as const
             : interrupted
@@ -1929,7 +1933,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             }));
             throw new AmbiguousExternalWriteError(
               receiptId,
-              recoverableTerminalObservation
+              error instanceof AmbiguousExternalWriteError
+                ? error.message
+                : recoverableTerminalObservation
                 ? "Terminal command has an unknown provider outcome and must be reconciled from its durable task"
                 : ambiguousResponseValidation
                 ? `Write ${dispatched.tool.definition.name} has an unknown external outcome because its response could not be validated`
