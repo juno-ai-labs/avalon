@@ -12,7 +12,7 @@ import {
   type HarnessToolResult,
 } from "@rally/agent-harness";
 import { CodeModeToolError } from "./errors";
-import { ENTRY_MODULE, ENTRY_SOURCE, PROGRAM_MODULE, programSyntaxRefusal, wrapProgram } from "./entry-module";
+import { ENTRY_MODULE, ENTRY_SOURCE, PROGRAM_MODULE, wrapProgram } from "./entry-module";
 import {
   CODE_PLUGIN_ID,
   CODE_PLUGIN_MODEL_ID,
@@ -178,10 +178,6 @@ export interface RunProgramInput {
 export async function runProgram(input: RunProgramInput): Promise<ProgramRun> {
   const deadlineMs = input.deadlineMs ?? CODE_PROGRAM_DEADLINE_MS;
   const cpuMs = input.cpuMs ?? CODE_PROGRAM_CPU_MS;
-  const syntaxRefusal = programSyntaxRefusal(input.code);
-  if (syntaxRefusal) {
-    throw new CodeModeToolError("code_program_failed", syntaxRefusal, { reason: "module_syntax", field: "code" });
-  }
   const worker = input.loader.load({
     compatibilityDate: "2026-08-01",
     mainModule: ENTRY_MODULE,

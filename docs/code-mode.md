@@ -23,7 +23,7 @@ verified.
 | --- | --- |
 | `apps/api/src/services/code-mode/plugin.ts` | The `rally:code` plugin and its one tool; `runProgram` (a fresh isolate per program, the deadline race, the parsed answer); `finishProgram` (the result, or the typed failure read from the gateway's own records); `createCustomToolsPlugin`, `runProgramForTool` and `customToolFailure` for a Sidekick's saved tools; the three prompts. |
 | `apps/api/src/services/code-mode/gateway.ts` | `GatewaySession`, one program's calls: the refusal rules, Bind's dispatch order and failure classification, the per-call timer, the closed and stopped states. `CodeToolGateway`, the `RpcTarget` a program holds, forwards its one method to the session. `callableTools` is the one rule for what a program may call. |
-| `apps/api/src/services/code-mode/entry-module.ts` | The isolate's entry module as a string (the `tools` proxy, the console capture, the deadline timer); `wrapProgram`, which always wraps the model's function body; `programSyntaxRefusal`. |
+| `apps/api/src/services/code-mode/entry-module.ts` | The isolate's entry module as a string (the `tools` proxy, the console capture, the deadline timer); `wrapProgram`, which always wraps the model's function body. |
 | `apps/api/src/services/code-mode/limits.ts` | The deadline and the load allowance, both set and provisional; the result bound, `LIMIT UNSET`. |
 | `apps/api/src/services/code-mode/errors.ts` | `CodeModeToolError`: code, sentence, allowlisted details. |
 | `packages/agent-harness/src/code-api.ts` | `renderCodeApi`: tool definitions to the TypeScript declarations in `# Code API`, one per name, in code-unit order. |
@@ -51,9 +51,9 @@ definitions in Bind's order, so a resumed attempt renders the same bytes and
 the provider's cached prefix survives.
 
 The model calls `code_execute({ code, description })`. `code` is the body of an
-async function and is always wrapped as one; a top-level `import` or `export`,
-or an `import()`, is refused by the host before the loader sees it, with a
-sentence saying what to remove. `runProgram` loads a fresh isolate with
+async function and is always wrapped as one; a body that does not compile
+fails as a program, with the compiler's message. `runProgram` loads a fresh
+isolate with
 `CODE_LOADER.load(…)`, `globalOutbound: null` and an empty `env`: `load`, not
 `get`, because an isolate kept by name would carry one program's globals into
 the next program of the same conversation. It then calls the entry module's
@@ -102,8 +102,9 @@ everything else is a definitive failure with the tool's own code. Writes and
 `serial` tools run one at a time per program; reads run as the program asks.
 
 The session has a lifetime. When the program returns, the tool closes it:
-calls still running are aborted and awaited, and a call made after return is
-refused. A thrown authorization or settlement is fatal: the program is stopped,
+calls still running are awaited, not aborted (a write the program did not
+await is still a write, and cutting it off would make its receipt ambiguous),
+and a call made after return is refused. A thrown authorization or settlement is fatal: the program is stopped,
 every later call is refused, and the tool rethrows the host's error to Bind
 once the isolate has answered, so the run sees the real failure rather than
 the program's account of it. The program's own tool is `reenterable`: an
@@ -116,7 +117,8 @@ replay through the same lookup a direct call uses.
 code, requiredPlugins }`. `requiredPlugins` names connector plugins
 (`plugin_*`, each of which must also be in `recommendedPlugins` so the run has
 it loaded) or one of `CUSTOM_TOOL_RALLY_PLUGIN_IDS`: `rally_core`,
-`rally_tables`, `rally_memory`, the three every run holds. The wizard tests a
+`rally_tables`, `rally_memory`, which every run holds, or `rally_web`, which a
+run loads when the tool's refusal tells it to. The wizard tests a
 candidate with `sidekick_tool_test`, which runs the program through the same
 executor narrowed to `requiredPlugins`, with the validated input in scope as
 `input`, and records the tool's identity hash (code, input schema and plugins
@@ -160,7 +162,7 @@ takes the saved schema and returns what `code_execute` returns.
 | `code_call_refused` | A nested call was refused by name | which name, why, and to call it directly or load the plugin |
 | `code_call_failed` | A nested call ran and failed, or rejected its arguments | the call index, the tool, the tool's own message, and the completed writes |
 | `ambiguous_external_write` | A nested record-before-execute write has an unknown outcome | the call, "do not repeat it", and to stop |
-| `code_program_failed` | The program threw, did not compile, used module syntax, or returned an unserializable value | the message and what to fix |
+| `code_program_failed` | The program threw, did not compile, or returned an unserializable value | the message and what to fix |
 | `code_program_timed_out` | The program ran past `CODE_PROGRAM_DEADLINE_MS` | the deadline, the call count, and the completed writes |
 | `code_result_too_large` | Value plus logs exceed `CODE_RESULT_MAX_BYTES` | the sizes and to return the answer, not the data |
 | `code_unavailable` | No host is attached (no `CODE_LOADER`) | to call the tools directly |
@@ -220,11 +222,13 @@ the same settlement, under the run's execution principal. A program therefore
 has the authority of the model that wrote it and no more, and a program's
 writes are as visible in the ledger as the model's own.
 
-The module shape is the host's: the body is always wrapped, and module syntax
-is refused by text before loading. A body that escaped its braces could run at
-module top level, but the isolate holds nothing for it to reach: no `env`, no
-network, and `cloudflare:workers` imports yield classes with nothing to call.
-The isolate is fresh per program, so no global state crosses programs or runs.
+The module shape is the host's: the body is always wrapped. A body that
+escaped its braces could run at module top level, but the isolate holds
+nothing for it to reach: no `env`, no network, and `cloudflare:workers`
+imports yield classes with nothing to call. No textual refusal stands in front
+of the loader for that reason; one did, and it guarded nothing while risking
+a false match on a string that began a line with `export`. The isolate is
+fresh per program, so no global state crosses programs or runs.
 
 What the program returns is data. `finishProgram` parses the isolate's answer
 with a schema, derives the failure code from the gateway's own records rather
@@ -271,7 +275,7 @@ own.
 - **No `CODE_LOADER` binding:** neither plugin is registered; runs behave as
   before. The wizard has no `sidekick_tool_test` and no custom-tool guide, and a
   submitted tool is refused as untested.
-- **A program throws, does not compile, or uses module syntax:**
+- **A program throws or does not compile:**
   `code_program_failed` with the message and the completed writes. The run
   continues.
 - **A program outlives its runtime:** `code_program_timed_out`. Loops are
@@ -295,8 +299,9 @@ own.
   it would from a direct call.
 - **A saved tool's plugin is not loaded in the run:** `custom_tool_unavailable`
   telling the run to load it. A `plugin_*` entry reaches a run preloaded
-  because the schema requires it in `recommendedPlugins`; the three Rally
-  plugins are always active.
+  because the schema requires it in `recommendedPlugins`; `rally_core`,
+  `rally_tables` and `rally_memory` are always active, and `rally_web` is
+  loaded on that refusal.
 
 Limits, for the team to confirm or move
 ([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)):
@@ -320,7 +325,7 @@ otherwise: the loader compiles what it is given, the deadline ends a loop
   halt without executing, every refusal reason, argument rejection with no
   receipt, Bind's failure classification, the per-call timer, a fatal
   authorization, closing with a call in flight); `finishProgram` deriving codes
-  from records; `customToolFailure`; `wrapProgram` and `programSyntaxRefusal`;
+  from records; `customToolFailure`; `wrapProgram`;
   `EntryResultSchema`. Run with
   `pnpm --filter @rally/api exec vitest run test/code-mode.test.ts`.
 - `apps/api/test-workers/code-mode.test.ts` (workerd): a room run with the
@@ -405,7 +410,7 @@ telemetry, and crash repair names the completed ones. The gateway exposes one
 method and a program cannot run a program, call a loop control, or call a tool
 whose result is current-turn content. A saved tool's identity is its code,
 input schema and plugins together; `requiredPlugins` admits connector plugins
-and `rally_core`, `rally_tables` and `rally_memory`, and a connector plugin
+and `rally_core`, `rally_tables`, `rally_memory` and `rally_web`, and a connector plugin
 must also be in `recommendedPlugins`. The program deadline is provisional at
 120 s, enforced by the entry's timer for a waiting program and by the
 runtime's CPU limit for a busy one; the result bound is the one open limit,

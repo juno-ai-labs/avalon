@@ -13,7 +13,7 @@ export {
   type RecordedCall,
   type RefusalReason,
 } from "./gateway";
-export { ENTRY_SOURCE, programSyntaxRefusal, wrapProgram } from "./entry-module";
+export { ENTRY_SOURCE, wrapProgram } from "./entry-module";
 export {
   CODE_API_FRAMING,
   CODE_PLUGIN_DESCRIPTION,

@@ -1541,13 +1541,15 @@ export const ToolInputObjectSchema = z.looseObject({
 export type ToolInputObject = z.infer<typeof ToolInputObjectSchema>;
 
 /**
- * Rally's own plugins a saved tool may call. Every run holds these three, so
- * a tool over them needs no recommendation to be loadable. The rest of Rally's
- * built-ins are left out on purpose: `rally_web` and `rally_terminal` are
- * loadable, not always active, and `rally_sidekicks` and `rally_conversations`
- * act on the run's own conversation, which is the run's to decide.
+ * Rally's own plugins a saved tool may call. Every run holds the first three,
+ * so a tool over them needs no recommendation to be loadable; `rally_web` is
+ * loadable, and a run that has not loaded it is told to and calls the tool
+ * again. The rest of Rally's built-ins are left out on purpose:
+ * `rally_terminal` is a machine with a sandbox to acquire, and
+ * `rally_sidekicks` and `rally_conversations` act on the run's own
+ * conversation, which is the run's to decide.
  */
-export const CUSTOM_TOOL_RALLY_PLUGIN_IDS = ["rally_core", "rally_tables", "rally_memory"] as const;
+export const CUSTOM_TOOL_RALLY_PLUGIN_IDS = ["rally_core", "rally_tables", "rally_memory", "rally_web"] as const;
 
 /**
  * A plugin a saved tool may call: a connector plugin (`plugin_*`, which must
