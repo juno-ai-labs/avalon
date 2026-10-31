@@ -1746,8 +1746,11 @@ describe("SidekickCustomToolSchema on a draft", () => {
     code: "return input.days * 2;", requiredPlugins: ["rally_core"],
   };
 
-  it("accepts a tool over a Rally plugin and defaults customTools to none", () => {
-    expect(AutomationDraftSchema.parse({ ...baseDraft, customTools: [dayMath] }).customTools).toHaveLength(1);
+  it("accepts a tool over a Rally plugin, closes its input schema, and defaults customTools to none", () => {
+    const parsed = AutomationDraftSchema.parse({ ...baseDraft, customTools: [dayMath] });
+    expect(parsed.customTools).toHaveLength(1);
+    // Closed by default: the schema the wizard tests against is the one a run validates against.
+    expect(parsed.customTools[0]!.inputSchema.additionalProperties).toBe(false);
     expect(AutomationDraftSchema.parse(baseDraft).customTools).toEqual([]);
   });
 

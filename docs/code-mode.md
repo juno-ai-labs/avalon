@@ -78,9 +78,10 @@ that completed, so the model never repeats them.
 
 `GatewaySession.call(plugin, tool, input)` resolves the tool against the run's
 active plugins through the runtime view and refuses by name, with a reason
-code: a plugin not in the run, the two program plugins (a program cannot run a
-program), a plugin outside a saved tool's `requiredPlugins`, a plugin not
-loaded, a loop control (`load_plugin`, `load_skill`, `request_elicitation`),
+code: a plugin not in the run, the two program plugins and the wizard's
+`sidekick_tool_test` (a program cannot run a program), a plugin outside a
+saved tool's `requiredPlugins`, a plugin not loaded, a loop control
+(`load_plugin`, `load_skill`, `request_elicitation`),
 a tool whose result is current-turn content (`yieldsContentParts`: `view_image`,
 `view_resource`, `browser_js`, the image generators), a tool the plugin does
 not have. Only "not loaded" is something the run can fix, and the sentence
@@ -91,7 +92,10 @@ normalize and validate the arguments (a bad argument is a correctable error
 with no receipt), hash them, run `beforeToolCall`, ask the host's
 `findCompletedToolResult` for the child at `<program toolCallId>:call:<index>`
 (a replay, a replay refusal, an ambiguous halt, or nothing), record the plan
-with `persistToolExecutionPlan`, execute through `HarnessTool.execute` with the
+with `persistToolExecutionPlan`, tell the host the call started (the attachment
+grounding guard sees a nested read as it sees a direct one, so a program's
+successful read clears a failure a direct read left), execute through
+`HarnessTool.execute` with the
 run's principal, the child's own `effectIntentId` and a signal that aborts on
 the run, on a host failure and on the tool's own timer (the execution is raced
 against that signal, as Bind races it, so a tool that never reads its signal
@@ -120,7 +124,9 @@ replay through the same lookup a direct call uses.
 ### A Sidekick's saved tools
 
 `customTools` on the definition carries `{ name, description, inputSchema,
-code, requiredPlugins }`. `requiredPlugins` names connector plugins
+code, requiredPlugins }`; `inputSchema` is a described plain object and is
+closed (`additionalProperties: false`) by default, so the schema the wizard
+tests against is the one a run validates against. `requiredPlugins` names connector plugins
 (`plugin_*`, each of which must also be in `recommendedPlugins` so the run has
 it loaded) or one of `CUSTOM_TOOL_RALLY_PLUGIN_IDS`: `rally_core`,
 `rally_tables`, `rally_memory`, which every run holds, or `rally_web`, which a
@@ -320,6 +326,7 @@ Limits, for the team to confirm or move
 | `CODE_PROGRAM_TOOL_TIMEOUT_MS` | deadline plus twice the allowance | follows the deadline | Bind's 30 s default would end `code_execute`, a saved tool or the wizard's test before the program's own clock |
 | `CODE_RESULT_MAX_BYTES` | `+Infinity` | LIMIT UNSET | a program returns the data instead of the answer and fills the context |
 | `CODE_ERROR_MESSAGE_MAX_CHARS` | 500 | set | a tool's message swamps the failure sentence |
+| `CODE_API_DOC_MAX_CHARS` (`packages/agent-harness/src/code-api.ts`) | `+Infinity` | LIMIT UNSET | a verbose connector description is copied whole into `# Code API` on every turn, once per tool; the wire already carries it once |
 
 Program bytes, calls per program and log bytes have no guard, written open or
 otherwise: the loader compiles what it is given, the deadline ends a loop
