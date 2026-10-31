@@ -134,11 +134,11 @@ stopped; split work larger than that across programs.
 
 A write made from a program is made for real. Compute first and write last, so a
 failure before the write leaves nothing half done. Before it runs, a program is
-checked and refused by line, with nothing written, when a write is not awaited
-where it is called, sits inside try/catch/finally, runs inside Promise.all or a
-map/forEach callback, or when a program that writes reads Date.now(), new Date()
-or Math.random(). Await each write in order, in a for...of loop when there are
-several, and take the time from the time tool. When Rally re-runs an
+checked and refused by line, with nothing written, when a write's promise is
+dropped, when a write runs inside Promise.all or a map/forEach callback, or when
+a program that writes reads Date.now(), new Date() or Math.random(). Await each
+write in order, in a for...of loop when there are several, and take the time
+from the time tool. When Rally re-runs an
 interrupted program, calls that already completed replay instead of running
 again; a program you send again is a new run and repeats its writes. A failed
 program names the call that failed and the writes that stand. Correct the
@@ -354,9 +354,13 @@ export interface CodePlugin {
   plugin: HarnessPlugin;
   /** Bind the host seams once the run's lease and hooks exist. */
   attachHost(host: CodeModeHost): void;
-  /** Run a saved tool's program with its declared plugin allowance. */
+  /**
+   * Run a saved tool's program with its declared plugin allowance. `checked`
+   * says the code already passed the pre-run check with this identity (the
+   * wizard's test ran it), so a run does not parse it again.
+   */
   runProgramForTool(
-    run: { tool: SidekickCustomTool; input: unknown; context: HarnessToolContext },
+    run: { tool: SidekickCustomTool; input: unknown; context: HarnessToolContext; checked?: boolean },
     options: { loader: WorkerLoader; input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "harnessRunId"> },
   ): Promise<HarnessToolResult>;
 }
@@ -401,8 +405,8 @@ async function executeProgram(input: {
   session: GatewaySession;
   loader: WorkerLoader;
   code: string;
-  /** `<plugin>.<tool>` of every callable write, for the pre-run check. */
-  writeTools: ReadonlySet<string>;
+  /** `<plugin>.<tool>` of every callable write, for the pre-run check; null skips the check for code it already passed. */
+  writeTools: ReadonlySet<string> | null;
   api: Record<string, string[]>;
   programInput: unknown;
   signal: AbortSignal;
@@ -412,7 +416,7 @@ async function executeProgram(input: {
   const { session } = input;
   let run: ProgramRun;
   try {
-    refuseFlaggedProgram(input.code, input.writeTools);
+    if (input.writeTools !== null) refuseFlaggedProgram(input.code, input.writeTools);
     run = await runProgram({
       loader: input.loader,
       code: input.code,
@@ -492,7 +496,7 @@ export function createCodePlugin(options: {
     attachHost: (attached) => {
       host = attached;
     },
-    runProgramForTool: async ({ tool, input, context }, runOptions) => {
+    runProgramForTool: async ({ tool, input, context, checked = false }, runOptions) => {
       if (!host || !view) throw unavailable();
       const allowed = new Set(tool.requiredPlugins);
       const callable = callableTools(view, allowed);
@@ -509,7 +513,7 @@ export function createCodePlugin(options: {
         session,
         loader: runOptions.loader,
         code: tool.code,
-        writeTools: writeToolKeys(callable),
+        writeTools: checked ? null : writeToolKeys(callable),
         api: apiNames(callable),
         programInput: input,
         signal: context.signal,
@@ -606,7 +610,9 @@ export async function createCustomToolsPlugin(
         const argumentError = validateToolArguments(raw, inputSchema);
         if (argumentError) throw argumentError;
         try {
-          return await codePlugin.runProgramForTool({ tool, input: raw, context }, options);
+          // The identity hash the test gate recorded covers this code, so the
+          // check it passed then is not repeated on every run.
+          return await codePlugin.runProgramForTool({ tool, input: raw, context, checked: true }, options);
         } catch (error) {
           return customToolFailure(tool.name, error);
         }

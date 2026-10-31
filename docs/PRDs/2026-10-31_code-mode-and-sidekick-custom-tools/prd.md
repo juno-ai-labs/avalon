@@ -464,17 +464,21 @@ done.
 ### 2026-10-31 — A program is checked before it runs
 
 **Decided:** The executor parses every program (acorn, on the wrapped body)
-and refuses it before an isolate is loaded when a write is not awaited where it
-is called, sits inside `try`/`catch`/`finally`, runs inside `Promise.all` or a
-`map`/`forEach` callback, or when a program that writes reads the clock or a
-random number. The refusal is `code_program_rejected`, by line, with nothing
-written; a saved tool meets the same check at test and at run.
+and refuses it before an isolate is loaded when a write's promise is dropped,
+when a write runs inside `Promise.all` or a `map`/`forEach` callback, or when
+a program that writes reads the clock or a random number. The refusal is
+`code_program_rejected`, by line, with nothing written. A saved tool meets the
+check at the wizard's test; its runs do not parse it again. A write inside
+`try`/`catch` is not refused.
 
 **Why:** The halt on an ambiguous write and the naming of completed writes act
 after a write was made. These shapes are the ones in which the program cannot
-know a write's outcome, or a re-run cannot match it by input hash. A parse is
-cheaper than an isolate and far cheaper than a half-made write. Best effort by
-design: direct call shapes only; the gateway stays the authority.
+know a write's outcome, or a re-run cannot match it by input hash. The parse of
+a three-kilobyte program is 0.3 ms median on Node; a refusal the model did not
+deserve is a model turn. So each rule is one with no legitimate program on the
+other side, and a caught failure, which the gateway already classifies as not
+made or halts, is left alone. Best effort by design: direct call shapes only;
+the gateway stays the authority.
 
 **Changes:** Open question 1 narrows: reads may run concurrently in a program,
 writes are sequential by rule. Writes in loops and several write sites in one
