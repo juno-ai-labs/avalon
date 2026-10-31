@@ -30,6 +30,7 @@ import {
   CODE_PROGRAM_CPU_MS,
   CODE_PROGRAM_DEADLINE_MS,
   CODE_PROGRAM_LOAD_ALLOWANCE_MS,
+  CODE_PROGRAM_TOOL_TIMEOUT_MS,
   CODE_RESULT_MAX_BYTES,
 } from "./limits";
 
@@ -77,7 +78,7 @@ const CODE_EXECUTE_DEFINITION: HarnessTool["definition"] = {
   capability: "code.program.execute",
   mode: "write",
   idempotency: "record_before_execute",
-  timeoutMs: CODE_PROGRAM_DEADLINE_MS + 2 * CODE_PROGRAM_LOAD_ALLOWANCE_MS,
+  timeoutMs: CODE_PROGRAM_TOOL_TIMEOUT_MS,
   inputSchema: {
     type: "object",
     additionalProperties: false,
@@ -548,7 +549,7 @@ export async function createCustomToolsPlugin(
         capability: "sidekick.tools.run",
         mode: "write",
         idempotency: "record_before_execute",
-        timeoutMs: CODE_PROGRAM_DEADLINE_MS + 2 * CODE_PROGRAM_LOAD_ALLOWANCE_MS,
+        timeoutMs: CODE_PROGRAM_TOOL_TIMEOUT_MS,
         providerOperationName: `custom:${identity}`,
         inputSchema,
       },
