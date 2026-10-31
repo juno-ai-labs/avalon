@@ -922,8 +922,12 @@ step comes next stay in the instructions with judgement, formatting and
 delivery; the tool holds the deterministic part. A test performs its writes: test a writing tool against a
 scratch table or accept the test's row, and leave an external delivery out of
 the tool when it is not wanted during setup. Every connector plugin a tool calls
-goes in recommendedPlugins. Change a saved tool's code only if its program makes
-no writes; otherwise submit nothing and report the defect.`;
+goes in recommendedPlugins. A changed tool is a new tool: test it again, against
+a scratch table or accepting the test's row when it writes. In a self-review,
+tools change with the procedure: a deterministic step the runs re-derived or
+got wrong (date bounds, pagination, a union, a count) becomes a tool, a tool the
+runs misused or no longer need is rewritten or removed, and the plan names each.
+A tool is part of the procedure, not a new capability.`;
 
 /**
  * Drafting tools for a Sidekick's own authoring conversation. The host controls

@@ -156,7 +156,13 @@ input, and a tool does not compute and write in one call when the run should
 read the result first. A tool that writes takes what it writes as input and
 never reads the clock to decide whether to act. The decisions (whether to post, whether it is time,
 which step is next) stay in the instructions; a smaller model running the
-Sidekick reads a narrow contract correctly where a wide one makes it guess. The schema refuses, by
+Sidekick reads a narrow contract correctly where a wide one makes it guess. In
+a self-review, the guide has tools change with the procedure: a deterministic
+step the runs re-derived or got wrong becomes such a tool, a tool the runs
+misused or no longer need is rewritten or removed, and the plan names each; a
+tool is part of the procedure, not a new capability, so the review's rule
+against adding one does not stop it. A changed tool is tested again before it
+is saved. The schema refuses, by
 field, a tool on an instruction-only Sidekick, a `plugin_*` entry missing from
 `recommendedPlugins`, and a Rally plugin outside the allowlist.
 
