@@ -1430,6 +1430,7 @@ export class HostedSidekick {
         defaultBehavior: definition.defaultBehavior,
         recommendedPlugins: definition.recommendedPlugins,
         memoryTables: definition.memoryTables,
+        customTools: definition.customTools,
       },
       defaultPluginIds: JSON.parse(sidekick.default_plugin_ids_json),
       activitySourcePluginIds: JSON.parse(sidekick.activity_source_plugin_ids_json),

@@ -7,6 +7,9 @@ import {
   createAutomationsPlugin,
   rememberAutomationPeopleSearchResult,
   rememberAutomationResourceSearchResult,
+  rememberAutomationToolTest,
+  customToolIdentityHash,
+  CUSTOM_TOOLS_GUIDE,
   type AutomationCreatorToolHost,
 } from "./automation-creator-tools";
 import { AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS } from "./index";
@@ -45,6 +48,7 @@ const eventDrivenDraft = {
   defaultBehavior: {},
   recommendedPlugins: [],
   memoryTables: [],
+  customTools: [],
   suggestedScope: "personal",
   followUpQuestion: null,
   elicitation: null,
@@ -127,6 +131,8 @@ describe("the automations plugin", () => {
     // From one definition rather than a second copy: these tools decide what a
     // draft may say, and two answers to that is two products. The list is the
     // one addition: an edit starts from a definition the conversation owns.
+    // `tool_test` is the one subtraction: this host has no program runtime, so
+    // the tool that would run one is not offered.
     expect(names).toEqual([
       "plugins_list",
       "plugins_search",
@@ -703,6 +709,7 @@ describe("set_evaluator_rules echoes the bindings the submitted draft declares",
     defaultBehavior: {},
     recommendedPlugins: [],
     memoryTables: [],
+    customTools: [],
     suggestedScope: "personal",
     followUpQuestion: null,
     elicitation: null,
@@ -820,6 +827,7 @@ describe("a composed source binding key is enough on its own", () => {
     defaultBehavior: {},
     recommendedPlugins: [],
     memoryTables: [],
+    customTools: [],
     suggestedScope: "workspace",
     followUpQuestion: null,
     elicitation: null,
@@ -935,5 +943,130 @@ describe("a connection whose scope cannot receive its connector's events", () =>
         when: { kind: "always" },
       }],
     }, toolContext)).rejects.toThrow(/Granola events reach Rally only through a workspace connection/u);
+  });
+});
+
+describe("custom tools in the drafting plugin", () => {
+  const dayMath = {
+    name: "day_math",
+    description: "Doubles a day count.",
+    inputSchema: { type: "object" as const, properties: { days: { type: "integer", description: "Days to double." } }, required: ["days"], additionalProperties: false as const },
+    code: "return { doubled: input.days * 2 };",
+    requiredPlugins: ["rally_core"],
+  };
+  const readyDraft = {
+    ...eventDrivenDraft,
+    triggers: [{ type: "manual" }],
+    customTools: [dayMath],
+  };
+
+  it("refuses a ready draft whose tool's current code was never tested, and admits it once it was", async () => {
+    const submitted: unknown[] = [];
+    const tested: unknown[] = [];
+    const state = host({
+      draftMutationPort: {
+        submitDraft: async (draft) => { submitted.push(draft); return { accepted: true }; },
+        setEvaluatorRules: async () => ({ accepted: true as const }),
+        testTool: async (tool, input) => { tested.push({ tool: tool.name, input }); return { output: { value: { doubled: 42 }, calls: [] } }; },
+      },
+    });
+    const plugin = createAutomationsPlugin(state);
+    const submit = plugin.tools.find((tool) => tool.definition.name === "submit_draft")!;
+    const test = plugin.tools.find((tool) => tool.definition.name === "tool_test")!;
+    const context = toolContext;
+
+    await expect(submit.execute(readyDraft, context)).rejects.toMatchObject({
+      code: "custom_tool_untested",
+      message: expect.stringContaining("Tool day_math has no successful sidekick_tool_test"),
+      details: { field: "customTools.0.code" },
+    });
+    expect(submitted).toEqual([]);
+
+    const result = await test.execute({ tool: dayMath, input: { days: 21 } }, context);
+    expect(tested).toEqual([{ tool: "day_math", input: { days: 21 } }]);
+    expect(result.output).toMatchObject({ name: "day_math", value: { doubled: 42 }, identityHash: await customToolIdentityHash(dayMath) });
+    expect([...state.draftState.toolTests!.get("day_math")!]).toEqual([await customToolIdentityHash(dayMath)]);
+
+    await submit.execute(readyDraft, context);
+    expect(submitted).toHaveLength(1);
+
+    // A changed program, schema or plugin list is an untested tool again; an
+    // earlier tested version stays tested beside the new one.
+    await expect(submit.execute({ ...readyDraft, customTools: [{ ...dayMath, code: "return 1;" }] }, context))
+      .rejects.toMatchObject({ code: "custom_tool_untested" });
+    await expect(submit.execute({ ...readyDraft, customTools: [{ ...dayMath, requiredPlugins: ["rally_tables"] }] }, context))
+      .rejects.toMatchObject({ code: "custom_tool_untested" });
+    await test.execute({ tool: { ...dayMath, code: "return 1;" }, input: { days: 1 } }, context);
+    expect(state.draftState.toolTests!.get("day_math")!.size).toBe(2);
+    await submit.execute(readyDraft, context);
+    expect(submitted).toHaveLength(2);
+  });
+
+  it("admits a tool the target Sidekick already saves unchanged, and still refuses a changed one, without a new test", async () => {
+    const SAVED_SIDEKICK_ID = "00000000-0000-4000-8000-0000000000a1";
+    const submitted: unknown[] = [];
+    const state = host({
+      automationDirectoryPort: {
+        listAutomations: async () => ({ sidekicks: [{ sidekickId: SAVED_SIDEKICK_ID, canEdit: true, name: "Day math", currentDefinition: { customTools: [dayMath] } }] }),
+      },
+      draftMutationPort: {
+        submitDraft: async (draft) => { submitted.push(draft); return { accepted: true }; },
+        setEvaluatorRules: async () => ({ accepted: true as const }),
+        testTool: async () => ({ output: {} }),
+      },
+    });
+    const submit = toolNamed(createAutomationsPlugin(state).tools, "submit_draft");
+
+    // An instructions-only revision of a Sidekick with a saved tool is not sent to repeat the tool's writes.
+    await submit.execute({ ...readyDraft, sidekickId: SAVED_SIDEKICK_ID }, toolContext);
+    expect(submitted).toHaveLength(1);
+    await submit.execute(readyDraft, toolContext);
+    expect(submitted).toHaveLength(2);
+    // A changed tool is a new tool, whatever the target saves.
+    await expect(submit.execute({ ...readyDraft, sidekickId: SAVED_SIDEKICK_ID, customTools: [{ ...dayMath, code: "return 1;" }] }, toolContext))
+      .rejects.toMatchObject({ code: "custom_tool_untested" });
+    // Another Sidekick's saved tool proves nothing about this one.
+    await expect(submit.execute({ ...readyDraft, sidekickId: "00000000-0000-4000-8000-0000000000a2" }, toolContext)).rejects.toMatchObject({ code: "custom_tool_untested" });
+    expect(submitted).toHaveLength(2);
+  });
+
+  it("offers the test tool and its guide only where a program runtime exists", () => {
+    const without = createAutomationsPlugin(host());
+    expect(without.tools.some((tool) => tool.definition.name === "tool_test")).toBe(false);
+    expect(without.systemMessage).not.toContain("custom tool");
+    const withRuntime = createAutomationsPlugin(host({
+      draftMutationPort: {
+        submitDraft: async () => ({ accepted: true }),
+        setEvaluatorRules: async () => ({ accepted: true as const }),
+        testTool: async () => ({ output: {} }),
+      },
+    }));
+    expect(withRuntime.tools.some((tool) => tool.definition.name === "tool_test")).toBe(true);
+    expect(withRuntime.systemMessage).toContain(CUSTOM_TOOLS_GUIDE);
+    expect(withRuntime.systemMessage.replace(/\s+/g, " ")).toContain("Change a saved tool's code only if its program makes no writes");
+  });
+
+  it("refuses a test whose input misses the tool's schema, and one naming an unloaded plugin, by field", async () => {
+    const plugin = createAutomationsPlugin(host({
+      loadedPluginIds: new Set(["plugin_slack"]),
+      draftMutationPort: {
+        submitDraft: async () => ({ accepted: true }),
+        setEvaluatorRules: async () => ({ accepted: true as const }),
+        testTool: async () => ({ output: {} }),
+      },
+    }));
+    const test = plugin.tools.find((tool) => tool.definition.name === "tool_test")!;
+    const context = toolContext;
+    await expect(test.execute({ tool: dayMath, input: { days: "many" } }, context)).rejects.toMatchObject({ code: "custom_tool_input_invalid", details: { field: "input" } });
+    await expect(test.execute({ tool: { ...dayMath, requiredPlugins: ["plugin_linear"] }, input: { days: 2 } }, context))
+      .rejects.toMatchObject({ code: "custom_tool_plugin_unbound", details: { field: "requiredPlugins", available: ["plugin_slack"] } });
+  });
+
+  it("restores recorded tests from their receipt output, one set of identities per tool", () => {
+    const state = host();
+    rememberAutomationToolTest({ name: "day_math", identityHash: "abc", value: 1 }, state.draftState);
+    rememberAutomationToolTest({ name: "day_math", identityHash: "def" }, state.draftState);
+    rememberAutomationToolTest({ unrelated: true }, state.draftState);
+    expect([...state.draftState.toolTests!].map(([name, hashes]) => [name, [...hashes]])).toEqual([["day_math", ["abc", "def"]]]);
   });
 });

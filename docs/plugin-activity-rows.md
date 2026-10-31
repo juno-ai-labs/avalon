@@ -134,9 +134,10 @@ advances at the rate its own total accrues.
 
 ### What the groups are
 
-`rally:core`, `rally:conversations`, `rally:discovery`, `rally:memory`, `rally:tables`, and
-`rally.skills` are all Rally reasoning about its own workspace, and are drawn as
-one **Rally** row. `rally:terminal` and `rally:workstream` are Rally operating a
+`rally:core`, `rally:conversations`, `rally:discovery`, `rally:memory`, `rally:tables`,
+`rally.skills`, `rally:code` and `rally:custom-tools` are all Rally reasoning
+about its own workspace (a program, and a Sidekick's saved tool, are Rally
+composing its own calls), and are drawn as one **Rally** row. `rally:terminal` and `rally:workstream` are Rally operating a
 machine, and are drawn as one **Computer** row. The
 `rally:multimodal-generation` plugin keeps its own **Multimodal generation** row;
 its canonical id maps it to Tabler's dedicated **image-generation** glyph rather
@@ -786,6 +787,27 @@ stack cannot run a real turn, so the way to get a multi-plugin transcript on
 screen is to write a hand-built `WorkstreamTranscriptSnapshot` into the
 renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
+
+### 2026-10-31 — A program is Rally working, not a tool Rally reached for
+
+**What changed:** `rally:code` and `rally:custom-tools` join the Rally group
+in `GROUPED_PLUGIN_IDS`. A Sidekick's profile gains a read-only **Tools**
+section: one closed disclosure per saved tool with its title and `custom_<name>`
+wire name, opening to the description, the inputs, the plugins it uses and a
+nested "Show code".
+
+**Why:** Both plugins carry display names, so without the mapping each read as
+a tool Rally reached for ("Used Code") rather than Rally working, and a
+program's nested calls, which are receipts without rows, would have had a row
+for the program alone standing beside the Rally row it belongs in.
+
+**Considered and rejected:** A row per nested call (the receipts exist, but the
+PRD's one-row-with-detail shape is what the feed needs and the detail is not
+built yet; see the PRD's decision log).
+
+**Consequences:** A program shows as Rally working for its whole duration; the
+program's `description` is the row's prose. Owned mechanism in
+[`code-mode.md`](code-mode.md).
 
 ### 2026-10-15 — A refused write asking for Allow editing stays a card
 

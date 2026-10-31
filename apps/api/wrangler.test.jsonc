@@ -65,7 +65,7 @@
   // The facet proofs need a real loader: a stateful artifact's class is loaded
   // into the facet through it, and a double would prove nothing about the
   // mechanism the whole stateful design rests on.
-  "worker_loaders": [{ "binding": "ARTIFACT_LOADER" }],
+  "worker_loaders": [{ "binding": "ARTIFACT_LOADER" }, { "binding": "CODE_LOADER" }],
   // The real Workflow binding, so a test can hand an instance id to the same
   // validator production runs. The preparation tests still replace it with a
   // fake in their env: a real driver would race their hand-driven phases.
