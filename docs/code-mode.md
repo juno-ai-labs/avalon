@@ -371,10 +371,12 @@ otherwise: the loader compiles what it is given, the deadline ends a loop
   note delta behind a cursor, weekly call prep, an hourly dashboard, a polling
   window, research dedup, a connector firehose the run cannot serve) rewritten
   over local plugins; it passed 22 of 22, with ten of its runs routed to the
-  scheduled-run model, Gemini Flash, each calling its saved tool. Three
-  `choice` scenarios in the code suite check that "run this Python" and
-  "publish a CSV" load Terminal and exact arithmetic does not; they need a
-  deployment where `TERMINAL_REGION_CAPABILITY` is `supported`.
+  scheduled-run model, Gemini Flash, each calling its saved tool. The code suite
+  with the final prompts passed 28 of 28 on Sol and Terra. Three `choice`
+  scenarios in it check that "run this Python" and "publish a CSV" load
+  Terminal and exact arithmetic does not; the arithmetic case passes locally,
+  the two Terminal cases need a deployment that registers Terminal (Daytona
+  credentials and `TERMINAL_REGION_CAPABILITY` set to `supported`).
 - Trap: the Node suite aliases `cloudflare:workers` to
   `apps/api/test/helpers/cloudflare-workers.ts`, which carries an `RpcTarget`
   stand-in so the gateway module loads off workerd. Anything that needs the
