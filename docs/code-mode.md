@@ -351,6 +351,21 @@ otherwise: the loader compiles what it is given, the deadline ends a loop
   tool and guide present only with a runtime, and restoring tests from receipts.
 - `packages/contracts/src/index.test.ts`: the schema's field-naming refusals
   and the Rally plugin allowlist.
+- `scripts/code-mode-evals.mjs`: prompt evaluations against the local API and
+  the real models, run by hand when a prompt or a tool contract changes
+  (`node scripts/code-mode-evals.mjs --suite final`). Three suites: fourteen
+  work-stream scenarios from one arithmetic call to a deliberate failure after
+  two writes, run on Sol and Terra; seven wizard scenarios with runs; and the
+  final twenty wizard scenarios of rising complexity, from a Sidekick with no
+  tool to one whose tool takes an input, dedupes by date and returns three
+  results. The graders read transcripts and saved definitions, and the expected
+  numbers are computed for 2026-10-31. Three rounds shaped the prompts: every
+  failure was a program guessing a tool's output shape (`current_time` as an
+  object, a direct result's `{success, data}` envelope inside a program), and
+  the sentences that name those shapes took the Code Mode suite from 23 of 26
+  to 26 of 26 and the wizard suite to 12 of 12. The final twenty passed, 38 of
+  38 wizard and run checks in substance; one run landed on a Gemini Flash
+  fallback and still passed.
 - Trap: the Node suite aliases `cloudflare:workers` to
   `apps/api/test/helpers/cloudflare-workers.ts`, which carries an `RpcTarget`
   stand-in so the gateway module loads off workerd. Anything that needs the
@@ -403,7 +418,9 @@ targets the Vercel AI SDK and owns none of the receipt or replay work. A
 read-only first version of programs, which would have excluded hosted MCP
 tools and so the PostHog case.
 
-**Consequences:** A program's nested calls are receipts with a `:call:<index>`
+**Consequences:** The prompts say what a call returns (the tool's data, with
+no result envelope; `current_time` as text lines) because every eval failure
+was a program guessing a shape. A program's nested calls are receipts with a `:call:<index>`
 suffix on the program's `toolCallId` and no transcript rows of their own; they
 share Bind's completed-receipt lookup, failure classification, audit row and
 telemetry, and crash repair names the completed ones. The gateway exposes one
