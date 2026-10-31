@@ -1,8 +1,7 @@
 # Research: Code Mode and wizard-authored tools
 
-> Investigation record for [`prd.md`](prd.md) and for
-> [`2026-10-31_sidekick-custom-tools`](../2026-10-31_sidekick-custom-tools/prd.md),
-> written 2026-10-30 and 2026-10-31. Production numbers were read from the
+> Investigation record for [`prd.md`](prd.md), written 2026-10-30 and
+> 2026-10-31. Production numbers were read from the
 > systems named beside them; nothing is inferred from a screenshot.
 
 ## What exists in the tree
