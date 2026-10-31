@@ -1,6 +1,6 @@
 import { RpcTarget } from "cloudflare:workers";
 import { z } from "zod";
-import { readStructuredFailure, type WorkstreamWorkflowInput } from "@rally/contracts";
+import { MAXIMUM_FAILURE_AVAILABLE_VALUES, readStructuredFailure, type WorkstreamWorkflowInput } from "@rally/contracts";
 import {
   canonicalToolInputHash,
   formatToolArgumentValidationError,
@@ -13,15 +13,19 @@ import {
   type HarnessTool,
   type HarnessToolContext,
   type HarnessToolPolicyIdentity,
+  type HarnessToolReplayRefusal,
   type HarnessToolResult,
 } from "@rally/agent-harness";
 import type { ToolReceiptObjectPort } from "../../durable-objects/workstream-tool-receipt-protocol";
 import { persistToolExecutionPlan, type AttemptLease } from "../../runtime/harness-run-runtime";
 import { CodeModeToolError } from "./errors";
-import { CODE_CALLS_MAX, CODE_ERROR_MESSAGE_MAX_CHARS } from "./limits";
+import { CODE_ERROR_MESSAGE_MAX_CHARS } from "./limits";
 
 export const CODE_PLUGIN_ID = "rally:code";
 export const CODE_PLUGIN_MODEL_ID = "rally_code";
+/** Plugin identity for a Sidekick's saved tools. */
+export const CUSTOM_TOOLS_PLUGIN_ID = "rally:custom-tools";
+export const CUSTOM_TOOLS_PLUGIN_MODEL_ID = "rally_custom_tools";
 
 /**
  * The tools a program may not call: loop controls, whose results are Bind
@@ -32,14 +36,16 @@ export const LOOP_CONTROL_TOOLS: ReadonlySet<string> = new Set(["load_plugin", "
 
 /**
  * What the gateway needs from the host to make a nested call exactly as Bind
- * makes a direct one: the same authorization hook, the same receipt plan, the
- * same settlement. Built in `runWorkstreamHarness`, where those live, and
- * attached to the plugin after the tool inventory is loaded.
+ * makes a direct one: the same authorization hook, the same receipt lookup,
+ * the same plan and the same settlement. Built in `runWorkstreamHarness`,
+ * where those live, and attached to the plugin just before the loop starts.
  */
 export interface CodeModeHost {
   lease: AttemptLease;
   receipts: ToolReceiptObjectPort;
-  /** Bind's `beforeToolCall`, run for the nested call. */
+  /** Bind's default per-call timer, for a tool that declares none of its own. */
+  toolTimeoutMs: number;
+  /** Bind's `beforeToolCall`, run for the nested call. A throw is an authority failure and stops the program. */
   authorize(call: {
     pluginId: string;
     toolName: string;
@@ -47,6 +53,18 @@ export interface CodeModeHost {
     policy: HarnessToolPolicyIdentity;
     signal: AbortSignal;
   }): Promise<BeforeToolCallDecision | void>;
+  /**
+   * The host's own completed-receipt lookup, as Bind calls it before a direct
+   * dispatch: a replayed result, a replay refusal, an ambiguous-write halt, or
+   * null when the call has to run. `nested` tells it to skip the transcript
+   * and event work a root call owns.
+   */
+  findCompletedToolResult(
+    toolCallId: string,
+    inputHash: string,
+    policy: { pluginId: string } & HarnessToolPolicyIdentity,
+    options: { nested: true },
+  ): Promise<HarnessToolResult | HarnessToolReplayRefusal | null>;
   /** The execution plan the host would record for a direct call of this tool. */
   plan(pluginId: string, tool: HarnessTool): {
     plan: Record<string, unknown>;
@@ -57,6 +75,8 @@ export interface CodeModeHost {
   complete(input: { invocationId: string; toolCallId: string; tool: HarnessTool; result: HarnessToolResult }): Promise<void>;
   fail(input: {
     invocationId: string;
+    toolName: string;
+    mode: "read" | "write";
     status: "failed" | "ambiguous";
     phase: string;
     error: { code: string; message: string; data?: { code: string; details?: Record<string, unknown> } };
@@ -67,12 +87,30 @@ export type GatewayAnswer =
   | { ok: true; output: unknown }
   | { ok: false; code: string; error: string; index: number };
 
+/**
+ * Why a call was refused, as a code the custom-tools wrapper reads to choose
+ * its sentence: only `plugin_not_loaded` is something a run can fix itself.
+ */
+export type RefusalReason =
+  | "unknown_plugin"
+  | "program_in_program"
+  | "outside_required_plugins"
+  | "plugin_not_loaded"
+  | "loop_control"
+  | "turn_scoped_result"
+  | "unknown_tool"
+  | "not_authorized"
+  | "program_finished"
+  | "program_stopped";
+
 export interface RecordedCall {
   index: number;
   tool: string;
   mode: "read" | "write";
   ms: number;
-  outcome: "completed" | "failed" | "replayed" | "refused";
+  outcome: "completed" | "failed" | "replayed" | "refused" | "ambiguous";
+  /** Set when the outcome is `refused`. */
+  refusal?: RefusalReason;
 }
 
 export interface CallablePlugin {
@@ -82,17 +120,18 @@ export interface CallablePlugin {
 
 /**
  * The tools a program may call right now: every active plugin's tools except
- * the code plugin's own and the loop controls, narrowed to `allowedPluginIds`
- * when a saved tool declared its plugins.
+ * the two program plugins' own (a program cannot run a program), the loop
+ * controls, and a tool whose result is current-turn content a program cannot
+ * hold; narrowed to `allowedPluginIds` when a saved tool declared its plugins.
  */
 export function callableTools(
   view: HarnessRuntimeView,
   allowedPluginIds: ReadonlySet<string> | null,
 ): CallablePlugin[] {
   return view.activePlugins().flatMap((plugin) => {
-    if (plugin.canonicalId === CODE_PLUGIN_ID) return [];
+    if (plugin.canonicalId === CODE_PLUGIN_ID || plugin.canonicalId === CUSTOM_TOOLS_PLUGIN_ID) return [];
     if (allowedPluginIds && !allowedPluginIds.has(plugin.modelId) && !allowedPluginIds.has(plugin.canonicalId)) return [];
-    const tools = plugin.tools.filter((tool) => !LOOP_CONTROL_TOOLS.has(tool.definition.name));
+    const tools = plugin.tools.filter((tool) => !LOOP_CONTROL_TOOLS.has(tool.definition.name) && !tool.yieldsContentParts);
     return tools.length ? [{ plugin, tools }] : [];
   });
 }
@@ -101,26 +140,73 @@ function bounded(text: string): string {
   return text.length > CODE_ERROR_MESSAGE_MAX_CHARS ? `${text.slice(0, CODE_ERROR_MESSAGE_MAX_CHARS - 3)}...` : text;
 }
 
+function refusal(label: string, reason: RefusalReason, why: string, available: string[]): CodeModeToolError {
+  return new CodeModeToolError(
+    "code_call_refused",
+    `${label} cannot be called from a program: ${why}`,
+    { reason, field: label, available: available.slice(0, MAXIMUM_FAILURE_AVAILABLE_VALUES) },
+  );
+}
+
+function ambiguous(label: string): CodeModeToolError {
+  return new CodeModeToolError(
+    "ambiguous_external_write",
+    `Rally could not confirm whether ${label} completed. Do not repeat it; tell the participant what is uncertain and stop.`,
+    { reason: "unknown external outcome", field: label },
+  );
+}
+
+function abortSignals(...signals: AbortSignal[]): AbortSignal {
+  const controller = new AbortController();
+  for (const signal of signals) {
+    if (signal.aborted) {
+      controller.abort(signal.reason);
+      break;
+    }
+    signal.addEventListener("abort", () => {
+      if (!controller.signal.aborted) controller.abort(signal.reason);
+    }, { once: true });
+  }
+  return controller.signal;
+}
+
+export interface GatewaySessionOptions {
+  host: CodeModeHost;
+  view: HarnessRuntimeView;
+  context: HarnessToolContext;
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "harnessRunId">;
+  allowedPluginIds: ReadonlySet<string> | null;
+}
+
 /**
- * The capability a program holds: one object, passed into the isolate as an
- * RPC argument, resolving every call against the run's live active set. The
- * program never sees a tool list it could widen, and nothing it sends names
- * the run; the run is bound into this object by the host.
+ * One program's calls: what the gateway does, kept off the RPC surface. The
+ * isolate holds a `CodeToolGateway`, whose only method forwards here; nothing
+ * on this object is reachable from a program.
+ *
+ * Lifetime: `close()` ends the session when the program returns, aborts any
+ * nested call still running and waits for it to settle, and turns every later
+ * call into a refusal. A thrown authorization or settlement is `fatal`: the
+ * program is stopped and the error is rethrown to Bind by the tool, so the run
+ * sees the real failure rather than a program's account of it.
  */
-export class CodeToolGateway extends RpcTarget {
+export class GatewaySession {
   readonly calls: RecordedCall[] = [];
+  readonly gateway: CodeToolGateway;
+  fatal: unknown = null;
+  private closed = false;
+  private readonly controller = new AbortController();
+  private readonly inFlight = new Set<Promise<unknown>>();
   private serialChain: Promise<unknown> = Promise.resolve();
 
-  constructor(
-    private readonly options: {
-      host: CodeModeHost;
-      view: HarnessRuntimeView;
-      context: HarnessToolContext;
-      input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentId" | "harnessRunId">;
-      allowedPluginIds: ReadonlySet<string> | null;
-    },
-  ) {
-    super();
+  constructor(private readonly options: GatewaySessionOptions) {
+    this.gateway = new CodeToolGateway(this);
+  }
+
+  /** The program is over: refuse new calls, abort running ones, wait for them to settle. */
+  async close(): Promise<void> {
+    this.closed = true;
+    this.controller.abort(new DOMException("The program finished", "AbortError"));
+    while (this.inFlight.size > 0) await Promise.allSettled([...this.inFlight]);
   }
 
   async call(pluginModelId: unknown, toolName: unknown, rawInput: unknown): Promise<GatewayAnswer> {
@@ -129,27 +215,38 @@ export class CodeToolGateway extends RpcTarget {
     const record: RecordedCall = { index, tool: label, mode: "read", ms: 0, outcome: "refused" };
     this.calls.push(record);
     const started = Date.now();
-    try {
-      if (index >= CODE_CALLS_MAX) {
-        throw new CodeModeToolError(
-          "code_budget_exhausted",
-          `The program made ${CODE_CALLS_MAX} calls, the most one program may make. Do less per program or page less.`,
-          { reason: `call limit ${CODE_CALLS_MAX}`, expected: `<= ${CODE_CALLS_MAX} calls` },
-        );
+    const work = (async (): Promise<GatewayAnswer> => {
+      try {
+        if (this.fatal !== null) {
+          throw refusal(label, "program_stopped", "an earlier call failed in a way that stopped the program.", []);
+        }
+        if (this.closed) {
+          throw refusal(label, "program_finished", "the program already returned; a call started after return is not made.", []);
+        }
+        const resolved = this.resolve(pluginModelId, toolName);
+        record.mode = resolved.tool.definition.mode;
+        const run = () => this.execute(index, resolved.plugin, resolved.tool, rawInput, record);
+        return resolved.tool.serial || resolved.tool.definition.mode === "write"
+          ? await this.serialized(run)
+          : await run();
+      } catch (error) {
+        if (record.outcome === "refused" && error instanceof CodeModeToolError && error.code === "code_call_refused") {
+          record.refusal = error.details?.reason as RefusalReason;
+        } else if (record.outcome === "refused") {
+          record.outcome = "failed";
+        }
+        const code = error instanceof CodeModeToolError ? error.code : "code_call_failed";
+        const message = error instanceof Error ? error.message : String(error);
+        return { ok: false, code, error: bounded(message), index };
+      } finally {
+        record.ms = Date.now() - started;
       }
-      const resolved = this.resolve(pluginModelId, toolName);
-      record.mode = resolved.tool.definition.mode;
-      const run = () => this.execute(index, resolved.plugin, resolved.tool, rawInput, record);
-      return resolved.tool.serial || resolved.tool.definition.mode === "write"
-        ? await this.serialized(run)
-        : await run();
-    } catch (error) {
-      if (record.outcome !== "replayed") record.outcome = record.outcome === "completed" ? "completed" : error instanceof CodeModeToolError && error.code === "code_call_refused" ? "refused" : "failed";
-      const code = error instanceof CodeModeToolError ? error.code : "code_call_failed";
-      const message = error instanceof Error ? error.message : String(error);
-      return { ok: false, code, error: bounded(message), index };
+    })();
+    this.inFlight.add(work);
+    try {
+      return await work;
     } finally {
-      record.ms = Date.now() - started;
+      this.inFlight.delete(work);
     }
   }
 
@@ -160,48 +257,44 @@ export class CodeToolGateway extends RpcTarget {
   }
 
   private resolve(pluginModelId: unknown, toolName: unknown): { plugin: HarnessPlugin; tool: HarnessTool } {
+    const label = `${String(pluginModelId)}.${String(toolName)}`;
     const callable = callableTools(this.options.view, this.options.allowedPluginIds);
     const plugin = callable.find((entry) => entry.plugin.modelId === pluginModelId);
     if (!plugin) {
       const known = this.options.view.plugins().find((candidate) => candidate.modelId === pluginModelId);
-      const why = !known
-        ? `no plugin named ${String(pluginModelId)} is in this run`
-        : known.canonicalId === CODE_PLUGIN_ID
-          ? "a program cannot run another program"
-          : this.options.allowedPluginIds && !this.options.allowedPluginIds.has(known.modelId)
-            ? "it is outside this tool's declared plugins"
-            : `${known.modelId} is not loaded; call load_plugin directly first`;
-      throw new CodeModeToolError(
-        "code_call_refused",
-        `${String(pluginModelId)}.${String(toolName)} cannot be called from a program: ${why}. Call it directly.`,
-        { reason: why, field: `${String(pluginModelId)}.${String(toolName)}`, available: callable.map((entry) => entry.plugin.modelId).slice(0, 40) },
-      );
+      const available = callable.map((entry) => entry.plugin.modelId);
+      if (!known) throw refusal(label, "unknown_plugin", `no plugin named ${String(pluginModelId)} is in this run.`, available);
+      if (known.canonicalId === CODE_PLUGIN_ID || known.canonicalId === CUSTOM_TOOLS_PLUGIN_ID) {
+        throw refusal(label, "program_in_program", "a program cannot run another program.", available);
+      }
+      if (this.options.allowedPluginIds && !this.options.allowedPluginIds.has(known.modelId)) {
+        throw refusal(label, "outside_required_plugins", `${known.modelId} is not in this tool's requiredPlugins.`, available);
+      }
+      throw refusal(label, "plugin_not_loaded", `${known.modelId} is not loaded. Call load_plugin for it directly, then run the program again.`, available);
     }
     const tool = plugin.tools.find((candidate) => candidate.definition.name === toolName);
     if (!tool) {
-      const control = plugin.plugin.tools.some((candidate) => candidate.definition.name === toolName);
-      const why = control ? "it is a loop control, not a tool a program can use" : `no tool named ${String(toolName)} in ${plugin.plugin.modelId}`;
-      throw new CodeModeToolError(
-        "code_call_refused",
-        `${plugin.plugin.modelId}.${String(toolName)} cannot be called from a program: ${why}. Call it directly.`,
-        { reason: why, field: `${plugin.plugin.modelId}.${String(toolName)}`, available: plugin.tools.map((candidate) => candidate.definition.name).slice(0, 40) },
-      );
+      const declared = plugin.plugin.tools.find((candidate) => candidate.definition.name === toolName);
+      const available = plugin.tools.map((candidate) => candidate.definition.name);
+      if (!declared) throw refusal(label, "unknown_tool", `${plugin.plugin.modelId} has no tool named ${String(toolName)}.`, available);
+      if (LOOP_CONTROL_TOOLS.has(declared.definition.name)) {
+        throw refusal(label, "loop_control", "it is a loop control, not a tool a program can use. Call it directly.", available);
+      }
+      throw refusal(label, "turn_scoped_result", "its result is content for the current turn, which a program cannot hold. Call it directly.", available);
     }
     return { plugin: plugin.plugin, tool };
   }
 
-  private ambiguous(name: string): CodeModeToolError {
-    return new CodeModeToolError(
-      "ambiguous_external_write",
-      `Rally could not confirm whether ${name} completed on an earlier attempt. Do not repeat it; tell the participant what is uncertain and stop.`,
-      { reason: "unknown external outcome", field: name },
-    );
+  private replayed(record: RecordedCall, output: unknown): GatewayAnswer {
+    record.outcome = "replayed";
+    return { ok: true, output };
   }
 
-  private async replayed(record: RecordedCall, receipt: { outputRef: string | null; outputSummary: string | null }): Promise<GatewayAnswer> {
-    record.outcome = "replayed";
-    const output = receipt.outputRef ? await this.options.host.replayOutput(receipt.outputRef) : null;
-    return { ok: true, output: output ?? { summary: receipt.outputSummary ?? "" } };
+  /** A failure of the host's own machinery: stop the program and keep the error for Bind. */
+  private stop(error: unknown): never {
+    if (this.fatal === null) this.fatal = error;
+    this.controller.abort(error instanceof Error ? error : new Error(String(error)));
+    throw refusal("the program", "program_stopped", "Rally could not authorize or record a call, so the program was stopped.", []);
   }
 
   private async execute(
@@ -217,63 +310,102 @@ export class CodeToolGateway extends RpcTarget {
     const args = rawInput !== null && typeof rawInput === "object" && !Array.isArray(rawInput)
       ? normalizeToolArguments(omitUnspecifiedToolArguments(rawInput, definition.inputSchema), definition.inputSchema, definition.mode)
       : rawInput;
+    // The same argument check Bind runs before a dispatch, so a bad argument
+    // is a correctable error with no receipt rather than a tool failure.
+    let argumentError: z.ZodError | null;
+    try {
+      argumentError = tool.validateInput?.(args) ?? validateToolArguments(args, definition.inputSchema);
+    } catch (error) {
+      argumentError = error instanceof z.ZodError ? error : null;
+      if (!argumentError) throw error;
+    }
+    if (argumentError) {
+      record.outcome = "failed";
+      throw new CodeModeToolError(
+        "code_call_failed",
+        `Call ${index} (${label}) rejected its arguments: ${formatToolArgumentValidationError(argumentError)} Fix the arguments and run the program again.`,
+        { reason: "invalid_arguments", field: label },
+      );
+    }
     const inputHash = await canonicalToolInputHash(args);
     const toolCallId = `${context.toolCallId}:call:${index}`;
-    const existing = await host.receipts.receiptForCall({ runId: input.harnessRunId, toolCallId });
-    if (existing?.status === "completed") {
-      if (existing.requestHash !== inputHash) {
-        throw new CodeModeToolError(
-          "code_replay_diverged",
-          `Call ${index} (${label}) sent different arguments on re-run than the completed record. Remove nondeterminism (time, randomness) from arguments and run again.`,
-          { reason: "arguments differ from the completed record", field: "code" },
-        );
-      }
-      return this.replayed(record, existing);
-    }
-    const unsettledWrite = existing && existing.status !== "failed"
-      && definition.mode === "write" && definition.idempotency === "record_before_execute" && !tool.reenterable;
-    if (existing?.status === "ambiguous" || unsettledWrite) {
-      if (existing && existing.status !== "ambiguous") {
-        await host.fail({
-          invocationId: existing.effectIntentId,
-          status: "ambiguous",
-          phase: "ambiguous_external_write",
-          error: { code: "ambiguous_external_write", message: `Interrupted write ${definition.name} has an unknown external outcome` },
-        });
-      }
-      throw this.ambiguous(label);
-    }
     const policy: HarnessToolPolicyIdentity = {
       canonicalToolName: definition.name,
       capability: definition.capability,
       mode: definition.mode,
       idempotency: definition.idempotency,
     };
-    const decision = await host.authorize({ pluginId: plugin.canonicalId, toolName: definition.name, inputHash, policy, signal: context.signal });
+    const signal = abortSignals(context.signal, this.controller.signal);
+    // Authority first, as Bind orders it: a replayed result is still a result
+    // this principal has to be allowed to read.
+    let decision: BeforeToolCallDecision | void;
+    try {
+      decision = await host.authorize({ pluginId: plugin.canonicalId, toolName: definition.name, inputHash, policy, signal });
+    } catch (error) {
+      this.stop(error);
+    }
     if (decision && decision.allowed === false) {
-      throw new CodeModeToolError("code_call_refused", `${label} cannot be called from a program: ${decision.message}`, { reason: decision.code, field: label });
+      throw refusal(label, "not_authorized", decision.message, []);
+    }
+    // The host's own completed-receipt lookup: a replay, a refusal to present
+    // an old result as current, an ambiguous write, or nothing yet.
+    let prior: HarnessToolResult | HarnessToolReplayRefusal | null;
+    try {
+      prior = await host.findCompletedToolResult(toolCallId, inputHash, { pluginId: plugin.canonicalId, ...policy }, { nested: true });
+    } catch (error) {
+      this.stop(error);
+    }
+    if (prior && "refusal" in prior) {
+      record.outcome = "failed";
+      throw new CodeModeToolError(
+        "code_call_failed",
+        `Call ${index} (${label}) completed on an earlier attempt but its result cannot be presented again: ${prior.refusal.message}`,
+        { reason: prior.refusal.code, field: label },
+      );
+    }
+    if (prior) {
+      if (prior.halt === "needs_input") {
+        record.outcome = "ambiguous";
+        throw ambiguous(label);
+      }
+      return this.replayed(record, prior.output);
     }
     const planned = host.plan(plugin.canonicalId, tool);
     const providerIdempotencyKey = definition.idempotency === "provider_key" ? toolCallId : undefined;
-    const claim = await persistToolExecutionPlan(host.receipts, host.lease, {
-      harnessRunId: input.harnessRunId,
-      workspaceId: input.workspaceId,
-      workstreamId: input.parentId,
-      toolCallId,
-      toolName: definition.name,
-      ...(planned.connectionId ? { connectionId: planned.connectionId } : {}),
-      inputHash,
-      input: args,
-      plan: planned.plan,
-      compatiblePriorPlans: planned.compatiblePriorPlans,
-      ...(providerIdempotencyKey ? { providerIdempotencyKey } : {}),
-      mode: definition.mode,
-    });
+    let claim: Awaited<ReturnType<typeof persistToolExecutionPlan>>;
+    try {
+      claim = await persistToolExecutionPlan(host.receipts, host.lease, {
+        harnessRunId: input.harnessRunId,
+        workspaceId: input.workspaceId,
+        workstreamId: input.parentId,
+        toolCallId,
+        toolName: definition.name,
+        ...(planned.connectionId ? { connectionId: planned.connectionId } : {}),
+        inputHash,
+        input: args,
+        plan: planned.plan,
+        compatiblePriorPlans: planned.compatiblePriorPlans,
+        ...(providerIdempotencyKey ? { providerIdempotencyKey } : {}),
+        mode: definition.mode,
+      });
+    } catch (error) {
+      this.stop(error);
+    }
     if (claim.state === "replay_completed") {
       const receipt = await host.receipts.receiptForCall({ runId: input.harnessRunId, toolCallId });
-      return this.replayed(record, receipt ?? { outputRef: null, outputSummary: null });
+      const output = receipt?.outputRef ? await host.replayOutput(receipt.outputRef) : null;
+      return this.replayed(record, output ?? { summary: receipt?.outputSummary ?? "" });
     }
-    if (claim.state === "ambiguous_external_write") throw this.ambiguous(label);
+    if (claim.state === "ambiguous_external_write") {
+      record.outcome = "ambiguous";
+      throw ambiguous(label);
+    }
+    // Bind's per-call timer, so a nested call that hangs ends as a direct one
+    // would, and the program learns which call it was.
+    const timeoutMs = tool.resolveTimeoutMs?.(args) ?? definition.timeoutMs ?? host.toolTimeoutMs;
+    const timeout = new AbortController();
+    const timer = setTimeout(() => timeout.abort(new DOMException(`Call exceeded ${timeoutMs} ms`, "TimeoutError")), timeoutMs);
+    const toolSignal = abortSignals(signal, timeout.signal);
     let result: HarnessToolResult;
     try {
       result = await tool.execute(args, {
@@ -287,37 +419,114 @@ export class CodeToolGateway extends RpcTarget {
         ...(decision?.allowed === true && decision.authorizationContext !== undefined
           ? { authorizationContext: decision.authorizationContext }
           : {}),
-        signal: context.signal,
+        signal: toolSignal,
       });
     } catch (error) {
-      const structured = readStructuredFailure(error);
-      const argumentError = error instanceof z.ZodError
-        ? tool.validateInput?.(args) ?? validateToolArguments(args, definition.inputSchema)
-        : null;
-      const message = argumentError
-        ? formatToolArgumentValidationError(argumentError)
-        : error instanceof Error ? error.message : "Tool execution failed";
-      const interruptedWrite = context.signal.aborted
-        && definition.mode === "write" && definition.idempotency === "record_before_execute";
-      await host.fail({
-        invocationId: claim.invocationId,
-        status: interruptedWrite ? "ambiguous" : "failed",
-        phase: interruptedWrite ? "ambiguous_external_write" : argumentError ? "validation" : "execution",
-        error: {
-          code: structured?.code ?? (argumentError ? "invalid_arguments" : "tool_failed"),
-          message: message.slice(0, 500),
-          ...(structured ? { data: structured } : {}),
-        },
-      });
-      if (interruptedWrite) throw this.ambiguous(label);
-      throw new CodeModeToolError(
-        "code_call_failed",
-        `Call ${index} (${label}) failed: ${bounded(message)} The program stopped there.`,
-        { reason: bounded(message), field: label, ...(structured?.details ?? {}) },
-      );
+      throw await this.failed(index, label, plugin, tool, args, claim.invocationId, error, toolSignal, timeout.signal, record);
+    } finally {
+      clearTimeout(timer);
     }
-    await host.complete({ invocationId: claim.invocationId, toolCallId, tool, result });
+    try {
+      await host.complete({ invocationId: claim.invocationId, toolCallId, tool, result });
+    } catch (error) {
+      this.stop(error);
+    }
     record.outcome = "completed";
     return { ok: true, output: result.output };
+  }
+
+  /**
+   * Bind's own classification of a failed dispatch, applied to the nested
+   * call: an argument error after the advertised schema accepted the input is
+   * correctable; a validation error downstream of valid arguments on a
+   * record-before-execute write may have written; an interrupted or timed-out
+   * such write may have too; Terminal's `command_outcome_unknown` is the one
+   * coded failure that is also ambiguous. Everything else is definitive.
+   */
+  private async failed(
+    index: number,
+    label: string,
+    plugin: HarnessPlugin,
+    tool: HarnessTool,
+    args: unknown,
+    invocationId: string,
+    error: unknown,
+    toolSignal: AbortSignal,
+    timeoutSignal: AbortSignal,
+    record: RecordedCall,
+  ): Promise<CodeModeToolError> {
+    const definition = tool.definition;
+    const recordBeforeExecuteWrite = definition.mode === "write" && definition.idempotency === "record_before_execute";
+    let declaredArgumentError: z.ZodError | null = null;
+    if (error instanceof z.ZodError) {
+      try {
+        declaredArgumentError = tool.validateInput?.(args) ?? validateToolArguments(args, definition.inputSchema);
+      } catch {
+        declaredArgumentError = null;
+      }
+    }
+    const downstreamValidationError = error instanceof z.ZodError && declaredArgumentError === null;
+    const ambiguousResponseValidation = downstreamValidationError && recordBeforeExecuteWrite;
+    const structured = readStructuredFailure(error);
+    const interrupted = toolSignal.aborted;
+    const recoverableTerminalObservation = structured?.code === "command_outcome_unknown"
+      && plugin.canonicalId === "rally:terminal" && definition.name === "run_command";
+    const ambiguousExternalWrite = (interrupted || ambiguousResponseValidation || recoverableTerminalObservation) && recordBeforeExecuteWrite;
+    const message = declaredArgumentError
+      ? formatToolArgumentValidationError(declaredArgumentError)
+      : ambiguousResponseValidation
+        ? "The write may have succeeded, but the tool could not validate the provider response. Rally stopped without retrying because repeating the call could duplicate the write."
+        : downstreamValidationError
+          ? "The tool failed while validating data after accepting its arguments."
+          : timeoutSignal.aborted
+            ? `The call exceeded its ${tool.resolveTimeoutMs?.(args) ?? definition.timeoutMs ?? this.options.host.toolTimeoutMs} ms limit.`
+            : error instanceof Error ? error.message : "Tool execution failed";
+    const code = ambiguousExternalWrite
+      ? "ambiguous_external_write"
+      : declaredArgumentError
+        ? "tool_validation_failed"
+        : structured?.code ?? (timeoutSignal.aborted ? "tool_timeout" : interrupted ? "tool_aborted" : "tool_failed");
+    try {
+      await this.options.host.fail({
+        invocationId,
+        toolName: definition.name,
+        mode: definition.mode,
+        status: ambiguousExternalWrite ? "ambiguous" : "failed",
+        phase: ambiguousExternalWrite ? "ambiguous_external_write" : declaredArgumentError ? "validation" : "execution",
+        error: { code, message: message.slice(0, 500), ...(structured ? { data: structured } : {}) },
+      });
+    } catch (settlementError) {
+      this.stop(settlementError);
+    }
+    if (ambiguousExternalWrite) {
+      record.outcome = "ambiguous";
+      return ambiguous(label);
+    }
+    record.outcome = "failed";
+    return new CodeModeToolError(
+      "code_call_failed",
+      `Call ${index} (${label}) failed: ${bounded(message)}`,
+      { reason: code, field: label, ...(structured?.details ?? {}) },
+    );
+  }
+}
+
+/**
+ * The capability a program holds: one object, passed into the isolate as an
+ * RPC argument, with one method. The session it forwards to is a private
+ * field, so nothing else the host knows is reachable over the stub; the
+ * program never sees a tool list it could widen, and nothing it sends names
+ * the run.
+ */
+export class CodeToolGateway extends RpcTarget {
+  readonly #session: GatewaySession;
+
+  constructor(session: GatewaySession) {
+    super();
+    this.#session = session;
+  }
+
+  call(pluginModelId: unknown, toolName: unknown, rawInput: unknown): Promise<GatewayAnswer> {
+    return this.#session.call(pluginModelId, toolName, rawInput);
   }
 }

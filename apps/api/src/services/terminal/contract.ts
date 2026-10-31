@@ -356,6 +356,7 @@ export function createTerminalPlugin(
     definition: definitions[name],
     serial: true,
     ...(REENTERABLE_TERMINAL_TOOLS.has(name) ? { reenterable: true } : {}),
+    ...(name === "view_image" ? { yieldsContentParts: true as const } : {}),
     ...(reconcilers[name] ? { reconcileEffect: reconcilers[name] } : {}),
     validateInput: (input) => {
       const result = TerminalArgumentSchemas[name].safeParse(input);

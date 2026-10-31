@@ -6,6 +6,11 @@
 > publication checks, and the limits. Written against
 > [`agent-tools.md`](../../agent-tools.md) and
 > [`agent-harness.md`](../../agent-harness.md).
+>
+> **Provenance, not the contract.** This is the design as it stood before the
+> build. What shipped, and where it differs, is in
+> [`code-mode.md`](../../code-mode.md) and the decision log in
+> [`prd.md`](prd.md#decision-log); read those first.
 
 ## Plugin contract: `rally:code`
 

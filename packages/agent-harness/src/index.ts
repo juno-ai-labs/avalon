@@ -152,10 +152,11 @@ export {
 export {
   AUTOMATIONS_PLUGIN_ID,
   AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE,
+  CUSTOM_TOOLS_GUIDE,
   createAutomationsPlugin,
   rememberAutomationToolTest,
   AutomationCreatorToolError,
-  customToolCodeHash,
+  customToolIdentityHash,
   rememberAutomationPeopleSearchResult,
   rememberAutomationResourceSearchResult,
   type AutomationCreatorToolHost,
@@ -2714,7 +2715,7 @@ export const sidekickCustomToolJsonSchema = {
       required: ["type", "properties"],
     },
     code: { type: "string", minLength: 1, description: "The body of an async JavaScript function with `input` and `tools` in scope, the same API code_execute shows in # Code API. Return the answer the run needs." },
-    requiredPlugins: { type: "array", minItems: 1, items: { type: "string", pattern: "^(plugin|rally)_[a-z][a-z0-9_]{0,62}$" }, description: "The plugin ids the program calls: a connector plugin from plugins_list (which must also be in recommendedPlugins) or one of Rally's own such as rally_core or rally_tables." },
+    requiredPlugins: { type: "array", minItems: 1, items: { type: "string", pattern: "^(plugin_[a-z][a-z0-9_]{0,62}|rally_core|rally_tables|rally_memory)$" }, description: "The plugin ids the program calls: a connector plugin from plugins_list (which must also be in recommendedPlugins), or rally_core, rally_tables or rally_memory." },
   },
   required: ["name", "description", "inputSchema", "code", "requiredPlugins"],
 } as const;
@@ -3917,7 +3918,7 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
   },
   {
     name: "tool_test",
-    description: "Run a candidate custom tool once, for real, against live data, and record the successful test for the next submit_draft. Pass the whole tool and a representative input. Writes the program makes are made. A tool whose current code has no successful test is refused at submit.",
+    description: "Run a candidate custom tool once, for real, against live data, and record the successful test for the next submit_draft. Pass the whole tool and a representative input. Writes the program makes are made. A tool whose current code, input schema or plugins have no successful test is refused at submit.",
     capability: "rally.sidekick.tools.test",
     mode: "write",
     idempotency: "record_before_execute",
@@ -4050,6 +4051,12 @@ export interface HarnessTool {
    * could assert this would be asserting that Rally may repeat its writes.
    */
   reenterable?: boolean;
+  /**
+   * The result carries `contentParts`, content that exists only in the current
+   * model turn. A program cannot hold it, so `callableTools` in Code Mode
+   * leaves such a tool out and the model calls it directly.
+   */
+  yieldsContentParts?: true;
   /**
    * Establish what an interrupted attempt of this tool did, without performing
    * it.

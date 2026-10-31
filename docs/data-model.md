@@ -813,7 +813,10 @@ column catalog; what follows is only what WorkspaceDO still holds.
   a **Run now**, and `external:<workspaceEventId>` for a connector event. The run
   id is the child substream id, and `harness_run_id` is unique per run.
 - Object-local `runs` records each bounded model loop. `tool_effects` is unique on
-  `(run_id, tool_call_id)` and stores input hashes plus side-effect state.
+  `(run_id, tool_call_id)` and stores input hashes plus side-effect state. A
+  `code_execute` program's nested calls are rows of their own whose
+  `tool_call_id` is the program's with a `:call:<index>` suffix
+  ([`code-mode.md`](code-mode.md)).
 - SubstreamAgent `tool_pages` maps `(run_id, page_id)` to private continuation
   arguments, producing/consuming receipts, operation, principal, connection, and
   forward ancestry. Migration 61 adds it alongside the receipt authority; the

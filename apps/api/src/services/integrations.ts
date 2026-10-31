@@ -74,6 +74,7 @@ import {
   HarnessToolEffectUnresolvedError,
   type HarnessToolContext,
   type HarnessToolResult,
+  type HarnessToolReplayRefusal,
   type HarnessToolPolicyIdentity,
   type RunHarnessInput,
   type HarnessTool,
@@ -3155,53 +3156,6 @@ export async function runWorkstreamHarness(
       authorizationContext: { frozen, capability: policy.capability, row } satisfies PreparedConnectorAuthorization,
     };
   };
-  // A program's nested calls take the same authorization, plan and settlement a
-  // direct call takes; the gateway gets them through these seams.
-  harnessTools.codeMode?.attachHost({
-    lease: liveness.lease,
-    receipts: createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
-    authorize: async (call) => await beforeToolCall(call),
-    plan: (pluginId, tool) => {
-      const receiptPolicy = resolveHarnessToolReceiptPolicy({
-        pluginId,
-        canonicalToolName: tool.definition.name,
-        capability: tool.definition.capability,
-        mode: tool.definition.mode,
-        idempotency: tool.definition.idempotency,
-      }, harnessTools);
-      const plan = {
-        pluginId: receiptPolicy.pluginId,
-        canonicalToolName: receiptPolicy.definition.name,
-        capability: receiptPolicy.definition.capability,
-        connectionId: receiptPolicy.connectionId,
-        mode: receiptPolicy.definition.mode,
-        idempotency: receiptPolicy.definition.idempotency,
-        toolSurfaceHash: receiptPolicy.toolSurfaceHash,
-      };
-      return { plan, compatiblePriorPlans: compatiblePriorReceiptPlans(plan, receiptPolicy), connectionId: receiptPolicy.connectionId };
-    },
-    replayOutput: (outputRef) => loadToolReplayOutput(env, outputRef),
-    complete: async ({ invocationId, toolCallId, tool, result }) => {
-      await settleRootHarnessToolCompletion(env, input, liveness.lease, {
-        invocationId,
-        toolCallId,
-        canonicalToolName: tool.definition.name,
-        attachmentOutput: result.output,
-        durableOutput: durableToolReplayOutput(tool.definition.capability, result.output, result.summary),
-        outputSummary: result.summary,
-        ...(result.providerOperationId ? { providerOperationId: result.providerOperationId } : {}),
-        memberSafePayload: { toolName: tool.definition.name, nested: true },
-        ...outboundExternalBinding(input, result.externalConversation),
-      });
-    },
-    fail: async (failure) => {
-      await settleRootHarnessToolFailure(
-        createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
-        liveness.lease,
-        { harnessRunId: input.harnessRunId, ...failure },
-      );
-    },
-  });
   // Translate stored credential/bundle IDs only to views still authorized by
   // the current grants. A surviving bundle keeps its hints when the other is removed.
   const activationTargets = new Map(harnessTools.plugins.map((plugin) => [plugin.canonicalId, new Set([plugin.canonicalId])]));
@@ -3664,6 +3618,306 @@ export async function runWorkstreamHarness(
       };
     },
   );
+  /**
+   * Bind's completed-receipt lookup before a dispatch, and the gateway's for a
+   * program's nested call (`nested`, which skips the transcript rows and the
+   * events a root call owns). One function, so a nested call replays, refuses
+   * and goes ambiguous exactly as a direct one does.
+   */
+  const findCompletedToolResult = async (
+    toolCallId: string,
+    inputHash: string,
+    policyIdentity: ToolPolicyIdentity,
+    options: { nested?: boolean } = {},
+  ): Promise<HarnessToolResult | HarnessToolReplayRefusal | null> => {
+    const nested = options.nested === true;
+    const expectedPolicy = resolveHarnessToolReceiptPolicy(policyIdentity, harnessTools);
+    const receipts = createToolReceiptObjectPort(
+      env,
+      input.workspaceId,
+      input.parentId,
+      undefined,
+      conversationSubstreamId,
+    );
+    const row = await receipts.receiptForCall({ runId: input.harnessRunId, toolCallId });
+    if (!row) return null;
+    const policyMatches = storedToolPolicyMatches(row.executionPlanJson, expectedPolicy);
+    if (row.status === "completed" && row.requestHash === inputHash && policyMatches) {
+      const replayRefusal = await validateCompletedToolReplay([...harnessTools.corePlugins, ...harnessTools.plugins], policyIdentity, parseJson(row.inputJson, {}), {
+        workspaceId: input.workspaceId, workstreamId: input.parentId, harnessRunId: input.harnessRunId,
+        toolCallId, effectIntentId: row.effectIntentId, executionPrincipal: input.executionPrincipal, signal: harnessSignal,
+      });
+      if (replayRefusal) return replayRefusal;
+      if (expectedPolicy.definition.name === "view_image") {
+        // The picture was the result, and it lived only in that turn: the
+        // sandbox file may have changed or gone since. The read is safe, so
+        // run it again rather than replay a success with nothing to see.
+        await invalidateAttachmentToolReplay(env, {
+          workspaceId: input.workspaceId,
+          workstreamId: input.parentId,
+          invocationId: row.effectIntentId,
+        }, receipts);
+        return null;
+      }
+      const attachmentReplay = await loadAuthorizedAttachmentReplay(env, input, {
+        invocationId: row.effectIntentId,
+        capability: expectedPolicy.definition.capability,
+        canonicalToolName: expectedPolicy.definition.name,
+        rawInput: parseJson(row.inputJson, {}),
+        outputRef: row.outputRef,
+      });
+      if (attachmentReplay === null) return null;
+      if (!nested) {
+        const invocation = await loadToolInvocation(env, input, toolCallId);
+        if (invocation) {
+          await emit({ type: "tool_completed", invocation });
+        }
+      }
+      const replayedOutput = attachmentReplay?.output ?? (row.outputRef
+        ? await loadToolReplayOutput(env, row.outputRef)
+        : null);
+      const contentParts = attachmentReplay?.contentParts ?? [];
+      return {
+        output: replayedOutput ?? { summary: row.outputSummary },
+        summary: row.outputSummary ?? "Completed",
+        ...(contentParts.length > 0 ? { contentParts } : {}),
+      };
+    }
+    try {
+      const recovered = await reenterInterruptedWrite({
+        row: {
+          id: row.effectIntentId,
+          // The reconciler reads the wire spelling; the object stores its own.
+          status: wireToolStatus(row.status),
+          inputHash: row.requestHash,
+          inputJson: row.inputJson,
+          attemptStartedAt: row.startedAt ?? 0,
+          providerIdempotencyKey: row.providerIdempotencyKey,
+        },
+        expectedInputHash: inputHash,
+        policyMatches,
+        expectedPolicy,
+        ...(runLimits.maxWallClockMs !== undefined ? {
+          maxWallClockMs: Math.max(0, runLimits.maxWallClockMs - (Date.now() - runLimitsAtMs)),
+        } : {}),
+        plugins: harnessTools.plugins,
+        context: {
+          workspaceId: input.workspaceId,
+          workstreamId: input.parentId,
+          harnessRunId: input.harnessRunId,
+          toolCallId,
+          executionPrincipal: input.executionPrincipal,
+          signal: harnessSignal,
+        },
+      });
+      if (recovered) {
+        await persistSuccessfulToolResult(env, input, liveness.lease, {
+          invocationId: row.effectIntentId,
+          toolCallId,
+          output: durableToolReplayOutput(
+            expectedPolicy.definition.capability,
+            recovered.output,
+            recovered.summary,
+          ),
+          outputSummary: recovered.summary,
+          memberSafePayload: { toolName: row.toolName, recovered: true },
+          allowAmbiguousReconciliation: row.status === "ambiguous",
+        });
+        const invocation = await loadToolInvocation(env, input, toolCallId);
+        if (invocation) {
+          if (!nested) await emit({ type: "tool_completed", invocation });
+          runtimeDeferral(recordToolAudit(env, input, invocation.id, row.toolName, "write", "completed"));
+        }
+        logStructuredEvent(env, "info", "terminal_tool_receipt_recovered", {
+          workspace_id: input.workspaceId,
+          workstream_id: input.parentId,
+          harness_run_id: input.harnessRunId,
+          tool_invocation_id: row.effectIntentId,
+        });
+        return recovered;
+      }
+    } catch (error) {
+      // A re-entry that failed has proved nothing, and the honest answer is
+      // the ambiguity below rather than a thrown run — for *any* tool the
+      // host was willing to re-enter. That is the same claim `reenterable`
+      // makes, so it is read from the resolved tool rather than from a list
+      // of names beside it.
+      //
+      // It was a list, and it was the defect this change removed from
+      // `reenterInterruptedWrite` sitting one function away: `publish_resource`
+      // had to be added to it by hand, the next re-enterable tool would have
+      // to be too, and nothing would have reminded anyone — the tool would
+      // look fully wired. The cost of forgetting is not "stays ambiguous"; it
+      // is the `throw` below, which kills the live run the way the incident
+      // did. `checkout_repository` was already in that position.
+      const attempted = harnessTools.plugins
+        .find((candidate) => candidate.canonicalId === expectedPolicy.pluginId)
+        ?.tools.find((candidate) => candidate.definition.name === expectedPolicy.definition.name);
+      // `command_recovery_unavailable` stays named because it is the one
+      // refusal that is *not* a failed lookup: `run_command` says with it
+      // that the durable submission authority was retired, which is a
+      // conclusion rather than an absence of one.
+      const codedRecoveryFailure = typeof error === "object" && error !== null && "code" in error;
+      if (!attempted?.reenterable && !(codedRecoveryFailure && error.code === "command_recovery_unavailable")) {
+        throw error;
+      }
+      logStructuredEvent(env, "warn", "terminal_tool_receipt_recovery_ambiguous", {
+        code: error instanceof TerminalToolError ? error.code : diagnosticErrorCode(error, "reentry_failed"),
+        plugin_id: expectedPolicy.pluginId,
+        workspace_id: input.workspaceId,
+        workstream_id: input.parentId,
+        harness_run_id: input.harnessRunId,
+        tool_invocation_id: row.effectIntentId,
+      });
+    }
+    // Classify replay safety from the canonical policy persisted in the
+    // receipt, never from a provider-rewritten wire alias. A missing or
+    // mismatched plan fails closed and is never replayed as a read.
+    const mode = expectedPolicy.definition.mode;
+    // A settled read at these coordinates is not an ambiguous write. Hand the
+    // call to the planner, which rebinds the receipt and executes it; see
+    // `completedReadReceipt`, which applies the same fences this does — a
+    // different call, both sides read, nothing external moved.
+    if (
+      row.status === "completed"
+      && mode === "read"
+      && row.requestHash !== inputHash
+      && recordedReceiptMode(row.executionPlanJson) === "read"
+    ) {
+      return null;
+    }
+    if (mode === "write" || row.requestHash !== inputHash || !policyMatches) {
+      ambiguousToolOutcome = true;
+      const newlyAmbiguous = row.status !== "ambiguous";
+      // A completed receipt cannot be finalized again: an ambiguous finalize
+      // moves `('pending', 'started', 'failed')`, so the update matches no row
+      // and the attempt raises `RunOwnershipLost`, which the harness reports
+      // as a fatal port failure. The ambiguity is still recorded below,
+      // against the receipt as it stands. A `failed` row is still mutable and
+      // still flips — a write may have reached the provider before failing.
+      if (row.status !== "ambiguous" && row.status !== "completed") {
+        await finalizeToolInvocationFailure(
+          createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
+          liveness.lease, {
+          harnessRunId: input.harnessRunId,
+          invocationId: row.effectIntentId,
+          status: "ambiguous",
+          phase: "ambiguous_external_write",
+          error: {
+            code: "ambiguous_external_write",
+            message: row.requestHash !== inputHash
+              ? "A stable tool-call ID was reused with different input"
+              : !policyMatches
+                ? "A stable tool-call ID was reused with a different canonical tool policy"
+                : "A previous write may have reached the provider and will not be repeated",
+          },
+          memberSafePayload: { code: "ambiguous_external_write" },
+        });
+      }
+      // A nested call has no transcript row of its own: the program's row
+      // carries its outcome, and the child receipt carries the truth.
+      if (!nested) {
+        await ensureTranscriptToolParents({
+          toolCallId,
+          pluginId: expectedPolicy.pluginId,
+        });
+        await orderedTranscript.upsertToolLifecycle({
+          toolCallId,
+          pluginId: expectedPolicy.pluginId,
+          toolName: row.toolName,
+          status: "ambiguous",
+          error: "Rally could not confirm whether this external action completed",
+          occurredAtUtc: new Date().toISOString(),
+        });
+        await failTranscriptToolActivities({
+          toolCallId,
+          pluginId: expectedPolicy.pluginId,
+          toolName: row.toolName,
+        });
+      }
+      const invocation = await loadToolInvocation(env, input, toolCallId);
+      if (invocation) {
+        if (!nested) await emit({ type: "tool_failed", invocation });
+        if (newlyAmbiguous) {
+          runtimeDeferral(recordToolAudit(env, input, invocation.id, row.toolName, mode, "ambiguous"));
+        }
+      }
+      return {
+        output: { error: "ambiguous_external_write", invocationId: row.effectIntentId },
+        summary: "Existing write invocation requires human resolution",
+        halt: "needs_input",
+      };
+    }
+    return null;
+  
+  };
+  // A program's nested calls take the same authorization, receipt lookup, plan
+  // and settlement a direct call takes; the gateway gets them through these
+  // seams, attached here where every one of them exists.
+  harnessTools.codeMode?.attachHost({
+    lease: liveness.lease,
+    receipts: createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
+    toolTimeoutMs: numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000),
+    authorize: async (call) => await beforeToolCall(call),
+    findCompletedToolResult: (toolCallId, inputHash, policy) => findCompletedToolResult(toolCallId, inputHash, policy, { nested: true }),
+    plan: (pluginId, tool) => {
+      const receiptPolicy = resolveHarnessToolReceiptPolicy({
+        pluginId,
+        canonicalToolName: tool.definition.name,
+        capability: tool.definition.capability,
+        mode: tool.definition.mode,
+        idempotency: tool.definition.idempotency,
+      }, harnessTools);
+      const plan = {
+        pluginId: receiptPolicy.pluginId,
+        canonicalToolName: receiptPolicy.definition.name,
+        capability: receiptPolicy.definition.capability,
+        connectionId: receiptPolicy.connectionId,
+        mode: receiptPolicy.definition.mode,
+        idempotency: receiptPolicy.definition.idempotency,
+        toolSurfaceHash: receiptPolicy.toolSurfaceHash,
+      };
+      return { plan, compatiblePriorPlans: compatiblePriorReceiptPlans(plan, receiptPolicy), connectionId: receiptPolicy.connectionId };
+    },
+    replayOutput: (outputRef) => loadToolReplayOutput(env, outputRef),
+    complete: async ({ invocationId, toolCallId, tool, result }) => {
+      await settleRootHarnessToolCompletion(env, input, liveness.lease, {
+        invocationId,
+        toolCallId,
+        canonicalToolName: tool.definition.name,
+        attachmentOutput: result.output,
+        durableOutput: durableToolReplayOutput(tool.definition.capability, result.output, result.summary),
+        outputSummary: result.summary,
+        ...(result.providerOperationId ? { providerOperationId: result.providerOperationId } : {}),
+        memberSafePayload: { toolName: tool.definition.name, nested: true },
+        ...outboundExternalBinding(input, result.externalConversation),
+      });
+      runtimeDeferral(recordToolAudit(env, input, invocationId, tool.definition.name, tool.definition.mode, "completed"));
+      emitAgentToolTerminalTelemetry(env, {
+        workspaceId: input.workspaceId,
+        workstreamId: input.parentId,
+        harnessRunId: input.harnessRunId,
+        invocationId,
+        ...automationRunProvenance(input),
+      });
+    },
+    fail: async ({ invocationId, toolName, mode, status, phase, error }) => {
+      if (status === "ambiguous") ambiguousToolOutcome = true;
+      await settleRootHarnessToolFailure(
+        createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
+        liveness.lease,
+        { harnessRunId: input.harnessRunId, invocationId, status, phase, error },
+      );
+      runtimeDeferral(recordToolAudit(env, input, invocationId, toolName, mode, status));
+      emitAgentToolTerminalTelemetry(env, {
+        workspaceId: input.workspaceId,
+        workstreamId: input.parentId,
+        harnessRunId: input.harnessRunId,
+        invocationId,
+        ...automationRunProvenance(input),
+      });
+    },
+  });
   let catalogSource: HarnessStartupTiming["catalogSource"] | undefined;
   try {
     outcome = await runHarness({
@@ -4176,222 +4430,7 @@ export async function runWorkstreamHarness(
         await liveness.pulse(stage, stage === "after_tool");
       }
     },
-    findCompletedToolResult: async (toolCallId, inputHash, policyIdentity) => {
-      const expectedPolicy = resolveHarnessToolReceiptPolicy(policyIdentity, harnessTools);
-      const receipts = createToolReceiptObjectPort(
-        env,
-        input.workspaceId,
-        input.parentId,
-        undefined,
-        conversationSubstreamId,
-      );
-      const row = await receipts.receiptForCall({ runId: input.harnessRunId, toolCallId });
-      if (!row) return null;
-      const policyMatches = storedToolPolicyMatches(row.executionPlanJson, expectedPolicy);
-      if (row.status === "completed" && row.requestHash === inputHash && policyMatches) {
-        const replayRefusal = await validateCompletedToolReplay([...harnessTools.corePlugins, ...harnessTools.plugins], policyIdentity, parseJson(row.inputJson, {}), {
-          workspaceId: input.workspaceId, workstreamId: input.parentId, harnessRunId: input.harnessRunId,
-          toolCallId, effectIntentId: row.effectIntentId, executionPrincipal: input.executionPrincipal, signal: harnessSignal,
-        });
-        if (replayRefusal) return replayRefusal;
-        if (expectedPolicy.definition.name === "view_image") {
-          // The picture was the result, and it lived only in that turn: the
-          // sandbox file may have changed or gone since. The read is safe, so
-          // run it again rather than replay a success with nothing to see.
-          await invalidateAttachmentToolReplay(env, {
-            workspaceId: input.workspaceId,
-            workstreamId: input.parentId,
-            invocationId: row.effectIntentId,
-          }, receipts);
-          return null;
-        }
-        const attachmentReplay = await loadAuthorizedAttachmentReplay(env, input, {
-          invocationId: row.effectIntentId,
-          capability: expectedPolicy.definition.capability,
-          canonicalToolName: expectedPolicy.definition.name,
-          rawInput: parseJson(row.inputJson, {}),
-          outputRef: row.outputRef,
-        });
-        if (attachmentReplay === null) return null;
-        const invocation = await loadToolInvocation(env, input, toolCallId);
-        if (invocation) {
-          await emit({ type: "tool_completed", invocation });
-        }
-        const replayedOutput = attachmentReplay?.output ?? (row.outputRef
-          ? await loadToolReplayOutput(env, row.outputRef)
-          : null);
-        const contentParts = attachmentReplay?.contentParts ?? [];
-        return {
-          output: replayedOutput ?? { summary: row.outputSummary },
-          summary: row.outputSummary ?? "Completed",
-          ...(contentParts.length > 0 ? { contentParts } : {}),
-        };
-      }
-      try {
-        const recovered = await reenterInterruptedWrite({
-          row: {
-            id: row.effectIntentId,
-            // The reconciler reads the wire spelling; the object stores its own.
-            status: wireToolStatus(row.status),
-            inputHash: row.requestHash,
-            inputJson: row.inputJson,
-            attemptStartedAt: row.startedAt ?? 0,
-            providerIdempotencyKey: row.providerIdempotencyKey,
-          },
-          expectedInputHash: inputHash,
-          policyMatches,
-          expectedPolicy,
-          ...(runLimits.maxWallClockMs !== undefined ? {
-            maxWallClockMs: Math.max(0, runLimits.maxWallClockMs - (Date.now() - runLimitsAtMs)),
-          } : {}),
-          plugins: harnessTools.plugins,
-          context: {
-            workspaceId: input.workspaceId,
-            workstreamId: input.parentId,
-            harnessRunId: input.harnessRunId,
-            toolCallId,
-            executionPrincipal: input.executionPrincipal,
-            signal: harnessSignal,
-          },
-        });
-        if (recovered) {
-          await persistSuccessfulToolResult(env, input, liveness.lease, {
-            invocationId: row.effectIntentId,
-            toolCallId,
-            output: durableToolReplayOutput(
-              expectedPolicy.definition.capability,
-              recovered.output,
-              recovered.summary,
-            ),
-            outputSummary: recovered.summary,
-            memberSafePayload: { toolName: row.toolName, recovered: true },
-            allowAmbiguousReconciliation: row.status === "ambiguous",
-          });
-          const invocation = await loadToolInvocation(env, input, toolCallId);
-          if (invocation) {
-            await emit({ type: "tool_completed", invocation });
-            runtimeDeferral(recordToolAudit(env, input, invocation.id, row.toolName, "write", "completed"));
-          }
-          logStructuredEvent(env, "info", "terminal_tool_receipt_recovered", {
-            workspace_id: input.workspaceId,
-            workstream_id: input.parentId,
-            harness_run_id: input.harnessRunId,
-            tool_invocation_id: row.effectIntentId,
-          });
-          return recovered;
-        }
-      } catch (error) {
-        // A re-entry that failed has proved nothing, and the honest answer is
-        // the ambiguity below rather than a thrown run — for *any* tool the
-        // host was willing to re-enter. That is the same claim `reenterable`
-        // makes, so it is read from the resolved tool rather than from a list
-        // of names beside it.
-        //
-        // It was a list, and it was the defect this change removed from
-        // `reenterInterruptedWrite` sitting one function away: `publish_resource`
-        // had to be added to it by hand, the next re-enterable tool would have
-        // to be too, and nothing would have reminded anyone — the tool would
-        // look fully wired. The cost of forgetting is not "stays ambiguous"; it
-        // is the `throw` below, which kills the live run the way the incident
-        // did. `checkout_repository` was already in that position.
-        const attempted = harnessTools.plugins
-          .find((candidate) => candidate.canonicalId === expectedPolicy.pluginId)
-          ?.tools.find((candidate) => candidate.definition.name === expectedPolicy.definition.name);
-        // `command_recovery_unavailable` stays named because it is the one
-        // refusal that is *not* a failed lookup: `run_command` says with it
-        // that the durable submission authority was retired, which is a
-        // conclusion rather than an absence of one.
-        const codedRecoveryFailure = typeof error === "object" && error !== null && "code" in error;
-        if (!attempted?.reenterable && !(codedRecoveryFailure && error.code === "command_recovery_unavailable")) {
-          throw error;
-        }
-        logStructuredEvent(env, "warn", "terminal_tool_receipt_recovery_ambiguous", {
-          code: error instanceof TerminalToolError ? error.code : diagnosticErrorCode(error, "reentry_failed"),
-          plugin_id: expectedPolicy.pluginId,
-          workspace_id: input.workspaceId,
-          workstream_id: input.parentId,
-          harness_run_id: input.harnessRunId,
-          tool_invocation_id: row.effectIntentId,
-        });
-      }
-      // Classify replay safety from the canonical policy persisted in the
-      // receipt, never from a provider-rewritten wire alias. A missing or
-      // mismatched plan fails closed and is never replayed as a read.
-      const mode = expectedPolicy.definition.mode;
-      // A settled read at these coordinates is not an ambiguous write. Hand the
-      // call to the planner, which rebinds the receipt and executes it; see
-      // `completedReadReceipt`, which applies the same fences this does — a
-      // different call, both sides read, nothing external moved.
-      if (
-        row.status === "completed"
-        && mode === "read"
-        && row.requestHash !== inputHash
-        && recordedReceiptMode(row.executionPlanJson) === "read"
-      ) {
-        return null;
-      }
-      if (mode === "write" || row.requestHash !== inputHash || !policyMatches) {
-        ambiguousToolOutcome = true;
-        const newlyAmbiguous = row.status !== "ambiguous";
-        // A completed receipt cannot be finalized again: an ambiguous finalize
-        // moves `('pending', 'started', 'failed')`, so the update matches no row
-        // and the attempt raises `RunOwnershipLost`, which the harness reports
-        // as a fatal port failure. The ambiguity is still recorded below,
-        // against the receipt as it stands. A `failed` row is still mutable and
-        // still flips — a write may have reached the provider before failing.
-        if (row.status !== "ambiguous" && row.status !== "completed") {
-          await finalizeToolInvocationFailure(
-            createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
-            liveness.lease, {
-            harnessRunId: input.harnessRunId,
-            invocationId: row.effectIntentId,
-            status: "ambiguous",
-            phase: "ambiguous_external_write",
-            error: {
-              code: "ambiguous_external_write",
-              message: row.requestHash !== inputHash
-                ? "A stable tool-call ID was reused with different input"
-                : !policyMatches
-                  ? "A stable tool-call ID was reused with a different canonical tool policy"
-                  : "A previous write may have reached the provider and will not be repeated",
-            },
-            memberSafePayload: { code: "ambiguous_external_write" },
-          });
-        }
-        {
-          await ensureTranscriptToolParents({
-            toolCallId,
-            pluginId: expectedPolicy.pluginId,
-          });
-          await orderedTranscript.upsertToolLifecycle({
-            toolCallId,
-            pluginId: expectedPolicy.pluginId,
-            toolName: row.toolName,
-            status: "ambiguous",
-            error: "Rally could not confirm whether this external action completed",
-            occurredAtUtc: new Date().toISOString(),
-          });
-          await failTranscriptToolActivities({
-            toolCallId,
-            pluginId: expectedPolicy.pluginId,
-            toolName: row.toolName,
-          });
-        }
-        const invocation = await loadToolInvocation(env, input, toolCallId);
-        if (invocation) {
-          await emit({ type: "tool_failed", invocation });
-          if (newlyAmbiguous) {
-            runtimeDeferral(recordToolAudit(env, input, invocation.id, row.toolName, mode, "ambiguous"));
-          }
-        }
-        return {
-          output: { error: "ambiguous_external_write", invocationId: row.effectIntentId },
-          summary: "Existing write invocation requires human resolution",
-          halt: "needs_input",
-        };
-      }
-      return null;
-    },
+    findCompletedToolResult: (toolCallId, inputHash, policyIdentity) => findCompletedToolResult(toolCallId, inputHash, policyIdentity),
     resolveToolEffectIntentId: toolEffectIntents.resolve,
     onEvent: async (event: HarnessEvent) => {
       if (!runtime?.persistentLoop) {

@@ -213,7 +213,7 @@ describe("a Sidekick's saved tools", () => {
     expect(parsed.data.calls.map((call) => call.tool)).toEqual(["rally_core.current_time"]);
     // The run's prompt carried the saved tools' instruction, and the tool's own description.
     const offered = provider.calls.find((call) => call.toolNames.includes("custom_day_math"));
-    expect(String(offered?.messages.find((message) => message.role === "system")?.content ?? "")).toContain("Custom tools were written and tested for this Sidekick");
+    expect(String(offered?.messages.find((message) => message.role === "system")?.content ?? "")).toContain("The custom_* tools were written and tested for this Sidekick");
   });
 
   it("refuses a tool on an instruction-only Sidekick by field", async () => {

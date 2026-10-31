@@ -954,6 +954,20 @@ OpenRouter did not expose an endpoint record for that model when this tool was
 added, so the normal state is an unavailable-price log rather than an invented
 price or denied speech request.
 
+## Model-authored input schemas
+
+One family of tools has a schema a model wrote: a Sidekick's saved custom
+tools, whose `inputSchema` the wizard authors and every run's model reads
+([`code-mode.md`](code-mode.md#a-sidekicks-saved-tools)). The rules above still
+hold, by construction rather than by review. `ToolInputObjectSchema` admits only
+a plain object root with a description on every property and `required` drawn
+from `properties` (items 2, 13); materialization closes it with
+`additionalProperties: false` and the executor's first statement is the same
+`validateToolArguments` the `validateInput` hook reports through (items 2, 12);
+the wire name is `custom_<name>` with the name constrained to lower snake case
+(item 1). What the schema cannot carry, a refinement or a cross-field rule, a
+saved tool cannot express either, so item 12 has nothing to close.
+
 ## Terminal tool contract registry
 
 The deferred `rally:terminal` plugin is the concrete file/command family that
@@ -1239,6 +1253,24 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-10-31 — A model may author a tool's input schema, within the shape
+
+**What changed:** A Sidekick's saved custom tool carries an `inputSchema` the
+wizard wrote. `ToolInputObjectSchema` bounds it to a described plain object,
+and materialization closes it and validates through the same function in the
+hook and the executor.
+
+**Why:** A saved tool is the one place a model writes a schema other models
+read. The checklist's items 2, 12 and 13 are what keep a tool usable by a small
+model, and a reviewed schema is not available here, so the shape enforces them.
+
+**Considered and rejected:** Free-form JSON Schema (an `anyOf` root or an
+undescribed property would reach a run's model as exactly the parameter the
+checklist forbids).
+
+**Consequences:** A saved tool cannot express a refinement; what it needs
+beyond the shape belongs in the program.
 
 ### 2026-10-15 — The connection check covers every scope
 

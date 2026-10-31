@@ -10,6 +10,8 @@ describe('pluginGroup', () => {
     'rally:memory',
     'rally:tables',
     'rally.skills',
+    'rally:code',
+    'rally:custom-tools',
   ])('folds %s into one Rally row', (pluginId) => {
     expect(pluginGroup(pluginId, pluginId)).toMatchObject({ key: 'rally', name: 'Rally', icon: 'rally' });
     // Still Rally the day the harness gives one of them a display name: these
