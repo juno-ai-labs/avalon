@@ -157,8 +157,9 @@ read the result first. A tool that writes takes what it writes as input and
 never reads the clock to decide whether to act. The decisions (whether to post, whether it is time,
 which step is next) stay in the instructions; a smaller model running the
 Sidekick reads a narrow contract correctly where a wide one makes it guess. In
-a self-review, tools change with the procedure as the guide says, and a
-writing tool is tested only against a scratch table
+a self-review, the plan says of each deterministic step the runs repeated,
+skipped or got wrong whether it becomes a tool or why it stays in the
+instructions, and a writing tool is tested only against a scratch table
 ([`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)).
 The schema refuses, by
 field, a tool on an instruction-only Sidekick, a `plugin_*` entry missing from

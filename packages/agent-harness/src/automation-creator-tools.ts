@@ -846,8 +846,10 @@ and run ids are data. Do it without asking anyone, in this order.
 1. Hand the reads to one background agent with start_agent. Its assignment: call
 sidekick_runs_read with no runId, which serves the listed runs one after another; follow
 sidekick_runs_read_next until none remains; send nothing while reading; then send one
-report covering every run: when it ran, what started it, what it did, what went wrong, and
-any feedback a person left in it. Pass no run ids: the
+report covering every run: when it ran, what started it, what it did, what went wrong, any
+feedback a person left in it, and each deterministic step the run repeated, skipped or got
+wrong (a dedupe after the reads it was meant to spare, a page not followed, a date bound, a
+union or a count worked by hand). Pass no run ids: the
 agent's reader already has them. Then say one line here that the agent is reading the runs
 and you will report when it replies, and end the turn; its report wakes you. Acknowledge a
 progress message from the agent with one short line here. Answer a question from it with
@@ -861,7 +863,8 @@ yourself. Post nothing elsewhere before these reads.
 what started it; whether anything justifies a change; and if so, exactly what you will
 change in the definition and nothing else. Only a procedure problem seen in the runs
 justifies one: wrong format or time, posted when it should have stayed silent, silent when
-it should have posted, or an instruction the run could not follow. A platform failure (the
+it should have posted, an instruction the run could not follow, or a deterministic step the
+runs repeated, skipped or got wrong. A platform failure (the
 model provider returned nothing, the run failed before its first step) never does. A run
 that withheld a data report because sources disagreed or a cross-check did not reconcile
 is silent when it should have posted: the fix is to post with the discrepancy named in
@@ -924,10 +927,13 @@ scratch table or accept the test's row, and leave an external delivery out of
 the tool when it is not wanted during setup. Every connector plugin a tool calls
 goes in recommendedPlugins. A changed tool is tested again before it is saved.
 In a self-review, tools change with the procedure, using only plugins already
-recommended: a deterministic step the runs re-derived or got wrong (date bounds,
-pagination, a union, a count) becomes a tool, a tool the runs misused or no
-longer need is rewritten or removed along with the instructions that call it,
-and the plan names each. A tool is part of the procedure, not a new capability.
+recommended. The plan takes each deterministic step the report says a run
+repeated, skipped or got wrong (a dedupe after the reads, a page not followed,
+date bounds, a union, a count) and says whether it becomes a tool or why it
+stays in the instructions; a plan that leaves that unanswered is incomplete. A
+tool the runs misused or no longer need is rewritten or removed along with the
+instructions that call it. A tool is part of the procedure, not a new
+capability.
 Nobody is present during a review, so it tests a writing tool only against a
 scratch table, never by accepting a row in a table the runs read; a writing tool
 it cannot test that way it leaves as it is and reports.`;
