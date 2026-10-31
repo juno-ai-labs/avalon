@@ -877,12 +877,18 @@ test it with sidekick_tool_test on representative input, and tell runs in the
 instructions to call custom_<name> and what to do when it fails. Read each tool's
 real output once before the program parses it: inside a program a call returns the
 \`data\` of a direct result with no success/data wrapper, and current_time, for one,
-returns text lines, not an object. A test performs its writes; a memory-table write may stay in
-the tool, tested with a preview input or a scratch table, but leave an external
-delivery out of the tool when it is not wanted during setup. Keep judgement,
-formatting and delivery in the instructions; put the deterministic part in the tool. Every connector plugin a
-tool calls goes in recommendedPlugins. Change a saved tool's code only if its program
-makes no writes; otherwise submit nothing and report the defect.`;
+returns text lines, not an object. One tool does one thing a run can name in a
+sentence, takes only that thing's inputs, and returns the facts the run decides
+with. Two steps are two tools: never a mode, action, dryRun or preview input, and
+never a tool that computes and writes when the run should look at the result
+first. A tool that writes takes what it writes as input; it never reads the
+clock to decide whether to act. Whether to post, whether it is time, and which
+step comes next stay in the instructions with judgement, formatting and
+delivery; the tool holds the deterministic part. A test performs its writes: test a writing tool against a
+scratch table or accept the test's row, and leave an external delivery out of
+the tool when it is not wanted during setup. Every connector plugin a tool calls
+goes in recommendedPlugins. Change a saved tool's code only if its program makes
+no writes; otherwise submit nothing and report the defect.`;
 
 /**
  * Drafting tools for a Sidekick's own authoring conversation. The host controls
