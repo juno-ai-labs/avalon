@@ -113,6 +113,13 @@ participant's. \`return\` the smallest value that answers the question. Throw an
 Error for a condition you cannot handle; its message reaches you. console.log
 output comes back with the value.
 
+A tool returns exactly what its direct call returns, and some return text, not
+an object: current_time returns lines, the last one \`iso8601 timestamp: <UTC
+ISO 8601>\`. When you have not seen a tool's output in this conversation, call
+it directly once, or return it unchanged from a short program, before writing
+code that reads its fields; a program that guesses a shape fails and costs a
+run.
+
 Loops are fine; a program may make as many calls as the work needs. It has
 ${Math.round(CODE_PROGRAM_DEADLINE_MS / 1000)} seconds of runtime, then it is
 stopped; split work larger than that across programs.
@@ -307,7 +314,7 @@ export function finishProgram(
     }
     throw new CodeModeToolError(
       "code_program_failed",
-      `The program threw: ${message} Fix the program and run it again; do not repeat the completed writes it names.${note}`,
+      `The program threw: ${message} Fix the program and run it again; if it read a field a tool's output does not have, call that tool directly first to see its real output. Do not repeat the completed writes it names.${note}`,
       { reason: message, field: "code" },
     );
   }
@@ -526,10 +533,13 @@ export async function createCustomToolsPlugin(
   const harnessTools = await Promise.all(tools.map(async (tool): Promise<HarnessTool> => {
     const identity = await customToolIdentityHash(tool);
     const inputSchema = { ...tool.inputSchema, type: "object" as const, additionalProperties: false } as Record<string, unknown>;
+    // The one allowlisted Rally plugin a run has to load itself; saying so on
+    // the tool saves the run a refused call before the load.
+    const loadFirst = tool.requiredPlugins.includes("rally_web") ? " Load the rally_web plugin before calling this." : "";
     return {
       definition: {
         name: tool.name,
-        description: tool.description,
+        description: `${tool.description}${loadFirst}`,
         capability: "sidekick.tools.run",
         mode: "write",
         idempotency: "record_before_execute",
