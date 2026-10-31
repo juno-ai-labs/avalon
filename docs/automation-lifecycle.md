@@ -1090,7 +1090,11 @@ reviews showed, whereas a plan written from the runs is the proposal a
 reader wants to see before the revision lands. It acts on the plan: nothing
 to change, stop after the report; otherwise revise as planned and submit
 `ready=true`, never adding a connector, plugin, destination, trigger or
-capability, never enrolling a delegate, submitting nothing over a
+capability (saved tools are part of the procedure, not a capability: where a
+program runtime exists the custom-tools guide lets a review add a tested tool
+for a step the runs re-derived or got wrong, and rewrite or remove one the
+runs misused or no longer need:
+[`code-mode.md`](code-mode.md#a-sidekicks-saved-tools)), never enrolling a delegate, submitting nothing over a
 person's unfinished draft, and never adding a validation step that can turn
 a report into a blocker: a run that withheld a data report because two
 sources disagreed is a run that was silent when it should have posted, and
@@ -1671,6 +1675,34 @@ The Sidekick authoring prompt carries no Google-specific lookup or attachment
 instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
+
+### 2026-10-31 — A review may turn a re-derived step into a saved tool
+
+**What changed:** The custom-tools guide, shown to the wizard only where a
+program runtime exists, now says tools change with the procedure in a
+self-review: a deterministic step the runs re-derived or got wrong (date
+bounds, pagination, a union, a count) becomes a tested saved tool called from
+the instructions, a tool the runs misused or no longer need is rewritten or
+removed, the plan names each, and a tool is part of the procedure rather than
+a new capability. A changed tool is tested again before it is saved; the
+earlier rule that a review changes a tool's code only when its program makes
+no writes is withdrawn in favour of testing against a scratch table or
+accepting the test's row.
+
+**Why:** The first production self-review on the deploy that shipped saved
+tools (Daily Active Rally Organizations, 2026-10-31) had `sidekick_tool_test`
+in its catalog, read four runs that each failed on checkpoint writes, pagination
+and set unions, and saved nine thousand characters of procedure prose with
+`customTools: []`. Step 3 of the review tells it to change exactly what the plan
+named and never to add a capability, and the guide spoke only of setup, so a
+tool read as out of bounds. The sentence sits in the guide rather than in step
+3 so a deployment with no runtime never tells a wizard to test a tool it does
+not have.
+
+**Consequences:** The test gate and the single-purpose rule apply to a tool a
+review adds or rewrites as they apply at setup, so a rewritten tool is an
+untested tool until `sidekick_tool_test` runs it again; removing a tool needs
+no test, and the instructions that called it change in the same revision.
 
 ### 2026-10-31 — The wizard saves a tested program as a tool its runs call
 
