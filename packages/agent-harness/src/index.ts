@@ -76,11 +76,12 @@ export * from "./prompts";
 export * from "./completion-verification";
 export { classifyMessageAdmission, classifyMessageContinuation, classifyMessageContinuationWithTypeSafe } from "./message-continuation";
 export { hasAvalonToolProse, toolActivityName, type ToolActivityStatus } from "./tool-activity";
-export { isAzureBoundModel } from "./bind-runtime";
+export { AmbiguousExternalWriteError, isAzureBoundModel } from "./bind-runtime";
 export {
   formatToolArgumentValidationError,
   modelToolArgumentSchema,
   normalizeToolArguments,
+  omitUnspecifiedToolArguments,
   validateToolArguments,
 } from "./tool-arguments";
 export {
@@ -116,6 +117,7 @@ export {
   weakenedCompositionBranches,
 } from "./tool-schema-safety";
 export { READING_GOOGLE_MEETING_NOTES_SKILL } from "./google-meeting-notes-skill";
+export { renderCodeApi, renderType, type CodeApiPlugin, type CodeApiTool } from "./code-api";
 export {
   BUILDING_LIVE_SITES_SKILL,
   BUILT_IN_SKILLS,
@@ -150,7 +152,11 @@ export {
 export {
   AUTOMATIONS_PLUGIN_ID,
   AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE,
+  CUSTOM_TOOLS_GUIDE,
   createAutomationsPlugin,
+  rememberAutomationToolTest,
+  AutomationCreatorToolError,
+  customToolIdentityHash,
   rememberAutomationPeopleSearchResult,
   rememberAutomationResourceSearchResult,
   type AutomationCreatorToolHost,
@@ -2690,6 +2696,30 @@ function addressingProviderRouting(model: string): OpenRouterProviderPreferences
   };
 }
 
+/** One saved tool, as `submit_draft` and `sidekick_tool_test` both take it. */
+export const sidekickCustomToolJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    name: { type: "string", pattern: "^[a-z][a-z0-9_]{2,40}$", description: "Lower snake case, unique within the Sidekick; runs call it as custom_<name>." },
+    description: { type: "string", description: "Model-facing: what the tool does, what it returns, and when a run should call it." },
+    inputSchema: {
+      type: "object",
+      description: "A plain JSON Schema object for the tool's input: type \"object\", a properties map with a description on every property, and required. The program receives the validated input as `input`.",
+      properties: {
+        type: { type: "string", enum: ["object"] },
+        properties: { type: "object", additionalProperties: { type: "object", properties: { type: { type: "string" }, description: { type: "string" } }, required: ["description"] } },
+        required: { type: "array", items: { type: "string" } },
+        additionalProperties: { type: "boolean", enum: [false] },
+      },
+      required: ["type", "properties"],
+    },
+    code: { type: "string", minLength: 1, description: "The body of an async JavaScript function with `input` and `tools` in scope, the same API code_execute shows in # Code API. Return the answer the run needs." },
+    requiredPlugins: { type: "array", minItems: 1, items: { type: "string", pattern: "^(plugin_[a-z][a-z0-9_]{0,62}|rally_core|rally_tables|rally_memory|rally_web)$" }, description: "The plugin ids the program calls: a connector plugin from plugins_list (which must also be in recommendedPlugins), or rally_core, rally_tables, rally_memory or rally_web." },
+  },
+  required: ["name", "description", "inputSchema", "code", "requiredPlugins"],
+} as const;
+
 const automationDraftSubmissionJsonSchema = {
   type: "object",
   additionalProperties: false,
@@ -2824,6 +2854,11 @@ const automationDraftSubmissionJsonSchema = {
         required: ["name", "description", "usageInstructions", "columns", "keyColumns"]
       }
     },
+    customTools: {
+      type: "array",
+      description: "Tools this Sidekick's runs call instead of rediscovering a method: each is a tested JavaScript program with a name, a model-facing description and an input schema, offered to every run as custom_<name>. One tool does one thing a run can name in a sentence; two steps are two tools, with no mode or preview input. Test each with sidekick_tool_test before submitting; a tool whose current code has no successful test is refused. Use [] when the runs need none.",
+      items: sidekickCustomToolJsonSchema,
+    },
     suggestedScope: {
       type: "string",
       enum: ["personal", "workspace", "workstream"],
@@ -2846,6 +2881,7 @@ const automationDraftSubmissionJsonSchema = {
     "defaultBehavior",
     "recommendedPlugins",
     "memoryTables",
+    "customTools",
     "suggestedScope",
     "ready"
   ]
@@ -3247,6 +3283,7 @@ function normalizeAutomationDraft(value: unknown): unknown {
     requiredCapabilities: [],
     defaultBehavior: parseJsonObject(draft.defaultBehavior),
     memoryTables: Array.isArray(draft.memoryTables) ? draft.memoryTables : [],
+    customTools: Array.isArray(draft.customTools) ? draft.customTools : [],
     ready,
     followUpQuestion: null,
     elicitation: null,
@@ -3552,7 +3589,7 @@ export const AVALON_MULTIMODAL_GENERATION_PLUGIN_ID = "rally:multimodal-generati
 
 export const AVALON_CURRENT_TIME_TOOL_DEFINITION = {
   name: "current_time",
-  description: "Return the current local time, local IANA timezone, workspace IANA timezone, local date, and UTC ISO-8601 timestamp. Local time defaults to the current user's timezone for user runs and the workspace timezone for workspace runs; optionally accepts another valid IANA timezone.",
+  description: "Return the current local time, local IANA timezone, workspace IANA timezone, local date, and UTC ISO-8601 timestamp, as text lines (not an object); the last line is `iso8601 timestamp: <UTC ISO 8601>`. Local time defaults to the current user's timezone for user runs and the workspace timezone for workspace runs; optionally accepts another valid IANA timezone.",
   capability: "time.read",
   mode: "read",
   idempotency: "safe",
@@ -3880,6 +3917,22 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
     },
   },
   {
+    name: "tool_test",
+    description: "Run a candidate custom tool once, for real, against live data, and record the successful test for the next submit_draft. Pass the whole tool and a representative input. Writes the program makes are made. A tool whose current code, input schema or plugins have no successful test is refused at submit.",
+    capability: "rally.sidekick.tools.test",
+    mode: "write",
+    idempotency: "record_before_execute",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        tool: { ...sidekickCustomToolJsonSchema, description: "The tool as it will be submitted: name, description, inputSchema, code, requiredPlugins." },
+        input: { type: "object", description: "Arguments a run would pass, matching tool.inputSchema. Validated before the program runs." },
+      },
+      required: ["tool", "input"],
+    },
+  },
+  {
     name: "sidekicks_list",
     description: "Read this Sidekick's current definition in its authoring conversation before revising it. To load reusable instructions in another conversation, use load_skill from the Skills catalog.",
     capability: "rally.sidekick.list",
@@ -3999,6 +4052,12 @@ export interface HarnessTool {
    */
   reenterable?: boolean;
   /**
+   * The result carries `contentParts`, content that exists only in the current
+   * model turn. A program cannot hold it, so `callableTools` in Code Mode
+   * leaves such a tool out and the model calls it directly.
+   */
+  yieldsContentParts?: true;
+  /**
    * Establish what an interrupted attempt of this tool did, without performing
    * it.
    *
@@ -4045,6 +4104,20 @@ export class HarnessPluginActivationError extends Error {
   }
 }
 
+/**
+ * What a plugin may read of the run it is registered in: which plugins are
+ * active right now, and the plugins the run holds at all. Handed to a plugin's
+ * `attachRuntimeView` once the runtime is built, and to `renderSystemMessage`
+ * on every render. Read-only; nothing here activates or widens anything.
+ */
+export interface HarnessRuntimeView {
+  isActive(canonicalId: string): boolean;
+  /** The active plugins in Bind's render order (canonical id). */
+  activePlugins(): HarnessPlugin[];
+  /** Every plugin the run registered, active or not. */
+  plugins(): HarnessPlugin[];
+}
+
 /** A Bind plugin whose trusted identity, prose, and tool policy are authored by the host. */
 export interface HarnessPlugin {
   /** Stable host authorization/persistence identity (`avalon:*` or `connection:<uuid>`). */
@@ -4089,6 +4162,15 @@ export interface HarnessPlugin {
   /** For deferred plugins, requests persistence before an activation hint; ignored for core plugins. */
   preload: boolean;
   explicit?: boolean;
+  /**
+   * A system message rendered from the run's current active plugin set, used
+   * in place of `systemMessage` while this plugin is active. Rendered on every
+   * model call, like the tool list, so it must be a pure function of the view:
+   * the same active set renders the same bytes.
+   */
+  renderSystemMessage?: (view: HarnessRuntimeView) => string;
+  /** Receives the run's live plugin view once, when the runtime is built. */
+  attachRuntimeView?: (view: HarnessRuntimeView) => void;
 }
 
 export type HarnessEvent =

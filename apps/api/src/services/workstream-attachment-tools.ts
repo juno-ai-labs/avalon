@@ -463,6 +463,7 @@ export function createWorkstreamAttachmentTools(
         idempotency: "safe",
         inputSchema: z.toJSONSchema(AttachmentViewResourceArgumentsSchema, { io: "input" }) as Record<string, unknown>,
       },
+      yieldsContentParts: true,
       execute: async (raw) => {
         const args = AttachmentViewResourceArgumentsSchema.parse(raw);
         const visibleRows = await loadScopedResourceRows(env, input, options, args.resourceIds);

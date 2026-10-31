@@ -102,6 +102,7 @@ const DEFINITION: AutomationDraft = {
   defaultBehavior: {},
   recommendedPlugins: [],
   memoryTables: [],
+  customTools: [],
   suggestedScope: "workstream",
   followUpQuestion: null,
   elicitation: null,

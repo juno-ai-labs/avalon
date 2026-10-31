@@ -52,6 +52,12 @@ export class WorkerEntrypoint<Env = unknown> {
 }
 
 /**
+ * The RPC-capability base class a `code_execute` gateway extends. Off workerd
+ * nothing serializes it; the stand-in only lets the module load.
+ */
+export class RpcTarget {}
+
+/**
  * Node-test stand-in for the runtime's custom-span API.
  *
  * The real one nests by async context and hands the span to the OTLP exporter;

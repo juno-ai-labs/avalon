@@ -22,6 +22,7 @@ const definition: NonNullable<AutomationDetail['currentDefinition']> = {
   defaultBehavior: {},
   recommendedPlugins: [],
   memoryTables: [],
+  customTools: [],
   suggestedScope: 'personal',
   followUpQuestion: null,
   elicitation: null,
@@ -130,6 +131,41 @@ describe('AutomationHeader', () => {
     expect(resume).not.toHaveAttribute('aria-disabled');
     fireEvent.click(resume);
     expect(handlers.onResume).toHaveBeenCalledOnce();
+  });
+
+  it('lists the saved tools by a human name, closed, with their code behind a second disclosure, and no section without any', () => {
+    const tool = {
+      name: 'day_math',
+      description: 'Doubles a day count.',
+      inputSchema: { type: 'object' as const, properties: { days: { type: 'integer', description: 'Days to double.' } }, required: ['days'], additionalProperties: false as const },
+      code: 'return { doubled: input.days * 2 };',
+      requiredPlugins: ['rally_core', 'plugin_slack'],
+    };
+    const active: AutomationDetail = {
+      ...draft, status: 'active', lifecycle: 'active', currentDefinitionRevision: 1, acceptedDefinitionRevision: 1,
+      currentDefinition: { ...definition, customTools: [tool] },
+    };
+    const { unmount } = render(<Tooltip.Provider><AutomationHeader automation={active} {...actions()} /></Tooltip.Provider>);
+    expect(screen.getByText('Steps this Sidekick runs the same way every time. Ask in its setup conversation to change one.')).toBeInTheDocument();
+    const list = screen.getByRole('list', { name: 'Tools' });
+    const title = within(list).getByText('Day math');
+    const tool1 = title.closest('details');
+    expect(tool1).not.toHaveAttribute('open');
+    expect(within(list).getByText('custom_day_math')).toBeInTheDocument();
+    fireEvent.click(title.closest('summary')!);
+    expect(tool1).toHaveAttribute('open');
+    expect(within(list).getByText('Doubles a day count.')).toBeInTheDocument();
+    expect(within(list).getByRole('list', { name: 'Inputs' })).toHaveTextContent('days: Days to double.');
+    expect(within(list).getByText('Uses Rally, Slack.')).toBeInTheDocument();
+    const source = within(list).getByText('Show code').closest('details');
+    expect(source).not.toHaveAttribute('open');
+    fireEvent.click(within(list).getByText('Show code'));
+    expect(source).toHaveAttribute('open');
+    expect(within(list).getByLabelText('Program for Day math').textContent).toBe('return { doubled: input.days * 2 };');
+    unmount();
+    render(<Tooltip.Provider><AutomationHeader automation={{ ...active, currentDefinition: definition }} {...actions()} /></Tooltip.Provider>);
+    expect(screen.queryByRole('list', { name: 'Tools' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Tools' })).toBeNull();
   });
 
   it('shows the generated description and triggers without manual publication', () => {

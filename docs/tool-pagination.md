@@ -4,6 +4,10 @@ Rally-authored tools keep opaque continuation tokens on the server. Models start
 with a normal list, search, or read call, then use its `_next` companion with
 only `{ pageId }`. A result's `nextPageId: null` is the end of the sequence.
 Hosted MCP and other pass-through tools retain their provider-defined contracts.
+A `code_execute` program may call an authored tool and its `_next` companion
+like any other; each nested call is its own receipt, so the claim fences below
+apply per nested call exactly as they do per direct call
+([`code-mode.md`](code-mode.md)).
 
 ## Where the code lives
 

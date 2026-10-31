@@ -148,6 +148,7 @@ import {
   runWorkstreamHarness,
   type WorkstreamHarnessResult,
 } from "../services/integrations";
+import { CODE_PLUGIN_ID, CUSTOM_TOOLS_PLUGIN_ID } from "../services/code-mode";
 import { canonicalExternalResultText } from "../services/external-result-delivery";
 import { SlackAgentService } from "../services/slack-agent-service";
 import { refreshWorkstreamDescription } from "../services/workstream-description-service";
@@ -5013,6 +5014,34 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * decide which missing calls completed, definitely did not run, or may have
    * crossed an external write boundary.
    */
+  /**
+   * For an interrupted `code_execute` or `custom_<name>` receipt, the nested
+   * calls recorded under it, as one sentence; null for any other tool. The
+   * children are receipts at `<toolCallId>:call:<index>`, settled as the
+   * program ran, so this is the ledger's own account of how far it got.
+   */
+  private completedProgramChildren(runId: string, receipt: { toolCallId: string; executionPlanJson: string | null }): string | null {
+    let pluginId: unknown;
+    try {
+      pluginId = receipt.executionPlanJson === null ? null : (JSON.parse(receipt.executionPlanJson) as { pluginId?: unknown }).pluginId;
+    } catch {
+      return null;
+    }
+    if (pluginId !== CODE_PLUGIN_ID && pluginId !== CUSTOM_TOOLS_PLUGIN_ID) return null;
+    const children = this.state.storage.sql.exec<{ tool_call_id: string; tool_name: string; status: string }>(
+      `SELECT tool_call_id, tool_name, status FROM tool_effects
+        WHERE run_id = ? AND tool_call_id LIKE ? ORDER BY tool_position`,
+      runId,
+      `${receipt.toolCallId}:call:%`,
+    ).toArray();
+    const completed = children.filter((child) => child.status === "completed")
+      .map((child) => `${child.tool_name} at ${child.tool_call_id.slice(receipt.toolCallId.length + ":call:".length)}`);
+    const unsettled = children.filter((child) => child.status !== "completed" && child.status !== "failed")
+      .map((child) => child.tool_name);
+    return `program interrupted; completed nested calls: ${completed.length ? completed.join(", ") : "none"}`
+      + (unsettled.length ? `; unknown: ${unsettled.join(", ")}` : "");
+  }
+
   private async recoverInterruptedToolBatch(
     executionEnv: Env,
     input: WorkstreamWorkflowInput,
@@ -5126,6 +5155,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         } else {
           classification = "ambiguous";
           ambiguityReason = reentry.reason;
+          // A program has no re-entry executor of its own, but its children
+          // are receipts: name the nested calls that completed, so whoever
+          // reads the ambiguity knows which writes stand and which are unknown.
+          const programChildren = this.completedProgramChildren(input.harnessRunId, receipt);
+          if (programChildren !== null) ambiguityReason = programChildren;
         }
         // Named for the attempt rather than the outcome, which travels in
         // `recovery`. The previous name asserted recovery on both branches, so
