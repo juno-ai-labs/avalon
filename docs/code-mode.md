@@ -365,7 +365,16 @@ otherwise: the loader compiles what it is given, the deadline ends a loop
   the sentences that name those shapes took the Code Mode suite from 23 of 26
   to 26 of 26 and the wizard suite to 12 of 12. The final twenty passed, 38 of
   38 wizard and run checks in substance; one run landed on a Gemini Flash
-  fallback and still passed.
+  fallback and still passed. A fourth suite, `prod`, holds twelve scenarios
+  shaped after Sidekicks running in production (daily activity and signup
+  reports with checkpoints, a careers-page monitor with a baseline ledger, a
+  note delta behind a cursor, weekly call prep, an hourly dashboard, a polling
+  window, research dedup, a connector firehose the run cannot serve) rewritten
+  over local plugins; it passed 22 of 22, with ten of its runs routed to the
+  scheduled-run model, Gemini Flash, each calling its saved tool. Three
+  `choice` scenarios in the code suite check that "run this Python" and
+  "publish a CSV" load Terminal and exact arithmetic does not; they need a
+  deployment where `TERMINAL_REGION_CAPABILITY` is `supported`.
 - Trap: the Node suite aliases `cloudflare:workers` to
   `apps/api/test/helpers/cloudflare-workers.ts`, which carries an `RpcTarget`
   stand-in so the gateway module loads off workerd. Anything that needs the
