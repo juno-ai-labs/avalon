@@ -1090,10 +1090,8 @@ reviews showed, whereas a plan written from the runs is the proposal a
 reader wants to see before the revision lands. It acts on the plan: nothing
 to change, stop after the report; otherwise revise as planned and submit
 `ready=true`, never adding a connector, plugin, destination, trigger or
-capability (saved tools are part of the procedure, not a capability: where a
-program runtime exists the custom-tools guide lets a review add a tested tool
-for a step the runs re-derived or got wrong, and rewrite or remove one the
-runs misused or no longer need:
+capability (a saved tool is part of the procedure, and the custom-tools guide
+says how a review adds, rewrites or removes one:
 [`code-mode.md`](code-mode.md#a-sidekicks-saved-tools)), never enrolling a delegate, submitting nothing over a
 person's unfinished draft, and never adding a validation step that can turn
 a report into a blocker: a run that withheld a data report because two
@@ -1680,14 +1678,14 @@ instructions. See [Google connector guidance](connectors.md#google).
 
 **What changed:** The custom-tools guide, shown to the wizard only where a
 program runtime exists, now says tools change with the procedure in a
-self-review: a deterministic step the runs re-derived or got wrong (date
-bounds, pagination, a union, a count) becomes a tested saved tool called from
-the instructions, a tool the runs misused or no longer need is rewritten or
-removed, the plan names each, and a tool is part of the procedure rather than
-a new capability. A changed tool is tested again before it is saved; the
-earlier rule that a review changes a tool's code only when its program makes
-no writes is withdrawn in favour of testing against a scratch table or
-accepting the test's row.
+self-review, using only plugins already recommended: a deterministic step the
+runs re-derived or got wrong becomes a tested saved tool, a tool the runs
+misused or no longer need is rewritten or removed along with the instructions
+that call it, the plan names each, and a tool is part of the procedure rather
+than a new capability. A review tests a writing tool only against a scratch
+table, never by accepting a row in a table the runs read, and leaves one it
+cannot test that way as it is. That replaces the earlier rule that a review
+changes a tool's code only when its program makes no writes.
 
 **Why:** The first production self-review on the deploy that shipped saved
 tools (Daily Active Rally Organizations, 2026-10-31) had `sidekick_tool_test`
@@ -1697,12 +1695,19 @@ and set unions, and saved nine thousand characters of procedure prose with
 named and never to add a capability, and the guide spoke only of setup, so a
 tool read as out of bounds. The sentence sits in the guide rather than in step
 3 so a deployment with no runtime never tells a wizard to test a tool it does
-not have.
+not have. The no-writes rule existed because a review has nobody present to
+accept a test's write; the scratch-table rule keeps that protection (a test
+row never lands in a table the runs read, so a checkpoint cannot move on test
+input) while letting a review fix a writing tool that can be tested that way,
+and the `custom_tool_untested` gate still refuses an untested rewrite.
 
 **Consequences:** The test gate and the single-purpose rule apply to a tool a
 review adds or rewrites as they apply at setup, so a rewritten tool is an
-untested tool until `sidekick_tool_test` runs it again; removing a tool needs
-no test, and the instructions that called it change in the same revision.
+untested tool until `sidekick_tool_test` runs it again. Removing a tool needs
+no test; the guide tells the review to rewrite the instructions that called it
+in the same revision, and nothing in the schema checks that, so a stale
+`custom_<name>` reference would fail at the run as a tool the plugin does not
+have.
 
 ### 2026-10-31 — The wizard saves a tested program as a tool its runs call
 
