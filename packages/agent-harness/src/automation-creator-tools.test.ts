@@ -1002,6 +1002,34 @@ describe("custom tools in the drafting plugin", () => {
     expect(submitted).toHaveLength(2);
   });
 
+  it("admits a tool the target Sidekick already saves unchanged, and still refuses a changed one, without a new test", async () => {
+    const SAVED_SIDEKICK_ID = "00000000-0000-4000-8000-0000000000a1";
+    const submitted: unknown[] = [];
+    const state = host({
+      automationDirectoryPort: {
+        listAutomations: async () => ({ sidekicks: [{ sidekickId: SAVED_SIDEKICK_ID, canEdit: true, name: "Day math", currentDefinition: { customTools: [dayMath] } }] }),
+      },
+      draftMutationPort: {
+        submitDraft: async (draft) => { submitted.push(draft); return { accepted: true }; },
+        setEvaluatorRules: async () => ({ accepted: true as const }),
+        testTool: async () => ({ output: {} }),
+      },
+    });
+    const submit = toolNamed(createAutomationsPlugin(state).tools, "submit_draft");
+
+    // An instructions-only revision of a Sidekick with a saved tool is not sent to repeat the tool's writes.
+    await submit.execute({ ...readyDraft, sidekickId: SAVED_SIDEKICK_ID }, toolContext);
+    expect(submitted).toHaveLength(1);
+    await submit.execute(readyDraft, toolContext);
+    expect(submitted).toHaveLength(2);
+    // A changed tool is a new tool, whatever the target saves.
+    await expect(submit.execute({ ...readyDraft, sidekickId: SAVED_SIDEKICK_ID, customTools: [{ ...dayMath, code: "return 1;" }] }, toolContext))
+      .rejects.toMatchObject({ code: "custom_tool_untested" });
+    // Another Sidekick's saved tool proves nothing about this one.
+    await expect(submit.execute({ ...readyDraft, sidekickId: "00000000-0000-4000-8000-0000000000a2" }, toolContext)).rejects.toMatchObject({ code: "custom_tool_untested" });
+    expect(submitted).toHaveLength(2);
+  });
+
   it("offers the test tool and its guide only where a program runtime exists", () => {
     const without = createAutomationsPlugin(host());
     expect(without.tools.some((tool) => tool.definition.name === "tool_test")).toBe(false);

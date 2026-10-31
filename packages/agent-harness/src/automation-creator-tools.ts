@@ -55,6 +55,36 @@ const ToolTestInputSchema = z.strictObject({
  * replays only against the tool that produced it. One function so all three
  * agree.
  */
+/**
+ * The identity hashes of the tools the submission's target already saves, read
+ * from the host's directory: the one named, or the one editable Sidekick when
+ * none is. Empty where the host lists nothing.
+ */
+async function savedToolIdentities(host: AutomationCreatorToolHost, target: string | null): Promise<Set<string>> {
+  const hashes = new Set<string>();
+  if (!host.automationDirectoryPort) return hashes;
+  // A directory that cannot be read admits nothing: the gate then asks for a
+  // test, as it did before the directory was consulted.
+  const listed = SavedToolsDirectorySchema.safeParse(await host.automationDirectoryPort.listAutomations().catch(() => null));
+  if (!listed.success) return hashes;
+  const candidates = listed.data.sidekicks.filter((entry) => target === null ? entry.canEdit !== false : entry.sidekickId === target);
+  const chosen = target === null && candidates.length !== 1 ? [] : candidates;
+  for (const entry of chosen) {
+    for (const tool of entry.currentDefinition?.customTools ?? []) hashes.add(await customToolIdentityHash(tool));
+  }
+  return hashes;
+}
+
+const SavedToolsDirectorySchema = z.object({
+  sidekicks: z.array(z.object({
+    sidekickId: z.string(),
+    canEdit: z.boolean().optional(),
+    currentDefinition: z.object({
+      customTools: z.array(SidekickCustomToolSchema).optional(),
+    }).nullish(),
+  })),
+});
+
 export function customToolIdentityHash(tool: Pick<SidekickCustomTool, "code" | "inputSchema" | "requiredPlugins">): Promise<string> {
   return canonicalToolInputHash({ code: tool.code, inputSchema: tool.inputSchema, requiredPlugins: [...tool.requiredPlugins].sort() });
 }
@@ -498,10 +528,15 @@ function createEveryAutomationCreatorTool(input: AutomationCreatorToolHost): Har
           // The test gate: a saved tool is a tool that ran. The schema already
           // refuses a tool on an instruction-only Sidekick and a plugin missing
           // from recommendedPlugins, by field; this is the one check only the
-          // conversation's own history can answer.
+          // conversation's own history can answer. A tool the target already
+          // saves, unchanged, ran when it was saved: a revision that touches
+          // only the instructions is not sent to repeat the tool's writes.
+          let saved: Set<string> | null = null;
           for (const [index, tool] of draft.customTools.entries()) {
             const identityHash = await customToolIdentityHash(tool);
-            if (!draftState.toolTests?.get(tool.name)?.has(identityHash)) {
+            if (draftState.toolTests?.get(tool.name)?.has(identityHash)) continue;
+            saved ??= await savedToolIdentities(input, automationSubmissionTarget(raw));
+            if (!saved.has(identityHash)) {
               throw new AutomationCreatorToolError(
                 "custom_tool_untested",
                 `Tool ${tool.name} has no successful sidekick_tool_test for its current code, input schema and plugins. `

@@ -9,7 +9,7 @@ import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DatabaseSync } from "node:sqlite";
 import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
-import type { HarnessPlugin, HarnessRuntimeView, HarnessTool, HarnessToolContext, HarnessToolResult } from "@rally/agent-harness";
+import { AmbiguousExternalWriteError, type HarnessPlugin, type HarnessRuntimeView, type HarnessTool, type HarnessToolContext, type HarnessToolResult } from "@rally/agent-harness";
 
 import {
   CODE_PLUGIN_ID,
@@ -132,11 +132,15 @@ describe("callableTools", () => {
     const sidekicks = plugin("rally:sidekicks", "rally_sidekicks", [tool({ name: "plugins_list" }), testTool]);
     const code = plugin(CODE_PLUGIN_ID, CODE_PLUGIN_MODEL_ID, [tool({ name: "execute", mode: "write" })]);
     const custom = plugin(CUSTOM_TOOLS_PLUGIN_ID, CUSTOM_TOOLS_PLUGIN_MODEL_ID, [tool({ name: "day_math", mode: "write" })]);
-    const all = callableTools(view([core, terminal, code, custom, sidekicks]), null);
+    const search = tool({ name: "search_messages" });
+    search.definition = { ...search.definition, capability: "slack.search" };
+    const slack = plugin("connector:slack", "plugin_slack", [tool({ name: "post_message", mode: "write" }), search]);
+    const all = callableTools(view([core, terminal, code, custom, sidekicks, slack]), null);
     expect(all.map((entry) => [entry.plugin.modelId, entry.tools.map((candidate) => candidate.definition.name)])).toEqual([
       ["rally_core", ["current_time"]],
       ["rally_terminal", ["run_command"]],
       ["rally_sidekicks", ["plugins_list"]],
+      ["plugin_slack", ["post_message"]],
     ]);
     expect(callableTools(view([core, terminal]), new Set(["rally_core"])).map((entry) => entry.plugin.modelId)).toEqual(["rally_core"]);
   });
@@ -156,7 +160,7 @@ describe("GatewaySession", () => {
     expect(session.calls.map((call) => [call.index, call.tool, call.outcome])).toEqual([[0, "rally_core.current_time", "completed"]]);
   });
 
-  it("replays a completed child the host already holds, and goes ambiguous on a halt, without executing", async () => {
+  it("replays a completed child the host already holds, and halts the program on an ambiguous one, without executing", async () => {
     const execute = vi.fn(async (): Promise<HarnessToolResult> => ({ output: {}, summary: "ran" }));
     const replayable = plugin("rally:core", "rally_core", [tool({ name: "current_time", execute })]);
     const { host, rows } = await hostOver({
@@ -168,16 +172,23 @@ describe("GatewaySession", () => {
     expect(await session.gateway.call("rally_core", "current_time", {})).toEqual({ ok: true, output: { fromReceipt: true } });
     const second = await session.gateway.call("rally_core", "current_time", {});
     expect(second).toMatchObject({ ok: false, code: "ambiguous_external_write", index: 1 });
+    // The program cannot catch the error and write again: every later call is refused.
+    const third = await session.gateway.call("rally_core", "current_time", {});
+    expect(third).toMatchObject({ ok: false, code: "code_call_refused", error: expect.stringContaining("unknown outcome") });
+    expect(session.halted).toMatchObject({ code: "ambiguous_external_write" });
     expect(execute).not.toHaveBeenCalled();
     expect(rows()).toEqual([]);
-    expect(session.calls.map((call) => call.outcome)).toEqual(["replayed", "ambiguous"]);
+    expect(session.calls.map((call) => call.outcome)).toEqual(["replayed", "ambiguous", "refused"]);
+    expect(session.calls[2]!.refusal).toBe("program_stopped");
   });
 
-  it("refuses by name, before any receipt: unknown plugin, program in program, loop control, turn-scoped, unknown tool, unloaded, outside the allowance", async () => {
+  it("refuses by name, before any receipt: unknown plugin, program in program, loop control, turn-scoped, transient, unknown tool, unloaded, outside the allowance", async () => {
     const { host, rows } = await hostOver();
     const code = plugin(CODE_PLUGIN_ID, CODE_PLUGIN_MODEL_ID, [tool({ name: "execute", mode: "write" })]);
     const web = plugin("rally:web", "rally_web", [tool({ name: "search" })]);
-    const withImage = plugin("rally:core", "rally_core", [...core.tools, tool({ name: "view_image", yieldsContentParts: true })]);
+    const slackSearch = tool({ name: "search_messages" });
+    slackSearch.definition = { ...slackSearch.definition, capability: "slack.search" };
+    const withImage = plugin("rally:core", "rally_core", [...core.tools, tool({ name: "view_image", yieldsContentParts: true }), slackSearch]);
     const input = { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, harnessRunId: RUN_ID };
     const open = new GatewaySession({ host, view: view([withImage, code], [web]), context: context(), input, allowedPluginIds: null });
     const narrowed = new GatewaySession({ host, view: view([withImage, web]), context: context(), input, allowedPluginIds: new Set(["rally_core"]) });
@@ -186,16 +197,18 @@ describe("GatewaySession", () => {
       open.gateway.call("rally_code", "execute", {}),
       open.gateway.call("rally_core", "request_elicitation", {}),
       open.gateway.call("rally_core", "view_image", {}),
+      open.gateway.call("rally_core", "search_messages", {}),
       open.gateway.call("rally_core", "nope", {}),
       open.gateway.call("rally_web", "search", {}),
       narrowed.gateway.call("rally_web", "search", {}),
     ]);
     expect(reasons.every((answer) => !answer.ok && answer.code === "code_call_refused")).toBe(true);
     expect([...open.calls, ...narrowed.calls].map((call) => call.refusal)).toEqual([
-      "unknown_plugin", "program_in_program", "loop_control", "turn_scoped_result", "unknown_tool", "plugin_not_loaded", "outside_required_plugins",
+      "unknown_plugin", "program_in_program", "loop_control", "turn_scoped_result", "transient_result", "unknown_tool", "plugin_not_loaded", "outside_required_plugins",
     ]);
     expect(reasons[2]).toMatchObject({ error: expect.stringContaining("loop control") });
-    expect(reasons[5]).toMatchObject({ error: expect.stringContaining("load_plugin") });
+    expect(reasons[4]).toMatchObject({ error: expect.stringContaining("may not be stored") });
+    expect(reasons[6]).toMatchObject({ error: expect.stringContaining("load_plugin") });
     expect(rows()).toEqual([]);
     expect(host.authorize).not.toHaveBeenCalled();
   });
@@ -212,14 +225,16 @@ describe("GatewaySession", () => {
     expect(invalid).toMatchObject({ ok: false, code: "code_call_failed", error: expect.stringContaining("rejected its arguments") });
     expect(rows()).toEqual([]);
 
-    const ambiguous = await session.gateway.call("rally_core", "bad_response", {});
-    expect(ambiguous).toMatchObject({ ok: false, code: "ambiguous_external_write" });
-    expect(host.fail).toHaveBeenLastCalledWith(expect.objectContaining({ status: "ambiguous", phase: "ambiguous_external_write", toolName: "bad_response", mode: "write" }));
-
     const coded = await session.gateway.call("rally_core", "coded", {});
     expect(coded).toMatchObject({ ok: false, code: "code_call_failed", error: expect.stringContaining("Provider said no") });
     expect(host.fail).toHaveBeenLastCalledWith(expect.objectContaining({ status: "failed", phase: "execution", error: expect.objectContaining({ code: "provider_refused" }) }));
-    expect(session.calls.map((call) => call.outcome)).toEqual(["failed", "ambiguous", "failed"]);
+
+    // A validation error downstream of valid arguments on a record-before-execute write is ambiguous, and halts the program.
+    const ambiguous = await session.gateway.call("rally_core", "bad_response", {});
+    expect(ambiguous).toMatchObject({ ok: false, code: "ambiguous_external_write" });
+    expect(host.fail).toHaveBeenLastCalledWith(expect.objectContaining({ status: "ambiguous", phase: "ambiguous_external_write", toolName: "bad_response", mode: "write" }));
+    expect(session.halted).not.toBeNull();
+    expect(session.calls.map((call) => call.outcome)).toEqual(["failed", "failed", "ambiguous"]);
   });
 
   it("times a nested call out with its own timer: a read fails, a record-before-execute write is ambiguous", async () => {
@@ -236,6 +251,21 @@ describe("GatewaySession", () => {
     expect(host.fail).toHaveBeenLastCalledWith(expect.objectContaining({ status: "failed", outcome: "timed_out", toolCallId: "program-call:call:0", error: expect.objectContaining({ code: "tool_timeout" }) }));
     expect(await session.gateway.call("rally_core", "slow_write", {})).toMatchObject({ ok: false, code: "ambiguous_external_write" });
     expect(host.fail).toHaveBeenLastCalledWith(expect.objectContaining({ status: "ambiguous" }));
+  });
+
+  it("clamps a nested call's timer to what is left of the program's budget, so no call outlives the program", async () => {
+    const waitForSignal: HarnessTool["execute"] = (_input, toolContext) => new Promise((_resolve, reject) => {
+      toolContext.signal.addEventListener("abort", () => reject(toolContext.signal.reason), { once: true });
+    });
+    const long = plugin("rally:core", "rally_core", [
+      tool({ name: "long_read", execute: waitForSignal, definition: { ...tool({ name: "long_read" }).definition, timeoutMs: 300_000 } }),
+    ]);
+    const { host } = await hostOver();
+    const session = new GatewaySession({ host, view: view([long]), context: context(), input: { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, harnessRunId: RUN_ID }, allowedPluginIds: null, deadlineAt: Date.now() + 30 });
+    const started = Date.now();
+    expect(await session.gateway.call("rally_core", "long_read", {})).toMatchObject({ ok: false, code: "code_call_failed", error: expect.stringMatching(/exceeded its \d{1,2} ms limit/) });
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(host.fail).toHaveBeenLastCalledWith(expect.objectContaining({ outcome: "timed_out", error: expect.objectContaining({ code: "tool_timeout" }) }));
   });
 
   it("names the rejected field when a tool fails validating data after valid arguments", async () => {
@@ -354,12 +384,13 @@ describe("finishProgram", () => {
         finishProgram(run, calls, "d");
         return null;
       } catch (error) {
-        return error instanceof CodeModeToolError ? error.code : "not_coded";
+        return error instanceof CodeModeToolError ? error.code : error instanceof AmbiguousExternalWriteError ? "bind_halt" : "not_coded";
       }
     };
     expect(code({ result: thrown("code_call_refused", 0), deadlinePassed: false }, [recorded({ index: 0, outcome: "refused", refusal: "loop_control" })])).toBe("code_call_refused");
     expect(code({ result: thrown(null, 0), deadlinePassed: false }, [recorded({ index: 0, outcome: "failed" })])).toBe("code_call_failed");
-    expect(code({ result: fine, deadlinePassed: false }, [recorded({ index: 0, mode: "write", outcome: "ambiguous" })])).toBe("ambiguous_external_write");
+    // An ambiguous nested write is Bind's own halt, not a program failure: the loop stops as after a direct write.
+    expect(code({ result: fine, deadlinePassed: false }, [recorded({ index: 0, mode: "write", outcome: "ambiguous" })])).toBe("bind_halt");
     // A program that throws an error dressed as a refusal, or claims the deadline early, is a program failure.
     expect(code({ result: thrown("code_call_refused", null), deadlinePassed: false }, [])).toBe("code_program_failed");
     expect(code({ result: thrown("deadline", null), deadlinePassed: false }, [])).toBe("code_program_failed");
@@ -396,7 +427,9 @@ describe("customToolFailure", () => {
       .toMatchObject({ code: "custom_tool_unavailable", message: expect.stringContaining("Call load_plugin for it, then call custom_day_math again") });
     expect(code(new CodeModeToolError("code_call_refused", "cannot", { reason: "outside_required_plugins" })))
       .toMatchObject({ code: "custom_tool_unavailable", message: expect.stringContaining("defect in the tool") });
-    expect(code(new CodeModeToolError("ambiguous_external_write", "unknown"))).toMatchObject({ code: "ambiguous_external_write", message: expect.stringContaining("custom_day_math may have completed a write") });
+    // Bind's halt is not the tool's failure to explain; it passes through untouched.
+    const halt = new AmbiguousExternalWriteError("call", "unknown");
+    expect(() => customToolFailure("day_math", halt)).toThrow(halt);
     expect(() => customToolFailure("day_math", new Error("plain"))).toThrow("plain");
   });
 });

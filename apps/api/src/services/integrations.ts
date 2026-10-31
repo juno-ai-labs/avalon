@@ -1921,10 +1921,16 @@ function createAvalonAutomationsPlugin(
       const receiptPort = createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0");
       // An automation's own conversation drafts across turns, so what it
       // inspected or looked up in an earlier turn still counts; a room's
-      // drafting is one turn's work and replays that run alone.
+      // drafting is one turn's work and replays that run alone, except a
+      // tool's test: it made real writes, and a wizard that tested in one turn
+      // and submits in the next is not sent to make them again.
+      const testCapabilities = replayCapabilities.filter((capability) => capability.endsWith(".tools.test"));
       const receipts = input.parentKind === "automation"
         ? await receiptPort.receiptsForCapabilities({ capabilities: replayCapabilities, limit: 200 })
-        : await receiptPort.receiptsForRun({ runId: input.harnessRunId, capabilities: replayCapabilities });
+        : [
+          ...await receiptPort.receiptsForRun({ runId: input.harnessRunId, capabilities: replayCapabilities }),
+          ...await receiptPort.receiptsForCapabilities({ capabilities: testCapabilities, limit: 200 }),
+        ];
       const replayDeadline = Date.now() + TOOL_TRANSCRIPT_REPLAY_BUDGET_MS;
       for (const receipt of receipts) {
         if (receipt.status !== "completed") continue;

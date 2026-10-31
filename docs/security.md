@@ -789,8 +789,12 @@ authorization hook, receipt and settlement a direct tool call takes, under the
 run's execution principal, so a program has the authority of the model that
 wrote it and no more, and its writes are in the ledger as the model's own are.
 The program's return value is data: parsed by schema, its failure classified
-from the host's own records rather than from the error it threw, its message
-bounded. Connector and saved-tool descriptions enter the prompt inside the
+from the host's own records rather than from the error it threw. A nested write
+whose outcome is unknown halts the program and raises Bind's own ambiguous-write
+halt, so a program cannot catch the error and write again and the run stops as
+it stops after a direct write; a tool whose result is transient (Slack's
+real-time search) is not callable from a program, whose result is durable.
+Connector and saved-tool descriptions enter the prompt inside the
 `# Code API` comments, framed as data. A saved tool is saved only after the
 wizard tested its exact code, input schema and plugins, and runs with the run's
 connections, never the wizard's. [`code-mode.md`](code-mode.md) owns the
