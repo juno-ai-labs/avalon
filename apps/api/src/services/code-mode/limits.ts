@@ -11,14 +11,30 @@
  */
 
 /**
- * Wall clock of one program, in milliseconds. **Provisional**, not open: an
- * unbounded program holds the Durable Object's I/O context and the platform
- * caps concurrent Dynamic Workers per object at ten, so `+Infinity` is not
- * inert here. 120 s covers the observed PostHog case (four to seven SQL calls
- * of 2 to 9 s each) with room; Cloudflare's own default is 30 s; the harness
- * tool cap is 1,050,000 ms. The team confirms or moves this number.
+ * The one runtime bound on a program: its maximum runtime, in milliseconds.
+ * Loops are allowed, as many calls as the program wants are allowed; what
+ * ends a program is this clock. **Provisional**, not open: an unbounded
+ * program holds the Durable Object's I/O context and the platform caps
+ * concurrent Dynamic Workers per object at ten, so `+Infinity` is not inert
+ * here. 120 s covers the observed PostHog case (four to seven SQL calls of 2
+ * to 9 s each) with room; Cloudflare's own default is 30 s; the harness tool
+ * cap is 1,050,000 ms. The team confirms or moves this number.
+ *
+ * Enforced twice, because one clock cannot stop both kinds of program: the
+ * entry module's timer ends a program that is waiting (on a call, on a
+ * promise that never settles), and the runtime's CPU limit below ends one
+ * that is busy (a loop that never yields), where no timer can fire. Both
+ * report as `code_program_timed_out`.
  */
 export const CODE_PROGRAM_DEADLINE_MS = 120_000;
+
+/**
+ * The force kill: CPU time one program may use before the runtime throws
+ * inside the isolate and ends it, in milliseconds. Set to the deadline, since
+ * CPU time cannot exceed wall time, so a program that is still running at the
+ * deadline is stopped whether it is busy or waiting. Not a separate decision.
+ */
+export const CODE_PROGRAM_CPU_MS = CODE_PROGRAM_DEADLINE_MS;
 
 /**
  * Time the isolate gets to load before the host-side race gives up on it, on

@@ -274,10 +274,13 @@ own.
 - **A program throws, does not compile, or uses module syntax:**
   `code_program_failed` with the message and the completed writes. The run
   continues.
-- **A program outlives the deadline:** `code_program_timed_out` from the entry's
-  own timer, or from the host-side race if the isolate is stuck in a busy loop.
-  The Dynamic Worker's CPU limit is the plan default; no custom `limits` are
-  set.
+- **A program outlives its runtime:** `code_program_timed_out`. Loops are
+  allowed; the one bound is the clock, enforced twice because one clock cannot
+  stop both kinds of program: the entry's own timer ends a program that waits,
+  and the runtime's CPU limit (`limits.cpuMs`, the same number) kills one that
+  is busy, where no timer can fire. The host-side race is the backstop behind
+  both. Past the deadline every failure is the deadline, whatever the program
+  caught and rethrew.
 - **A nested call fails:** its child receipt is `failed` with the tool's own
   code, audited and counted as a direct failure is; the program fails
   `code_call_failed` carrying the inner sentence.
@@ -301,13 +304,14 @@ Limits, for the team to confirm or move
 | Constant | Value | Status | Without it |
 | --- | --- | --- | --- |
 | `CODE_PROGRAM_DEADLINE_MS` | 120,000 | provisional, set | an unbounded program holds the object's I/O context; the platform caps Dynamic Workers at ten per object |
+| `CODE_PROGRAM_CPU_MS` | the deadline | follows the deadline | a program that loops without yielding runs until the plan's CPU limit, and the host cannot stop it |
 | `CODE_PROGRAM_LOAD_ALLOWANCE_MS` | 15,000 | provisional, set | a stuck isolate holds the program's tool timer past the deadline |
 | `CODE_RESULT_MAX_BYTES` | `+Infinity` | LIMIT UNSET | a program returns the data instead of the answer and fills the context |
 | `CODE_ERROR_MESSAGE_MAX_CHARS` | 500 | set | a tool's message swamps the failure sentence |
 
 Program bytes, calls per program and log bytes have no guard, written open or
-otherwise: the loader compiles what it is given, the deadline ends a loop, and
-the result bound covers the logs.
+otherwise: the loader compiles what it is given, the deadline ends a loop
+(waiting or busy), and the result bound covers the logs.
 
 ## Testing
 
@@ -324,7 +328,9 @@ the result bound covers the logs.
   receipt, its child rows, the value the model read, the framed `# Code API`
   block; a refused loop control, an unknown name through the proxy, a blocked
   `fetch`, a program that does not compile; `runProgram` directly for the
-  deadline and for isolate freshness. Run with
+  deadline of a waiting program and for isolate freshness. Not covered: the
+  CPU kill of a busy loop, which the platform enforces only when deployed; on
+  local workerd such a program starves the host's timers and never ends. Run with
   `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/code-mode.test.ts`.
 - `apps/api/test-workers/sidekick-custom-tools.test.ts`: a hosted Sidekick with
   a saved tool, run now, the run calling `custom_<name>`, its child receipt,
@@ -401,4 +407,6 @@ whose result is current-turn content. A saved tool's identity is its code,
 input schema and plugins together; `requiredPlugins` admits connector plugins
 and `rally_core`, `rally_tables` and `rally_memory`, and a connector plugin
 must also be in `recommendedPlugins`. The program deadline is provisional at
-120 s; the result bound is the one open limit, and no other bound exists.
+120 s, enforced by the entry's timer for a waiting program and by the
+runtime's CPU limit for a busy one; the result bound is the one open limit,
+and no other bound exists.
