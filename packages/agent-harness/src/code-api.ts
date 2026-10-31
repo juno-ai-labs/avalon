@@ -4,7 +4,8 @@
  *
  * A pure function of the tool definitions the wire already shows the model, in
  * the order the caller hands them (Bind's plugin order, canonical id first),
- * with tools sorted by canonical name inside a plugin. Determinism matters: the
+ * with tools sorted by canonical name (code-unit order) inside a plugin.
+ * Determinism matters: the
  * section is re-rendered on every model call from the active plugin set, and a
  * resumed attempt must produce the same bytes as a fresh one so the provider's
  * cached prefix survives.
@@ -38,7 +39,13 @@ export function renderCodeApi(plugins: readonly CodeApiPlugin[]): string {
 }
 
 function renderNamespace(plugin: CodeApiPlugin): string {
-  const tools = [...plugin.tools].sort((a, b) => a.name.localeCompare(b.name, "en"));
+  // Code-unit order, not a locale collation: the same bytes on every runtime.
+  // One declaration per name, the first one wins, so a plugin that lists a
+  // tool twice cannot render two conflicting signatures.
+  const seen = new Set<string>();
+  const tools = plugin.tools
+    .filter((tool) => !seen.has(tool.name) && seen.add(tool.name))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   const lines = [`  /** ${docText(plugin.description)} */`, `  ${identifier(plugin.modelId)}: {`];
   for (const tool of tools) {
     lines.push(`    /** ${tool.mode}. ${docText(tool.description)} */`);

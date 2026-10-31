@@ -1541,14 +1541,22 @@ export const ToolInputObjectSchema = z.looseObject({
 export type ToolInputObject = z.infer<typeof ToolInputObjectSchema>;
 
 /**
- * A plugin a saved tool may call: a connector plugin (`plugin_*`, which must
- * also be recommended so the run loads it) or one of Rally's own (`rally_*`,
- * such as `rally_core` or `rally_tables`).
+ * Rally's own plugins a saved tool may call. Every run holds these three, so
+ * a tool over them needs no recommendation to be loadable. The rest of Rally's
+ * built-ins are left out on purpose: `rally_web` and `rally_terminal` are
+ * loadable, not always active, and `rally_sidekicks` and `rally_conversations`
+ * act on the run's own conversation, which is the run's to decide.
  */
-export const CustomToolPluginIdSchema = z.string().regex(/^(plugin|rally)_[a-z][a-z0-9_]{0,62}$/u);
+export const CUSTOM_TOOL_RALLY_PLUGIN_IDS = ["rally_core", "rally_tables", "rally_memory"] as const;
 
-/** The longest program a saved tool may carry. LIMIT UNSET: see docs/adding-security-defensive-and-other-limits.md. */
-export const CUSTOM_TOOL_CODE_MAX_BYTES = Number.POSITIVE_INFINITY;
+/**
+ * A plugin a saved tool may call: a connector plugin (`plugin_*`, which must
+ * also be recommended so the run loads it) or one of the Rally plugins above.
+ */
+export const CustomToolPluginIdSchema = z.union([
+  z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u),
+  z.enum(CUSTOM_TOOL_RALLY_PLUGIN_IDS),
+]);
 
 /**
  * A tool the Sidekick wizard wrote and tested: a program with a name, a
@@ -1562,7 +1570,7 @@ export const SidekickCustomToolSchema = z.strictObject({
   name: z.string().regex(/^[a-z][a-z0-9_]{2,40}$/, "Lower snake case, 3 to 41 characters, starting with a letter"),
   description: z.string().trim().min(1).max(800),
   inputSchema: ToolInputObjectSchema,
-  code: z.string().min(1).max(Number.isFinite(CUSTOM_TOOL_CODE_MAX_BYTES) ? CUSTOM_TOOL_CODE_MAX_BYTES : Number.MAX_SAFE_INTEGER),
+  code: z.string().min(1),
   requiredPlugins: z.array(CustomToolPluginIdSchema).min(1).max(8),
 });
 export type SidekickCustomTool = z.infer<typeof SidekickCustomToolSchema>;

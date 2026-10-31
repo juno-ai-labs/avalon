@@ -670,9 +670,11 @@ model already saw `scope: "personal"` beside four healthy-looking triggers and
 reasonably concluded the connection was usable.
 
 A draft may also carry `customTools`, programs the wizard wrote and tested with
-`sidekick_tool_test`; `submit_draft` refuses a ready draft whose tool's current
-code has no recorded test, and a run receives each as `custom_<name>`
-([`code-mode.md`](code-mode.md)).
+`sidekick_tool_test`; `submit_draft` refuses with `custom_tool_untested`,
+naming the field, a ready draft whose tool's current identity (code, input
+schema and plugins together) has no recorded test, and a run receives each as
+`custom_<name>`. The test tool and its guide exist only where the Worker has a
+program runtime ([`code-mode.md`](code-mode.md)).
 
 Instruction-only definitions bypass connector binding, schedule preparation,
 email reservation and memory-table creation. Triggered definitions reuse the
@@ -1696,9 +1698,12 @@ the drafting state and restored from receipts instead).
 
 **Consequences:** A tool needs a triggered Sidekick; an instruction-only one is
 a Skill and carries none. A `plugin_*` the tool calls must also be in
-`recommendedPlugins`, so the run has it loaded; `rally_*` plugins need no
-recommendation. A changed program is an untested program again. The review
-revises a tool under the same gate and never adds a plugin through one.
+`recommendedPlugins`, so the run has it loaded; of Rally's own plugins only
+`rally_core`, `rally_tables` and `rally_memory` may be called, and they need no
+recommendation. A changed program, schema or plugin list is an untested tool
+again, refused as `custom_tool_untested` by field. The review revises a tool
+under the same gate, never adds a plugin through one, and changes a tool's code
+only when its program makes no writes.
 
 ### 2026-10-30 — A person's check stays; a review removes the wizard's own
 

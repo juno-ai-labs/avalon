@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import {
   AutomationSetEvaluatorRulesModelInputV1Schema,
+  MAXIMUM_FAILURE_AVAILABLE_VALUES,
   SidekickCustomToolSchema,
   automationActivitySourcePluginIds,
   automationDraftAcceptanceBlocker,
@@ -46,9 +47,16 @@ const ToolTestInputSchema = z.strictObject({
   input: z.record(z.string(), z.unknown()),
 });
 
-/** The hash `sidekick_tool_test` records and `submit_draft` checks; one function so the two agree. */
-export function customToolCodeHash(code: string): Promise<string> {
-  return canonicalToolInputHash(code);
+/**
+ * A saved tool's identity: its code, its input schema and the plugins it may
+ * call, hashed together. `sidekick_tool_test` records it, `submit_draft`
+ * checks it, and the run folds it into the tool's surface hash, so a changed
+ * schema or plugin list is as untested as a changed program and a receipt
+ * replays only against the tool that produced it. One function so all three
+ * agree.
+ */
+export function customToolIdentityHash(tool: Pick<SidekickCustomTool, "code" | "inputSchema" | "requiredPlugins">): Promise<string> {
+  return canonicalToolInputHash({ code: tool.code, inputSchema: tool.inputSchema, requiredPlugins: [...tool.requiredPlugins].sort() });
 }
 
 /**
@@ -90,11 +98,12 @@ export interface AutomationCreatorToolHost {
     evaluatorRules?: AutomationSetEvaluatorRulesInputV1 | null;
     /**
      * Custom tools that ran successfully in this conversation, by name, with
-     * the hash of the code that ran. `submit_draft` refuses a ready draft whose
-     * tool's current code has no entry here, so a saved tool was always a tool
-     * that worked at least once.
+     * the identity hashes that ran (several, when the wizard tested more than
+     * one version). `submit_draft` refuses a ready draft whose tool's current
+     * identity has no entry here, so a saved tool was always a tool that
+     * worked at least once.
      */
-    toolTests?: Map<string, string>;
+    toolTests?: Map<string, Set<string>>;
   };
   model: string;
   draftResearchPort?: {
@@ -158,9 +167,15 @@ export function rememberAutomationToolTest(
   draftState: AutomationCreatorToolHost["draftState"],
 ): void {
   const record = asRecord(output);
-  if (typeof record.name !== "string" || typeof record.codeHash !== "string") return;
+  if (typeof record.name !== "string" || typeof record.identityHash !== "string") return;
+  rememberToolTest(draftState, record.name, record.identityHash);
+}
+
+function rememberToolTest(draftState: AutomationCreatorToolHost["draftState"], name: string, identityHash: string): void {
   draftState.toolTests ??= new Map();
-  draftState.toolTests.set(record.name, record.codeHash);
+  const hashes = draftState.toolTests.get(name) ?? new Set<string>();
+  hashes.add(identityHash);
+  draftState.toolTests.set(name, hashes);
 }
 
 export function rememberAutomationResourceSearchResult(
@@ -235,6 +250,13 @@ function describeUnboundRules(unbound: AutomationSetEvaluatorRulesInputV1["evalu
 const RegisterResourceInputSchema = z.strictObject({ pluginId: z.string().min(1), resource: z.string().min(1) });
 
 export function createAutomationCreatorTools(input: AutomationCreatorToolHost): HarnessTool[] {
+  // A deployment without a program runtime offers no test tool: a tool the
+  // model can see but never use is an invitation to write one.
+  return createEveryAutomationCreatorTool(input)
+    .filter((tool) => tool.definition.name !== "tool_test" || input.draftMutationPort?.testTool !== undefined);
+}
+
+function createEveryAutomationCreatorTool(input: AutomationCreatorToolHost): HarnessTool[] {
   const catalog = input.catalog;
   const inspectedAutomationPluginIds = input.inspectedPluginIds;
   const resolvedAutomationResources = input.resolvedResources;
@@ -328,7 +350,13 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
         return parsed.success ? null : parsed.error;
       },
       execute: async (raw, context) => {
-        if (!input.draftMutationPort?.testTool) throw new Error("sidekick_tool_test_host_unavailable");
+        if (!input.draftMutationPort?.testTool) {
+          throw new AutomationCreatorToolError(
+            "custom_tool_runtime_unavailable",
+            "Programs cannot run in this deployment, so no custom tool can be tested or saved. Put the method in the instructions instead.",
+            { reason: "no program runtime" },
+          );
+        }
         const { tool, input: toolInput } = ToolTestInputSchema.parse(raw);
         const argumentError = validateToolArguments(toolInput, tool.inputSchema as Record<string, unknown>);
         if (argumentError) {
@@ -345,15 +373,14 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
           throw new AutomationCreatorToolError(
             "custom_tool_plugin_unbound",
             `${unloaded} is not loaded in this conversation. Load and inspect it first, or remove it from requiredPlugins.`,
-            { field: "requiredPlugins", reason: `${unloaded} not loaded`, available: [...loadedAutomationPluginIds].slice(0, 40) },
+            { field: "requiredPlugins", reason: `${unloaded} not loaded`, available: [...loadedAutomationPluginIds].slice(0, MAXIMUM_FAILURE_AVAILABLE_VALUES) },
           );
         }
         const result = await input.draftMutationPort.testTool(tool, toolInput, context);
-        const codeHash = await customToolCodeHash(tool.code);
-        draftState.toolTests ??= new Map();
-        draftState.toolTests.set(tool.name, codeHash);
+        const identityHash = await customToolIdentityHash(tool);
+        rememberToolTest(draftState, tool.name, identityHash);
         return {
-          output: { ...asRecord(result.output), name: tool.name, codeHash, testedAt: new Date().toISOString() },
+          output: { ...asRecord(result.output), name: tool.name, identityHash, testedAt: new Date().toISOString() },
           summary: `Tested custom tool ${tool.name}`,
         };
       },
@@ -472,12 +499,14 @@ export function createAutomationCreatorTools(input: AutomationCreatorToolHost): 
           // refuses a tool on an instruction-only Sidekick and a plugin missing
           // from recommendedPlugins, by field; this is the one check only the
           // conversation's own history can answer.
-          for (const tool of draft.customTools) {
-            const codeHash = await customToolCodeHash(tool.code);
-            if (draftState.toolTests?.get(tool.name) !== codeHash) {
-              throw new Error(
-                `Tool ${tool.name} has no successful sidekick_tool_test for its current code. `
+          for (const [index, tool] of draft.customTools.entries()) {
+            const identityHash = await customToolIdentityHash(tool);
+            if (!draftState.toolTests?.get(tool.name)?.has(identityHash)) {
+              throw new AutomationCreatorToolError(
+                "custom_tool_untested",
+                `Tool ${tool.name} has no successful sidekick_tool_test for its current code, input schema and plugins. `
                 + "Test it with representative input, then submit.",
+                { field: `customTools.${index}.code`, reason: "untested" },
               );
             }
           }
@@ -733,14 +762,6 @@ For new or changed executable work, test the workflow with available reads or
 non-destructive trials. Inspecting tool schemas is discovery, not a workflow test.
 Exercise the data retrieval and transformation needed to produce a representative
 result, and save the working queries or tool arguments when reusable.
-When that tested method is work every run repeats, save it as a custom tool:
-declare its input, write the program against the tools you used (the same API
-code_execute shows), test it with sidekick_tool_test on representative input,
-and in the instructions tell runs to call custom_<name> and what to do when it
-fails. A test performs its writes; leave the write step out of the tool, or
-point it at a scratch destination, when a real delivery is not wanted during setup.
-Keep judgement, formatting and delivery in the instructions; put the
-deterministic part in the tool. Every plugin a tool calls goes in recommendedPlugins.
 Record what worked, what you could not test, and remaining
 assumptions. Draft acceptance is not a workflow test. Leave future runs' deliveries
 and other effects to those runs unless requested during setup.
@@ -846,6 +867,21 @@ actual refusal exactly. After saving, briefly say what was saved or what
 information is still needed.`;
 
 /**
+ * The custom-tool paragraph of the wizard's guide, rendered only where a
+ * program runtime exists; without one the test tool is absent too.
+ */
+export const CUSTOM_TOOLS_GUIDE = `# Save the tested method as a tool
+When the tested method is work every run repeats, save it as a custom tool: declare
+its input, write the program against the tools you used (the API code_execute shows),
+test it with sidekick_tool_test on representative input, and tell runs in the
+instructions to call custom_<name> and what to do when it fails. A test performs its
+writes; leave the write out of the tool, or point it at a scratch destination, when a
+real delivery is not wanted during setup. Keep judgement, formatting and delivery in
+the instructions; put the deterministic part in the tool. Every connector plugin a
+tool calls goes in recommendedPlugins. Change a saved tool's code only if its program
+makes no writes; otherwise submit nothing and report the defect.`;
+
+/**
  * Drafting tools for a Sidekick's own authoring conversation. The host controls
  * eligibility and supplies the existing Sidekick identity. Loading tools does
  * not create another Sidekick; a ready submission saves through normal domain
@@ -853,7 +889,9 @@ information is still needed.`;
  */
 export function createAutomationsPlugin(
   host: AutomationCreatorToolHost,
-  systemMessage = AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE,
+  systemMessage = host.draftMutationPort?.testTool
+    ? `${AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE}\n\n${CUSTOM_TOOLS_GUIDE}`
+    : AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE,
 ): {
   canonicalId: string;
   modelId: string;

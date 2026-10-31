@@ -282,6 +282,11 @@ const GROUPED_PLUGIN_IDS = new Map<string, PluginGroup>([
   ['rally:multimodal-generation', MULTIMODAL_GENERATION_GROUP],
   ['rally:tables', RALLY_GROUP],
   ['rally.skills', RALLY_GROUP],
+  // A program and a Sidekick's saved tool are Rally composing its own calls;
+  // both carry display names, so without this row they would each read as a
+  // tool Rally reached for ("Used Code") rather than Rally working.
+  ['rally:code', RALLY_GROUP],
+  ['rally:custom-tools', RALLY_GROUP],
   ['rally:terminal', COMPUTER_GROUP],
   ['rally:workstream', COMPUTER_GROUP],
 ]);
