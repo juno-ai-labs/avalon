@@ -874,10 +874,12 @@ export const CUSTOM_TOOLS_GUIDE = `# Save the tested method as a tool
 When the tested method is work every run repeats, save it as a custom tool: declare
 its input, write the program against the tools you used (the API code_execute shows),
 test it with sidekick_tool_test on representative input, and tell runs in the
-instructions to call custom_<name> and what to do when it fails. A test performs its
-writes; leave the write out of the tool, or point it at a scratch destination, when a
-real delivery is not wanted during setup. Keep judgement, formatting and delivery in
-the instructions; put the deterministic part in the tool. Every connector plugin a
+instructions to call custom_<name> and what to do when it fails. Read each tool's
+real output once before the program parses it; current_time, for one, returns text
+lines, not an object. A test performs its writes; a memory-table write may stay in
+the tool, tested with a preview input or a scratch table, but leave an external
+delivery out of the tool when it is not wanted during setup. Keep judgement,
+formatting and delivery in the instructions; put the deterministic part in the tool. Every connector plugin a
 tool calls goes in recommendedPlugins. Change a saved tool's code only if its program
 makes no writes; otherwise submit nothing and report the defect.`;
 

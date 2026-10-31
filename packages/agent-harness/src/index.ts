@@ -3589,7 +3589,7 @@ export const AVALON_MULTIMODAL_GENERATION_PLUGIN_ID = "rally:multimodal-generati
 
 export const AVALON_CURRENT_TIME_TOOL_DEFINITION = {
   name: "current_time",
-  description: "Return the current local time, local IANA timezone, workspace IANA timezone, local date, and UTC ISO-8601 timestamp. Local time defaults to the current user's timezone for user runs and the workspace timezone for workspace runs; optionally accepts another valid IANA timezone.",
+  description: "Return the current local time, local IANA timezone, workspace IANA timezone, local date, and UTC ISO-8601 timestamp, as text lines (not an object); the last line is `iso8601 timestamp: <UTC ISO 8601>`. Local time defaults to the current user's timezone for user runs and the workspace timezone for workspace runs; optionally accepts another valid IANA timezone.",
   capability: "time.read",
   mode: "read",
   idempotency: "safe",
