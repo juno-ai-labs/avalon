@@ -93,13 +93,19 @@ with no receipt), hash them, run `beforeToolCall`, ask the host's
 (a replay, a replay refusal, an ambiguous halt, or nothing), record the plan
 with `persistToolExecutionPlan`, execute through `HarnessTool.execute` with the
 run's principal, the child's own `effectIntentId` and a signal that aborts on
-the run, on the program's end and on the tool's own timer, then settle through
-the host's `complete` or `fail`, which also write the audit row and telemetry a
-direct call gets. A failure is classified as Bind classifies it: a `ZodError`
-after valid arguments on a record-before-execute write, an interrupted or timed
-out such write, or Terminal's `command_outcome_unknown` is ambiguous;
-everything else is a definitive failure with the tool's own code. Writes and
-`serial` tools run one at a time per program; reads run as the program asks.
+the run, on a host failure and on the tool's own timer (the execution is raced
+against that signal, as Bind races it, so a tool that never reads its signal
+still ends), then settle through the host's `complete` or `fail`, which also
+write the audit row and telemetry a direct call gets. A failure is classified
+as Bind classifies it: a `ZodError` after valid arguments on a
+record-before-execute write, an interrupted or timed out such write, or
+Terminal's `command_outcome_unknown` is ambiguous; everything else is a
+definitive failure with the tool's own code. A `ZodError` after valid
+arguments names the fields it rejected, in the receipt's code
+(`tool_response_invalid:<fields>`) and in the sentence. Writes and `serial`
+tools run one at a time per program, and a write queued behind the call that
+stopped the program is refused when its turn comes; reads run as the program
+asks.
 
 The session has a lifetime. When the program returns, the tool closes it:
 calls still running are awaited, not aborted (a write the program did not
@@ -147,7 +153,7 @@ again, or a defect to report, by the refusal's reason), and
 | Plugin | Wire name | Capability | Mode | Idempotency | Where |
 | --- | --- | --- | --- | --- | --- |
 | `rally:code` (`rally_code`) | `code_execute` | `code.program.execute` | write | record_before_execute | loadable, every run with `CODE_LOADER` |
-| `rally:sidekicks` | `sidekick_tool_test` | `rally.sidekick.tools.test` | write | record_before_execute | the wizard conversation, with `CODE_LOADER` |
+| `rally:sidekicks` | `sidekick_tool_test` | `rally.sidekick.tools.test` | write | record_before_execute | the wizard conversation, with `CODE_LOADER`; carries the program tools' timer |
 | `rally:custom-tools` (`rally_custom_tools`) | `custom_<name>` | `sidekick.tools.run` | write | record_before_execute | runs of a Sidekick with saved tools |
 
 `code_execute` takes `{ code: string, description: string <= 240 }` and
@@ -311,6 +317,7 @@ Limits, for the team to confirm or move
 | `CODE_PROGRAM_DEADLINE_MS` | 120,000 | provisional, set | an unbounded program holds the object's I/O context; the platform caps Dynamic Workers at ten per object |
 | `CODE_PROGRAM_CPU_MS` | the deadline | follows the deadline | a program that loops without yielding runs until the plan's CPU limit, and the host cannot stop it |
 | `CODE_PROGRAM_LOAD_ALLOWANCE_MS` | 15,000 | provisional, set | a stuck isolate holds the program's tool timer past the deadline |
+| `CODE_PROGRAM_TOOL_TIMEOUT_MS` | deadline plus twice the allowance | follows the deadline | Bind's 30 s default would end `code_execute`, a saved tool or the wizard's test before the program's own clock |
 | `CODE_RESULT_MAX_BYTES` | `+Infinity` | LIMIT UNSET | a program returns the data instead of the answer and fills the context |
 | `CODE_ERROR_MESSAGE_MAX_CHARS` | 500 | set | a tool's message swamps the failure sentence |
 
