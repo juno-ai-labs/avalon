@@ -322,6 +322,7 @@ import {
 } from "./conversation-tools";
 import { conversationIdOf } from "../durable-objects/workspace-sidekick-conversation-storage";
 import { createAvalonTerminalPlugin } from "./terminal/plugin";
+import { createCodePlugin, type CodePlugin } from "./code-mode";
 import { TerminalToolError } from "./terminal/tools";
 import type { WorkstreamRuntimeResourceAttacher } from "./workstream-object-client";
 
@@ -3096,6 +3097,91 @@ export async function runWorkstreamHarness(
   let streamStarted = false;
   let suppressCurrentStreamPreview = false;
   const harnessTools = await toolsPreparation.get();
+  const beforeToolCall: NonNullable<RunHarnessInput["beforeToolCall"]> = async ({ pluginId, toolName }) => {
+    const policy = toolPolicyForCall(pluginId, toolName, harnessTools);
+    if (!policy) throw new ConnectorError("unauthorized", "Plugin tool is outside this run scope");
+    const frozen = harnessTools.frozenConnections.get(pluginId);
+    if (!frozen) {
+      if (
+        !isCoreHarnessPlugin(pluginId, harnessTools)
+        && !isLoadableBuiltinHarnessPlugin(pluginId, harnessTools)
+      ) {
+        throw new ConnectorError("unauthorized", "Plugin is outside this run scope");
+      }
+      if (policy.mode === "read") await liveness.pulse("before_tool", true);
+      else await Promise.all([
+        liveness.pulse("before_tool", true),
+        assertRunAuthorityStillValid(env, input, runAuthoritySnapshot),
+      ]);
+      return { allowed: true };
+    }
+    if (input.parentKind === "automation") {
+      await Promise.all([
+        liveness.pulse("before_tool", true),
+        assertRunAuthorityStillValid(env, input, runAuthoritySnapshot),
+      ]);
+      // The requested plugin identifies the authored operation. Its serving
+      // account is selected below; authorizing its old owner here would
+      // prevent a known-resource read from using another eligible delegate.
+      return { allowed: true, authorizationContext: { delegation: harnessTools.delegation } };
+    }
+    const [, , row] = await Promise.all([
+      liveness.pulse("before_tool", true),
+      assertRunAuthorityStillValid(env, input, runAuthoritySnapshot),
+      assertFrozenConnectionAuthorized(env, input, frozen, policy.capability, false),
+    ]);
+    return {
+      allowed: true,
+      authorizationContext: { frozen, capability: policy.capability, row } satisfies PreparedConnectorAuthorization,
+    };
+  };
+  // A program's nested calls take the same authorization, plan and settlement a
+  // direct call takes; the gateway gets them through these seams.
+  harnessTools.codeMode?.attachHost({
+    lease: liveness.lease,
+    receipts: createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
+    authorize: async (call) => await beforeToolCall(call),
+    plan: (pluginId, tool) => {
+      const receiptPolicy = resolveHarnessToolReceiptPolicy({
+        pluginId,
+        canonicalToolName: tool.definition.name,
+        capability: tool.definition.capability,
+        mode: tool.definition.mode,
+        idempotency: tool.definition.idempotency,
+      }, harnessTools);
+      const plan = {
+        pluginId: receiptPolicy.pluginId,
+        canonicalToolName: receiptPolicy.definition.name,
+        capability: receiptPolicy.definition.capability,
+        connectionId: receiptPolicy.connectionId,
+        mode: receiptPolicy.definition.mode,
+        idempotency: receiptPolicy.definition.idempotency,
+        toolSurfaceHash: receiptPolicy.toolSurfaceHash,
+      };
+      return { plan, compatiblePriorPlans: compatiblePriorReceiptPlans(plan, receiptPolicy), connectionId: receiptPolicy.connectionId };
+    },
+    replayOutput: (outputRef) => loadToolReplayOutput(env, outputRef),
+    complete: async ({ invocationId, toolCallId, tool, result }) => {
+      await settleRootHarnessToolCompletion(env, input, liveness.lease, {
+        invocationId,
+        toolCallId,
+        canonicalToolName: tool.definition.name,
+        attachmentOutput: result.output,
+        durableOutput: durableToolReplayOutput(tool.definition.capability, result.output, result.summary),
+        outputSummary: result.summary,
+        ...(result.providerOperationId ? { providerOperationId: result.providerOperationId } : {}),
+        memberSafePayload: { toolName: tool.definition.name, nested: true },
+        ...outboundExternalBinding(input, result.externalConversation),
+      });
+    },
+    fail: async (failure) => {
+      await settleRootHarnessToolFailure(
+        createToolReceiptObjectPort(env, input.workspaceId, input.parentId, undefined, conversationSubstreamId),
+        liveness.lease,
+        { harnessRunId: input.harnessRunId, ...failure },
+      );
+    },
+  });
   // Translate stored credential/bundle IDs only to views still authorized by
   // the current grants. A surviving bundle keeps its hints when the other is removed.
   const activationTargets = new Map(harnessTools.plugins.map((plugin) => [plugin.canonicalId, new Set([plugin.canonicalId])]));
@@ -3891,44 +3977,7 @@ export async function runWorkstreamHarness(
         },
       });
     },
-    beforeToolCall: async ({ pluginId, toolName }) => {
-        const policy = toolPolicyForCall(pluginId, toolName, harnessTools);
-        if (!policy) throw new ConnectorError("unauthorized", "Plugin tool is outside this run scope");
-        const frozen = harnessTools.frozenConnections.get(pluginId);
-        if (!frozen) {
-          if (
-            !isCoreHarnessPlugin(pluginId, harnessTools)
-            && !isLoadableBuiltinHarnessPlugin(pluginId, harnessTools)
-          ) {
-            throw new ConnectorError("unauthorized", "Plugin is outside this run scope");
-          }
-          if (policy.mode === "read") await liveness.pulse("before_tool", true);
-          else await Promise.all([
-            liveness.pulse("before_tool", true),
-            assertRunAuthorityStillValid(env, input, runAuthoritySnapshot),
-          ]);
-          return { allowed: true };
-        }
-        if (input.parentKind === "automation") {
-          await Promise.all([
-            liveness.pulse("before_tool", true),
-            assertRunAuthorityStillValid(env, input, runAuthoritySnapshot),
-          ]);
-          // The requested plugin identifies the authored operation. Its serving
-          // account is selected below; authorizing its old owner here would
-          // prevent a known-resource read from using another eligible delegate.
-          return { allowed: true, authorizationContext: { delegation: harnessTools.delegation } };
-        }
-        const [, , row] = await Promise.all([
-          liveness.pulse("before_tool", true),
-          assertRunAuthorityStillValid(env, input, runAuthoritySnapshot),
-          assertFrozenConnectionAuthorized(env, input, frozen, policy.capability, false),
-        ]);
-        return {
-          allowed: true,
-          authorizationContext: { frozen, capability: policy.capability, row } satisfies PreparedConnectorAuthorization,
-        };
-    },
+    beforeToolCall,
     onInferenceDelay: (event) => emit({
       type: "inference_delay_changed",
       ...event,
@@ -5603,6 +5652,8 @@ async function loadHarnessTools(
   idempotencyByTool: Map<string, "safe" | "provider_key" | "record_before_execute">;
   modeByTool: Map<string, "read" | "write">;
   delegation: SidekickExecutionDelegation | null;
+  /** The `rally:code` plugin, when the loader is bound, awaiting its host. */
+  codeMode: CodePlugin | null;
 }> {
   const [[attachedLinks, connectionRows], runDefinition, delegation] = await Promise.all([
     inventoryPreparation.get(), runDefinitionPreparation.get(), readSidekickOperationDelegation(env, input),
@@ -5730,6 +5781,10 @@ async function loadHarnessTools(
   // tests. Bind receives stable always-active core plugins plus loadable
   // built-in and credential-scoped plugins.
   const tools: HarnessTool[] = [...coreTools];
+  // The code plugin needs no inventory to be built; its host seams (lease,
+  // authorization, receipts) are attached by `runWorkstreamHarness` once they
+  // exist. Absent the loader binding, no plugin and no catalog line.
+  const codeMode = env.CODE_LOADER ? createCodePlugin({ loader: env.CODE_LOADER, input }) : null;
   const builtinPlugins = [
     createAgentCommunicationPlugin(new AgentCommunicationService(env, input), agentCoordinationRoleGuidance(input)),
     workstreamPlugin,
@@ -5738,6 +5793,7 @@ async function loadHarnessTools(
     multimodalGenerationPlugin,
     automationsPlugin,
     conversationsPlugin,
+    codeMode?.plugin ?? null,
   ].filter(
     (plugin): plugin is HarnessPlugin => plugin !== null,
   );
@@ -6114,6 +6170,7 @@ async function loadHarnessTools(
     idempotencyByTool,
     modeByTool,
     delegation,
+    codeMode,
   };
 }
 
@@ -6131,6 +6188,7 @@ function profileHarnessTools(corePlugins: HarnessPlugin[]): Awaited<ReturnType<t
   })));
   return {
     delegation: null,
+    codeMode: null,
     coreTools,
     corePlugins,
     tools: coreTools,
