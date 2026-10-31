@@ -23,7 +23,7 @@ import {
 
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
-import type { AuthContext, Env } from "../src/env";
+import type { Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
@@ -42,9 +42,6 @@ const SESSION_ID = "00000000-0000-7000-8000-00000000cd12";
 const NOW = "2026-10-31T10:00:00.000Z";
 const TEST_ENV: Env = env;
 const RUN_SETTLE_TIMEOUT_MS = 20_000;
-
-const AUTH: AuthContext = { sessionId: SESSION_ID, userId: AUTHOR_ID, workspaceId: WORKSPACE_ID, region: "global", role: "member" };
-void AUTH;
 
 let ordinal = 0;
 let ROOM_ID = asWorkstreamId("00000000-0000-7000-8000-000000000cd1");

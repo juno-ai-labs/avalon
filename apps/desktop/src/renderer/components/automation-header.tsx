@@ -89,6 +89,9 @@ export function AutomationHeader({
   const name = definition?.name ?? automation.name;
   const description = definition?.description ?? automation.description;
   const listedRuns = runs ?? automation.recentRuns;
+  // The tools the wizard saved for this Sidekick's runs, read-only here: a
+  // change goes through the setup conversation, where the program is tested.
+  const customTools = definition?.customTools ?? [];
   // The object runs only an active automation with triggers. Keep unavailable
   // commands visible and explain the same constraints without issuing them.
   const hasTriggers = automation.runnable ?? ((definition?.triggers.length ?? 0) > 0);
@@ -198,6 +201,25 @@ export function AutomationHeader({
           {automation.nextRunAt && <p className="automation-runs-next">Next <RelativeTime value={automation.nextRunAt} /></p>}
         </section>
         {automation.emailAddress && <details className="sidekick-profile-section sidekick-email-details"><summary>Email this Sidekick</summary><span className="automation-header-email"><Mail aria-hidden="true" size={14} /><span>{automation.emailAddress}</span></span></details>}
+        {customTools.length > 0 && <section className="sidekick-profile-section sidekick-tools-section">
+          <h2>Tools</h2>
+          <ul aria-label="Custom tools" className="sidekick-tools-list">
+            {customTools.map((tool) => (
+              <li key={tool.name}>
+                <details className="sidekick-tool">
+                  <summary>
+                    <code>custom_{tool.name}</code>
+                    <span>{tool.description}</span>
+                  </summary>
+                  <p className="sidekick-tool-meta">
+                    Input: {Object.keys(tool.inputSchema.properties ?? {}).join(', ') || 'none'}. Uses {tool.requiredPlugins.join(', ')}.
+                  </p>
+                  <pre className="sidekick-tool-code"><code>{tool.code}</code></pre>
+                </details>
+              </li>
+            ))}
+          </ul>
+        </section>}
       </div>
       <Modal open={showRunHistory} onOpenChange={setShowRunHistory} title="Run history" description="Technical details for troubleshooting this Sidekick.">
           {runsError ? (

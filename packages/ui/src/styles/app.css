@@ -7195,6 +7195,13 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .automation-header-email svg { flex-shrink: 0; margin-top: 3px; }
 .automation-header-email span { min-width: 0; overflow-wrap: anywhere; }
 .automation-header-triggers { display: flex; flex-direction: column; gap: 8px; font-size: 14px; line-height: 1.5; list-style: none; margin: 0; padding: 0; }
+.sidekick-tools-list { display: flex; flex-direction: column; gap: 10px; list-style: none; margin: 0; padding: 0; min-width: 0; }
+.sidekick-tool summary { display: flex; flex-direction: column; gap: 4px; cursor: pointer; font-size: 14px; line-height: 1.5; list-style: none; }
+.sidekick-tool summary::-webkit-details-marker { display: none; }
+.sidekick-tool summary code { font-family: var(--av-sys-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 13px; color: var(--av-sys-color-text); }
+.sidekick-tool summary span { color: var(--av-sys-color-text-muted); }
+.sidekick-tool-meta { margin: 8px 0 0; font-size: 13px; line-height: 1.5; color: var(--av-sys-color-text-muted); }
+.sidekick-tool-code { margin: 8px 0 0; padding: 10px 12px; max-height: 240px; overflow: auto; border: 1px solid var(--av-sys-color-border-subtle); border-radius: 8px; background: var(--av-sys-color-surface-sunken, var(--av-sys-color-surface)); font-family: var(--av-sys-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--av-sys-color-text); }
 .automation-runs-next { color: var(--av-sys-color-text-muted); font-size: 12px; margin: 8px 0 0; }
 .automation-timing-empty { margin: 0; color: var(--av-sys-color-text-muted); font-size: 14px; line-height: 1.5; }
 .sidekick-email-details summary { cursor: pointer; color: var(--av-sys-color-text-muted); font-size: 13px; }
