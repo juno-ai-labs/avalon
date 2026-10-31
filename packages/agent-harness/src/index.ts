@@ -81,6 +81,7 @@ export {
   formatToolArgumentValidationError,
   modelToolArgumentSchema,
   normalizeToolArguments,
+  omitUnspecifiedToolArguments,
   validateToolArguments,
 } from "./tool-arguments";
 export {
@@ -116,6 +117,7 @@ export {
   weakenedCompositionBranches,
 } from "./tool-schema-safety";
 export { READING_GOOGLE_MEETING_NOTES_SKILL } from "./google-meeting-notes-skill";
+export { renderCodeApi, renderType, type CodeApiPlugin, type CodeApiTool } from "./code-api";
 export {
   BUILDING_LIVE_SITES_SKILL,
   BUILT_IN_SKILLS,
@@ -4045,6 +4047,20 @@ export class HarnessPluginActivationError extends Error {
   }
 }
 
+/**
+ * What a plugin may read of the run it is registered in: which plugins are
+ * active right now, and the plugins the run holds at all. Handed to a plugin's
+ * `attachRuntimeView` once the runtime is built, and to `renderSystemMessage`
+ * on every render. Read-only; nothing here activates or widens anything.
+ */
+export interface HarnessRuntimeView {
+  isActive(canonicalId: string): boolean;
+  /** The active plugins in Bind's render order (canonical id). */
+  activePlugins(): HarnessPlugin[];
+  /** Every plugin the run registered, active or not. */
+  plugins(): HarnessPlugin[];
+}
+
 /** A Bind plugin whose trusted identity, prose, and tool policy are authored by the host. */
 export interface HarnessPlugin {
   /** Stable host authorization/persistence identity (`avalon:*` or `connection:<uuid>`). */
@@ -4089,6 +4105,15 @@ export interface HarnessPlugin {
   /** For deferred plugins, requests persistence before an activation hint; ignored for core plugins. */
   preload: boolean;
   explicit?: boolean;
+  /**
+   * A system message rendered from the run's current active plugin set, used
+   * in place of `systemMessage` while this plugin is active. Rendered on every
+   * model call, like the tool list, so it must be a pure function of the view:
+   * the same active set renders the same bytes.
+   */
+  renderSystemMessage?: (view: HarnessRuntimeView) => string;
+  /** Receives the run's live plugin view once, when the runtime is built. */
+  attachRuntimeView?: (view: HarnessRuntimeView) => void;
 }
 
 export type HarnessEvent =

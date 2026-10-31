@@ -194,7 +194,7 @@
   // stateful path runs the model's class as a facet of ArtifactHostDO, which is
   // deployed here; the artifact serving Worker declares its own for the
   // stateless path.
-  "worker_loaders": [{ "binding": "ARTIFACT_LOADER" }],
+  "worker_loaders": [{ "binding": "ARTIFACT_LOADER" }, { "binding": "CODE_LOADER" }],
   "durable_objects": {
     "bindings": [
       { "name": "SUBSTREAM_AGENTS", "class_name": "SubstreamAgent" },
