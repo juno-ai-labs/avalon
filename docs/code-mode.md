@@ -138,7 +138,15 @@ together) under its name in the drafting state and in the receipt output, from
 which a resumed conversation restores it. `submit_draft` refuses a ready draft
 whose tool has no recorded test for its current identity with
 `custom_tool_untested`, naming `customTools.<i>.code`. The test tool and its
-guide paragraph exist only where `CODE_LOADER` does. The schema refuses, by
+guide paragraph exist only where `CODE_LOADER` does. The guide holds the shape
+of a saved tool: one tool does one thing a run can name in a sentence, takes
+only that thing's inputs, and returns the facts the run decides with. Two steps
+are two tools, never one behind a `mode`, `action`, `dryRun` or `preview`
+input, and a tool does not compute and write in one call when the run should
+read the result first. A tool that writes takes what it writes as input and
+never reads the clock to decide whether to act. The decisions (whether to post, whether it is time,
+which step is next) stay in the instructions; a smaller model running the
+Sidekick reads a narrow contract correctly where a wide one makes it guess. The schema refuses, by
 field, a tool on an instruction-only Sidekick, a `plugin_*` entry missing from
 `recommendedPlugins`, and a Rally plugin outside the allowlist.
 
