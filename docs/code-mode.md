@@ -179,7 +179,8 @@ which step is next) stay in the instructions; a smaller model running the
 Sidekick reads a narrow contract correctly where a wide one makes it guess. In
 a self-review, the plan says of each deterministic step the runs repeated,
 skipped or got wrong whether it becomes a tool or why it stays in the
-instructions, and a writing tool is tested only against a scratch table
+instructions, with "the instructions already say so" ruled out as a reason, and
+a writing tool is tested only against a scratch table
 ([`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)).
 The schema refuses, by
 field, a tool on an instruction-only Sidekick, a `plugin_*` entry missing from
