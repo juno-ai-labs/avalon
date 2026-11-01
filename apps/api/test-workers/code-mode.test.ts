@@ -65,9 +65,15 @@ const response = await fetch("https://example.com/");
 return response.status;
 `;
 
-/** A program that forgets to return: it fails as a program, with the isolate's own message. */
+/** A body that does not parse: the pre-run check refuses it before any isolate loads, with the parser's message. */
 const SYNTAX_PROGRAM = `
 return (;
+`;
+
+/** A write not awaited where it is called: the pre-run check refuses it, so the write is never made. */
+const UNAWAITED_WRITE_PROGRAM = `
+tools.rally_tables.insert_rows({ tableId: "none", rows: [] });
+return 1;
 `;
 
 useSelectedModel();
@@ -87,7 +93,8 @@ const provider = useOpenRouterDouble((call) => {
       : prompt.includes("UNKNOWN") ? UNKNOWN_TOOL_PROGRAM
         : prompt.includes("EGRESS") ? EGRESS_PROGRAM
           : prompt.includes("SYNTAX") ? SYNTAX_PROGRAM
-            : PROGRAM;
+            : prompt.includes("UNAWAITED") ? UNAWAITED_WRITE_PROGRAM
+              : PROGRAM;
     return { callTool: { name: execute, arguments: { code, description: "Read the time twice and add some numbers" } } };
   }
   const load = call.toolNames.find((name) => name.endsWith("load_plugin"));
@@ -234,10 +241,16 @@ describe("code_execute on workerd", () => {
     expect(failure.error).toContain("The program threw");
   });
 
-  it("reports a program that does not compile as the program's failure, with the compiler's message", async () => {
+  it("refuses a program that does not parse before any isolate loads, with the parser's message", async () => {
     const failure = await failedProgram("SYNTAX");
-    expect(failure.code).toBe("code_program_failed");
-    expect(failure.error).toContain("could not be loaded or run");
+    expect(failure.code).toBe("code_program_rejected");
+    expect(failure.error).toContain("The program was not run and nothing was written. Line 2, column 9: Unexpected token.");
+  });
+
+  it("refuses a write that is not awaited before any isolate loads, so the write is never made", async () => {
+    const failure = await failedProgram("UNAWAITED");
+    expect(failure.code).toBe("code_program_rejected");
+    expect(failure.error).toContain("Line 2: rally_tables.insert_rows is a write that is not awaited where it is called.");
   });
 });
 

@@ -246,6 +246,9 @@ describe("the automations plugin", () => {
     expect(systemMessage).toContain("1. Hand the reads to one background agent with start_agent.");
     // The agent's reader walks the notice's runs itself, so the assignment carries no ids.
     expect(systemMessage).toContain("Pass no run ids: the\nagent's reader already has them.");
+    // The scout names the deterministic misses, and step 2 counts one as a reason to change.
+    expect(systemMessage).toContain("and each deterministic step the run repeated, skipped or got\nwrong");
+    expect(systemMessage).toContain("or a deterministic step the\nruns repeated, skipped or got wrong.");
     // The wizard ends no turn with nothing: the harness reads that as a defect and falls back.
     expect(systemMessage).toContain("Then say one line here that the agent is reading the runs");
     expect(systemMessage).toContain("Answer a question from it with\nreply_to_message, then end the turn with one short line here.");
@@ -1044,6 +1047,7 @@ describe("custom tools in the drafting plugin", () => {
     expect(withRuntime.tools.some((tool) => tool.definition.name === "tool_test")).toBe(true);
     expect(withRuntime.systemMessage).toContain(CUSTOM_TOOLS_GUIDE);
     expect(withRuntime.systemMessage.replace(/\s+/g, " ")).toContain("In a self-review, tools change with the procedure");
+    expect(withRuntime.systemMessage.replace(/\s+/g, " ")).toContain("says whether it becomes a tool or why it stays in the instructions");
   });
 
   it("refuses a test whose input misses the tool's schema, and one naming an unloaded plugin, by field", async () => {

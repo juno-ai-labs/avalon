@@ -24,6 +24,7 @@ verified.
 | `apps/api/src/services/code-mode/plugin.ts` | The `rally:code` plugin and its one tool; `runProgram` (a fresh isolate per program, the deadline race, the parsed answer); `finishProgram` (the result, or the typed failure read from the gateway's own records); `createCustomToolsPlugin`, `runProgramForTool` and `customToolFailure` for a Sidekick's saved tools; the three prompts. |
 | `apps/api/src/services/code-mode/gateway.ts` | `GatewaySession`, one program's calls: the refusal rules, Bind's dispatch order and failure classification, the per-call timer, the closed and stopped states. `CodeToolGateway`, the `RpcTarget` a program holds, forwards its one method to the session. `callableTools` is the one rule for what a program may call. |
 | `apps/api/src/services/code-mode/entry-module.ts` | The isolate's entry module as a string (the `tools` proxy, the console capture, the deadline timer); `wrapProgram`, which always wraps the model's function body. |
+| `apps/api/src/services/code-mode/check.ts` | `checkProgram`, the static pre-run check: a parse with acorn and a walk that refuses, by line, a body that does not parse and the write shapes whose outcome a program cannot know or a re-run cannot match; `writeToolKeys`, the callable writes it judges against. |
 | `apps/api/src/services/code-mode/limits.ts` | The deadline and the load allowance, both set and provisional; the result bound, `LIMIT UNSET`. |
 | `apps/api/src/services/code-mode/errors.ts` | `CodeModeToolError`: code, sentence, allowlisted details. |
 | `packages/agent-harness/src/code-api.ts` | `renderCodeApi`: tool definitions to the TypeScript declarations in `# Code API`, one per name, in code-unit order. |
@@ -51,9 +52,28 @@ definitions in Bind's order, so a resumed attempt renders the same bytes and
 the provider's cached prefix survives.
 
 The model calls `code_execute({ code, description })`. `code` is the body of an
-async function and is always wrapped as one; a body that does not compile
-fails as a program, with the compiler's message. `runProgram` loads a fresh
-isolate with
+async function and is always wrapped as one. Before any isolate is loaded,
+`checkProgram` parses the wrapped body with acorn, walks it, and refuses the
+program as `code_program_rejected`, by line and with nothing written: a body
+that does not parse; a write (`tools.<plugin>.<tool>` whose mode is `write`)
+called as a bare statement with its promise dropped, inside `Promise.all` and
+its kin, or inside a `map`/`forEach` callback; and `Date.now()`, `new Date()`,
+`Math.random()` and the like in a program that writes, because a re-run
+replays a nested call by its input hash and cannot match a write whose input
+changed. The balance is latency against certainty: the parse of a
+three-kilobyte program measures 0.3 ms median and 1 ms at the 99th percentile
+on Node, while a refusal the model did not deserve costs a model turn, so
+every rule is one with no legitimate program on the other side. A write in
+`try`/`catch` is not refused: the gateway classifies a definitive failure as
+a write that did not happen and halts the session on an ambiguous one, so a
+caught failure is safe by mechanism. A write kept in a variable is not
+refused: it may be awaited later. The check is static and best effort: it
+follows the direct call shape only, never an alias or a computed name, and a
+program it passes can still fail. A body that parses but does not compile in
+the isolate fails as a program, with the compiler's message. A saved tool is
+checked at the wizard's test, whose identity hash covers the code; a run of
+that tool does not parse it again. `runProgram`
+loads a fresh isolate with
 `CODE_LOADER.load(…)`, `globalOutbound: null` and an empty `env`: `load`, not
 `get`, because an isolate kept by name would carry one program's globals into
 the next program of the same conversation. It then calls the entry module's
@@ -157,8 +177,9 @@ read the result first. A tool that writes takes what it writes as input and
 never reads the clock to decide whether to act. The decisions (whether to post, whether it is time,
 which step is next) stay in the instructions; a smaller model running the
 Sidekick reads a narrow contract correctly where a wide one makes it guess. In
-a self-review, tools change with the procedure as the guide says, and a
-writing tool is tested only against a scratch table
+a self-review, the plan says of each deterministic step the runs repeated,
+skipped or got wrong whether it becomes a tool or why it stays in the
+instructions, and a writing tool is tested only against a scratch table
 ([`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)).
 The schema refuses, by
 field, a tool on an instruction-only Sidekick, a `plugin_*` entry missing from
@@ -245,6 +266,11 @@ twenty values, `expected`, `retryAfterMs`); a tool's message text is bounded to
 - **A program never runs a program, and never holds a result the turn owns.**
   Breaking the first nests receipts without bound; breaking the second puts an
   image in a JSON value. Guard: `callableTools` in `test/code-mode.test.ts`.
+- **A program reaches the isolate only through the pre-run check.** Breaking it
+  means a write in a `catch`, a `map` callback or a `Promise.all` that the
+  gateway meets with the write already made, and a clock-stamped write a re-run
+  makes twice. Guard: `test/code-mode.test.ts` fails when the executor skips
+  the check, since the loader is then called for a flagged program.
 
 ## Security and trust model
 
@@ -311,6 +337,10 @@ own.
 - **No `CODE_LOADER` binding:** neither plugin is registered; runs behave as
   before. The wizard has no `sidekick_tool_test` and no custom-tool guide, and a
   submitted tool is refused as untested.
+- **A program is refused before it runs:** `code_program_rejected`, listing
+  each line and the shape that passes; nothing was loaded or written, and the
+  run continues. Through a saved tool it is `custom_tool_failed`, reported as
+  a defect in the tool.
 - **A program throws or does not compile:**
   `code_program_failed` with the message and the completed writes. The run
   continues.
@@ -364,7 +394,9 @@ otherwise: the loader compiles what it is given, the deadline ends a loop
   receipt, Bind's failure classification, the per-call timer, a fatal
   authorization, closing with a call in flight); `finishProgram` deriving codes
   from records; `customToolFailure`; `wrapProgram`;
-  `EntryResultSchema`. Run with
+  `EntryResultSchema`; `checkProgram` on each shape it refuses and the ones it
+  passes; the executor refusing a flagged program before the loader is called
+  and loading one that passes. Run with
   `pnpm --filter @rally/api exec vitest run test/code-mode.test.ts`.
 - `apps/api/test-workers/code-mode.test.ts` (workerd): a room run with the
   provider double scripting `load_plugin` then `code_execute`; the program's
@@ -437,6 +469,64 @@ otherwise: the loader compiles what it is given, the deadline ends a loop
   is a listing-rules question still open.
 
 ## Changelog
+
+### 2026-10-31 — A program is checked before it runs
+
+**What changed:** `checkProgram` in `check.ts`, run by the executor before any
+isolate is loaded, for `code_execute`, the wizard's tool test and a saved
+tool's test. It parses the wrapped body with acorn (a new direct
+dependency of the API, already in the lockfile through ESLint) and refuses the
+program as `code_program_rejected`, listing each issue by line: a body that
+does not parse, a write called as a bare statement with its promise dropped,
+a write inside `Promise.all` and its kin or inside a `map`/`forEach`
+callback, and `Date.now()`, `new Date()`, `Math.random()`,
+`crypto.randomUUID()`, `crypto.getRandomValues()` or `performance.now()` in a
+program that writes. A saved tool's run skips the check: the identity hash
+the test gate recorded covers the code it passed. The Code system message says
+what is refused and the shape that passes. `customToolFailure` maps the code
+to `custom_tool_failed` as a defect in the tool.
+
+**Why:** The gateway halts an ambiguous write and names completed writes in
+every failure, but both act after a write was made. The shapes refused are the
+ones in which the program itself cannot know a write's outcome, or in which a
+re-run cannot recognize the write: a `map` callback or `Promise.all`
+dispatches the next write whatever happened to the last; a dropped promise may
+be in flight when the program returns; and a write whose input holds
+`Date.now()` has a different input hash on every attempt, so
+`findCompletedToolResult` misses it and the write is made again. The parse of
+a three-kilobyte program measures 0.3 ms median, 1 ms at the 99th percentile,
+on Node; a refusal the model did not deserve costs a model turn, seconds and
+tokens. That ratio sets the rule: refuse only a shape with no legitimate
+program on the other side, and never check what was already checked. The
+check is best effort by design: it reads the direct `tools.<plugin>.<tool>`
+shape and nothing it cannot resolve statically, and the gateway remains the
+authority at run time.
+
+**Considered and rejected:** Refusing a write inside `try`/`catch`: a
+definitive failure the program catches is a write the gateway classified as
+not made, and an ambiguous one halts the session so a retry in the `catch` is
+refused where it matters; a program that returns a structured answer from a
+caught failure is legitimate, and refusing it would cost a model turn for
+nothing. Refusing a write stored in a variable: it may be awaited on the next
+line. Checking a saved tool again on every run: the identity hash covers the
+code the test checked, and a parse per run is a double check. Refusing a
+write inside a loop: inserting rows
+one per iteration is the common case Code Mode exists for, and a loop of
+awaited writes stops at the first failure, with the completed ones named.
+Refusing more than one distinct write site: two programs with a model turn
+between them are no more atomic than one program with two writes. Running the
+check inside the isolate: it would cost the load the check exists to spare,
+and a program could not be refused before it had a stub. Following aliases
+and computed names: a data-flow analysis for a check that is a sanity pass,
+not a boundary; the gateway governs every call regardless.
+
+**Consequences:** A model that writes `rows.forEach(r => tools.x.insert(r))`
+or drops a write's promise is refused with the line and the shape to use, and
+rewrites once. A tool saved before the check existed runs unchecked, under the
+gateway's rules. Reads keep every shape: `Promise.all` over reads and a read in
+`try` pass. A program with no write may read the clock freely. Open question 1
+(concurrency inside a program) is narrowed: reads may run concurrently; writes
+are sequential by rule as well as by the gateway's serialization.
 
 ### 2026-10-31 — Code Mode and Sidekick custom tools
 
