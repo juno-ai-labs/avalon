@@ -249,6 +249,7 @@ describe("the automations plugin", () => {
     // The scout names the deterministic misses, and step 2 counts one as a reason to change.
     expect(systemMessage).toContain("and each deterministic step the run repeated, skipped or got\nwrong");
     expect(systemMessage).toContain("or a deterministic step the\nruns repeated, skipped or got wrong.");
+    expect(systemMessage).toContain("one run that repeated, skipped or got wrong a deterministic step is\nevidence enough: the step either ran as written or it did not.");
     // The wizard ends no turn with nothing: the harness reads that as a defect and falls back.
     expect(systemMessage).toContain("Then say one line here that the agent is reading the runs");
     expect(systemMessage).toContain("Answer a question from it with\nreply_to_message, then end the turn with one short line here.");
@@ -1048,6 +1049,8 @@ describe("custom tools in the drafting plugin", () => {
     expect(withRuntime.systemMessage).toContain(CUSTOM_TOOLS_GUIDE);
     expect(withRuntime.systemMessage.replace(/\s+/g, " ")).toContain("In a self-review, tools change with the procedure");
     expect(withRuntime.systemMessage.replace(/\s+/g, " ")).toContain("says whether it becomes a tool or why it stays in the instructions");
+    expect(withRuntime.systemMessage.replace(/\s+/g, " ")).toContain("\"The instructions already say so\" is not a reason it stays");
+    expect(withRuntime.systemMessage.replace(/\s+/g, " ")).toContain("unless the run shows the step failed on something outside it (a timed-out read)");
   });
 
   it("refuses a test whose input misses the tool's schema, and one naming an unloaded plugin, by field", async () => {

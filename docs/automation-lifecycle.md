@@ -1087,9 +1087,13 @@ procedure problem seen in the runs, a deterministic step the runs repeated,
 skipped or got wrong among them, never a platform failure); and if so
 exactly what it will change and nothing else, which where a program runtime
 exists says of each such step whether it becomes a saved tool or why it
-stays in the instructions. The plan comes after the reads
-because before them there is nothing to plan from: a plan written from the
-notice's counts restated the notice and the rules, which the two first live
+stays in the instructions. An instruction a run did not follow is not covered
+by being written, one run that repeated, skipped or got wrong a deterministic
+step is evidence enough, and where a runtime exists such a step is the case
+for a tool unless the run shows it failed on something outside it. The plan
+comes after the reads because before them there is nothing to plan from: a
+plan written from the notice's counts restated the notice and the rules, which
+the two first live
 reviews showed, whereas a plan written from the runs is the proposal a
 reader wants to see before the revision lands. It acts on the plan: nothing
 to change, stop after the report; otherwise revise as planned and submit
@@ -1677,6 +1681,31 @@ The Sidekick authoring prompt carries no Google-specific lookup or attachment
 instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
+
+### 2026-11-01 — An instruction a run did not follow is the case for a tool
+
+**What changed:** Review step 2 and the custom-tools guide rule out two
+reasons for leaving a deterministic miss in prose: "the instructions already
+say so" and "only one run showed it".
+
+**Why:** The first self-review on the build that made the plan answer
+tool-or-not (Daily Signup, Traffic & Attribution Report, 2026-11-01 00:41 UTC)
+had the scout name three misses in its one run (date bounds passed as literals
+where the instructions require computing them in code, deltas typed into the
+Slack text by hand, no flow-entry dedupe or paging guard) and the plan decline
+all three as "already covered by the current instructions; this single run
+does not establish a new rule." Both are the wrong inference: an instruction
+the run did not follow is the failure a tool exists to remove, and a
+deterministic step is binary evidence. The guide asked for a reason and
+accepted any; it now names the two that do not count, and keeps the one that
+does: a step that failed on something outside the run (a timed-out read) is
+not a re-derived step.
+
+**Consequences:** A review can no longer leave such a step on those two
+grounds. The grounds the guide names still stand: a transient failure, and a
+writing tool the review cannot test against a scratch table, which is left as
+it is and reported. Where no runtime exists, the same step is still a reason
+to change the instructions.
 
 ### 2026-10-31 — The review plan answers tool-or-not for each deterministic miss
 
