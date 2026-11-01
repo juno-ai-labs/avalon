@@ -865,8 +865,8 @@ change in the definition and nothing else. Only a procedure problem seen in the 
 justifies one: wrong format or time, posted when it should have stayed silent, silent when
 it should have posted, an instruction the run could not follow, or a deterministic step the
 runs repeated, skipped or got wrong. An instruction a run did not follow is not covered by
-being written, and one run that skipped a deterministic step is evidence enough: the step
-either ran in code or it did not. A platform failure (the
+being written, and one run that repeated, skipped or got wrong a deterministic step is
+evidence enough: the step either ran as written or it did not. A platform failure (the
 model provider returned nothing, the run failed before its first step) never does. A run
 that withheld a data report because sources disagreed or a cross-check did not reconcile
 is silent when it should have posted: the fix is to post with the discrepancy named in
@@ -935,7 +935,9 @@ date bounds, a union, a count) and says whether it becomes a tool or why it
 stays in the instructions; a plan that leaves that unanswered is incomplete.
 "The instructions already say so" is not a reason it stays: an instruction the
 run did not follow is the case for a tool, which moves the step out of prose the
-run can skip and into code the run calls. A
+run can skip and into code the run calls, unless the run shows the step failed
+on something outside it (a timed-out read) rather than being done by hand or
+skipped. A
 tool the runs misused or no longer need is rewritten or removed along with the
 instructions that call it. A tool is part of the procedure, not a new
 capability.
