@@ -1711,9 +1711,12 @@ review's run floor so a single-run review never happens: the floor is a product
 number, and the problem was the inference, not the sample.
 
 **Consequences:** A review that reads one run in which a deterministic step
-ran in prose rather than code now has no sanctioned reason to leave it, where a
-runtime exists. Where none exists, the same step is still a reason to change
-the instructions.
+ran in prose rather than code can no longer leave it on the grounds that the
+instructions already say so or that one run is too few. The other grounds the
+guide names stand: a writing tool the review cannot test against a scratch
+table is left as it is and reported, and a step that a transient broke once is
+not a re-derived step. Where no runtime exists, the same step is still a reason
+to change the instructions.
 
 ### 2026-10-31 — The review plan answers tool-or-not for each deterministic miss
 
