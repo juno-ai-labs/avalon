@@ -1078,12 +1078,16 @@ Memory treats the review as agent-derived.
 `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, not a gate, in four stages. It reads
 first, posting nowhere else: it hands the listed runs to one background
 agent, whose reader walks them without a run id and which sends one
-report, says in one line that it is waiting, and when the reply wakes it,
+report that also names each deterministic step a run repeated, skipped or got
+wrong, says in one line that it is waiting, and when the reply wakes it,
 it reads the Sidekick's posts and replies in its home itself. It then
 plans, in one message before any write: what
 the runs showed, run by run; whether anything justifies a change (a
-procedure problem seen in the runs, never a platform failure); and if so
-exactly what it will change and nothing else. The plan comes after the reads
+procedure problem seen in the runs, a deterministic step the runs repeated,
+skipped or got wrong among them, never a platform failure); and if so
+exactly what it will change and nothing else, which where a program runtime
+exists says of each such step whether it becomes a saved tool or why it
+stays in the instructions. The plan comes after the reads
 because before them there is nothing to plan from: a plan written from the
 notice's counts restated the notice and the rules, which the two first live
 reviews showed, whereas a plan written from the runs is the proposal a
@@ -1673,6 +1677,48 @@ The Sidekick authoring prompt carries no Google-specific lookup or attachment
 instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
+
+### 2026-10-31 — The review plan answers tool-or-not for each deterministic miss
+
+**What changed:** Three sentences of prompt. The scout's assignment (review
+step 1, and `SIDEKICK_RUN_READING_GUIDANCE` in its own system message) asks
+for each deterministic step a run repeated, skipped or got wrong, with the
+examples named: a dedupe after the reads, a page not followed, a date bound, a
+union or a count worked by hand. Step 2's list of what justifies a change
+gains that item. The custom-tools guide, where a program runtime exists, now
+makes the plan say of each such step whether it becomes a tool or why it stays
+in the instructions, and calls a plan that leaves that unanswered incomplete.
+
+**Why:** The second production self-review on the deploy that let a review
+change tools (Content Machine Research Enricher, 2026-10-31 18:54 UTC) had the
+guide in its system message and `sidekick_tool_test` in its catalog. Its scout
+reported, run by run, that dedupe ran after the source reads in three of five
+runs so known URLs were fetched again, and that the X timeline was read to its
+first page in all five. The wizard's plan named neither and changed only the
+two delivered outcomes it saw as defects: a double post and an overstated
+verification. Step 2 listed what justifies a change (format, time, posted or
+silent wrongly, an instruction the run could not follow), and a repeated or
+skipped deterministic step was not on it, so the wizard was right by its own
+rules to leave them. The guide's sentence granted permission to make a tool
+and asked nothing, and permission the plan need not mention is permission the
+smallest edit never uses. Making the scout name the misses and the plan answer
+for each turns the sentence into a decision the wizard has to write down, in
+the plan a reader sees before the revision lands.
+
+**Considered and rejected:** Asking the host to detect a repeated step (a
+re-fetched URL, an unfollowed continuation) and put it in the notice: the host
+knows a run finished and under which revision, not what the run did, and the
+review's design keeps the reasoning in the wizard and costs the runs nothing.
+Putting the tool question in step 2 of the authoring prompt rather than the
+guide: step 2 is shown in every deployment, and one without a program runtime
+would be asked a question it cannot answer; the step-2 addition is only the
+observation, which a prose fix (dedupe before the reads) answers there.
+
+**Consequences:** A review now proposes a change for a deterministic miss even
+where no runtime exists, as prose. Where one exists, the plan carries one line
+per miss; a tool it saves meets the same test gate and single-purpose rule as
+at setup. The scout's report grows by one item per run, which is bounded by
+the sample the notice picked.
 
 ### 2026-10-31 — A review may turn a re-derived step into a saved tool
 
