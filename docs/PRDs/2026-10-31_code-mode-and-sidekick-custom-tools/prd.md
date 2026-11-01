@@ -461,6 +461,29 @@ close it rather than rediscover it.
 **Changes:** [`state.md`](state.md) stays in progress until items 6 and 7 are
 done.
 
+### 2026-10-31 — A program is checked before it runs
+
+**Decided:** The executor parses every program (acorn, on the wrapped body)
+and refuses it before an isolate is loaded when a write's promise is dropped,
+when a write runs inside `Promise.all` or a `map`/`forEach` callback, or when
+a program that writes reads the clock or a random number. The refusal is
+`code_program_rejected`, by line, with nothing written. A saved tool meets the
+check at the wizard's test; its runs do not parse it again. A write inside
+`try`/`catch` is not refused.
+
+**Why:** The halt on an ambiguous write and the naming of completed writes act
+after a write was made. These shapes are the ones in which the program cannot
+know a write's outcome, or a re-run cannot match it by input hash. The parse of
+a three-kilobyte program is 0.3 ms median on Node; a refusal the model did not
+deserve is a model turn. So each rule is one with no legitimate program on the
+other side, and a caught failure, which the gateway already classifies as not
+made or halts, is left alone. Best effort by design: direct call shapes only;
+the gateway stays the authority.
+
+**Changes:** Open question 1 narrows: reads may run concurrently in a program,
+writes are sequential by rule. Writes in loops and several write sites in one
+program remain allowed; a loop of awaited writes stops at the first failure.
+
 ## Key design decisions
 
 1. **The program's tool calls go through `HarnessTool.execute`, not around
@@ -691,11 +714,12 @@ arithmetic for the team to set it before merge.
 
 ## Open questions
 
-1. **Concurrency inside a program.** `Promise.all` over stub calls is natural
-   JavaScript. The gateway serializes tools flagged `serial` and runs others
-   concurrently up to a cap written open. Whether connectors tolerate the
-   concurrency a program can generate is a provider question the first
-   production trip decides.
+1. **Concurrency inside a program.** `Promise.all` over reads is natural
+   JavaScript and allowed; a write inside `Promise.all` or an iteration
+   callback is refused before the program runs, so writes are sequential by
+   rule as well as by the gateway's serialization. Whether connectors tolerate
+   the read concurrency a program can generate is a provider question the
+   first production trip decides.
 2. **Pagination inside a program.** `_next` tools are offered as stubs so a
    program can loop pages. Whether to add an async iterator helper depends on
    how often programs page; decide after the first ten programs.

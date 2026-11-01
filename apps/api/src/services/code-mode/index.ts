@@ -1,3 +1,4 @@
+export { checkProgram, writeToolKeys, type CheckProgramOptions, type ProgramIssue, type ProgramIssueCode } from "./check";
 export { CodeModeToolError } from "./errors";
 export {
   CODE_PLUGIN_ID,
