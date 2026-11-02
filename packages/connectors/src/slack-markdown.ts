@@ -142,6 +142,15 @@ export function splitSlackMarkdown(value: string, maximum = SLACK_MARKDOWN_BLOCK
         carriedFence = openFence;
         pending = carry;
         pendingLength = carry.reduce((total, entry) => total + entry.length + 1, 0);
+        // What a paragraph break carries fit the last chunk, but it need not
+        // fit beside this piece too; when it does not, it is a chunk of its own.
+        if (pending.length
+          && fenceOverhead(carriedFence, nextFenceState(openFence, piece)) + pendingLength + piece.length + 1 > maximum) {
+          chunks.push(joinChunk(carriedFence, pending, openFence));
+          carriedFence = openFence;
+          pending = [];
+          pendingLength = 0;
+        }
       }
       pendingLength += piece.length + (pending.length ? 1 : 0);
       pending.push(piece);
