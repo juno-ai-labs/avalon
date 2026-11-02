@@ -96,7 +96,8 @@ function allPlugins(): HarnessPlugin[] {
     ...__integrationTesting.createWorkstreamCorePlugins(tools),
     __integrationTesting.createAvalonWorkstreamPlugin(tools),
     __integrationTesting.createAvalonWebPlugin(tools),
-    createAgentCommunicationPlugin(new AgentCommunicationService(env, input), "role guidance"),
+    // A run's surface is the widest: it adds `request_sidekick_change`.
+    createAgentCommunicationPlugin(new AgentCommunicationService(env, input), "role guidance", { sidekickRun: true }),
     createAvalonMultimodalGenerationPlugin(env, input),
     createTerminalPlugin(terminalExecutors),
     // The configuration conversation's scope offers all four tools.
@@ -196,6 +197,7 @@ describe("plugin wire names", () => {
       "read_resource_previous",
       "reply_to_message",
       "request_elicitation",
+      "request_sidekick_change",
       "run_command",
       "schedule_wakeup",
       "search_resource",

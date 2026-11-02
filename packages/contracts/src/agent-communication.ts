@@ -116,6 +116,21 @@ export const ReplyToAgentMessageInputSchema = z.strictObject({
   ...MessageFields,
 }).refine(hasContent, contentError);
 export const AgentMessageResultSchema = z.strictObject({ messageId: IdSchema, next: z.string() });
+/**
+ * Room the host keeps for the frame it writes around a change request: fixed
+ * sentences, a run id, a sender name bounded at 200 and a provider at 100. It
+ * is arithmetic, not a policy: the framed message must fit the one ceiling
+ * every message shares, or admission refuses a request the tool accepted.
+ */
+export const SIDEKICK_CHANGE_FRAME_RESERVE = 1_000;
+/**
+ * A Sidekick run asking its own Sidekick's wizard for a change. No recipient
+ * field: the host names the wizard from the run, so a run reaches only its own.
+ */
+export const RequestSidekickChangeInputSchema = z.strictObject({
+  changes: z.string().trim().min(1).max(MESSAGE_MAX_CHARACTERS - SIDEKICK_CHANGE_FRAME_RESERVE)
+    .describe("Describe the change to this Sidekick in plain words: what to change, who asked for it, and their words where they matter. The wizard edits the saved definition, so it needs no ids."),
+});
 export const StopAgentInputSchema = z.strictObject({
   agentId: ModelAgentIdSchema.describe("Copy the agentId of an agent you own. Its owned descendants also stop."),
 });
@@ -145,10 +160,11 @@ export const AGENT_MESSAGE_CONTENT_KIND = "agent_message" as const;
  * the name the transcript stores.
  *
  * `createAgentCommunicationPlugin` declares `shortWireName: ""`, so these are
- * its tool names unprefixed. Three of that plugin's seven are about a message
- * or a worker rather than about Rally reaching for a tool; `list_agents`,
+ * its tool names unprefixed. The ones listed here are about a message rather
+ * than about Rally reaching for a tool; `list_agents`,
  * `stop_agent`, `sidekicks_list` and `create_sidekick` are the reader using
- * the plugin and stay on its own row.
+ * the plugin and stay on its own row. `request_sidekick_change` is a message
+ * to the run's own wizard, so it is one of the messages.
  *
  * They are named here rather than beside either consumer because both need
  * them: the API asks whether a run handed off before telling its owner the run
@@ -158,7 +174,7 @@ export const AGENT_MESSAGE_CONTENT_KIND = "agent_message" as const;
  * carries: a client older than a rename reads the new spelling as ordinary
  * Background agents activity, losing the row rather than the work.
  */
-export const AGENT_MESSAGE_TOOL_NAMES = ["send_message", "reply_to_message"] as const;
+export const AGENT_MESSAGE_TOOL_NAMES = ["send_message", "reply_to_message", "request_sidekick_change"] as const;
 
 /** The tool that starts a worker. Its own row, for the same reason. */
 export const AGENT_START_TOOL_NAME = "start_agent";

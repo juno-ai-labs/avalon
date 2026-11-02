@@ -8,6 +8,33 @@ import type { WorkstreamWorkflowInput } from '@rally/contracts';
  */
 const DELEGATION_GUIDANCE = 'Tell the agent what result is needed, what requirements are already settled, and what it still needs to investigate. Leave choices that still need investigation to that agent. Loading a skill in your conversation does not load it for another agent. Name the skills the agent must load. For work that will run later, also save the required steps in its run instructions. Send messages only for new results, concrete blockers or questions, or changed requirements. Do not reply just to acknowledge receipt, repeat that you are waiting, or acknowledge another acknowledgment. When a message needs no action or answer, send no agent message; end the turn with one short line in your own conversation, never with no text. After delegating, keep working on what does not need the result, or end your turn with a short status. The reply arrives as a message and wakes this conversation. Do not poll for it and do not resend the assignment. If you must know by a certain time, schedule one wake-up for that time, not a repeating one.';
 
+/**
+ * What a run is told about changing its own Sidekick. A run follows saved
+ * instructions and cannot edit them; the wizard can. Without this, a request
+ * to change the Sidekick that reached a run (a reply in its Slack thread, most
+ * often) was either done once in that run or dropped.
+ */
+export const SIDEKICK_RUN_CHANGE_GUIDANCE = 'You are executing one run of a Sidekick. When someone asks to change the Sidekick itself, such as its instructions, schedule, sources or what it reports, rather than only this run, send the change with request_sidekick_change. It goes to this Sidekick\'s wizard, which owns the saved definition. Say who asked and include their words where they matter. If the request also applies to this run\'s result, do that here too. The wizard\'s reply arrives as a message. Tell the person the change is saved only after the wizard confirms the revision was accepted; otherwise pass on its question or what blocks it.';
+
+/**
+ * The text the wizard reads for a run's change request. The host writes the
+ * frame, so which run sent it and who started the turn that asked come from
+ * the run's input, not from the model; the request itself is the run's words.
+ * Bounded by `SIDEKICK_CHANGE_FRAME_RESERVE`.
+ */
+export function sidekickChangeRequestText(
+  runId: string,
+  continuation: WorkstreamWorkflowInput['automationContinuation'],
+  changes: string,
+): string {
+  const requester = !continuation
+    ? ''
+    : continuation.source.kind === 'provider_thread'
+      ? ` ${continuation.senderName} asked for it by replying in the run's ${continuation.source.provider} thread; they may not be a Rally member.`
+      : ` ${continuation.senderName} asked for it in the run.`;
+  return `Change request from run ${runId} of this Sidekick.${requester} Update this Sidekick's saved definition if the request fits it, then reply to this message saying whether the revision was accepted or what blocks it.\n\n${changes}`;
+}
+
 /** The same role guidance applies before and after loading coordination tools. */
 export function agentCoordinationRoleGuidance(
   input: Pick<WorkstreamWorkflowInput, 'backgroundAgent' | 'parentKind'>,
