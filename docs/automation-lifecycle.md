@@ -1127,9 +1127,10 @@ Slack thread. The request arrives as an agent message whose text begins with
 `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE` has a section keyed on it that takes
 precedence over Save and report for that message. The wizard reads the run when
 the request depends on it; decides whether the request is a lasting change;
-refuses to widen the Sidekick's reach (the set a scheduled self-review may not
-add, plus recipients and data sources, with changes to an existing schedule
-allowed); asks one question and submits nothing, not even a partial draft, when
+keeps the Sidekick's purpose, the job its description and overview state,
+applying any change that still serves that job (a new source, recipient,
+destination, schedule or tool included) and sending a change of job back to a
+person who manages it; asks one question and submits nothing, not even a partial draft, when
 the request is unclear; leaves a person's open draft alone; revises as for any
 revision otherwise; and replies to the run, which passes the answer on. The
 request is evidence, like run content in a review. Reading the definition and

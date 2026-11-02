@@ -328,6 +328,21 @@ The message is from the run's own address, so the wizard's reply goes back to
 the run like any reply. The tool is on `AGENT_MESSAGE_TOOL_NAMES`, so the client
 counts it as a sent message.
 
+**How an answer or question gets back to the person.** Nothing in the host
+routes the wizard's words to Slack; the run does it with the tools it already
+has. The wizard answers with `reply_to_message`, which admits an agent message
+into the run child because the request came from the run's address. Any input
+to a run child continues that run (`continueSidekickRun`), so the run wakes
+with its own history, including the Slack post it made and that post's
+timestamp, and its guidance tells it to pass the answer on where the person
+asked: it calls the Slack plugin's `send_message` with the channel and that
+timestamp as `thread_ts`. When the wizard asked a question, the person's answer
+in the same thread follows the binding back to the run like any reply, and the
+run sends it to the wizard as a new `request_sidekick_change`; the wizard
+connects it to its question from its own conversation history. Because the
+model chooses the reply's destination, a run can post somewhere else; measured
+end to end, the answer reached the thread in all but two of 26 runs.
+
 
 ## Invariants
 
@@ -429,9 +444,8 @@ plain-language change and sends it, framed by the host under a fixed first
 line, to the wizard of the run's own Sidekick. Its guidance tells the run to use
 it for changes to the Sidekick itself and to tell the person, where they asked,
 only what the wizard confirmed. The wizard gets a section on evaluating one:
-decide whether it is a lasting change, never widen the Sidekick's reach on a
-run's request, ask one question when it is unclear, change only what was asked,
-and reply.
+decide whether it is a lasting change, keep the Sidekick's purpose, ask one
+question when it is unclear, change only what was asked, and reply.
 
 **Why:** A reply in a Slack thread bound to a Sidekick run reaches that run, not
 the wizard. A person who replied "change this report" was asking for a
@@ -477,7 +491,13 @@ the wizard's answer in its own conversation or posted it home in two of four
 cases, so the guidance says to pass it on where the person asked. Across the
 later runs, removing a section was saved 4 of 4 times, moving the schedule to
 Mondays 4 of 4 (the time kept from the definition), and emailing the report to
-an outside address was refused as widening reach 2 of 2. The answer reached the
+an outside address was refused as widening reach 2 of 2 under the first version
+of the wizard's rule. Under the purpose rule that replaced it, replacing the
+signup report with an AWS bill summary was refused as a different job 2 of 2,
+and the outside email request was attempted and stopped only because the
+Sidekick has no mail connection, 2 of 2. A second reply refining a saved change
+went through the run to the wizard and was saved as the next revision 3 of 3.
+The answer reached the
 person in the report's thread in 24 of 26 runs; in one of the other two the run
 re-posted the report at the top of the channel instead. "A single table with 3
 columns x, y, and z" is the open case: the wizard asked what the columns mean
@@ -506,13 +526,16 @@ what it reported, and most replies are about this run, not the Sidekick.
 **Consequences:** The tool grants no authority a run lacked; it passes the same
 contact check as any message to the wizard. The wizard decides whether a
 request fits, and the frame tells it when the asker may not be a Rally member.
-Anyone in a bound thread can reach the wizard this way, which is why the
-wizard's section refuses any widening of reach (connectors, plugins,
-destinations, recipients, sources, capabilities, delegates, new triggers) and
-sends it back to a person who manages the Sidekick, the same set a scheduled
-self-review may not add. Whether a non-member's request may change anything at
-all is a product decision this does not make; it belongs in the contact check
-or the wizard's section, not the tool.
+Anyone in a bound thread can reach the wizard this way, including someone who
+is not a Rally member. The wizard's section keeps only the Sidekick's purpose,
+the job its description and overview state: it applies any change that still
+serves that job, including a new source, recipient, destination, schedule or
+tool, and sends a change of job back to a person who manages the Sidekick. A
+first version refused any widening of reach, the set a scheduled self-review may
+not add; the team chose purpose as the line instead, so a reply in the thread
+can, for example, add an outside email recipient to a report. Tightening that
+again, or limiting what a non-member's request may change, belongs in the
+contact check or the wizard's section, not the tool.
 
 ### 2026-10-23 — Confirm the requested revision before reporting a saved edit
 

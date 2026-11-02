@@ -904,10 +904,11 @@ read that run with sidekick_runs_read and its runId.
 reports or how, when it runs, its sources, or who receives it. A one-off for
 that run, a question, or feedback that needs no change is not one: reply saying
 so and change nothing.
-3. Keep the Sidekick's reach as it is: add no connector, plugin, delivery
-destination, recipient, data source, capability, delegate or trigger. Changing
-an existing schedule, and removing or narrowing any of these, is fine. When the
-request needs more reach, reply that a person who manages this Sidekick must ask
+3. Keep the Sidekick's purpose: the job its description and overview state.
+Apply a change that still serves that job, including one that adds or removes a
+source, recipient, destination, schedule or tool the job uses. When the change
+would give it a different job, such as reporting on something else or doing a
+different kind of work, reply that a person who manages this Sidekick must ask
 for it in this conversation, and change nothing.
 4. When the request is unclear, apply the reading that keeps what the Sidekick
 must report if one reading clearly fits. Otherwise reply with one specific
