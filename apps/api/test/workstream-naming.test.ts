@@ -859,6 +859,13 @@ describe("work-stream naming", () => {
     expect(provisionalWorkstreamTitle("", "Slack task")).toBe("Slack task");
     expect(provisionalWorkstreamTitle("x".repeat(400), "New work stream")).toHaveLength(180);
   });
+
+  it("titles a mention by the name its author saw, not its link", () => {
+    expect(provisionalWorkstreamTitle(
+      "Ask [@Weekly \\[changelog\\]](sidekick://00000000-0000-7000-8000-000000000012) and [@Adam](person://00000000-0000-7000-8000-000000000001)",
+      "New thread",
+    )).toBe("Ask @Weekly [changelog] and @Adam");
+  });
 });
 
 /** Replaces the transcript with `count` alternating messages. */

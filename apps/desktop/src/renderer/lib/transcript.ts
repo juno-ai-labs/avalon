@@ -205,7 +205,8 @@ export function prepareDraftMentions(
   members: readonly WorkspaceMember[],
 ): ReturnType<typeof prepareMentionMarkdown> {
   const offsetSelections = selected.flatMap((mention) =>
-    mention.startOffset === undefined || mention.endOffset === undefined ? [] : [{
+    // A Sidekick selection is Markdown before it gets here (`sidekickMentionsAsMarkdown`).
+    mention.type === 'sidekick' || mention.startOffset === undefined || mention.endOffset === undefined ? [] : [{
       type: mention.type,
       userId: mention.userId,
       connectorType: mention.connectorType,

@@ -119,7 +119,8 @@ function isMentionIdentity(value: unknown): value is MentionIdentity {
     && Number.isInteger(candidate['endOffset'])
     && Number(candidate['startOffset']) >= 0
     && Number(candidate['endOffset']) > Number(candidate['startOffset']);
-  return (candidate['type'] === 'person' || candidate['type'] === 'connector')
+  return (candidate['type'] === 'person' || candidate['type'] === 'connector'
+    || (candidate['type'] === 'sidekick' && typeof candidate['sidekickId'] === 'string'))
     && typeof candidate['label'] === 'string'
     && (offsetsAbsent || offsetsValid);
 }

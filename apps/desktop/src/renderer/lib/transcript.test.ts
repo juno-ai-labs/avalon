@@ -436,6 +436,13 @@ describe('transcript messages', () => {
     });
   });
 
+  it("leaves a Sidekick link's label alone when a member has the same name", () => {
+    const sam = '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b';
+    const text = 'Ask [@Sam](sidekick://0b8c3a52-5f0e-4d6a-9a1c-1d2e3f405162)';
+    expect(typedMentionRendering(text, [{ id: sam, name: 'Sam', email: 'sam@example.com', timezone: 'UTC' }]))
+      .toEqual({ text, mentions: [] });
+  });
+
   it('leaves a draft alone when the selection carries no offsets to rewrite', () => {
     expect(optimisticMentionRendering(
       'Ping @Sam',

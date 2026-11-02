@@ -260,10 +260,16 @@ interface RequestOptions<T> {
 }
 
 export interface MentionIdentity {
-  type: 'person' | 'connector';
+  /**
+   * `sidekick` lives only in the draft: the composer turns it into a
+   * `[@Name](sidekick://<id>)` link before sending, so it never reaches the
+   * mention payload. See `sidekickMentionsAsMarkdown`.
+   */
+  type: 'person' | 'connector' | 'sidekick';
   label: string;
   userId: string | null;
   connectorType: string | null;
+  sidekickId?: string;
   /** UTF-16 offsets for the exact autocomplete selection in the draft. */
   startOffset?: number;
   endOffset?: number;

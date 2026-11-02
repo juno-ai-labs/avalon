@@ -11,6 +11,7 @@ import {
   mentionsInTrimmedText,
   rebaseMentionIdentities,
   resolveMentionPayload,
+  sidekickMentionsAsMarkdown,
   upsertMentionIdentity,
 } from '../lib/mention-draft';
 import type { WorkspaceInvitee } from '@rally/contracts';
@@ -19,12 +20,14 @@ import { NO_MENTIONS, useDraftText } from '../lib/use-draft-text';
 import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
+import { type SidekickMentionTarget, useSidekickMentions } from '../lib/sidekick-mentions';
 import type { WorkstreamMessageDeliveryMode } from '../lib/use-workstream-socket';
 import { ComposerAgentActivity } from './composer-agent-activity';
 import { STOPPING_LABEL } from './agent-work-timing';
 import type { AttachmentPreview } from './attachments';
 import { ComposerInput, type ComposerMenuAction, type ComposerModelControl } from './composer-input';
 import { Avatar, Button, IconButton, Modal, RallyAvatar } from './primitives';
+import { AutomationGlyph } from './workstream-glyph';
 
 /**
  * Someone an `@` can name here. Only people for now: the work stream's
@@ -37,13 +40,16 @@ import { Avatar, Button, IconButton, Modal, RallyAvatar } from './primitives';
  * have no account, so their label is their address and the mention is the
  * typed `@address`: no identity rides with it, and the host shares the
  * conversation with the address when the message is sent.
+ *
+ * A Sidekick is sent as a link; see `sidekickMentionsAsMarkdown`.
  */
 interface MentionCandidate {
   id: string;
   label: string;
   description: string;
-  kind: 'rally' | 'person' | 'invitee';
+  kind: 'rally' | 'person' | 'invitee' | 'sidekick';
   member?: WorkspaceMember;
+  sidekick?: SidekickMentionTarget;
 }
 
 const NO_SHARED: readonly string[] = [];
@@ -57,6 +63,7 @@ function invitedArgument(emails: string[]): [] | [string[]] {
 function mentionKindLabel(candidate: MentionCandidate): string {
   if (candidate.kind === 'rally') return 'AI';
   if (candidate.kind === 'invitee') return 'Invited';
+  if (candidate.kind === 'sidekick') return 'Sidekick';
   return candidate.member?.accessClass === 'guest' ? 'Guest' : 'Member';
 }
 
@@ -216,11 +223,14 @@ export function WorkstreamComposer({
   const annotationBlocked = (Boolean(sending) && Boolean(annotationDraft?.pins.length)) || !annotationPayloadValid || annotationAttachmentCount + attachments.length > MAX_ATTACHMENTS || annotationDraft?.uploading;
   const hasCommentedPin = annotationDraft?.readyPins.some((p) => p.annotation.comment.trim()) ?? false;
   const annotationSendPending = useRef(false);
-  const submitMessage: typeof onSend = async (...args) => {
+  const submitMessage: typeof onSend = async (draftText, draftMentions, ...rest) => {
     const withPins=Boolean(annotationDraft?.pins.length);
     if(withPins&&annotationSendPending.current)throw new Error('Your artifact comments are still sending.');
     if(withPins)annotationSendPending.current=true;
-    try {await onSend(...args);} finally {if(withPins)annotationSendPending.current=false;}
+    // The host sends what the reader will see, so a picked Sidekick leaves as
+    // its link here and every host's optimistic turn already shows the chip.
+    const outgoing = sidekickMentionsAsMarkdown(draftText, draftMentions);
+    try {await onSend(outgoing.text, outgoing.mentions, ...rest);} finally {if(withPins)annotationSendPending.current=false;}
   };
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const draftRevisionRef = useRef(0);
@@ -235,6 +245,10 @@ export function WorkstreamComposer({
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingMentionConfirmation | null>(null);
   const [confirming, setConfirming] = useState(false);
   const readyAttachmentCount = attachments.filter((attachment) => attachment.status === 'ready').length;
+  // The Organization's Sidekicks and this conversation's own (see
+  // `sidekick-mentions.tsx`), offered after the people. Drafts are left out:
+  // one that has never been published has nothing to name yet.
+  const sidekicks = useSidekickMentions().list;
   const participantIds = useMemo(() => new Set(workstream.participants.map((person) => person.id)), [workstream.participants]);
   const candidates = useMemo<MentionCandidate[]>(() => [{
     id: 'rally-assistant',
@@ -258,9 +272,25 @@ export function WorkstreamComposer({
     label: invitee.email,
     description: '',
     kind: 'invitee' as const,
-  }))], [invitees, members]);
+  })),
+  ...sidekicks
+    .filter((sidekick) => sidekick.status !== 'draft')
+    .map((sidekick) => ({
+      id: `sidekick:${sidekick.id}`,
+      label: sidekick.name,
+      description: sidekick.description,
+      kind: 'sidekick' as const,
+      sidekick,
+    }))], [invitees, members, sidekicks]);
 
-  const mentionLabels = useMemo(() => candidates.map((candidate) => candidate.label), [candidates]);
+  // A person, invitee or Rally is found by name on send, so any match is
+  // highlighted. A Sidekick is sent only where it was picked, so its name is
+  // highlighted only while a pick holds it; a retyped one would read as a
+  // mention and go out as text.
+  const mentionLabels = useMemo(() => {
+    const picked = new Set(selectedMentions.flatMap((mention) => mention.type === 'sidekick' ? [mention.label] : []));
+    return candidates.flatMap((candidate) => candidate.kind !== 'sidekick' || picked.has(candidate.label) ? [candidate.label] : []);
+  }, [candidates, selectedMentions]);
   const mentionGroups = useMemo(() => {
     if (mentionQuery === null) return [];
     const query = mentionQuery.toLowerCase();
@@ -276,6 +306,7 @@ export function WorkstreamComposer({
           : candidate.kind === 'invitee' && !sharedInvitees.has(candidate.label)) },
       { label: 'Guests', candidates: matches.filter((candidate) =>
         candidate.member?.accessClass === 'guest' && !participantIds.has(candidate.id)) },
+      { label: 'Sidekicks', candidates: matches.filter((candidate) => candidate.kind === 'sidekick') },
     ].filter((group) => group.candidates.length > 0);
     // Carry each group's starting index so rendering a row never scans the list.
     let startIndex = 0;
@@ -413,15 +444,13 @@ export function WorkstreamComposer({
     setText(completed.text);
     setSelectedMentions((current) => {
       const rebased = rebaseMentionIdentities(text, completed.text, current);
-      if (!candidate.member) return rebased;
-      const identity: MentionIdentity = {
-        type: 'person',
-        label: candidate.label,
-        userId: candidate.member.id,
-        connectorType: null,
-        startOffset: completed.startOffset,
-        endOffset: completed.endOffset,
-      };
+      const range = { startOffset: completed.startOffset, endOffset: completed.endOffset };
+      const identity: MentionIdentity | null = candidate.member
+        ? { type: 'person', label: candidate.label, userId: candidate.member.id, connectorType: null, ...range }
+        : candidate.sidekick
+        ? { type: 'sidekick', label: candidate.label, userId: null, connectorType: null, sidekickId: candidate.sidekick.id, ...range }
+        : null;
+      if (!identity) return rebased;
       return upsertMentionIdentity(rebased, identity);
     });
     setMentionQuery(null);
@@ -531,7 +560,7 @@ export function WorkstreamComposer({
                   <button
                     aria-label={[candidate.label, candidate.description, mentionKindLabel(candidate)].filter(Boolean).join(' — ')}
                     aria-selected={index === mentionNavigation.activeIndex}
-                    className={clsx(index === mentionNavigation.activeIndex && 'is-selected', candidate.kind === 'invitee' && 'is-invited')}
+                    className={clsx(index === mentionNavigation.activeIndex && 'is-selected', candidate.kind === 'invitee' && 'is-invited', candidate.kind === 'sidekick' && 'is-sidekick')}
                     id={mentionOptionId(candidate.id)}
                     key={candidate.id}
                     onClick={() => insertMention(candidate)}
@@ -546,6 +575,10 @@ export function WorkstreamComposer({
                     <span aria-hidden="true" className="mention-icon">
                       {candidate.member
                         ? <Avatar member={candidate.member} size="small" />
+                        : candidate.sidekick
+                        ? <span className="mention-icon-sidekick">
+                          <AutomationGlyph {...(candidate.sidekick.appearance ? { appearance: candidate.sidekick.appearance } : {})} id={candidate.sidekick.id} />
+                        </span>
                         : candidate.kind === 'invitee'
                         ? <Avatar member={inviteeAsMember(candidate.label)} size="small" />
                         : <RallyAvatar size="small" />}

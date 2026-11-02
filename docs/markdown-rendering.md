@@ -259,6 +259,24 @@ the address draws as their person chip, an invitee as `.mention-chip-invited`
 Resolving at render rather than at parse is what turns the chip into the
 person's name once they join, with nothing rewritten in the stored message.
 
+A Sidekick mention is durable Markdown, `[@Name](sidekick://<uuid>)`, which the
+composer writes when someone picks a Sidekick from the mention list. It has no
+mention row: naming a Sidekick notifies it of nothing and grants it nothing, so
+it is a reference in the same standing as a `resource://` citation. `CitationLink`
+routes a `sidekick:` href to the identity path before the matrix, as it does a
+connector href, and `SidekickMentionChip` resolves the id against
+`SidekickMentionContext`: the Organization-wide Sidekicks, provided once
+under the Organization socket in `App.tsx`, plus the conversation's owned,
+attached and recommended ones, which `conversation-surface.tsx` adds with
+`SidekickMentionScope`. A Sidekick the reader can see draws as
+`.mention-chip-sidekick` with its hexagon glyph and its *current* name, so a
+rename shows everywhere; any other id draws as the label text. That is also why
+a hand-typed `sidekick://` link is harmless: it can only name a Sidekick the
+reader already sees, under that Sidekick's own name. The `@Name` inside such a link is
+never discovered as a person (`resolveMentionPayload`), even when a member has
+the same name. Email, Slack and push read
+it through `rewriteMessageAsPlainText`, which reduces it to `@Name`.
+
 ### Web links and favicons
 
 `remark-gfm` owns autolinking as well as tables and footnotes. A naked
@@ -694,8 +712,8 @@ written this way is a sign it is not a typography override.
   file is a regression waiting for the next person who splits a stylesheet, and
   it fails silently and visually, which is the combination this module has
   already been bitten by once.
-- **A mention link is never navigable.** `person:` / `person://` and
-  render-minted `connector:` / `connector://` hrefs survive
+- **A mention link is never navigable.** `person:` / `person://`,
+  `sidekick://` and render-minted `connector:` / `connector://` hrefs survive
   `urlTransform` only so the `a` override can turn them into chips or, failing
   that, into inert text. If one ever reached the DOM as an `href`, a model would
   be choosing a destination. Connector is not a citation scheme; chips go
@@ -709,7 +727,8 @@ written this way is a sign it is not a typography override.
   renders as, which is why it is indistinguishable from one that does not exist.
 - **`urlTransform` passes citation schemes plus connector mention hrefs, in two
   positions.** `resource:`, `person:` / `person://`, and `connector:` /
-  `connector://`, on `a[href]` and `img[src]`. Everything else goes through
+  `connector://`, on `a[href]` and `img[src]`, plus `sidekick://` on `a[href]`
+  only. Everything else goes through
   `defaultUrlTransform`, which empties what it rejects. Widening this is how a
   model-chosen destination reaches the DOM.
 - **The matrix has no fallthrough.** Every cell is written, or the compiler
@@ -944,6 +963,24 @@ renderer keeps its existing parsing and code behavior. Source/range mapping and
 restoration are owned by [artifact annotations](artifact-annotations.md).
 
 ## Changelog
+
+### 2026-11-02 — Sidekick mention chips
+
+**What changed:** A `[@Name](sidekick://<uuid>)` link draws as a Sidekick chip
+with its hexagon glyph and current name, resolved against a new
+`SidekickMentionContext`; an id the reader cannot see draws as its label.
+
+**Why:** People asked to name a Sidekick in a message the way they name a person
+or Rally, picked from the same mention list. A person mention's stored row
+exists to notify and authorize, and a Sidekick needs neither, so the link alone
+carries it and no Durable Object or D1 schema changed.
+
+**Considered and rejected:** A third `mention_kind` stored like a person
+mention. It would need a schema rebuild in every conversation object for a row
+that decides nothing. Plain `@Name` resolved by name, like `@Rally`, was also
+rejected: Sidekick names are not unique and can match a person's.
+
+Provisional thread titles now reduce mention links to `@Name` (`mentionLinksAsText`).
 
 ### 2026-10-20 — Remove the message-level collapse button
 
