@@ -945,7 +945,11 @@ one identity and one history, and can complete more than once.
    read as a fresh task, and a model sends its requests again. The name is
    quoted rather than written into the sentence because anyone in a bound
    thread chooses their own. The note is an activation input keyed on the triggering
-   turn, so a recovered execution does not add a second one.
+   turn, so a recovered execution does not add a second one. A turn this
+   Sidekick's own wizard started (the agent exchange's sender is
+   `automation/<id>/0`) gets a different note instead: the wizard's message,
+   usually its answer to the run's change request, goes in the thread where
+   the person who asked wrote, whether the change was saved or what it asked.
 
 **Refusals.** `continueRun` answers `sidekick_deleted` for an archived
 Sidekick, `sidekick_paused` for one a person paused, `run_not_found`
@@ -1669,11 +1673,15 @@ its turn carries the review's reason, or when the review's notice is the
 last word in the authoring conversation that is not the wizard's own
 (`reviewOwnsThisTurn` in `integrations.ts`): the wizard hands the reads to a
 background agent and ends its turn, and the agent's reply wakes it with that
-reply as the reason. A turn a person woke is theirs without reading the
-conversation, and a request from an agent outside the authoring conversation
-(another Thread's Rally relaying an edit) ends the review, as the wake or as a
-row; otherwise a review stays open until a person speaks or the next notice
-lands.
+reply as the reason. The review's agents are the ones the wizard started
+(`ownedAgentDescendants` of the wizard), not every address under the
+Sidekick: a run of the same Sidekick passing on a change request has that
+address shape too. The delegation is read only when an agent wrote after the
+open notice, so most submissions read the conversation alone. A turn a person woke is theirs without reading the
+conversation, and a request from any other agent (another Thread's Rally
+relaying an edit, or one of this Sidekick's runs) ends the review, as the wake
+or as a row; otherwise a review stays open until a person speaks or the next
+notice lands.
 [`runbook.md`](runbook.md) has the production inspection paths.
 
 ## Scoped Sidekick discovery reuse
@@ -1694,6 +1702,38 @@ The Sidekick authoring prompt carries no Google-specific lookup or attachment
 instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
+
+### 2026-11-02 — A run's change request is not the review's, and a wizard's answer reaches the thread
+
+**What changed:** `reviewOwnsThisTurn` tells the review's agents apart by
+delegation, the agents the wizard started, instead of by an address under the
+Sidekick. A turn the Sidekick's own wizard starts in a run gets its own
+continuation note: post the wizard's answer in the thread where the person
+who asked wrote.
+
+**Why:** The first production change request from a run (a Slack reply to the
+daily signup report, 2026-11-02) was saved as revision 11, but stamped as the
+answer to the last scheduled self-review: the run's message came from
+`automation/<id>/<runId>`, the same shape as the review's reader agents, so the
+review looked open. The same run then re-posted the report in the new format
+and never told the person the change was saved for future reports. The
+generic note told it to handle the wizard's message "only as the Sidekick's
+instructions direct", and the instructions say nothing about a change request.
+Replayed on Terra with a reply that also asked to re-send today's report, the
+run confirmed the save in 1 of 3 runs before the note and 4 of 4 after.
+
+**Considered and rejected:** Recognizing a change request by its header text:
+the review check would then depend on model-visible wording. A stronger
+sentence in the run's own guidance alone: it raised confirmations but cost
+change requests elsewhere (Terra sent 25 of 28 instead of 28), because "reply
+in the thread" read as "just reply"; the run guidance keeps that instruction
+conditional on the wizard's reply.
+
+**Consequences:** A review's revision is recorded against it only while the
+latest word after its notice is the wizard's or its delegated agents'. A run
+that re-posts its result before the wizard answers still follows the
+Sidekick's own delivery instructions, which can put the re-post at the top of
+the channel rather than in the thread.
 
 ### 2026-11-01 — An instruction a run did not follow is the case for a tool
 
