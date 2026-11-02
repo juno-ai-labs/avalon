@@ -1788,12 +1788,23 @@ async function executeSlackDirectTool(
             : {}),
         }, context.signal, fetcher);
       const result = await post(head, 0, args.thread_ts);
+      // Once the first message is in the channel, a later failure must still
+      // report it: the receipt then records what Slack holds, and a refresh
+      // retry cannot rerun the send and post the earlier parts twice.
+      let partial: { parts_posted: number; parts_total: number; failure: string } | null = null;
       for (const [offset, message] of rest.entries()) {
-        await post(message, offset + 1, args.thread_ts ?? result.ts);
+        try {
+          await post(message, offset + 1, args.thread_ts ?? result.ts);
+        } catch (error) {
+          partial = { parts_posted: offset + 1, parts_total: rest.length + 1, failure: slackFailureCode(error) };
+          break;
+        }
       }
       return {
-        output: { channel_id: result.channel, timestamp: result.ts },
-        summary: `Sent a Slack message to ${result.channel}`,
+        output: { channel_id: result.channel, timestamp: result.ts, ...partial },
+        summary: partial
+          ? `Posted ${partial.parts_posted} of ${partial.parts_total} parts of a Slack message to ${result.channel}; part ${partial.parts_posted + 1} failed (${partial.failure}) and the rest was not sent`
+          : `Sent a Slack message to ${result.channel}`,
         providerOperationId: `${result.channel}:${result.ts}`,
         // Only the workspace bot's conversations reach ingress, so only a bot
         // send has a reply thread Rally can route. A send into an existing
@@ -2103,6 +2114,12 @@ function trustedSlackFileUrl(value: string): URL {
 async function stableSlackUuid(value: string): Promise<string> {
   const digest = await sha256Hex(value);
   return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-5${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+}
+
+/** Slack's own error name where it gave one, else the local failure's code. */
+function slackFailureCode(error: unknown): string {
+  return slackProviderErrorName(error)
+    ?? (error instanceof ConnectorError ? error.code : error instanceof Error ? error.name : "non_error_thrown");
 }
 
 function slackProviderErrorName(error: unknown): string | null {

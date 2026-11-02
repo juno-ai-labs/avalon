@@ -1203,6 +1203,38 @@ describe("Slack connector", () => {
     expect(requests.map((request) => request.thread_ts)).toEqual([undefined, "1786130000.000104"]);
   });
 
+  it("reports the first message when a later part of a long post fails", async () => {
+    // The first part is already visible, so the receipt must still record it;
+    // throwing would lose it and let a re-send post that part twice.
+    let calls = 0;
+    const fetcher: FetchLike = vi.fn(async () => {
+      calls += 1;
+      return calls === 1
+        ? json({ ok: true, channel: "CIDEAS", ts: "1786130000.000101" })
+        : json({ ok: false, error: "ratelimited" });
+    });
+    const adapter = createSlackConnector({
+      clientId: "client",
+      clientSecret: "secret",
+      signingSecret: "signing",
+      redirectUri: "https://api.example.com/connections/slack/callback",
+      fetch: fetcher,
+    });
+    const connection = slackWorkspaceToolConnection();
+    const long = Array.from({ length: 300 }, (_, row) => `line ${row} ${"x".repeat(60)}`).join("\n");
+    const sent = await adapter.executeTool("send_message", { channel_id: "CIDEAS", text: long }, {
+      connection,
+      principal: { type: "workspace" as const, workspaceId: asWorkspaceId(connection.workspaceId) },
+      signal: neverAborts(),
+    });
+    expect(sent).toMatchObject({
+      providerOperationId: "CIDEAS:1786130000.000101",
+      output: { channel_id: "CIDEAS", timestamp: "1786130000.000101", parts_posted: 1, parts_total: 2, failure: "ratelimited" },
+      summary: "Posted 1 of 2 parts of a Slack message to CIDEAS; part 2 failed (ratelimited) and the rest was not sent",
+    });
+    expect(calls).toBe(2);
+  });
+
   it("rejects free workspace plans and refreshes user-only MCP tokens", async () => {
     const calls: URL[] = [];
     const fetcher: FetchLike = vi.fn(async (input, init) => {
