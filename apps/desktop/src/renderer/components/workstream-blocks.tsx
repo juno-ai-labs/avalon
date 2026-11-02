@@ -964,8 +964,8 @@ function EmailMentionChip({ children, email }: PropsWithChildren<{ email: string
  * message carried, so a link to a Sidekick this reader cannot see discloses
  * nothing and a deleted one reads as plain text.
  */
-function SidekickMentionChip({ label, sidekickId }: { label: React.ReactNode; sidekickId: string | undefined }): React.JSX.Element {
-  const sidekick = useSidekickMentions().byId.get(sidekickId ?? '');
+function SidekickMentionChip({ label, sidekickId }: { label: React.ReactNode; sidekickId: string }): React.JSX.Element {
+  const sidekick = useSidekickMentions().byId.get(sidekickId);
   if (!sidekick) return <span className="mention-text-fallback">{label}</span>;
   return (
     <span className="mention-chip mention-chip-sidekick" data-sidekick-id={sidekick.id}>
@@ -1042,7 +1042,11 @@ function renderIdentity(
     }
     return <ConnectorMentionChip connectorType={connectorType} label={text} />;
   }
-  if (isSidekickHref(href)) return <SidekickMentionChip label={label} sidekickId={sidekickIdFromMentionHref(href)} />;
+  if (isSidekickHref(href)) {
+    const sidekickId = sidekickIdFromMentionHref(href);
+    if (!sidekickId) return <span className="mention-text-fallback">{label}</span>;
+    return <SidekickMentionChip label={label} sidekickId={sidekickId} />;
+  }
   // A `person:` target that is not an id is text a model wrote. It reaches here
   // intact because `urlTransform` passes the whole scheme through —
   // `defaultUrlTransform` would empty it instead, and an anchor with nothing

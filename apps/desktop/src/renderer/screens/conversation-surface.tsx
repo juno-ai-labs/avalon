@@ -7,7 +7,7 @@ import { loadAnnotationPreview, readAnnotationVersion } from '../lib/annotation-
 import { AnnotationDraftProvider, useAnnotationDraft } from '../components/artifact-annotations';
 import { ScopeSharingPanel, useScopeInvitations } from "../components/scope-sharing-panel";
 import { EmailMentionContext, emailMentionDirectory, inviteeAsMember, NO_INVITEES, useWorkspaceInvitees } from "../lib/workspace-invitees";
-import { SidekickMentionScope } from "../lib/sidekick-mentions";
+import { conversationSidekickMentions, SidekickMentionScope } from "../lib/sidekick-mentions";
 import { useWorkspaceMembers } from "../lib/workspace-members";
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
 import { artifactActivitySubject, conversationActivitySubject, reportActivityEvent } from '../lib/activity-events';
@@ -2733,7 +2733,7 @@ function ConversationSurfaceContent({
   // order its Sidekicks section lists them: nameable with `@` here ahead of
   // the Organization's.
   const conversationSidekicks = useMemo(
-    () => [...(ownedSidekickList ?? []), ...(attachedSidekickList ?? []), ...(recommendedSidekickList ?? [])],
+    () => conversationSidekickMentions(ownedSidekickList, attachedSidekickList, recommendedSidekickList),
     [attachedSidekickList, ownedSidekickList, recommendedSidekickList],
   );
   const recommendationOptions = useQuery({
