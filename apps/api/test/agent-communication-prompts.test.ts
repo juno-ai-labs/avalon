@@ -124,16 +124,21 @@ describe("a Sidekick run asking its wizard for a change", () => {
     await expect(tool.execute({ changes: "   " }, context)).rejects.toThrow();
   });
 
-  it("frames the request with the run and who asked, from the run's own input", () => {
+  it("frames the request with a header, the run and who asked, from the run's own input", () => {
     const runId = "00000000-0000-7000-8000-000000000003";
-    expect(sidekickChangeRequestText(runId, undefined, "Add a weekly totals row.")).toBe(
-      "Change request from run 00000000-0000-7000-8000-000000000003 of this Sidekick. Update this Sidekick's saved definition if the request fits it, then reply to this message saying whether the revision was accepted or what blocks it.\n\nAdd a weekly totals row.",
-    );
+    expect(sidekickChangeRequestText(runId, undefined, "Add a weekly totals row.")).toBe([
+      "SIDEKICK CHANGE REQUEST FROM A RUN",
+      "Run: 00000000-0000-7000-8000-000000000003",
+      "Asked by: the run itself, not a person",
+      "Evaluate it as your guidance for a change request from a run says, then reply to this message with the outcome.",
+      "",
+      "Request:",
+      "Add a weekly totals row.",
+    ].join("\n"));
     expect(sidekickChangeRequestText(runId, { stopGeneration: 0, senderName: "Ada",
-      source: { kind: "provider_thread", provider: "slack" } }, "Drop the desktop table.")).toBe(
-      "Change request from run 00000000-0000-7000-8000-000000000003 of this Sidekick. Ada asked for it by replying in the run's slack thread; they may not be a Rally member. Update this Sidekick's saved definition if the request fits it, then reply to this message saying whether the revision was accepted or what blocks it.\n\nDrop the desktop table.",
-    );
+      source: { kind: "provider_thread", provider: "slack" } }, "Drop the desktop table."))
+      .toContain("\nAsked by: Ada, replying in the run's slack thread; they may not be a Rally member\n");
     expect(sidekickChangeRequestText(runId, { stopGeneration: 0, senderName: "Ada", source: { kind: "run" } }, "x"))
-      .toContain(" Ada asked for it in the run. ");
+      .toContain("\nAsked by: Ada, in the run\n");
   });
 });

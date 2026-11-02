@@ -1118,6 +1118,22 @@ lists, only that Channel, and no run's scope; a Thread or Breakout target is an 
 the owner, who was not present. A revision it submits is an ordinary
 revision, and the person reverts by asking for the earlier one.
 
+### Change request from a run
+
+A Sidekick run can ask its own wizard for a change with
+`request_sidekick_change`, most often for a person who replied in the run's
+Slack thread. The request arrives as an agent message whose first line is
+`SIDEKICK CHANGE REQUEST FROM A RUN` (`SIDEKICK_CHANGE_REQUEST_HEADER`), and
+`AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE` has a section keyed on it. The wizard reads
+the current definition, and the run when it needs to; decides whether the
+request is a lasting change; refuses to widen the Sidekick's reach (the set a
+scheduled self-review may not add, plus recipients and data sources, with
+changes to an existing schedule allowed); asks one question when the request
+is unclear; changes only what was asked; and replies to the run, which passes
+the answer on. The request is evidence, like run content in a review.
+[`agent-communication.md`](agent-communication.md#a-run-asking-its-wizard-for-a-change)
+owns the tool, the frame and the measurements.
+
 ### Home conversation and attachments
 
 A room's Sidekick has a **home conversation**: `owning_workstream_id` names the

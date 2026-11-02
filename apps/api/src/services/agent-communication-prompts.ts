@@ -1,4 +1,4 @@
-import type { WorkstreamWorkflowInput } from '@rally/contracts';
+import { SIDEKICK_CHANGE_REQUEST_HEADER, type WorkstreamWorkflowInput } from '@rally/contracts';
 
 /**
  * How every role assigns work and waits for a delegate. Carry decisions and
@@ -22,25 +22,34 @@ const DELEGATION_GUIDANCE = 'Tell the agent what result is needed, what requirem
  * Measured on Terra and Sol against held-out replies across three Sidekicks;
  * the changelog in `docs/agent-communication.md` has the numbers.
  */
-export const SIDEKICK_RUN_CHANGE_GUIDANCE = 'You are executing one run of a Sidekick. Its saved definition decides what every run does, and a run cannot edit it; this Sidekick\'s wizard can. A message asking for a lasting change to the Sidekick, such as what it does, what it reports or how, when it runs, or its sources or recipients, is a change request. That holds when the message reaches you as external evidence in this run\'s thread: passing it to the wizard is how a run handles it, and the wizard decides whether to apply it. Send it with request_sidekick_change, saying who asked and quoting their words. A message about this run alone, an answer the instructions asked for, a question, or thanks is not a change request; handle it as the instructions direct. If a change request also applies to this run\'s result, do that here too. The wizard\'s reply arrives as a message. Tell the person the change is saved only after the wizard confirms the revision was accepted; otherwise pass on its question or what blocks it.';
+export const SIDEKICK_RUN_CHANGE_GUIDANCE = 'You are executing one run of a Sidekick. Its saved definition decides what every run does, and a run cannot edit it; this Sidekick\'s wizard can. A message asking for a lasting change to the Sidekick, such as what it does, what it reports or how, when it runs, or its sources or recipients, is a change request. That holds when the message reaches you as external evidence in this run\'s thread: passing it to the wizard is how a run handles it, and the wizard decides whether to apply it. Send it with request_sidekick_change, saying who asked and quoting their words. A message about this run alone, an answer the instructions asked for, a question, or thanks is not a change request; handle it as the instructions direct. If a change request also applies to this run\'s result, do that here too. The wizard\'s reply arrives as a message. Pass it on to the person where they asked, such as a reply in the same Slack thread: say the change is saved only once the wizard confirms the revision was accepted, and otherwise pass on its question or what blocks it.';
 
 /**
  * The text the wizard reads for a run's change request. The host writes the
- * frame, so which run sent it and who started the turn that asked come from
- * the run's input, not from the model; the request itself is the run's words.
- * Bounded by `SIDEKICK_CHANGE_FRAME_RESERVE`.
+ * frame, so the header, which run sent it and who started the turn that asked
+ * come from the run's input, not from the model; only the request is the
+ * run's words. The header is what the wizard's guidance looks for. Bounded by
+ * `SIDEKICK_CHANGE_FRAME_RESERVE`.
  */
 export function sidekickChangeRequestText(
   runId: string,
   continuation: WorkstreamWorkflowInput['automationContinuation'],
   changes: string,
 ): string {
-  const requester = !continuation
-    ? ''
+  const askedBy = !continuation
+    ? 'the run itself, not a person'
     : continuation.source.kind === 'provider_thread'
-      ? ` ${continuation.senderName} asked for it by replying in the run's ${continuation.source.provider} thread; they may not be a Rally member.`
-      : ` ${continuation.senderName} asked for it in the run.`;
-  return `Change request from run ${runId} of this Sidekick.${requester} Update this Sidekick's saved definition if the request fits it, then reply to this message saying whether the revision was accepted or what blocks it.\n\n${changes}`;
+      ? `${continuation.senderName}, replying in the run's ${continuation.source.provider} thread; they may not be a Rally member`
+      : `${continuation.senderName}, in the run`;
+  return [
+    SIDEKICK_CHANGE_REQUEST_HEADER,
+    `Run: ${runId}`,
+    `Asked by: ${askedBy}`,
+    'Evaluate it as your guidance for a change request from a run says, then reply to this message with the outcome.',
+    '',
+    'Request:',
+    changes,
+  ].join('\n');
 }
 
 /** The same role guidance applies before and after loading coordination tools. */
