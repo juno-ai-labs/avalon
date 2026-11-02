@@ -1,4 +1,4 @@
-import { IdSchema, WorkspaceIdSchema } from "@rally/contracts";
+import { IdSchema, SubstreamIdSchema, WorkspaceIdSchema } from "@rally/contracts";
 import { RegionSchema } from "@rally/contracts/regions";
 import { z } from "zod";
 
@@ -59,6 +59,18 @@ export const SUGGESTION_BACKFILL_MIGRATION: readonly string[] = [
      SELECT 'suggestion_backfill', workstream_id, 0, 0 FROM channels WHERE archived_at IS NULL`,
 ];
 
+/**
+ * WorkspaceDO migration 133: where a thread's pass stands. `resume_from` is
+ * the conversation a stopped pass resumes at; `through_child` is the last
+ * conversation the pass covers, recorded the first time the thread is worked
+ * on. Without them a stopped pass started over at Main, and a thread gaining
+ * conversations faster than one pass took never finished.
+ */
+export const THREAD_BACKFILL_RESUME_MIGRATION: readonly string[] = [
+  "ALTER TABLE thread_backfill ADD COLUMN resume_from TEXT",
+  "ALTER TABLE thread_backfill ADD COLUMN through_child TEXT",
+];
+
 /** One thread for one job. */
 export const ThreadBackfillMessageSchema = z.strictObject({
   type: z.literal("thread_backfill"),
@@ -70,6 +82,12 @@ export const ThreadBackfillMessageSchema = z.strictObject({
   attempt: z.number().int().positive(),
 });
 export type ThreadBackfillMessage = z.infer<typeof ThreadBackfillMessageSchema>;
+
+/** A delivery that stopped at a conversation still delivering, and resumes there. */
+export const ThreadBackfillDeferSchema = ThreadBackfillMessageSchema.extend({
+  resumeFrom: SubstreamIdSchema,
+});
+export type ThreadBackfillDefer = z.infer<typeof ThreadBackfillDeferSchema>;
 
 /**
  * The conversations to run one job over: Main (`"0"`) and each open Breakout.
@@ -170,18 +188,62 @@ export function releaseThreadBackfill(
   ).toArray().length === 1;
 }
 
-/** The conversations of one listed thread, or `null` after settling a row with nothing to do. */
+/**
+ * Record where a stopped pass resumes. Only the latest claim moves it, and
+ * only forward: every conversation before it was delivered by this pass or an
+ * earlier one, because a pass runs over them in order.
+ */
+export function deferThreadBackfill(
+  sql: SqlStorage, job: ThreadBackfillJob, workstreamId: string, attempt: number, resumeFrom: string,
+): boolean {
+  return sql.exec<{ workstream_id: string }>(
+    `UPDATE thread_backfill SET resume_from = ?
+      WHERE job = ? AND workstream_id = ? AND attempts = ?
+        AND (resume_from IS NULL OR resume_from < ?) RETURNING workstream_id`,
+    resumeFrom, job, workstreamId, attempt, resumeFrom,
+  ).toArray().length === 1;
+}
+
+/**
+ * The conversations of one listed thread, or `null` after settling a row with
+ * nothing to do. A pass covers the conversations that existed when the thread
+ * was first worked on, up to `through_child`: a conversation created later
+ * runs the job's own live path, so a thread that keeps gaining them still
+ * finishes. It resumes at `resume_from`, so a pass that stopped does not
+ * repeat what it delivered.
+ */
 export function threadBackfillWork(
   sql: SqlStorage,
   input: { job: ThreadBackfillJob; workstreamId: string },
 ): ThreadBackfillWork {
-  const listed = sql.exec(
-    "SELECT 1 FROM thread_backfill WHERE job = ? AND workstream_id = ?", input.job, input.workstreamId,
-  ).toArray().length > 0;
+  const row = sql.exec<{ resume_from: string | null; through_child: string | null }>(
+    "SELECT resume_from, through_child FROM thread_backfill WHERE job = ? AND workstream_id = ?",
+    input.job, input.workstreamId,
+  ).toArray()[0];
   // Settled already, by an earlier delivery of the same row.
-  if (!listed) return null;
+  if (!row) return null;
+  const all = conversationsToBackfill(sql, input);
+  if (all === null) return null;
+  let through = row.through_child;
+  if (through === null && all.length > 0) {
+    through = all.reduce((last, id) => (id > last ? id : last));
+    sql.exec("UPDATE thread_backfill SET through_child = ? WHERE job = ? AND workstream_id = ?",
+      through, input.job, input.workstreamId);
+  }
+  const resumeFrom = row.resume_from ?? "";
+  const substreamIds = all.filter((id) => id >= resumeFrom && through !== null && id <= through);
+  if (substreamIds.length) return { substreamIds };
+  completeThreadBackfill(sql, input.job, input.workstreamId);
+  return null;
+}
+
+/** Every conversation of a listed thread the job runs over, or `null` after settling a thread with none. */
+function conversationsToBackfill(
+  sql: SqlStorage,
+  input: { job: ThreadBackfillJob; workstreamId: string },
+): string[] | null {
   if (input.job === "conversation_view") {
-    const substreamIds = sql.exec<{ substream_id: string }>(
+    return sql.exec<{ substream_id: string }>(
       `SELECT substream_id FROM parent_children WHERE parent_id = ? AND status = 'ready'
        UNION SELECT substream_id FROM sidekick_children WHERE sidekick_id = ?
        UNION SELECT '0' WHERE EXISTS (SELECT 1 FROM channels WHERE workstream_id = ?)
@@ -194,9 +256,6 @@ export function threadBackfillWork(
       input.workstreamId, input.workstreamId, input.workstreamId, input.workstreamId,
       input.workstreamId, input.workstreamId,
     ).toArray().map((row) => row.substream_id);
-    if (substreamIds.length) return { substreamIds };
-    completeThreadBackfill(sql, input.job, input.workstreamId);
-    return null;
   }
   const thread = sql.exec<{ archived_at: number | null }>(
     "SELECT archived_at FROM channels WHERE workstream_id = ?", input.workstreamId,
@@ -210,5 +269,5 @@ export function threadBackfillWork(
       WHERE workstream_id = ? AND archived_at IS NULL ORDER BY substream_id`,
     input.workstreamId,
   ).toArray().map((row) => row.substream_id);
-  return { substreamIds: ["0", ...breakouts] };
+  return ["0", ...breakouts];
 }
