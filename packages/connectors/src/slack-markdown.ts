@@ -79,7 +79,9 @@ export function slackHeaderBlock(title: string): Record<string, unknown> {
  * than the whole budget — a hard character break. A chunk that ends inside a
  * fenced code block closes the fence and the next chunk reopens it, so a long
  * code block arrives as two rendered blocks instead of one block and a page of
- * loose text.
+ * loose text. A chunk that ends inside a table starts the next one with that
+ * table's header and delimiter rows, for the same reason: each chunk is its own
+ * `markdown` block, and rows without a header render as pipe-delimited prose.
  */
 export function splitSlackMarkdown(value: string, maximum = SLACK_MARKDOWN_BLOCK_LIMIT): string[] {
   if (maximum < MINIMUM_CHUNK) throw new Error("Slack markdown chunks need room to reopen a fence");
@@ -94,6 +96,10 @@ export function splitSlackMarkdown(value: string, maximum = SLACK_MARKDOWN_BLOCK
   // it, and the fence open at the current line, so a break knows to close it.
   let carriedFence: string | null = null;
   let openFence: string | null = null;
+  // The header and delimiter rows of the table open at the current line, and
+  // the line before it, which is a table's header once a delimiter follows.
+  let openTable: [string, string] | null = null;
+  let previous: string | null = null;
 
   for (const line of normalized.split("\n")) {
     // Reserve room for the reopened fence above and the closing fence below, so
@@ -121,19 +127,56 @@ export function splitSlackMarkdown(value: string, maximum = SLACK_MARKDOWN_BLOCK
         // A blank line is only a paragraph seam outside a fence; inside one it
         // is part of the code, and breaking there splits the block for nothing.
         const paragraph = openFence === null ? lastParagraphBreak(pending) : -1;
-        const carry = paragraph > 0 ? pending.slice(paragraph + 1) : [];
-        chunks.push(joinChunk(carriedFence, paragraph > 0 ? pending.slice(0, paragraph) : pending, openFence));
+        let body = paragraph > 0 ? pending.slice(0, paragraph) : pending;
+        let carry = paragraph > 0 ? pending.slice(paragraph + 1) : [];
+        // A table cannot cross a blank line, so a paragraph break already
+        // carries the whole table start. A line break inside one does not.
+        if (paragraph <= 0 && openTable && continuesTable(piece)
+          && openTable[0].length + openTable[1].length + piece.length + 2 <= maximum) {
+          carry = [...openTable];
+        } else if (paragraph <= 0 && pending.length > 1 && opensTable(previous, openFence, piece)) {
+          body = pending.slice(0, -1);
+          carry = pending.slice(-1);
+        }
+        chunks.push(joinChunk(carriedFence, body, openFence));
         carriedFence = openFence;
         pending = carry;
         pendingLength = carry.reduce((total, entry) => total + entry.length + 1, 0);
+        // What a paragraph break carries fit the last chunk, but it need not
+        // fit beside this piece too; when it does not, it is a chunk of its own.
+        if (pending.length
+          && fenceOverhead(carriedFence, nextFenceState(openFence, piece)) + pendingLength + piece.length + 1 > maximum) {
+          chunks.push(joinChunk(carriedFence, pending, openFence));
+          carriedFence = openFence;
+          pending = [];
+          pendingLength = 0;
+        }
       }
       pendingLength += piece.length + (pending.length ? 1 : 0);
       pending.push(piece);
+      if (openTable && !continuesTable(piece)) openTable = null;
+      if (opensTable(previous, openFence, piece)) openTable = [previous!, piece];
       openFence = nextFenceState(openFence, piece);
+      if (openFence !== null) openTable = null;
+      previous = piece;
     }
   }
   if (pending.length) chunks.push(joinChunk(carriedFence, pending, openFence));
   return chunks.filter((chunk) => chunk.trim().length > 0);
+}
+
+/** A GFM table delimiter row, such as `|---|:--:|`. */
+const TABLE_DELIMITER = /^[ \t]*\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/u;
+
+/** Whether `line`, outside a fence, makes `previous` a table's header row. */
+function opensTable(previous: string | null, openFence: string | null, line: string): boolean {
+  return openFence === null && previous !== null && previous.includes("|")
+    && line.includes("|") && TABLE_DELIMITER.test(line);
+}
+
+/** Whether a line is another row of the table above it. */
+function continuesTable(line: string): boolean {
+  return line.trim().length > 0 && line.includes("|");
 }
 
 /** Room a chunk must leave for the fence it reopens and the fence it closes. */
