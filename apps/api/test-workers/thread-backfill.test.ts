@@ -168,9 +168,10 @@ describe("a one-off job over every thread", () => {
     };
     const backfill = { ...message(), job: "conversation_view" };
     expect((await consume([backfill])).retryMessages).toEqual([]);
+    // Still claimed, and the next pass resumes at Main, where this one stopped.
     expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
-      "SELECT in_flight FROM thread_backfill WHERE job = 'conversation_view' AND workstream_id = ?", THREAD,
-    ).toArray())).toEqual([{ in_flight: 1 }]);
+      "SELECT in_flight, resume_from FROM thread_backfill WHERE job = 'conversation_view' AND workstream_id = ?", THREAD,
+    ).toArray())).toEqual([{ in_flight: 1, resume_from: "0" }]);
     const identity = { type: "conversation_view_v1" as const, region: "global" as const,
       workspaceId: WORKSPACE_ID, parentId: THREAD, substreamId: asSubstreamId("0") };
     const claims = await runInDurableObject(main, async (_instance, state) => {
@@ -223,6 +224,75 @@ describe("a one-off job over every thread", () => {
     expect(await listed()).toBe(false);
     // A second delivery of the same row finds nothing to do.
     expect(await workspace().threadBackfillWork(message())).toBeNull();
+  });
+
+  it("resumes a stopped preview pass where it stopped, and ends at the conversations it started with", async () => {
+    const first = "00000000-0000-7000-8000-00000000e811";
+    const second = "00000000-0000-7000-8000-00000000e813";
+    // Registered later, with an id that sorts between the two: ids are not
+    // ordered by creation, so only the time bound keeps it out.
+    const later = "00000000-0000-7000-8000-00000000e812";
+    await project(1);
+    await runInDurableObject(workspace(), (_instance, state) => {
+      for (const [substreamId, kind] of [["0", "main"], [first, "child"], [second, "child"]]) {
+        state.storage.sql.exec(`INSERT INTO parent_children(parent_id, substream_id, kind, created_at)
+          VALUES (?, ?, ?, 1)`, THREAD, substreamId, kind);
+      }
+      state.storage.sql.exec(`INSERT INTO thread_backfill(job, workstream_id, attempts, not_before, in_flight)
+        VALUES ('conversation_view', ?, 1, ?, 1)`, THREAD, Date.now() + 60_000);
+    });
+    const backfill = { ...message(), job: "conversation_view" as const };
+
+    expect(await workspace().threadBackfillWork(backfill)).toEqual({ substreamIds: ["0", first, second] });
+    // The pass stops at `first`, and a conversation is registered before it comes round again.
+    expect(await workspace().deferThreadBackfill({ ...backfill, resumeFrom: asSubstreamId(first) })).toBe(true);
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO parent_children(parent_id, substream_id, kind, created_at)
+        VALUES (?, ?, 'child', ?)`, THREAD, later, Date.now() + 60_000);
+    });
+    expect(await workspace().threadBackfillWork(backfill)).toEqual({ substreamIds: [first, second] });
+    // Never back over what was delivered, and never from a claim the alarm has replaced.
+    expect(await workspace().deferThreadBackfill({ ...backfill, resumeFrom: asSubstreamId("0") })).toBe(false);
+    expect(await workspace().deferThreadBackfill({ ...backfill, attempt: 2, resumeFrom: asSubstreamId(second) })).toBe(false);
+    expect(await workspace().threadBackfillWork(backfill)).toEqual({ substreamIds: [first, second] });
+  });
+
+  it("resumes a preview pass that failed part way at the conversation that failed", async () => {
+    const broken = "00000000-0000-7000-8000-00000000e821";
+    await project(1);
+    await runInDurableObject(workspace(), (_instance, state) => {
+      for (const [substreamId, kind] of [["0", "main"], [broken, "child"]]) {
+        state.storage.sql.exec(`INSERT INTO parent_children(parent_id, substream_id, kind, created_at)
+          VALUES (?, ?, ?, 1)`, THREAD, substreamId, kind);
+      }
+      state.storage.sql.exec(`INSERT INTO thread_backfill(job, workstream_id, attempts, not_before, in_flight)
+        VALUES ('conversation_view', ?, 1, ?, 1)`, THREAD, Date.now() + 60_000);
+    });
+    // Main is a placeholder, which the pass passes over; the child's object
+    // holds another thread, so waking it for this one throws.
+    const main = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, THREAD));
+    await boot(main);
+    await runInDurableObject(main, (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: THREAD });
+      state.storage.sql.exec("UPDATE workstream SET authority_mode = 'preparing', authority_generation = 0 WHERE id = 1");
+    });
+    const child = env.SUBSTREAM_AGENTS.getByName(
+      conversationObjectName("global", WORKSPACE_ID, THREAD, asSubstreamId(broken)));
+    await boot(child);
+    await runInDurableObject(child, (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: "00000000-0000-7000-8000-00000000e8fe" });
+    });
+
+    const batch = createMessageBatch("avalon-global-activity", [{
+      id: crypto.randomUUID(), timestamp: new Date(), attempts: 1,
+      body: { ...message(), job: "conversation_view" },
+    }]);
+    await consumeActivityQueue(batch, env);
+    expect((await getQueueResult(batch, createExecutionContext())).retryMessages).toEqual([]);
+    // Released for its gate, and the next pass starts at the child, not at Main.
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      "SELECT in_flight, resume_from FROM thread_backfill WHERE job = 'conversation_view' AND workstream_id = ?", THREAD,
+    ).toArray())).toEqual([{ in_flight: 0, resume_from: broken }]);
   });
 
   it("settles a thread with nothing to do: archived, or never projected", async () => {

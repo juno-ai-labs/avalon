@@ -40,9 +40,18 @@ consumer says so.
    `breakouts` table. It runs the job's handler over each in turn, logs
    `thread_backfill_conversation` with the handler's outcome, and settles the
    row with `completeThreadBackfill`.
-4. **A failure releases the row.** The consumer logs `thread_backfill_failed`,
-   releases the row so it holds no successor back, and acks the message. The
-   row's own gate sends it again.
+4. **A pass resumes, and a preview pass is bounded.** A pass that stops at a
+   conversation still delivering records it with `deferThreadBackfill` as
+   `resume_from`, and the next pass starts there instead of at Main. The first
+   `threadBackfillWork` call for a row records the time as `admitted_before`,
+   and a `conversation_view` pass covers only children registered by then: a
+   child registered later projects through the ordinary lane. Both columns are
+   WorkspaceDO migration 133.
+5. **A failure releases the row.** The consumer logs `thread_backfill_failed`
+   with the conversation that failed, records that conversation as
+   `resume_from`, releases the row so it holds no successor back, and acks the
+   message. The row's own gate sends it again, from the conversation that
+   failed.
 
 A thread that is archived, or that WorkspaceDO has no projection of, is
 settled by `threadBackfillWork` without running anything.
@@ -94,6 +103,12 @@ arms its own alarm.
   again; letting the older one's late failure clear that claim would send the
   next batch while this one still runs. Guard: the release case in
   `test-workers/thread-backfill.test.ts`.
+- **A pass only shrinks.** `resume_from` only moves forward and only from the
+  latest claim; `admitted_before` is fixed once recorded, and is a time
+  because ids are not ordered by creation. Relies on the consumer running the
+  list in the id order `threadBackfillWork` returns. Guard: the resume case in
+  `test-workers/thread-backfill.test.ts` and the migration 133 case in
+  `test/workspace-thread-backfill-migration.test.ts`.
 - **A row is settled only after every conversation ran.** Settling first
   would lose the rest of the thread on a failure. Guard: the Queue case in
   `test-workers/thread-backfill.test.ts`.
@@ -179,6 +194,42 @@ The list drains to empty when the job is done. A row that keeps coming back
 shows as repeated `thread_backfill_failed` for one `workstream_id`.
 
 ## Changelog
+
+### 2026-11-02 — A stopped pass resumes, and a preview pass covers only the children it started with
+
+**What changed:** `thread_backfill` gains `resume_from` and `admitted_before`
+(WorkspaceDO migration 133). A pass that stops records where, and the next
+pass starts there: a `conversation_view` pass at a conversation still
+delivering, and any job's pass at a conversation that failed. The first pass
+records the time, and a `conversation_view` pass covers only children
+registered by then. A row already stuck heals on its next delivery after
+deploy: its columns start empty, so that pass records its bound, walks the
+thread once more, and resumes from where it stops.
+
+**Why:** A pass that stopped started over at Main. In production one
+thread had about 800 children and gained about two an hour; one pass over
+them took about 23 minutes, and every stop logged on 11-02 was at the newest
+child of the time. Its pass never finished: 224,310 deliveries from
+2026-10-27 to 11-01 and 47,493 on 11-02, all for that one thread. The activity
+Queue takes one message per invocation, and Slack thread replies waited
+behind that loop for about 15 minutes before reaching their Sidekick run.
+Failures had the same shape: 24 passes over that thread failed part way in
+the week (for example after delivering 12 conversations), and each retry
+started over at Main.
+
+**Rejected:** Recording progress after every conversation, which adds an RPC
+per conversation to every pass for no gain over recording only where a pass
+stopped, since a pass runs in order. Leaving later conversations in the pass
+and relying on the resume point alone, which still re-runs the loop whenever
+a new conversation is mid-delivery as the pass reaches it. Bounding the pass
+by the largest child id, which a review caught: ids are not ordered by
+creation (a UUIDv4 or name-derived child id can sort above every later
+UUIDv7), so later children could fall inside the bound.
+
+**What a future change has to respect:** the consumer runs the list in the
+order `threadBackfillWork` returns it, which is id order. A job whose new
+conversations do not run its live path cannot take the `admitted_before`
+bound.
 
 ### 2026-10-19 — A conversation that cannot serve settles
 
