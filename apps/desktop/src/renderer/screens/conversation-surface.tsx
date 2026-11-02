@@ -7,6 +7,7 @@ import { loadAnnotationPreview, readAnnotationVersion } from '../lib/annotation-
 import { AnnotationDraftProvider, useAnnotationDraft } from '../components/artifact-annotations';
 import { ScopeSharingPanel, useScopeInvitations } from "../components/scope-sharing-panel";
 import { EmailMentionContext, emailMentionDirectory, inviteeAsMember, NO_INVITEES, useWorkspaceInvitees } from "../lib/workspace-invitees";
+import { SidekickMentionScope } from "../lib/sidekick-mentions";
 import { useWorkspaceMembers } from "../lib/workspace-members";
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
 import { artifactActivitySubject, conversationActivitySubject, reportActivityEvent } from '../lib/activity-events';
@@ -2718,6 +2719,16 @@ function ConversationSurfaceContent({
     }),
     enabled: Boolean(api && id && parentKind === 'workstream' && readOwnedSidekickDetails && !railSidekicks),
   });
+  const ownedSidekickList = railSidekicks
+    ? railSidekicks.owned
+    : readOwnedSidekickDetails ? ownedSidekicks.data : undefined;
+  const attachedSidekickList = railSidekicks?.attached ?? attachedSidekicks.data;
+  // The Sidekicks this conversation owns and has attached, nameable with `@`
+  // here ahead of the Organization's. Recommendations are not the room's own.
+  const conversationSidekicks = useMemo(
+    () => [...(ownedSidekickList ?? []), ...(attachedSidekickList ?? [])],
+    [attachedSidekickList, ownedSidekickList],
+  );
   const recommendedSidekicks = useQuery({
     queryKey: ['recommended-sidekicks', id, substreamId],
     queryFn: ({ signal }) => api!.getRecommendedSidekicks(id!, signal, substreamId),
@@ -3570,6 +3581,7 @@ function ConversationSurfaceContent({
   return (
     <MessageIssueProvider api={api} target={issueSubstreamId ? { kind: 'conversation', parentId: id, substreamId: issueSubstreamId } : null}>
     <EmailMentionContext.Provider value={emailMentions}>
+    <SidekickMentionScope sidekicks={conversationSidekicks}>
     <ConnectorConnectionsProvider connections={visibleConnections}>
     <div className="conversation-layout" ref={layoutRef}>
       {renderSidebar?.({
@@ -4102,6 +4114,7 @@ function ConversationSurfaceContent({
     </div>
     </div>
     </ConnectorConnectionsProvider>
+    </SidekickMentionScope>
     </EmailMentionContext.Provider>
     </MessageIssueProvider>
   );

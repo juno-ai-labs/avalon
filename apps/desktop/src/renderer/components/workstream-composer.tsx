@@ -247,8 +247,9 @@ export function WorkstreamComposer({
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingMentionConfirmation | null>(null);
   const [confirming, setConfirming] = useState(false);
   const readyAttachmentCount = attachments.filter((attachment) => attachment.status === 'ready').length;
-  // Sidekicks the reader can see, offered after the people. Drafts are left
-  // out: one that has never been published has nothing to name yet.
+  // The Organization's Sidekicks and this conversation's own (see
+  // `sidekick-mentions.tsx`), offered after the people. Drafts are left out:
+  // one that has never been published has nothing to name yet.
   const sidekicks = useSidekickMentions().list;
   const participantIds = useMemo(() => new Set(workstream.participants.map((person) => person.id)), [workstream.participants]);
   const candidates = useMemo<MentionCandidate[]>(() => [{
