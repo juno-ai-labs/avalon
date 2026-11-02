@@ -23,6 +23,7 @@ import {
 import { isAccessRevocationQueue, reapExpiredSessions } from "./services/access-revocation";
 import { dispatchWorkspaceRelationshipChanges } from "./services/workspace-relationship-delivery";
 import { consumeActivityQueue, recoverPendingActivityQueue } from "./queues/activity-consumer";
+import { consumeInteractiveQueue, isInteractiveQueue } from "./queues/interactive-consumer";
 import {
   isAnalyticsLakehouseQueue,
   recoverUndeliveredAnalyticsLakehouseEvents,
@@ -188,6 +189,12 @@ export default {
         authority.generation,
         ...(authority.failedClosedReason ? [authority.failedClosedReason] : []),
       ].join(":"));
+    }
+    // Work a person is waiting on, on its own queue so it never waits behind
+    // the activity backlog. It is new work-stream work, so it stays behind the
+    // maintenance gate above. See docs/interactive-queue.md.
+    if (isInteractiveQueue(batch.queue)) {
+      return consumeInteractiveQueue(batch, env);
     }
     return consumeActivityQueue(batch, env);
   }),

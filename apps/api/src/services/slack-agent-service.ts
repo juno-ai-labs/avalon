@@ -393,7 +393,7 @@ export class SlackAgentService {
     );
     for (const jobId of recoverable.jobIds) {
       try {
-        await this.env.ACTIVITY_QUEUE.send(SlackIngressQueueMessageSchema.parse({
+        await this.env.INTERACTIVE_QUEUE.send(SlackIngressQueueMessageSchema.parse({
           kind: "slack_ingress",
           region: this.env.AVALON_REGION,
           workspaceId,
@@ -494,7 +494,7 @@ export class SlackAgentService {
     ).all<{ id: string; workspace_id: string }>();
     for (const job of redriven.results ?? []) {
       try {
-        await this.env.ACTIVITY_QUEUE.send(SlackIngressQueueMessageSchema.parse({
+        await this.env.INTERACTIVE_QUEUE.send(SlackIngressQueueMessageSchema.parse({
           kind: "slack_ingress",
           region: this.env.AVALON_REGION,
           workspaceId: job.workspace_id,
@@ -866,9 +866,9 @@ export class SlackAgentService {
     });
     try {
       if (input.queueDelaySeconds != null) {
-        await this.env.ACTIVITY_QUEUE.send(message, { delaySeconds: input.queueDelaySeconds });
+        await this.env.INTERACTIVE_QUEUE.send(message, { delaySeconds: input.queueDelaySeconds });
       } else {
-        await this.env.ACTIVITY_QUEUE.send(message);
+        await this.env.INTERACTIVE_QUEUE.send(message);
       }
     } catch (error) {
       if (!input.recoverQueueSendFailure) throw error;

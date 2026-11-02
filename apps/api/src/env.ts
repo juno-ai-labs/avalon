@@ -95,6 +95,11 @@ export interface Env {
    */
   CODE_LOADER?: WorkerLoader;
   ACTIVITY_QUEUE: Queue;
+  /**
+   * Inbound work a person is waiting on Rally to answer (Slack ingress), kept
+   * apart from the activity backlog. See docs/interactive-queue.md.
+   */
+  INTERACTIVE_QUEUE: Queue;
   /** Regional durable hand-off from inference capture to Pipeline ingestion. */
   INFERENCE_LAKEHOUSE_QUEUE?: Queue;
   /** Global durable hand-off from accepted typed telemetry to its lakehouse. */
@@ -466,6 +471,7 @@ const EnvContractSchema = z.object({
   ARTIFACT_LOADER: binding<WorkerLoader>().optional(),
   CODE_LOADER: binding<WorkerLoader>().optional(),
   ACTIVITY_QUEUE: binding<Queue>(),
+  INTERACTIVE_QUEUE: binding<Queue>(),
   INFERENCE_LAKEHOUSE_QUEUE: binding<Queue>().optional(),
   ANALYTICS_LAKEHOUSE_QUEUE: binding<Queue>().optional(),
   ACCESS_REVOCATION_QUEUE: binding<Queue>(),

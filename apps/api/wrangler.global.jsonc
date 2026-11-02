@@ -270,6 +270,13 @@
   "queues": {
     "producers": [
       { "binding": "ACTIVITY_QUEUE", "queue": "avalon-global-activities" },
+      // Inbound work a person is waiting on Rally to answer: Slack ingress
+      // today. Its own resource so it never waits behind the activity
+      // backlog. Split per region like the activity queue, because a job names
+      // a workspace whose WorkspaceDO lives in that region. Slack's volume is
+      // a few messages a second at most, far under 5,000 per second. See
+      // docs/interactive-queue.md.
+      { "binding": "INTERACTIVE_QUEUE", "queue": "avalon-global-interactive" },
       // Every inference request and terminal attempt is staged in the regional
       // payload bucket, then this queue carries only its content-addressed
       // pointer to the regional Pipeline consumer. The queue keeps provider
@@ -317,6 +324,17 @@
         "max_batch_timeout": 1,
         "max_retries": 5,
         "dead_letter_queue": "avalon-global-activities-dead-letter"
+      },
+      {
+        "queue": "avalon-global-interactive",
+        // The activity queue's policy, which Slack ingress already ran under:
+        // one message per invocation, a one-second window, five retries. Moving
+        // the jobs changes which backlog they wait behind and nothing else;
+        // retuning these is the team's call.
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 5,
+        "dead_letter_queue": "avalon-global-interactive-dead-letter"
       },
       {
         "queue": "avalon-global-inference-lakehouse",
