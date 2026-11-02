@@ -358,7 +358,7 @@ export function renderRunContinuationNote(continuation: {
   };
 }
 
-function providerDisplayName(provider: string): string {
+export function providerDisplayName(provider: string): string {
   return provider.length === 0 ? provider : `${provider[0]!.toLocaleUpperCase()}${provider.slice(1)}`;
 }
 

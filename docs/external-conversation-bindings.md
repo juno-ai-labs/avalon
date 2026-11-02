@@ -189,6 +189,12 @@ sender's: [`connectors.md`](connectors.md#invariants) owns that rule. The reply
 gets the installation's acknowledgement reaction, or its stopped reaction when
 the Sidekick is not active and the run will not act on it yet.
 
+The reply reaches the run, never the Sidekick's wizard. A reply that asks to
+change the Sidekick itself is passed on by the run with
+`request_sidekick_change`;
+[`agent-communication.md`](agent-communication.md#a-run-asking-its-wizard-for-a-change)
+owns that path.
+
 ### One-to-one DMs
 
 A message in a bot DM with no binding of its own (a top-level message, or a
