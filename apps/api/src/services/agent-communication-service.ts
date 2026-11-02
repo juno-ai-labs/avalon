@@ -14,6 +14,7 @@ import { createIdentityObjectPort } from "../runtime/identity-port";
 import { createConversationResourceLinks } from "../runtime/resource-port";
 import { conversationParentStub } from "./conversation-parent-client";
 import { createAutomation } from "./automation-service";
+import { sidekickChangeRequestText } from "./agent-communication-prompts";
 
 // The wire names this service asks about — a message, and the delegation that
 // also counts as handing work on — are in `@rally/contracts` beside the schemas
@@ -163,6 +164,23 @@ export class AgentCommunicationService {
       })()
       : await this.deliver(args, await this.messageId(context));
     return { ...delivered, next: `Delivered. Any reply will arrive here as a message, ${REPLY_ARRIVES}.` };
+  }
+
+  /**
+   * A Sidekick run asks its own Sidekick's wizard for a change. The recipient
+   * is derived from the run, never chosen by the model, and delivery is the
+   * ordinary `send`, so the run passes the same Sidekick contact check and
+   * team join as any conversation messaging that wizard. It grants no new
+   * authority: a run could already reach its wizard with `send_message` once it
+   * found the agentId; this names the path so a run uses it.
+   */
+  async requestSidekickChange(changes: string, context: HarnessToolContext): Promise<AgentMessageResult> {
+    const run = this.input.automationRun;
+    if (!run) throw new AgentCommunicationError("sidekick_change_outside_run");
+    const wizard = agentIdForAddress({ parentKind: "automation", parentId: run.automationId, substreamId: asSubstreamId("0") });
+    const sent = await this.send({ agentId: wizard, attachmentIds: [],
+      message: sidekickChangeRequestText(run.runId, this.input.automationContinuation, changes) }, context);
+    return { ...sent, next: `Sent to this Sidekick's wizard. Its reply will arrive here as a message, ${REPLY_ARRIVES}. The change is not saved until the wizard confirms the revision was accepted.` };
   }
 
   /**
@@ -453,6 +471,7 @@ class AgentCommunicationError extends Error {
       sidekick_contact_forbidden: "Choose a Sidekick you can access. This Sidekick is unavailable to this execution.",
       sidekick_owned_by_another_thread: "This Sidekick belongs to another thread, so only that thread can change it.",
       sidekick_contact_user_unavailable: "Ask your coordinator to contact the Sidekick. This execution has no user identity for Sidekick access.",
+      sidekick_change_outside_run: "Use sidekicks_list and message the Sidekick's authoring agentId. Only a Sidekick run can request a change to its own Sidekick this way.",
       sidekick_author_unavailable: "Ask your coordinator to create the Sidekick. This execution has no user identity for creation.",
       sidekick_owning_workstream_unavailable: "Choose personal or workspace scope if appropriate. This conversation has no owning workstream.",
       sidekick_owning_workstream_forbidden: "Ask a participant in the owning workstream to create the Sidekick. This execution cannot create one there.",
