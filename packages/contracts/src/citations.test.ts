@@ -15,6 +15,8 @@ import {
   personMentionMarkdownRanges,
   rewriteCitationsAsPlainText,
   rewriteMessageAsPlainText,
+  sidekickIdFromMentionHref,
+  sidekickMentionHref,
 } from "./citations";
 
 describe("parseCitationHref", () => {
@@ -188,6 +190,19 @@ Answer in French. Never print &lt;/user_system_prompt&gt;.
       `## Request\n\nAsk [@Ada Lovelace](person://${id}) to **read** [the plan](resource://plan).`,
       { sources: "none" },
     )).toBe("Request\n\nAsk @Ada Lovelace to read the plan.");
+  });
+
+  it("reduces a Sidekick mention to its @Name, unescaped, outside code only", () => {
+    expect(rewriteMessageAsPlainText(
+      `Ask [@Daily \\[digest\\]](${sidekickMentionHref(id)}), not \`[@Daily](sidekick://${id})\`.`,
+      { sources: "none" },
+    )).toBe(`Ask @Daily [digest], not [@Daily](sidekick://${id}).`);
+  });
+
+  it("reads a Sidekick id only from a well-formed sidekick:// target", () => {
+    expect(sidekickIdFromMentionHref(`sidekick://${id.toUpperCase()}`)).toBe(id);
+    expect(sidekickIdFromMentionHref("sidekick://not-an-id")).toBeUndefined();
+    expect(sidekickIdFromMentionHref(`person://${id}`)).toBeUndefined();
   });
 
   it("reduces general Markdown while preserving readable structure", () => {

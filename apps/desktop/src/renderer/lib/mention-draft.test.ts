@@ -6,6 +6,7 @@ import {
   mentionsInTrimmedText,
   rebaseMentionIdentities,
   resolveMentionPayload,
+  sidekickMentionsAsMarkdown,
   upsertMentionIdentity,
 } from './mention-draft';
 
@@ -90,5 +91,40 @@ describe('mention drafts', () => {
     )).toEqual([
       { type: 'person', userId: 'builder', connectorType: null, startOffset: 4, endOffset: 16 },
     ]);
+  });
+});
+
+const DIGEST_ID = '0b8c3a52-5f0e-4d6a-9a1c-1d2e3f405162';
+
+function sidekick(label: string, startOffset: number): MentionIdentity {
+  return {
+    type: 'sidekick',
+    label,
+    userId: null,
+    connectorType: null,
+    sidekickId: DIGEST_ID,
+    startOffset,
+    endOffset: startOffset + label.length + 1,
+  };
+}
+
+describe('Sidekick mentions in a draft', () => {
+  it('sends a picked Sidekick as its link and moves the person named after it', () => {
+    expect(sidekickMentionsAsMarkdown(
+      'Ask @Daily [digest] to brief @Sam Lee',
+      [sidekick('Daily [digest]', 4), person('Sam Lee', 'user-sam', 29)],
+    )).toEqual({
+      text: `Ask [@Daily \\[digest\\]](sidekick://${DIGEST_ID}) to brief @Sam Lee`,
+      mentions: [{ ...person('Sam Lee', 'user-sam'), startOffset: 82, endOffset: 90 }],
+    });
+  });
+
+  it('leaves the text as typed when the picked name was edited away', () => {
+    expect(sidekickMentionsAsMarkdown('Ask @Daily dig', [sidekick('Daily digest', 4)]))
+      .toEqual({ text: 'Ask @Daily dig', mentions: [] });
+  });
+
+  it('never hands a Sidekick selection to the mention payload', () => {
+    expect(resolveMentionPayload('Ask @Daily digest', [sidekick('Daily digest', 4)], [])).toEqual([]);
   });
 });

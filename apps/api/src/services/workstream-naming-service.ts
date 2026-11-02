@@ -1,3 +1,4 @@
+import { mentionLinksAsText } from "@rally/contracts/citations";
 import { normalizeModelText } from "@rally/contracts/model-markdown";
 import {
   renderWorkstreamNameMessages,
@@ -101,7 +102,9 @@ const nameWithSummaryJsonSchema = {
  * `OPENROUTER_API_KEY` is unset.
  */
 export function provisionalWorkstreamTitle(objective: string, fallback: string): string {
-  const firstLine = firstNonEmptyLine(objective);
+  // A title is plain text: a mention reads as the `@Name` its author saw, not
+  // the `[@Name](sidekick://…)` link the opening message stores.
+  const firstLine = firstNonEmptyLine(mentionLinksAsText(objective));
   return firstLine ? truncateUtf16Safe(firstLine, PROVISIONAL_TITLE_MAX_LENGTH) : fallback;
 }
 
