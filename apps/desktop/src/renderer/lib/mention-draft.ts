@@ -1,3 +1,4 @@
+import { renderSidekickMentionMarkdown } from '@rally/contracts/message-mentions';
 import type { MentionIdentity } from './api';
 
 export interface ResolvedMentionIdentity {
@@ -127,9 +128,12 @@ export function resolveMentionPayload(
   selected: readonly MentionIdentity[],
   discovered: readonly MentionIdentity[],
 ): ResolvedMentionIdentity[] {
-  const selectedLabels = new Set(selected.map((candidate) => candidate.label.toLowerCase()));
+  // A Sidekick selection is Markdown by now (`sidekickMentionsAsMarkdown`);
+  // one that is not names nothing the server could store.
+  const people = selected.filter((candidate) => candidate.type !== 'sidekick');
+  const selectedLabels = new Set(people.map((candidate) => candidate.label.toLowerCase()));
   const candidates = [
-    ...selected.map((candidate) => ({ candidate, bound: candidate.startOffset !== undefined && candidate.endOffset !== undefined })),
+    ...people.map((candidate) => ({ candidate, bound: candidate.startOffset !== undefined && candidate.endOffset !== undefined })),
     ...discovered
       .filter((candidate) => !selectedLabels.has(candidate.label.toLowerCase()))
       .map((candidate) => ({ candidate, bound: false })),
@@ -187,6 +191,10 @@ export function resolveMentionPayload(
       continue;
     }
     const chosen = eligible[0]!;
+    if (chosen.candidate.type === 'sidekick') {
+      cursor = first.endOffset;
+      continue;
+    }
     resolved.push({
       type: chosen.candidate.type,
       userId: chosen.candidate.userId,
@@ -197,4 +205,50 @@ export function resolveMentionPayload(
     cursor = chosen.endOffset;
   }
   return resolved;
+}
+
+/**
+ * Turn each Sidekick picked from the mention list into its durable
+ * `[@Name](sidekick://<id>)` link, and move every other selection by the
+ * length that link adds before it.
+ *
+ * Done in the draft rather than on the server because a Sidekick mention has
+ * no mention row to resolve: it is a reference, not a grant, so the text is
+ * the whole of it. A selection whose visible `@Name` was edited away is
+ * dropped and its text left as typed, the same rule a person selection follows.
+ */
+export function sidekickMentionsAsMarkdown(
+  text: string,
+  mentions: readonly MentionIdentity[],
+): { text: string; mentions: MentionIdentity[] } {
+  const sidekicks = mentions
+    .filter((mention) => mention.type === 'sidekick' && mention.sidekickId && visibleMatches(text, mention))
+    .sort((left, right) => left.startOffset! - right.startOffset!);
+  if (sidekicks.length === 0) {
+    return { text, mentions: mentions.filter((mention) => mention.type !== 'sidekick') };
+  }
+  const replaced: Array<{ start: number; end: number; shift: number }> = [];
+  let output = '';
+  let cursor = 0;
+  let shift = 0;
+  for (const mention of sidekicks) {
+    const start = mention.startOffset!;
+    const end = mention.endOffset!;
+    if (start < cursor) continue;
+    const link = renderSidekickMentionMarkdown({ id: mention.sidekickId!, name: mention.label });
+    output += text.slice(cursor, start) + link;
+    shift += link.length - (end - start);
+    replaced.push({ start, end, shift });
+    cursor = end;
+  }
+  output += text.slice(cursor);
+  const others = mentions.flatMap((mention) => {
+    if (mention.type === 'sidekick') return [];
+    if (mention.startOffset === undefined || mention.endOffset === undefined) return [mention];
+    const { startOffset, endOffset } = mention;
+    if (replaced.some((range) => startOffset < range.end && endOffset > range.start)) return [];
+    const offset = replaced.filter((range) => range.end <= startOffset).at(-1)?.shift ?? 0;
+    return [{ ...mention, startOffset: startOffset + offset, endOffset: endOffset + offset }];
+  });
+  return { text: output, mentions: others };
 }
