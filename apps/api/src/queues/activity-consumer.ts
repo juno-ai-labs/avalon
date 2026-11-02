@@ -655,13 +655,17 @@ async function consumeOne(message: Message<unknown>, env: Env,
       target.workspaceId,
       workspaceDOName(env.AVALON_REGION, target.workspaceId),
     );
+    // The conversation being worked on, so a failure resumes there.
+    let current: string | null = null;
     try {
       const work = await workspace.threadBackfillWork(target);
       if (work) {
         // Main and each open Breakout, in turn. A failure part way leaves the
-        // row in place and the alarm sends it again; every job is written to
-        // do nothing the second time over a conversation it already did.
+        // row in place and the alarm sends it again, from the conversation
+        // that failed; every job is written to do nothing the second time
+        // over a conversation it already did.
         for (const substreamId of work.substreamIds) {
+          current = substreamId;
           const outcome = await THREAD_BACKFILL_HANDLERS[target.job](env, {
             workspaceId: target.workspaceId, workstreamId: target.workstreamId, substreamId,
           });
@@ -675,8 +679,10 @@ async function consumeOne(message: Message<unknown>, env: Env,
           if (target.job === "conversation_view" && outcome === "queued") {
             // Keep this parent claimed until its source has confirmed writes.
             // Do not wake all its children and immediately admit another batch.
-            // Its durable retry gate will revisit it; ordinary pending work
-            // must not burn through Queue retries and land in the dead letter.
+            // Its durable retry gate will revisit it, at this conversation
+            // rather than at Main; ordinary pending work must not burn
+            // through Queue retries and land in the dead letter.
+            await workspace.deferThreadBackfill({ ...target, resumeFrom: asSubstreamId(substreamId) });
             message.ack();
             return;
           }
@@ -692,8 +698,12 @@ async function consumeOne(message: Message<unknown>, env: Env,
           job: target.job,
           workspace_id: target.workspaceId,
           workstream_id: target.workstreamId,
+          ...(current === null ? {} : { substream_id: current }),
           reason: diagnosticErrorCode(error, "thread_backfill_failed"),
         });
+        if (current !== null) {
+          await workspace.deferThreadBackfill({ ...target, resumeFrom: asSubstreamId(current) }).catch(() => undefined);
+        }
         await workspace.releaseThreadBackfill(target).catch(() => undefined);
       }
     }
