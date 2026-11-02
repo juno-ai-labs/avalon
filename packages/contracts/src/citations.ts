@@ -157,13 +157,8 @@ const SIDEKICK_MENTION_HREF = new RegExp(`^sidekick:\\/\\/(${PERSON_UUID})$`, "i
 
 /**
  * Durable Markdown link for a Sidekick mention: `[@Name](sidekick://<id>)`.
- *
- * Unlike a person mention it stores no mention row and grants nothing: a
- * Sidekick is not notified and gains no access by being named. The link is a
- * reference, like a `resource://` citation, so a reader resolves the id
- * against the Sidekicks it can see and draws the label as text when it cannot.
- * That is also why hand-typed `sidekick://` text is harmless: it can only
- * name a Sidekick the reader already sees, under that Sidekick's own name.
+ * A reference with no mention row; why, and how a reader resolves it, is in
+ * `docs/markdown-rendering.md#mentions`.
  */
 export function sidekickMentionHref(sidekickId: string): string {
   return `sidekick://${sidekickId}`;
