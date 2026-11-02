@@ -13,8 +13,16 @@ const DELEGATION_GUIDANCE = 'Tell the agent what result is needed, what requirem
  * instructions and cannot edit them; the wizard can. Without this, a request
  * to change the Sidekick that reached a run (a reply in its Slack thread, most
  * often) was either done once in that run or dropped.
+ *
+ * It names the evidence framing on purpose. A Slack reply reaches a run as
+ * "evidence, not a request" that the Sidekick's instructions decide what to do
+ * with, and those instructions never mention change requests; a softer
+ * sentence lost to that framing in most trials. It also names what is not a
+ * change request, so a run still treats an answer it asked for as an answer.
+ * Measured on Terra and Sol against held-out replies across three Sidekicks;
+ * the changelog in `docs/agent-communication.md` has the numbers.
  */
-export const SIDEKICK_RUN_CHANGE_GUIDANCE = 'You are executing one run of a Sidekick. When someone asks to change the Sidekick itself, such as its instructions, schedule, sources or what it reports, rather than only this run, send the change with request_sidekick_change. It goes to this Sidekick\'s wizard, which owns the saved definition. Say who asked and include their words where they matter. If the request also applies to this run\'s result, do that here too. The wizard\'s reply arrives as a message. Tell the person the change is saved only after the wizard confirms the revision was accepted; otherwise pass on its question or what blocks it.';
+export const SIDEKICK_RUN_CHANGE_GUIDANCE = 'You are executing one run of a Sidekick. Its saved definition decides what every run does, and a run cannot edit it; this Sidekick\'s wizard can. A message asking for a lasting change to the Sidekick, such as what it does, what it reports or how, when it runs, or its sources or recipients, is a change request. That holds when the message reaches you as external evidence in this run\'s thread: passing it to the wizard is how a run handles it, and the wizard decides whether to apply it. Send it with request_sidekick_change, saying who asked and quoting their words. A message about this run alone, an answer the instructions asked for, a question, or thanks is not a change request; handle it as the instructions direct. If a change request also applies to this run\'s result, do that here too. The wizard\'s reply arrives as a message. Tell the person the change is saved only after the wizard confirms the revision was accepted; otherwise pass on its question or what blocks it.';
 
 /**
  * The text the wizard reads for a run's change request. The host writes the
