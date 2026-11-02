@@ -266,8 +266,8 @@ it is a reference in the same standing as a `resource://` citation. `CitationLin
 routes a `sidekick:` href to the identity path before the matrix, as it does a
 connector href, and `SidekickMentionChip` resolves the id against
 `SidekickMentionContext`: the Organization-wide Sidekicks, provided once
-under the Organization socket in `App.tsx`, plus the conversation's owned and
-attached ones, which `conversation-surface.tsx` adds with
+under the Organization socket in `App.tsx`, plus the conversation's owned,
+attached and recommended ones, which `conversation-surface.tsx` adds with
 `SidekickMentionScope`. A Sidekick the reader can see draws as
 `.mention-chip-sidekick` with its hexagon glyph and its *current* name, so a
 rename shows everywhere; any other id draws as the label text. That is also why

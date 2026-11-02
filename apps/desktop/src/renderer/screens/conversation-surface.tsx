@@ -2723,17 +2723,19 @@ function ConversationSurfaceContent({
     ? railSidekicks.owned
     : readOwnedSidekickDetails ? ownedSidekicks.data : undefined;
   const attachedSidekickList = railSidekicks?.attached ?? attachedSidekicks.data;
-  // The Sidekicks this conversation owns and has attached, nameable with `@`
-  // here ahead of the Organization's. Recommendations are not the room's own.
-  const conversationSidekicks = useMemo(
-    () => [...(ownedSidekickList ?? []), ...(attachedSidekickList ?? [])],
-    [attachedSidekickList, ownedSidekickList],
-  );
   const recommendedSidekicks = useQuery({
     queryKey: ['recommended-sidekicks', id, substreamId],
     queryFn: ({ signal }) => api!.getRecommendedSidekicks(id!, signal, substreamId),
     enabled: Boolean(api && id && parentKind === 'workstream' && !railSidekicks),
   });
+  const recommendedSidekickList = railSidekicks?.recommended ?? recommendedSidekicks.data;
+  // The Sidekicks this conversation owns, has attached, and recommends, in the
+  // order its Sidekicks section lists them: nameable with `@` here ahead of
+  // the Organization's.
+  const conversationSidekicks = useMemo(
+    () => [...(ownedSidekickList ?? []), ...(attachedSidekickList ?? []), ...(recommendedSidekickList ?? [])],
+    [attachedSidekickList, ownedSidekickList, recommendedSidekickList],
+  );
   const recommendationOptions = useQuery({
     queryKey: ['sidekick-recommendation-options', id, substreamId],
     queryFn: ({ signal }) => api!.getSidekickRecommendationOptions(id!, substreamId, signal),
