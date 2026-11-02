@@ -338,8 +338,9 @@ timestamp, and its guidance tells it to pass the answer on where the person
 asked: it calls the Slack plugin's `send_message` with the channel and that
 timestamp as `thread_ts`. When the wizard asked a question, the person's answer
 in the same thread follows the binding back to the run like any reply, and the
-run sends it to the wizard as a new `request_sidekick_change`; the wizard
-connects it to its question from its own conversation history. Because the
+run sends it to the wizard as a new `request_sidekick_change`, sometimes also
+answering the question with `reply_to_message`; the wizard connects it to its
+question from its own conversation history. Because the
 model chooses the reply's destination, a run can post somewhere else; measured
 end to end, the answer reached the thread in all but two of 26 runs.
 
@@ -497,6 +498,9 @@ signup report with an AWS bill summary was refused as a different job 2 of 2,
 and the outside email request was attempted and stopped only because the
 Sidekick has no mail connection, 2 of 2. A second reply refining a saved change
 went through the run to the wizard and was saved as the next revision 3 of 3.
+For "also add the other metric we talked about yesterday", the wizard asked
+which metric, the run posted the question in the thread, and the answer ("the
+activation rate…") went back to the wizard and was saved, 2 of 2.
 The answer reached the
 person in the report's thread in 24 of 26 runs; in one of the other two the run
 re-posted the report at the top of the channel instead. "A single table with 3
