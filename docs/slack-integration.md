@@ -844,8 +844,11 @@ block's 12,000. That cap is a limit the team set, and the splitter already keeps
 long posts working.
 
 **Consequences:** A long post now arrives as a first message plus replies in its
-thread. A failure partway leaves the earlier chunks posted, and production
-supplies no idempotency key for Slack writes, so nothing dedupes a rerun. Slack's
+thread, so it is no longer one atomic write. A failure after the first part
+returns that message with `parts_posted`, `parts_total` and Slack's error name,
+rather than throwing: the receipt records what is visible, and the refresh retry
+around the tool cannot rerun the send and post the first parts twice, since
+production supplies no idempotency key for Slack writes to dedupe them. Slack's
 markdown block reference does not say whether `<@U…>` mentions and `<#C…>`
 channel links render inside the block; until someone checks in a live workspace,
 that is open.
