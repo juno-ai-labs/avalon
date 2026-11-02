@@ -634,7 +634,15 @@ describe("a room Sidekick's run and the room's agents", () => {
         WHERE client_message_id LIKE 'agent-message:%'`,
     ).toArray());
     expect(received.map((turn) => turn.content)).toEqual([
-      `Change request from run ${started.runId} of this Sidekick. Update this Sidekick's saved definition if the request fits it, then reply to this message saying whether the revision was accepted or what blocks it.\n\nWEEKLY_TOTALS: add a weekly totals row to the report.`,
+      [
+        "SIDEKICK CHANGE REQUEST FROM A RUN",
+        `Run: ${started.runId}`,
+        "Asked by: the run itself, not a person",
+        "Evaluate it as your guidance for a change request from a run says, then reply to this message with the outcome.",
+        "",
+        "Request:",
+        "WEEKLY_TOTALS: add a weekly totals row to the report.",
+      ].join("\n"),
     ]);
     // From the run itself, so the wizard's reply goes back to the run.
     expect(JSON.parse(received[0]!.structured_content_json ?? "{}").senderAgentId)
@@ -643,6 +651,9 @@ describe("a room Sidekick's run and the room's agents", () => {
     const wizardCall = provider.calls.find((call) => JSON.stringify(call.messages.filter((message) => message.role === "user").at(-1)?.content ?? "")
       .includes(sidekickChangeRequest!));
     expect(wizardCall?.toolNames).not.toContain("request_sidekick_change");
+    // The wizard reads the request beside its guidance for one, keyed on the same header.
+    expect(JSON.stringify(wizardCall?.messages.filter((message) => message.role === "system")))
+      .toContain('A message whose first line is \\"SIDEKICK CHANGE REQUEST FROM A RUN\\"');
   });
 
   it("refuses a change request from a conversation that is not a Sidekick run", async () => {

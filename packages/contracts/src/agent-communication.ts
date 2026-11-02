@@ -124,6 +124,13 @@ export const AgentMessageResultSchema = z.strictObject({ messageId: IdSchema, ne
  */
 export const SIDEKICK_CHANGE_FRAME_RESERVE = 1_000;
 /**
+ * The first line of every change request a run sends its wizard. Plain text
+ * the wizard's guidance names, so the wizard can tell a run's request from a
+ * person's message or another agent's. Shared here because the frame that
+ * writes it (API) and the guidance that names it (harness) are in two packages.
+ */
+export const SIDEKICK_CHANGE_REQUEST_HEADER = "SIDEKICK CHANGE REQUEST FROM A RUN";
+/**
  * A Sidekick run asking its own Sidekick's wizard for a change. No recipient
  * field: the host names the wizard from the run, so a run reaches only its own.
  */
