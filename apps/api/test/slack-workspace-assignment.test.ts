@@ -1522,9 +1522,12 @@ describe("Slack public channel membership", () => {
       database,
       instance,
       credentialsKey,
-      activityQueueSend,
+      vi.fn(async () => undefined),
       undefined,
       {
+        // A connector event is a Sidekick trigger, not work a person waits
+        // on, so it stays on the activity queue.
+        ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>({ send: activityQueueSend }),
         WORKSPACE_DOS: createCloudflareTestBinding<Env["WORKSPACE_DOS"]>(testSubstreamAgentsBinding(database, {
           extra: {
             ...workspaceObjectRpcs(instance, SLACK_WORKSPACE_OBJECT_METHODS),
@@ -3801,7 +3804,7 @@ function slackMembershipEnvironment(
 ): Env {
   return { ...createTestEnv({
     DB: sqliteD1(database),
-    ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>({ send }),
+    INTERACTIVE_QUEUE: createCloudflareTestBinding<Queue>({ send }),
     AVALON_REGION: "global",
     CONNECTOR_CREDENTIALS_KEY: credentialsKey,
     CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
