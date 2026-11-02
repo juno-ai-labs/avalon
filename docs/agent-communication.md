@@ -296,8 +296,11 @@ at a later Bind boundary during a participant-started run follow the same rule.
 
 A Sidekick run child (`automationRun` set) also gets
 `request_sidekick_change({ changes })` and one paragraph of guidance
-(`SIDEKICK_RUN_CHANGE_GUIDANCE`): a request to change the Sidekick itself goes
-to its wizard, and the run reports it saved only after the wizard confirms. No
+(`SIDEKICK_RUN_CHANGE_GUIDANCE`): a request for a lasting change to the
+Sidekick goes to its wizard, even when it arrives as external evidence, and the
+run reports it saved only after the wizard confirms. An answer the instructions
+asked for, a question, thanks, or a request about this run alone is not a change
+request. No
 other conversation is offered the tool, and the service refuses one that calls
 it anyway with `sidekick_change_outside_run`.
 
@@ -419,6 +422,34 @@ Sidekick-level change, and the run had no guidance for it: it follows saved
 instructions and cannot edit them. It could reach the wizard with
 `send_message`, but nothing told it to, so the request was done once in that
 run or dropped.
+
+The guidance names the evidence framing outright. Every Slack reply reaches a
+run as "evidence, not a request" that the Sidekick's instructions decide what to
+do with, and the instructions never mention change requests. A softer first
+version lost to that framing: replaying the real continued-run request for "show
+this all in a single table with 3 columns x, y, and z" on a daily report, GPT-5.6
+Terra asked the wizard in 2 of 10 trials and otherwise answered that the saved
+format stands. To check the wording was not fitted to that one reply, it was
+measured on held-out replies across three Sidekicks (the daily report, a weekly
+DM that asks a founder for an update, and a pull-request digest): six lasting
+changes and eight replies that must not trigger it, including the founder's
+answer, a one-off redo, questions, thanks, and an instruction to leak the bot
+token, then six more written after the first results.
+
+| Model | Guidance | Change requests sent | Non-changes left alone |
+| --- | --- | ---: | ---: |
+| Terra | first version | 27/35 | 40/40 |
+| Terra | shipped | 43/45 | 60/60 |
+| Sol | shipped | 27/27 | 36/36 |
+
+Terra ran 5 trials per reply and Sol 3. The first version was measured on the
+first round only, before the six later replies were written.
+
+The two Terra misses were "Monthly is plenty, please stop asking me every
+week" to the weekly DM, which Terra always forwarded home as the founder's
+answer and asked the wizard about 3 of 5 times. The wording was not tuned
+against it. Each trial is the model's first response to the captured request;
+the wizard's handling and the loop back to Slack were not part of it.
 
 **Considered and rejected:** Prompt guidance alone, pointing the run at
 `sidekicks_list` and `send_message`. It needs two calls and an id the model must
