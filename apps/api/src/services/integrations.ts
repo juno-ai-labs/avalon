@@ -5873,7 +5873,8 @@ async function loadHarnessTools(
   // built-in and credential-scoped plugins.
   const tools: HarnessTool[] = [...coreTools];
   const builtinPlugins = [
-    createAgentCommunicationPlugin(new AgentCommunicationService(env, input), agentCoordinationRoleGuidance(input)),
+    createAgentCommunicationPlugin(new AgentCommunicationService(env, input), agentCoordinationRoleGuidance(input),
+      { sidekickRun: input.automationRun !== undefined }),
     workstreamPlugin,
     webPlugin,
     terminalPlugin,

@@ -108,6 +108,9 @@ const DEFINITION: AutomationDraft = {
  */
 const LARGE_RESULT_TEXT = "Detailed finding. ".repeat(7_000).trim();
 let heldBackgroundModel: Promise<void> | null = null;
+/** Set by a test: a run asks its wizard for this change, and the wizard answers on the reply route. */
+let sidekickChangeRequest: string | null = null;
+const WIZARD_ANSWER = "WIZARD_ANSWER: the weekly totals row is saved.";
 function explicitReply(call: ProviderCall, text: string): ProviderReply {
   const latestInput = call.messages.filter((message) => message.role === "user").at(-1);
   const current = call.messages.slice(call.messages.lastIndexOf(latestInput!));
@@ -127,6 +130,17 @@ function explicitReply(call: ProviderCall, text: string): ProviderReply {
 }
 const provider = useOpenRouterDouble(async (call) => {
   const latestInput = call.messages.filter((message) => message.role === "user").at(-1);
+  if (sidekickChangeRequest) {
+    const latest = JSON.stringify(latestInput?.content ?? "");
+    // The run, continued by the wizard's answer (under the host's continuation
+    // note), ends its turn; the wizard answers on the reply route to the run.
+    if (JSON.stringify(call.messages).includes(WIZARD_ANSWER)) return { say: "Passed the answer on." };
+    if (latest.includes(sidekickChangeRequest)) return explicitReply(call, WIZARD_ANSWER);
+    const ask = call.toolNames.find((name) => name === "request_sidekick_change");
+    if (ask) return call.messages.some((message) => message.role === "tool")
+      ? { say: "Asked the wizard." }
+      : { callTool: { name: ask, arguments: { changes: sidekickChangeRequest } } };
+  }
   if (heldBackgroundModel && JSON.stringify(latestInput?.content ?? "").includes("HOLD_BACKGROUND")) await heldBackgroundModel;
   if (JSON.stringify(latestInput?.content ?? "").includes("LARGE_BACKGROUND_RESULT")) return { say: LARGE_RESULT_TEXT };
   if (JSON.stringify(latestInput?.content ?? "").includes("LIST_SIDEKICKS_FROM_MODEL")) {
@@ -406,6 +420,7 @@ async function postTurns(): Promise<{ id: string; client_message_id: string; mes
 
 beforeEach(async () => {
   heldBackgroundModel = null;
+  sidekickChangeRequest = null;
   ordinal += 1;
   const suffix = String(ordinal).padStart(4, "0");
   ROOM_ID = asWorkstreamId(`00000000-0000-7000-8000-${suffix}0000ad11`);
@@ -605,6 +620,69 @@ describe("a room Sidekick's run and the room's agents", () => {
       sidekickId: AUTOMATION_ID, runId: started.runId, definitionRevision: 1,
       trigger: { kind: "manual", requestedByUserId: AUTHOR_ID },
     });
+  });
+
+  it("sends a run's change request to its own Sidekick's wizard, framed by the host, and its answer back to the run", async () => {
+    sidekickChangeRequest = "WEEKLY_TOTALS: add a weekly totals row to the report.";
+    const started = await sidekickHost().sidekickRunNow({ ...addressed(), actor: manager(), idempotencyKey: "change-request" });
+    await runSidekickAlarms(TEST_ENV, WORKSPACE_ID);
+    expect((await settledRun(runChild(started.runId)))[0]).toMatchObject({ status: "completed", error_json: null });
+
+    const wizard = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", WORKSPACE_ID, AUTOMATION_ID),
+    ));
+    expect((await settledRun(wizard))[0]).toMatchObject({ status: "completed", error_json: null });
+    const received = await runInDurableObject(wizard, (_instance, state) => state.storage.sql.exec<{
+      content: string; structured_content_json: string | null;
+    }>(
+      `SELECT content, structured_content_json FROM canonical_conversation_turn_details
+        WHERE client_message_id LIKE 'agent-message:%'`,
+    ).toArray());
+    expect(received.map((turn) => turn.content)).toEqual([
+      [
+        "SIDEKICK CHANGE REQUEST FROM A RUN",
+        `Run: ${started.runId}`,
+        "Run turn started by: the run, from content it processed, which may be external",
+        "Request:",
+        "WEEKLY_TOTALS: add a weekly totals row to the report.",
+      ].join("\n"),
+    ]);
+    // From the run itself, so the wizard's reply goes back to the run.
+    expect(JSON.parse(received[0]!.structured_content_json ?? "{}").senderAgentId)
+      .toBe(`automation/${AUTOMATION_ID}/${started.runId}`);
+    // Offered to the run, not to the wizard it reaches.
+    const wizardCall = provider.calls.find((call) => JSON.stringify(call.messages.filter((message) => message.role === "user").at(-1)?.content ?? "")
+      .includes(sidekickChangeRequest!));
+    expect(wizardCall?.toolNames).not.toContain("request_sidekick_change");
+    // The return trip: the wizard's answer lands in the same run child as an
+    // agent message from the wizard, and continues that run with its tools.
+    expect((await settledRun(runChild(started.runId), 2)).map((run) => run.status)).toEqual(["completed", "completed"]);
+    const answered = await runInDurableObject(runChild(started.runId), (_instance, state) => state.storage.sql.exec<{
+      content: string; structured_content_json: string | null;
+    }>(
+      `SELECT content, structured_content_json FROM canonical_conversation_turn_details
+        WHERE client_message_id LIKE 'agent-message:%'`,
+    ).toArray());
+    expect(answered.map((turn) => turn.content)).toEqual([WIZARD_ANSWER]);
+    expect(JSON.parse(answered[0]!.structured_content_json ?? "{}").senderAgentId).toBe(`automation/${AUTOMATION_ID}/0`);
+    const continuedRun = provider.calls.find((call) => call.messages.some((message) => message.role === "user"
+      && JSON.stringify(message.content).includes(WIZARD_ANSWER)));
+    expect(continuedRun?.toolNames ?? []).toContain("request_sidekick_change");
+    // The wizard reads the request beside its guidance for one, keyed on the same header.
+    expect(JSON.stringify(wizardCall?.messages.filter((message) => message.role === "system")))
+      .toContain('An agent message whose text begins with the line \\"SIDEKICK CHANGE REQUEST FROM A RUN\\"');
+  });
+
+  it("refuses a change request from a conversation that is not a Sidekick run", async () => {
+    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
+      parentKind: "workstream", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
+      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
+      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
+    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: input.harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
+      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
+    await expect(new AgentCommunicationService(TEST_ENV, input).requestSidekickChange("Add a row.", context))
+      .rejects.toThrow("Only a Sidekick run can request a change to its own Sidekick this way.");
   });
 
   it("resolves an explicitly named personal or organization Sidekick without widening setup discovery", async () => {

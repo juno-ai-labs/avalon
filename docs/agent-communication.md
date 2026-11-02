@@ -292,6 +292,34 @@ Questions from agent exchanges use replies instead of participant forms. This
 guidance is present in every Sidekick authoring execution, so requests arriving
 at a later Bind boundary during a participant-started run follow the same rule.
 
+### A run asking its wizard for a change
+
+A Sidekick run child (`automationRun` set) also gets `request_sidekick_change`
+and a paragraph of guidance in this plugin's message: a request for a lasting
+change to the Sidekick goes to its wizard, even when it reaches the run as
+external evidence. No other conversation is offered the tool, and the service
+refuses one that calls it (`sidekick_change_outside_run`).
+
+The host names the recipient from `automationRun.automationId`, so a run
+reaches only its own wizard; the model supplies only `changes`. Delivery is the
+ordinary `send`, with its contact check, team join and reply route. The host
+frames the text (`sidekickChangeRequestText`) under `SIDEKICK_CHANGE_REQUEST_HEADER`
+with `Run:` and `Run turn started by:` lines it derives from the run's input;
+the wizard's guide has a section keyed on that header. The tool is on
+`AGENT_MESSAGE_TOOL_NAMES`, so the client counts it as a sent message.
+
+**How an answer or question gets back to the person.** Nothing in the host
+routes the wizard's words to Slack; the run does it with the tools it already
+has. The wizard answers with `reply_to_message`, which admits an agent message
+into the run child because the request came from the run's address. Any input
+to a run child continues that run (`continueSidekickRun`), so the run wakes
+with its own history, including the Slack post it made and that post's
+timestamp, and calls the Slack plugin's `send_message` with that timestamp as
+`thread_ts`. A person's answer to a wizard question follows the thread binding
+back to the run like any reply, and the run sends it on as a new request.
+Because the model chooses the reply's destination, a run can post somewhere
+else.
+
 
 ## Invariants
 
@@ -305,6 +333,10 @@ at a later Bind boundary during a participant-started run follow the same rule.
   record an ownership edge without its membership.
 - WorkspaceDO is the sole team authority; a D1 fallback would create divergent
   membership decisions.
+- A run's change request goes only to its own Sidekick's wizard. The recipient
+  comes from the run's `automationRun`, never from a model argument; a field
+  for it would let a run's model, steered by a Slack reply, address another
+  Sidekick's wizard.
 - Only the owning thread may message a thread-owned Sidekick's authoring agent,
   and ownership is per thread, Breakouts included. The host answers it; a
   conversation that acts for no thread owns nothing. Returning a raw owner id to
@@ -377,6 +409,34 @@ the ownership flags from a conversation that acts for no thread, and a guest's
 grant-only contact. Complete desktop behavior remains an implementation gate.
 
 ## Changelog
+
+### 2026-11-02 — A Sidekick run asks its own wizard for a change
+
+**What changed:** A Sidekick run gets `request_sidekick_change`, which sends a
+plain-language change, framed by the host, to the wizard of the run's own
+Sidekick. The wizard's guide gains a section for evaluating one: keep the
+Sidekick's purpose, ask one question when it is unclear, and reply.
+
+**Why:** A reply in a Slack thread bound to a Sidekick run reaches that run, not
+the wizard. A person asking for a lasting change ("show this all in one
+table") had no path to the definition: a run follows saved instructions and
+cannot edit them, so the request was done once in that run or dropped. The
+guidance names the evidence framing outright because a softer wording lost to
+it: every Slack reply reaches a run as "evidence, not a request", and the
+Sidekick's instructions never mention change requests.
+
+**Considered and rejected:** Prompt guidance alone, pointing the run at
+`sidekicks_list` and `send_message`: two calls, an id the model must copy, and a
+recipient left to a model reading untrusted text. Routing a Slack reply straight
+to the wizard: the run holds the context of what it reported, and most replies
+are about that run.
+
+**Consequences:** The tool grants no authority a run lacked; it passes the same
+contact check as any message to the wizard. But the asker can be anyone in a
+bound thread, or content a run processed, and the wizard's line is the
+Sidekick's purpose rather than its reach, so a change that keeps the job, an
+added recipient included, can be saved from such a request. A tighter rule
+belongs in the wizard's section or the contact check, not the tool.
 
 ### 2026-10-23 — Confirm the requested revision before reporting a saved edit
 
