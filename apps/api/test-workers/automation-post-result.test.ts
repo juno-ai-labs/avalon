@@ -668,6 +668,8 @@ describe("a room Sidekick's run and the room's agents", () => {
     const continuedRun = provider.calls.find((call) => call.messages.some((message) => message.role === "user"
       && JSON.stringify(message.content).includes(WIZARD_ANSWER)));
     expect(continuedRun?.toolNames ?? []).toContain("request_sidekick_change");
+    // The host tells the run the message is its wizard's, and where its answer goes.
+    expect(JSON.stringify(continuedRun?.messages ?? [])).toContain("This run is continuing because this Sidekick's wizard sent a message");
     // The wizard reads the request beside its guidance for one, keyed on the same header.
     expect(JSON.stringify(wizardCall?.messages.filter((message) => message.role === "system")))
       .toContain('An agent message whose text begins with the line \\"SIDEKICK CHANGE REQUEST FROM A RUN\\"');

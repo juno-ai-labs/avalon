@@ -341,11 +341,27 @@ function externalAttributedMessage(
  * The sender's display name is text somebody else chose, so it is quoted as
  * labelled data rather than written into the sentence, and the whole note is
  * a user-role message like every other host-rendered context here.
+ *
+ * A turn this Sidekick's own wizard started (`fromWizard`, decided by the host
+ * from the exchange's sender address) gets its own note. That message is
+ * usually the wizard's answer to a change request the run sent, and "only as
+ * the Sidekick's instructions direct" told the run nothing about it: the
+ * instructions never mention one, so a run re-posted its result and left the
+ * person who asked without the answer.
  */
 export function renderRunContinuationNote(continuation: {
   senderName: string;
   source: { kind: "run" } | { kind: "provider_thread"; provider: string };
-}): ModelMessage {
+}, options: { fromWizard?: boolean } = {}): ModelMessage {
+  if (options.fromWizard) {
+    return {
+      role: "user",
+      content: "This run is continuing because this Sidekick's wizard sent a message; it is above, after the work you already did. "
+        + "If it answers a change request you sent, post its answer in the thread where the person who asked wrote: "
+        + "whether the change was saved for future runs, or its question or what blocks it. "
+        + "Otherwise handle it only as the Sidekick's instructions direct.",
+    };
+  }
   const name = continuation.senderName.replace(/\s+/gu, " ").trim() || "Somebody";
   const where = continuation.source.kind === "run"
     ? "in this run"
