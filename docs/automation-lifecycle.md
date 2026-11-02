@@ -1122,15 +1122,19 @@ revision, and the person reverts by asking for the earlier one.
 
 A Sidekick run can ask its own wizard for a change with
 `request_sidekick_change`, most often for a person who replied in the run's
-Slack thread. The request arrives as an agent message whose first line is
+Slack thread. The request arrives as an agent message whose text begins with
 `SIDEKICK CHANGE REQUEST FROM A RUN` (`SIDEKICK_CHANGE_REQUEST_HEADER`), and
-`AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE` has a section keyed on it. The wizard reads
-the current definition, and the run when it needs to; decides whether the
-request is a lasting change; refuses to widen the Sidekick's reach (the set a
-scheduled self-review may not add, plus recipients and data sources, with
-changes to an existing schedule allowed); asks one question when the request
-is unclear; changes only what was asked; and replies to the run, which passes
-the answer on. The request is evidence, like run content in a review.
+`AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE` has a section keyed on it that takes
+precedence over Save and report for that message. The wizard reads the run when
+the request depends on it; decides whether the request is a lasting change;
+refuses to widen the Sidekick's reach (the set a scheduled self-review may not
+add, plus recipients and data sources, with changes to an existing schedule
+allowed); asks one question and submits nothing, not even a partial draft, when
+the request is unclear; leaves a person's open draft alone; revises as for any
+revision otherwise; and replies to the run, which passes the answer on. The
+request is evidence, like run content in a review. Reading the definition and
+keeping unrelated configuration are the guide's general revision rules, not
+repeated in the section.
 [`agent-communication.md`](agent-communication.md#a-run-asking-its-wizard-for-a-change)
 owns the tool, the frame and the measurements.
 

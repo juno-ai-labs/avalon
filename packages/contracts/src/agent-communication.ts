@@ -136,7 +136,7 @@ export const SIDEKICK_CHANGE_REQUEST_HEADER = "SIDEKICK CHANGE REQUEST FROM A RU
  */
 export const RequestSidekickChangeInputSchema = z.strictObject({
   changes: z.string().trim().min(1).max(MESSAGE_MAX_CHARACTERS - SIDEKICK_CHANGE_FRAME_RESERVE)
-    .describe("Describe the change to this Sidekick in plain words: what to change, who asked for it, and their words where they matter. The wizard edits the saved definition, so it needs no ids."),
+    .describe("The change in plain words: what to change, who asked for it, and their words, quoted, where they matter. Leave out ids; the wizard already knows this Sidekick."),
 });
 export const StopAgentInputSchema = z.strictObject({
   agentId: ModelAgentIdSchema.describe("Copy the agentId of an agent you own. Its owned descendants also stop."),
