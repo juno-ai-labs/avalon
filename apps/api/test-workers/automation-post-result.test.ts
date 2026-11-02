@@ -642,7 +642,7 @@ describe("a room Sidekick's run and the room's agents", () => {
       [
         "SIDEKICK CHANGE REQUEST FROM A RUN",
         `Run: ${started.runId}`,
-        "Run turn started by: the run itself, not a person",
+        "Run turn started by: the run, from content it processed, which may be external",
         "Request:",
         "WEEKLY_TOTALS: add a weekly totals row to the report.",
       ].join("\n"),

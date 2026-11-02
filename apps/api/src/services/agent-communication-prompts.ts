@@ -1,4 +1,5 @@
 import { SIDEKICK_CHANGE_REQUEST_HEADER, type WorkstreamWorkflowInput } from '@rally/contracts';
+import { providerDisplayName } from './workstream-participant-model-message';
 
 /**
  * How every role assigns work and waits for a delegate. Carry decisions and
@@ -10,22 +11,12 @@ const DELEGATION_GUIDANCE = 'Tell the agent what result is needed, what requirem
 
 /**
  * The text the wizard reads for a run's change request. The host writes the
- * frame, so the header, which run sent it and who started the run's current
- * turn come from the run's input, not from the model; only the request is the
- * run's words. It carries no instruction of its own: what to do with it is the
- * wizard's guidance, keyed on the header.
- *
- * The attribution line says who started the turn, not who asked: a reply that
- * arrives while the turn is executing joins it without rebuilding this input,
- * so naming that sender as the asker could credit the wrong person. Who asked
- * is in the request, which the tool's parameter tells the run to include.
- *
- * The sender's display name is text somebody else chose, so it is quoted and
- * labelled, as the run's continuation note does, after its control characters
- * and lone surrogates are dropped: they mean nothing in a name, and JSON
- * quoting turns each into a six-character escape, which could overrun
- * `SIDEKICK_CHANGE_FRAME_RESERVE`. What remains can at most double, for a name
- * of quotes or backslashes.
+ * header and the Run and Run turn started by lines from the run's input, so
+ * the wizard can trust them; only the request is the run's words. The turn's
+ * starter is not necessarily who asked (a reply can join a turn already
+ * executing), so who asked is in the request. A display name is quoted after
+ * dropping control characters and lone surrogates, which JSON quoting would
+ * turn into six-character escapes past `SIDEKICK_CHANGE_FRAME_RESERVE`.
  */
 export function sidekickChangeRequestText(
   runId: string,
@@ -33,20 +24,18 @@ export function sidekickChangeRequestText(
   changes: string,
 ): string {
   const startedBy = !continuation
-    ? 'the run itself, not a person'
+    ? 'the run, from content it processed, which may be external'
     : continuation.source.kind === 'provider_thread'
-      ? `${quotedName(continuation.senderName)} (display name), replying in the run's ${providerName(continuation.source.provider)} thread; they may not be a Rally member`
-      : `${quotedName(continuation.senderName)} (display name), in the run`;
+      ? `${quotedName(continuation.senderName)} (display name), replying in the run's ${providerDisplayName(continuation.source.provider)} thread; they may not be a Rally member`
+      : continuation.senderUserId
+        ? `${quotedName(continuation.senderName)} (display name), a Rally member, in the run`
+        : 'a message in the run that is not from a Rally member, such as another agent\'s';
   return [SIDEKICK_CHANGE_REQUEST_HEADER, `Run: ${runId}`, `Run turn started by: ${startedBy}`, 'Request:', changes].join('\n');
 }
 
 function quotedName(name: string): string {
   // eslint-disable-next-line no-control-regex
   return JSON.stringify(name.replace(/[\u0000-\u001f\u007f-\u009f\ud800-\udfff]/gu, ''));
-}
-
-function providerName(provider: string): string {
-  return provider.length === 0 ? provider : `${provider[0]!.toLocaleUpperCase()}${provider.slice(1)}`;
 }
 
 /** The same role guidance applies before and after loading coordination tools. */

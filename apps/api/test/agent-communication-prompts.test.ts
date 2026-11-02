@@ -139,7 +139,7 @@ describe("a Sidekick run asking its wizard for a change", () => {
       expect(framed.length).toBeLessThanOrEqual(MESSAGE_MAX_CHARACTERS);
     }
     expect(sidekickChangeRequestText(runId, { stopGeneration: 0, senderName: "A\u0007d\ud800a",
-      source: { kind: "run" } }, "x")).toContain('\nRun turn started by: "Ada" (display name), in the run\n');
+      source: { kind: "provider_thread", provider: "slack" } }, "x")).toContain('\nRun turn started by: "Ada" (display name)');
   });
 
   it("frames the request with a header, the run and who asked, from the run's own input", () => {
@@ -147,14 +147,18 @@ describe("a Sidekick run asking its wizard for a change", () => {
     expect(sidekickChangeRequestText(runId, undefined, "Add a weekly totals row.")).toBe([
       "SIDEKICK CHANGE REQUEST FROM A RUN",
       "Run: 00000000-0000-7000-8000-000000000003",
-      "Run turn started by: the run itself, not a person",
+      "Run turn started by: the run, from content it processed, which may be external",
       "Request:",
       "Add a weekly totals row.",
     ].join("\n"));
     expect(sidekickChangeRequestText(runId, { stopGeneration: 0, senderName: "Ada",
       source: { kind: "provider_thread", provider: "slack" } }, "Drop the desktop table."))
       .toContain('\nRun turn started by: "Ada" (display name), replying in the run\'s Slack thread; they may not be a Rally member\n');
-    expect(sidekickChangeRequestText(runId, { stopGeneration: 0, senderName: "Ada", source: { kind: "run" } }, "x"))
-      .toContain('\nRun turn started by: "Ada" (display name), in the run\n');
+    expect(sidekickChangeRequestText(runId, { stopGeneration: 0, senderName: "Ada", source: { kind: "run" },
+      senderUserId: "00000000-0000-7000-8000-000000000004" as never }, "x"))
+      .toContain('\nRun turn started by: "Ada" (display name), a Rally member, in the run\n');
+    // The wizard's own reply continues the run as an in-run message with no member behind it.
+    expect(sidekickChangeRequestText(runId, { stopGeneration: 0, senderName: "Sidekick wizard", source: { kind: "run" } }, "x"))
+      .toContain("\nRun turn started by: a message in the run that is not from a Rally member, such as another agent's\n");
   });
 });
