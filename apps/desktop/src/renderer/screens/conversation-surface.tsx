@@ -8,6 +8,7 @@ import { AnnotationDraftProvider, useAnnotationDraft } from '../components/artif
 import { ScopeSharingPanel, useScopeInvitations } from "../components/scope-sharing-panel";
 import { EmailMentionContext, emailMentionDirectory, inviteeAsMember, NO_INVITEES, useWorkspaceInvitees } from "../lib/workspace-invitees";
 import { conversationSidekickMentions, SidekickMentionScope } from "../lib/sidekick-mentions";
+import { mentionLinksAsText } from "@rally/contracts/citations";
 import { useWorkspaceMembers } from "../lib/workspace-members";
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
 import { artifactActivitySubject, conversationActivitySubject, reportActivityEvent } from '../lib/activity-events';
@@ -2905,7 +2906,9 @@ function ConversationSurfaceContent({
     setSending(true);
     setSendError(undefined);
     if (activeElicitation) {
-      const response = manualElicitationResponse(activeElicitation, text);
+      // An answer is stored and shown as plain text, not Markdown, so a picked
+      // Sidekick goes back to the `@Name` the reader typed.
+      const response = manualElicitationResponse(activeElicitation, mentionLinksAsText(text));
       try {
         await answerElicitation(activeElicitation.id, response.answer, response.customResponse);
         // An answer is a message this reader sent, and an elicitation outlives

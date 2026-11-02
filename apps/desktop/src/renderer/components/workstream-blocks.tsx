@@ -84,7 +84,7 @@ import { saveMessageExport } from '../lib/message-export';
 import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
 import { useCopy } from '../lib/use-copy';
 import { useEmailMentionTarget } from '../lib/workspace-invitees';
-import { useSidekickMentions } from '../lib/sidekick-mentions';
+import { SidekickMentionContext, useSidekickMentions } from '../lib/sidekick-mentions';
 import { AutomationGlyph } from './workstream-glyph';
 import { bareAddressAutolink, EMAIL_MENTION, EMAIL_MENTION_AT } from '@rally/contracts/email-mentions';
 import { pluginGroupIconForContract, type PluginGroupIcon } from '../lib/plugin-groups';
@@ -1835,6 +1835,8 @@ export function MessageActions({
   const speech = useSpeechPlayback();
   const speechId = telemetry?.messageId ?? fallbackSpeechId;
   const speaking = speech?.activeMessageId === speechId;
+  // The export renders in a detached root that no provider reaches.
+  const sidekickMentions = useSidekickMentions();
 
   const copyResponse = async (): Promise<void> => {
     await desktopBridge().copyText(text);
@@ -1856,14 +1858,14 @@ export function MessageActions({
         // text in the file somebody keeps. `still` is what the card does not
         // share with the turn — nothing in a picture can be hovered, so the
         // sources a pill's popover holds are printed under it instead.
-        content: <MarkdownBody
+        content: <SidekickMentionContext.Provider value={sidekickMentions}><MarkdownBody
           citations={citations}
           mentions={rendered?.mentions ?? mentions}
           preserveLineBreaks={verbatim}
           rallyMentions={verbatim}
           still
           verbatim={verbatim}
-        >{rendered?.text ?? text}</MarkdownBody>,
+        >{rendered?.text ?? text}</MarkdownBody></SidekickMentionContext.Provider>,
         // The file name slugs the first line the way the card *shows* it — a
         // saved image named `…-backlog-rightarrow-done` outlives the render
         // that repaired the text it pictures. Copy stays the stored bytes.
