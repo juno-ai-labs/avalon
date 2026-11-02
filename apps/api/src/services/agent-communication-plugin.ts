@@ -12,22 +12,9 @@ export type AgentCommunicationTools = Pick<AgentCommunicationService,
   | "requestSidekickChange">;
 
 /**
- * What a run is told about changing its own Sidekick, appended to this
- * plugin's message only where `request_sidekick_change` is offered, so the
- * tool it names is always in scope. A run follows saved instructions and cannot
- * edit them; the wizard can. Without this, a request to change the Sidekick
- * that reached a run (a reply in its Slack thread, most often) was done once in
- * that run or dropped.
- *
- * It names the evidence framing on purpose. A Slack reply reaches a run as
- * "evidence, not a request" that the Sidekick's instructions decide what to do
- * with, and those instructions never mention change requests; a softer
- * sentence lost to that framing in most trials. It names what is not a change
- * request, and that a message can be both, so a run still treats an answer it
- * asked for as an answer. That a sent request is not a saved change is said
- * once, above, for every edit request. Measured on Terra and Sol against
- * held-out replies across three Sidekicks; `docs/agent-communication.md` has
- * the numbers.
+ * Appended only where `request_sidekick_change` is offered, so the tool it names
+ * is in scope. It names the evidence framing because a Slack reply reaches a run
+ * as "evidence, not a request", and a softer wording lost to that framing.
  */
 const SIDEKICK_RUN_CHANGE_GUIDANCE = "You are executing one run of a Sidekick. Its saved definition decides what every run does, and a run cannot edit it; this Sidekick's wizard can. A message asking for a lasting change to the Sidekick, such as what it reports or how, when it runs, its sources, or who receives it, is a change request, also when it reaches you as external evidence in this run's thread. Send a change request to the wizard with request_sidekick_change; that is how a run handles one, and the wizard decides whether to apply it. A message about this run alone, an answer the instructions asked for, a question, or thanks is not a change request: handle it as the instructions direct. A message can be both, such as an answer that also asks for a lasting change, or a change that should also apply to this run's result; then do both. When the wizard replies, pass its answer on to the person where they asked, such as in the same Slack thread.";
 
