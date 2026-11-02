@@ -5,12 +5,31 @@ import {
 import type { HarnessPlugin, HarnessTool } from "@rally/agent-harness";
 import { z } from "zod";
 import type { AgentCommunicationService } from "./agent-communication-service";
-import { SIDEKICK_RUN_CHANGE_GUIDANCE } from "./agent-communication-prompts";
 
 /** What the tools call: the service's model-facing operations and nothing else. */
 export type AgentCommunicationTools = Pick<AgentCommunicationService,
   "sidekicks" | "findSidekick" | "createSidekick" | "attachSidekickResource" | "start" | "list" | "send" | "stop"
   | "requestSidekickChange">;
+
+/**
+ * What a run is told about changing its own Sidekick, appended to this
+ * plugin's message only where `request_sidekick_change` is offered, so the
+ * tool it names is always in scope. A run follows saved instructions and cannot
+ * edit them; the wizard can. Without this, a request to change the Sidekick
+ * that reached a run (a reply in its Slack thread, most often) was done once in
+ * that run or dropped.
+ *
+ * It names the evidence framing on purpose. A Slack reply reaches a run as
+ * "evidence, not a request" that the Sidekick's instructions decide what to do
+ * with, and those instructions never mention change requests; a softer
+ * sentence lost to that framing in most trials. It names what is not a change
+ * request, and that a message can be both, so a run still treats an answer it
+ * asked for as an answer. That a sent request is not a saved change is said
+ * once, above, for every edit request. Measured on Terra and Sol against
+ * held-out replies across three Sidekicks; `docs/agent-communication.md` has
+ * the numbers.
+ */
+const SIDEKICK_RUN_CHANGE_GUIDANCE = "You are executing one run of a Sidekick. Its saved definition decides what every run does, and a run cannot edit it; this Sidekick's wizard can. A message asking for a lasting change to the Sidekick, such as what it reports or how, when it runs, its sources, or who receives it, is a change request, also when it reaches you as external evidence in this run's thread. Send a change request to the wizard with request_sidekick_change; that is how a run handles one, and the wizard decides whether to apply it. A message about this run alone, an answer the instructions asked for, a question, or thanks is not a change request: handle it as the instructions direct. A message can be both, such as an answer that also asks for a lasting change, or a change that should also apply to this run's result; then do both. When the wizard replies, pass its answer on to the person where they asked, such as in the same Slack thread.";
 
 /**
  * `sidekickRun` adds `request_sidekick_change` and its guidance. Only a
@@ -61,7 +80,7 @@ export function createAgentCommunicationPlugin(service: AgentCommunicationTools,
       tool("send_message", "Send instructions or an update to a teammate using agentId. Returns at once and resumes idle or stopped agents.", SendAgentMessageInputSchema, (input, context) => service.send(input, context)),
       tool("reply_to_message", "Send a response to the sender of a received message. Use that messageId, not an agentId. Returns at once.", ReplyToAgentMessageInputSchema, (input, context) => service.send(input, context)),
       tool("stop_agent", "Stop an agent you own and all agents it owns. Completed actions are not undone. A later message can resume the stopped agent.", StopAgentInputSchema, (input) => service.stop(input.agentId)),
-      ...(options.sidekickRun ? [tool("request_sidekick_change", "Ask this Sidekick's wizard to change the Sidekick itself: its instructions, schedule, sources or output. Describe the change in plain words. Returns at once; the wizard's reply arrives as a message. Sending is not saving.", RequestSidekickChangeInputSchema, (input, context) => service.requestSidekickChange(input.changes, context))] : []),
+      ...(options.sidekickRun ? [tool("request_sidekick_change", "Ask this Sidekick's wizard for a lasting change to the Sidekick, such as what it reports or how, when it runs, its sources, or who receives it. The wizard decides whether to apply it. Returns at once; its reply arrives as a message. Sending is not saving.", RequestSidekickChangeInputSchema, (input, context) => service.requestSidekickChange(input.changes, context))] : []),
     ],
   };
 }

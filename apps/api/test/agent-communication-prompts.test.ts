@@ -130,15 +130,13 @@ describe("a Sidekick run asking its wizard for a change", () => {
       "SIDEKICK CHANGE REQUEST FROM A RUN",
       "Run: 00000000-0000-7000-8000-000000000003",
       "Asked by: the run itself, not a person",
-      "Evaluate it as your guidance for a change request from a run says, then reply to this message with the outcome.",
-      "",
       "Request:",
       "Add a weekly totals row.",
     ].join("\n"));
     expect(sidekickChangeRequestText(runId, { stopGeneration: 0, senderName: "Ada",
       source: { kind: "provider_thread", provider: "slack" } }, "Drop the desktop table."))
-      .toContain("\nAsked by: Ada, replying in the run's slack thread; they may not be a Rally member\n");
+      .toContain('\nAsked by: "Ada" (display name), replying in the run\'s Slack thread; they may not be a Rally member\n');
     expect(sidekickChangeRequestText(runId, { stopGeneration: 0, senderName: "Ada", source: { kind: "run" } }, "x"))
-      .toContain("\nAsked by: Ada, in the run\n");
+      .toContain('\nAsked by: "Ada" (display name), in the run\n');
   });
 });
