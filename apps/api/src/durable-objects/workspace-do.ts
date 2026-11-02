@@ -9878,7 +9878,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (jobs.length > 0) this.refreshScheduleAfterSlackWrite(workspaceId);
     for (const job of jobs) {
       try {
-        await this.env.ACTIVITY_QUEUE.send(SlackIngressQueueMessageSchema.parse({
+        await this.env.INTERACTIVE_QUEUE.send(SlackIngressQueueMessageSchema.parse({
           kind: "slack_ingress",
           region: this.env.AVALON_REGION,
           workspaceId,
