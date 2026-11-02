@@ -61,14 +61,13 @@ export const SUGGESTION_BACKFILL_MIGRATION: readonly string[] = [
 
 /**
  * WorkspaceDO migration 133: where a thread's pass stands. `resume_from` is
- * the conversation a stopped pass resumes at; `through_child` is the last
- * conversation the pass covers, recorded the first time the thread is worked
- * on. Without them a stopped pass started over at Main, and a thread gaining
- * conversations faster than one pass took never finished.
+ * the conversation id a stopped pass resumes at. `admitted_before` is the
+ * time (Unix ms) the thread was first worked on; a `conversation_view` pass
+ * covers only the conversations registered by then.
  */
 export const THREAD_BACKFILL_RESUME_MIGRATION: readonly string[] = [
   "ALTER TABLE thread_backfill ADD COLUMN resume_from TEXT",
-  "ALTER TABLE thread_backfill ADD COLUMN through_child TEXT",
+  "ALTER TABLE thread_backfill ADD COLUMN admitted_before INTEGER",
 ];
 
 /** One thread for one job. */
@@ -206,46 +205,56 @@ export function deferThreadBackfill(
 
 /**
  * The conversations of one listed thread, or `null` after settling a row with
- * nothing to do. A pass covers the conversations that existed when the thread
- * was first worked on, up to `through_child`: a conversation created later
- * runs the job's own live path, so a thread that keeps gaining them still
- * finishes. It resumes at `resume_from`, so a pass that stopped does not
- * repeat what it delivered.
+ * nothing to do. A pass resumes at `resume_from`, so one that stopped does not
+ * repeat what it finished. A `conversation_view` pass covers only the
+ * conversations registered by `admitted_before`, recorded the first time the
+ * thread is worked on: a conversation registered later projects through the
+ * ordinary lane, so a thread that keeps gaining them still finishes. The bound
+ * is a time, not an id, because ids are not ordered by creation (a UUIDv4 or
+ * name-derived id can sort above every later UUIDv7).
  */
 export function threadBackfillWork(
   sql: SqlStorage,
   input: { job: ThreadBackfillJob; workstreamId: string },
+  now: number = Date.now(),
 ): ThreadBackfillWork {
-  const row = sql.exec<{ resume_from: string | null; through_child: string | null }>(
-    "SELECT resume_from, through_child FROM thread_backfill WHERE job = ? AND workstream_id = ?",
+  const row = sql.exec<{ resume_from: string | null; admitted_before: number | null }>(
+    "SELECT resume_from, admitted_before FROM thread_backfill WHERE job = ? AND workstream_id = ?",
     input.job, input.workstreamId,
   ).toArray()[0];
   // Settled already, by an earlier delivery of the same row.
   if (!row) return null;
-  const all = conversationsToBackfill(sql, input);
-  if (all === null) return null;
-  let through = row.through_child;
-  if (through === null && all.length > 0) {
-    through = all.reduce((last, id) => (id > last ? id : last));
-    sql.exec("UPDATE thread_backfill SET through_child = ? WHERE job = ? AND workstream_id = ?",
-      through, input.job, input.workstreamId);
+  let admittedBefore = row.admitted_before;
+  if (admittedBefore === null) {
+    admittedBefore = now;
+    sql.exec("UPDATE thread_backfill SET admitted_before = ? WHERE job = ? AND workstream_id = ?",
+      admittedBefore, input.job, input.workstreamId);
   }
+  const all = conversationsToBackfill(sql, input, admittedBefore);
+  if (all === null) return null;
   const resumeFrom = row.resume_from ?? "";
-  const substreamIds = all.filter((id) => id >= resumeFrom && through !== null && id <= through);
+  const substreamIds = all.filter((id) => id >= resumeFrom);
   if (substreamIds.length) return { substreamIds };
   completeThreadBackfill(sql, input.job, input.workstreamId);
   return null;
 }
 
-/** Every conversation of a listed thread the job runs over, or `null` after settling a thread with none. */
+/**
+ * Every conversation of a listed thread the job runs over, in id order, or
+ * `null` after settling a thread with none. Only `conversation_view` is bounded
+ * by `admittedBefore`: its child registries record when each child was
+ * registered. A job added here without a live path for new conversations must
+ * not take that bound.
+ */
 function conversationsToBackfill(
   sql: SqlStorage,
   input: { job: ThreadBackfillJob; workstreamId: string },
+  admittedBefore: number,
 ): string[] | null {
   if (input.job === "conversation_view") {
     return sql.exec<{ substream_id: string }>(
-      `SELECT substream_id FROM parent_children WHERE parent_id = ? AND status = 'ready'
-       UNION SELECT substream_id FROM sidekick_children WHERE sidekick_id = ?
+      `SELECT substream_id FROM parent_children WHERE parent_id = ? AND status = 'ready' AND created_at <= ?
+       UNION SELECT substream_id FROM sidekick_children WHERE sidekick_id = ? AND created_at <= ?
        UNION SELECT '0' WHERE EXISTS (SELECT 1 FROM channels WHERE workstream_id = ?)
          OR EXISTS (SELECT 1 FROM spaces WHERE space_id = ?)
          OR EXISTS (SELECT 1 FROM parent_metadata WHERE parent_id = ?)
@@ -253,8 +262,8 @@ function conversationsToBackfill(
        ORDER BY substream_id`,
       // HostedParent.childRegistry also supplies an implicit Main for legacy
       // parents whose registry has not materialized its "0" row yet.
-      input.workstreamId, input.workstreamId, input.workstreamId, input.workstreamId,
-      input.workstreamId, input.workstreamId,
+      input.workstreamId, admittedBefore, input.workstreamId, admittedBefore, input.workstreamId,
+      input.workstreamId, input.workstreamId, input.workstreamId,
     ).toArray().map((row) => row.substream_id);
   }
   const thread = sql.exec<{ archived_at: number | null }>(

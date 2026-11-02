@@ -120,7 +120,7 @@ Each backfill delivery wakes a listed SubstreamAgent and arms any pending
 projection work seeded by migration 78. It does not re-mark delivered history.
 The parent remains claimed and later children wait until the current source
 has confirmed delivery of its pending rows to WorkspaceDO; the next pass
-resumes at that child, and a pass ends at the last child that existed when the
+resumes at that child, and a pass covers only children registered before the
 backfill first reached the parent
 ([`thread-backfill.md`](thread-backfill.md#how-it-works)).
 A registered child whose source object is absent, preparing, quarantined, or

@@ -228,8 +228,10 @@ describe("a one-off job over every thread", () => {
 
   it("resumes a stopped preview pass where it stopped, and ends at the conversations it started with", async () => {
     const first = "00000000-0000-7000-8000-00000000e811";
-    const second = "00000000-0000-7000-8000-00000000e812";
-    const later = "00000000-0000-7000-8000-00000000e813";
+    const second = "00000000-0000-7000-8000-00000000e813";
+    // Registered later, with an id that sorts between the two: ids are not
+    // ordered by creation, so only the time bound keeps it out.
+    const later = "00000000-0000-7000-8000-00000000e812";
     await project(1);
     await runInDurableObject(workspace(), (_instance, state) => {
       for (const [substreamId, kind] of [["0", "main"], [first, "child"], [second, "child"]]) {
@@ -242,11 +244,11 @@ describe("a one-off job over every thread", () => {
     const backfill = { ...message(), job: "conversation_view" as const };
 
     expect(await workspace().threadBackfillWork(backfill)).toEqual({ substreamIds: ["0", first, second] });
-    // The pass stops at `first`, and a conversation is created before it comes round again.
+    // The pass stops at `first`, and a conversation is registered before it comes round again.
     expect(await workspace().deferThreadBackfill({ ...backfill, resumeFrom: asSubstreamId(first) })).toBe(true);
     await runInDurableObject(workspace(), (_instance, state) => {
       state.storage.sql.exec(`INSERT INTO parent_children(parent_id, substream_id, kind, created_at)
-        VALUES (?, ?, 'child', 2)`, THREAD, later);
+        VALUES (?, ?, 'child', ?)`, THREAD, later, Date.now() + 60_000);
     });
     expect(await workspace().threadBackfillWork(backfill)).toEqual({ substreamIds: [first, second] });
     // Never back over what was delivered, and never from a claim the alarm has replaced.
