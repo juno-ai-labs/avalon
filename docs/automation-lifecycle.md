@@ -1676,7 +1676,8 @@ background agent and ends its turn, and the agent's reply wakes it with that
 reply as the reason. The review's agents are the ones the wizard started
 (`ownedAgentDescendants` of the wizard), not every address under the
 Sidekick: a run of the same Sidekick passing on a change request has that
-address shape too. A turn a person woke is theirs without reading the
+address shape too. The delegation is read only when an agent wrote after the
+open notice, so most submissions read the conversation alone. A turn a person woke is theirs without reading the
 conversation, and a request from any other agent (another Thread's Rally
 relaying an edit, or one of this Sidekick's runs) ends the review, as the wake
 or as a row; otherwise a review stays open until a person speaks or the next

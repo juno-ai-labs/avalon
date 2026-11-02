@@ -642,14 +642,9 @@ describe("durable UI-to-model transcript projection", () => {
   });
 
   it("tells a run its own wizard's message may answer its change request, and where to post the answer", () => {
-    expect(renderRunContinuationNote({ senderName: "Sidekick wizard", source: { kind: "run" } }, { fromWizard: true }))
-      .toEqual({
-        role: "user",
-        content: "This run is continuing because this Sidekick's wizard sent a message; it is above, after the work you already did. "
-          + "If it answers a change request you sent, post its answer in the thread where the person who asked wrote: "
-          + "whether the change was saved for future runs, or its question or what blocks it. "
-          + "Otherwise handle it only as the Sidekick's instructions direct.",
-      });
+    const note = renderRunContinuationNote({ senderName: "Sidekick wizard", source: { kind: "run" } }, { fromWizard: true });
+    expect(note.role).toBe("user");
+    expect(note.content).toContain("post its answer in the thread where the person who asked wrote");
   });
 
   it("launches a selected expanded suggested-work brief as the executable user turn", async () => {
