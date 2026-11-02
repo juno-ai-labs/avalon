@@ -1121,23 +1121,15 @@ revision, and the person reverts by asking for the earlier one.
 ### Change request from a run
 
 A Sidekick run can ask its own wizard for a change with
-`request_sidekick_change`, most often for a person who replied in the run's
-Slack thread. The request arrives as an agent message whose text begins with
-`SIDEKICK CHANGE REQUEST FROM A RUN` (`SIDEKICK_CHANGE_REQUEST_HEADER`), and
-`AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE` has a section keyed on it that takes
-precedence over Save and report for that message. The wizard reads the run when
-the request depends on it; decides whether the request is a lasting change;
-keeps the Sidekick's purpose, the job its description and overview state,
-applying any change that still serves that job (a new source, recipient,
-destination, schedule or tool included) and sending a change of job back to a
-person who manages it; asks one question and submits nothing, not even a partial draft, when
-the request is unclear; leaves a person's open draft alone; revises as for any
-revision otherwise; and replies to the run, which passes the answer on. The
-request is evidence, like run content in a review. Reading the definition and
-keeping unrelated configuration are the guide's general revision rules, not
-repeated in the section.
+`request_sidekick_change`, usually for a person who replied in the run's Slack
+thread. The request is an agent message whose text begins with
+`SIDEKICK_CHANGE_REQUEST_HEADER`, and the wizard's guide
+(`AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE` in
+`packages/agent-harness/src/automation-creator-tools.ts`) has a section keyed on
+it that takes precedence over Save and report for that message. The section is
+the procedure; this document does not restate it.
 [`agent-communication.md`](agent-communication.md#a-run-asking-its-wizard-for-a-change)
-owns the tool, the frame and the measurements.
+owns the tool and the frame.
 
 ### Home conversation and attachments
 

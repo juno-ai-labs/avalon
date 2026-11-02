@@ -294,44 +294,19 @@ at a later Bind boundary during a participant-started run follow the same rule.
 
 ### A run asking its wizard for a change
 
-A Sidekick run child (`automationRun` set) also gets
-`request_sidekick_change({ changes })`, and this plugin's message gains one
-paragraph of guidance (`SIDEKICK_RUN_CHANGE_GUIDANCE`, beside the tool so the
-name it uses is always in scope): a request for a lasting change to the
-Sidekick goes to its wizard, even when it arrives as external evidence; an
-answer the instructions asked for, a question, thanks, or a request about this
-run alone is not one; a message can be both, and then the run does both; and
-the wizard's answer goes back to the person where they asked. That a sent
-request is not a saved change is the rule above for every edit request. No
-other conversation is offered the tool, and the service refuses one that calls
-it anyway with `sidekick_change_outside_run`.
+A Sidekick run child (`automationRun` set) also gets `request_sidekick_change`
+and a paragraph of guidance in this plugin's message: a request for a lasting
+change to the Sidekick goes to its wizard, even when it reaches the run as
+external evidence. No other conversation is offered the tool, and the service
+refuses one that calls it (`sidekick_change_outside_run`).
 
-The name follows the family's verb-and-object form (`find_sidekick`,
-`create_sidekick`) and says the call is a request, which the wizard may decline,
-rather than an edit. It has no recipient argument: the host names the recipient
-from `automationRun.automationId`, so the model supplies only the text and a run
-reaches only its own wizard. Delivery is the ordinary `send`: the same Sidekick
-contact check, team join, effect-derived message id and reply route as
-`send_message`.
-
-The host wraps the text in a plain-text frame (`sidekickChangeRequestText`):
-`SIDEKICK CHANGE REQUEST FROM A RUN` (`SIDEKICK_CHANGE_REQUEST_HEADER`), then
-`Run:`, `Run turn started by:` (the display name of whoever started the run's
-current turn, quoted and labelled as the run's continuation note quotes it, with
-control characters and lone surrogates dropped so quoting cannot overrun the
-reserve; whether they replied in a bound provider thread; and that they may not
-be a Rally member), and the run's words under `Request:`. The line names who
-started the turn rather than who asked, because a reply that arrives while the
-turn is executing joins it without changing the run's input; who asked is in
-the request, which the tool's parameter tells the run to include.
-The frame carries no instruction of its own and comes from the run's input
-rather than the model, so the wizard can trust it. The agent-message renderer
-puts its sender and message id lines above it, so the wizard's guidance keys on
-the text beginning with the header, not on the message's first line
-([`automation-lifecycle.md`](automation-lifecycle.md#change-request-from-a-run)).
-The message is from the run's own address, so the wizard's reply goes back to
-the run like any reply. The tool is on `AGENT_MESSAGE_TOOL_NAMES`, so the client
-counts it as a sent message.
+The host names the recipient from `automationRun.automationId`, so a run
+reaches only its own wizard; the model supplies only `changes`. Delivery is the
+ordinary `send`, with its contact check, team join and reply route. The host
+frames the text (`sidekickChangeRequestText`) under `SIDEKICK_CHANGE_REQUEST_HEADER`
+with `Run:` and `Run turn started by:` lines it derives from the run's input;
+the wizard's guide has a section keyed on that header. The tool is on
+`AGENT_MESSAGE_TOOL_NAMES`, so the client counts it as a sent message.
 
 **How an answer or question gets back to the person.** Nothing in the host
 routes the wizard's words to Slack; the run does it with the tools it already
@@ -339,15 +314,11 @@ has. The wizard answers with `reply_to_message`, which admits an agent message
 into the run child because the request came from the run's address. Any input
 to a run child continues that run (`continueSidekickRun`), so the run wakes
 with its own history, including the Slack post it made and that post's
-timestamp, and its guidance tells it to pass the answer on where the person
-asked: it calls the Slack plugin's `send_message` with the channel and that
-timestamp as `thread_ts`. When the wizard asked a question, the person's answer
-in the same thread follows the binding back to the run like any reply, and the
-run sends it to the wizard as a new `request_sidekick_change`, sometimes also
-answering the question with `reply_to_message`; the wizard connects it to its
-question from its own conversation history. Because the
-model chooses the reply's destination, a run can post somewhere else; measured
-end to end, the answer reached the thread in all but two of 26 runs.
+timestamp, and calls the Slack plugin's `send_message` with that timestamp as
+`thread_ts`. A person's answer to a wizard question follows the thread binding
+back to the run like any reply, and the run sends it on as a new request.
+Because the model chooses the reply's destination, a run can post somewhere
+else.
 
 
 ## Invariants
@@ -434,119 +405,38 @@ rosters, reply routes, replay, and descendant ownership. The latter clears only
 its own dedicated workspace's new tables between tests. The execution suite also covers hidden idempotent creation, inherited principal,
 stop/replay/continuation, a worker reply to the foreground, and independently
 owned Sidekick contact, the refusal from a thread that does not own a Sidekick,
-the ownership flags from a conversation that acts for no thread, a guest's
-grant-only contact, a run's model calling `request_sidekick_change`, the
-framed request landing in its wizard from the run's own address, the wizard's
-`reply_to_message` answer landing back in that run child and continuing it, and
-the refusal outside a run. `apps/api/test/agent-communication-prompts.test.ts`
-pins the frame, the worst-case frame fitting its reserve, the tool's transcript
-prose, and that only a run is offered the tool. Complete desktop behavior
-remains an implementation gate.
+the ownership flags from a conversation that acts for no thread, and a guest's
+grant-only contact. Complete desktop behavior remains an implementation gate.
 
 ## Changelog
 
 ### 2026-11-02 — A Sidekick run asks its own wizard for a change
 
-**What changed:** A Sidekick run gets `request_sidekick_change`, which takes a
-plain-language change and sends it, framed by the host under a fixed first
-line, to the wizard of the run's own Sidekick. Its guidance tells the run to use
-it for changes to the Sidekick itself and to tell the person, where they asked,
-only what the wizard confirmed. The wizard gets a section on evaluating one:
-decide whether it is a lasting change, keep the Sidekick's purpose, ask one
-question when it is unclear, change only what was asked, and reply.
+**What changed:** A Sidekick run gets `request_sidekick_change`, which sends a
+plain-language change, framed by the host, to the wizard of the run's own
+Sidekick. The wizard's guide gains a section for evaluating one: keep the
+Sidekick's purpose, ask one question when it is unclear, and reply.
 
 **Why:** A reply in a Slack thread bound to a Sidekick run reaches that run, not
-the wizard. A person who replied "change this report" was asking for a
-Sidekick-level change, and the run had no guidance for it: it follows saved
-instructions and cannot edit them. It could reach the wizard with
-`send_message`, but nothing told it to, so the request was done once in that
-run or dropped.
-
-The guidance names the evidence framing outright. Every Slack reply reaches a
-run as "evidence, not a request" that the Sidekick's instructions decide what to
-do with, and the instructions never mention change requests. A softer first
-version lost to that framing: replaying the real continued-run request for "show
-this all in a single table with 3 columns x, y, and z" on a daily report, GPT-5.6
-Terra asked the wizard in 2 of 10 trials and otherwise answered that the saved
-format stands. To check the wording was not fitted to that one reply, it was
-measured on held-out replies across three Sidekicks (the daily report, a weekly
-DM that asks a founder for an update, and a pull-request digest): six lasting
-changes and eight replies that must not trigger it, including the founder's
-answer, a one-off redo, questions, thanks, and an instruction to leak the bot
-token, then six more written after the first results.
-
-| Model | Guidance | Change requests sent | Non-changes left alone |
-| --- | --- | ---: | ---: |
-| Terra | first version | 27/35 | 40/40 |
-| Terra | second version | 43/45 | 60/60 |
-| Sol | second version | 27/27 | 36/36 |
-| Terra | shipped | 26/27 | 36/36 |
-| Sol | shipped | 27/27 | 36/36 |
-
-Terra ran 5 trials per reply on the first two versions and 3 on the shipped one;
-Sol ran 3. The first version was measured on the first round only, before the
-six later replies were written. Each trial is the model's first response to a
-request captured from the real harness. The misses were replies that are both
-an answer and a change ("Monthly is plenty, please stop asking me every week"
-and "Stop DMing me about this" to the weekly DM): run 10 more times each on the
-shipped wording, they went to the wizard 38 of 40 times. The wording was not
-tuned against them.
-
-The whole loop was then run on Terra in the real harness, with only Slack's API
-doubled: the reply through Slack ingress, the run, the wizard, the saved
-revision and the run's answer in the thread. A first pass showed the run kept
-the wizard's answer in its own conversation or posted it home in two of four
-cases, so the guidance says to pass it on where the person asked. Across the
-later runs, removing a section was saved 4 of 4 times, moving the schedule to
-Mondays 4 of 4 (the time kept from the definition), and emailing the report to
-an outside address was refused as widening reach 2 of 2 under the first version
-of the wizard's rule. Under the purpose rule that replaced it, replacing the
-signup report with an AWS bill summary was refused as a different job 2 of 2,
-and the outside email request was attempted and stopped only because the
-Sidekick has no mail connection, 2 of 2. A second reply refining a saved change
-went through the run to the wizard and was saved as the next revision 3 of 3.
-For "also add the other metric we talked about yesterday", the wizard asked
-which metric, the run posted the question in the thread, and the answer ("the
-activation rate…") went back to the wizard and was saved, 2 of 2.
-The answer reached the
-person in the report's thread in 24 of 26 runs; in one of the other two the run
-re-posted the report at the top of the channel instead. "A single table with 3
-columns x, y, and z" is the open case: the wizard asked what the columns mean
-in 3 of 3 runs before the prompt audit below and 2 of 4 on the shipped wording,
-and otherwise saved a reading (usually literal `x`, `y`, `z` headings) and told
-the person what it saved. Three rewrites of that step meant to make it ask more
-often asked 1 of 2, 3 of 6 and 1 of 4 times, so the step keeps its original
-wording rather than one fitted to that reply.
-
-All of the prompt text was then checked against
-[`writing-prompts.md`](writing-prompts.md) and [`agent-tools.md`](agent-tools.md).
-That removed rules said twice (who asked, saved only after confirmation, the
-wizard's general revision steps, and a line in the frame that repeated the
-wizard's guidance), gave one list of change kinds to the tool, the run and the
-wizard, added the tie-breaks for a message that is both an answer and a change
-and for asking against the general partial-draft rule, quoted the display name,
-and moved the run guidance into the plugin that owns its tool.
+the wizard. A person asking for a lasting change ("show this all in one
+table") had no path to the definition: a run follows saved instructions and
+cannot edit them, so the request was done once in that run or dropped. The
+guidance names the evidence framing outright because a softer wording lost to
+it: every Slack reply reaches a run as "evidence, not a request", and the
+Sidekick's instructions never mention change requests.
 
 **Considered and rejected:** Prompt guidance alone, pointing the run at
-`sidekicks_list` and `send_message`. It needs two calls and an id the model must
-copy, and it leaves the recipient to the model. A run's input can be an
-untrusted Slack reply, so the host fixes the recipient instead. Routing a Slack
-reply straight to the wizard was rejected too: the run holds the context of
-what it reported, and most replies are about this run, not the Sidekick.
+`sidekicks_list` and `send_message`: two calls, an id the model must copy, and a
+recipient left to a model reading untrusted text. Routing a Slack reply straight
+to the wizard: the run holds the context of what it reported, and most replies
+are about that run.
 
 **Consequences:** The tool grants no authority a run lacked; it passes the same
-contact check as any message to the wizard. The wizard decides whether a
-request fits, and the frame tells it when the asker may not be a Rally member.
-Anyone in a bound thread can reach the wizard this way, including someone who
-is not a Rally member. The wizard's section keeps only the Sidekick's purpose,
-the job its description and overview state: it applies any change that still
-serves that job, including a new source, recipient, destination, schedule or
-tool, and sends a change of job back to a person who manages the Sidekick. A
-first version refused any widening of reach, the set a scheduled self-review may
-not add; the team chose purpose as the line instead, so a reply in the thread
-can, for example, add an outside email recipient to a report. Tightening that
-again, or limiting what a non-member's request may change, belongs in the
-contact check or the wizard's section, not the tool.
+contact check as any message to the wizard. But the asker can be anyone in a
+bound thread, or content a run processed, and the wizard's line is the
+Sidekick's purpose rather than its reach, so a change that keeps the job, an
+added recipient included, can be saved from such a request. A tighter rule
+belongs in the wizard's section or the contact check, not the tool.
 
 ### 2026-10-23 — Confirm the requested revision before reporting a saved edit
 
