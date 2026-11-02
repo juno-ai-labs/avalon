@@ -1,0 +1,523 @@
+[
+  {
+    "name": "search",
+    "description": "Search Slack messages, files, channels, and users visible to the authorized principal. Prefer search_messages when only messages are needed.",
+    "pagination": {
+      "cursorParameter": "cursor"
+    },
+    "capability": "slack.search",
+    "mode": "read",
+    "idempotency": "safe",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What to look for, in plain words. Slack's own search operators work too, for example `in:#design`, `from:@dana`, `has:link`, and `\"a quoted phrase\"`. A query nothing matches comes back as an empty result rather than an error, so widen the words before concluding the workspace has nothing."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20,
+          "description": "Maximum results to return across all four kinds. Defaults to 20."
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Send `null` for the first page. To continue an earlier call, pass back the exact `next_cursor` string a previous call to this tool returned, with that call's other arguments unchanged. It is an opaque cursor: a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token; when you have no token from a previous call, the value is `null`. A result whose `next_cursor` is `null` is the last page: stop there rather than calling again."
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "search_messages",
+    "description": "Search Slack messages relevant to a query. Workspace-bot search is limited by Slack to a user-initiated event and public-channel access.",
+    "pagination": {
+      "cursorParameter": "cursor"
+    },
+    "capability": "slack.search",
+    "mode": "read",
+    "idempotency": "safe",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What to look for in message text, in plain words. Narrow to one conversation or one author with `channel_id` and `author_user_id` rather than writing `in:` or `from:` operators here."
+        },
+        "channel_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "description": "Return only messages posted in one conversation. It is a Slack conversation id, such as `C0123ABCDEF` for a public channel, `G0123ABCDEF` for a private channel or group message, or `D0123ABCDEF` for a direct message; get one from find_channels. A channel name such as `#design` is not an id and is refused. Omit it, or send `null`, to search every conversation the credential can see. A well-formed id for a conversation the credential cannot see is not refused — it returns no matches rather than an error."
+        },
+        "author_user_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "description": "Return only messages written by one person. It is a Slack user id such as `U0123ABCDEF`; get one from find_users, and a display name or email address is not one. Omit it, or send `null`, for any author. A well-formed id for the wrong person is not refused — it returns no matches rather than an error."
+        },
+        "after": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Return only messages posted after this Unix time, in whole seconds — the part of a message `ts` before the dot, so `1767225600` is 2026-01-01. Omit it, or send `null`, for no lower bound. Milliseconds are a date tens of thousands of years out, which matches nothing and reads as an empty result."
+        },
+        "before": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Return only messages posted before this Unix time, in whole seconds — the part of a message `ts` before the dot, so `1767225600` is 2026-01-01. Omit it, or send `null`, for no upper bound. Milliseconds are a date tens of thousands of years out, so every message is before it and the bound does nothing."
+        },
+        "sort": {
+          "type": "string",
+          "enum": [
+            "score",
+            "timestamp"
+          ],
+          "description": "Order matches by `score`, which is Slack's relevance ranking, or by `timestamp`, which is when they were posted. Defaults to `score`."
+        },
+        "sort_dir": {
+          "type": "string",
+          "enum": [
+            "asc",
+            "desc"
+          ],
+          "description": "`desc` puts the best-ranked or most recent match first, `asc` the reverse. Defaults to `desc`."
+        },
+        "include_bots": {
+          "type": "boolean",
+          "description": "Include messages posted by bots and apps. Defaults to false, which returns only what people wrote."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20,
+          "description": "Maximum messages to return. Defaults to 20."
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Send `null` for the first page. To continue an earlier call, pass back the exact `next_cursor` string a previous call to this tool returned, with that call's other arguments unchanged. It is an opaque cursor: a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token; when you have no token from a previous call, the value is `null`. A result whose `next_cursor` is `null` is the last page: stop there rather than calling again."
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "find_users",
+    "description": "Find Slack users by name, display name, real name, email address, or user ID.",
+    "capability": "slack.users.read",
+    "mode": "read",
+    "idempotency": "safe",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Part of a name, display name, real name, email address, or user id to match, for example `Dana`, `dana@example.com`, or `U0123ABCDEF`. Matching is case-insensitive and on the stored profile only, so a nickname nobody has typed into Slack finds no one rather than failing."
+        },
+        "include_deleted": {
+          "type": "boolean",
+          "description": "Include deactivated accounts. Defaults to false."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "description": "Maximum users to return. Defaults to 50."
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "find_channels",
+    "description": "Find Slack conversations by name or conversation ID within the authorized credential's visibility.",
+    "capability": "slack.users.read",
+    "mode": "read",
+    "idempotency": "safe",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Part of a conversation name or a conversation id to match, for example `design` or `C0123ABCDEF`. Match it against the name as Slack stores it, without the leading `#`. Only conversations the credential can already see are searched, so a private channel it was never invited to is absent rather than refused."
+        },
+        "include_archived": {
+          "type": "boolean",
+          "description": "Include archived conversations. Defaults to false."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "description": "Maximum conversations to return. Defaults to 50."
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "read_message_context",
+    "description": "Read a bounded window around one Slack message timestamp.",
+    "capability": "slack.messages.read",
+    "mode": "read",
+    "idempotency": "safe",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "channel_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The conversation the message is in. It is a Slack conversation id, such as `C0123ABCDEF` for a public channel, `G0123ABCDEF` for a private channel or group message, or `D0123ABCDEF` for a direct message; get one from find_channels. A channel name such as `#design` is not an id and is refused."
+        },
+        "message_ts": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The message to center the window on. Copy Slack's `ts` value exactly as a returned message carries it, for example `1735689600.123456`; it is an id, not a date. Trimming its digits or converting it to a date names no message, which reads as an empty result rather than an error."
+        },
+        "before": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 50,
+          "description": "How many messages posted before the target one to include. Defaults to 10; 0 returns none."
+        },
+        "after": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 50,
+          "description": "How many messages posted after the target one to include. Defaults to 5; 0 returns none."
+        }
+      },
+      "required": [
+        "channel_id",
+        "message_ts"
+      ]
+    }
+  },
+  {
+    "name": "read_channel",
+    "description": "Read messages from a Slack conversation.",
+    "pagination": {
+      "cursorParameter": "cursor"
+    },
+    "capability": "slack.messages.read",
+    "mode": "read",
+    "idempotency": "safe",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "channel_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The conversation to read. It is a Slack conversation id, such as `C0123ABCDEF` for a public channel, `G0123ABCDEF` for a private channel or group message, or `D0123ABCDEF` for a direct message; get one from find_channels. A channel name such as `#design` is not an id and is refused."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Maximum messages to return, newest first. Defaults to 50."
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Send `null` for the first page. To continue an earlier call, pass back the exact `next_cursor` string a previous call to this tool returned, with that call's other arguments unchanged. It is an opaque cursor: a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token; when you have no token from a previous call, the value is `null`. A result whose `next_cursor` is `null` is the last page: stop there rather than calling again."
+        }
+      },
+      "required": [
+        "channel_id"
+      ]
+    }
+  },
+  {
+    "name": "read_thread",
+    "description": "Read a Slack message thread.",
+    "pagination": {
+      "cursorParameter": "cursor"
+    },
+    "capability": "slack.messages.read",
+    "mode": "read",
+    "idempotency": "safe",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "channel_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The conversation the thread is in. It is a Slack conversation id, such as `C0123ABCDEF` for a public channel, `G0123ABCDEF` for a private channel or group message, or `D0123ABCDEF` for a direct message; get one from find_channels. A channel name such as `#design` is not an id and is refused."
+        },
+        "thread_ts": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The thread's parent message, which is the `thread_ts` a reply carries, or the `ts` of the message the thread hangs off. Copy Slack's `ts` value exactly as a returned message carries it, for example `1735689600.123456`; it is an id, not a date. Trimming its digits or converting it to a date names no message, which reads as an empty result rather than an error."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Maximum messages to return, including the parent. Defaults to 100."
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Send `null` for the first page. To continue an earlier call, pass back the exact `next_cursor` string a previous call to this tool returned, with that call's other arguments unchanged. It is an opaque cursor: a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token; when you have no token from a previous call, the value is `null`. A result whose `next_cursor` is `null` is the last page: stop there rather than calling again."
+        }
+      },
+      "required": [
+        "channel_id",
+        "thread_ts"
+      ]
+    }
+  },
+  {
+    "name": "read_file",
+    "description": "Read metadata and bounded textual content for a Slack file.",
+    "capability": "slack.files.read",
+    "mode": "read",
+    "idempotency": "safe",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "file_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The Slack file id, such as `F0123ABCDEF`. Messages that share a file carry it in their `files` entries; it is not a filename or a download URL."
+        }
+      },
+      "required": [
+        "file_id"
+      ]
+    }
+  },
+  {
+    "name": "send_message",
+    "description": "Send a Slack message as the connected user or installed workspace bot.",
+    "capability": "slack.messages.write",
+    "mode": "write",
+    "idempotency": "record_before_execute",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "channel_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Where to post the message. It is a Slack conversation id, such as `C0123ABCDEF` for a public channel, `G0123ABCDEF` for a private channel or group message, or `D0123ABCDEF` for a direct message; get one from find_channels. A channel name such as `#design` is not an id and is refused."
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40000,
+          "description": "The message body, in Slack's mrkdwn: `*bold*`, `_italic_`, `` `code` ``, `<https://example.com|a link>`, `<@U0123ABCDEF>` to mention a person, and `<#C0123ABCDEF>` to link a channel. A bare `@dana` posts the literal text and notifies no one."
+        },
+        "thread_ts": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "description": "Post as a reply inside an existing thread, as that thread's parent `ts` copied exactly, for example `1735689600.123456`. Omit it, or send `null`, to post a new top-level message in the conversation."
+        }
+      },
+      "required": [
+        "channel_id",
+        "text"
+      ]
+    }
+  },
+  {
+    "name": "create_conversation",
+    "description": "Create a Slack channel or open a direct or group message as the connected user or installed workspace bot. Provide exactly one: `name` for a channel, or `user_ids` for a direct or group message.",
+    "capability": "slack.conversations.write",
+    "mode": "write",
+    "idempotency": "record_before_execute",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9_-]+$",
+          "description": "Channel name without `#`, using lowercase letters, digits, hyphens, or underscores, for example `launch-oct`. Omit it when using `user_ids`."
+        },
+        "user_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "One to eight Slack user IDs from `find_users`, for example `[\"U0123ABCDEF\"]`. One ID opens a direct message; multiple IDs open a group message. Omit it when using `name`."
+        },
+        "is_private": {
+          "type": "boolean",
+          "description": "Whether a channel created with `name` is private. Defaults to false and is ignored for direct and group messages. Channel privacy cannot be changed later through these tools."
+        }
+      }
+    }
+  },
+  {
+    "name": "add_reaction",
+    "description": "Add an emoji reaction to a Slack message as the connected user or installed workspace bot.",
+    "capability": "slack.reactions.write",
+    "mode": "write",
+    "idempotency": "record_before_execute",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "channel_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The conversation holding the message to react to. It is a Slack conversation id, such as `C0123ABCDEF` for a public channel, `G0123ABCDEF` for a private channel or group message, or `D0123ABCDEF` for a direct message; get one from find_channels. A channel name such as `#design` is not an id and is refused."
+        },
+        "timestamp": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The message to react to. Copy Slack's `ts` value exactly as a returned message carries it, for example `1735689600.123456`; it is an id, not a date. Trimming its digits or converting it to a date names no message, which reads as an empty result rather than an error."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "pattern": "^[a-zA-Z0-9_+-]+$",
+          "description": "The emoji's Slack name without the surrounding colons, for example `white_check_mark` or `tada`. A literal `✅`, or a name this workspace has no emoji for, is refused."
+        }
+      },
+      "required": [
+        "channel_id",
+        "timestamp",
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "read_user_profile",
+    "description": "Read a Slack user profile.",
+    "capability": "slack.users.read",
+    "mode": "read",
+    "idempotency": "safe",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "user_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The Slack user id, such as `U0123ABCDEF`; get one from find_users. A display name or email address is not an id and is refused."
+        }
+      },
+      "required": [
+        "user_id"
+      ]
+    }
+  },
+  {
+    "name": "list_channel_members",
+    "description": "List members of a Slack conversation.",
+    "pagination": {
+      "cursorParameter": "cursor"
+    },
+    "capability": "slack.users.read",
+    "mode": "read",
+    "idempotency": "safe",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "channel_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The conversation whose members to list. It is a Slack conversation id, such as `C0123ABCDEF` for a public channel, `G0123ABCDEF` for a private channel or group message, or `D0123ABCDEF` for a direct message; get one from find_channels. A channel name such as `#design` is not an id and is refused."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "description": "Maximum member ids to return in one page. Defaults to 200."
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Send `null` for the first page. To continue an earlier call, pass back the exact `next_cursor` string a previous call to this tool returned, with that call's other arguments unchanged. It is an opaque cursor: a long provider-generated string, not a page number, an offset, or an index. Never construct, guess, shorten, or increment this token; when you have no token from a previous call, the value is `null`. A result whose `next_cursor` is `null` is the last page: stop there rather than calling again."
+        }
+      },
+      "required": [
+        "channel_id"
+      ]
+    }
+  }
+]
