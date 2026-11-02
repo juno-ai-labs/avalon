@@ -292,6 +292,26 @@ Questions from agent exchanges use replies instead of participant forms. This
 guidance is present in every Sidekick authoring execution, so requests arriving
 at a later Bind boundary during a participant-started run follow the same rule.
 
+### A run asking its wizard for a change
+
+A Sidekick run child (`automationRun` set) also gets
+`request_sidekick_change({ changes })` and one paragraph of guidance
+(`SIDEKICK_RUN_CHANGE_GUIDANCE`): a request to change the Sidekick itself goes
+to its wizard, and the run reports it saved only after the wizard confirms. No
+other conversation is offered the tool, and the service refuses one that calls
+it anyway with `sidekick_change_outside_run`.
+
+The host names the recipient from `automationRun.automationId`, so the model
+supplies only the text and a run reaches only its own wizard. Delivery is the
+ordinary `send`: the same Sidekick contact check, team join, effect-derived
+message id and reply route as `send_message`. The host wraps the text in a frame
+(`sidekickChangeRequestText`) that names the run and, when the turn was a
+continuation, who asked and whether from a bound provider thread, where the
+sender may not be a Rally member. The frame comes from the run's input rather
+than the model, so the wizard can trust it. The message is from the run's own
+address, so the wizard's reply goes back to the run like any reply. The tool is on `AGENT_MESSAGE_TOOL_NAMES`,
+so the client counts it as a sent message.
+
 
 ## Invariants
 
@@ -305,6 +325,10 @@ at a later Bind boundary during a participant-started run follow the same rule.
   record an ownership edge without its membership.
 - WorkspaceDO is the sole team authority; a D1 fallback would create divergent
   membership decisions.
+- A run's change request goes only to its own Sidekick's wizard. The recipient
+  comes from the run's `automationRun`, never from a model argument; a field
+  for it would let a run's model, steered by a Slack reply, address another
+  Sidekick's wizard.
 - Only the owning thread may message a thread-owned Sidekick's authoring agent,
   and ownership is per thread, Breakouts included. The host answers it; a
   conversation that acts for no thread owns nothing. Returning a raw owner id to
@@ -373,10 +397,40 @@ rosters, reply routes, replay, and descendant ownership. The latter clears only
 its own dedicated workspace's new tables between tests. The execution suite also covers hidden idempotent creation, inherited principal,
 stop/replay/continuation, a worker reply to the foreground, and independently
 owned Sidekick contact, the refusal from a thread that does not own a Sidekick,
-the ownership flags from a conversation that acts for no thread, and a guest's
-grant-only contact. Complete desktop behavior remains an implementation gate.
+the ownership flags from a conversation that acts for no thread, a guest's
+grant-only contact, a run's model calling `request_sidekick_change` and the
+framed request landing in its wizard from the run's own address, and the
+refusal outside a run. `apps/api/test/agent-communication-prompts.test.ts` pins
+the frame and that only a run is offered the tool. Complete desktop behavior
+remains an implementation gate.
 
 ## Changelog
+
+### 2026-11-02 — A Sidekick run asks its own wizard for a change
+
+**What changed:** A Sidekick run gets `request_sidekick_change`, which takes a
+plain-language change and sends it, framed by the host, to the wizard of the
+run's own Sidekick. Its guidance tells the run to use it for changes to the
+Sidekick itself and to report a change saved only after the wizard confirms.
+
+**Why:** A reply in a Slack thread bound to a Sidekick run reaches that run, not
+the wizard. A person who replied "change this report" was asking for a
+Sidekick-level change, and the run had no guidance for it: it follows saved
+instructions and cannot edit them. It could reach the wizard with
+`send_message`, but nothing told it to, so the request was done once in that
+run or dropped.
+
+**Considered and rejected:** Prompt guidance alone, pointing the run at
+`sidekicks_list` and `send_message`. It needs two calls and an id the model must
+copy, and it leaves the recipient to the model. A run's input can be an
+untrusted Slack reply, so the host fixes the recipient instead. Routing a Slack
+reply straight to the wizard was rejected too: the run holds the context of
+what it reported, and most replies are about this run, not the Sidekick.
+
+**Consequences:** The tool grants no authority a run lacked; it passes the same
+contact check as any message to the wizard. The wizard decides whether a
+request fits, and the frame tells it when the asker may not be a Rally member.
+A change to who may change a Sidekick belongs in the contact check, not here.
 
 ### 2026-10-23 — Confirm the requested revision before reporting a saved edit
 

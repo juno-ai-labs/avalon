@@ -1,16 +1,24 @@
 import {
   StartAgentInputSchema, ListAgentsInputSchema, SendAgentMessageInputSchema,
-  ReplyToAgentMessageInputSchema, StopAgentInputSchema, modelAgentId, IdSchema,
+  ReplyToAgentMessageInputSchema, StopAgentInputSchema, RequestSidekickChangeInputSchema, modelAgentId, IdSchema,
 } from "@rally/contracts";
 import type { HarnessPlugin, HarnessTool } from "@rally/agent-harness";
 import { z } from "zod";
 import type { AgentCommunicationService } from "./agent-communication-service";
+import { SIDEKICK_RUN_CHANGE_GUIDANCE } from "./agent-communication-prompts";
 
 /** What the tools call: the service's model-facing operations and nothing else. */
 export type AgentCommunicationTools = Pick<AgentCommunicationService,
-  "sidekicks" | "findSidekick" | "createSidekick" | "attachSidekickResource" | "start" | "list" | "send" | "stop">;
+  "sidekicks" | "findSidekick" | "createSidekick" | "attachSidekickResource" | "start" | "list" | "send" | "stop"
+  | "requestSidekickChange">;
 
-export function createAgentCommunicationPlugin(service: AgentCommunicationTools, roleGuidance: string): HarnessPlugin {
+/**
+ * `sidekickRun` adds `request_sidekick_change` and its guidance. Only a
+ * Sidekick run child has a wizard of its own to ask; everywhere else the tool
+ * would be a refusal waiting to happen, so it is not offered.
+ */
+export function createAgentCommunicationPlugin(service: AgentCommunicationTools, roleGuidance: string,
+  options: { sidekickRun?: boolean } = {}): HarnessPlugin {
   function tool<T>(name: string, description: string, schema: z.ZodType<T>,
     execute: (input: T, context: Parameters<HarnessTool["execute"]>[1]) => Promise<unknown>): HarnessTool {
     return {
@@ -38,7 +46,7 @@ export function createAgentCommunicationPlugin(service: AgentCommunicationTools,
     shortWireName: "",
     displayName: "Background agents", description: "Delegate tasks to background agents, check their progress, and exchange messages with other agents. Find or create a Sidekick for scheduled or event-triggered work. Attach resources to a Sidekick without starting a run.",
     searchAliases: ["background", "delegate", "teammate", "send message", "reply", "subagent", "attach resource"],
-    systemMessage: `${roleGuidance} Send results and questions explicitly to the intended agent. Your final response stays in your own conversation. New agents receive the instructions and attachments you provide, not your transcript or loaded skills. Prefer including the task's resources in attachmentIds so the intended resources are explicit. Sidekicks can also read known IDs their execution user can read if an attachment is omitted. Background agents share the Terminal files of the conversation or Sidekick they work for. Include enough context to do the work. Agents inherit your model and authorized tools. Continue existing agents through messages. list_agents shows whether one is still running. Messages start idle agents, resume stopped agents, and reach busy agents between execution steps. You may stop only agents you own and their descendants. Reusable procedures appear under Skills; call load_skill to use their instructions. To set up a Sidekick, use sidekicks_list and send the assignment directly to a suitable returned authoring agentId. That agent is the Sidekick wizard and can edit its definition. If none fits, create_sidekick returns the wizard to message directly. Use sidekick_attach_resource with its sidekickId to attach a resource without sending a message or waking the wizard. Do not start a background agent just to relay setup instructions or wait for the wizard. Use find_sidekick only when the person explicitly names an existing Sidekick to edit; never silently replace a named target. The authoring agent handles setup and replies with questions or results. A sent setup or edit request is not completion. Report the change as saved only after receiving confirmation that the requested revision was accepted. For work after an external change, tell the wizard to load polling-for-events. Verify activation and scheduling from current state; a run timestamp does not prove completion. Correct superseded blocker memory while preserving the person’s preferences.`,
+    systemMessage: `${roleGuidance} Send results and questions explicitly to the intended agent. Your final response stays in your own conversation. New agents receive the instructions and attachments you provide, not your transcript or loaded skills. Prefer including the task's resources in attachmentIds so the intended resources are explicit. Sidekicks can also read known IDs their execution user can read if an attachment is omitted. Background agents share the Terminal files of the conversation or Sidekick they work for. Include enough context to do the work. Agents inherit your model and authorized tools. Continue existing agents through messages. list_agents shows whether one is still running. Messages start idle agents, resume stopped agents, and reach busy agents between execution steps. You may stop only agents you own and their descendants. Reusable procedures appear under Skills; call load_skill to use their instructions. To set up a Sidekick, use sidekicks_list and send the assignment directly to a suitable returned authoring agentId. That agent is the Sidekick wizard and can edit its definition. If none fits, create_sidekick returns the wizard to message directly. Use sidekick_attach_resource with its sidekickId to attach a resource without sending a message or waking the wizard. Do not start a background agent just to relay setup instructions or wait for the wizard. Use find_sidekick only when the person explicitly names an existing Sidekick to edit; never silently replace a named target. The authoring agent handles setup and replies with questions or results. A sent setup or edit request is not completion. Report the change as saved only after receiving confirmation that the requested revision was accepted. For work after an external change, tell the wizard to load polling-for-events. Verify activation and scheduling from current state; a run timestamp does not prove completion. Correct superseded blocker memory while preserving the person’s preferences.${options.sidekickRun ? ` ${SIDEKICK_RUN_CHANGE_GUIDANCE}` : ""}`,
     preload: true,
     tools: [
       tool("sidekicks_list", "List editable Sidekicks owned by this thread and the current Sidekick, marked isCurrentSidekick: true. Each item includes authoring agentId, status, nextRunAt and lastRunAt. Reusable instructions are listed under Skills. A draft or sent setup request is not evidence of activation.", z.strictObject({}), () => service.sidekicks()),
@@ -53,6 +61,7 @@ export function createAgentCommunicationPlugin(service: AgentCommunicationTools,
       tool("send_message", "Send instructions or an update to a teammate using agentId. Returns at once and resumes idle or stopped agents.", SendAgentMessageInputSchema, (input, context) => service.send(input, context)),
       tool("reply_to_message", "Send a response to the sender of a received message. Use that messageId, not an agentId. Returns at once.", ReplyToAgentMessageInputSchema, (input, context) => service.send(input, context)),
       tool("stop_agent", "Stop an agent you own and all agents it owns. Completed actions are not undone. A later message can resume the stopped agent.", StopAgentInputSchema, (input) => service.stop(input.agentId)),
+      ...(options.sidekickRun ? [tool("request_sidekick_change", "Ask this Sidekick's wizard to change the Sidekick itself: its instructions, schedule, sources or output. Describe the change in plain words. Returns at once; the wizard's reply arrives as a message. Sending is not saving.", RequestSidekickChangeInputSchema, (input, context) => service.requestSidekickChange(input.changes, context))] : []),
     ],
   };
 }

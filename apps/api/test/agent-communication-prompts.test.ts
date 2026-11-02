@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agentCoordinationRoleGuidance } from '../src/services/agent-communication-prompts';
+import { agentCoordinationRoleGuidance, sidekickChangeRequestText } from '../src/services/agent-communication-prompts';
 import { renderAgentMessage } from "../src/services/agent-message-content";
 import { createAgentCommunicationPlugin, type AgentCommunicationTools } from "../src/services/agent-communication-plugin";
 
@@ -78,6 +78,7 @@ describe("the agents plugin", () => {
       ownedByThisWorkstream: true, isCurrentSidekick: false, canEdit: true, status: "draft" as const, nextRunAt: null, lastRunAt: null, agentId: `automation/${sidekickId}/0` as never }] }),
     send: async (input) => ({ messageId: sidekickId, next: "agentId" in input ? input.agentId : "" }),
     findSidekick: unused, createSidekick: unused, attachSidekickResource: unused, start: unused, list: unused, stop: unused,
+    requestSidekickChange: async (changes) => ({ messageId: sidekickId, next: changes }),
   } satisfies AgentCommunicationTools;
   const plugin = createAgentCommunicationPlugin(service, "");
   const tool = (name: string) => plugin.tools.find((candidate) => candidate.definition.name === name)!;
@@ -97,5 +98,42 @@ describe("the agents plugin", () => {
     expect(plugin.systemMessage).toContain("Use find_sidekick only when the person explicitly names an existing Sidekick to edit; never silently replace a named target.");
     expect(tool("sidekicks_list").definition.description).toContain("editable Sidekicks owned by this thread");
     expect(tool("sidekicks_list").definition.description).toContain("the current Sidekick, marked isCurrentSidekick: true");
+  });
+});
+
+describe("a Sidekick run asking its wizard for a change", () => {
+  const unused = async (): Promise<never> => { throw new Error("not called"); };
+  const service = {
+    sidekicks: unused, send: unused, findSidekick: unused, createSidekick: unused, attachSidekickResource: unused,
+    start: unused, list: unused, stop: unused,
+    requestSidekickChange: async (changes) => ({ messageId: "00000000-0000-4000-8000-000000000002", next: `asked: ${changes}` }),
+  } satisfies AgentCommunicationTools;
+  const context = {} as Parameters<ReturnType<typeof createAgentCommunicationPlugin>["tools"][number]["execute"]>[1];
+
+  it("offers the tool and its guidance only to a run", async () => {
+    const elsewhere = createAgentCommunicationPlugin(service, "");
+    expect(elsewhere.tools.map((tool) => tool.definition.name)).not.toContain("request_sidekick_change");
+    expect(elsewhere.systemMessage).not.toContain("You are executing one run of a Sidekick.");
+
+    const run = createAgentCommunicationPlugin(service, "", { sidekickRun: true });
+    expect(run.systemMessage).toContain("You are executing one run of a Sidekick.");
+    const tool = run.tools.find((candidate) => candidate.definition.name === "request_sidekick_change")!;
+    expect(tool.definition.mode).toBe("write");
+    await expect(tool.execute({ changes: "  Add a weekly totals row.  " }, context))
+      .resolves.toMatchObject({ output: { next: "asked: Add a weekly totals row." } });
+    await expect(tool.execute({ changes: "   " }, context)).rejects.toThrow();
+  });
+
+  it("frames the request with the run and who asked, from the run's own input", () => {
+    const runId = "00000000-0000-7000-8000-000000000003";
+    expect(sidekickChangeRequestText(runId, undefined, "Add a weekly totals row.")).toBe(
+      "Change request from run 00000000-0000-7000-8000-000000000003 of this Sidekick. Update this Sidekick's saved definition if the request fits it, then reply to this message saying whether the revision was accepted or what blocks it.\n\nAdd a weekly totals row.",
+    );
+    expect(sidekickChangeRequestText(runId, { stopGeneration: 0, senderName: "Ada",
+      source: { kind: "provider_thread", provider: "slack" } }, "Drop the desktop table.")).toBe(
+      "Change request from run 00000000-0000-7000-8000-000000000003 of this Sidekick. Ada asked for it by replying in the run's slack thread; they may not be a Rally member. Update this Sidekick's saved definition if the request fits it, then reply to this message saying whether the revision was accepted or what blocks it.\n\nDrop the desktop table.",
+    );
+    expect(sidekickChangeRequestText(runId, { stopGeneration: 0, senderName: "Ada", source: { kind: "run" } }, "x"))
+      .toContain(" Ada asked for it in the run. ");
   });
 });
