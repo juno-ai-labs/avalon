@@ -779,6 +779,33 @@ describe('WorkstreamComposer mention confirmation', () => {
     ));
   });
 
+  it('highlights a Sidekick name only while a pick holds it', async () => {
+    const sidekicks = sidekickMentionDirectory([
+      { id: '0b8c3a52-5f0e-4d6a-9a1c-1d2e3f405162', name: 'Daily digest', description: '', status: 'active' },
+    ]);
+    vi.stubGlobal('ResizeObserver', class { observe(): void {} unobserve(): void {} disconnect(): void {} });
+    render(
+      <SidekickMentionContext.Provider value={sidekicks}>
+        <Tooltip.Provider>
+          <WorkstreamComposer draftKey="test-draft" attachments={[]} fileInputRef={createRef<HTMLInputElement>()}
+            members={[creator]} onOpenAttachment={() => undefined} onRemoveAttachment={() => undefined}
+            onRetryAttachment={() => undefined} onSend={vi.fn(async () => undefined)} onStop={async () => undefined}
+            sending={false} uploading={false} workstream={workstream} />
+        </Tooltip.Provider>
+      </SidekickMentionContext.Provider>,
+    );
+    const composer = screen.getByLabelText('Message the thread');
+    const marks = (): string[] => [...document.querySelectorAll('mark.composer-mention')].map((mark) => mark.textContent ?? '');
+
+    // Typed by hand it would go out as text, so it must not look like a mention.
+    fireEvent.change(composer, { target: { value: 'Ask @Daily digest' } });
+    expect(marks()).toEqual([]);
+
+    fireEvent.change(composer, { target: { value: 'Ask @dai' } });
+    fireEvent.click(await screen.findByRole('option', { name: /Daily digest .* Sidekick/u }));
+    expect(marks()).toEqual(['@Daily digest']);
+  });
+
   it('wraps to the last candidate when the highlight is walked up off the top', async () => {
     renderComposer();
     const composer = screen.getByLabelText('Message the thread');

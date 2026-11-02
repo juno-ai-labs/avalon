@@ -283,7 +283,14 @@ export function WorkstreamComposer({
       sidekick,
     }))], [invitees, members, sidekicks]);
 
-  const mentionLabels = useMemo(() => candidates.map((candidate) => candidate.label), [candidates]);
+  // A person, invitee or Rally is found by name on send, so any match is
+  // highlighted. A Sidekick is sent only where it was picked, so its name is
+  // highlighted only while a pick holds it; a retyped one would read as a
+  // mention and go out as text.
+  const mentionLabels = useMemo(() => {
+    const picked = new Set(selectedMentions.flatMap((mention) => mention.type === 'sidekick' ? [mention.label] : []));
+    return candidates.flatMap((candidate) => candidate.kind !== 'sidekick' || picked.has(candidate.label) ? [candidate.label] : []);
+  }, [candidates, selectedMentions]);
   const mentionGroups = useMemo(() => {
     if (mentionQuery === null) return [];
     const query = mentionQuery.toLowerCase();
