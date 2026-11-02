@@ -10,24 +10,39 @@ const DELEGATION_GUIDANCE = 'Tell the agent what result is needed, what requirem
 
 /**
  * The text the wizard reads for a run's change request. The host writes the
- * frame, so the header, which run sent it and who started the turn that asked
- * come from the run's input, not from the model; only the request is the
+ * frame, so the header, which run sent it and who started the run's current
+ * turn come from the run's input, not from the model; only the request is the
  * run's words. It carries no instruction of its own: what to do with it is the
- * wizard's guidance, keyed on the header. The sender's display name is text
- * somebody else chose, so it is quoted and labelled, as the run's continuation
- * note does. Bounded by `SIDEKICK_CHANGE_FRAME_RESERVE`.
+ * wizard's guidance, keyed on the header.
+ *
+ * The attribution line says who started the turn, not who asked: a reply that
+ * arrives while the turn is executing joins it without rebuilding this input,
+ * so naming that sender as the asker could credit the wrong person. Who asked
+ * is in the request, which the tool's parameter tells the run to include.
+ *
+ * The sender's display name is text somebody else chose, so it is quoted and
+ * labelled, as the run's continuation note does, after its control characters
+ * and lone surrogates are dropped: they mean nothing in a name, and JSON
+ * quoting turns each into a six-character escape, which could overrun
+ * `SIDEKICK_CHANGE_FRAME_RESERVE`. What remains can at most double, for a name
+ * of quotes or backslashes.
  */
 export function sidekickChangeRequestText(
   runId: string,
   continuation: WorkstreamWorkflowInput['automationContinuation'],
   changes: string,
 ): string {
-  const askedBy = !continuation
+  const startedBy = !continuation
     ? 'the run itself, not a person'
     : continuation.source.kind === 'provider_thread'
-      ? `${JSON.stringify(continuation.senderName)} (display name), replying in the run's ${providerName(continuation.source.provider)} thread; they may not be a Rally member`
-      : `${JSON.stringify(continuation.senderName)} (display name), in the run`;
-  return [SIDEKICK_CHANGE_REQUEST_HEADER, `Run: ${runId}`, `Asked by: ${askedBy}`, 'Request:', changes].join('\n');
+      ? `${quotedName(continuation.senderName)} (display name), replying in the run's ${providerName(continuation.source.provider)} thread; they may not be a Rally member`
+      : `${quotedName(continuation.senderName)} (display name), in the run`;
+  return [SIDEKICK_CHANGE_REQUEST_HEADER, `Run: ${runId}`, `Run turn started by: ${startedBy}`, 'Request:', changes].join('\n');
+}
+
+function quotedName(name: string): string {
+  // eslint-disable-next-line no-control-regex
+  return JSON.stringify(name.replace(/[\u0000-\u001f\u007f-\u009f\ud800-\udfff]/gu, ''));
 }
 
 function providerName(provider: string): string {
