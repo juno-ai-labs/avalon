@@ -1194,6 +1194,13 @@ describe("Slack connector", () => {
     expect(requests.map((request) => request.thread_ts)).toEqual(["1786120000.000100", "1786120000.000100"]);
     expect(new Set(requests.map((request) => request.client_msg_id)).size).toBe(2);
     expect(requests.map((request) => (request.blocks as Array<{ text: string }>)[0]!.text).join("\n")).toBe(long);
+
+    // Posted top-level, the rest continues in the first message's thread, so
+    // a reply anywhere in it reaches the root the send binds.
+    requests.length = 0;
+    await expect(adapter.executeTool("send_message", { channel_id: "CIDEAS", text: long }, context))
+      .resolves.toMatchObject({ providerOperationId: "CIDEAS:1786130000.000104" });
+    expect(requests.map((request) => request.thread_ts)).toEqual([undefined, "1786130000.000104"]);
   });
 
   it("rejects free workspace plans and refreshes user-only MCP tokens", async () => {

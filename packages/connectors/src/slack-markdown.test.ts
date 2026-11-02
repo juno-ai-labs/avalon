@@ -98,6 +98,14 @@ describe("splitting Slack markdown", () => {
     expect(chunks).toEqual([lead, "| A | B |\n|---|---|\n| 1 | 2 |"]);
   });
 
+  it("flushes a carried paragraph tail that cannot fit beside the next line", () => {
+    const tail = "d".repeat(3_000);
+    const last = "e".repeat(11_900);
+    const chunks = splitSlackMarkdown(`a\nb\nc\n\n${tail}\n${last}`);
+    for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(SLACK_MARKDOWN_BLOCK_LIMIT);
+    expect(chunks).toEqual(["a\nb\nc", tail, last]);
+  });
+
   it("hard-breaks only a single line longer than the whole budget", () => {
     const chunks = splitSlackMarkdown("x".repeat(5_000), 1_000);
     expect(chunks.length).toBe(5);

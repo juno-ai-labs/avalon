@@ -358,9 +358,9 @@ as prose.
 
 **The connector's `send_message` tool renders the same way.** A Sidekick or
 agent posting through it writes ordinary markdown, so the tool sends the body
-through `slackMarkdownMessages` rather than as `text`. A body past the limit posts
-as consecutive messages in the same conversation or thread, each with its own
-`client_msg_id` derived from the tool receipt, and the tool reports the first.
+through `slackMarkdownMessages` rather than as `text`. A body past the limit
+continues in the first message's thread, so a reply anywhere in it reaches the
+root the send binds, and the tool reports the first message.
 
 **Citations are reduced before the split.** An agent's answer may
 carry `resource://` link and image targets and GFM footnotes
@@ -830,35 +830,25 @@ The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026
 
 ### 2026-11-02 — The connector's send tool posts through the `markdown` block
 
-**What changed:** `send_message` in `packages/connectors/src/slack.ts` builds its
-payload with `slackMarkdownMessages`: a `markdown` block carrying the body, with
-stripped `text` as the notification fallback. Its schema now asks the model for
-standard markdown instead of mrkdwn, and refuses a whitespace-only body, which
-would otherwise render to no message at all. `splitSlackMarkdown` now repeats a
-table's header and delimiter rows at the top of any chunk the table continues
-into, and moves a header row that lands at the end of a chunk onto the next one,
-beside its delimiter.
-
-**Why:** The tool still sent the model's text as `chat.postMessage`'s `text`,
-which Slack reads as mrkdwn. A daily signup report a Sidekick posted to a channel
+**Why:** `send_message` still sent the model's text as `chat.postMessage`'s
+`text`, which Slack reads as mrkdwn. A daily report a Sidekick posted to a channel
 showed every table row as literal pipes, because mrkdwn has no tables. The
-2026-08-22 entry moved Rally's own reply and result paths to the `markdown`
-block but left this path behind. Slack's markdown block reference now lists
-tables as rendered. Review of this change (Codex) found that a table crossing the
-12,000-character split lost its header in the second chunk, so the continuation
-rendered as pipes again. That was true of agent replies before this change too;
-routing connector posts through the same splitter made it worth fixing here.
+2026-08-22 entry moved Rally's own reply and result paths to the `markdown` block
+but left this path behind. Review then found two splitter defects that agent
+replies already had: a table crossing a split lost its header in the next chunk,
+and a carried paragraph tail could push a chunk past Slack's limit. Routing
+connector posts through the same splitter made both worth fixing here.
 
 **Considered and rejected:** Lowering the tool's 40,000-character cap to the
-block's 12,000. That cap is a limit the team set, and splitting through the
-existing helper keeps long posts working without changing it.
+block's 12,000. That cap is a limit the team set, and the splitter already keeps
+long posts working.
 
-**Consequences:** A long post now arrives as several messages instead of one, and
-a failure partway leaves the earlier chunks posted; the receipt-derived
-`client_msg_id` on each chunk is what a retry has to dedupe on. Slack's markdown
-block reference does not say whether `<@U…>` mentions and `<#C…>` channel links
-render inside the block. The tool still tells the model to use them, and that is
-unverified against a live workspace.
+**Consequences:** A long post now arrives as a first message plus replies in its
+thread. A failure partway leaves the earlier chunks posted, and production
+supplies no idempotency key for Slack writes, so nothing dedupes a rerun. Slack's
+markdown block reference does not say whether `<@U…>` mentions and `<#C…>`
+channel links render inside the block; until someone checks in a live workspace,
+that is open.
 
 ### 2026-10-06 — Each run's outcome follows its own message and member
 
