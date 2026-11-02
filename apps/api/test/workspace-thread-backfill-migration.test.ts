@@ -6,7 +6,9 @@
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { deferThreadBackfill, threadBackfillWork } from "../src/durable-objects/thread-backfill";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
+import { createTestSqlStorage } from "./helpers/sql-storage";
 
 const THREAD_BACKFILL_MIGRATION_VERSION = 100;
 const OPEN_THREAD = "00000000-0000-7000-8000-0000000000f1";
@@ -61,5 +63,36 @@ describe("WorkspaceDO migration 100", () => {
     expect(database.prepare(
       "SELECT job, workstream_id, attempts, not_before, in_flight FROM thread_backfill ORDER BY workstream_id",
     ).all()).toEqual([{ job: "description_summary", workstream_id: OPEN_THREAD, attempts: 0, not_before: 0, in_flight: 0 }]);
+  });
+});
+
+describe("WorkspaceDO migration 133", () => {
+  it("keeps a claimed row's claim through the upgrade, then bounds and resumes its pass", () => {
+    const resume = 133;
+    const parent = "00000000-0000-7000-8000-0000000000f3";
+    const older = "00000000-0000-7000-8000-0000000000f4";
+    const newer = "00000000-0000-7000-8000-0000000000f5";
+    const database = openDatabase();
+    apply(database, resume - 1);
+    // A row stuck mid-backfill, as production holds one: claimed, deep in its retries.
+    database.prepare(`INSERT INTO thread_backfill(job, workstream_id, attempts, not_before, in_flight)
+      VALUES ('conversation_view', ?, 412, 9000, 1)`).run(parent);
+    for (const [substreamId, kind, createdAt] of [["0", "main", 100], [older, "child", 200], [newer, "child", 5000]] as const) {
+      database.prepare(`INSERT INTO parent_children(parent_id, substream_id, kind, created_at)
+        VALUES (?, ?, ?, ?)`).run(parent, substreamId, kind, createdAt);
+    }
+
+    apply(database, resume, resume - 1);
+
+    expect(database.prepare(
+      "SELECT attempts, not_before, in_flight, resume_from, admitted_before FROM thread_backfill WHERE workstream_id = ?",
+    ).all(parent)).toEqual([{ attempts: 412, not_before: 9000, in_flight: 1, resume_from: null, admitted_before: null }]);
+
+    const sql = createTestSqlStorage(database);
+    const row = { job: "conversation_view" as const, workstreamId: parent };
+    // Its first pass after the upgrade admits what was registered by then, and no later child.
+    expect(threadBackfillWork(sql, row, 1000)).toEqual({ substreamIds: ["0", older] });
+    expect(deferThreadBackfill(sql, row.job, parent, 412, older)).toBe(true);
+    expect(threadBackfillWork(sql, row, 6000)).toEqual({ substreamIds: [older] });
   });
 });
