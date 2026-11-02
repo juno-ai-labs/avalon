@@ -58,6 +58,7 @@ import { BrowserImportWindow } from './screens/browser-import';
 import { WorkspaceSettingsScreen } from './screens/workspace-settings';
 import { WorkstreamScreen } from './screens/workstream';
 import { WorkstreamLandingScreen } from './screens/workstream-landing';
+import { SidekickMentionProvider } from './lib/sidekick-mentions';
 
 const queryClient = createQueryClient();
 
@@ -278,6 +279,7 @@ export function WorkspaceApp(): React.JSX.Element {
       region={session!.workspace!.region}
       workspaceId={session!.workspace!.id}
     >
+      <SidekickMentionProvider>
       {/* The directory connection and profile request start together. Keep this
           tree mounted when the profile arrives so prepared sockets survive. */}
       {/* Commit route changes atomically so a new hash never labels an old feed. */}
@@ -292,6 +294,7 @@ export function WorkspaceApp(): React.JSX.Element {
           </WorkspaceOnboardingJourney>
         </WorkstreamSocketResumeProvider>
       </HashRouter> : content}
+      </SidekickMentionProvider>
     </WorkspaceSocketProvider>
     </LocalCacheScopeProvider>
   );

@@ -7,6 +7,7 @@ import { isUnrecognizedConnectorConnectionCard } from '../lib/connector-connecti
 import { MemberPresentationContext } from '../lib/member-presentation';
 import { groupPluginToolMessages, withoutAgentWork } from '../lib/transcript';
 import { EmailMentionContext, emailMentionDirectory } from '../lib/workspace-invitees';
+import { SidekickMentionContext, sidekickMentionDirectory } from '../lib/sidekick-mentions';
 import * as connectorMentions from './connector-mentions';
 import type { ElicitationData, Message } from '../lib/types';
 import { applyTheme } from '../lib/theme';
@@ -793,6 +794,29 @@ describe('MessageBlock markdown', () => {
     const joined = screen.getByText('Dana Diaz').closest('.mention-chip');
     expect(joined).toHaveAttribute('data-person-id', dana.id);
     expect(joined).not.toHaveClass('mention-chip-invited');
+  });
+
+  it('draws a sidekick:// link as the Sidekick chip under its current name, and text when the reader cannot see it', () => {
+    const digestId = '0b8c3a52-5f0e-4d6a-9a1c-1d2e3f405162';
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-sidekick-mention',
+      text: `Ask [@Old name](sidekick://${digestId}) or [@Hidden](sidekick://7f1e2d3c-4b5a-4968-8776-655443322110)`,
+    };
+    const directory = sidekickMentionDirectory([{ id: digestId, name: 'Daily digest', description: '', status: 'active' }]);
+
+    const { container } = render(
+      <SidekickMentionContext.Provider value={directory}><MessageBlock {...actions} message={message} /></SidekickMentionContext.Provider>,
+    );
+
+    const chip = container.querySelector('.mention-chip-sidekick');
+    expect(chip).toHaveAttribute('data-sidekick-id', digestId);
+    expect(chip?.querySelector('.mention-chip-label')?.textContent).toBe('Daily digest');
+    expect(chip?.querySelector('svg.automation-glyph')).toBeInTheDocument();
+    expect(container.querySelectorAll('.mention-chip')).toHaveLength(1);
+    expect(screen.getByText('@Hidden', { selector: '.mention-text-fallback' })).toBeInTheDocument();
+    // A mention names a Sidekick; it never opens anything.
+    expect(container.querySelector('a')).toBeNull();
   });
 
   it("leaves an agent's @Rally as text", () => {

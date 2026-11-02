@@ -47,9 +47,11 @@ import {
   connectorTypeFromMentionHref,
   footnoteReferencePattern,
   isConnectorHref,
+  isSidekickHref,
   openFootnoteReferencePattern,
   personIdFromMentionHref,
   personMentionMarkdownRanges,
+  sidekickIdFromMentionHref,
 } from '@rally/contracts/citations';
 import {
   ConnectorConnectionCard,
@@ -82,6 +84,8 @@ import { saveMessageExport } from '../lib/message-export';
 import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
 import { useCopy } from '../lib/use-copy';
 import { useEmailMentionTarget } from '../lib/workspace-invitees';
+import { useSidekickMentions } from '../lib/sidekick-mentions';
+import { AutomationGlyph } from './workstream-glyph';
 import { bareAddressAutolink, EMAIL_MENTION, EMAIL_MENTION_AT } from '@rally/contracts/email-mentions';
 import { pluginGroupIconForContract, type PluginGroupIcon } from '../lib/plugin-groups';
 import { isPluginBrandMark, type PluginBrandMark } from '../lib/plugin-marks';
@@ -954,9 +958,28 @@ function EmailMentionChip({ children, email }: PropsWithChildren<{ email: string
   );
 }
 
-/** Whether a link names a person or connector, which a glance still draws as a chip. */
+/**
+ * A `[@Name](sidekick://<id>)` link: the Sidekick's chip, under its current
+ * name and glyph, when the reader can see it. Anything else is the label the
+ * message carried, so a link to a Sidekick this reader cannot see discloses
+ * nothing and a deleted one reads as plain text.
+ */
+function SidekickMentionChip({ label, sidekickId }: { label: React.ReactNode; sidekickId: string | undefined }): React.JSX.Element {
+  const sidekick = useSidekickMentions().byId.get(sidekickId ?? '');
+  if (!sidekick) return <span className="mention-text-fallback">{label}</span>;
+  return (
+    <span className="mention-chip mention-chip-sidekick" data-sidekick-id={sidekick.id}>
+      <span aria-hidden="true" className="mention-chip-avatar mention-chip-avatar-sidekick">
+        <AutomationGlyph {...(sidekick.appearance ? { appearance: sidekick.appearance } : {})} id={sidekick.id} />
+      </span>
+      <span className="mention-chip-label">{sidekick.name}</span>
+    </span>
+  );
+}
+
+/** Whether a link names a person, connector or Sidekick, which a glance still draws as a chip. */
 function isIdentityHref(href: string | undefined): boolean {
-  return href !== undefined && (citationScheme(href) === 'person' || isConnectorHref(href));
+  return href !== undefined && (citationScheme(href) === 'person' || isConnectorHref(href) || isSidekickHref(href));
 }
 
 /** The schemes whose cells need the target the model actually wrote. */
@@ -981,6 +1004,7 @@ function isInternalCitationTarget(url: string, key: string, tagName: string): bo
   const position = (key === 'href' && tagName === 'a') || (key === 'src' && tagName === 'img');
   if (!position) return false;
   if (isConnectorHref(url)) return true;
+  if (isSidekickHref(url)) return tagName === 'a';
   return INTERNAL_CITATION_SCHEMES.has(citationScheme(url));
 }
 
@@ -1018,6 +1042,7 @@ function renderIdentity(
     }
     return <ConnectorMentionChip connectorType={connectorType} label={text} />;
   }
+  if (isSidekickHref(href)) return <SidekickMentionChip label={label} sidekickId={sidekickIdFromMentionHref(href)} />;
   // A `person:` target that is not an id is text a model wrote. It reaches here
   // intact because `urlTransform` passes the whole scheme through —
   // `defaultUrlTransform` would empty it instead, and an anchor with nothing
