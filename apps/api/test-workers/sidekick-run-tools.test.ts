@@ -446,7 +446,13 @@ describe("Sidekick wizard run inspection", () => {
         attentionOrdinal: null, ...message }));
     const agentRow = (turnId: string, senderAgentId: string) => say(turnId, { actor: "system", messageType: "system",
       structuredContentJson: JSON.stringify({ kind: "agent_message", senderAgentId, teamId: senderAgentId, messageId: runId(50) }) });
+    // The review's agents are the ones the wizard started: a delegation, not
+    // an address. A run of the same Sidekick has the same address shape.
+    const wizard = `automation/${SIDEKICK}/0` as never;
     const ownAgent = `automation/${SIDEKICK}/${runId(8)}`;
+    const { teamId } = await workspace().ensureAgentTeam({ workspaceId: WORKSPACE, originAgentId: wizard });
+    expect(await workspace().registerAgentDelegation({ workspaceId: WORKSPACE, teamId: teamId as never,
+      ownerAgentId: wizard, agentId: ownAgent as never })).toMatchObject({ ok: true });
     await say("notice", { actor: "system", messageType: "system", structuredContentJson: JSON.stringify({ kind: "sidekick_review_due", reviewId: delivered }) });
     await agentRow("agent-reply", ownAgent);
     const submit = (reason: string, instructions: string) => tool("submit_draft", { reason })
@@ -454,9 +460,12 @@ describe("Sidekick wizard run inspection", () => {
     await submit("agent_message", "Reviewed: list active incidents with owners.");
     // A turn the person woke is theirs before any row is read.
     await submit("human_message", "A person's own change.");
-    // The wizard's own agents keep the review open; a request from another conversation's agent ends it.
+    // The wizard's own agents keep the review open; a request from any other agent ends it.
     await agentRow("agent-reply-again", ownAgent);
     await submit("agent_message", "Reviewed again: name the owner first.");
+    // One of this Sidekick's runs passing on a person's change request is not the review's.
+    await agentRow("run-change-request", `automation/${SIDEKICK}/${runId(9)}`);
+    await submit("agent_message", "A change a person asked for in a run's Slack thread.");
     await agentRow("outside-request", `workstream/${runId(7)}/0`);
     await submit("agent_message", "A change a person asked for from another Thread.");
     await say("person", { actor: "human", authorUserId: USER, authorSnapshot: { displayName: "Adam", avatarUrl: null } });
@@ -464,7 +473,8 @@ describe("Sidekick wizard run inspection", () => {
     expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ definition_revision: number; review_id: string | null }>(
       `SELECT definition_revision, review_id FROM sidekick_revisions WHERE sidekick_id = ? AND definition_revision >= 2 ORDER BY definition_revision`,
       SIDEKICK).toArray())).toEqual([{ definition_revision: 2, review_id: delivered }, { definition_revision: 3, review_id: null },
-      { definition_revision: 4, review_id: delivered }, { definition_revision: 5, review_id: null }, { definition_revision: 6, review_id: null }]);
+      { definition_revision: 4, review_id: delivered }, { definition_revision: 5, review_id: null }, { definition_revision: 6, review_id: null },
+      { definition_revision: 7, review_id: null }]);
   });
 
   it("exposes first/next companions and rejects invented page IDs before reading history", async () => {
