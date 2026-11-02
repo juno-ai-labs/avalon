@@ -9,7 +9,7 @@ import { Preparation, ToolSurfacePreparations } from "./harness-preparation";
 import { validateCompletedToolReplay } from "./completed-tool-replay";
 import { completionVerificationNudge } from "./completion-verification";
 import type { CompletionVerificationSnapshot } from "../durable-objects/completion-verification-storage";
-import { AGENT_MESSAGE_CONTENT_KIND, agentAddressForId, AgentIdSchema, ImportedMessageProvenanceSchema, SidekickReviewNoticeV1Schema } from "@rally/contracts";
+import { AGENT_MESSAGE_CONTENT_KIND, agentIdForAddress, AgentIdSchema, ImportedMessageProvenanceSchema, SidekickReviewNoticeV1Schema } from "@rally/contracts";
 import { agentCoordinationRoleGuidance } from './agent-communication-prompts';
 import { conversationParentStub, hostedParentStub } from "./conversation-parent-client";
 import { AgentCommunicationService } from "./agent-communication-service";
@@ -2258,24 +2258,32 @@ function createAvalonAutomationsPlugin(
  * review's notice is the last word in the authoring conversation that is not
  * the wizard's own or its own background agents': the wizard ends its turn
  * after handing the reads to an agent and is woken again by its reply. A
- * person's message, or a request from an agent outside this conversation
- * (another Thread's Rally relaying an edit), as the turn's wake or in the
- * recent rows, ends the review. The rows read are the lister's page, the most
- * recent 250; a notice older than that is out of the review's reach.
+ * person's message, or a request from any other agent, as the turn's wake or
+ * in the recent rows, ends the review. That includes this Sidekick's own runs:
+ * a run asking for a change (`request_sidekick_change`) sits under the same
+ * Sidekick address as the review's agents, so the review's agents are told
+ * apart by delegation (the agents the wizard started, and theirs), never by
+ * address. The rows read are the lister's page, the most recent 250; a notice
+ * older than that is out of the review's reach.
  */
 async function reviewOwnsThisTurn(env: Env, input: WorkstreamWorkflowInput): Promise<boolean> {
   if (input.reason === "sidekick_review") return true;
   if (input.parentKind !== "automation" || PERSONAL_SYSTEM_PROMPT_REASONS.has(input.reason)) return false;
+  const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, input.workspaceId,
+    workspaceDOName(env.AVALON_REGION, input.workspaceId));
+  const wizard = agentIdForAddress({ parentKind: "automation", parentId: input.parentId, substreamId: asSubstreamId("0") });
+  const transcript = createMessageObjectPort(env, input.workspaceId, input.parentId, undefined, "0");
+  const [delegated, recent] = await Promise.all([
+    workspace.ownedAgentDescendants({ workspaceId: input.workspaceId, agentId: wizard }),
+    transcriptLister(transcript, { workspaceId: input.workspaceId, workstreamId: input.parentId })(
+      input.workspaceId, input.parentId, 250),
+  ]);
+  const reviewAgents = new Set<string>(delegated.agentIds);
   const ownAgent = (sender: unknown): boolean => {
     const id = AgentIdSchema.safeParse(sender);
-    if (!id.success) return false;
-    const address = agentAddressForId(id.data);
-    return address.parentKind === "automation" && address.parentId === input.parentId && address.substreamId !== "0";
+    return id.success && reviewAgents.has(id.data);
   };
   if (input.agentExchange && !ownAgent(input.agentExchange.senderAgentId)) return false;
-  const transcript = createMessageObjectPort(env, input.workspaceId, input.parentId, undefined, "0");
-  const recent = await transcriptLister(transcript, { workspaceId: input.workspaceId, workstreamId: input.parentId })(
-    input.workspaceId, input.parentId, 250);
   let notice = -1;
   let other = -1;
   for (const message of recent) {
@@ -5341,8 +5349,10 @@ async function loadRunPromptContext(
     // After the input that continued the run, which is already in the
     // transcript above. Keyed on that input, so a recovered execution reuses
     // the same activation input rather than adding a second note.
+    const fromWizard = input.agentExchange?.senderAgentId === agentIdForAddress({
+      parentKind: "automation", parentId: input.parentId, substreamId: asSubstreamId("0") });
     additionalMessages.push(modelDerivative(
-      renderRunContinuationNote(input.automationContinuation),
+      renderRunContinuationNote(input.automationContinuation, { fromWizard }),
       "run_continuation",
       input.triggerMessageId ?? input.harnessRunId,
     ));
