@@ -40,7 +40,14 @@ consumer says so.
    `breakouts` table. It runs the job's handler over each in turn, logs
    `thread_backfill_conversation` with the handler's outcome, and settles the
    row with `completeThreadBackfill`.
-4. **A failure releases the row.** The consumer logs `thread_backfill_failed`,
+4. **A pass is bounded and resumes.** The first `threadBackfillWork` call for
+   a row records the last conversation in id order as `through_child`, and
+   every later pass stops there: a conversation created after the backfill
+   started runs the job's own live path, so it is not the backfill's work. A
+   pass that stops at a conversation still delivering records it with
+   `deferThreadBackfill` as `resume_from`, and the next pass starts there
+   instead of at Main. Both columns are WorkspaceDO migration 133.
+5. **A failure releases the row.** The consumer logs `thread_backfill_failed`,
    releases the row so it holds no successor back, and acks the message. The
    row's own gate sends it again.
 
@@ -93,6 +100,13 @@ arms its own alarm.
   refused. A delivery can outlive its gate, and the alarm then claims the row
   again; letting the older one's late failure clear that claim would send the
   next batch while this one still runs. Guard: the release case in
+  `test-workers/thread-backfill.test.ts`.
+- **A pass only shrinks.** It covers the ids from `resume_from` to
+  `through_child`; the first never moves back (`deferThreadBackfill` refuses an
+  earlier id, and a claim the alarm has replaced), and the second is fixed
+  once recorded. A thread that gains conversations faster than one pass takes
+  still finishes. This relies on the consumer running the list in id order,
+  which `threadBackfillWork` returns. Guard: the resume case in
   `test-workers/thread-backfill.test.ts`.
 - **A row is settled only after every conversation ran.** Settling first
   would lose the rest of the thread on a failure. Guard: the Queue case in
@@ -179,6 +193,33 @@ The list drains to empty when the job is done. A row that keeps coming back
 shows as repeated `thread_backfill_failed` for one `workstream_id`.
 
 ## Changelog
+
+### 2026-11-02 — A stopped pass resumes, and a pass ends at the conversations it started with
+
+**What changed:** `thread_backfill` gains `resume_from` and `through_child`
+(WorkspaceDO migration 133). A `conversation_view` pass that stops at a
+conversation still delivering records it, and the next pass starts there.
+The first pass records the last conversation it covers, and later passes stop
+there.
+
+**Why:** A pass that stopped started over at Main. In production one
+thread had about 800 children and gained about two an hour; one pass over
+them took about 23 minutes, and every stop logged on 11-02 was at the newest
+child of the time. Its pass never finished: 224,310 deliveries from
+2026-10-27 to 11-01 and 47,493 on 11-02, all for that one thread. The activity
+Queue takes one message per invocation, and Slack thread replies waited
+behind that loop for about 15 minutes before reaching their Sidekick run.
+
+**Rejected:** Recording progress after every conversation, which adds an RPC
+per conversation to every pass for no gain over recording only where a pass
+stopped, since a pass runs in order. Leaving later conversations in the pass
+and relying on the resume point alone, which still re-runs the loop whenever
+a new conversation is mid-delivery as the pass reaches it.
+
+**What a future change has to respect:** the consumer runs the list in the
+order `threadBackfillWork` returns it, which is id order. A job whose
+conversations do not run its live path on creation cannot use the
+`through_child` bound.
 
 ### 2026-10-19 — A conversation that cannot serve settles
 

@@ -869,12 +869,16 @@ import { retireUnopenedImportKey } from "../services/session-import-reclaim";
 import {
   SUGGESTION_BACKFILL_MIGRATION,
   THREAD_BACKFILL_MIGRATION,
+  THREAD_BACKFILL_RESUME_MIGRATION,
+  ThreadBackfillDeferSchema,
   ThreadBackfillMessageSchema,
   completeThreadBackfill,
+  deferThreadBackfill,
   nextThreadBackfillAt,
   publishThreadBackfill,
   releaseThreadBackfill,
   threadBackfillWork,
+  type ThreadBackfillDefer,
   type ThreadBackfillMessage,
   type ThreadBackfillWork,
 } from "./thread-backfill";
@@ -4830,6 +4834,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 132,
   description: "count Sidekick run finishes toward a scheduled wizard review and record each review request",
   statements: SIDEKICK_REVIEW_SCHEMA_STATEMENTS,
+}, {
+  version: 133,
+  description: "resume a stopped thread backfill where it stopped, and bound each pass to the conversations it started with",
+  statements: THREAD_BACKFILL_RESUME_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -12139,6 +12147,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const completed = completeThreadBackfill(this.state.storage.sql, request.job, request.workstreamId);
     await this.armNextAlarm();
     return completed;
+  }
+
+  /** A pass that stopped at a conversation still delivering resumes there, not at Main. */
+  async deferThreadBackfill(input: ThreadBackfillDefer): Promise<boolean> {
+    await this.initialized;
+    const request = parseRpcInput(ThreadBackfillDeferSchema, input, "defer_thread_backfill");
+    this.assertWorkspace(request.workspaceId);
+    return deferThreadBackfill(this.state.storage.sql, request.job, request.workstreamId, request.attempt, request.resumeFrom);
   }
 
   /** A thread the consumer could not finish: it retries at its own gate and holds back nothing. */

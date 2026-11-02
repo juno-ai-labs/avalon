@@ -675,8 +675,10 @@ async function consumeOne(message: Message<unknown>, env: Env,
           if (target.job === "conversation_view" && outcome === "queued") {
             // Keep this parent claimed until its source has confirmed writes.
             // Do not wake all its children and immediately admit another batch.
-            // Its durable retry gate will revisit it; ordinary pending work
-            // must not burn through Queue retries and land in the dead letter.
+            // Its durable retry gate will revisit it, at this conversation
+            // rather than at Main; ordinary pending work must not burn
+            // through Queue retries and land in the dead letter.
+            await workspace.deferThreadBackfill({ ...target, resumeFrom: asSubstreamId(substreamId) });
             message.ack();
             return;
           }
