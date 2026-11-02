@@ -72,6 +72,32 @@ describe("splitting Slack markdown", () => {
     }
   });
 
+  it("repeats a table's header on each chunk the table continues into", () => {
+    // Each chunk is its own markdown block, and rows without a header and
+    // delimiter row render as pipe-delimited prose, not as a table.
+    const header = "| Metric | Value |\n|---|---:|";
+    const rows = Array.from({ length: 120 }, (_, index) => `| row ${index} | ${index} |`);
+    const prose = "Closing words that run long enough to need a chunk of their own.\n".repeat(30);
+    const chunks = splitSlackMarkdown(`Intro.\n\n${header}\n${rows.join("\n")}\n\n${prose}`, 1_000);
+    const tableChunks = chunks.filter((chunk) => chunk.includes("| row "));
+    expect(tableChunks.length).toBeGreaterThan(1);
+    for (const chunk of tableChunks) {
+      expect(chunk.length).toBeLessThanOrEqual(1_000);
+      expect(chunk.slice(chunk.indexOf("| Metric")).startsWith(header)).toBe(true);
+    }
+    // Every row arrives exactly once; only the header repeats.
+    const delivered = chunks.join("\n").split("\n").filter((line) => line.startsWith("| row "));
+    expect(delivered).toEqual(rows);
+    // Prose after the table is not a table row and is not given a header.
+    expect(chunks.at(-1)?.startsWith("Closing words")).toBe(true);
+  });
+
+  it("moves a header row onto the chunk that holds its delimiter", () => {
+    const lead = "x".repeat(82);
+    const chunks = splitSlackMarkdown(`${lead}\n| A | B |\n|---|---|\n| 1 | 2 |`, 100);
+    expect(chunks).toEqual([lead, "| A | B |\n|---|---|\n| 1 | 2 |"]);
+  });
+
   it("hard-breaks only a single line longer than the whole budget", () => {
     const chunks = splitSlackMarkdown("x".repeat(5_000), 1_000);
     expect(chunks.length).toBe(5);
