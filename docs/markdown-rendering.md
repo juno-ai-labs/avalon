@@ -272,7 +272,9 @@ attached and recommended ones, which `conversation-surface.tsx` adds with
 `.mention-chip-sidekick` with its hexagon glyph and its *current* name, so a
 rename shows everywhere; any other id draws as the label text. That is also why
 a hand-typed `sidekick://` link is harmless: it can only name a Sidekick the
-reader already sees, under that Sidekick's own name. Email, Slack and push read
+reader already sees, under that Sidekick's own name. The `@Name` inside such a link is
+never discovered as a person (`resolveMentionPayload`), even when a member has
+the same name. Email, Slack and push read
 it through `rewriteMessageAsPlainText`, which reduces it to `@Name`.
 
 ### Web links and favicons
@@ -978,9 +980,7 @@ mention. It would need a schema rebuild in every conversation object for a row
 that decides nothing. Plain `@Name` resolved by name, like `@Rally`, was also
 rejected: Sidekick names are not unique and can match a person's.
 
-A provisional thread title now reduces person and Sidekick links to `@Name`
-(`mentionLinksAsText`), since a title is plain text and an opening message can
-now carry a link the client wrote.
+Provisional thread titles now reduce mention links to `@Name` (`mentionLinksAsText`).
 
 ### 2026-10-20 — Remove the message-level collapse button
 

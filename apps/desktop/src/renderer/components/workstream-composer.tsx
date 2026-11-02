@@ -41,9 +41,7 @@ import { AutomationGlyph } from './workstream-glyph';
  * typed `@address`: no identity rides with it, and the host shares the
  * conversation with the address when the message is sent.
  *
- * A Sidekick is named by reference: the message carries a
- * `[@Name](sidekick://<id>)` link that draws as its chip, and the Sidekick is
- * neither notified nor added. See `sidekickMentionsAsMarkdown`.
+ * A Sidekick is sent as a link; see `sidekickMentionsAsMarkdown`.
  */
 interface MentionCandidate {
   id: string;

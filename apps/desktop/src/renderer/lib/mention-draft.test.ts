@@ -128,6 +128,10 @@ describe('Sidekick mentions in a draft', () => {
     expect(resolveMentionPayload('Ask @Sam', [sidekick('Sam', 4)], [person('Sam', 'user-sam')])).toEqual([]);
   });
 
+  it("does not find a person whose name starts the picked Sidekick's", () => {
+    expect(resolveMentionPayload("Ask @Sam's inbox", [sidekick("Sam's inbox", 4)], [person('Sam', 'user-sam')])).toEqual([]);
+  });
+
   it("never reads a Sidekick link's label as a person, but still finds that person elsewhere", () => {
     const text = `Ask [@Sam](sidekick://${DIGEST_ID}) and @Sam`;
     expect(resolveMentionPayload(text, [], [person('Sam', 'user-sam')])).toEqual([{
