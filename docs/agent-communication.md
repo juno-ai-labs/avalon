@@ -307,11 +307,15 @@ it anyway with `sidekick_change_outside_run`.
 The host names the recipient from `automationRun.automationId`, so the model
 supplies only the text and a run reaches only its own wizard. Delivery is the
 ordinary `send`: the same Sidekick contact check, team join, effect-derived
-message id and reply route as `send_message`. The host wraps the text in a frame
-(`sidekickChangeRequestText`) that names the run and, when the turn was a
-continuation, who asked and whether from a bound provider thread, where the
-sender may not be a Rally member. The frame comes from the run's input rather
-than the model, so the wizard can trust it. The message is from the run's own
+message id and reply route as `send_message`. The host wraps the text in a
+plain-text frame (`sidekickChangeRequestText`): a first line that reads
+`SIDEKICK CHANGE REQUEST FROM A RUN` (`SIDEKICK_CHANGE_REQUEST_HEADER`), then
+`Run:`, `Asked by:` (who asked and whether from a bound provider thread, where
+the sender may not be a Rally member), one line telling the wizard to evaluate
+it and reply, and the run's words under `Request:`. The frame comes from the
+run's input rather than the model, so the wizard can trust it. The wizard's
+guidance has a section keyed on that first line
+([`automation-lifecycle.md`](automation-lifecycle.md#change-request-from-a-run)). The message is from the run's own
 address, so the wizard's reply goes back to the run like any reply. The tool is on `AGENT_MESSAGE_TOOL_NAMES`,
 so the client counts it as a sent message.
 
@@ -412,9 +416,13 @@ remains an implementation gate.
 ### 2026-11-02 — A Sidekick run asks its own wizard for a change
 
 **What changed:** A Sidekick run gets `request_sidekick_change`, which takes a
-plain-language change and sends it, framed by the host, to the wizard of the
-run's own Sidekick. Its guidance tells the run to use it for changes to the
-Sidekick itself and to report a change saved only after the wizard confirms.
+plain-language change and sends it, framed by the host under a fixed first
+line, to the wizard of the run's own Sidekick. Its guidance tells the run to use
+it for changes to the Sidekick itself and to tell the person, where they asked,
+only what the wizard confirmed. The wizard gets a section on evaluating one:
+decide whether it is a lasting change, never widen the Sidekick's reach on a
+run's request, ask one question when it is unclear, change only what was asked,
+and reply.
 
 **Why:** A reply in a Slack thread bound to a Sidekick run reaches that run, not
 the wizard. A person who replied "change this report" was asking for a
@@ -448,8 +456,20 @@ first round only, before the six later replies were written.
 The two Terra misses were "Monthly is plenty, please stop asking me every
 week" to the weekly DM, which Terra always forwarded home as the founder's
 answer and asked the wizard about 3 of 5 times. The wording was not tuned
-against it. Each trial is the model's first response to the captured request;
-the wizard's handling and the loop back to Slack were not part of it.
+against it. Each trial is the model's first response to the captured request.
+
+The whole loop was then run on Terra in the real harness, with only Slack's API
+doubled: the reply through Slack ingress, the run, the wizard, the saved
+revision and the run's answer in the thread. A first pass showed the run kept
+the wizard's answer in its own conversation or posted it home in two of four
+cases, so the guidance now says to pass it on where the person asked. After
+that, 8 of 8 (four requests, twice each) went right: removing a section and
+moving the schedule to Mondays were saved as revision 2; "a single table with
+3 columns x, y, and z" got one question back and no change; emailing the report
+to an outside address was refused as widening reach. Every outcome reached the
+person as a reply in the report's thread. The first-decision set above, rerun
+on the final wording, scored 63 of 63 on Terra at 3 trials, the "Monthly" reply
+included.
 
 **Considered and rejected:** Prompt guidance alone, pointing the run at
 `sidekicks_list` and `send_message`. It needs two calls and an id the model must
@@ -461,7 +481,13 @@ what it reported, and most replies are about this run, not the Sidekick.
 **Consequences:** The tool grants no authority a run lacked; it passes the same
 contact check as any message to the wizard. The wizard decides whether a
 request fits, and the frame tells it when the asker may not be a Rally member.
-A change to who may change a Sidekick belongs in the contact check, not here.
+Anyone in a bound thread can reach the wizard this way, which is why the
+wizard's section refuses any widening of reach (connectors, plugins,
+destinations, recipients, sources, capabilities, delegates, new triggers) and
+sends it back to a person who manages the Sidekick, the same set a scheduled
+self-review may not add. Whether a non-member's request may change anything at
+all is a product decision this does not make; it belongs in the contact check
+or the wizard's section, not the tool.
 
 ### 2026-10-23 — Confirm the requested revision before reporting a saved edit
 
