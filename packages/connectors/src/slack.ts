@@ -5,6 +5,7 @@ import type { ConnectorActivityFilterField, NormalizedActivity, ToolDefinition }
 import { HttpsUrlSchema } from "@rally/contracts/url-schemas";
 import { z } from "zod";
 import { createHostedMcpPassthrough } from "./hosted-mcp";
+import { slackMarkdownMessages } from "./slack-markdown";
 import { readConnectorDocument, type ConnectorDocumentConnection, type ConnectorDocumentReader } from "./documents";
 import {
   isProviderCredentialRejection,
@@ -354,7 +355,7 @@ export const slackTools: ToolDefinition[] = [
   }, ["file_id"]),
   tool("send_message", "Send a Slack message as the connected user or installed workspace bot.", SlackCapabilities.messagesWrite, "write", {
     channel_id: conversationId("Where to post the message."),
-    text: { type: "string", minLength: 1, maxLength: 40_000, description: "The message body, in Slack's mrkdwn: `*bold*`, `_italic_`, `` `code` ``, `<https://example.com|a link>`, `<@U0123ABCDEF>` to mention a person, and `<#C0123ABCDEF>` to link a channel. A bare `@dana` posts the literal text and notifies no one." },
+    text: { type: "string", minLength: 1, maxLength: 40_000, description: "The message body, in standard markdown: `**bold**`, `_italic_`, `` `code` ``, `[a link](https://example.com)`, headings, lists, code blocks, and `|`-delimited tables all render. Use `<@U0123ABCDEF>` to mention a person and `<#C0123ABCDEF>` to link a channel. A bare `@dana` posts the literal text and notifies no one." },
     thread_ts: { ...optionalId, description: "Post as a reply inside an existing thread, as that thread's parent `ts` copied exactly, for example `1735689600.123456`. Omit it, or send `null`, to post a new top-level message in the conversation." },
   }, ["channel_id", "text"]),
   tool("create_conversation", "Create a Slack channel or open a direct or group message as the connected user or installed workspace bot. Provide exactly one: `name` for a channel, or `user_ids` for a direct or group message.", SlackCapabilities.conversationsWrite, "write", {
@@ -1306,7 +1307,7 @@ const SlackDirectInputSchemas = {
   read_file: z.strictObject({ file_id: SlackIdSchema }),
   send_message: z.strictObject({
     channel_id: SlackIdSchema,
-    text: z.string().min(1).max(40_000),
+    text: z.string().min(1).max(40_000).regex(/\S/u),
     thread_ts: SlackTimestampSchema.nullable().optional(),
   }),
   create_conversation: z.strictObject({
@@ -1766,14 +1767,27 @@ async function executeSlackDirectTool(
     }
     case "send_message": {
       const args = SlackDirectInputSchemas.send_message.parse(rawArgs);
-      const result = await slackApi(token, "chat.postMessage", {
-        channel: args.channel_id,
-        text: args.text,
-        ...(args.thread_ts ? { thread_ts: args.thread_ts } : {}),
-        ...(context.providerIdempotencyKey
-          ? { client_msg_id: await stableSlackUuid(context.providerIdempotencyKey) }
-          : {}),
-      }, context.signal, fetcher);
+      // The model writes ordinary markdown, which only the `markdown` block
+      // renders; the `text` field is mrkdwn and shows a table as literal pipes.
+      // A body past Slack's markdown limit posts as consecutive messages in
+      // the same place, and the first one is the message this tool reports.
+      const messages = slackMarkdownMessages(args.text, { fallback: args.text });
+      let result: { channel: string; ts: string } | null = null;
+      for (const [index, message] of messages.entries()) {
+        const posted = await slackApi(token, "chat.postMessage", {
+          channel: args.channel_id,
+          text: message.text,
+          blocks: message.blocks,
+          ...(args.thread_ts ? { thread_ts: args.thread_ts } : {}),
+          ...(context.providerIdempotencyKey
+            ? { client_msg_id: await stableSlackUuid(index === 0
+              ? context.providerIdempotencyKey
+              : `${context.providerIdempotencyKey}:${index}`) }
+            : {}),
+        }, context.signal, fetcher);
+        result ??= posted;
+      }
+      if (!result) throw new ConnectorError("provider_error", "Slack message body rendered no content");
       return {
         output: { channel_id: result.channel, timestamp: result.ts },
         summary: `Sent a Slack message to ${result.channel}`,

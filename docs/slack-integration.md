@@ -354,6 +354,12 @@ text. Long output splits at Slack's 12,000-character limit, preferring a
 paragraph seam, then a line, and closing and reopening a fenced code block rather
 than severing one.
 
+**The connector's `send_message` tool renders the same way.** A Sidekick or
+agent posting through it writes ordinary markdown, so the tool sends the body
+through `slackMarkdownMessages` rather than as `text`. A body past the limit posts
+as consecutive messages in the same conversation or thread, each with its own
+`client_msg_id` derived from the tool receipt, and the tool reports the first.
+
 **Citations are reduced before the split.** An agent's answer may
 carry `resource://` link and image targets and GFM footnotes
 ([`markdown-rendering.md`](markdown-rendering.md)); Slack renders neither, so an
@@ -819,6 +825,32 @@ briefing's three/one/zero-result cases.
 The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026-08-06. Slack later made PKCE immutable for this app. CLI 4.6.0 strips `pkce_enabled` from its validation request even when the generated manifest contains `"pkce_enabled": true`, so the API interprets the omission as an attempt to disable PKCE. Until the CLI preserves that field, validate and apply production changes through Slack's App Manifest editor instead. Validation does not replace deployment or Marketplace review.
 
 ## Changelog
+
+### 2026-11-02 — The connector's send tool posts through the `markdown` block
+
+**What changed:** `send_message` in `packages/connectors/src/slack.ts` builds its
+payload with `slackMarkdownMessages`: a `markdown` block carrying the body, with
+stripped `text` as the notification fallback. Its schema now asks the model for
+standard markdown instead of mrkdwn, and refuses a whitespace-only body, which
+would otherwise render to no message at all.
+
+**Why:** The tool still sent the model's text as `chat.postMessage`'s `text`,
+which Slack reads as mrkdwn. A daily signup report a Sidekick posted to a channel
+showed every table row as literal pipes, because mrkdwn has no tables. The
+2026-08-22 entry moved Rally's own reply and result paths to the `markdown`
+block but left this path behind. Slack's markdown block reference now lists
+tables as rendered.
+
+**Considered and rejected:** Lowering the tool's 40,000-character cap to the
+block's 12,000. That cap is a limit the team set, and splitting through the
+existing helper keeps long posts working without changing it.
+
+**Consequences:** A long post now arrives as several messages instead of one, and
+a failure partway leaves the earlier chunks posted; the receipt-derived
+`client_msg_id` on each chunk is what a retry has to dedupe on. Slack's markdown
+block reference does not say whether `<@U…>` mentions and `<#C…>` channel links
+render inside the block. The tool still tells the model to use them, and that is
+unverified against a live workspace.
 
 ### 2026-10-06 — Each run's outcome follows its own message and member
 
