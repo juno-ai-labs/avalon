@@ -47,9 +47,11 @@ consumer says so.
    pass that stops at a conversation still delivering records it with
    `deferThreadBackfill` as `resume_from`, and the next pass starts there
    instead of at Main. Both columns are WorkspaceDO migration 133.
-5. **A failure releases the row.** The consumer logs `thread_backfill_failed`,
-   releases the row so it holds no successor back, and acks the message. The
-   row's own gate sends it again.
+5. **A failure releases the row.** The consumer logs `thread_backfill_failed`
+   with the conversation that failed, records that conversation as
+   `resume_from`, releases the row so it holds no successor back, and acks the
+   message. The row's own gate sends it again, from the conversation that
+   failed.
 
 A thread that is archived, or that WorkspaceDO has no projection of, is
 settled by `threadBackfillWork` without running anything.
@@ -101,7 +103,8 @@ arms its own alarm.
   again; letting the older one's late failure clear that claim would send the
   next batch while this one still runs. Guard: the release case in
   `test-workers/thread-backfill.test.ts`.
-- **A pass only shrinks.** It covers the ids from `resume_from` to
+- **A pass only shrinks.** A pass that stops, because a conversation is still
+  delivering or because one failed, resumes there. It covers the ids from `resume_from` to
   `through_child`; the first never moves back (`deferThreadBackfill` refuses an
   earlier id, and a claim the alarm has replaced), and the second is fixed
   once recorded. A thread that gains conversations faster than one pass takes
@@ -197,10 +200,13 @@ shows as repeated `thread_backfill_failed` for one `workstream_id`.
 ### 2026-11-02 — A stopped pass resumes, and a pass ends at the conversations it started with
 
 **What changed:** `thread_backfill` gains `resume_from` and `through_child`
-(WorkspaceDO migration 133). A `conversation_view` pass that stops at a
-conversation still delivering records it, and the next pass starts there.
-The first pass records the last conversation it covers, and later passes stop
-there.
+(WorkspaceDO migration 133). A pass that stops records where, and the next
+pass starts there: a `conversation_view` pass at a conversation still
+delivering, and any job's pass at a conversation that failed. The first pass
+records the last conversation it covers, and later passes stop there. A row
+already stuck heals on its next delivery after deploy: its columns start
+empty, so that pass records its end, walks the thread once more, and resumes
+from where it stops.
 
 **Why:** A pass that stopped started over at Main. In production one
 thread had about 800 children and gained about two an hour; one pass over
@@ -209,6 +215,9 @@ child of the time. Its pass never finished: 224,310 deliveries from
 2026-10-27 to 11-01 and 47,493 on 11-02, all for that one thread. The activity
 Queue takes one message per invocation, and Slack thread replies waited
 behind that loop for about 15 minutes before reaching their Sidekick run.
+Failures had the same shape: 24 passes over that thread failed part way in
+the week (for example after delivering 12 conversations), and each retry
+started over at Main.
 
 **Rejected:** Recording progress after every conversation, which adds an RPC
 per conversation to every pass for no gain over recording only where a pass
