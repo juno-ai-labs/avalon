@@ -47,7 +47,7 @@ export const SidekickMentionContext = createContext<SidekickMentionDirectory>(EM
  * The Organization-wide Sidekicks, provided once under the Organization
  * socket, which pushes them (the sidebar's `automations`). A personal
  * Sidekick is left out: it is one person's tool, so naming it is offered only
- * where a conversation has it attached (`SidekickMentionScope`).
+ * where a conversation has it attached or recommends it (`SidekickMentionScope`).
  */
 export function SidekickMentionProvider({ children }: PropsWithChildren): React.JSX.Element {
   const sidekicks = useSocketOwnedList<AutomationSummary>(SIDEBAR_LIST_QUERY_KEYS.automations).data;
@@ -59,8 +59,8 @@ export function SidekickMentionProvider({ children }: PropsWithChildren): React.
 }
 
 /**
- * Adds one conversation's own Sidekicks (those it owns and those attached to
- * it) ahead of the Organization's, for everything rendered inside it.
+ * Adds one conversation's own Sidekicks (those it owns, has attached, and
+ * recommends) ahead of the Organization's, for everything rendered inside it.
  */
 export function SidekickMentionScope({ children, sidekicks }: PropsWithChildren<{
   sidekicks: readonly SidekickMentionTarget[];
