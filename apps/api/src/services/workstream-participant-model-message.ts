@@ -342,12 +342,9 @@ function externalAttributedMessage(
  * labelled data rather than written into the sentence, and the whole note is
  * a user-role message like every other host-rendered context here.
  *
- * A turn this Sidekick's own wizard started (`fromWizard`, decided by the host
- * from the exchange's sender address) gets its own note. That message is
- * usually the wizard's answer to a change request the run sent, and "only as
- * the Sidekick's instructions direct" told the run nothing about it: the
- * instructions never mention one, so a run re-posted its result and left the
- * person who asked without the answer.
+ * `fromWizard` selects the note for a turn this Sidekick's own wizard started,
+ * usually its answer to a change request the run sent. The host sets it from
+ * the exchange's sender, never from message text.
  */
 export function renderRunContinuationNote(continuation: {
   senderName: string;
