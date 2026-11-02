@@ -641,6 +641,12 @@ describe("durable UI-to-model transcript projection", () => {
     );
   });
 
+  it("tells a run its own wizard's message may answer its change request, and where to post the answer", () => {
+    const note = renderRunContinuationNote({ senderName: "Sidekick wizard", source: { kind: "run" } }, { fromWizard: true });
+    expect(note.role).toBe("user");
+    expect(note.content).toContain("post its answer in the thread where the person who asked wrote");
+  });
+
   it("launches a selected expanded suggested-work brief as the executable user turn", async () => {
     const messageId = "00000000-0000-4000-8000-000000000030";
     const projection = await __integrationTesting.projectModelProtocolTranscript(
