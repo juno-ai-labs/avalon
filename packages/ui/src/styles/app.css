@@ -3627,6 +3627,10 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .mention-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* Rally's avatar, as in the mention list: brand yellow on a fixed near-black disc. */
 .mention-chip-avatar-rally { background: var(--av-sys-color-brand-on); color: var(--av-sys-color-brand-base); font-size: 8px; }
+/* A Sidekick's own hexagon, as in the sidebar and the mention list: the glyph
+   draws its own fill, so the disc behind it goes. */
+.mention-chip-avatar-sidekick { background: transparent; border-radius: 0; overflow: visible; }
+.mention-chip-avatar-sidekick > svg { display: block; height: 100%; width: 100%; }
 /* Someone invited who has not joined: an outline instead of a fill, and the
    address in a quieter ink, so it reads as a person who is not here yet. Both
    are washes of the inherited ink, which keeps them legible in a coloured
@@ -4746,6 +4750,10 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .mention-popover button:hover { background: var(--av-cmp-row-background-selected); }
 .mention-icon { align-items: center; display: flex; flex: 0 0 16px; height: 16px; justify-content: center; width: 16px; }
 .mention-icon :is(.avatar-small, .provider-icon) { height: 16px; width: 16px; }
+.mention-icon-sidekick { display: block; height: 16px; width: 16px; }
+.mention-icon-sidekick > svg { display: block; height: 100%; width: 100%; }
+/* A Sidekick's description is a sentence, not an address: the name keeps its room and the sentence gives way. */
+.mention-popover button.is-sidekick strong { flex-shrink: 0; max-width: 60%; }
 .mention-popover-copy { align-items: baseline; display: flex; flex: 1; gap: 8px; min-width: 0; }
 .mention-popover strong { font-size: 13px; font-weight: 400; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mention-popover small { color: var(--av-sys-color-text-muted); font-size: 13px; font-weight: 420; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

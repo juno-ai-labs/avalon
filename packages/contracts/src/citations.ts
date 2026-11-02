@@ -153,6 +153,48 @@ export function personMentionMarkdownRanges(markdown: string): PersonMentionMark
   return ranges;
 }
 
+const SIDEKICK_MENTION_HREF = new RegExp(`^sidekick:\\/\\/(${PERSON_UUID})$`, "iu");
+
+/**
+ * Durable Markdown link for a Sidekick mention: `[@Name](sidekick://<id>)`.
+ * A reference with no mention row; why, and how a reader resolves it, is in
+ * `docs/markdown-rendering.md#mentions`.
+ */
+export function sidekickMentionHref(sidekickId: string): string {
+  return `sidekick://${sidekickId}`;
+}
+
+/** The Sidekick id a mention href names, or `undefined` when it is not one. */
+export function sidekickIdFromMentionHref(href: string | undefined): string | undefined {
+  return href?.match(SIDEKICK_MENTION_HREF)?.[1]?.toLowerCase();
+}
+
+/** Whether an href uses the Sidekick mention scheme at all, well-formed or not. */
+export function isSidekickHref(href: string | undefined): boolean {
+  return href !== undefined && /^sidekick:/iu.test(href);
+}
+
+/**
+ * Matches `[@Label](sidekick://<uuid>)`. Group 1 is the label with Markdown
+ * escapes intact. Fresh each call, like {@link personMentionMarkdownPattern}.
+ */
+export function sidekickMentionMarkdownPattern(): RegExp {
+  return new RegExp(
+    String.raw`\[@((?:\\.|[^\\\]])+)\]\(sidekick:\/\/(${PERSON_UUID})\)`,
+    "giu",
+  );
+}
+
+/**
+ * Person and Sidekick mention links reduced to the `@Name` a reader saw, for
+ * a one-line label such as a provisional title. Not code-aware and leaves all
+ * other Markdown alone: {@link rewriteMessageAsPlainText} is the full reduction.
+ */
+export function mentionLinksAsText(text: string): string {
+  const plain = (_match: string, label: string): string => `@${label.replace(/\\([\\[\]])/gu, "$1")}`;
+  return text.replace(personMentionMarkdownPattern(), plain).replace(sidekickMentionMarkdownPattern(), plain);
+}
+
 /**
  * Per-render connector mention href — the house spelling.
  *
@@ -702,10 +744,7 @@ export function rewriteMessageAsPlainText(
       return `${MESSAGE_SPAN_PLACEHOLDER}${inlineSpans.length - 1}${MESSAGE_SPAN_PLACEHOLDER}`;
     }),
   );
-  const references = mapOutsideCode(rewriteCitationsAsPlainText(protectedMarkdown, options), (prose) => prose.replace(
-    personMentionMarkdownPattern(),
-    (_match, label: string) => `@${label.replace(/\\([\\\]])/gu, "$1")}`,
-  ));
+  const references = mapOutsideCode(rewriteCitationsAsPlainText(protectedMarkdown, options), mentionLinksAsText);
   return markdownFormattingAsPlainText(references).replace(
     new RegExp(`${MESSAGE_SPAN_PLACEHOLDER}(\\d+)${MESSAGE_SPAN_PLACEHOLDER}`, "gu"),
     (_match, index: string) => inlineSpans[Number(index)] ?? "",

@@ -7,6 +7,8 @@ import { loadAnnotationPreview, readAnnotationVersion } from '../lib/annotation-
 import { AnnotationDraftProvider, useAnnotationDraft } from '../components/artifact-annotations';
 import { ScopeSharingPanel, useScopeInvitations } from "../components/scope-sharing-panel";
 import { EmailMentionContext, emailMentionDirectory, inviteeAsMember, NO_INVITEES, useWorkspaceInvitees } from "../lib/workspace-invitees";
+import { conversationSidekickMentions, SidekickMentionScope } from "../lib/sidekick-mentions";
+import { mentionLinksAsText } from "@rally/contracts/citations";
 import { useWorkspaceMembers } from "../lib/workspace-members";
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
 import { artifactActivitySubject, conversationActivitySubject, reportActivityEvent } from '../lib/activity-events';
@@ -2718,11 +2720,23 @@ function ConversationSurfaceContent({
     }),
     enabled: Boolean(api && id && parentKind === 'workstream' && readOwnedSidekickDetails && !railSidekicks),
   });
+  const ownedSidekickList = railSidekicks
+    ? railSidekicks.owned
+    : readOwnedSidekickDetails ? ownedSidekicks.data : undefined;
+  const attachedSidekickList = railSidekicks?.attached ?? attachedSidekicks.data;
   const recommendedSidekicks = useQuery({
     queryKey: ['recommended-sidekicks', id, substreamId],
     queryFn: ({ signal }) => api!.getRecommendedSidekicks(id!, signal, substreamId),
     enabled: Boolean(api && id && parentKind === 'workstream' && !railSidekicks),
   });
+  const recommendedSidekickList = railSidekicks?.recommended ?? recommendedSidekicks.data;
+  // The Sidekicks this conversation owns, has attached, and recommends, in the
+  // order its Sidekicks section lists them: nameable with `@` here ahead of
+  // the Organization's.
+  const conversationSidekicks = useMemo(
+    () => conversationSidekickMentions(ownedSidekickList, attachedSidekickList, recommendedSidekickList),
+    [attachedSidekickList, ownedSidekickList, recommendedSidekickList],
+  );
   const recommendationOptions = useQuery({
     queryKey: ['sidekick-recommendation-options', id, substreamId],
     queryFn: ({ signal }) => api!.getSidekickRecommendationOptions(id!, substreamId, signal),
@@ -2892,7 +2906,9 @@ function ConversationSurfaceContent({
     setSending(true);
     setSendError(undefined);
     if (activeElicitation) {
-      const response = manualElicitationResponse(activeElicitation, text);
+      // An answer is stored and shown as plain text, not Markdown, so a picked
+      // Sidekick goes back to the `@Name` the reader typed.
+      const response = manualElicitationResponse(activeElicitation, mentionLinksAsText(text));
       try {
         await answerElicitation(activeElicitation.id, response.answer, response.customResponse);
         // An answer is a message this reader sent, and an elicitation outlives
@@ -3570,6 +3586,7 @@ function ConversationSurfaceContent({
   return (
     <MessageIssueProvider api={api} target={issueSubstreamId ? { kind: 'conversation', parentId: id, substreamId: issueSubstreamId } : null}>
     <EmailMentionContext.Provider value={emailMentions}>
+    <SidekickMentionScope sidekicks={conversationSidekicks}>
     <ConnectorConnectionsProvider connections={visibleConnections}>
     <div className="conversation-layout" ref={layoutRef}>
       {renderSidebar?.({
@@ -4102,6 +4119,7 @@ function ConversationSurfaceContent({
     </div>
     </div>
     </ConnectorConnectionsProvider>
+    </SidekickMentionScope>
     </EmailMentionContext.Provider>
     </MessageIssueProvider>
   );
