@@ -1,5 +1,5 @@
 import type { Message } from "./index";
-import { personMentionHref } from "./citations";
+import { personMentionHref, sidekickMentionHref } from "./citations";
 
 type Mention = Message["mentions"][number];
 
@@ -37,6 +37,11 @@ function escapeMarkdownLabel(label: string): string {
 
 export function renderPersonMentionMarkdown(person: MentionPerson): string {
   return `[@${escapeMarkdownLabel(person.name)}](${personMentionHref(person.id)})`;
+}
+
+/** `[@Name](sidekick://<id>)`, escaped the way a person mention is. */
+export function renderSidekickMentionMarkdown(sidekick: { id: string; name: string }): string {
+  return `[@${escapeMarkdownLabel(sidekick.name)}](${sidekickMentionHref(sidekick.id)})`;
 }
 
 export function isCanonicalPersonMention(

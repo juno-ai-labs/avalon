@@ -1,5 +1,5 @@
 import { type AttachmentKind, classifyAttachmentKind } from '@rally/contracts';
-import { type CitationScheme, type CitationTarget, type FootnoteCitation, citationScheme, isConnectorHref, parseCitationHref } from '@rally/contracts/citations';
+import { type CitationScheme, type CitationTarget, type FootnoteCitation, citationScheme, isConnectorHref, isSidekickHref, parseCitationHref } from '@rally/contracts/citations';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { IconPin } from '@tabler/icons-react';
 
@@ -34,7 +34,8 @@ import { isVideoAttachment } from '../lib/attachment-media';
  *   name openable content and navigate; `person:` / `person://` names an
  *   identity and never does, in any position. Connector mention chips
  *   (`connector://`) share that non-navigating identity path but are not a
- *   citation scheme — they are handled before the matrix. That asymmetry is
+ *   citation scheme — they are handled before the matrix, as is a Sidekick
+ *   mention (`sidekick://`). That asymmetry is
  *   deliberate and is the renderer's existing security posture, not a new one.
  * - **A citation adds affordance, never disclosure.** When a target cannot be
  *   resolved — unknown, revoked, or simply not visible to this viewer — what
@@ -745,10 +746,11 @@ export function CitationLink({ anchor, children, footnoteRef, href, identity }: 
     // reference keeps pointing at the entry that is still in the trailing list.
     return <a {...anchor} href={href}>{children}</a>;
   }
-  // Connector chips are minted at render time and are not a citation scheme.
-  // Route them through the host's identity path before the matrix, or they
-  // would land in `unknown` as a navigable (or emptied) anchor.
-  if (isConnectorHref(href)) {
+  // Connector chips are minted at render time and are not a citation scheme;
+  // a `sidekick://` mention names an identity, not openable content. Route both
+  // through the host's identity path before the matrix, or they would land in
+  // `unknown` as a navigable (or emptied) anchor.
+  if (isConnectorHref(href) || isSidekickHref(href)) {
     return <>{identity()}</>;
   }
   const cell = LINK_CELLS[citationScheme(href)];

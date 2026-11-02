@@ -158,7 +158,11 @@ conversations, and nonparticipating guests even in Organization-visible ones.
 Organization members in an Organization-visible conversation need no prompt.
 
 The shared composer mention picker keeps Rally first, then groups people into
-**Participants**, **Org members**, and **Guests**. Participation takes precedence
+**Participants**, **Org members**, and **Guests**, then published Sidekicks under
+**Sidekicks**: the ones this conversation owns, has attached, or recommends first, then the
+Organization-wide ones. Drafts are left out, and a personal Sidekick is offered
+only where a conversation has it attached or recommends it. Picking one
+mentions it by reference: it adds and notifies no one. Participation takes precedence
 over guest access; pending Organization invitees appear under Org members until
 shared into the conversation, when they appear under Participants. Empty groups
 are omitted after search. The popup scrolls through every match so a large member

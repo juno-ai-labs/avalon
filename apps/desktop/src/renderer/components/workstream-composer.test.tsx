@@ -10,6 +10,7 @@ import { mentionOptionCopy } from '../test/mention-option-copy';
 import { STOPPING_LABEL } from './agent-work-timing';
 import type { ComposerModelControl } from './composer-input';
 import { WorkstreamComposer } from './workstream-composer';
+import { SidekickMentionContext, sidekickMentionDirectory } from '../lib/sidekick-mentions';
 import type { WorkspaceInvitee } from '@rally/contracts';
 
 // The composer shows the work stream's model only while Application →
@@ -731,6 +732,78 @@ describe('WorkstreamComposer mention confirmation', () => {
     expect(composer).toHaveValue('@Rally ');
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
     await waitFor(() => expect(onSend).toHaveBeenCalledWith('@Rally', [], undefined, undefined));
+  });
+
+  it('offers published Sidekicks under their own heading and sends a picked one as its link', async () => {
+    const onSend = vi.fn(async () => undefined);
+    const { rerender } = renderComposer(onSend);
+    const sidekicks = sidekickMentionDirectory([
+      { id: '0b8c3a52-5f0e-4d6a-9a1c-1d2e3f405162', name: 'Daily digest', description: 'Summarizes the day', status: 'active' },
+      { id: '7f1e2d3c-4b5a-4968-8776-655443322110', name: 'Daily draft', description: 'Not published', status: 'draft' },
+    ]);
+    rerender(
+      <SidekickMentionContext.Provider value={sidekicks}>
+        <Tooltip.Provider>
+          <WorkstreamComposer
+            draftKey="test-draft"
+            attachments={[]}
+            fileInputRef={createRef<HTMLInputElement>()}
+            members={[creator, bob, cara]}
+            onOpenAttachment={() => undefined}
+            onRemoveAttachment={() => undefined}
+            onRetryAttachment={() => undefined}
+            onSend={onSend}
+            onStop={async () => undefined}
+            sending={false}
+            uploading={false}
+            workstream={workstream}
+          />
+        </Tooltip.Provider>
+      </SidekickMentionContext.Provider>,
+    );
+    const composer = screen.getByLabelText('Message the thread');
+
+    fireEvent.change(composer, { target: { value: 'Ask @dai' } });
+    const group = await screen.findByRole('group', { name: 'Sidekicks' });
+    expect(within(group).getAllByRole('option').map(mentionOptionCopy))
+      .toEqual([{ label: 'Daily digest', description: 'Summarizes the day' }]);
+    fireEvent.click(within(group).getByRole('option', { name: /Daily digest .* Sidekick/u }));
+
+    expect(composer).toHaveValue('Ask @Daily digest ');
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith(
+      'Ask [@Daily digest](sidekick://0b8c3a52-5f0e-4d6a-9a1c-1d2e3f405162)',
+      [],
+      undefined,
+      undefined,
+    ));
+  });
+
+  it('highlights a Sidekick name only while a pick holds it', async () => {
+    const sidekicks = sidekickMentionDirectory([
+      { id: '0b8c3a52-5f0e-4d6a-9a1c-1d2e3f405162', name: 'Daily digest', description: '', status: 'active' },
+    ]);
+    vi.stubGlobal('ResizeObserver', class { observe(): void {} unobserve(): void {} disconnect(): void {} });
+    render(
+      <SidekickMentionContext.Provider value={sidekicks}>
+        <Tooltip.Provider>
+          <WorkstreamComposer draftKey="test-draft" attachments={[]} fileInputRef={createRef<HTMLInputElement>()}
+            members={[creator]} onOpenAttachment={() => undefined} onRemoveAttachment={() => undefined}
+            onRetryAttachment={() => undefined} onSend={vi.fn(async () => undefined)} onStop={async () => undefined}
+            sending={false} uploading={false} workstream={workstream} />
+        </Tooltip.Provider>
+      </SidekickMentionContext.Provider>,
+    );
+    const composer = screen.getByLabelText('Message the thread');
+    const marks = (): string[] => [...document.querySelectorAll('mark.composer-mention')].map((mark) => mark.textContent ?? '');
+
+    // Typed by hand it would go out as text, so it must not look like a mention.
+    fireEvent.change(composer, { target: { value: 'Ask @Daily digest' } });
+    expect(marks()).toEqual([]);
+
+    fireEvent.change(composer, { target: { value: 'Ask @dai' } });
+    fireEvent.click(await screen.findByRole('option', { name: /Daily digest .* Sidekick/u }));
+    expect(marks()).toEqual(['@Daily digest']);
   });
 
   it('wraps to the last candidate when the highlight is walked up off the top', async () => {
