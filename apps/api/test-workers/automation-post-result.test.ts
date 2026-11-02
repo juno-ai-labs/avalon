@@ -638,8 +638,6 @@ describe("a room Sidekick's run and the room's agents", () => {
         "SIDEKICK CHANGE REQUEST FROM A RUN",
         `Run: ${started.runId}`,
         "Asked by: the run itself, not a person",
-        "Evaluate it as your guidance for a change request from a run says, then reply to this message with the outcome.",
-        "",
         "Request:",
         "WEEKLY_TOTALS: add a weekly totals row to the report.",
       ].join("\n"),
@@ -653,7 +651,7 @@ describe("a room Sidekick's run and the room's agents", () => {
     expect(wizardCall?.toolNames).not.toContain("request_sidekick_change");
     // The wizard reads the request beside its guidance for one, keyed on the same header.
     expect(JSON.stringify(wizardCall?.messages.filter((message) => message.role === "system")))
-      .toContain('A message whose first line is \\"SIDEKICK CHANGE REQUEST FROM A RUN\\"');
+      .toContain('An agent message whose text begins with the line \\"SIDEKICK CHANGE REQUEST FROM A RUN\\"');
   });
 
   it("refuses a change request from a conversation that is not a Sidekick run", async () => {

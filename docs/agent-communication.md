@@ -295,29 +295,38 @@ at a later Bind boundary during a participant-started run follow the same rule.
 ### A run asking its wizard for a change
 
 A Sidekick run child (`automationRun` set) also gets
-`request_sidekick_change({ changes })` and one paragraph of guidance
-(`SIDEKICK_RUN_CHANGE_GUIDANCE`): a request for a lasting change to the
-Sidekick goes to its wizard, even when it arrives as external evidence, and the
-run reports it saved only after the wizard confirms. An answer the instructions
-asked for, a question, thanks, or a request about this run alone is not a change
-request. No
+`request_sidekick_change({ changes })`, and this plugin's message gains one
+paragraph of guidance (`SIDEKICK_RUN_CHANGE_GUIDANCE`, beside the tool so the
+name it uses is always in scope): a request for a lasting change to the
+Sidekick goes to its wizard, even when it arrives as external evidence; an
+answer the instructions asked for, a question, thanks, or a request about this
+run alone is not one; a message can be both, and then the run does both; and
+the wizard's answer goes back to the person where they asked. That a sent
+request is not a saved change is the rule above for every edit request. No
 other conversation is offered the tool, and the service refuses one that calls
 it anyway with `sidekick_change_outside_run`.
 
-The host names the recipient from `automationRun.automationId`, so the model
-supplies only the text and a run reaches only its own wizard. Delivery is the
-ordinary `send`: the same Sidekick contact check, team join, effect-derived
-message id and reply route as `send_message`. The host wraps the text in a
-plain-text frame (`sidekickChangeRequestText`): a first line that reads
+The name follows the family's verb-and-object form (`find_sidekick`,
+`create_sidekick`) and says the call is a request, which the wizard may decline,
+rather than an edit. It has no recipient argument: the host names the recipient
+from `automationRun.automationId`, so the model supplies only the text and a run
+reaches only its own wizard. Delivery is the ordinary `send`: the same Sidekick
+contact check, team join, effect-derived message id and reply route as
+`send_message`.
+
+The host wraps the text in a plain-text frame (`sidekickChangeRequestText`):
 `SIDEKICK CHANGE REQUEST FROM A RUN` (`SIDEKICK_CHANGE_REQUEST_HEADER`), then
-`Run:`, `Asked by:` (who asked and whether from a bound provider thread, where
-the sender may not be a Rally member), one line telling the wizard to evaluate
-it and reply, and the run's words under `Request:`. The frame comes from the
-run's input rather than the model, so the wizard can trust it. The wizard's
-guidance has a section keyed on that first line
-([`automation-lifecycle.md`](automation-lifecycle.md#change-request-from-a-run)). The message is from the run's own
-address, so the wizard's reply goes back to the run like any reply. The tool is on `AGENT_MESSAGE_TOOL_NAMES`,
-so the client counts it as a sent message.
+`Run:`, `Asked by:` (the sender's display name quoted and labelled, as the run's
+continuation note quotes it, whether they replied in a bound provider thread,
+and that they may not be a Rally member), and the run's words under `Request:`.
+The frame carries no instruction of its own and comes from the run's input
+rather than the model, so the wizard can trust it. The agent-message renderer
+puts its sender and message id lines above it, so the wizard's guidance keys on
+the text beginning with the header, not on the message's first line
+([`automation-lifecycle.md`](automation-lifecycle.md#change-request-from-a-run)).
+The message is from the run's own address, so the wizard's reply goes back to
+the run like any reply. The tool is on `AGENT_MESSAGE_TOOL_NAMES`, so the client
+counts it as a sent message.
 
 
 ## Invariants
@@ -447,29 +456,45 @@ token, then six more written after the first results.
 | Model | Guidance | Change requests sent | Non-changes left alone |
 | --- | --- | ---: | ---: |
 | Terra | first version | 27/35 | 40/40 |
-| Terra | shipped | 43/45 | 60/60 |
+| Terra | second version | 43/45 | 60/60 |
+| Sol | second version | 27/27 | 36/36 |
+| Terra | shipped | 26/27 | 36/36 |
 | Sol | shipped | 27/27 | 36/36 |
 
-Terra ran 5 trials per reply and Sol 3. The first version was measured on the
-first round only, before the six later replies were written.
-
-The two Terra misses were "Monthly is plenty, please stop asking me every
-week" to the weekly DM, which Terra always forwarded home as the founder's
-answer and asked the wizard about 3 of 5 times. The wording was not tuned
-against it. Each trial is the model's first response to the captured request.
+Terra ran 5 trials per reply on the first two versions and 3 on the shipped one;
+Sol ran 3. The first version was measured on the first round only, before the
+six later replies were written. Each trial is the model's first response to a
+request captured from the real harness. The misses were replies that are both
+an answer and a change ("Monthly is plenty, please stop asking me every week"
+and "Stop DMing me about this" to the weekly DM): run 10 more times each on the
+shipped wording, they went to the wizard 38 of 40 times. The wording was not
+tuned against them.
 
 The whole loop was then run on Terra in the real harness, with only Slack's API
 doubled: the reply through Slack ingress, the run, the wizard, the saved
 revision and the run's answer in the thread. A first pass showed the run kept
 the wizard's answer in its own conversation or posted it home in two of four
-cases, so the guidance now says to pass it on where the person asked. After
-that, 8 of 8 (four requests, twice each) went right: removing a section and
-moving the schedule to Mondays were saved as revision 2; "a single table with
-3 columns x, y, and z" got one question back and no change; emailing the report
-to an outside address was refused as widening reach. Every outcome reached the
-person as a reply in the report's thread. The first-decision set above, rerun
-on the final wording, scored 63 of 63 on Terra at 3 trials, the "Monthly" reply
-included.
+cases, so the guidance says to pass it on where the person asked. Across the
+later runs, removing a section was saved 4 of 4 times, moving the schedule to
+Mondays 4 of 4 (the time kept from the definition), and emailing the report to
+an outside address was refused as widening reach 2 of 2. The answer reached the
+person in the report's thread in 24 of 26 runs; in one of the other two the run
+re-posted the report at the top of the channel instead. "A single table with 3
+columns x, y, and z" is the open case: the wizard asked what the columns mean
+in 3 of 3 runs before the prompt audit below and 2 of 4 on the shipped wording,
+and otherwise saved a reading (usually literal `x`, `y`, `z` headings) and told
+the person what it saved. Three rewrites of that step meant to make it ask more
+often asked 1 of 2, 3 of 6 and 1 of 4 times, so the step keeps its original
+wording rather than one fitted to that reply.
+
+All of the prompt text was then checked against
+[`writing-prompts.md`](writing-prompts.md) and [`agent-tools.md`](agent-tools.md).
+That removed rules said twice (who asked, saved only after confirmation, the
+wizard's general revision steps, and a line in the frame that repeated the
+wizard's guidance), gave one list of change kinds to the tool, the run and the
+wizard, added the tie-breaks for a message that is both an answer and a change
+and for asking against the general partial-draft rule, quoted the display name,
+and moved the run guidance into the plugin that owns its tool.
 
 **Considered and rejected:** Prompt guidance alone, pointing the run at
 `sidekicks_list` and `send_message`. It needs two calls and an id the model must
