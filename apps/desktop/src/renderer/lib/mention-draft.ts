@@ -1,3 +1,4 @@
+import { sidekickMentionMarkdownPattern } from '@rally/contracts/citations';
 import { renderSidekickMentionMarkdown } from '@rally/contracts/message-mentions';
 import type { MentionIdentity } from './api';
 
@@ -128,12 +129,20 @@ export function resolveMentionPayload(
   selected: readonly MentionIdentity[],
   discovered: readonly MentionIdentity[],
 ): ResolvedMentionIdentity[] {
-  // A Sidekick selection is Markdown by now (`sidekickMentionsAsMarkdown`);
-  // one that is not names nothing the server could store.
-  const people = selected.filter((candidate) => candidate.type !== 'sidekick');
-  const selectedLabels = new Set(people.map((candidate) => candidate.label.toLowerCase()));
+  // A picked Sidekick still claims its range, so a person of the same name is
+  // not found there instead; it emits nothing, being no stored mention. Its
+  // label does not hide that person elsewhere in the text, the way a picked
+  // person's label does, because the person is a different identity.
+  const selectedLabels = new Set(selected
+    .filter((candidate) => candidate.type !== 'sidekick')
+    .map((candidate) => candidate.label.toLowerCase()));
+  // Once sent, a Sidekick is a `[@Name](sidekick://<id>)` link, and the `@Name`
+  // inside it is that Sidekick's label, never a person to discover.
+  const sidekickLinks = [...text.matchAll(sidekickMentionMarkdownPattern())]
+    .map((match) => [match.index, match.index + match[0].length] as const);
+  const insideSidekickLink = (offset: number): boolean => sidekickLinks.some(([start, end]) => offset >= start && offset < end);
   const candidates = [
-    ...people.map((candidate) => ({ candidate, bound: candidate.startOffset !== undefined && candidate.endOffset !== undefined })),
+    ...selected.map((candidate) => ({ candidate, bound: candidate.startOffset !== undefined && candidate.endOffset !== undefined })),
     ...discovered
       .filter((candidate) => !selectedLabels.has(candidate.label.toLowerCase()))
       .map((candidate) => ({ candidate, bound: false })),
@@ -156,6 +165,7 @@ export function resolveMentionPayload(
     for (const match of text.matchAll(expression)) {
       const startOffset = match.index;
       if (startOffset !== 0 && !/[\s([{]/u.test(text[startOffset - 1] ?? '')) continue;
+      if (insideSidekickLink(startOffset)) continue;
       matches.push({
         candidate,
         candidateOrder,
