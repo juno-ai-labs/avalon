@@ -255,6 +255,44 @@ describe("a one-off job over every thread", () => {
     expect(await workspace().threadBackfillWork(backfill)).toEqual({ substreamIds: [first, second] });
   });
 
+  it("resumes a preview pass that failed part way at the conversation that failed", async () => {
+    const broken = "00000000-0000-7000-8000-00000000e821";
+    await project(1);
+    await runInDurableObject(workspace(), (_instance, state) => {
+      for (const [substreamId, kind] of [["0", "main"], [broken, "child"]]) {
+        state.storage.sql.exec(`INSERT INTO parent_children(parent_id, substream_id, kind, created_at)
+          VALUES (?, ?, ?, 1)`, THREAD, substreamId, kind);
+      }
+      state.storage.sql.exec(`INSERT INTO thread_backfill(job, workstream_id, attempts, not_before, in_flight)
+        VALUES ('conversation_view', ?, 1, ?, 1)`, THREAD, Date.now() + 60_000);
+    });
+    // Main is a placeholder, which the pass passes over; the child's object
+    // holds another thread, so waking it for this one throws.
+    const main = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, THREAD));
+    await boot(main);
+    await runInDurableObject(main, (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: THREAD });
+      state.storage.sql.exec("UPDATE workstream SET authority_mode = 'preparing', authority_generation = 0 WHERE id = 1");
+    });
+    const child = env.SUBSTREAM_AGENTS.getByName(
+      conversationObjectName("global", WORKSPACE_ID, THREAD, asSubstreamId(broken)));
+    await boot(child);
+    await runInDurableObject(child, (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: "00000000-0000-7000-8000-00000000e8fe" });
+    });
+
+    const batch = createMessageBatch("avalon-global-activity", [{
+      id: crypto.randomUUID(), timestamp: new Date(), attempts: 1,
+      body: { ...message(), job: "conversation_view" },
+    }]);
+    await consumeActivityQueue(batch, env);
+    expect((await getQueueResult(batch, createExecutionContext())).retryMessages).toEqual([]);
+    // Released for its gate, and the next pass starts at the child, not at Main.
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      "SELECT in_flight, resume_from FROM thread_backfill WHERE job = 'conversation_view' AND workstream_id = ?", THREAD,
+    ).toArray())).toEqual([{ in_flight: 0, resume_from: broken }]);
+  });
+
   it("settles a thread with nothing to do: archived, or never projected", async () => {
     await project(1, undefined, "2026-10-12T01:00:00.000Z");
     await list();
