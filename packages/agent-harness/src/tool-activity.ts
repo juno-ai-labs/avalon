@@ -122,6 +122,11 @@ const AGENT_PROSE: Record<string, ToolProse> = {
     settled: "Replied to a teammate",
     failed: "Could not reply to a teammate",
   },
+  request_sidekick_change: {
+    started: "Asking the Sidekick's wizard for a change",
+    settled: "Asked the Sidekick's wizard for a change",
+    failed: "Could not ask the Sidekick's wizard for a change",
+  },
   stop_agent: {
     started: "Stopping a background agent",
     settled: "Stopped a background agent",

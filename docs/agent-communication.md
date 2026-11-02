@@ -316,9 +316,14 @@ contact check, team join, effect-derived message id and reply route as
 
 The host wraps the text in a plain-text frame (`sidekickChangeRequestText`):
 `SIDEKICK CHANGE REQUEST FROM A RUN` (`SIDEKICK_CHANGE_REQUEST_HEADER`), then
-`Run:`, `Asked by:` (the sender's display name quoted and labelled, as the run's
-continuation note quotes it, whether they replied in a bound provider thread,
-and that they may not be a Rally member), and the run's words under `Request:`.
+`Run:`, `Run turn started by:` (the display name of whoever started the run's
+current turn, quoted and labelled as the run's continuation note quotes it, with
+control characters and lone surrogates dropped so quoting cannot overrun the
+reserve; whether they replied in a bound provider thread; and that they may not
+be a Rally member), and the run's words under `Request:`. The line names who
+started the turn rather than who asked, because a reply that arrives while the
+turn is executing joins it without changing the run's input; who asked is in
+the request, which the tool's parameter tells the run to include.
 The frame carries no instruction of its own and comes from the run's input
 rather than the model, so the wizard can trust it. The agent-message renderer
 puts its sender and message id lines above it, so the wizard's guidance keys on
@@ -430,10 +435,12 @@ its own dedicated workspace's new tables between tests. The execution suite also
 stop/replay/continuation, a worker reply to the foreground, and independently
 owned Sidekick contact, the refusal from a thread that does not own a Sidekick,
 the ownership flags from a conversation that acts for no thread, a guest's
-grant-only contact, a run's model calling `request_sidekick_change` and the
-framed request landing in its wizard from the run's own address, and the
-refusal outside a run. `apps/api/test/agent-communication-prompts.test.ts` pins
-the frame and that only a run is offered the tool. Complete desktop behavior
+grant-only contact, a run's model calling `request_sidekick_change`, the
+framed request landing in its wizard from the run's own address, the wizard's
+`reply_to_message` answer landing back in that run child and continuing it, and
+the refusal outside a run. `apps/api/test/agent-communication-prompts.test.ts`
+pins the frame, the worst-case frame fitting its reserve, the tool's transcript
+prose, and that only a run is offered the tool. Complete desktop behavior
 remains an implementation gate.
 
 ## Changelog
