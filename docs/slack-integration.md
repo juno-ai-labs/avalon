@@ -352,7 +352,15 @@ notification and screen-reader fallback. An
 automation result's title is a `header` block above it rather than a line of body
 text. Long output splits at Slack's 12,000-character limit, preferring a
 paragraph seam, then a line, and closing and reopening a fenced code block rather
-than severing one.
+than severing one. A table split at a line starts the next chunk with its header
+and delimiter rows, since each chunk is its own block and headerless rows render
+as prose.
+
+**The connector's `send_message` tool renders the same way.** A Sidekick or
+agent posting through it writes ordinary markdown, so the tool sends the body
+through `slackMarkdownMessages` rather than as `text`. A body past the limit
+continues in the first message's thread, so a reply anywhere in it reaches the
+root the send binds, and the tool reports the first message.
 
 **Citations are reduced before the split.** An agent's answer may
 carry `resource://` link and image targets and GFM footnotes
@@ -819,6 +827,31 @@ briefing's three/one/zero-result cases.
 The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026-08-06. Slack later made PKCE immutable for this app. CLI 4.6.0 strips `pkce_enabled` from its validation request even when the generated manifest contains `"pkce_enabled": true`, so the API interprets the omission as an attempt to disable PKCE. Until the CLI preserves that field, validate and apply production changes through Slack's App Manifest editor instead. Validation does not replace deployment or Marketplace review.
 
 ## Changelog
+
+### 2026-11-02 — The connector's send tool posts through the `markdown` block
+
+**Why:** `send_message` still sent the model's text as `chat.postMessage`'s
+`text`, which Slack reads as mrkdwn. A daily report a Sidekick posted to a channel
+showed every table row as literal pipes, because mrkdwn has no tables. The
+2026-08-22 entry moved Rally's own reply and result paths to the `markdown` block
+but left this path behind. Review then found two splitter defects that agent
+replies already had: a table crossing a split lost its header in the next chunk,
+and a carried paragraph tail could push a chunk past Slack's limit. Routing
+connector posts through the same splitter made both worth fixing here.
+
+**Considered and rejected:** Lowering the tool's 40,000-character cap to the
+block's 12,000. That cap is a limit the team set, and the splitter already keeps
+long posts working.
+
+**Consequences:** A long post now arrives as a first message plus replies in its
+thread, so it is no longer one atomic write. A failure after the first part
+returns that message with `parts_posted`, `parts_total` and Slack's error name,
+rather than throwing: the receipt records what is visible, and the refresh retry
+around the tool cannot rerun the send and post the first parts twice, since
+production supplies no idempotency key for Slack writes to dedupe them. Slack's
+markdown block reference does not say whether `<@U…>` mentions and `<#C…>`
+channel links render inside the block; until someone checks in a live workspace,
+that is open.
 
 ### 2026-10-06 — Each run's outcome follows its own message and member
 
