@@ -124,6 +124,17 @@ describe('Sidekick mentions in a draft', () => {
       .toEqual({ text: 'Ask @Daily dig', mentions: [] });
   });
 
+  it('does not find a same-named person where a Sidekick was picked', () => {
+    expect(resolveMentionPayload('Ask @Sam', [sidekick('Sam', 4)], [person('Sam', 'user-sam')])).toEqual([]);
+  });
+
+  it("never reads a Sidekick link's label as a person, but still finds that person elsewhere", () => {
+    const text = `Ask [@Sam](sidekick://${DIGEST_ID}) and @Sam`;
+    expect(resolveMentionPayload(text, [], [person('Sam', 'user-sam')])).toEqual([{
+      type: 'person', userId: 'user-sam', connectorType: null, startOffset: 64, endOffset: 68,
+    }]);
+  });
+
   it('never hands a Sidekick selection to the mention payload', () => {
     expect(resolveMentionPayload('Ask @Daily digest', [sidekick('Daily digest', 4)], [])).toEqual([]);
   });
