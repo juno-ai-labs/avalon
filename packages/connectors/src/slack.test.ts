@@ -1147,6 +1147,94 @@ describe("Slack connector", () => {
     expect(sent).not.toHaveProperty("externalConversation");
   });
 
+  it("posts a message body as a markdown block, so its tables render", async () => {
+    // Slack reads `chat.postMessage`'s `text` as mrkdwn, which has no tables:
+    // a Sidekick's report posted there showed every row as literal pipes.
+    const requests: Array<Record<string, unknown>> = [];
+    let next = 0;
+    const fetcher: FetchLike = vi.fn(async (_input, init) => {
+      requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      next += 1;
+      return json({ ok: true, channel: "CIDEAS", ts: `1786130000.00010${next}` });
+    });
+    const adapter = createSlackConnector({
+      clientId: "client",
+      clientSecret: "secret",
+      signingSecret: "signing",
+      redirectUri: "https://api.example.com/connections/slack/callback",
+      fetch: fetcher,
+    });
+    const connection = slackWorkspaceToolConnection();
+    const context = {
+      connection,
+      principal: { type: "workspace" as const, workspaceId: asWorkspaceId(connection.workspaceId) },
+      providerIdempotencyKey: "tool-receipt-send-report",
+      signal: neverAborts(),
+    };
+
+    const table = "**Web traffic**\n\n| Metric | Oct 30 |\n|---|---:|\n| Visitors | 84 |";
+    await expect(adapter.executeTool("send_message", {
+      channel_id: "CIDEAS", text: table, thread_ts: "1786120000.000100",
+    }, context)).resolves.toMatchObject({ providerOperationId: "CIDEAS:1786130000.000101" });
+    expect(requests[0]).toMatchObject({
+      channel: "CIDEAS",
+      thread_ts: "1786120000.000100",
+      text: "Web traffic\n\n| Metric | Oct 30 |\n|---|---:|\n| Visitors | 84 |",
+      blocks: [{ type: "markdown", text: table }],
+    });
+
+    // A body past Slack's markdown limit posts as consecutive messages in the
+    // same thread, each with its own idempotency key, and reports the first.
+    requests.length = 0;
+    const long = Array.from({ length: 300 }, (_, row) => `| row ${row} | ${"x".repeat(60)} |`).join("\n");
+    await expect(adapter.executeTool("send_message", {
+      channel_id: "CIDEAS", text: long, thread_ts: "1786120000.000100",
+    }, context)).resolves.toMatchObject({ providerOperationId: "CIDEAS:1786130000.000102" });
+    expect(requests).toHaveLength(2);
+    expect(requests.map((request) => request.thread_ts)).toEqual(["1786120000.000100", "1786120000.000100"]);
+    expect(new Set(requests.map((request) => request.client_msg_id)).size).toBe(2);
+    expect(requests.map((request) => (request.blocks as Array<{ text: string }>)[0]!.text).join("\n")).toBe(long);
+
+    // Posted top-level, the rest continues in the first message's thread, so
+    // a reply anywhere in it reaches the root the send binds.
+    requests.length = 0;
+    await expect(adapter.executeTool("send_message", { channel_id: "CIDEAS", text: long }, context))
+      .resolves.toMatchObject({ providerOperationId: "CIDEAS:1786130000.000104" });
+    expect(requests.map((request) => request.thread_ts)).toEqual([undefined, "1786130000.000104"]);
+  });
+
+  it("reports the first message when a later part of a long post fails", async () => {
+    // The first part is already visible, so the receipt must still record it;
+    // throwing would lose it and let a re-send post that part twice.
+    let calls = 0;
+    const fetcher: FetchLike = vi.fn(async () => {
+      calls += 1;
+      return calls === 1
+        ? json({ ok: true, channel: "CIDEAS", ts: "1786130000.000101" })
+        : json({ ok: false, error: "ratelimited" });
+    });
+    const adapter = createSlackConnector({
+      clientId: "client",
+      clientSecret: "secret",
+      signingSecret: "signing",
+      redirectUri: "https://api.example.com/connections/slack/callback",
+      fetch: fetcher,
+    });
+    const connection = slackWorkspaceToolConnection();
+    const long = Array.from({ length: 300 }, (_, row) => `line ${row} ${"x".repeat(60)}`).join("\n");
+    const sent = await adapter.executeTool("send_message", { channel_id: "CIDEAS", text: long }, {
+      connection,
+      principal: { type: "workspace" as const, workspaceId: asWorkspaceId(connection.workspaceId) },
+      signal: neverAborts(),
+    });
+    expect(sent).toMatchObject({
+      providerOperationId: "CIDEAS:1786130000.000101",
+      output: { channel_id: "CIDEAS", timestamp: "1786130000.000101", parts_posted: 1, parts_total: 2, failure: "ratelimited" },
+      summary: "Posted 1 of 2 parts of a Slack message to CIDEAS; part 2 failed (ratelimited) and the rest was not sent",
+    });
+    expect(calls).toBe(2);
+  });
+
   it("rejects free workspace plans and refreshes user-only MCP tokens", async () => {
     const calls: URL[] = [];
     const fetcher: FetchLike = vi.fn(async (input, init) => {

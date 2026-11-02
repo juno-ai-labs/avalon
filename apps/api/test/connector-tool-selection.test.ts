@@ -6,10 +6,11 @@ import type {
   WorkstreamWorkflowInput,
 } from "@rally/contracts";
 import { customToolIdentityHash, runHarness, type HarnessEvent } from "@rally/agent-harness";
-import { slackTools, notionTools, granolaTools } from "@rally/connectors";
+import { notionTools, granolaTools } from "@rally/connectors";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ToolDefinition } from "@rally/contracts";
 import historicalGoogleTools from "./fixtures/google-tools-before-workflows.json";
+import historicalSlackTools from "./fixtures/slack-tools-before-markdown-send.json";
 import combinedGoogleReceipts from "./fixtures/google-combined-receipts.json";
 import preTextPageReceipts from "./fixtures/google-receipts-before-text-pages.json";
 
@@ -31,12 +32,13 @@ import {
 } from "./helpers/durable-authority";
 import { responsesStreamResponse } from "@rally/agent-harness/test-support/responses-stream";
 
-// Frozen pre-cutover definitions. Google uses a historical fixture because
-// new workflows and attachment inputs intentionally change the current receipt
-// digest; older receipts must remain fenced. Prose participates in the hash.
+// Frozen pre-cutover definitions. Google and Slack use historical fixtures
+// because new workflows and attachment inputs, and `send_message`'s move to
+// standard markdown, intentionally change the current receipt digest; older
+// receipts must remain fenced. Prose participates in the hash.
 it.each([
   ["google", historicalGoogleTools as ToolDefinition[], "ee3d58df9c6be517cf31c61c24ff0a9e48496b6985952f2b1fb233c9e17107f3"],
-  ["slack", slackTools, "4252e614c1b846896edb924fd3210d89339b1536a81b22b19e8c5010baa27820"],
+  ["slack", historicalSlackTools as ToolDefinition[], "4252e614c1b846896edb924fd3210d89339b1536a81b22b19e8c5010baa27820"],
   ["notion", notionTools, "9df5f6fbfe14255d35486d5efb4f90545bdf2919cab5a4321a5b3c43014f3ef6"],
   ["granola", granolaTools, "68ee12b5c978b26d85e9d8893c0f9f5d3bdd5d6f42a1c4ef0f36654a6550c807"],
 ] as const)("reconstructs the historical %s receipt surface", async (pluginId, definitions, expected) => {

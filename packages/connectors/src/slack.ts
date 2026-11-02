@@ -5,6 +5,7 @@ import type { ConnectorActivityFilterField, NormalizedActivity, ToolDefinition }
 import { HttpsUrlSchema } from "@rally/contracts/url-schemas";
 import { z } from "zod";
 import { createHostedMcpPassthrough } from "./hosted-mcp";
+import { slackMarkdownMessages, type SlackMarkdownMessage } from "./slack-markdown";
 import { readConnectorDocument, type ConnectorDocumentConnection, type ConnectorDocumentReader } from "./documents";
 import {
   isProviderCredentialRejection,
@@ -354,7 +355,7 @@ export const slackTools: ToolDefinition[] = [
   }, ["file_id"]),
   tool("send_message", "Send a Slack message as the connected user or installed workspace bot.", SlackCapabilities.messagesWrite, "write", {
     channel_id: conversationId("Where to post the message."),
-    text: { type: "string", minLength: 1, maxLength: 40_000, description: "The message body, in Slack's mrkdwn: `*bold*`, `_italic_`, `` `code` ``, `<https://example.com|a link>`, `<@U0123ABCDEF>` to mention a person, and `<#C0123ABCDEF>` to link a channel. A bare `@dana` posts the literal text and notifies no one." },
+    text: { type: "string", minLength: 1, maxLength: 40_000, pattern: "\\S", description: "The message body, in standard markdown: `**bold**`, `_italic_`, `` `code` ``, `[a link](https://example.com)`, headings, lists, code blocks, and `|`-delimited tables all render. Use `<@U0123ABCDEF>` to mention a person and `<#C0123ABCDEF>` to link a channel. A bare `@dana` posts the literal text and notifies no one." },
     thread_ts: { ...optionalId, description: "Post as a reply inside an existing thread, as that thread's parent `ts` copied exactly, for example `1735689600.123456`. Omit it, or send `null`, to post a new top-level message in the conversation." },
   }, ["channel_id", "text"]),
   tool("create_conversation", "Create a Slack channel or open a direct or group message as the connected user or installed workspace bot. Provide exactly one: `name` for a channel, or `user_ids` for a direct or group message.", SlackCapabilities.conversationsWrite, "write", {
@@ -1306,7 +1307,7 @@ const SlackDirectInputSchemas = {
   read_file: z.strictObject({ file_id: SlackIdSchema }),
   send_message: z.strictObject({
     channel_id: SlackIdSchema,
-    text: z.string().min(1).max(40_000),
+    text: z.string().min(1).max(40_000).regex(/\S/u),
     thread_ts: SlackTimestampSchema.nullable().optional(),
   }),
   create_conversation: z.strictObject({
@@ -1766,17 +1767,44 @@ async function executeSlackDirectTool(
     }
     case "send_message": {
       const args = SlackDirectInputSchemas.send_message.parse(rawArgs);
-      const result = await slackApi(token, "chat.postMessage", {
-        channel: args.channel_id,
-        text: args.text,
-        ...(args.thread_ts ? { thread_ts: args.thread_ts } : {}),
-        ...(context.providerIdempotencyKey
-          ? { client_msg_id: await stableSlackUuid(context.providerIdempotencyKey) }
-          : {}),
-      }, context.signal, fetcher);
+      // The model writes ordinary markdown, which only the `markdown` block
+      // renders; the `text` field is mrkdwn and shows a table as literal pipes.
+      // A body past Slack's markdown limit continues in the first message's
+      // thread, where a reply still reaches the root this tool binds.
+      const [head, ...rest] = slackMarkdownMessages(args.text);
+      // Only a body of nothing but citation syntax reduces to no message, and
+      // posting that syntax raw is what the reduction exists to prevent.
+      if (!head) throw new ConnectorError("invalid_payload", "send_message.text has no content once citations are reduced");
+      const post = async (message: SlackMarkdownMessage, index: number, threadTs: string | null | undefined) =>
+        slackApi(token, "chat.postMessage", {
+          channel: args.channel_id,
+          text: message.text,
+          blocks: message.blocks,
+          ...(threadTs ? { thread_ts: threadTs } : {}),
+          ...(context.providerIdempotencyKey
+            ? { client_msg_id: await stableSlackUuid(index === 0
+              ? context.providerIdempotencyKey
+              : `${context.providerIdempotencyKey}:${index}`) }
+            : {}),
+        }, context.signal, fetcher);
+      const result = await post(head, 0, args.thread_ts);
+      // Once the first message is in the channel, a later failure must still
+      // report it: the receipt then records what Slack holds, and a refresh
+      // retry cannot rerun the send and post the earlier parts twice.
+      let partial: { parts_posted: number; parts_total: number; failure: string } | null = null;
+      for (const [offset, message] of rest.entries()) {
+        try {
+          await post(message, offset + 1, args.thread_ts ?? result.ts);
+        } catch (error) {
+          partial = { parts_posted: offset + 1, parts_total: rest.length + 1, failure: slackFailureCode(error) };
+          break;
+        }
+      }
       return {
-        output: { channel_id: result.channel, timestamp: result.ts },
-        summary: `Sent a Slack message to ${result.channel}`,
+        output: { channel_id: result.channel, timestamp: result.ts, ...partial },
+        summary: partial
+          ? `Posted ${partial.parts_posted} of ${partial.parts_total} parts of a Slack message to ${result.channel}; part ${partial.parts_posted + 1} failed (${partial.failure}) and the rest was not sent`
+          : `Sent a Slack message to ${result.channel}`,
         providerOperationId: `${result.channel}:${result.ts}`,
         // Only the workspace bot's conversations reach ingress, so only a bot
         // send has a reply thread Rally can route. A send into an existing
@@ -2086,6 +2114,12 @@ function trustedSlackFileUrl(value: string): URL {
 async function stableSlackUuid(value: string): Promise<string> {
   const digest = await sha256Hex(value);
   return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-5${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+}
+
+/** Slack's own error name where it gave one, else the local failure's code. */
+function slackFailureCode(error: unknown): string {
+  return slackProviderErrorName(error)
+    ?? (error instanceof ConnectorError ? error.code : error instanceof Error ? error.name : "non_error_thrown");
 }
 
 function slackProviderErrorName(error: unknown): string | null {
