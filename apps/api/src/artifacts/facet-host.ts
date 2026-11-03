@@ -29,6 +29,8 @@
  * See `docs/live-web-artifacts.md`.
  */
 
+import { ARTIFACT_COMPATIBILITY_DATE, ASSET_SHIM_SOURCE, rallyCodeRevision } from "./asset-shim";
+
 /** The module name Rally's host class is loaded under, beside the model's. */
 export const FACET_HOST_MODULE = "__rally_host.js";
 
@@ -120,6 +122,26 @@ export class ${FACET_HOST_CLASS} extends DurableObject {
     return { tables };
   }
 
+  /**
+   * The schema scoping reads: every table and view with its definition, and
+   * every column of each table, generated ones included. No rows are counted,
+   * so a scoped read pays for a schema lookup and nothing more.
+   */
+  rallySchema() {
+    const tables = [];
+    for (const row of this.ctx.storage.sql.exec(
+      "SELECT name, sql FROM sqlite_master WHERE type = 'table' ORDER BY name",
+    )) {
+      if (INTERNAL_TABLE.test(row.name)) continue;
+      const columns = [];
+      for (const column of this.ctx.storage.sql.exec("SELECT name FROM pragma_table_xinfo(?)", row.name)) {
+        columns.push(column.name);
+      }
+      tables.push({ name: row.name, sql: row.sql ?? "", columns });
+    }
+    return { tables };
+  }
+
   /** The table names the live schema actually has, for identifier admission. */
   rallyTableNames() {
     const names = [];
@@ -182,3 +204,6 @@ export class ${FACET_HOST_CLASS} extends DurableObject {
 /** Thrown to force the rollback; never surfaced to a caller. */
 class RallyRollback extends Error {}
 `;
+
+/** The fingerprint of the Rally code a stateful site's isolate runs; see `rallyCodeRevision`. */
+export const FACET_HOST_REVISION = rallyCodeRevision(FACET_HOST_MODULE_SOURCE, ASSET_SHIM_SOURCE, ARTIFACT_COMPATIBILITY_DATE);

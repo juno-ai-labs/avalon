@@ -15,6 +15,7 @@ const ARTIFACT = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
 type HostDouble = ArtifactDataHost & {
   describeData: ReturnType<typeof vi.fn>;
   queryData: ReturnType<typeof vi.fn>;
+  pageData: ReturnType<typeof vi.fn>;
 };
 
 /**
@@ -39,6 +40,7 @@ function fixture(overrides: {
         rowCount: 2,
       }],
     })),
+    pageData: vi.fn(async () => ({ ok: true as const, rows: [{ choice: "yes" }] })),
     queryData: vi.fn(async () => ({
       ok: true as const,
       columns: ["choice"],
@@ -50,7 +52,7 @@ function fixture(overrides: {
   };
   const context = {
     resolveArtifact: vi.fn(async () => overrides.artifact === undefined
-      ? { artifactId: ARTIFACT, slug: "offsite-poll", mode: "active" as const, stateful: true }
+      ? { artifactId: ARTIFACT, slug: "offsite-poll", mode: "active" as const, stateful: true, scope: { rows: "all" as const } }
       : overrides.artifact),
     hostFor: vi.fn(async () => host satisfies ArtifactDataHost),
   } satisfies ArtifactDataToolContext;
@@ -137,7 +139,34 @@ describe("querying a site's data", () => {
       { resource: "p", sql: "SELECT * FROM votes WHERE choice = ?", params: ["yes"] },
       {} as never,
     );
-    expect(host.queryData).toHaveBeenCalledWith("SELECT * FROM votes WHERE choice = ?", ["yes"], 200);
+    expect(host.queryData).toHaveBeenCalledWith("SELECT * FROM votes WHERE choice = ?", ["yes"], 200, { rows: "all" });
+  });
+
+  it("reads with the resolved scope and says in describe when rows are only the requester's own", async () => {
+    const scope = { rows: "viewer" as const, viewerId: "00000000-0000-7000-8000-0000000000a9" };
+    const { describe: describeTool, query, host } = fixture({
+      artifact: { artifactId: ARTIFACT, slug: "journal", mode: "active", stateful: true, scope },
+    });
+    const described = await describeTool.execute({ resource: "journal" }, {} as never);
+    const read = await query.execute({ resource: "journal", sql: "SELECT choice FROM votes" }, {} as never);
+    expect(host.describeData).toHaveBeenCalledWith(scope);
+    expect(host.queryData).toHaveBeenCalledWith("SELECT choice FROM votes", [], 200, scope);
+    expect(described.output).toMatchObject({
+      rowsShown: "Tables with a private_to_viewer column show only the requesting person's rows; other tables show every row.",
+    });
+    // A query that ran found no private table, so every row it returned is shared.
+    expect(read.output).not.toHaveProperty("rowsShown");
+  });
+
+  it("reads one page of a table with the resolved scope", async () => {
+    const scope = { rows: "viewer" as const, viewerId: "00000000-0000-7000-8000-0000000000a9" };
+    const { context, host } = fixture({
+      artifact: { artifactId: ARTIFACT, slug: "journal", mode: "active", stateful: true, scope },
+    });
+    const read = createWorkstreamArtifactDataTools(context).find((tool) => tool.definition.name === "read_artifact_table")!;
+    const result = await read.execute({ resource: "journal", table: "entries" }, {} as never);
+    expect(host.pageData).toHaveBeenCalledWith("entries", 0, 200, scope);
+    expect(result.output).toMatchObject({ table: "entries", rows: [{ choice: "yes" }], rowsShown: expect.any(String) });
   });
 
   it("surfaces a refused statement as a repairable failure carrying the repair", async () => {
@@ -153,6 +182,35 @@ describe("querying a site's data", () => {
     const error = await refusal(() => query.execute({ resource: "p", sql: "DELETE FROM votes" }, {} as never));
     expect(error.code).toBe("sql_error");
     expect(error.message).toContain("Describe the data first");
+  });
+
+  it("names a private-rows refusal apart from bad SQL, so the model switches tools", async () => {
+    const { query } = fixture({
+      host: {
+        queryData: vi.fn(async () => ({
+          ok: false as const,
+          reason: "private_rows" as const,
+          detail: "Read a table with read_artifact_table instead.",
+        })),
+      },
+    });
+    const error = await refusal(() => query.execute({ resource: "p", sql: "SELECT * FROM entries" }, {} as never));
+    expect(error.code).toBe("private_rows");
+    expect(error.message).toContain("read_artifact_table");
+  });
+
+  it("offers the next page only when a full page came back", async () => {
+    const full = Array.from({ length: 200 }, (_, index) => ({ n: index }));
+    const { context, host } = fixture({
+      host: { pageData: vi.fn(async () => ({ ok: true as const, rows: full })) },
+    });
+    const read = createWorkstreamArtifactDataTools(context).find((tool) => tool.definition.name === "read_artifact_table")!;
+    const first = await read.execute({ resource: "p", table: "votes", offset: 200 }, {} as never);
+    expect(host.pageData).toHaveBeenCalledWith("votes", 200, 200, { rows: "all" });
+    expect(first.output).toMatchObject({ nextOffset: 400 });
+    expect(first.output).not.toHaveProperty("rowsShown");
+    host.pageData.mockResolvedValueOnce({ ok: true, rows: [{ n: 1 }] });
+    expect((await read.execute({ resource: "p", table: "votes" }, {} as never)).output).not.toHaveProperty("nextOffset");
   });
 
   it("replaces a stored blob with its size rather than spending context on it", async () => {
@@ -199,7 +257,7 @@ describe("what the tools refuse to reach", () => {
     // A static or stateless-active site is a working outcome, not a broken one,
     // and the remediation points at reading its source instead.
     const { describe: describeTool, query, host } = fixture({
-      artifact: { artifactId: ARTIFACT, slug: "checklist", mode: "static", stateful: false },
+      artifact: { artifactId: ARTIFACT, slug: "checklist", mode: "static", stateful: false, scope: { rows: "all" } },
     });
     const error = await refusal(() => describeTool.execute({ resource: "checklist" }, {} as never));
     expect(error.code).toBe("no_artifact_data");

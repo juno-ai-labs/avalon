@@ -286,7 +286,7 @@ import type { HarnessRunObjectPort } from "../durable-objects/workstream-harness
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createConversationResourceLinks } from "../runtime/resource-port";
 import { createWorkstreamArtifactDataTools } from "./workstream-artifact-data-tools";
-import { createArtifactDataToolContext } from "./workstream-artifact-data-wiring";
+import { artifactDataReader, createArtifactDataToolContext } from "./workstream-artifact-data-wiring";
 import type { MessageObjectPort } from "../durable-objects/workstream-message-protocol";
 import { transcriptLister } from "../runtime/message-projection";
 import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
@@ -8516,6 +8516,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
       workspaceId: input.workspaceId,
       workstreamId: input.parentId,
       principal: input.executionPrincipal,
+      reader: artifactDataReader(input),
     })),
     {
       definition: AVALON_CURRENT_TIME_TOOL_DEFINITION,

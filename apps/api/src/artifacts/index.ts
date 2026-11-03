@@ -38,13 +38,16 @@ import type { Region } from "@rally/contracts/regions";
  */
 import {
   ARTIFACT_RESERVED_PREFIX,
-  ArtifactHostnameRouteSchema,
+  ARTIFACT_SIGN_IN_PATH,
+  artifactReturnPath,
+  artifactSiteOpenPath,
   artifactManifestKey,
   asArtifactId,
   parseArtifactHost,
   type ArtifactManifest,
 } from "@rally/contracts";
 
+import { resolveArtifactHostname } from "./hostname-routes";
 import { artifactHostDOName } from "../durable-objects/names";
 import type { ArtifactHostDO } from "../durable-objects/artifact-host-do";
 import { durableObjectStubForArtifact } from "../lib/durable-object-namespace";
@@ -67,6 +70,8 @@ import {
   ASSET_SHIM_SOURCE,
   LOADER_ENTRY_MODULE,
   LOADER_ENTRY_SOURCE,
+  ARTIFACT_COMPATIBILITY_DATE,
+  statelessLoaderId,
 } from "./asset-shim";
 import { neutralPage, plainErrorPage, redeemBootstrapPage } from "./pages";
 import {
@@ -83,8 +88,10 @@ export interface ArtifactServingEnv {
   AVALON_REGION: Region;
   ARTIFACT_SERVING_DOMAIN: string;
   /**
-   * The browser client's origin, the one page allowed to frame an artifact for
-   * its inline preview. Unset, nothing may frame one.
+   * The browser client's origin: the one page allowed to frame an artifact for
+   * its inline preview, and where a site sends a person to sign in. Unset,
+   * nothing may frame one, `/__rally/sign-in` answers the neutral 404, and a
+   * protected site's 401 is shown as it is.
    */
   BROWSER_APP_ORIGIN?: string;
   ARTIFACT_HOSTS: DurableObjectNamespace<ArtifactHostDO>;
@@ -137,39 +144,6 @@ function readCookie(request: Request, name: string): string | null {
   return null;
 }
 
-/**
- * Resolve a public stub through the content-free platform database.
- *
- * The artifact Worker receives this one D1 binding instead of either product
- * region's database. A composite primary key makes the lookup one row and keeps
- * equal stubs in `-g` and a configured suffix independent origins.
- */
-async function resolveArtifactHostname(
-  env: ArtifactServingEnv,
-  hostnameStub: string,
-): Promise<string | null> {
-  const row = await env.PLATFORM_DB.prepare(
-    `SELECT hostname_stub, artifact_id, region FROM artifact_hostname_routes
-      WHERE region = ? AND hostname_stub = ?`,
-  ).bind(env.AVALON_REGION, hostnameStub).first<{
-    hostname_stub: string;
-    artifact_id: string;
-    region: string;
-  }>();
-  if (!row) return null;
-  const route = ArtifactHostnameRouteSchema.safeParse({
-    version: 1,
-    hostnameStub: row.hostname_stub,
-    artifactId: row.artifact_id,
-    region: row.region,
-  });
-  if (!route.success) return null;
-  // Keep the trust decision explicit even though the SQL predicate already
-  // names both values: a malformed or misbound index must never turn this
-  // regional Worker into a cross-region artifact resolver.
-  if (route.data.region !== env.AVALON_REGION || route.data.hostnameStub !== hostnameStub) return null;
-  return route.data.artifactId;
-}
 
 /**
  * Exported here as well as from the API Worker's entry, because `ctx.exports`
@@ -198,6 +172,14 @@ const artifactServer = {
     // regionalization says has no path.
     if (host.region !== env.AVALON_REGION) return html(neutralPage(), 404);
     if (isFramedHopFromAnotherArtifact(request)) return html(neutralPage(), 403);
+
+    // Sign-in hands the person to the browser client, which signs them in if
+    // needed and opens this site at `return`. Answered before the hostname
+    // lookup, the same for every host, so it says nothing about what exists.
+    if (url.pathname === ARTIFACT_SIGN_IN_PATH) {
+      const target = signInUrl(env, host, url.searchParams.get("return"));
+      return target ? redirect(target) : html(neutralPage(), 404);
+    }
 
     // The bootstrap page is the one path served before a session exists, and it
     // is Rally's own HTML rather than artifact content. It reads the code from
@@ -245,11 +227,13 @@ const artifactServer = {
     if (url.pathname === `${ARTIFACT_RESERVED_PREFIX}/redeem`) {
       if (request.method !== "POST") return html(neutralPage(), 405);
       if (classifyFetchMetadata(request, origin) === "refused") return html(neutralPage(), 403);
-      const body = await request.text().catch(() => "");
-      const code = new URLSearchParams(body).get("code") ?? "";
+      const form = new URLSearchParams(await request.text().catch(() => ""));
+      const code = form.get("code") ?? "";
       const redeemed = code ? await artifact.redeemCode(code) : null;
       if (!redeemed) return html(neutralPage(), 403);
-      const headers = new Headers({ location: "/" });
+      // Back to where the person was going when they signed in. Reduced to a
+      // path on this site, so the redirect cannot leave it.
+      const headers = new Headers({ location: artifactReturnPath(form.get("return")) });
       // Redeemed inside the browser client's preview frame, the artifact is a
       // cross-site frame, and a `Lax` cookie would never be sent with its
       // requests. A partitioned `None` cookie is kept only for this artifact
@@ -268,17 +252,19 @@ const artifactServer = {
       return withSecurityHeaders(new Response(null, { status: 303, headers }));
     }
 
-    // Every remaining path is public artifact content. Fetch metadata decides
-    // whether the request is eligible to carry a trusted Rally viewer identity:
-    // anonymous reads are allowed from anywhere, but unsafe requests still
-    // require exact same-origin browser metadata.
+    // Every remaining path is artifact content, and any request may reach it.
+    // Fetch metadata decides only whether it may carry a viewer identity:
+    // same-origin requests and top-level navigations may; everything else,
+    // any method from any origin, arrives anonymous. So a sibling artifact can
+    // never act with a viewer's identity, and the site's code decides what an
+    // anonymous request may do.
     const verdict = classifyFetchMetadata(request, origin);
-    if (verdict === "refused") {
-      return html(neutralPage(), 403);
-    }
-
     let admitted: Admitted | null = null;
-    if (verdict !== "anonymous_read") {
+    // Whether sending this person to sign in could help. Not when their
+    // session could not be checked: signing in again would only come back to
+    // the same failed check, round and round.
+    let signInCanHelp = true;
+    if (verdict === "same_origin" || verdict === "top_level") {
       const session = readCookie(request, SESSION_COOKIE);
       // Identity is an optional enhancement to a public response. If the
       // visibility hop fails, degrade to anonymous rather than making a viewer
@@ -288,6 +274,7 @@ const artifactServer = {
         try {
           checked = await artifact.checkSession(session);
         } catch (error) {
+          signInCanHelp = false;
           logWarn({
             LOG_LEVEL: "info",
             AVALON_REGION: env.AVALON_REGION,
@@ -329,28 +316,66 @@ const artifactServer = {
       };
     }
 
-    // Public means readable, not anonymously writable. Fetch metadata is a
-    // browser CSRF signal rather than caller authentication, and a non-browser
-    // client can spell those headers itself. Preserve the former session gate
-    // for every method that may mutate model-owned state.
-    if (!admitted.viewerId && request.method !== "GET" && request.method !== "HEAD") {
-      return html(neutralPage(), 401);
-    }
+    // Anyone may submit to a site. A request without a session reaches the
+    // handler with no viewer headers, and the site's own code decides whether
+    // to require them: a protected site answers 401, which a page load turns
+    // into sign-in below.
 
     const mount = splitVersionMount(url.pathname);
     if (mount.version !== null && mount.version !== admitted.version) {
       // Historical active versions cannot run their protection guard, and a
       // historical static version has no guard at all. Keep version browsing
       // behind the Rally session even though the current site is public.
-      if (!admitted.viewerId) return html(neutralPage(), 401);
+      if (!admitted.viewerId) {
+        const target = signInCanHelp && isDocumentNavigation(request)
+          ? signInUrl(env, host, url.pathname + url.search)
+          : null;
+        return target ? redirect(target) : html(neutralPage(), 401);
+      }
       const refusal = refuseUnsafeVersionRequest(request);
       if (refusal) return html(plainErrorPage(refusal), 405);
       return servePriorVersion(env, artifactId, mount.version, mount.path, admitted);
     }
 
-    return serveCurrent(env, ctx, artifact, artifactId, request, url, admitted);
+    const response = await serveCurrent(env, ctx, artifact, artifactId, request, url, admitted);
+    // A protected site answers a visitor with no session 401. When that visitor
+    // is loading a page, send them to sign in and back here instead, so a
+    // direct link to a protected site works. The handler still decided the
+    // refusal; only its page is replaced, and only for a page load.
+    if (response.status === 401 && !admitted.viewerId && signInCanHelp && isDocumentNavigation(request)) {
+      const target = signInUrl(env, host, url.pathname + url.search);
+      if (target) return redirect(target);
+    }
+    return response;
   },
 };
+
+/**
+ * The browser client's page that signs a person in and opens this site at
+ * `returnTo`, or `null` where there is none to send them to: no browser
+ * client is configured (or the setting is not a URL), or a legacy UUID host
+ * has no hostname to name.
+ */
+function signInUrl(
+  env: ArtifactServingEnv,
+  host: NonNullable<ReturnType<typeof parseArtifactHost>>,
+  returnTo: string | null,
+): string | null {
+  const browserOrigin = browserFrameAncestor(env.BROWSER_APP_ORIGIN);
+  if (!browserOrigin || !host.hostnameStub) return null;
+  return new URL(artifactSiteOpenPath(host.region, host.hostnameStub, returnTo ?? "/"), browserOrigin).toString();
+}
+
+/** A person loading a page, as opposed to a script, an image or a crawler. */
+function isDocumentNavigation(request: Request): boolean {
+  return request.method === "GET"
+    && request.headers.get("sec-fetch-mode") === "navigate"
+    && request.headers.get("sec-fetch-dest") === "document";
+}
+
+function redirect(location: string): Response {
+  return withSecurityHeaders(new Response(null, { status: 303, headers: { location } }));
+}
 
 type Admitted = {
   viewerId: string | null;
@@ -507,11 +532,11 @@ async function runArtifactModule(
     return await artifact.fetchThroughFacet(forwardable(request, admitted));
   }
   const loader = env.ARTIFACT_LOADER!;
-  const worker = loader.get(`artifact:${artifactId}:v${manifest.artifactVersion}`, async () => {
+  const worker = loader.get(statelessLoaderId(artifactId, manifest.artifactVersion), async () => {
     const module = await env.PAYLOADS.get(`artifact/${artifactId}/v${manifest.artifactVersion}/assets/index.js`);
     if (!module) throw new Error("artifact_server_module_missing");
     return {
-      compatibilityDate: "2026-08-01",
+      compatibilityDate: ARTIFACT_COMPATIBILITY_DATE,
       // Rally's module is the main one and imports the site's, so `env.ASSETS`
       // is the wrapped reader by the time the site's handler runs — the same
       // shape the facet gives a stateful site, so one contract covers both.

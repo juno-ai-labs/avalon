@@ -69,15 +69,19 @@ export function redeemBootstrapPage(redeemPath: string): string {
   return page(
     "Rally",
     "<h1>Opening…</h1><p>One moment.</p>"
-    + `<form id="f" method="POST" action="${redeemPath}"><input type="hidden" name="code" id="c"></form>`
+    + `<form id="f" method="POST" action="${redeemPath}"><input type="hidden" name="code" id="c"><input type="hidden" name="return" id="r"></form>`
     + `<script>
 (function () {
   var code = location.hash.slice(1);
+  // Where to land after redemption. Only a path; the redeem endpoint reduces
+  // it to one on this site whatever it holds.
+  var back = new URLSearchParams(location.search).get("return");
   // Clear it from the address bar before the POST, so a screenshot or a
   // shoulder-read of the URL bar never holds a live code.
   history.replaceState(null, "", location.pathname);
   if (!code) { location.replace("/"); return; }
   document.getElementById("c").value = code;
+  if (back) document.getElementById("r").value = back;
   document.getElementById("f").submit();
 })();
 </script>`,

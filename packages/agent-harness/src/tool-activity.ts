@@ -155,6 +155,11 @@ const WORKSTREAM_PROSE: Record<string, ToolProse> = {
     settled: "Read the site's data",
     failed: "Could not read the site's data",
   },
+  read_artifact_table: {
+    started: "Reading a table of the site's data",
+    settled: "Read a table of the site's data",
+    failed: "Could not read a table of the site's data",
+  },
   search_resource: {
     started: "Searching an attached resource",
     settled: "Searched an attached resource",
