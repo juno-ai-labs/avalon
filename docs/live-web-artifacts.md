@@ -323,6 +323,10 @@ what the page shows is the page's job.
 - **Organization-principal runs** read every row, like Sidekick runs, at the
   PR author's direction. That includes runs for an unlinked Slack or connector
   sender.
+- **What this does not guard.** `private_to_viewer` keeps rows out of the
+  Data view, the export and a member's own agent reads. It is not a boundary
+  against Sidekick runs or Organization-principal runs, which read every row:
+  a member who can create a Sidekick can have it read every row.
 - **What counts as private** is read from a schema-only facet call,
   `rallySchema`, using `pragma_table_xinfo` so a generated `private_to_viewer`
   column counts, and counting no rows. A private FTS5 table's backing tables
@@ -728,7 +732,10 @@ fails without its fix. Anonymous submissions now reach every site's handler, wit
 the site's code decides what to accept, so a public poll needs no Rally
 setting. An earlier per-site opt-in was removed as friction for the model.
 
-**Consequences:** The column name is the contract; renaming it in a site makes
+**Consequences:** Sites published before this change were written while
+Rally refused anonymous unsafe requests, so any that never check for a viewer
+now accept anonymous writes from any origin; that cannot be undone for data
+already written. The column name is the contract; renaming it in a site makes
 its rows shared. A view that cannot be read back from `sqlite_master` throws
 rather than going unshadowed. A caller CTE reusing a per-viewer table's name is
 a SQLite error, not a leak. Anyone adding a fourth read path must pass a scope
