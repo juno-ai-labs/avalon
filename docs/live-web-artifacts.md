@@ -341,6 +341,12 @@ what the page shows is the page's job.
   trigger, a view, a vocabulary table over another index), so hiding only
   indexes that name a private table leaked; hiding them all is the rule. A
   site with no private table hides nothing.
+- **Searching private rows.** A full-text table with its own
+  `private_to_viewer UNINDEXED` column is private, not hidden, and
+  `read_artifact_table`'s `match` searches it with the viewer filter Rally
+  adds, so a member finds only their own entries. The search terms are a bound
+  parameter, never caller SQL. The skill teaches that column for any search
+  over private entries.
 - **Every reader is told which tables are private.** `describeData` marks
   each table `private` from its columns, which the Data view shows as a
   Private pill and the describe tool returns, so an author knows which rows
@@ -730,10 +736,12 @@ The selector and trust boundaries are owned by
 
 ## Changelog
 
-### 2026-11-03 — A Private pill, and Sidekick runs read every row again
+### 2026-11-03 — A Private pill, member search, and Sidekick runs read every row again
 
 **What changed:** `describeData` marks each table `private`, and the Data
-view shows a Private pill on such a table. Describing now lists generated
+view shows a Private pill on such a table. `pageData` and
+`read_artifact_table` take an optional `match` that searches a full-text
+table, with Rally adding the viewer filter. Describing now lists generated
 columns too. A member's message continuing a Sidekick run no longer narrows
 that run to the member's rows.
 
@@ -742,9 +750,14 @@ nothing warned them before repeating private entries in a shared thread.
 People do not type into Sidekick runs, so the narrowing guarded a path nobody
 uses and added a rule to explain.
 
+Hiding every search table on a site with private rows left members unable to
+search their own entries; a `match` argument restores that without letting a
+member's agent write the filter it could also leave out.
+
 **Considered and rejected:** Marking private tables with a second facet call
 to read the schema: the columns `rallyDescribe` already returns say it, so
-the flag costs no extra call.
+the flag costs no extra call. Trusting the model to add the viewer filter to
+free SQL: a member could ask their agent to leave it out.
 
 **Consequences:** If people can ever type into a Sidekick run, that run
 reads every row for them; narrow it in `artifactDataReader` then.

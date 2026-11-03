@@ -866,7 +866,7 @@ that built the page.
 | --- | --- | --- |
 | `describe_artifact_data` | `{ resource: string }` — a site resource's slug or id | `{ resource, slug, mode, tables: [{ name, columns: [{ name, type }], rowCount, private }] }`; `private` marks a table that shows each person only their own rows. Discovery first: the schema is a model-designed one this run may never have seen. |
 | `query_artifact_data` | `{ resource: string, sql: string, params?: (string \| number \| null)[] }` | `{ resource, columns, rows, rowCount, truncated }`; at most 200 rows, with `truncated` rather than a silent cut. A stored blob is replaced by `<n bytes>`. |
-| `read_artifact_table` | `{ resource: string, table: string, offset?: number }` | `{ resource, table, rows, nextOffset?, rowsShown? }`; one page of at most 200 rows, with `nextOffset` when a full page came back. `table_refused` names a table the site does not have. |
+| `read_artifact_table` | `{ resource: string, table: string, offset?: number, match?: string }` | `{ resource, table, rows, nextOffset?, rowsShown? }`; one page of at most 200 rows, with `nextOffset` when a full page came back. `match` searches a full-text (fts5) table, best matches first; Rally adds the viewer filter, so a member searches only their own rows of a private one. `table_refused` names a table the site does not have, a search on a table that is not fts5, or search terms SQLite cannot parse. |
 
 A member who did not publish the site reads only their own rows of a table
 with a `private_to_viewer` column, and `describe_artifact_data` and

@@ -307,6 +307,24 @@ describe("a stateful artifact's facet", () => {
       .toMatchObject({ ok: true, rows: [{ body: "mine" }, { body: "theirs" }] });
   });
 
+  it("searches a private full-text table only within the reader's own rows", async () => {
+    await publish(JOURNAL_MODULE);
+    const host = hostStub();
+    await host.fetchThroughFacet(viewerRequest("/write?body=mine"));
+    await host.fetchThroughFacet(viewerRequest("/write?body=theirs", OTHER_VIEWER));
+    // The other person's entry matches the words but is not this viewer's.
+    expect(await host.pageData("notes_fts", 0, 10, VIEWER_ROWS, "theirs")).toEqual({ ok: true, rows: [] });
+    expect(await host.pageData("notes_fts", 0, 10, VIEWER_ROWS, "mine"))
+      .toMatchObject({ ok: true, rows: [{ body: "mine" }] });
+    // The author searches every row.
+    expect(await host.pageData("notes_fts", 0, 10, ALL_ROWS, "theirs"))
+      .toMatchObject({ ok: true, rows: [{ body: "theirs" }] });
+    // Only a full-text table searches, and bad syntax is the caller's to fix.
+    expect(await host.pageData("entries", 0, 10, ALL_ROWS, "mine")).toMatchObject({ ok: false, reason: "table_refused" });
+    expect(await host.pageData("notes_fts", 0, 10, VIEWER_ROWS, "\"unclosed"))
+      .toMatchObject({ ok: false, reason: "table_refused", detail: expect.stringContaining("full-text search syntax") });
+  });
+
   it("keeps one warm instance across requests rather than reconstructing per request", async () => {
     // Worth pinning on its own: it is what makes a stateful artifact cheap
     // between requests, and it is the premise the republish test reasons about.

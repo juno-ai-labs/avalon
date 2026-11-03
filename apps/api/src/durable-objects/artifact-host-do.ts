@@ -714,8 +714,22 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     return { ok: true, columns: read.columns, rows: read.rows, rowCount: read.rowCount, truncated: read.truncated };
   }
 
-  /** One page of one table, for the Data view and the CSV export. */
-  async pageData(table: string, offset: number, limit: number, scope: ArtifactRowScope): Promise<ArtifactPageResult> {
+  /**
+   * One page of one table, for the Data view, the CSV export and
+   * `read_artifact_table`.
+   *
+   * `match` searches a full-text (FTS5) table with SQLite's `MATCH`, best
+   * matches first. Rally adds the viewer filter itself, so a member searches
+   * only their own rows of a private search table: the search is a bound
+   * parameter, never SQL the caller wrote.
+   */
+  async pageData(
+    table: string,
+    offset: number,
+    limit: number,
+    scope: ArtifactRowScope,
+    match?: string,
+  ): Promise<ArtifactPageResult> {
     await this.initialized;
     const state = this.stateRow();
     if (!state || state.stateful !== 1) return { ok: false, reason: "no_artifact_data" };
@@ -725,18 +739,49 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     const admitted = admitTableName(table, await host.rallyTableNames());
     if (!admitted.admitted) return { ok: false, reason: "table_refused", detail: admitted.reason };
     const viewerId = viewerOf(scope);
-    if (viewerId !== null) {
-      const scoped = viewerTables(await host.rallySchema());
-      if (scoped.hidden.includes(table)) return { ok: true, rows: [] };
-      if (scoped.filtered.some((candidate) => candidate.name === table)) {
+    const schema = viewerId !== null || match !== undefined ? await host.rallySchema() : null;
+    if (match !== undefined) {
+      const definition = schema?.tables.find((candidate) => candidate.name === table)?.sql ?? "";
+      if (!/\busing\s+fts5\b/iu.test(definition)) {
+        return {
+          ok: false,
+          reason: "table_refused",
+          detail: "Only a full-text search table (one created with fts5) can be searched. Omit match to page this table.",
+        };
+      }
+    }
+    const searched = match === undefined ? "" : ` ${admitted.quoted} MATCH ?`;
+    const order = match === undefined ? "" : " ORDER BY rank";
+    const read = async (where: string, params: (string | number)[]): Promise<ArtifactPageResult> => {
+      try {
         const page = await host.rallyQuery(
-          `SELECT * FROM ${admitted.quoted} WHERE ${quoteIdentifier(VIEWER_COLUMN)} = ? LIMIT ? OFFSET ?`,
-          [viewerId, limit, Math.max(0, offset)],
+          `SELECT * FROM ${admitted.quoted}${where}${order} LIMIT ? OFFSET ?`,
+          [...params, limit, Math.max(0, offset)],
           limit,
         );
         return { ok: true, rows: page.rows };
+      } catch (error) {
+        // The statement's shape is fixed, so SQLite rejecting it means the search
+        // terms, which are the caller's to repair; anything else is ours.
+        if (match === undefined || !/SQLITE_ERROR/u.test(error instanceof Error ? error.message : "")) throw error;
+        return {
+          ok: false,
+          reason: "table_refused",
+          detail: "That search is not valid full-text search syntax. Use plain words, or put a phrase in double quotes.",
+        };
+      }
+    };
+    if (viewerId !== null && schema) {
+      const scoped = viewerTables(schema);
+      if (scoped.hidden.includes(table)) return { ok: true, rows: [] };
+      if (scoped.filtered.some((candidate) => candidate.name === table)) {
+        const own = ` WHERE ${quoteIdentifier(VIEWER_COLUMN)} = ?`;
+        return match === undefined
+          ? await read(own, [viewerId])
+          : await read(`${own} AND${searched}`, [viewerId, match]);
       }
     }
+    if (match !== undefined) return await read(` WHERE${searched}`, [match]);
     const page = await host.rallyPage(admitted.quoted, offset, limit);
     return { ok: true, rows: page.rows };
   }

@@ -524,6 +524,14 @@ shape of \`index.js\`.
    }
    \`\`\`
 
+   **To search private entries**, give the full-text table the same
+   column, marked \`UNINDEXED\` so the owner's id is not searchable text,
+   and filter the page's search by it as well:
+   \`CREATE VIRTUAL TABLE journal_search USING fts5(body, ${ARTIFACT_VIEWER_COLUMN} UNINDEXED)\`,
+   then \`... WHERE journal_search MATCH ? AND ${ARTIFACT_VIEWER_COLUMN} = ?\`. A search
+   table without the column is hidden from members' views of a site that
+   has private tables.
+
 5. **Old versions of a stateful site do not run.** When someone views
    a prior version, they see its *source*, not a live page — only the
    current version's code ever runs against the database. So never

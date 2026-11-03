@@ -166,7 +166,7 @@ describe("querying a site's data", () => {
     });
     const read = createWorkstreamArtifactDataTools(context).find((tool) => tool.definition.name === "read_artifact_table")!;
     const result = await read.execute({ resource: "journal", table: "entries" }, {} as never);
-    expect(host.pageData).toHaveBeenCalledWith("entries", 0, 200, scope);
+    expect(host.pageData).toHaveBeenCalledWith("entries", 0, 200, scope, undefined);
     expect(result.output).toMatchObject({ table: "entries", rows: [{ choice: "yes" }], rowsShown: expect.any(String) });
   });
 
@@ -200,6 +200,13 @@ describe("querying a site's data", () => {
     expect(error.message).toContain("read_artifact_table");
   });
 
+  it("passes search terms through, leaving the filter to the host", async () => {
+    const { context, host } = fixture();
+    const read = createWorkstreamArtifactDataTools(context).find((tool) => tool.definition.name === "read_artifact_table")!;
+    await read.execute({ resource: "p", table: "notes_fts", match: "dentist" }, {} as never);
+    expect(host.pageData).toHaveBeenCalledWith("notes_fts", 0, 200, { rows: "all" }, "dentist");
+  });
+
   it("offers the next page only when a full page came back", async () => {
     const full = Array.from({ length: 200 }, (_, index) => ({ n: index }));
     const { context, host } = fixture({
@@ -207,7 +214,7 @@ describe("querying a site's data", () => {
     });
     const read = createWorkstreamArtifactDataTools(context).find((tool) => tool.definition.name === "read_artifact_table")!;
     const first = await read.execute({ resource: "p", table: "votes", offset: 200 }, {} as never);
-    expect(host.pageData).toHaveBeenCalledWith("votes", 200, 200, { rows: "all" });
+    expect(host.pageData).toHaveBeenCalledWith("votes", 200, 200, { rows: "all" }, undefined);
     expect(first.output).toMatchObject({ nextOffset: 400 });
     expect(first.output).not.toHaveProperty("rowsShown");
     host.pageData.mockResolvedValueOnce({ ok: true, rows: [{ n: 1 }] });
