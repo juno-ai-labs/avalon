@@ -4,6 +4,7 @@ import {
   admitReadOnlyStatement,
   admitTableName,
   quoteIdentifier,
+  scopeStatementToViewer,
 } from "../src/artifacts/read-only-sql";
 
 function admitted(sql: string): boolean {
@@ -144,5 +145,52 @@ describe("dynamic table names", () => {
     const refused = admitTableName("nope", live);
     expect(refused.admitted).toBe(false);
     if (!refused.admitted) expect(refused.reason).toContain("Describe the data first");
+  });
+});
+
+describe("limiting a read to one viewer's rows", () => {
+  const scope = { viewerTables: ["entries"], views: [], viewerId: "v-1" };
+  const shadow = `"entries" AS (SELECT * FROM main."entries" WHERE "viewer_id" = 'v-1')`;
+
+  it("shadows each per-viewer table with a CTE of the same name", () => {
+    expect(scopeStatementToViewer("SELECT body FROM entries", scope))
+      .toBe(`WITH ${shadow} SELECT body FROM entries`);
+  });
+
+  it("merges into the caller's own WITH, keeping RECURSIVE first", () => {
+    expect(scopeStatementToViewer("WITH x AS (SELECT 1) SELECT * FROM x", scope))
+      .toBe(`WITH ${shadow},  x AS (SELECT 1) SELECT * FROM x`);
+    expect(scopeStatementToViewer("with recursive r(n) AS (SELECT 1) SELECT * FROM r", scope))
+      .toBe(`WITH RECURSIVE ${shadow},  r(n) AS (SELECT 1) SELECT * FROM r`);
+  });
+
+  it("quotes the viewer id, so it can only ever be a value", () => {
+    expect(scopeStatementToViewer("SELECT 1", { ...scope, viewerId: "x' OR '1'='1" }))
+      .toContain(`"viewer_id" = 'x'' OR ''1''=''1')`);
+  });
+
+  it("drops a schema qualifier in any quoting from a shadowed name, and only from one", () => {
+    expect(scopeStatementToViewer('SELECT * FROM main.entries, "main"."entries", [temp] . entries, main.prompts', scope))
+      .toBe(`WITH ${shadow} SELECT * FROM entries, "entries", entries, main.prompts`);
+  });
+
+  it("leaves a schema name inside a string or a comment alone", () => {
+    expect(scopeStatementToViewer("SELECT 'main.entries' -- main.entries\nFROM entries", scope))
+      .toBe(`WITH ${shadow} SELECT 'main.entries' -- main.entries\nFROM entries`);
+  });
+
+  it("shadows a view with its own definition, so it reads the shadowed tables", () => {
+    const views = [
+      { name: "recent", sql: "CREATE VIEW recent AS SELECT body FROM main.entries" },
+      { name: "Labelled", sql: 'CREATE VIEW IF NOT EXISTS "Labelled"(text) AS SELECT body FROM recent' },
+    ];
+    expect(scopeStatementToViewer("SELECT * FROM labelled", { ...scope, views })).toBe(
+      `WITH ${shadow}, "recent" AS (SELECT body FROM entries), "Labelled"(text) AS (SELECT body FROM recent) SELECT * FROM labelled`,
+    );
+  });
+
+  it("leaves a statement alone when the site has no per-viewer table", () => {
+    expect(scopeStatementToViewer("SELECT * FROM main.prompts", { ...scope, viewerTables: [] }))
+      .toBe("SELECT * FROM main.prompts");
   });
 });

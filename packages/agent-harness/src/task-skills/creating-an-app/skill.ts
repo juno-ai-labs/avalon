@@ -36,6 +36,8 @@ question right away, before writing any files:
   sign-in.
 - **Signed-in viewers**: people sign in with Rally, so the site can tell
   viewers apart and save what each one does, or keep out anyone not signed in.
+  Each person sees only their own saved data; the person who asked for the
+  site, and Sidekicks, can see everyone's.
 
 Treat the request as already clear when it names per-person data ("my own
 list", "each person's votes", "members only") or says it is for anyone to view.
@@ -49,7 +51,8 @@ your reply that sign-in can be added.
 
 Load Terminal and \`building-live-sites\`, and follow it. A shared site with no
 saved data is static or active; a site that remembers what visitors do, or a
-signed-in site, follows its stateful and viewer-identity sections. Loading this
+signed-in site, follows its stateful and viewer-identity sections, with a
+\`viewer_id\` column on every table that holds one person's data. Loading this
 skill does not give you Terminal; if Terminal is not available, say the app
 needs it.
 

@@ -18,6 +18,7 @@ import type { Env } from "../env";
 import { createConversationResourceLinks } from "../runtime/resource-port";
 import { loadVisibleWorkstreamResourcesByIds } from "./workstream-resource-visibility";
 import { durableObjectStubForArtifact, workspacePlacementAffinity } from "../lib/durable-object-namespace";
+import type { ArtifactRowScope } from "../artifacts/read-only-sql";
 import type {
   ArtifactDataHost,
   ArtifactDataToolContext,
@@ -28,6 +29,13 @@ export interface ArtifactDataWiringInput {
   workspaceId: string;
   workstreamId: string;
   principal: ExecutionPrincipal;
+  /**
+   * The run belongs to a Sidekick: its wizard, one of its runs, or a
+   * background agent one started. A Sidekick reads every row, because its job
+   * is usually the whole data set (a digest, a tally, a refresh) and it acts
+   * for the Sidekick rather than for one viewer.
+   */
+  sidekick: boolean;
 }
 
 export function createArtifactDataToolContext(
@@ -66,11 +74,20 @@ export function createArtifactDataToolContext(
         stateful: number;
       }>();
       if (!row) return null;
+      // Anyone else reads only their own rows in per-viewer tables, unless they
+      // published the site. The resource row records who the publishing run
+      // ran as.
+      const author = typeof match.uploaded_by_user_id === "string" ? match.uploaded_by_user_id : null;
+      const scope: ArtifactRowScope = input.sidekick || input.principal.type !== "user"
+        || author === input.principal.userId
+        ? { rows: "all" }
+        : { rows: "viewer", viewerId: input.principal.userId };
       return {
         artifactId: row.artifact_id,
         slug: match.slug,
         mode: row.mode === "active" ? "active" : "static",
         stateful: row.stateful === 1,
+        scope,
       };
     },
 

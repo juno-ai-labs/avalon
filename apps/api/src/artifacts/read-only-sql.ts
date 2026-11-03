@@ -193,3 +193,185 @@ export function admitTableName(
   }
   return { admitted: true, quoted: quoteIdentifier(requested) };
 }
+
+/**
+ * The column that makes a table **per-viewer**.
+ *
+ * A convention rather than a declaration because a stateful site has no
+ * manifest field for its schema: the model writes `CREATE TABLE` in its own
+ * class, and the skill already teaches this exact column for the id Rally
+ * injects. A table without it is shared, and every reader sees all its rows.
+ */
+export const VIEWER_COLUMN = "viewer_id";
+
+/** Whose rows a read may return: every row, or one viewer's in per-viewer tables. */
+export type ArtifactRowScope = { rows: "all" } | { rows: "viewer"; viewerId: string };
+
+interface SqlToken {
+  /** A bare word, a quoted identifier, or a single punctuation character. */
+  kind: "word" | "quoted" | "punct";
+  /** The identifier as SQLite reads it: unquoted, escapes undone. */
+  value: string;
+  start: number;
+  end: number;
+}
+
+/**
+ * Split a statement into the tokens that can name something.
+ *
+ * Comments and string literals are skipped, since neither can name a table.
+ * Quoted identifiers are **kept** and unquoted, which is the difference from
+ * `blankLiteralsAndComments`: `"main"."notes"` names the real table exactly as
+ * `main.notes` does, and a scanner that blanked it would miss the bypass.
+ */
+function identifierTokens(sql: string): SqlToken[] {
+  const tokens: SqlToken[] = [];
+  let index = 0;
+  while (index < sql.length) {
+    const character = sql[index]!;
+    const next = sql[index + 1];
+    if (/\s/u.test(character)) { index += 1; continue; }
+    if (character === "-" && next === "-") {
+      while (index < sql.length && sql[index] !== "\n") index += 1;
+      continue;
+    }
+    if (character === "/" && next === "*") {
+      const close = sql.indexOf("*/", index + 2);
+      index = close === -1 ? sql.length : close + 2;
+      continue;
+    }
+    if (character === "'") {
+      index += 1;
+      while (index < sql.length) {
+        if (sql[index] === "'" && sql[index + 1] === "'") { index += 2; continue; }
+        if (sql[index] === "'") { index += 1; break; }
+        index += 1;
+      }
+      continue;
+    }
+    const closer = character === '"' ? '"' : character === "`" ? "`" : character === "[" ? "]" : null;
+    if (closer) {
+      const start = index;
+      let value = "";
+      index += 1;
+      while (index < sql.length) {
+        if (sql[index] === closer && closer !== "]" && sql[index + 1] === closer) { value += closer; index += 2; continue; }
+        if (sql[index] === closer) { index += 1; break; }
+        value += sql[index];
+        index += 1;
+      }
+      tokens.push({ kind: "quoted", value, start, end: index });
+      continue;
+    }
+    const word = /^[\p{L}_][\p{L}\p{N}_$]*/u.exec(sql.slice(index));
+    if (word) {
+      tokens.push({ kind: "word", value: word[0], start: index, end: index + word[0].length });
+      index += word[0].length;
+      continue;
+    }
+    tokens.push({ kind: "punct", value: character, start: index, end: index + 1 });
+    index += 1;
+  }
+  return tokens;
+}
+
+/** A SQL string literal. The value is Rally's own user id, quoted all the same. */
+function sqlString(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+/**
+ * Remove the `main.` or `temp.` qualifier in front of every shadowed name.
+ *
+ * A qualified name resolves against the schema and never against a CTE, so
+ * `main.entries` would read past the shadow. Dropping the qualifier makes it
+ * the same reference as `entries`, which is what the caller meant. Names that
+ * are not shadowed keep their qualifier and read the real table, as before.
+ */
+function unqualifyShadowed(sql: string, shadowed: ReadonlySet<string>): string {
+  const tokens = identifierTokens(sql);
+  let out = "";
+  let copied = 0;
+  for (let index = 0; index + 2 < tokens.length; index += 1) {
+    const [schema, dot, name] = [tokens[index]!, tokens[index + 1]!, tokens[index + 2]!];
+    if (schema.kind === "punct" || name.kind === "punct" || dot.value !== ".") continue;
+    const qualifier = schema.value.toLowerCase();
+    if ((qualifier === "main" || qualifier === "temp") && shadowed.has(name.value.toLowerCase())) {
+      out += sql.slice(copied, schema.start);
+      copied = name.start;
+    }
+  }
+  return out + sql.slice(copied);
+}
+
+/**
+ * A view's definition as a CTE: `name(columns) AS (select)`.
+ *
+ * Read from the `CREATE VIEW` text SQLite keeps in `sqlite_master`. The select
+ * starts after the first `AS` that follows the name, and an optional column
+ * list sits between the two. SQLite would not have accepted text without that
+ * shape, so its absence throws rather than leaving the view unshadowed: a view
+ * read past the shadow would return every viewer's rows.
+ */
+function viewAsCte(view: { name: string; sql: string }): string {
+  const tokens = identifierTokens(view.sql);
+  const as = tokens.findIndex((token, index) => index > 0 && token.kind === "word" && token.value.toLowerCase() === "as");
+  let nameEnd = -1;
+  for (let index = 0; index < as; index += 1) {
+    const token = tokens[index]!;
+    if (token.kind !== "punct" && token.value.toLowerCase() === view.name.toLowerCase()) nameEnd = index;
+  }
+  if (nameEnd === -1) throw new Error("artifact_view_definition_unreadable");
+  const columns = view.sql.slice(tokens[nameEnd]!.end, tokens[as]!.start).trim();
+  const body = view.sql.slice(tokens[as]!.end).trim().replace(/;\s*$/u, "");
+  return `${quoteIdentifier(view.name)}${columns ? columns : ""} AS (${body})`;
+}
+
+/**
+ * Limit an already-admitted read to one viewer's rows in per-viewer tables.
+ *
+ * **Each per-viewer table is shadowed by a common table expression of the same
+ * name**, filtered to the viewer. SQLite resolves an unqualified table name to
+ * a CTE before the schema, through every subquery and every other CTE in the
+ * statement, so the caller's query runs as written against a database that
+ * holds only this viewer's rows. Nothing the caller may write is refused here:
+ * the site's model designs its own schema and the reader designs its own
+ * query, and neither should have to know scoping exists.
+ *
+ * Two references would otherwise read past the shadow, and both are rewritten:
+ *
+ * - a **schema-qualified** name (`main.entries`) resolves against the schema,
+ *   so its qualifier is dropped; and
+ * - a **view** was compiled against the schema, so every view is shadowed too,
+ *   by a CTE built from its own definition. Its body then reads the shadowed
+ *   tables like any other reference.
+ *
+ * A caller CTE that reuses a shadowed name is a SQLite error (`duplicate WITH
+ * table name`), not a leak.
+ */
+export function scopeStatementToViewer(
+  sql: string,
+  input: {
+    viewerTables: readonly string[];
+    views: readonly { name: string; sql: string }[];
+    viewerId: string;
+  },
+): string {
+  if (input.viewerTables.length === 0) return sql;
+  const shadowed = new Set([...input.viewerTables, ...input.views.map((view) => view.name)].map((name) => name.toLowerCase()));
+  const shadows = [
+    ...input.viewerTables.map((table) =>
+      `${quoteIdentifier(table)} AS (SELECT * FROM main.${quoteIdentifier(table)} WHERE ${quoteIdentifier(VIEWER_COLUMN)} = ${sqlString(input.viewerId)})`),
+    ...input.views.map((view) => viewAsCte({ name: view.name, sql: unqualifyShadowed(view.sql, shadowed) })),
+  ].join(", ");
+  const statement = unqualifyShadowed(sql, shadowed);
+  const [first, second] = identifierTokens(statement);
+  if (first?.kind === "word" && first.value.toLowerCase() === "with") {
+    // Merge into the caller's WITH: a statement has one, and RECURSIVE has to
+    // lead it. The shadows come first so the caller's CTEs can read them.
+    const recursive = second?.kind === "word" && second.value.toLowerCase() === "recursive";
+    const resume = recursive ? second.end : first.end;
+    return `${statement.slice(0, first.start)}WITH ${recursive ? "RECURSIVE " : ""}${shadows}, ${statement.slice(resume)}`;
+  }
+  return `WITH ${shadows} ${statement}`;
+}

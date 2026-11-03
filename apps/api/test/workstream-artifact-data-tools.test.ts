@@ -50,7 +50,7 @@ function fixture(overrides: {
   };
   const context = {
     resolveArtifact: vi.fn(async () => overrides.artifact === undefined
-      ? { artifactId: ARTIFACT, slug: "offsite-poll", mode: "active" as const, stateful: true }
+      ? { artifactId: ARTIFACT, slug: "offsite-poll", mode: "active" as const, stateful: true, scope: { rows: "all" as const } }
       : overrides.artifact),
     hostFor: vi.fn(async () => host satisfies ArtifactDataHost),
   } satisfies ArtifactDataToolContext;
@@ -137,7 +137,22 @@ describe("querying a site's data", () => {
       { resource: "p", sql: "SELECT * FROM votes WHERE choice = ?", params: ["yes"] },
       {} as never,
     );
-    expect(host.queryData).toHaveBeenCalledWith("SELECT * FROM votes WHERE choice = ?", ["yes"], 200);
+    expect(host.queryData).toHaveBeenCalledWith("SELECT * FROM votes WHERE choice = ?", ["yes"], 200, { rows: "all" });
+  });
+
+  it("reads with the resolved scope and says when rows are only the requester's own", async () => {
+    const scope = { rows: "viewer" as const, viewerId: "00000000-0000-7000-8000-0000000000a9" };
+    const { describe: describeTool, query, host } = fixture({
+      artifact: { artifactId: ARTIFACT, slug: "journal", mode: "active", stateful: true, scope },
+    });
+    const described = await describeTool.execute({ resource: "journal" }, {} as never);
+    const read = await query.execute({ resource: "journal", sql: "SELECT choice FROM votes" }, {} as never);
+    expect(host.describeData).toHaveBeenCalledWith(scope);
+    expect(host.queryData).toHaveBeenCalledWith("SELECT choice FROM votes", [], 200, scope);
+    expect(described.output).toMatchObject({
+      rowsShown: "Tables with a viewer_id column show only the requesting person's rows; other tables show every row.",
+    });
+    expect(read.output).toMatchObject({ rowsShown: expect.stringContaining("requesting person's rows") });
   });
 
   it("surfaces a refused statement as a repairable failure carrying the repair", async () => {
@@ -199,7 +214,7 @@ describe("what the tools refuse to reach", () => {
     // A static or stateless-active site is a working outcome, not a broken one,
     // and the remediation points at reading its source instead.
     const { describe: describeTool, query, host } = fixture({
-      artifact: { artifactId: ARTIFACT, slug: "checklist", mode: "static", stateful: false },
+      artifact: { artifactId: ARTIFACT, slug: "checklist", mode: "static", stateful: false, scope: { rows: "all" } },
     });
     const error = await refusal(() => describeTool.execute({ resource: "checklist" }, {} as never));
     expect(error.code).toBe("no_artifact_data");

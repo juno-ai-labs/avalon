@@ -8516,6 +8516,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
       workspaceId: input.workspaceId,
       workstreamId: input.parentId,
       principal: input.executionPrincipal,
+      sidekick: input.parentKind === "automation" || Boolean(input.automationRun || input.automationDelegation),
     })),
     {
       definition: AVALON_CURRENT_TIME_TOOL_DEFINITION,
