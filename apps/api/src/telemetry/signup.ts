@@ -1,9 +1,11 @@
 import type { TelemetryEventProperties } from '@rally/contracts/telemetry';
 import type { Context } from 'hono';
 import type { Env, HonoAppEnv } from '../env';
+import { newId } from '@rally/db';
 import { runtimeDeferral } from '../lib/defer';
 import { diagnosticErrorCode, logWarn } from '../observability/logger';
 import { apiTelemetryEnvelope } from './api-emitter';
+import { ensurePersonAnalyticsId } from './authenticated';
 import { TelemetryCollector } from './collector';
 import { resourceTelemetryEventId } from './product-usage';
 
@@ -53,7 +55,38 @@ export function observeAuthenticationCompleted(env: Env, flow: SignupFlow, metho
   observeSignup(env, flow, 'authentication_completed', method, { userId, created, clientPlatform });
   if (created) {
     observeSignup(env, flow, 'signup_account_created', method, { userId, created, clientPlatform });
+    runtimeDeferral(queueSignupIdentityTransition(env, userId).catch((error: unknown) => {
+      logWarn(env, 'signup_identity_transition_failed', { code: diagnosticErrorCode(error, 'signup_identity_transition_failed') });
+    }));
   }
+}
+
+/** Merges a new account's own signup flow into its person, so every stage of
+ * that flow, before and after the account existed, is attributed to the
+ * person's email. It reuses the ordered epoch transition: the flow ID is the
+ * stages' `distinct_id`, so it is the `$anon_distinct_id` to merge. Only the
+ * flow recorded at account creation qualifies; a returning sign-in's flow never
+ * merges. Opted-out accounts queue nothing, and delivery rechecks the choice. */
+export async function queueSignupIdentityTransition(env: Env, userId: string): Promise<void> {
+  const user = await env.DB.prepare('SELECT signup_flow_id, product_analytics_enabled, email, name FROM users WHERE id = ?')
+    .bind(userId).first<{ signup_flow_id: string | null; product_analytics_enabled: number; email: string; name: string }>();
+  if (!user?.signup_flow_id || user.product_analytics_enabled !== 1) return;
+  const personAnalyticsId = await ensurePersonAnalyticsId(env, userId);
+  const now = new Date();
+  const deleteAt = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1_000).toISOString();
+  // The flow ID is client-supplied, so two new accounts can store the same one,
+  // and authentication can report one new account more than once (a replayed
+  // redemption). The first account to queue a flow owns it; any other queues
+  // nothing, so one flow's history is never claimed for two people.
+  await env.DB.prepare(`INSERT INTO telemetry_profile_jobs
+      (id, subject_user_id, workspace_id, job_kind, destination_analytics_id,
+       anonymous_epoch_id, properties_json, version, state, created_at, delete_at)
+     SELECT ?, ?, NULL, 'epoch_transition', ?, ?, ?, 1, 'pending', ?, ?
+     WHERE NOT EXISTS (SELECT 1 FROM telemetry_profile_jobs
+       WHERE job_kind = 'epoch_transition' AND anonymous_epoch_id = ?)`)
+    .bind(newId(now.getTime()), userId, personAnalyticsId, user.signup_flow_id,
+      JSON.stringify({ email: user.email, name: user.name }), now.toISOString(), deleteAt, user.signup_flow_id)
+    .run();
 }
 
 /** Join/setup observations run after the authoritative mutation and follow only a new account's first flow. */

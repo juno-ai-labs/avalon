@@ -70,7 +70,8 @@ for Oopsie reports and their message, conversation and reporter references.
 Regional migration 0121 adds an opaque telemetry flow to OAuth state, desktop
 login tickets, and email challenges. Tickets and challenges preserve whether the
 proof created a new identity. Email challenges also preserve their entry surface.
-New user insertion records `signup_flow_id` and `signup_client_platform`;
+New user insertion records `signup_flow_id` (unless another account already
+holds that flow) and `signup_client_platform`;
 `signup_path` and `signup_completed_at` record first organization readiness and
 one completion. These are analytics bookkeeping, never authorization or a gate
 on authentication. Existing identities and old proofs remain without lineage.

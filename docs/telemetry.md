@@ -537,7 +537,9 @@ closed.
   send an arbitrary property dictionary, read a telemetry credential, or call
   PostHog; otherwise an XSS becomes a data-exfiltration and schema-expansion path.
 
-- **Only the per-login epoch performs an anonymous history merge.** The random
+- **Only the per-login epoch and a new account's own signup flow perform an
+  anonymous history merge.** The signup flow merges once, at account creation,
+  from `users.signup_flow_id`; a returning sign-in's flow never merges. The random
   installation ID may appear as PostHog `$device_id` for SDK-compatible device
   attribution, but it is never used as `$anon_distinct_id`, entered in Rally's
   identity-link table, or exported across regions; conflating these roles would
@@ -571,7 +573,8 @@ It does not own product state, authorization for the product action being
 observed, provider content, PostHog-side retention/access/configuration, legal
 approval, advertising, consent-law determinations, or cross-site account identity.
 Public-site acquisition reporting is owned by `public-site-telemetry.md`; its
-opaque flow correlation joins signup observations without joining identities. Product analytics are
+opaque flow correlation joins signup observations; only a new account's own
+signup flow is merged into its person. Product analytics are
 advisory and may be incomplete; regional product authority is canonical — D1
 for workspace/control data and, after its guarded cutover, the Channel's parent
 in `WorkspaceDO` and its conversations for work-stream product data.
@@ -626,7 +629,16 @@ The closed API stages are `signup_viewed`, `signup_started`,
 `signup_verification_completed`, `authentication_completed`,
 `signup_account_created`, `signup_organization_requested`,
 `signup_organization_ready`, `signup_onboarding_completed`, `signup_completed`,
-and `signup_failed`. New-account events exclude returning sign-ins. Completion
+and `signup_failed`. New-account events exclude returning sign-ins.
+
+Signup stages stay personless, with the flow ID as `distinct_id`. When an
+account is created, `queueSignupIdentityTransition` queues the same ordered
+`epoch_transition` profile job the desktop epoch uses, with the flow ID as
+`$anon_distinct_id` and the account's email and name. PostHog then attributes
+every stage of that flow, before and after the account existed, to the person,
+so a person who stalled after creating an account can be found by email.
+Attempts that never create an account stay anonymous. Opted-out accounts queue
+nothing, and delivery rechecks the preference. Completion
 requires first organization access and any required introduction, for either
 `new_organization` or `existing_organization`. Automatically claimed shares enter
 the organization setup funnel when the user selects their organization.
@@ -813,6 +825,29 @@ telemetry under 0.5% CPU/15 MiB/1 MiB per day, and 95% owned-frame symbolication
 when matching artifacts exist. Operational snapshots and packaged fixtures provide
 the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
+
+### 2026-11-03 — A new account's signup flow merges into its person
+
+**What changed:** Account creation queues an `epoch_transition` profile job
+from the account's `signup_flow_id` to its `analytics_person_id`, carrying the
+verified email and name. One job per flow, and replayed redemptions add none.
+The flow ID is client-supplied, so account creation records it only when no
+other account already holds it: a second account that reuses a flow gets no
+lineage, no later signup stages and no merge.
+
+**Why:** The daily signup report could not name who signed up, and nobody
+could contact people who created an account but did not finish organization
+setup or onboarding. Signup stages used the flow ID as a personless
+`distinct_id` and nothing linked it to a person, so PostHog held no email. The
+rejected alternative, resolving emails in the report from
+`users.signup_flow_id`, works only for whoever has database access and leaves
+PostHog funnels anonymous.
+
+**Consequences:** This replaces the earlier stance that flow correlation never
+joins identities, for a new account's own flow only. Attempts that end before
+an account exists stay anonymous, and so do email addresses submitted but never
+verified. A returning sign-in's flow must never merge: it would attribute one
+person's attempt to another account.
 
 ### 2026-10-30 — Every capture carries the outbox row's id as `uuid`
 
