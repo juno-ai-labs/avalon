@@ -376,8 +376,9 @@ only the path survives that trip. Signed in, it asks the site's deployment
 `POST /browser/sites/resolve` for the site's organization and resource, opens
 that organization with the same `openWorkspace` a workspace link uses, mints the
 site's single-use access code, and replaces itself with the site's `openUrl`
-plus `?return=`. A 404 means the site does not exist or this account cannot
-read it, and says so without telling the two apart.
+plus `?return=`. A 404 means no such site, and a 403 means the site exists but
+this account cannot read it; the page says which, so the person knows whether
+to fix the link or ask for access.
 
 A deployment other than Global sets its cookie only when one of its
 organizations is opened, and the lookup is what finds the organization, so a
@@ -629,6 +630,10 @@ for someone who can read it.
 **Why:** A protected site answered a visitor who arrived by its link, rather
 than from inside Rally, with "Open this site from Rally", and nothing there
 could get them in. Sites are shared by link, so that was the common case.
+
+**Not found versus no access:** the lookup answers 404 and 403 separately,
+at the PR author's direction, so a person knows whether to fix the link or ask
+for access. It tells a signed-in person that a site exists, nothing more.
 
 **Considered and rejected:** Putting the organization id in the site's
 redirect. The site Worker does read it, but it would hand the id to anyone
