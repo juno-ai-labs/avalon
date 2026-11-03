@@ -578,9 +578,34 @@ shape of \`index.js\`.
   instead: record identity with *acts* (an RSVP, a vote, a sign-up),
   and record views only when the page's stated purpose is attendance.
 - **Attribution theater on an anonymous page.** If the request was for
-  anonymous feedback, storing the viewer id anyway breaks the promise
-  in a way the data view exposes. Do instead: ignore the headers
-  entirely there, and say in the page that responses are anonymous.
+  anonymous answers, storing the viewer id with them breaks the promise
+  in a way the data view exposes. Do instead: follow **Anonymous
+  answers** below, and say in the page that responses are anonymous.
+
+### Anonymous answers
+
+An anonymous poll, survey or feedback box still needs a Rally viewer to
+submit, because anonymous visitors cannot write; what makes it anonymous
+is what you store. The author and Sidekicks read every row, so the rows
+themselves must not link a person to an answer.
+
+1. **Store answers without identity.** For choices, keep a count per
+   choice and add one per answer (\`UPDATE tally SET votes = votes + 1
+   WHERE choice = ?\`). For free text, insert the text alone. Give answer
+   rows no viewer id, no name and no timestamp finer than the day.
+2. **For one answer each, keep who answered apart from what.** A separate
+   \`responded (member_id TEXT PRIMARY KEY)\` table records that someone
+   answered and nothing else. Check it before accepting an answer, and
+   write both tables in one \`transactionSync\`.
+3. **Never let the two line up.** Rows stored in the order they arrive can
+   be matched to \`responded\` by that order. Store choices as counts, and
+   store free text in a table keyed by a random id that SQLite keeps in
+   key order rather than arrival order:
+   \`CREATE TABLE answers (id TEXT PRIMARY KEY, body TEXT NOT NULL) WITHOUT
+   ROWID\`, inserting \`crypto.randomUUID()\` as the id.
+4. **Do not undo it on the page.** Show results as totals or as the list of
+   answers, never "you voted for X" from the server; let the browser
+   remember the person's own choice locally if the page needs to show it.
 `;
 
 const WORKED_EXAMPLES = `Two complete, minimal examples the body's rules produce — read this
