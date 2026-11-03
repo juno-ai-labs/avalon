@@ -159,7 +159,7 @@ The host resolves stored-loadable Sidekicks against execution and conversation a
 | `packages/agent-harness/src/tool-arguments.ts` | Schema-guided numeric-string normalization, blanked-optional-argument stripping, and bounded model-visible argument errors. |
 | `scripts/eslint-rules/tool-input-boundaries.mjs` | Prevents individual tools from replacing the exact shared numeric-string policy with permissive coercion or compatibility unions. |
 | `packages/agent-harness/src/prompts/` | Every stable prompt. Byte-stable and golden-hashed; read [`writing-prompts.md`](writing-prompts.md) first. |
-| `packages/agent-harness/src/skills.ts`, `built-in-skills.ts` | The skill registry, its three bounds, and the built-in skill catalog, including procedures scoped by `ownerPlugin`. |
+| `packages/agent-harness/src/skills.ts`, `built-in-skills.ts`, `task-skills/` | The skill registry, its three bounds, and the built-in skill catalog, including procedures scoped by `ownerPlugin` and the task skills. |
 | `packages/agent-harness/src/tool-activity.ts` | `toolActivityName` — the prose every transcript row is labelled with. |
 | `packages/agent-harness/src/tool-schema-safety.ts` | The measured rule for what xAI reads as an object, two build-time checks over what Bind's sanitizer *emits*, and the run-time repair gated on one of them — that repair is the piece with the blast radius, since it rewrites third-party schemas. |
 | `apps/api/src/runtime/harness-run-runtime.ts` | The host side: admission, the lease, run scope, receipts, terminal state. |
@@ -769,7 +769,9 @@ The always-active `rally_skills` plugin owns two globally named controls. `load_
 
 Three bounds keep a looping model from loading its way into a context-limit error: a count cap, a budget over the total tokens of loaded bodies, and a byte cap on a single `read_skill_resource` response. Bind judges the first two (`admitSkillLoad`); Rally measures the token half by resolving the bodies the load would actually inject, and applies the third itself — an unbounded Tier-3 read would otherwise route around the Tier-2 budget, since a skill whose body fits can bundle a reference that does not. All three are configurable, through `maxActiveSkills`, `maxActiveSkillBodyTokens`, and `maxSkillResourceBytes`.
 
-The package ships eleven skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet. Five are unowned and offered to ordinary runs: `deep-research`, `writing-an-email`, `scheduling-a-calendar-event`, `using-the-local-inapp-browser`, and `using-external-structured-data`. The other six each set an `ownerPlugin` and are offered only to a run whose scope already carries that plugin: `polling-for-events` below, `tracking-seen-or-done-items` owned by `rally:tables`, `building-live-sites` above, and the three AI-chat readers — `reading-an-ai-chat`, `reading-chatgpt-conversations` and `reading-claude-conversations` (`reading-ai-chats-skills.ts`) — owned by Rally's browser plugin, `avalon:browser`. The generic reader is written against what every chat page must have (conversation data the page loaded, messages with authors, ids and parent links) rather than any markup, and ends in a self-check against the page; the provider companions carry routes and shapes as hints to verify, so a provider redesign degrades to the generic procedure instead of a wrong import. The email and calendar skills are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
+The package ships thirteen skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet. Seven are unowned and offered to ordinary runs: `deep-research`, `writing-an-email`, `scheduling-a-calendar-event`, `using-the-local-inapp-browser`, `using-external-structured-data`, and the two task skills described below. The other six each set an `ownerPlugin` and are offered only to a run whose scope already carries that plugin: `polling-for-events` below, `tracking-seen-or-done-items` owned by `rally:tables`, `building-live-sites` above, and the three AI-chat readers — `reading-an-ai-chat`, `reading-chatgpt-conversations` and `reading-claude-conversations` (`reading-ai-chats-skills.ts`) — owned by Rally's browser plugin, `avalon:browser`. The generic reader is written against what every chat page must have (conversation data the page loaded, messages with authors, ids and parent links) rather than any markup, and ends in a self-check against the page; the provider companions carry routes and shapes as hints to verify, so a provider redesign degrades to the generic procedure instead of a wrong import. The email and calendar skills are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
+
+**Task skills** live in `packages/agent-harness/src/task-skills/`, one file each, collected as `TASK_SKILLS` and spread into `BUILT_IN_SKILLS`. A task skill is named for an outcome a person asks for rather than a capability: it reads the request, settles what has to be decided before work starts, and names the procedure skills that do the work. `reporting-on-data` finds every connected source that holds part of an answer, names the keys that join them, and slices the joined records the way the person asked, deferring row-level reading to `using-external-structured-data`; its body carries a section for a Sidekick wizard, which maps the shape of all accessible data and shows the person a plan for combining and slicing it before saving that plan as the run procedure. `creating-an-app` reads "an app" as a live web site, turns a clear iOS or Android request toward a site because Rally builds no native apps, and asks one question before the first file when the request does not settle it: one shared site, or signed-in Rally viewers. It then hands off to `building-live-sites`. Neither sets an `ownerPlugin`, so a run without Terminal can still route an app request and say what it needs instead of the skill vanishing from the catalog.
 
 `using-external-structured-data` owns the source-handling procedure shared by
 sites, reports, imports and other outputs. It has no owner-plugin gate; local-file
@@ -1869,6 +1871,29 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-11-03 — Task skills: reporting on data and creating an app
+
+**What changed:** A new `task-skills/` folder holds skills named for an outcome
+a person asks for, collected as `TASK_SKILLS` and added to `BUILT_IN_SKILLS`.
+The first two are `reporting-on-data`, with a section for Sidekick wizards, and
+`creating-an-app`.
+
+**Why:** The existing skills each teach one capability (read rows without loss,
+build a site). Requests arrive as outcomes ("a report on our deals", "make me an
+app"), and nothing told the model which capabilities to combine or what to
+settle first: that a report should join every related source, that an app here
+means a live web site, and that shared versus signed-in has to be asked before
+storage is written.
+
+**Considered and rejected:** Folding the app question into `building-live-sites`,
+which is owned by Terminal and so is missing from the catalog of a run without
+it, the run most likely to need to say what an app requires. A separate wizard
+skill for reports, which would split one job across two catalog lines.
+
+**Consequences:** A task skill routes and decides; it does not repeat the
+procedure skills it names. Keep its catalog line short, since it shares the
+catalog budget with every other skill.
 
 ### 2026-10-31 — A plugin may render its system message from the active set, and see the run it is in
 
