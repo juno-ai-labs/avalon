@@ -952,7 +952,7 @@ describe("Sidekick resource reads by ID", () => {
   it("finds a site's organization from its hostname only for someone who can read it", async () => {
     // A protected site sends a signed-out visitor to sign in; the browser then
     // knows only the hostname. The answer names the organization and resource
-    // for a reader, and is the same 404 for a stranger and for no such site.
+    // for a reader, is 403 for someone who cannot read it, and 404 for no site.
     await seedSidekick("0");
     const resourceId = await source();
     await attachWorkstreamRuntimeResource(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID,
@@ -977,7 +977,7 @@ describe("Sidekick resource reads by ID", () => {
     });
 
     await expect(resolveSiteForViewer(TEST_ENV, AUTHOR_ID, stub)).resolves.toEqual({ workspaceId: WORKSPACE_ID, resourceId });
-    await expect(resolveSiteForViewer(TEST_ENV, OUTSIDER_ID, stub)).rejects.toMatchObject({ status: 404, code: "site_not_found" });
+    await expect(resolveSiteForViewer(TEST_ENV, OUTSIDER_ID, stub)).rejects.toMatchObject({ status: 403, code: "site_access_denied" });
     await expect(resolveSiteForViewer(TEST_ENV, AUTHOR_ID, "no-such-site-anywhere-here")).rejects.toMatchObject({ status: 404, code: "site_not_found" });
   });
 

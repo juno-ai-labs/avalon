@@ -41,7 +41,9 @@ export function SiteOpening({ region, hostnameStub, returnPath, openWorkspace, o
     })().catch((cause: unknown) => {
       if (!active) return;
       if (cause instanceof BrowserApiError && cause.status === 404) {
-        setFailure("This site doesn't exist, or your account can't open it. Check you're signed in with the right account.");
+        setFailure("This site doesn't exist. Check the link.");
+      } else if (cause instanceof BrowserApiError && cause.status === 403) {
+        setFailure("You don't have access to this site. Ask whoever shared it to add you, or check you're signed in with the right account.");
       } else if (cause instanceof BrowserApiError && cause.status === 401 && region !== IDENTITY_REGION) {
         // A deployment other than Global sets its cookie only when one of its
         // organizations is opened, which needs the organization this lookup finds.
