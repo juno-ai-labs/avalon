@@ -751,6 +751,64 @@ describe("a workspace's derived alarm lanes", () => {
     expect(armed).not.toBeNull();
     expect(armed!).toBeLessThan(deliveryDueAt);
   });
+
+  it("holds an alarm whose pass changed nothing and asked to run again at once", async () => {
+    await seedOpenAuthority();
+    const stub = await initializedWorkspace();
+
+    await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
+      const held: number[] = [];
+      const hooks = instance as unknown as {
+        nextDerivedAlarmCandidates(now: number): readonly number[];
+        runDueAlarmWork(now: number): Promise<void>;
+        onIdleAlarmHeld(attempt: number, heldUntil: number): void;
+      };
+      // A lane that reports work at `now` and a pass that declines it, the
+      // shape a stopped agent with a queued message had. Before the hold the
+      // re-arm floored `now` at the next millisecond on every pass.
+      let futureCandidate: number | null = null;
+      hooks.nextDerivedAlarmCandidates = (now) => futureCandidate === null ? [now] : [now, futureCandidate];
+      hooks.runDueAlarmWork = () => Promise.resolve();
+      hooks.onIdleAlarmHeld = (attempt) => { held.push(attempt); };
+
+      const first = Date.now();
+      await instance.alarm();
+      const firstHold = await state.storage.getAlarm();
+      expect(held).toEqual([1]);
+      expect(firstHold!).toBeGreaterThanOrEqual(first + scheduledAlarmRetryDelay(1, () => 0));
+      expect(firstHold!).toBeLessThanOrEqual(Date.now() + scheduledAlarmRetryDelay(1, () => 1));
+
+      // The attempt grows across passes, so the delay climbs toward the
+      // ceiling a thrown entry's would.
+      const second = Date.now();
+      await instance.alarm();
+      expect(held).toEqual([1, 2]);
+      expect(await state.storage.getAlarm()).toBeGreaterThanOrEqual(second + scheduledAlarmRetryDelay(2, () => 0));
+
+      // Never later than a real future reason to wake.
+      futureCandidate = Date.now() + 5_000;
+      await instance.alarm();
+      expect(held).toEqual([1, 2, 3]);
+      expect(await state.storage.getAlarm()).toBe(futureCandidate);
+      futureCandidate = null;
+
+      // A pass that wrote is progress: it keeps its immediate wake, and the
+      // next idle pass starts again at the first step.
+      state.storage.sql.exec("CREATE TABLE IF NOT EXISTS idle_hold_probe (n INTEGER)");
+      hooks.runDueAlarmWork = () => {
+        state.storage.sql.exec("INSERT INTO idle_hold_probe (n) VALUES (1)");
+        return Promise.resolve();
+      };
+      const writing = Date.now();
+      await instance.alarm();
+      expect(held).toEqual([1, 2, 3]);
+      expect(await state.storage.getAlarm()).toBeLessThanOrEqual(Math.max(writing, Date.now()) + 1);
+
+      hooks.runDueAlarmWork = () => Promise.resolve();
+      await instance.alarm();
+      expect(held).toEqual([1, 2, 3, 1]);
+    });
+  });
 });
 
 describe("a workspace's schedule", () => {
