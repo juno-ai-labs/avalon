@@ -320,9 +320,9 @@ what the page shows is the page's job.
   `automationDelegation`. It works on the whole data set (a tally, a digest,
   a refresh). A Sidekick's wizard is a member typing, so it reads as that
   member.
-- **No person** is a third scope, `none`: an Organization-principal run that
-  is not a Sidekick, such as one for an unlinked Slack or connector sender,
-  sees shared tables and no private rows.
+- **Organization-principal runs** read every row, like Sidekick runs, at the
+  PR author's direction. That includes runs for an unlinked Slack or connector
+  sender.
 - **What counts as private** is read from a schema-only facet call,
   `rallySchema`, using `pragma_table_xinfo` so a generated `private_to_viewer`
   column counts, and counting no rows. A private FTS5 table's backing tables
