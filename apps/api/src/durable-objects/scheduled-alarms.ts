@@ -76,6 +76,9 @@ export const SCHEDULED_ALARM_RETRY_MAX_MS = 30 * 60_000;
  */
 export const SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS = 2_000;
 
+/** KV key holding the current idle-hold episode's attempt; absent when none. */
+const IDLE_ALARM_ATTEMPT_KEY = "_internal_idle_alarm_attempt";
+
 /**
  * Bring a Durable Object's alarm forward without erasing a sooner one.
  *
@@ -87,10 +90,12 @@ export const SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS = 2_000;
 export async function ensureStorageAlarmNoLaterThan(
   storage: DurableObjectStorage,
   dueAt: number,
-): Promise<void> {
+): Promise<boolean> {
   const floored = Math.max(Date.now() + 1, dueAt);
   const existing = await storage.getAlarm();
-  if (existing === null || existing > floored) await storage.setAlarm(floored);
+  if (existing !== null && existing <= floored) return false;
+  await storage.setAlarm(floored);
+  return true;
 }
 
 /**
@@ -511,14 +516,17 @@ export abstract class ScheduledDurableObject<TEnv extends Env = Env>
   protected abstract onIdleAlarmHeld(attempt: number, heldUntil: number): void;
 
   /**
-   * Consecutive idle passes, counted in memory. See {@link holdIdleAlarm}.
-   *
-   * Not persisted, because writing it would make the pass that counts it look
-   * like progress. An object in the loop this catches never sleeps, so its
-   * instance is never evicted; one that is evicted starts again at the first
-   * step, which costs one short wake.
+   * Consecutive idle passes, cached from {@link IDLE_ALARM_ATTEMPT_KEY}; `null`
+   * until read. See {@link holdIdleAlarm}.
    */
-  private idleAlarmAttempt = 0;
+  private idleAlarmAttempt: number | null = null;
+
+  /**
+   * Alarm writes this object's own arming made, so a pass that only re-armed
+   * is not mistaken for one that moved work: each `setAlarm`, and each
+   * `deleteAlarm` of an armed alarm, is one SQLite change.
+   */
+  private ownAlarmWrites = 0;
 
   /**
    * Add or move one entry, then point the alarm at whatever is now earliest.
@@ -589,16 +597,22 @@ export abstract class ScheduledDurableObject<TEnv extends Env = Env>
       ...(options.derivedCandidates ?? this.nextDerivedAlarmCandidates(now)),
     ]
       .filter((value): value is number => value !== null);
+    const existing = await this.ctx.storage.getAlarm();
     if (candidates.length === 0) {
-      await this.ctx.storage.deleteAlarm();
+      if (existing !== null) {
+        await this.ctx.storage.deleteAlarm();
+        this.ownAlarmWrites += 1;
+      }
       return null;
     }
     const overdueAt = Math.max(now + 1, options.overdueAt ?? now + 1);
     const next = Math.min(
       ...candidates.map((candidate) => candidate <= now ? overdueAt : candidate),
     );
-    const existing = await this.ctx.storage.getAlarm();
-    if (existing !== next) await this.ctx.storage.setAlarm(next);
+    if (existing !== next) {
+      await this.ctx.storage.setAlarm(next);
+      this.ownAlarmWrites += 1;
+    }
     return next;
   }
 
@@ -610,7 +624,7 @@ export abstract class ScheduledDurableObject<TEnv extends Env = Env>
    * ever moves it earlier, so it can never erase a sooner one.
    */
   protected async ensureAlarmNoLaterThan(dueAt: number): Promise<void> {
-    await ensureStorageAlarmNoLaterThan(this.ctx.storage, dueAt);
+    if (await ensureStorageAlarmNoLaterThan(this.ctx.storage, dueAt)) this.ownAlarmWrites += 1;
   }
 
   /**
@@ -724,29 +738,56 @@ export abstract class ScheduledDurableObject<TEnv extends Env = Env>
    * the due work, which is the whole of what a pass can durably move. A pass
    * that drained a stored entry wrote its settle, a bounded drain wrote the rows
    * it took, and a request that wrote while the pass awaited counts too. So the
-   * test errs toward not holding. The re-arms on either side are outside the
-   * sample: `setAlarm` is itself a change.
+   * test errs toward not holding. `setAlarm` is itself a change, so the re-arms
+   * on either side are outside the sample and the object's own re-arms inside
+   * it (a workspace's schedule reconcile) are subtracted. One a collaborator
+   * makes through `ensureStorageAlarmNoLaterThan` counts as progress.
+   *
+   * The attempt is kept in the object's KV storage, written only here, after
+   * the sample, so it survives the eviction a 30-second hold invites and the
+   * delay still climbs to the ceiling and the alert. A pass that wrote but
+   * still asked to run at once is not held and keeps the attempt: a hold capped
+   * at another wake reason lands on that reason's pass, which writes, while
+   * the looping lane is still due. Only a pass that arms later, or arms
+   * nothing, ends the episode.
    *
    * The hold is the backoff a thrown entry earns, never later than the next
    * future candidate, and anything that schedules or admits work re-arms past
-   * it through the ordinary paths. A pass that writes, or arms anywhere but the
-   * next millisecond, ends the episode.
+   * it through the ordinary paths.
+   *
+   * A candidate that came due after `passNow`, the instant the drain and the
+   * due work read, was never offered to this pass, so its immediate wake is
+   * kept and the pass is not counted. Derived lanes are read at `passNow` for
+   * the same reason: a lane that answers with the instant it is asked about
+   * would otherwise look newly due on every pass.
    */
-  private async holdIdleAlarm(changesBefore: number, changesAfter: number): Promise<void> {
+  private async holdIdleAlarm(passNow: number, progressed: boolean): Promise<void> {
     const now = Date.now();
     const armed = await this.ctx.storage.getAlarm();
-    if (changesAfter !== changesBefore || armed === null || armed > now + 1) {
-      this.idleAlarmAttempt = 0;
+    if (armed === null || armed > now + 1) {
+      if (this.readIdleAlarmAttempt() > 0) {
+        this.ctx.storage.kv.delete(IDLE_ALARM_ATTEMPT_KEY);
+        this.idleAlarmAttempt = 0;
+      }
       return;
     }
-    this.idleAlarmAttempt += 1;
-    const future = [
-      this.scheduledAlarms.nextDueAtAfter(now),
-      ...this.nextDerivedAlarmCandidates(now),
-    ].filter((candidate): candidate is number => candidate !== null && candidate > now);
-    const heldUntil = Math.min(now + scheduledAlarmRetryDelay(this.idleAlarmAttempt), ...future);
+    if (progressed) return;
+    const later = [
+      this.scheduledAlarms.nextDueAtAfter(passNow),
+      ...this.nextDerivedAlarmCandidates(passNow),
+    ].filter((candidate): candidate is number => candidate !== null && candidate > passNow);
+    if (later.some((candidate) => candidate <= now)) return;
+    const attempt = this.readIdleAlarmAttempt() + 1;
+    this.ctx.storage.kv.put(IDLE_ALARM_ATTEMPT_KEY, attempt);
+    this.idleAlarmAttempt = attempt;
+    const heldUntil = Math.min(now + scheduledAlarmRetryDelay(attempt), ...later);
     await this.ctx.storage.setAlarm(heldUntil);
-    this.onIdleAlarmHeld(this.idleAlarmAttempt, heldUntil);
+    this.onIdleAlarmHeld(attempt, heldUntil);
+  }
+
+  private readIdleAlarmAttempt(): number {
+    this.idleAlarmAttempt ??= this.ctx.storage.kv.get<number>(IDLE_ALARM_ATTEMPT_KEY) ?? 0;
+    return this.idleAlarmAttempt;
   }
 
   private sqlTotalChanges(): number {
@@ -828,11 +869,13 @@ export abstract class ScheduledDurableObject<TEnv extends Env = Env>
       return;
     }
     const changesBefore = this.sqlTotalChanges();
+    const alarmWritesBefore = this.ownAlarmWrites;
     const ran = await this.drainDueScheduledAlarms(now);
     await this.runDueAlarmWork(now);
     this.gateStalledScheduledAlarms(ran, Date.now());
-    const changesAfter = this.sqlTotalChanges();
+    const progressed = this.sqlTotalChanges() - changesBefore
+      !== this.ownAlarmWrites - alarmWritesBefore;
     await this.armAlarmAfterDueWork();
-    await this.holdIdleAlarm(changesBefore, changesAfter);
+    await this.holdIdleAlarm(now, progressed);
   }
 }
