@@ -30,10 +30,10 @@ export interface ArtifactDataWiringInput {
   workstreamId: string;
   principal: ExecutionPrincipal;
   /**
-   * The run belongs to a Sidekick: its wizard, one of its runs, or a
-   * background agent one started. A Sidekick reads every row, because its job
-   * is usually the whole data set (a digest, a tally, a refresh) and it acts
-   * for the Sidekick rather than for one viewer.
+   * The run is an unattended Sidekick run, or a background agent one started.
+   * It reads every row, because its job is usually the whole data set (a
+   * digest, a tally, a refresh). A Sidekick's wizard is a member typing, so it
+   * is not one of these and reads as that member.
    */
   sidekick: boolean;
 }

@@ -317,10 +317,10 @@ what the page shows is the page's job.
 - **Author** is `resources.uploaded_by_user_id`, whoever the publishing run ran
   as. A site published under an Organization principal has none, so in the
   Data view every member reads only their own rows.
-- **Sidekick** is any conversation whose parent is an automation (its wizard
-  and runs) or a run carrying `automationRun` or `automationDelegation`. A
-  Sidekick works on the whole data set (a tally, a digest, a refresh) for the
-  Sidekick rather than for one viewer.
+- **Sidekick** means an unattended run, one carrying `automationRun` or
+  `automationDelegation`. It works on the whole data set (a tally, a digest,
+  a refresh). A Sidekick's wizard is a member typing, so it reads as that
+  member.
 - **No person** is a third scope, `none`: an Organization-principal run that
   is not a Sidekick, such as one for an unlinked Slack or connector sender,
   sees shared tables and no private rows.
