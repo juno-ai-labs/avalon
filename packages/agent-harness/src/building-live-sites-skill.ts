@@ -593,45 +593,21 @@ shape of \`index.js\`.
 
 ### Anonymous answers
 
-An anonymous poll, survey or feedback box for a team needs a signed-in
-Rally viewer to submit, which is what lets you limit each person to one
-answer; give the page a sign-in link for them. What makes it anonymous is
-what you store.
+For an anonymous poll, survey or feedback box, store the answers without
+who sent them; how is up to you, and counts per choice are the simplest.
 
-**Open to anyone with the link.** When the request says anyone, the
-public, customers or the internet should answer without signing in, add
-this line to \`index.js\`:
+To let anyone on the internet submit without signing in (an anonymous
+poll, a public guestbook, a contact form, anything the request opens to
+the public), add this line to \`index.js\`:
 
 \`\`\`js
 export const acceptAnonymousSubmissions = true;
 \`\`\`
 
-Rally then lets submissions through from people who are not signed in,
-with no viewer headers. Such a site cannot limit anyone to one answer:
-remember in the browser's \`localStorage\` that this browser answered and
-say so on the page, which stops honest repeats only. Never record an IP
-address or any other way to tell visitors apart. Tell the person that
-anyone with the link can answer, as often as they like. Leave the line out
-of every other site; without it, only signed-in viewers can submit. The author and Sidekicks read every row, so the rows
-themselves must not link a person to an answer.
-
-1. **Store answers without identity.** For choices, keep a count per
-   choice and add one per answer (\`UPDATE tally SET votes = votes + 1
-   WHERE choice = ?\`). For free text, insert the text alone. Give answer
-   rows no viewer id, no name and no timestamp finer than the day.
-2. **For one answer each, keep who answered apart from what.** A separate
-   \`responded (member_id TEXT PRIMARY KEY)\` table records that someone
-   answered and nothing else. Check it before accepting an answer, and
-   write both tables in one \`transactionSync\`.
-3. **Never let the two line up.** Rows stored in the order they arrive can
-   be matched to \`responded\` by that order. Store choices as counts, and
-   store free text in a table keyed by a random id that SQLite keeps in
-   key order rather than arrival order:
-   \`CREATE TABLE answers (id TEXT PRIMARY KEY, body TEXT NOT NULL) WITHOUT
-   ROWID\`, inserting \`crypto.randomUUID()\` as the id.
-4. **Do not undo it on the page.** Show results as totals or as the list of
-   answers, never "you voted for X" from the server; let the browser
-   remember the person's own choice locally if the page needs to show it.
+Rally then passes submissions from people who are not signed in to your
+handler, with no viewer headers, and your class writes them to its
+database like any other. Tell the person anyone with the link can answer.
+Without the line, only signed-in viewers can submit.
 `;
 
 const WORKED_EXAMPLES = `Two complete, minimal examples the body's rules produce — read this
